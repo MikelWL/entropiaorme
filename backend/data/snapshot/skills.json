@@ -1,0 +1,1367 @@
+[
+  {
+    "name": "Chemistry",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Fishing",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Casting",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Angling",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Fly Fishing",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Deep Ocean Fishing",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Baitfishing",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Water Reading",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Fisherman's Sense",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Lure Mastery",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Angler Intuition",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Matching the Hatch",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "False Casting",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Sea Eyes",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Gutting",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Filleting",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Fishing Rod Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Fishing Attachment Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Cooking",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Provisioning",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Nutrition",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Gastronomy",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Beauty Sense",
+    "category": {
+      "name": "Beauty"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Body Sculpting",
+    "category": {
+      "name": "Beauty"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Face Sculpting",
+    "category": {
+      "name": "Beauty"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Hair Stylist",
+    "category": {
+      "name": "Beauty"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Plastic Surgery",
+    "category": {
+      "name": "Beauty"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Quality Sense",
+    "category": {
+      "name": "Beauty"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Aim",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Clubs",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Combat Reflexes",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Combat Sense",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 800
+  },
+  {
+    "name": "Commando",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 200
+  },
+  {
+    "name": "Handgun",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Heavy Melee Weapons",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Heavy Weapons",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Inflict Melee Damage",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Inflict Ranged Damage",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Kill Strike",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Light Melee Weapons",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Longblades",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Marksmanship",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Martial Arts",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 400
+  },
+  {
+    "name": "Melee Combat",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 533.3
+  },
+  {
+    "name": "Melee Damage Assessment",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Power Fist",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Ranged Damage Assessment",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Rifle",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Shortblades",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Support Weapon Systems",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Weapons Handling",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Whip",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Wounding",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Armor Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Attachments Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "BLP Weaponry Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Blueprint Comprehension",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Carpentry",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Enhancer Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Equipment Methodology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Explosive Projectile Weaponry Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Gauss Weaponry Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Industrialist",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 800
+  },
+  {
+    "name": "Laser Weaponry Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Machinery",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Manufacture Armor",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Manufacture Attachments",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Manufacture Electronic Equipment",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Manufacture Enhancers",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Manufacture Mechanical Equipment",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Manufacture Metal Equipment",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Manufacture Methodology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Manufacture Tools",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Manufacture Vehicle",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Manufacture Weapons",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Material Extraction Methodology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Particle Beamer Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Plasma Weaponry Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Spacecraft Engineering",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Spacecraft Weaponry",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Texture Engineering",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Tier Upgrading",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Tools Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Vehicle Repairing",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Vehicle Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Weapon Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Wood Carving",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Wood Processing",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Avoidance",
+    "category": {
+      "name": "Defense"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Dispense Decoy",
+    "category": {
+      "name": "Defense"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Telepathy",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Translocation",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Archaeological Lore",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Artefact Preservation",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Drilling",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Drilling Expertise",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Extraction",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Dodge",
+    "category": {
+      "name": "Defense"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Evade",
+    "category": {
+      "name": "Defense"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Color Matching",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Coloring",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Coloring Methodology",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Fashion Design",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Glamor",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 800
+  },
+  {
+    "name": "Make Textile",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Material Comprehension",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Surface Composition",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Tailoring",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Texture Pattern Matching",
+    "category": {
+      "name": "Design"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Alertness",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Athletics",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 533.3
+  },
+  {
+    "name": "Bravado",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 2000
+  },
+  {
+    "name": "Coolness",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 400
+  },
+  {
+    "name": "Courage",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 320
+  },
+  {
+    "name": "Dexterity",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 800
+  },
+  {
+    "name": "Intuition",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Perception",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Quickness",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Serendipity",
+    "category": {
+      "name": "General"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Butchering",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Probing",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Reaping",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Reclaiming",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Salvaging",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Scan Animal",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Scan Human",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Scan Mutant",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Scan Robot",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Scan Technology",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Scourging",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Skinning",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Anatomy",
+    "category": {
+      "name": "Medical"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Diagnosis",
+    "category": {
+      "name": "Medical"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Doctor",
+    "category": {
+      "name": "Medical"
+    },
+    "hp_increase": 800
+  },
+  {
+    "name": "First Aid",
+    "category": {
+      "name": "Medical"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Medical Therapy",
+    "category": {
+      "name": "Medical"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Medicine",
+    "category": {
+      "name": "Medical"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Treatment",
+    "category": {
+      "name": "Medical"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Bioregenesis",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Concentration",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Cryogenics",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Electrokinesis",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Ethereal Soul Language",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Force Merge",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 800
+  },
+  {
+    "name": "Jamming",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Mindforce Harmony",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Power Catalyst",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 2000
+  },
+  {
+    "name": "Pyrokinesis",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Scavenging",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Geology",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Ground Assessment",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Metallurgy",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Miner",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Mineral Sense",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Mining",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Precision Artefact Extraction",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Prospecting",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Resource Gathering",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Surveying",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Treasure Sense",
+    "category": {
+      "name": "Mining"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Analysis",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Animal Lore",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Animal Taming",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Biology",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Botany",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Computer",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Deep Space Knowledge",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": null
+  },
+  {
+    "name": "Electronics",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Engineering",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 3200
+  },
+  {
+    "name": "Genetics",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Mechanics",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Robotology",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Scientist",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Spacecraft Pilot",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 533.3
+  },
+  {
+    "name": "Spacecraft Systems",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Xenobiology",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Zoology",
+    "category": {
+      "name": "Science"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Fracturing",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 2000
+  },
+  {
+    "name": "Beneficiating",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Fragmentating",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Mining Laser Operator",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Mining Laser Technology",
+    "category": {
+      "name": "Construction"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Integrity Analysis",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Thermal Drilling",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Strength",
+    "category": {
+      "name": "Attributes"
+    },
+    "hp_increase": 20
+  },
+  {
+    "name": "Sampling",
+    "category": {
+      "name": "Combat"
+    },
+    "hp_increase": 1600
+  },
+  {
+    "name": "Agility",
+    "category": {
+      "name": "Attributes"
+    },
+    "hp_increase": 40
+  },
+  {
+    "name": "Health",
+    "category": {
+      "name": "Attributes"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Intelligence",
+    "category": {
+      "name": "Attributes"
+    },
+    "hp_increase": 80
+  },
+  {
+    "name": "Psyche",
+    "category": {
+      "name": "Attributes"
+    },
+    "hp_increase": 80
+  },
+  {
+    "name": "Stamina",
+    "category": {
+      "name": "Attributes"
+    },
+    "hp_increase": 9.25
+  },
+  {
+    "name": "Mentor",
+    "category": {
+      "name": "Information"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Sweat Gatherer",
+    "category": {
+      "name": "Mindforce"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Promoter Rating",
+    "category": {
+      "name": "Social"
+    },
+    "hp_increase": 0
+  },
+  {
+    "name": "Reputation",
+    "category": {
+      "name": "Social"
+    },
+    "hp_increase": 0
+  }
+]

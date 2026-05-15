@@ -1,0 +1,458 @@
+[
+  {
+    "id": "e409b5210482",
+    "name": "H-DNA"
+  },
+  {
+    "id": "b5f5214e2a1b",
+    "name": "Nanobots - Accuracy"
+  },
+  {
+    "id": "73f99a215803",
+    "name": "Nanobots - Adrenaline Boost"
+  },
+  {
+    "id": "d976829b66aa",
+    "name": "Nanobots - Kill Strike"
+  },
+  {
+    "id": "8a567badf2fd",
+    "name": "Nanobots - Memory Enhancer"
+  },
+  {
+    "id": "54a91e985d64",
+    "name": "Nanobots - Metabolic Boost"
+  },
+  {
+    "id": "645536cf5cc5",
+    "name": "Nanobots - Regenerative"
+  },
+  {
+    "id": "0bb52a987937",
+    "name": "Nanobots - Resilience"
+  },
+  {
+    "id": "0ffcf4bf08db",
+    "name": "Nanobots - System Overload"
+  },
+  {
+    "id": "d6bdf2a6acea",
+    "name": "AccuStim 5mg"
+  },
+  {
+    "id": "d7b1db0805c9",
+    "name": "AccuStim 15mg"
+  },
+  {
+    "id": "3540fe3f6808",
+    "name": "AccuStim, FEN Edition"
+  },
+  {
+    "id": "ce9f14ff3dc1",
+    "name": "DevaStim 5mg"
+  },
+  {
+    "id": "3d49b054f6de",
+    "name": "DevaStim 15mg"
+  },
+  {
+    "id": "4945012d6edb",
+    "name": "DevaStim, FEN Edition"
+  },
+  {
+    "id": "d1fb2b8e5636",
+    "name": "HyperStim 5mg"
+  },
+  {
+    "id": "c01690805b8e",
+    "name": "HyperStim 15mg"
+  },
+  {
+    "id": "faf5ed5442cd",
+    "name": "HyperStim, FEN Edition"
+  },
+  {
+    "id": "a32d5a5da68a",
+    "name": "Loot Collection Pill"
+  },
+  {
+    "id": "91f70b820fe4",
+    "name": "Loot Collection Pill, Adjusted"
+  },
+  {
+    "id": "0194da2c034e",
+    "name": "Loot Collection Pill, Augmented"
+  },
+  {
+    "id": "c5531dbf0cb6",
+    "name": "MediStim 5mg"
+  },
+  {
+    "id": "b88b1f9310be",
+    "name": "MediStim 15mg"
+  },
+  {
+    "id": "d1f1131ff17a",
+    "name": "MediStim, FEN Edition"
+  },
+  {
+    "id": "4afd29164c4c",
+    "name": "Merry Mayhem Candy Cane"
+  },
+  {
+    "id": "6e5f8a22963e",
+    "name": "Modified Neurostim"
+  },
+  {
+    "id": "610dbf8fb2e7",
+    "name": "Neurostim-A"
+  },
+  {
+    "id": "19450842f12e",
+    "name": "Neurostim-B"
+  },
+  {
+    "id": "7651c1463e45",
+    "name": "Neurostim-C"
+  },
+  {
+    "id": "c9f924befa4e",
+    "name": "Neurostim-H"
+  },
+  {
+    "id": "f70b8a982fda",
+    "name": "NutriStim 5mg"
+  },
+  {
+    "id": "0d67dca85a5f",
+    "name": "NutriStim 15mg"
+  },
+  {
+    "id": "852c40b98926",
+    "name": "NutriStim, FEN Edition"
+  },
+  {
+    "id": "7eb484106344",
+    "name": "Tethys Creek Mulled Wine"
+  },
+  {
+    "id": "7337eac1b997",
+    "name": "Tethys Creek Mulled Wine, 2013"
+  },
+  {
+    "id": "46ffa6672ab4",
+    "name": "Lahar Swamp Inoculation"
+  },
+  {
+    "id": "ebc19f64ea45",
+    "name": "Rotten Eyeball"
+  },
+  {
+    "id": "ef5abb3ce626",
+    "name": "Infected Eyeball"
+  },
+  {
+    "id": "f95387dab279",
+    "name": "Skumtomte Candy"
+  },
+  {
+    "id": "beb2a7ee2541",
+    "name": "Experimental BioStim"
+  },
+  {
+    "id": "39ae5188e605",
+    "name": "Octoburger - Frescoquada"
+  },
+  {
+    "id": "888504150edd",
+    "name": "Boar Barf Treat"
+  },
+  {
+    "id": "d30127ec0f93",
+    "name": "Solid Fart Treat"
+  },
+  {
+    "id": "f9325f637f36",
+    "name": "CUHOF Pill"
+  },
+  {
+    "id": "d3291a9d9f9e",
+    "name": "30% for 1 Hour Skill Juice"
+  },
+  {
+    "id": "a08ab8788d29",
+    "name": "50% for 1 Hour Skill Juice"
+  },
+  {
+    "id": "ad8d681630a7",
+    "name": "100% for 1 Hour Skill Juice"
+  },
+  {
+    "id": "2ef8e6e51a49",
+    "name": "Neural Infuse: Plasma - 10%"
+  },
+  {
+    "id": "b1dc991af12e",
+    "name": "Neural Infuse: Plasma - 20%"
+  },
+  {
+    "id": "166388c93c68",
+    "name": "Neural Infuse: Plasma - 50%"
+  },
+  {
+    "id": "fc8ad2e6a506",
+    "name": "Neural Infuse: Gauss - 10%"
+  },
+  {
+    "id": "e0581843c526",
+    "name": "Neural Infuse: Gauss - 20%"
+  },
+  {
+    "id": "25d5f5dd3add",
+    "name": "Neural Infuse: Gauss - 50%"
+  },
+  {
+    "id": "2ead8cb1850d",
+    "name": "Neural Infuse: Clubs - 10%"
+  },
+  {
+    "id": "368f5126ed84",
+    "name": "Neural Infuse: Clubs - 20%"
+  },
+  {
+    "id": "558cb9ff5130",
+    "name": "Neural Infuse: Clubs - 50%"
+  },
+  {
+    "id": "417bfac84545",
+    "name": "Neural Infuse: Power Fist - 10%"
+  },
+  {
+    "id": "317f37cf3ddd",
+    "name": "Neural Infuse: Power Fist - 20%"
+  },
+  {
+    "id": "641d6ac51010",
+    "name": "Neural Infuse: Power Fist - 50%"
+  },
+  {
+    "id": "7567cb0ff663",
+    "name": "Neural Infuse: MindForce - 10%"
+  },
+  {
+    "id": "6b89e091b411",
+    "name": "Neural Infuse: MindForce - 20%"
+  },
+  {
+    "id": "a9653e88aaea",
+    "name": "Neural Infuse: MindForce - 50%"
+  },
+  {
+    "id": "c1b70d47f761",
+    "name": "Neural Infuse: Construction - 10%"
+  },
+  {
+    "id": "6be90e919210",
+    "name": "Neural Infuse: Construction - 20%"
+  },
+  {
+    "id": "d3f0c4837a12",
+    "name": "Neural Infuse: Construction - 50%"
+  },
+  {
+    "id": "065bbb633761",
+    "name": "Loot Collection Pill, Mayhem"
+  },
+  {
+    "id": "04b944915f94",
+    "name": "Miner's Delight Stim"
+  },
+  {
+    "id": "7a7e8e632417",
+    "name": "100% for 5 Hour Skill Juice"
+  },
+  {
+    "id": "8aa94cb91392",
+    "name": "Neurobiotic Booster A1 5mg"
+  },
+  {
+    "id": "44e6b8fc0ed9",
+    "name": "Neurobiotic Booster A2 1mg"
+  },
+  {
+    "id": "5f93946c82a0",
+    "name": "Neurobiotic Booster A2 5mg"
+  },
+  {
+    "id": "e0adec21fcca",
+    "name": "Neurobiotic Booster A3 1mg"
+  },
+  {
+    "id": "55c938941e57",
+    "name": "Neurobiotic Booster A3 5mg"
+  },
+  {
+    "id": "229471f651ff",
+    "name": "Neurobiotic Booster A4 1mg"
+  },
+  {
+    "id": "50b728f32ead",
+    "name": "Neurobiotic Booster A5 5mg"
+  },
+  {
+    "id": "12c8250ddc7f",
+    "name": "Neurobiotic Booster A6 1mg"
+  },
+  {
+    "id": "ad3636364b5e",
+    "name": "Neurobiotic Booster A7 1mg"
+  },
+  {
+    "id": "3bf82415f632",
+    "name": "Neurobiotic Booster A8 1mg"
+  },
+  {
+    "id": "c28f572442f7",
+    "name": "Neurobiotic Booster A9 1mg"
+  },
+  {
+    "id": "281eb3a9344b",
+    "name": "Neurobiotic Booster A1 10mg"
+  },
+  {
+    "id": "68c6e1a85d64",
+    "name": "Neurobiotic Booster A4 10mg"
+  },
+  {
+    "id": "c9b3346ee313",
+    "name": "Neurobiotic Booster A10 10mg"
+  },
+  {
+    "id": "aa3796b0c3c4",
+    "name": "Neurostim-X2"
+  },
+  {
+    "id": "9ff6066dbc24",
+    "name": "Neurostim-X"
+  },
+  {
+    "id": "884cbe7703c9",
+    "name": "Neurostim-Y2"
+  },
+  {
+    "id": "434cc1ded751",
+    "name": "Neurostim-Y"
+  },
+  {
+    "id": "bca89e673a63",
+    "name": "Neurostim-Z2"
+  },
+  {
+    "id": "65bfec25937c",
+    "name": "Easter Egg"
+  },
+  {
+    "id": "ed470960ae95",
+    "name": "Halloween Candy Box"
+  },
+  {
+    "id": "fc4cdbdae2ba",
+    "name": "Christmas Treat Bag"
+  },
+  {
+    "id": "9b6407b57d6c",
+    "name": "30% for 10 Hour Skill Juice"
+  },
+  {
+    "id": "531580dfaa91",
+    "name": "50% for 5 Hour Skill Juice"
+  },
+  {
+    "id": "330b2abd4a38",
+    "name": "50% for 10 Hour Skill Juice"
+  },
+  {
+    "id": "f0a76bcf7b07",
+    "name": "100% for 10 Hour Skill Juice"
+  },
+  {
+    "id": "69aa668ec700",
+    "name": "AccuStim 10mg"
+  },
+  {
+    "id": "0593e1c281b8",
+    "name": "NutriStim 10mg"
+  },
+  {
+    "id": "ad414dc6a1ab",
+    "name": "Neurobiotic Booster A10 1mg"
+  },
+  {
+    "id": "6686f2218ba7",
+    "name": "Neurobiotic Booster A1 1mg"
+  },
+  {
+    "id": "bc3c8b6f0df5",
+    "name": "Neurobiotic Booster A5 1mg"
+  },
+  {
+    "id": "fe86174e5870",
+    "name": "Neurobiotic Booster A10 5mg"
+  },
+  {
+    "id": "1209f9a84299",
+    "name": "Neurostim-Z"
+  },
+  {
+    "id": "60c5bed50e76",
+    "name": "30% for 5 Hour Skill Juice"
+  },
+  {
+    "id": "1a0ae77dae2f",
+    "name": "Frontier Stimulant Pill"
+  },
+  {
+    "id": "249ac591b0b3",
+    "name": "DevaStim 10mg"
+  },
+  {
+    "id": "7b95d729f5c6",
+    "name": "HyperStim 10mg"
+  },
+  {
+    "id": "3ca35803037f",
+    "name": "MediStim 10mg"
+  },
+  {
+    "id": "8dd0c9e5d829",
+    "name": "Medusa Swamp Inoculation"
+  },
+  {
+    "id": "848c8e8f3091",
+    "name": "Tasty Slippery Pike Filet"
+  },
+  {
+    "id": "c25e0b8d290e",
+    "name": "Slippery Pike Filet"
+  },
+  {
+    "id": "2c205846fdbb",
+    "name": "Starfish Filet"
+  },
+  {
+    "id": "504f8c2dd0e8",
+    "name": "Preserved Longmouth Sucker Filet"
+  },
+  {
+    "id": "24f639a00a44",
+    "name": "Preserved Swordfish Broth"
+  },
+  {
+    "id": "aed32f2b4a39",
+    "name": "Preserved Salmon Brain Bites"
+  },
+  {
+    "id": "efa0fa2828e7",
+    "name": "Preserved Slippery Eel Filet"
+  }
+]

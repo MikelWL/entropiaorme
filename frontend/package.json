@@ -1,0 +1,44 @@
+{
+	"name": "entropia-orme-frontend",
+	"private": true,
+	"version": "0.1.0",
+	"description": "Tauri shell + Svelte frontend for EntropiaOrme, an analytical desktop tool for Entropia Universe.",
+	"type": "module",
+	"license": "MIT",
+	"author": "Mikel Williams-Lekuona <MikelWL@protonmail.com>",
+	"engines": {
+		"node": ">=20.19.0"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"tauri": "tauri",
+		"tauri:build": "tauri build --bundles nsis"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-static": "^3.0.10",
+		"@sveltejs/kit": "^2.50.2",
+		"@sveltejs/vite-plugin-svelte": "^6.2.4",
+		"@tailwindcss/vite": "^4.2.2",
+		"@tauri-apps/cli": "^2.10.1",
+		"svelte": "^5.51.0",
+		"svelte-check": "^4.4.2",
+		"tailwindcss": "^4.2.2",
+		"typescript": "^5.9.3",
+		"vite": "^7.3.1"
+	},
+	"dependencies": {
+		"@tauri-apps/api": "^2.10.1",
+		"@tauri-apps/plugin-shell": "^2.3.5",
+		"@tauri-apps/plugin-store": "^2.4.3",
+		"marked": "^15.0.0",
+		"motion": "^12.38.0"
+	},
+	"overrides": {
+		"cookie": "^0.7.0"
+	}
+}

@@ -1,0 +1,5 @@
+# Build-time / dev-only dependencies (not bundled into the runtime sidecar).
+pyinstaller>=6.20.0
+
+# Test runner for backend/tests/.
+pytest>=8.0.0

@@ -1,0 +1,62 @@
+# cargo-audit configuration
+#
+# Every advisory ignored here is on a transitive crate inside the Tauri
+# toolchain, not a direct dependency of entropia-orme. None are exploitable
+# in our Windows desktop embedding; none are fixable here without an
+# upstream Tauri release that bumps the relevant subtree. Resolution path
+# for each category is "wait for upstream"; the per-advisory comments below
+# spell out why each is non-actionable for v0.1.0.
+#
+# Cargo audit categorisation note: these are `unmaintained` and `unsound`
+# *warnings*, not `vulnerability` advisories. Vulnerability count remains
+# zero with this file in place.
+#
+# Review cadence: re-walk on every Tauri bump and whenever a new advisory
+# fires against a crate in our transitive tree.
+
+[advisories]
+ignore = [
+    # GTK3 bindings: unmaintained advisories on the entire gtk-rs GTK3 family.
+    # All are Linux-only transitive deps pulled by Tauri via webkit2gtk.
+    # entropia-orme v0.1.0 ships Windows-only artefacts; no GTK code runs.
+    # Not actionable until Tauri's Linux backend migrates off GTK3.
+    "RUSTSEC-2024-0411", # gdkwayland-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0414", # gdkx11-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0417", # gdkx11
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0420", # gtk-sys
+
+    # glib: Iterator/DoubleEndedIterator unsoundness on `VariantStrIter`.
+    # Linux-only transitive dep (glib bindings are part of the GTK stack);
+    # no glib code paths execute in the Windows build.
+    "RUSTSEC-2024-0429", # glib
+
+    # unic-*: family of unmaintained Unicode-data crates pulled transitively
+    # through Tauri's macro/codegen tree. Build-time data-only crates; no
+    # exploit surface in the runtime binary.
+    "RUSTSEC-2025-0075", # unic-char-range
+    "RUSTSEC-2025-0080", # unic-common
+    "RUSTSEC-2025-0081", # unic-char-property
+    "RUSTSEC-2025-0098", # unic-ucd-version
+    "RUSTSEC-2025-0100", # unic-ucd-ident
+
+    # proc-macro-error: unmaintained build-time macro procedure crate.
+    # Transitive build-dep; not present in the runtime binary.
+    "RUSTSEC-2024-0370", # proc-macro-error
+
+    # fxhash: unmaintained non-cryptographic hash. Transitive; no security
+    # surface (not used for any cryptographic or trust-bearing path).
+    "RUSTSEC-2025-0057", # fxhash
+
+    # rand 0.7.3 + 0.8.5: unsoundness with a custom logger using `rand::rng()`.
+    # Both versions are transitive through Tauri's codegen tree (phf /
+    # selectors / cssparser / html5ever). Build-time path; "custom logger"
+    # attack vector is not present in our embedding. Single advisory ID
+    # covers both rand versions.
+    "RUSTSEC-2026-0097", # rand (0.7.3, 0.8.5)
+]

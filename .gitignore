@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+pytest-cache-files-*/
+.ruff_cache/
+.mypy_cache/
+dist/
+# PyInstaller working dir (sibling of dist/ at repo root for the backend sidecar build)
+/build/
+
+# Node/Frontend
+node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Tauri
+frontend/src-tauri/target/
+frontend/src-tauri/gen/schemas/
+# Sidecar binaries: the frozen Python backend lives here at build time
+# (renamed from dist/entropiaorme-backend.exe with the platform triple
+# Tauri's externalBin requires). Built artefact, not source.
+frontend/src-tauri/binaries/
+
+# Config & secrets
+.env
+config.json
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime data (SQLite databases and generated files). data/* (not data/) so
+# the directory remains walked and per-path re-inclusions work below.
+data/*
+!backend/data/
+
+# Bundled curated demo DB — committed so PyInstaller datas can include it for
+# the v0.1.0 frozen build's guide-mode playback (the /demo/* router reads it
+# read-only and clones into in-memory before any tracker priming). Everything
+# else under data/demo/ stays ignored (transient SQLite -wal/-shm, settings).
+!data/demo/
+data/demo/*
+!data/demo/entropia_orme.db
+!data/demo/seed_manifest.json
+
+# Diagnostic/temp artifacts
+tmp/
+/calibration/
+
+# Local dev scratch dirs
+/agents/
+/.venv-*/
+.claude/

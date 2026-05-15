@@ -1,0 +1,842 @@
+[
+  {
+    "name": "T1 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T1 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T1 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T1 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T1 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T1 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T1 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T1 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T1 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T1 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T1 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T1 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T1 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T1 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T2 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T2 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T2 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T2 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T2 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T2 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T2 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T2 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T2 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T2 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T2 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T2 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T2 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T2 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T3 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T3 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T3 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T3 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T3 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T3 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T3 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T3 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T3 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T3 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T3 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T3 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T3 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T3 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T4 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T4 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T4 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T4 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T4 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T4 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T4 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T4 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T4 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T4 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T4 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T4 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T4 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T4 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T5 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T5 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T5 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T5 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T5 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T5 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T5 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T5 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T5 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T5 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T5 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T5 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T5 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T5 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T6 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T6 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T6 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T6 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T6 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T6 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T6 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T6 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T6 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T6 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T6 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T6 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T6 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T6 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T7 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T7 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T7 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T7 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T7 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T7 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T7 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T7 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T7 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T7 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T7 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T7 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T7 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T7 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T8 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T8 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T8 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T8 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T8 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T8 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T8 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T8 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T8 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T8 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T8 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T8 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T8 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T8 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T9 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T9 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T9 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T9 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T9 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T9 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T9 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T9 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T9 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T9 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T9 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T9 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T9 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T9 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  },
+  {
+    "name": "T10 Weapon Damage Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T10 Weapon Accuracy Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T10 Weapon Range Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T10 Weapon Economy Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T10 Weapon Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T10 Armor Defense Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T10 Armor Durability Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T10 Medical Tool Economy Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T10 Medical Tool Heal Enhancer",
+    "economy": {
+      "max_tt": 0.4
+    }
+  },
+  {
+    "name": "T10 Medical Tool Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T10 Mining Finder Depth Enhancer",
+    "economy": {
+      "max_tt": 0.8
+    }
+  },
+  {
+    "name": "T10 Mining Finder Range Enhancer",
+    "economy": {
+      "max_tt": 1
+    }
+  },
+  {
+    "name": "T10 Mining Finder Skill Modification Enhancer",
+    "economy": {
+      "max_tt": 0.6
+    }
+  },
+  {
+    "name": "T10 Mining Excavator Speed Enhancer",
+    "economy": {
+      "max_tt": 0.2
+    }
+  }
+]

@@ -1,0 +1,2592 @@
+[
+  {
+    "id": "1a3f3a1b04c4",
+    "name": "A.R.C. Improved First Aid Pack (L)",
+    "economy": {
+      "decay": 1
+    },
+    "min_heal": null,
+    "max_heal": 22,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "a37fd7e2e3b1",
+    "name": "California FAP mk IV Elite (C)",
+    "economy": {
+      "decay": 6.61
+    },
+    "min_heal": 48,
+    "max_heal": 64,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "5c975fd99a47",
+    "name": "Chikara Ashvin HR2 (L)",
+    "economy": {
+      "decay": 1.15
+    },
+    "min_heal": null,
+    "max_heal": 13,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "71e2b517d914",
+    "name": "California FAP mk III (C,L)",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": 48,
+    "max_heal": 64,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "1da282006814",
+    "name": "EMT Kit Ek-2350",
+    "economy": {
+      "decay": 6
+    },
+    "min_heal": 4,
+    "max_heal": 24,
+    "uses_per_minute": 41
+  },
+  {
+    "id": "9d02548285a1",
+    "name": "Coover's Personal Nurse",
+    "economy": {
+      "decay": 2.5
+    },
+    "min_heal": 16,
+    "max_heal": 88,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "a9d2f7747938",
+    "name": "EMT Kit Ek-2350, Adjusted",
+    "economy": {
+      "decay": 2.4
+    },
+    "min_heal": 24,
+    "max_heal": 24,
+    "uses_per_minute": 41
+  },
+  {
+    "id": "5e6e3c6c486f",
+    "name": "EMT Kit Ek-2350, Improved",
+    "economy": {
+      "decay": 2.4
+    },
+    "min_heal": 48,
+    "max_heal": 48,
+    "uses_per_minute": 41
+  },
+  {
+    "id": "a2174067d99a",
+    "name": "EMT Kit Ek-2500 Deluxe",
+    "economy": {
+      "decay": 180
+    },
+    "min_heal": 10,
+    "max_heal": 100,
+    "uses_per_minute": 17
+  },
+  {
+    "id": "faa87af8f496",
+    "name": "EMT Kit Ek-2550",
+    "economy": {
+      "decay": 9
+    },
+    "min_heal": 5,
+    "max_heal": 34,
+    "uses_per_minute": 33
+  },
+  {
+    "id": "9fa1839b795e",
+    "name": "EMT Kit Ek-2580",
+    "economy": {
+      "decay": 5.5
+    },
+    "min_heal": 4,
+    "max_heal": 30,
+    "uses_per_minute": 32
+  },
+  {
+    "id": "96636e0849f2",
+    "name": "EMT Kit Ek-2600",
+    "economy": {
+      "decay": 9
+    },
+    "min_heal": 7,
+    "max_heal": 42,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "c15f9dec2576",
+    "name": "EMT Kit Ek-2600, Adjusted",
+    "economy": {
+      "decay": 4.2
+    },
+    "min_heal": 42,
+    "max_heal": 42,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "66cc25031970",
+    "name": "EMT Kit Ek-2600, Improved",
+    "economy": {
+      "decay": 4.2
+    },
+    "min_heal": 84,
+    "max_heal": 84,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "396fc7deea2c",
+    "name": "GYRO Combat FAP-10 (L)",
+    "economy": {
+      "decay": 2.002
+    },
+    "min_heal": 12,
+    "max_heal": 16,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "74421f115ed5",
+    "name": "GYRO Combat FAP-14 (L)",
+    "economy": {
+      "decay": 2.879
+    },
+    "min_heal": 17.3,
+    "max_heal": 23,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "8e810f709b33",
+    "name": "GYRO Combat FAP-18 (L)",
+    "economy": {
+      "decay": 3.382
+    },
+    "min_heal": 20.3,
+    "max_heal": 27,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "f4ad39ed44f6",
+    "name": "GYRO Combat FAP-2 (L)",
+    "economy": {
+      "decay": 0.75
+    },
+    "min_heal": 4.5,
+    "max_heal": 6,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "90146f1f6f3d",
+    "name": "GYRO Combat FAP-22 (L)",
+    "economy": {
+      "decay": 3.885
+    },
+    "min_heal": 23.3,
+    "max_heal": 31,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "5c2e7eb73a28",
+    "name": "GYRO Combat FAP-22 Smuggler",
+    "economy": {
+      "decay": 4.01
+    },
+    "min_heal": 24,
+    "max_heal": 32,
+    "uses_per_minute": 40
+  },
+  {
+    "id": "35f86e48f830",
+    "name": "GYRO Combat FAP-26 (L)",
+    "economy": {
+      "decay": 4.389
+    },
+    "min_heal": 26.3,
+    "max_heal": 35,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "f6246bf16a31",
+    "name": "GYRO Combat FAP-30 (L)",
+    "economy": {
+      "decay": 5.019
+    },
+    "min_heal": 30,
+    "max_heal": 40,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "4088910bceb0",
+    "name": "GYRO Combat FAP-35 (L)",
+    "economy": {
+      "decay": 5.524
+    },
+    "min_heal": 33,
+    "max_heal": 44,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "e81695b5094c",
+    "name": "GYRO Combat FAP-40 (L)",
+    "economy": {
+      "decay": 6.029
+    },
+    "min_heal": 36,
+    "max_heal": 48,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "3bcc79e4d9b9",
+    "name": "GYRO Combat FAP-45 (L)",
+    "economy": {
+      "decay": 6.41
+    },
+    "min_heal": 38.3,
+    "max_heal": 51,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "800e6fe524e1",
+    "name": "GYRO Combat FAP-55 (L)",
+    "economy": {
+      "decay": 7.17
+    },
+    "min_heal": 42.3,
+    "max_heal": 57,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "7f30c5f24420",
+    "name": "GYRO Combat FAP-6 (L)",
+    "economy": {
+      "decay": 1.5
+    },
+    "min_heal": 9,
+    "max_heal": 12,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "bfa2c88ce6b4",
+    "name": "GYRO Combat FAP-60 (L)",
+    "economy": {
+      "decay": 7.55
+    },
+    "min_heal": 45,
+    "max_heal": 60,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "01eacda8a04e",
+    "name": "GYRO Combat FAP-60 Smuggler",
+    "economy": {
+      "decay": 7.298
+    },
+    "min_heal": 43.5,
+    "max_heal": 58,
+    "uses_per_minute": 40
+  },
+  {
+    "id": "6026868023c4",
+    "name": "GYRO Combat FAP-65 (L)",
+    "economy": {
+      "decay": 7.929
+    },
+    "min_heal": 47.3,
+    "max_heal": 63,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "c19595aead90",
+    "name": "GYRO FAP-10 (L)",
+    "economy": {
+      "decay": 2.625
+    },
+    "min_heal": 22.5,
+    "max_heal": 30,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "2313e5352900",
+    "name": "GYRO FAP-14 (L)",
+    "economy": {
+      "decay": 3.678
+    },
+    "min_heal": 31.5,
+    "max_heal": 42,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "507679495abc",
+    "name": "GYRO FAP-14 Smuggler",
+    "economy": {
+      "decay": 3.941
+    },
+    "min_heal": 33.8,
+    "max_heal": 45,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "78ad8aecf990",
+    "name": "GYRO FAP-18 (L)",
+    "economy": {
+      "decay": 4.381
+    },
+    "min_heal": 37.5,
+    "max_heal": 50,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "f369d1962f70",
+    "name": "GYRO FAP-2 (L)",
+    "economy": {
+      "decay": 0.875
+    },
+    "min_heal": 7.5,
+    "max_heal": 10,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "086c65afbee2",
+    "name": "GYRO FAP-2 Smuggler",
+    "economy": {
+      "decay": 1.75
+    },
+    "min_heal": 15,
+    "max_heal": 20,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "81b2f4e800e5",
+    "name": "GYRO FAP-22 (L)",
+    "economy": {
+      "decay": 5.084
+    },
+    "min_heal": 43.5,
+    "max_heal": 58,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "59332b1ede71",
+    "name": "GYRO FAP-26 (L)",
+    "economy": {
+      "decay": 5.786
+    },
+    "min_heal": 49.5,
+    "max_heal": 66,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "a53d983c28be",
+    "name": "GYRO FAP-30 (L)",
+    "economy": {
+      "decay": 6.488
+    },
+    "min_heal": 55.5,
+    "max_heal": 74,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "32dfc0d4bbf6",
+    "name": "GYRO FAP-30 Smuggler",
+    "economy": {
+      "decay": 6.313
+    },
+    "min_heal": 54,
+    "max_heal": 72,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "cff4a87bce30",
+    "name": "GYRO FAP-35 (L)",
+    "economy": {
+      "decay": 7.191
+    },
+    "min_heal": 61.5,
+    "max_heal": 82,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "a367c31ed138",
+    "name": "GYRO FAP-40 (L)",
+    "economy": {
+      "decay": 7.807
+    },
+    "min_heal": 66.8,
+    "max_heal": 89,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "2063b892f990",
+    "name": "GYRO FAP-45 (L)",
+    "economy": {
+      "decay": 8.422
+    },
+    "min_heal": 72,
+    "max_heal": 96,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "66cffcfb9fed",
+    "name": "GYRO FAP-50 (L)",
+    "economy": {
+      "decay": 8.954
+    },
+    "min_heal": 76.5,
+    "max_heal": 102,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "7940e73a97b3",
+    "name": "GYRO FAP-50 Smuggler",
+    "economy": {
+      "decay": 8.339
+    },
+    "min_heal": 71.3,
+    "max_heal": 95,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "28d9ad836cab",
+    "name": "GYRO FAP-55 (L)",
+    "economy": {
+      "decay": 9.485
+    },
+    "min_heal": 81,
+    "max_heal": 108,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "dc134187c032",
+    "name": "GYRO FAP-6 (L)",
+    "economy": {
+      "decay": 1.923
+    },
+    "min_heal": 16.5,
+    "max_heal": 22,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "74cc12550c6d",
+    "name": "GYRO FAP-60 (L)",
+    "economy": {
+      "decay": 10.014
+    },
+    "min_heal": 85.5,
+    "max_heal": 114,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "2cf2ae4638ee",
+    "name": "Chikara Ashvin HR1 (L)",
+    "economy": {
+      "decay": 0.63
+    },
+    "min_heal": 5.3,
+    "max_heal": 7,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "0cc08e9fa858",
+    "name": "GYRO FAP Improved",
+    "economy": {
+      "decay": 1.94
+    },
+    "min_heal": 102.9,
+    "max_heal": 137.2,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "69f171c90409",
+    "name": "GYRO FAP-65 (L)",
+    "economy": {
+      "decay": 10.544
+    },
+    "min_heal": 90,
+    "max_heal": 120,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "3022a0afc2b7",
+    "name": "EMT Kit Ek-2900",
+    "economy": {
+      "decay": 15
+    },
+    "min_heal": 8,
+    "max_heal": 44,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "202d19d055c8",
+    "name": "Fast Aid Pack, Adjusted, FEN Edition",
+    "economy": {
+      "decay": 1.5
+    },
+    "min_heal": 56,
+    "max_heal": 56,
+    "uses_per_minute": 28
+  },
+  {
+    "id": "bebd67ecbd7c",
+    "name": "Fast Aid Pack, Adjusted, FEN Edition (L)",
+    "economy": {
+      "decay": 1.5
+    },
+    "min_heal": 56,
+    "max_heal": 56,
+    "uses_per_minute": 28
+  },
+  {
+    "id": "0b73c1bbd30f",
+    "name": "Fast Aid Pack, Improved, FEN Edition",
+    "economy": {
+      "decay": 2.2
+    },
+    "min_heal": 130,
+    "max_heal": 130,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "08214197c3f5",
+    "name": "Fast Aid Pack, Modified, FEN Edition",
+    "economy": {
+      "decay": 1.7
+    },
+    "min_heal": 180,
+    "max_heal": 180,
+    "uses_per_minute": 28
+  },
+  {
+    "id": "d66e4544eedd",
+    "name": "Fast Aid Pack, Modified, FEN Edition (L)",
+    "economy": {
+      "decay": 1.7
+    },
+    "min_heal": 180,
+    "max_heal": 180,
+    "uses_per_minute": 28
+  },
+  {
+    "id": "0fe4ecf90497",
+    "name": "EMT Kit Ek-2600, Modified",
+    "economy": {
+      "decay": 4.2
+    },
+    "min_heal": 108,
+    "max_heal": 108,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "8077647fcdda",
+    "name": "EMT Kit Ek-2350, Modified",
+    "economy": {
+      "decay": 2.4
+    },
+    "min_heal": 30,
+    "max_heal": 60,
+    "uses_per_minute": 41
+  },
+  {
+    "id": "d688ba4077ea",
+    "name": "GYRO FAP-TT (L)",
+    "economy": {
+      "decay": 0.903
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 18
+  },
+  {
+    "id": "bea43a7c0770",
+    "name": "H.E.A.R.T. M1 (L)",
+    "economy": {
+      "decay": 2.5
+    },
+    "min_heal": 21,
+    "max_heal": 28,
+    "uses_per_minute": 19
+  },
+  {
+    "id": "da84955d3627",
+    "name": "Hedoc Mayhem",
+    "economy": {
+      "decay": 5.35
+    },
+    "min_heal": 37.5,
+    "max_heal": 50,
+    "uses_per_minute": 28
+  },
+  {
+    "id": "65ba075fe3bc",
+    "name": "Hedoc Mayhem, Adjusted",
+    "economy": {
+      "decay": 5
+    },
+    "min_heal": 39.8,
+    "max_heal": 53,
+    "uses_per_minute": 35
+  },
+  {
+    "id": "3d03692e640d",
+    "name": "H.E.A.R.T. M7 (L)",
+    "economy": {
+      "decay": 3.75
+    },
+    "min_heal": 30.8,
+    "max_heal": 41,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "26ee946177b9",
+    "name": "Hedoc Mayhem, Improved",
+    "economy": {
+      "decay": 8
+    },
+    "min_heal": 93,
+    "max_heal": 124,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "be208d1d1b3a",
+    "name": "Hedoc Mayhem, Modified",
+    "economy": {
+      "decay": 8
+    },
+    "min_heal": 124.5,
+    "max_heal": 166,
+    "uses_per_minute": 40
+  },
+  {
+    "id": "37c370b89be5",
+    "name": "Hedoc Mayhem, Perfected",
+    "economy": {
+      "decay": 10
+    },
+    "min_heal": 150,
+    "max_heal": 200,
+    "uses_per_minute": 43
+  },
+  {
+    "id": "57fd22f949b8",
+    "name": "Hedoc SK-120 (L)",
+    "economy": {
+      "decay": 9.023
+    },
+    "min_heal": 73.5,
+    "max_heal": 98,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "c0f767757fa4",
+    "name": "Hedoc SK-20",
+    "economy": {
+      "decay": 3.159
+    },
+    "min_heal": 25.7,
+    "max_heal": 34.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "72f2230008d6",
+    "name": "Hedoc SK-20 (L)",
+    "economy": {
+      "decay": 3.159
+    },
+    "min_heal": 25.7,
+    "max_heal": 34.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "cb247a8e1ba0",
+    "name": "Hedoc SK-20, Adjusted",
+    "economy": {
+      "decay": 2.764
+    },
+    "min_heal": 22.5,
+    "max_heal": 30,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "7d4e5b4e4b61",
+    "name": "Hedoc SK-20, Adjusted (L)",
+    "economy": {
+      "decay": 2.764
+    },
+    "min_heal": 22.5,
+    "max_heal": 30,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "1162c9ac0045",
+    "name": "Hedoc M-600 (L)",
+    "economy": {
+      "decay": 13.421
+    },
+    "min_heal": 109.3,
+    "max_heal": 145.7,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "91856ae1697d",
+    "name": "Herb Box",
+    "economy": {
+      "decay": 1.305
+    },
+    "min_heal": 11.3,
+    "max_heal": 15,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "7954c455d443",
+    "name": "Hedoc SK-50 (L)",
+    "economy": {
+      "decay": 6.355
+    },
+    "min_heal": 51.8,
+    "max_heal": 69,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "4f221efab05e",
+    "name": "Hedoc SK-50, Adjusted",
+    "economy": {
+      "decay": 5.56
+    },
+    "min_heal": 45.3,
+    "max_heal": 60.4,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "96484cb10a38",
+    "name": "Imperium Fast Fap v1 (L)",
+    "economy": {
+      "decay": 2.2
+    },
+    "min_heal": 15,
+    "max_heal": 20,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "ce386db2c96d",
+    "name": "Hedoc SK-50, Adjusted, SGA Edition",
+    "economy": {
+      "decay": 5.561
+    },
+    "min_heal": 45.3,
+    "max_heal": 60.4,
+    "uses_per_minute": 26
+  },
+  {
+    "id": "37317b5b3f3f",
+    "name": "Hedoc SK-80",
+    "economy": {
+      "decay": 8.421
+    },
+    "min_heal": 68.6,
+    "max_heal": 91.4,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "8568c6859e7d",
+    "name": "Imperium Fast Fap v2 (L)",
+    "economy": {
+      "decay": 4.4
+    },
+    "min_heal": null,
+    "max_heal": 40,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "fcb4760d6733",
+    "name": "Imperium Reliable Fap v1 (L)",
+    "economy": {
+      "decay": 1.4
+    },
+    "min_heal": 11.3,
+    "max_heal": 15,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "5c01f4d343b5",
+    "name": "Imperium Reliable Fap v3 (L)",
+    "economy": {
+      "decay": 4.2
+    },
+    "min_heal": 33.8,
+    "max_heal": 45,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "878594cb0f46",
+    "name": "Medkit (L)",
+    "economy": {
+      "decay": 0.5
+    },
+    "min_heal": 3,
+    "max_heal": 12,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "f0c0e626c38a",
+    "name": "Neff's Stim Pack",
+    "economy": {
+      "decay": 9.5
+    },
+    "min_heal": 75,
+    "max_heal": 100,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "0100326398e1",
+    "name": "NEVERDIE FA Series 001 (L)",
+    "economy": {
+      "decay": 9.307
+    },
+    "min_heal": 31.5,
+    "max_heal": 42,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "8da7c1a1829d",
+    "name": "NEVERDIE FA Series 002 (L)",
+    "economy": {
+      "decay": 10.331
+    },
+    "min_heal": 34.5,
+    "max_heal": 46,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "f89a1e596336",
+    "name": "NEVERDIE HK Series 001 (L)",
+    "economy": {
+      "decay": 0.857
+    },
+    "min_heal": 6.8,
+    "max_heal": 9,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "abfad298d0f9",
+    "name": "NEVERDIE HK Series 002 (L)",
+    "economy": {
+      "decay": 1.237
+    },
+    "min_heal": 9.8,
+    "max_heal": 13,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "cf3aee3669d0",
+    "name": "NEVERDIE HK Series 005 (L)",
+    "economy": {
+      "decay": 2.187
+    },
+    "min_heal": 17.3,
+    "max_heal": 23,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "aa66b293fa46",
+    "name": "NEVERDIE HK Series 006 (L)",
+    "economy": {
+      "decay": 2.569
+    },
+    "min_heal": 20.3,
+    "max_heal": 27,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "7faa805ccae4",
+    "name": "NEVERDIE LS Series 001 (L)",
+    "economy": {
+      "decay": 90
+    },
+    "min_heal": 37.5,
+    "max_heal": 50,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "82808d13e8ed",
+    "name": "NEVERDIE LS Series 002 (L)",
+    "economy": {
+      "decay": 100
+    },
+    "min_heal": 41.3,
+    "max_heal": 55,
+    "uses_per_minute": 32
+  },
+  {
+    "id": "be1c5dda9200",
+    "name": "NEVERDIE LS Series 003 (L)",
+    "economy": {
+      "decay": 110
+    },
+    "min_heal": null,
+    "max_heal": 61,
+    "uses_per_minute": 34
+  },
+  {
+    "id": "ee0f19054449",
+    "name": "NEVERDIE LS Series 004 (L)",
+    "economy": {
+      "decay": 120
+    },
+    "min_heal": null,
+    "max_heal": 66,
+    "uses_per_minute": 36
+  },
+  {
+    "id": "8fc54e0be7ef",
+    "name": "NEVERDIE LS Series 005 (L)",
+    "economy": {
+      "decay": 130
+    },
+    "min_heal": null,
+    "max_heal": 72,
+    "uses_per_minute": 39
+  },
+  {
+    "id": "5001433ff716",
+    "name": "NEVERDIE XMAS F.A.P",
+    "economy": {
+      "decay": 12
+    },
+    "min_heal": 5.3,
+    "max_heal": 7,
+    "uses_per_minute": 50
+  },
+  {
+    "id": "a2b34025884a",
+    "name": "I0-Pulse Unit",
+    "economy": {
+      "decay": 1.487
+    },
+    "min_heal": 13.5,
+    "max_heal": 18,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "5589b8970d2b",
+    "name": "O.S. F.A.P. M1 (L)",
+    "economy": {
+      "decay": 10
+    },
+    "min_heal": 27,
+    "max_heal": 36,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "aecf28b7abad",
+    "name": "Omegaton Fast Aid FAP-10",
+    "economy": {
+      "decay": 3
+    },
+    "min_heal": 3,
+    "max_heal": 16,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "38fad568ee39",
+    "name": "Omegaton Fast Aid FAP-110",
+    "economy": {
+      "decay": 8
+    },
+    "min_heal": 8,
+    "max_heal": 44,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "a5c4ef05c102",
+    "name": "Ozpyn Factorial F.A.P CE (L)",
+    "economy": {
+      "decay": 6.625
+    },
+    "min_heal": 56.3,
+    "max_heal": 75,
+    "uses_per_minute": 21
+  },
+  {
+    "id": "b2d38de49cbe",
+    "name": "Ozpyn Factorial F.A.P DE (L)",
+    "economy": {
+      "decay": 7.1
+    },
+    "min_heal": null,
+    "max_heal": 70,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "e52fe9e07115",
+    "name": "Omegaton Fast Aid FAP-15",
+    "economy": {
+      "decay": 3.3
+    },
+    "min_heal": 3,
+    "max_heal": 16,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "cad4ed7f5d6c",
+    "name": "Omegaton Fast Aid FAP-18",
+    "economy": {
+      "decay": 4.8
+    },
+    "min_heal": 3,
+    "max_heal": 26,
+    "uses_per_minute": 21
+  },
+  {
+    "id": "104cabec085c",
+    "name": "Refurbished H.E.A.R.T. Rank I",
+    "economy": {
+      "decay": 2.5
+    },
+    "min_heal": 13.5,
+    "max_heal": 18,
+    "uses_per_minute": 18
+  },
+  {
+    "id": "de1732c9098a",
+    "name": "Refurbished H.E.A.R.T. Rank II",
+    "economy": {
+      "decay": 2.35
+    },
+    "min_heal": 14.3,
+    "max_heal": 19,
+    "uses_per_minute": 19
+  },
+  {
+    "id": "7263c34dfbed",
+    "name": "Refurbished H.E.A.R.T. Rank III",
+    "economy": {
+      "decay": 2.2
+    },
+    "min_heal": 15,
+    "max_heal": 20,
+    "uses_per_minute": 19
+  },
+  {
+    "id": "65502b09611e",
+    "name": "Refurbished H.E.A.R.T. Rank IV",
+    "economy": {
+      "decay": 2.05
+    },
+    "min_heal": 15.8,
+    "max_heal": 21,
+    "uses_per_minute": 19
+  },
+  {
+    "id": "c4eb502c1d14",
+    "name": "Refurbished H.E.A.R.T. Rank VI",
+    "economy": {
+      "decay": 1.75
+    },
+    "min_heal": 27,
+    "max_heal": 36,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "7039110023f7",
+    "name": "S.I. First Aid Pack",
+    "economy": {
+      "decay": 5.999
+    },
+    "min_heal": 18,
+    "max_heal": 18,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "34c03a104253",
+    "name": "Omegaton Fast Aid FAP-18, SGA Edition",
+    "economy": {
+      "decay": 5.169
+    },
+    "min_heal": 3,
+    "max_heal": 28,
+    "uses_per_minute": 21
+  },
+  {
+    "id": "7030996ba11a",
+    "name": "Omegaton Fast Aid FAP-28",
+    "economy": {
+      "decay": 3.5
+    },
+    "min_heal": 3,
+    "max_heal": 20,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "0027e4407990",
+    "name": "Omegaton Fast Aid FAP-35",
+    "economy": {
+      "decay": 3.8
+    },
+    "min_heal": 3,
+    "max_heal": 16,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "a09aa30f8eb8",
+    "name": "Vivo Neo (L) Adapted",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": 105,
+    "max_heal": 140,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "6e3a2a367680",
+    "name": "Omegaton Fast Aid FAP-5",
+    "economy": {
+      "decay": 1
+    },
+    "min_heal": 1,
+    "max_heal": 10,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "0d954ac744c8",
+    "name": "Vivo Oxy1500 (L) Adapted",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": null,
+    "max_heal": 110,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "b41167f92019",
+    "name": "Omegaton Fast Aid FAP-50",
+    "economy": {
+      "decay": 4
+    },
+    "min_heal": 3,
+    "max_heal": 26,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "b4d20baff055",
+    "name": "Vivo Oxy2000 (L) Adapted",
+    "economy": {
+      "decay": 10.336
+    },
+    "min_heal": 88.6,
+    "max_heal": 118.13,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "e86ed440ab01",
+    "name": "Omegaton Fast Aid FAP-50, SGA Edition",
+    "economy": {
+      "decay": 4
+    },
+    "min_heal": 3,
+    "max_heal": 26,
+    "uses_per_minute": 26
+  },
+  {
+    "id": "db8724f44b60",
+    "name": "Vivo Oxy2500 (L) Adapted",
+    "economy": {
+      "decay": 11.713
+    },
+    "min_heal": 100.4,
+    "max_heal": 133.88,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "bbe49e0ffa3a",
+    "name": "Omegaton Fast Aid FAP-69",
+    "economy": {
+      "decay": 5
+    },
+    "min_heal": 3,
+    "max_heal": 30,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "3da7c618ae8c",
+    "name": "Omegaton Fast Aid FAP-69, SGA Edition",
+    "economy": {
+      "decay": 4.8
+    },
+    "min_heal": 3,
+    "max_heal": 43,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "2b5c39165e60",
+    "name": "Omegaton Fast Aid FAP-80",
+    "economy": {
+      "decay": 6
+    },
+    "min_heal": 5,
+    "max_heal": 32,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "c85060e65e94",
+    "name": "Omegaton Fast Aid FAP-90",
+    "economy": {
+      "decay": 7
+    },
+    "min_heal": 7,
+    "max_heal": 40,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "34c0d50528f1",
+    "name": "Vivo Survivor (L) Adapted",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": null,
+    "max_heal": 153.1,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "2455811dc2a3",
+    "name": "Omegaton Fast Aid Pack, Adjusted",
+    "economy": {
+      "decay": 2
+    },
+    "min_heal": 8,
+    "max_heal": 50,
+    "uses_per_minute": 26
+  },
+  {
+    "id": "d2808d9034a9",
+    "name": "Omegaton Fast Aid Pack, Improved",
+    "economy": {
+      "decay": 2
+    },
+    "min_heal": 20,
+    "max_heal": 120,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "d1cc0849fc87",
+    "name": "Vivo T10 (L) Adapted",
+    "economy": {
+      "decay": 1.914
+    },
+    "min_heal": 16.4,
+    "max_heal": 21.9,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "efd10abcaa37",
+    "name": "Vivo T10 Adapted",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": 16.4,
+    "max_heal": 21.9,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "2361d7e9fffc",
+    "name": "Punk Trauma Pack (L)",
+    "economy": {
+      "decay": 0.903
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 18
+  },
+  {
+    "id": "bcdf2573c8db",
+    "name": "Vivo T15",
+    "economy": {
+      "decay": 4.287
+    },
+    "min_heal": 36.8,
+    "max_heal": 49,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "b09fd7f1aed6",
+    "name": "Vivo T15 (L)",
+    "economy": {
+      "decay": 4.287
+    },
+    "min_heal": 36.8,
+    "max_heal": 49,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "60cad872774b",
+    "name": "Vivo T15 (L) Adapted",
+    "economy": {
+      "decay": 3.751
+    },
+    "min_heal": 32.2,
+    "max_heal": 42.9,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "84898df4e38c",
+    "name": "Vivo T15 Adapted",
+    "economy": {
+      "decay": 3.751
+    },
+    "min_heal": 32.2,
+    "max_heal": 42.9,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "33f00d9e1256",
+    "name": "Vivo T15 Adapted, SGA Edition (L)",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": null,
+    "max_heal": null,
+    "uses_per_minute": null
+  },
+  {
+    "id": "81eda27f667f",
+    "name": "Vivo T20",
+    "economy": {
+      "decay": 5.001
+    },
+    "min_heal": 42.9,
+    "max_heal": 57.1,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "0635eac65ef3",
+    "name": "Vivo T20 (L)",
+    "economy": {
+      "decay": 5.001
+    },
+    "min_heal": 42.9,
+    "max_heal": 57.1,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "da3693f10a8c",
+    "name": "Vivo T20 (L) Adapted",
+    "economy": {
+      "decay": 4.375
+    },
+    "min_heal": 37.5,
+    "max_heal": 50,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "3bdbf302df42",
+    "name": "Vivo T5 (L)",
+    "economy": {
+      "decay": 1.607
+    },
+    "min_heal": 13.7,
+    "max_heal": 18.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "247a56009f47",
+    "name": "Vivo T5 (L) Adapted",
+    "economy": {
+      "decay": 1.406
+    },
+    "min_heal": 12,
+    "max_heal": 16,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "9f0ab6baf0e3",
+    "name": "Vivo T5 Adapted",
+    "economy": {
+      "decay": 1.406
+    },
+    "min_heal": 12,
+    "max_heal": 16,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "08086409399f",
+    "name": "Omegaton Fast Aid Pack, Improved, SGA Edition",
+    "economy": {
+      "decay": 2.083
+    },
+    "min_heal": 20,
+    "max_heal": 125,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "51a438515465",
+    "name": "Vivo UR125 (L)",
+    "economy": {
+      "decay": 7.001
+    },
+    "min_heal": 60,
+    "max_heal": 80,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "bb392618303a",
+    "name": "Vivo UR125 (L) Adapted",
+    "economy": {
+      "decay": 6.125
+    },
+    "min_heal": 52.5,
+    "max_heal": 70,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "74d5fbfc6dda",
+    "name": "Omegaton Fast Aid Pack, Modified",
+    "economy": {
+      "decay": 1
+    },
+    "min_heal": 60,
+    "max_heal": 160,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "ee41d0673d28",
+    "name": "Vivo UR150 (L)",
+    "economy": {
+      "decay": 7.429
+    },
+    "min_heal": 63.7,
+    "max_heal": 84.9,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "577fcfd4daf9",
+    "name": "Refurbished H.E.A.R.T. Rank V",
+    "economy": {
+      "decay": 1.9
+    },
+    "min_heal": 16.5,
+    "max_heal": 22,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "2a9a7af171f1",
+    "name": "Vivo UR175 (L)",
+    "economy": {
+      "decay": 9.001
+    },
+    "min_heal": 77.1,
+    "max_heal": 102.9,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "43821f384d2f",
+    "name": "S.I. H.E.A.R.T.",
+    "economy": {
+      "decay": 0.9
+    },
+    "min_heal": 1,
+    "max_heal": 14,
+    "uses_per_minute": 19
+  },
+  {
+    "id": "068c127696f3",
+    "name": "Vivo UR200 (L)",
+    "economy": {
+      "decay": 9.537
+    },
+    "min_heal": 81.8,
+    "max_heal": 109,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "568c593266a9",
+    "name": "Vivo UR200 (L) Adapted",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": 71.5,
+    "max_heal": 95.4,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "e714ddfbfb15",
+    "name": "Vivo UR225 (L)",
+    "economy": {
+      "decay": 9.5
+    },
+    "min_heal": 81.8,
+    "max_heal": 109,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "55ac708dafa0",
+    "name": "Vivo Zychion Pro (L) Adapted",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": null,
+    "max_heal": null,
+    "uses_per_minute": null
+  },
+  {
+    "id": "cee65f75de5d",
+    "name": "Vivo Explorer (L)",
+    "economy": {
+      "decay": 0.05
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 32
+  },
+  {
+    "id": "aaaf047c10ef",
+    "name": "Eir Mk 1 (L)",
+    "economy": {
+      "decay": 2.6
+    },
+    "min_heal": 37.5,
+    "max_heal": 50,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "1b9c99a7fd57",
+    "name": "Eir Mk 2",
+    "economy": {
+      "decay": 4.8
+    },
+    "min_heal": 75.75,
+    "max_heal": 101,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "dd8880ed5782",
+    "name": "Eir Mk 2 (L)",
+    "economy": {
+      "decay": 4.8
+    },
+    "min_heal": 75.75,
+    "max_heal": 101,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "67a10d4cd3f6",
+    "name": "Eir Mk 3",
+    "economy": {
+      "decay": 6.2
+    },
+    "min_heal": 113.25,
+    "max_heal": 151,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "abd9a30e58aa",
+    "name": "Eir Mk 3 (L)",
+    "economy": {
+      "decay": 6.2
+    },
+    "min_heal": 113.25,
+    "max_heal": 151,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "f7ed51449e38",
+    "name": "Vivo T1",
+    "economy": {
+      "decay": 0.903
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "1f678312860a",
+    "name": "Vivo T1A (L)",
+    "economy": {
+      "decay": 0.903
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 18
+  },
+  {
+    "id": "1c9e7da5c9ce",
+    "name": "Refurbished H.E.A.R.T. Rank VIII",
+    "economy": {
+      "decay": 2.7
+    },
+    "min_heal": 59.3,
+    "max_heal": 75,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "ed44bde5c109",
+    "name": "Speedy Refurbished H.E.A.R.T. Rank VI",
+    "economy": {
+      "decay": 1.75
+    },
+    "min_heal": 27,
+    "max_heal": 36,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "1e0b9054ec61",
+    "name": "Vigorous Refurbished H.E.A.R.T. Rank VI",
+    "economy": {
+      "decay": 1.75
+    },
+    "min_heal": 27,
+    "max_heal": 36,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "0b7134194f87",
+    "name": "NI Herbbox New Settler Issue (L)",
+    "economy": {
+      "decay": 0.05
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 32
+  },
+  {
+    "id": "ab70ce7d1599",
+    "name": "Vivo Zychion Pro (L)",
+    "economy": {
+      "decay": 15.875
+    },
+    "min_heal": 136.1,
+    "max_heal": 181.4,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "dd94550ca94f",
+    "name": "Speedy Refurbished H.E.A.R.T. Rank VIII",
+    "economy": {
+      "decay": 2.7
+    },
+    "min_heal": 59.3,
+    "max_heal": 75,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "2b42d5796493",
+    "name": "Vigorous Refurbished H.E.A.R.T. Rank VIII",
+    "economy": {
+      "decay": 2.7
+    },
+    "min_heal": 59.3,
+    "max_heal": 75,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "587b6994e855",
+    "name": "Fast Aid Pack, Improved, TWEN Edition",
+    "economy": {
+      "decay": 2
+    },
+    "min_heal": 138,
+    "max_heal": 138,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "e9b1bd6c1c25",
+    "name": "Fast Aid Pack, Modified, TWEN Edition",
+    "economy": {
+      "decay": 1
+    },
+    "min_heal": 184,
+    "max_heal": 184,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "5713a72add42",
+    "name": "Initiate's Healing Kit (L)",
+    "economy": {
+      "decay": 0.903
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 18
+  },
+  {
+    "id": "b7a5e3a503f5",
+    "name": "California FAP mk II (L)",
+    "economy": {
+      "decay": 5.102
+    },
+    "min_heal": 42,
+    "max_heal": 56,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "67403db1c0a9",
+    "name": "EMT Kit Ek-1000",
+    "economy": {
+      "decay": 1.68
+    },
+    "min_heal": 2,
+    "max_heal": 12,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "3e4e8ec29e6c",
+    "name": "Fanoos Medical V1 (L)",
+    "economy": {
+      "decay": 0.05
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 32
+  },
+  {
+    "id": "3b410b4c0316",
+    "name": "SET-HP1 Healing Orb (L)",
+    "economy": {
+      "decay": null
+    },
+    "min_heal": 4.5,
+    "max_heal": 6,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "2633d361d302",
+    "name": "EMT Kit Ek-2000",
+    "economy": {
+      "decay": 5.55
+    },
+    "min_heal": 4,
+    "max_heal": 20,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "3a982b85a40c",
+    "name": "EMT Kit Ek-2300",
+    "economy": {
+      "decay": 5.803
+    },
+    "min_heal": 4,
+    "max_heal": 24,
+    "uses_per_minute": 32
+  },
+  {
+    "id": "638dbf8c2c95",
+    "name": "EMT Kit Ek-2500",
+    "economy": {
+      "decay": 6.85
+    },
+    "min_heal": 4,
+    "max_heal": 30,
+    "uses_per_minute": 26
+  },
+  {
+    "id": "908e08b41524",
+    "name": "Fanoos Medical V2 (L)",
+    "economy": {
+      "decay": 1.607
+    },
+    "min_heal": 13.7,
+    "max_heal": 18.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "a3a63c324623",
+    "name": "SET-HP2 Healing Orb (L)",
+    "economy": {
+      "decay": 0.001
+    },
+    "min_heal": 8.2,
+    "max_heal": 11,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "e14050f0dd2d",
+    "name": "Fanoos Medical V3 (L)",
+    "economy": {
+      "decay": 2.188
+    },
+    "min_heal": 18.8,
+    "max_heal": 25,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "90d31809c551",
+    "name": "Vivo UR175, Adapted (L)",
+    "economy": {
+      "decay": 7.875
+    },
+    "min_heal": 67.5,
+    "max_heal": 90,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "9bf0b7166bd2",
+    "name": "GYRO Combat FAP-40 Smuggler",
+    "economy": {
+      "decay": 5.904
+    },
+    "min_heal": 35.3,
+    "max_heal": 47,
+    "uses_per_minute": 40
+  },
+  {
+    "id": "dcbac6034e61",
+    "name": "Frontier First Aid Pack, Adjusted",
+    "economy": {
+      "decay": 2
+    },
+    "min_heal": 21.4,
+    "max_heal": 28.6,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "217ec193a6ec",
+    "name": "Eir Mk 1",
+    "economy": {
+      "decay": 2.6
+    },
+    "min_heal": 37.5,
+    "max_heal": 50,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "91b0d5dae45a",
+    "name": "RDI-HP1 Healing Orb (L)",
+    "economy": {
+      "decay": 0.005
+    },
+    "min_heal": 24,
+    "max_heal": 32,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "f0f385139c35",
+    "name": "GYRO FAP Trainer (L)",
+    "economy": {
+      "decay": 0.7
+    },
+    "min_heal": 6,
+    "max_heal": 8,
+    "uses_per_minute": 22
+  },
+  {
+    "id": "0a72f053ad5e",
+    "name": "Hedoc Adventurer (L)",
+    "economy": {
+      "decay": 15.263
+    },
+    "min_heal": 124.3,
+    "max_heal": 165.7,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "2f53df6020eb",
+    "name": "Hedoc M-450, Adjusted (L)",
+    "economy": {
+      "decay": 9.212
+    },
+    "min_heal": 75,
+    "max_heal": 100,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "2515a5d17621",
+    "name": "Hedoc SK-50",
+    "economy": {
+      "decay": 6.355
+    },
+    "min_heal": 51.8,
+    "max_heal": 69,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "da382367c8bd",
+    "name": "Hedoc Adventurer, Adjusted (L)",
+    "economy": {
+      "decay": 13.355
+    },
+    "min_heal": 108.7,
+    "max_heal": 145,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "b2e3102b6023",
+    "name": "Hedoc M-450 (L)",
+    "economy": {
+      "decay": 10.529
+    },
+    "min_heal": 85.7,
+    "max_heal": 114.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "feef7c944c1f",
+    "name": "Hedoc SK-20, Adjusted, SGA Edition",
+    "economy": {
+      "decay": 3.301
+    },
+    "min_heal": 26.3,
+    "max_heal": 35,
+    "uses_per_minute": 26
+  },
+  {
+    "id": "b4f9c74ad461",
+    "name": "Imperium Fast Fap v3 (L)",
+    "economy": {
+      "decay": 6.6
+    },
+    "min_heal": null,
+    "max_heal": 60,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "e0fec6105602",
+    "name": "Imperium Reliable Fap v2 (L)",
+    "economy": {
+      "decay": 2.8
+    },
+    "min_heal": 22.5,
+    "max_heal": 30,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "440d44f49ea5",
+    "name": "Omegaton Fast Aid Pack, Modified, SGA Edition",
+    "economy": {
+      "decay": 1.207
+    },
+    "min_heal": 60,
+    "max_heal": 171,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "deb0cdd640a2",
+    "name": "Special Issue Medkit (L)",
+    "economy": {
+      "decay": 0.14
+    },
+    "min_heal": null,
+    "max_heal": 13.8,
+    "uses_per_minute": 33
+  },
+  {
+    "id": "f82a4e6b67fe",
+    "name": "Tibbi Medical V6 (L)",
+    "economy": {
+      "decay": 5.01
+    },
+    "min_heal": null,
+    "max_heal": 38,
+    "uses_per_minute": 21
+  },
+  {
+    "id": "fd8ab02ce1c8",
+    "name": "Vivo Neo (L)",
+    "economy": {
+      "decay": 14.001
+    },
+    "min_heal": 120,
+    "max_heal": 160,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "9d4b2b641841",
+    "name": "Vivo Oxy1500 (L)",
+    "economy": {
+      "decay": 11.009
+    },
+    "min_heal": null,
+    "max_heal": 125.7,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "42be6157156b",
+    "name": "Vivo Oxy2000 (L)",
+    "economy": {
+      "decay": 11.813
+    },
+    "min_heal": 101.3,
+    "max_heal": 135,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "60340312b356",
+    "name": "Vivo Oxy2500 (L)",
+    "economy": {
+      "decay": 13.387
+    },
+    "min_heal": 114.8,
+    "max_heal": 153,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "491beabee0db",
+    "name": "Vivo Survivor (L)",
+    "economy": {
+      "decay": 15.313
+    },
+    "min_heal": 131.3,
+    "max_heal": 175,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "515fde0e0376",
+    "name": "Vivo T10, Improved",
+    "economy": {
+      "decay": 1.188
+    },
+    "min_heal": 15,
+    "max_heal": 20,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "28f1337d0570",
+    "name": "Vivo UR125",
+    "economy": {
+      "decay": 7.001
+    },
+    "min_heal": 60,
+    "max_heal": 80,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "4292cac300bf",
+    "name": "Vivo UR175",
+    "economy": {
+      "decay": 9.001
+    },
+    "min_heal": null,
+    "max_heal": 102.9,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "ac50c2874f00",
+    "name": "Fast Aid Pack, Adjusted, TWEN Edition",
+    "economy": {
+      "decay": 2.1
+    },
+    "min_heal": 57.5,
+    "max_heal": 57.5,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "de5d3623f8c8",
+    "name": "California FAP mk I (L)",
+    "economy": {
+      "decay": 4.401
+    },
+    "min_heal": 36,
+    "max_heal": 48,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "4f6ff56b773f",
+    "name": "Hedoc Mayhem, Augmented",
+    "economy": {
+      "decay": 9
+    },
+    "min_heal": 137.3,
+    "max_heal": 183,
+    "uses_per_minute": 41
+  },
+  {
+    "id": "7eaa510b88ff",
+    "name": "Vivo S10",
+    "economy": {
+      "decay": 1.33
+    },
+    "min_heal": 14.3,
+    "max_heal": 19,
+    "uses_per_minute": 31
+  },
+  {
+    "id": "6d18e1a12da3",
+    "name": "Hedoc Adventurer",
+    "economy": {
+      "decay": 15.263
+    },
+    "min_heal": null,
+    "max_heal": 165.7,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "92ed11f22b0a",
+    "name": "Hedoc M-450",
+    "economy": {
+      "decay": 10.529
+    },
+    "min_heal": 85.7,
+    "max_heal": 114.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "c710f80d93de",
+    "name": "Hedoc M-600, Adjusted",
+    "economy": {
+      "decay": 11.743
+    },
+    "min_heal": 95.6,
+    "max_heal": 127.5,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "3f466d18bf0c",
+    "name": "E-Laj V1 (L)",
+    "economy": {
+      "decay": 0.903
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "a4980b92bbe4",
+    "name": "EMT Kit Ek-2700",
+    "economy": {
+      "decay": 8.563
+    },
+    "min_heal": 6,
+    "max_heal": 38,
+    "uses_per_minute": 30
+  },
+  {
+    "id": "38278f738452",
+    "name": "Hedoc M-600",
+    "economy": {
+      "decay": 13.421
+    },
+    "min_heal": 109.3,
+    "max_heal": 145.7,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "a12842231f40",
+    "name": "Hedoc M-600, Adjusted (L)",
+    "economy": {
+      "decay": 11.743
+    },
+    "min_heal": 95.6,
+    "max_heal": 127.5,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "0b8378b31430",
+    "name": "Cheap A$$ FAP-1 (L)",
+    "economy": {
+      "decay": 0.903
+    },
+    "min_heal": 7.7,
+    "max_heal": 10.3,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "a12597f2712c",
+    "name": "Imperium Trainee F.A.P. (L)",
+    "economy": {
+      "decay": 0.5
+    },
+    "min_heal": 9,
+    "max_heal": 12,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "87c7b93b3447",
+    "name": "Ozpyn S.E. F.A.P. (L)",
+    "economy": {
+      "decay": 10
+    },
+    "min_heal": null,
+    "max_heal": null,
+    "uses_per_minute": null
+  },
+  {
+    "id": "812a8290da34",
+    "name": "Vivo Oxy2500, Adapted",
+    "economy": {
+      "decay": 11.713
+    },
+    "min_heal": null,
+    "max_heal": null,
+    "uses_per_minute": null
+  },
+  {
+    "id": "c45ac8a9518c",
+    "name": "Mulmun Vigg's FAP (L)",
+    "economy": {
+      "decay": 12.955
+    },
+    "min_heal": null,
+    "max_heal": 98,
+    "uses_per_minute": 40
+  },
+  {
+    "id": "d7e511d109ec",
+    "name": "NEVERDIE FA Series 003 (L)",
+    "economy": {
+      "decay": 11.367
+    },
+    "min_heal": 38.3,
+    "max_heal": 51,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "020094dfc383",
+    "name": "NEVERDIE FA Series 004 (L)",
+    "economy": {
+      "decay": 12.401
+    },
+    "min_heal": 42,
+    "max_heal": 56,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "a4b5b336a8de",
+    "name": "NEVERDIE FA Series 007 (L)",
+    "economy": {
+      "decay": 15.503
+    },
+    "min_heal": 52.5,
+    "max_heal": 70,
+    "uses_per_minute": 27
+  },
+  {
+    "id": "1d171fccbe75",
+    "name": "NEVERDIE HK Series 003 (L)",
+    "economy": {
+      "decay": 1.523
+    },
+    "min_heal": 12,
+    "max_heal": 16,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "180c20616cc0",
+    "name": "NEVERDIE HK Series 010 (L)",
+    "economy": {
+      "decay": 5.697
+    },
+    "min_heal": 45,
+    "max_heal": 60,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "30cdd11b8ac1",
+    "name": "NEVERDIE HK Series 004 (L)",
+    "economy": {
+      "decay": 1.903
+    },
+    "min_heal": 15,
+    "max_heal": 20,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "b8b27f99dc4d",
+    "name": "NEVERDIE HK Series 007 (L)",
+    "economy": {
+      "decay": 2.857
+    },
+    "min_heal": 22.5,
+    "max_heal": 30,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "0ae96cb8ea14",
+    "name": "NEVERDIE HK Series 008 (L)",
+    "economy": {
+      "decay": 3.803
+    },
+    "min_heal": 30,
+    "max_heal": 40,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "1122fe5166a5",
+    "name": "Vivo T10",
+    "economy": {
+      "decay": 2.188
+    },
+    "min_heal": 18.8,
+    "max_heal": 25,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "d5bd4cd0f1f8",
+    "name": "Vivo T10 (L)",
+    "economy": {
+      "decay": 2.188
+    },
+    "min_heal": 18.8,
+    "max_heal": 25,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "ad3d37bd1d5c",
+    "name": "NEVERDIE HK Series 009 (L)",
+    "economy": {
+      "decay": 4.757
+    },
+    "min_heal": 12.5,
+    "max_heal": 50,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "cccc81c9febc",
+    "name": "NEVERDIE LS Series 008 (L)",
+    "economy": {
+      "decay": 160
+    },
+    "min_heal": 66.8,
+    "max_heal": 89,
+    "uses_per_minute": 49
+  },
+  {
+    "id": "af55c5081147",
+    "name": "NEVERDIE LS Series 009 (L)",
+    "economy": {
+      "decay": 170
+    },
+    "min_heal": 70.5,
+    "max_heal": 94,
+    "uses_per_minute": 54
+  },
+  {
+    "id": "629cc06fd865",
+    "name": "Refurbished H.E.A.R.T. Rank VII",
+    "economy": {
+      "decay": 2.2
+    },
+    "min_heal": 43.2,
+    "max_heal": 55.5,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "ed93739801fe",
+    "name": "Speedy Refurbished H.E.A.R.T. Rank VII",
+    "economy": {
+      "decay": 2.2
+    },
+    "min_heal": 43.2,
+    "max_heal": 55.5,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "78336441c478",
+    "name": "Vigorous Refurbished H.E.A.R.T. Rank VII",
+    "economy": {
+      "decay": 2.2
+    },
+    "min_heal": 43.2,
+    "max_heal": 55.5,
+    "uses_per_minute": 25
+  },
+  {
+    "id": "48724a0dc91c",
+    "name": "Exceptional Hedoc Mayhem, Perfected (L)",
+    "economy": {
+      "decay": 3
+    },
+    "min_heal": 150,
+    "max_heal": 200,
+    "uses_per_minute": 43
+  },
+  {
+    "id": "f48d27c81865",
+    "name": "Shifa V1 (L)",
+    "economy": {
+      "decay": 1.52
+    },
+    "min_heal": 31.5,
+    "max_heal": 42,
+    "uses_per_minute": 26
+  },
+  {
+    "id": "a39f82ce24d3",
+    "name": "Vivo Oxy2500, Adapted (L)",
+    "economy": {
+      "decay": 11.713
+    },
+    "min_heal": 100.4,
+    "max_heal": 133.9,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "b8d871e9a058",
+    "name": "Hedoc M-450, Adjusted",
+    "economy": {
+      "decay": 9.212
+    },
+    "min_heal": null,
+    "max_heal": 100,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "720a78bb211e",
+    "name": "Hedoc SK-80, Adjusted",
+    "economy": {
+      "decay": 7.368
+    },
+    "min_heal": 60,
+    "max_heal": 80,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "c399433e52a3",
+    "name": "NEVERDIE LS Series 010 (L)",
+    "economy": {
+      "decay": 180
+    },
+    "min_heal": 75,
+    "max_heal": 100,
+    "uses_per_minute": 60
+  },
+  {
+    "id": "67b9b92ccfa0",
+    "name": "O.S. F.A.P. M7 (L)",
+    "economy": {
+      "decay": 15
+    },
+    "min_heal": 40.5,
+    "max_heal": 54,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "b9fdc7975801",
+    "name": "GYRO Combat FAP-50 (L)",
+    "economy": {
+      "decay": 6.791
+    },
+    "min_heal": null,
+    "max_heal": null,
+    "uses_per_minute": 38
+  },
+  {
+    "id": "f48021f2f9d4",
+    "name": "Hedoc SK-50, Adjusted (L)",
+    "economy": {
+      "decay": 5.56
+    },
+    "min_heal": 45.3,
+    "max_heal": 60.4,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "cfd35cfd5124",
+    "name": "Hedoc SK-80 (L)",
+    "economy": {
+      "decay": 8.421
+    },
+    "min_heal": 68.6,
+    "max_heal": 91.4,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "d598c3d40607",
+    "name": "Official Medical Kit",
+    "economy": {
+      "decay": 0.001
+    },
+    "min_heal": 187.5,
+    "max_heal": 250,
+    "uses_per_minute": 120
+  },
+  {
+    "id": "d42e06560a7f",
+    "name": "Omegaton Fast Aid FAP-83",
+    "economy": {
+      "decay": 8
+    },
+    "min_heal": 3,
+    "max_heal": 26,
+    "uses_per_minute": 35
+  },
+  {
+    "id": "46a6db7488bc",
+    "name": "Hedoc SK-80, Adjusted (L)",
+    "economy": {
+      "decay": 7.368
+    },
+    "min_heal": 60,
+    "max_heal": 80,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "8adfc978d5d3",
+    "name": "Improved GYRO, Gold Rush Edition",
+    "economy": {
+      "decay": 2
+    },
+    "min_heal": 131.2,
+    "max_heal": 175,
+    "uses_per_minute": 29
+  },
+  {
+    "id": "2adb69b86bab",
+    "name": "Frontier First Aid Pack",
+    "economy": {
+      "decay": 1
+    },
+    "min_heal": 12.9,
+    "max_heal": 17.1,
+    "uses_per_minute": 24
+  },
+  {
+    "id": "1d4e6047efab",
+    "name": "Ozpyn Regenerative F.A.P. CE (L)",
+    "economy": {
+      "decay": 8.55
+    },
+    "min_heal": 63.8,
+    "max_heal": 85,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "94bcf969cb88",
+    "name": "Ozpyn Regenerative F.A.P. DE (L)",
+    "economy": {
+      "decay": 8
+    },
+    "min_heal": 60,
+    "max_heal": 80,
+    "uses_per_minute": 21
+  },
+  {
+    "id": "39997ae3027e",
+    "name": "Vivo Oxy2500, SGA Edition (L)",
+    "economy": {
+      "decay": 13.387
+    },
+    "min_heal": 114.8,
+    "max_heal": 153,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "81d7241ab83b",
+    "name": "Vivo T5",
+    "economy": {
+      "decay": 1.607
+    },
+    "min_heal": 13.7,
+    "max_heal": 18.3,
+    "uses_per_minute": 20
+  },
+  {
+    "id": "1c1dd0fdf538",
+    "name": "Vivo T20, Adapted",
+    "economy": {
+      "decay": 4.375
+    },
+    "min_heal": null,
+    "max_heal": null,
+    "uses_per_minute": null
+  },
+  {
+    "id": "a5707860e690",
+    "name": "Vivo UR125, Adapted",
+    "economy": {
+      "decay": 6.125
+    },
+    "min_heal": null,
+    "max_heal": null,
+    "uses_per_minute": null
+  }
+]

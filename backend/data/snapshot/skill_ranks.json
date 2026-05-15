@@ -1,0 +1,214 @@
+{
+  "table": {
+    "rows": [
+      {
+        "name": "Newbie",
+        "skill": 1
+      },
+      {
+        "name": "Inept",
+        "skill": 10
+      },
+      {
+        "name": "Poor",
+        "skill": 20
+      },
+      {
+        "name": "Weak",
+        "skill": 40
+      },
+      {
+        "name": "Mediocre",
+        "skill": 67
+      },
+      {
+        "name": "Unskilled",
+        "skill": 110
+      },
+      {
+        "name": "Green",
+        "skill": 160
+      },
+      {
+        "name": "Beginner",
+        "skill": 260
+      },
+      {
+        "name": "Novice",
+        "skill": 360
+      },
+      {
+        "name": "Amateur",
+        "skill": 460
+      },
+      {
+        "name": "Apprentice",
+        "skill": 600
+      },
+      {
+        "name": "Initiated",
+        "skill": 800
+      },
+      {
+        "name": "Qualified",
+        "skill": 1000
+      },
+      {
+        "name": "Trained",
+        "skill": 1200
+      },
+      {
+        "name": "Able",
+        "skill": 1400
+      },
+      {
+        "name": "Competent",
+        "skill": 1600
+      },
+      {
+        "name": "Adept",
+        "skill": 1800
+      },
+      {
+        "name": "Capable",
+        "skill": 2000
+      },
+      {
+        "name": "Skilled",
+        "skill": 2200
+      },
+      {
+        "name": "Experienced",
+        "skill": 2400
+      },
+      {
+        "name": "Proficient",
+        "skill": 2600
+      },
+      {
+        "name": "Good",
+        "skill": 2800
+      },
+      {
+        "name": "Great",
+        "skill": 3000
+      },
+      {
+        "name": "Inspiring",
+        "skill": 3200
+      },
+      {
+        "name": "Impressive",
+        "skill": 3400
+      },
+      {
+        "name": "Veteran",
+        "skill": 3600
+      },
+      {
+        "name": "Professional",
+        "skill": 3800
+      },
+      {
+        "name": "Specialist",
+        "skill": 4000
+      },
+      {
+        "name": "Advanced",
+        "skill": 4200
+      },
+      {
+        "name": "Remarkable",
+        "skill": 4500
+      },
+      {
+        "name": "Expert",
+        "skill": 4800
+      },
+      {
+        "name": "Exceptional",
+        "skill": 5100
+      },
+      {
+        "name": "Amazing",
+        "skill": 5400
+      },
+      {
+        "name": "Incredible",
+        "skill": 5700
+      },
+      {
+        "name": "Marvelous",
+        "skill": 6000
+      },
+      {
+        "name": "Astonishing",
+        "skill": 6300
+      },
+      {
+        "name": "Outstanding",
+        "skill": 6600
+      },
+      {
+        "name": "Champion",
+        "skill": 6900
+      },
+      {
+        "name": "Elite",
+        "skill": 7200
+      },
+      {
+        "name": "Superior",
+        "skill": 7500
+      },
+      {
+        "name": "Supreme",
+        "skill": 7800
+      },
+      {
+        "name": "Master",
+        "skill": 8100
+      },
+      {
+        "name": "Grand Master",
+        "skill": 8400
+      },
+      {
+        "name": "Arch Master",
+        "skill": 8700
+      },
+      {
+        "name": "Supreme Master",
+        "skill": 9100
+      },
+      {
+        "name": "Ultimate Master",
+        "skill": 9500
+      },
+      {
+        "name": "Great Master",
+        "skill": 10000
+      },
+      {
+        "name": "Great Grand Master",
+        "skill": 12000
+      },
+      {
+        "name": "Great Arch Master",
+        "skill": 14000
+      },
+      {
+        "name": "Great Supreme Master",
+        "skill": 16000
+      },
+      {
+        "name": "Great Ultimate Master",
+        "skill": 18000
+      },
+      {
+        "name": "Entropia Master",
+        "skill": 20000
+      }
+    ]
+  }
+}

@@ -1,0 +1,238 @@
+import type {
+	Quest,
+	QuestPlaylist,
+	QuestAnalyticsRow,
+	PlaylistAnalyticsRow
+} from '$lib/types';
+
+/**
+ * Inline demo data for the quests surface guide-mode mount.
+ *
+ * The quests guide uses inline fixtures rather than the bundled demo DB +
+ * `/demo/` namespace path because the surface walks a narrow scripted slice
+ * (a single playlist with a handful of quests) that does not need the full
+ * seeded catalogue.
+ */
+
+export const questsDemoQuests: Quest[] = [
+	{
+		id: 'q1',
+		name: 'Iron Mission Chain 10 - Atrox',
+		category: 'Iron Missions',
+		targetMobs: ['Atrox'],
+		planet: 'Calypso',
+		waypoint: '[Calypso, 81234, 78912, 110]',
+		cooldownDurationHours: null,
+		cooldownExpiresAt: null,
+		reward: 0,
+		rewardIsSkill: true,
+		expectedRewardMarkupPercent: null,
+		rewardDescription: '5 PES, 1x Daikiba Tooth',
+		notes: '',
+		chainName: 'Iron Missions Atrox',
+		chainPosition: 10,
+		chainTotal: 12,
+		playlistIds: ['pl1', 'pl2'],
+		startedAt: null
+	},
+	{
+		id: 'q2',
+		name: 'Daily Kill - Caboria',
+		category: 'A.R.C. Faction',
+		targetMobs: ['Caboria'],
+		planet: 'Calypso',
+		waypoint: null,
+		cooldownDurationHours: 21,
+		cooldownExpiresAt: null,
+		reward: 1.2,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: 130,
+		rewardDescription: '3x A.R.C. Faction Badge',
+		notes: '',
+		chainName: null,
+		chainPosition: null,
+		chainTotal: null,
+		playlistIds: ['pl1'],
+		startedAt: null
+	},
+	{
+		id: 'q3',
+		name: 'Coordinated Strike - Daikiba',
+		category: 'Daily Tokens',
+		targetMobs: ['Daikiba'],
+		planet: 'Calypso',
+		waypoint: null,
+		cooldownDurationHours: 21,
+		cooldownExpiresAt: null,
+		reward: 2.5,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: 105,
+		rewardDescription: 'Token of Calypso x4',
+		notes: '',
+		chainName: null,
+		chainPosition: null,
+		chainTotal: null,
+		playlistIds: ['pl1'],
+		startedAt: null
+	},
+	{
+		id: 'q4',
+		name: 'Weekly Bonus - Allophyl',
+		category: 'Weekly',
+		targetMobs: ['Allophyl'],
+		planet: 'Calypso',
+		waypoint: null,
+		cooldownDurationHours: 168,
+		cooldownExpiresAt: null,
+		reward: 18.0,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: 110,
+		rewardDescription: 'Calypso Cache Voucher',
+		notes: '',
+		chainName: null,
+		chainPosition: null,
+		chainTotal: null,
+		playlistIds: ['pl2'],
+		startedAt: null
+	}
+];
+
+export const questsDemoPlaylists: QuestPlaylist[] = [
+	{
+		id: 'pl1',
+		name: 'Daily Calypso run',
+		planet: 'Calypso',
+		estimatedMinutes: 18,
+		questIds: ['q1', 'q2', 'q3'],
+		immediateQuestIds: ['q2', 'q3'],
+		longHorizonQuestIds: ['q1'],
+		items: [
+			{ questId: 'q2', description: 'Caboria field east of waypoint', groupType: 'immediate' },
+			{ questId: 'q3', description: null, groupType: 'immediate' },
+			{ questId: 'q1', description: 'Drop while passing through', groupType: 'long_horizon' }
+		]
+	},
+	{
+		id: 'pl2',
+		name: 'Atrox grind',
+		planet: 'Calypso',
+		estimatedMinutes: 42,
+		questIds: ['q1', 'q4'],
+		immediateQuestIds: ['q4'],
+		longHorizonQuestIds: ['q1'],
+		items: [
+			{ questId: 'q4', description: null, groupType: 'immediate' },
+			{ questId: 'q1', description: null, groupType: 'long_horizon' }
+		]
+	}
+];
+
+export const questsDemoQuestAnalytics: QuestAnalyticsRow[] = [
+	{
+		questId: 'q2',
+		questName: 'Daily Kill - Caboria',
+		planet: 'Calypso',
+		category: 'A.R.C. Faction',
+		rewardPed: 1.2,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: 130,
+		totalExpectedRewardPed: 18.72,
+		linkedSessions: 12,
+		totalDurationSec: 12_240,
+		totalWeaponCost: 132.4,
+		totalHealCost: 8.2,
+		totalEnhancerCost: 4.1,
+		totalArmourCost: 6.0,
+		totalLootTt: 138.6,
+		totalPes: 0
+	},
+	{
+		questId: 'q3',
+		questName: 'Coordinated Strike - Daikiba',
+		planet: 'Calypso',
+		category: 'Daily Tokens',
+		rewardPed: 2.5,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: 105,
+		totalExpectedRewardPed: 18.38,
+		linkedSessions: 7,
+		totalDurationSec: 8_400,
+		totalWeaponCost: 88.6,
+		totalHealCost: 4.4,
+		totalEnhancerCost: 2.6,
+		totalArmourCost: 3.8,
+		totalLootTt: 92.2,
+		totalPes: 0
+	},
+	{
+		questId: 'q4',
+		questName: 'Weekly Bonus - Allophyl',
+		planet: 'Calypso',
+		category: 'Weekly',
+		rewardPed: 18.0,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: 110,
+		totalExpectedRewardPed: 59.4,
+		linkedSessions: 3,
+		totalDurationSec: 7_800,
+		totalWeaponCost: 122.4,
+		totalHealCost: 6.8,
+		totalEnhancerCost: 3.0,
+		totalArmourCost: 4.2,
+		totalLootTt: 128.8,
+		totalPes: 0
+	}
+];
+
+export const questsDemoPlaylistAnalytics: PlaylistAnalyticsRow[] = [
+	{
+		playlistId: 'pl1',
+		playlistName: 'Daily Calypso run',
+		questCount: 3,
+		longHorizonQuestCount: 1,
+		matchedSessions: 5,
+		totalRewardPed: 18.5,
+		totalImmediateRewardPed: 18.5,
+		totalBonusRewardPed: 0,
+		totalPesReward: 25,
+		totalImmediatePesReward: 0,
+		totalBonusPesReward: 25,
+		totalExpectedRewardPed: 24.05,
+		totalExpectedImmediateRewardPed: 24.05,
+		totalExpectedBonusRewardPed: 0,
+		totalDurationSec: 5_400,
+		totalWeaponCost: 92.5,
+		totalHealCost: 5.4,
+		totalEnhancerCost: 2.6,
+		totalArmourCost: 4.0,
+		totalLootTt: 96.8,
+		totalPes: 0
+	},
+	{
+		playlistId: 'pl2',
+		playlistName: 'Atrox grind',
+		questCount: 2,
+		longHorizonQuestCount: 1,
+		matchedSessions: 2,
+		totalRewardPed: 36.0,
+		totalImmediateRewardPed: 36.0,
+		totalBonusRewardPed: 0,
+		totalPesReward: 10,
+		totalImmediatePesReward: 0,
+		totalBonusPesReward: 10,
+		totalExpectedRewardPed: 39.6,
+		totalExpectedImmediateRewardPed: 39.6,
+		totalExpectedBonusRewardPed: 0,
+		totalDurationSec: 5_040,
+		totalWeaponCost: 81.6,
+		totalHealCost: 4.5,
+		totalEnhancerCost: 2.0,
+		totalArmourCost: 2.8,
+		totalLootTt: 84.4,
+		totalPes: 0
+	}
+];
+
+/** Plausible global rates derived from a recent Atrox/Caboria stretch. */
+export const questsDemoGlobalLiquidReturnRate = 0.94;
+export const questsDemoGlobalSkillProgressionRate = 0.063;

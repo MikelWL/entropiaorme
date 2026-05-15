@@ -1,0 +1,5645 @@
+[
+  {
+    "id": "b2178fde1403",
+    "name": "Zorra's Blessed Laser Amp (L)",
+    "economy": {
+      "decay": 0.15,
+      "ammo_burn": 1707
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 72,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "45390a526140",
+    "name": "Block Rocker BLP Mk I (L)",
+    "economy": {
+      "decay": 3.297,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 1,
+      "cut": null,
+      "stab": null,
+      "penetration": 13,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "4ee7d0a40ebb",
+    "name": "Block Rocker BLP Mk II (L)",
+    "economy": {
+      "decay": 6.865,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 2,
+      "cut": null,
+      "stab": null,
+      "penetration": 27,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "c8396148dc95",
+    "name": "Bust-A-BLP Mk I (L)",
+    "economy": {
+      "decay": null,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "0aa4511314ce",
+    "name": "Bust-A-BLP Mk II (L)",
+    "economy": {
+      "decay": null,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 2,
+      "cut": null,
+      "stab": null,
+      "penetration": 17,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "c8cdfccc05ff",
+    "name": "Chahen BLP V1 (L)",
+    "economy": {
+      "decay": 0.66,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": 4,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "ba072693dd14",
+    "name": "Chahen BLP V2 (L)",
+    "economy": {
+      "decay": 1.25,
+      "ammo_burn": 68
+    },
+    "damage": {
+      "impact": 8,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "6f7762112c36",
+    "name": "Chahen BLP V3 (L)",
+    "economy": {
+      "decay": null,
+      "ammo_burn": 110
+    },
+    "damage": {
+      "impact": 12,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "66077b6f05b7",
+    "name": "Fi/Ra/Co Cause",
+    "economy": {
+      "decay": 4.522,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 2,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 24,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "6bd61d99b1ff",
+    "name": "MC-Matrix Mk. 2, TWEN Edition",
+    "economy": {
+      "decay": 0.03,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "33b7259c99bf",
+    "name": "MC-Matrix Mk. 3, TWEN Edition",
+    "economy": {
+      "decay": 0.033,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "65f3ff7e9770",
+    "name": "Rage 20 (L)",
+    "economy": {
+      "decay": 1.063,
+      "ammo_burn": 415
+    },
+    "damage": {
+      "impact": 5,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 17,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "bd5abd443612",
+    "name": "Rage 25 (L)",
+    "economy": {
+      "decay": 1.255,
+      "ammo_burn": 515
+    },
+    "damage": {
+      "impact": 6,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 21,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1c2bbbb215ea",
+    "name": "M-Matrix, TWEN Edition",
+    "economy": {
+      "decay": 0.025,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "edd6f77707d8",
+    "name": "Roadie BLP Mk I (L)",
+    "economy": {
+      "decay": 0.477,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": 2,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "306189c96365",
+    "name": "Roadie BLP Mk II (L)",
+    "economy": {
+      "decay": 1.194,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": 5,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "d549f3c53da7",
+    "name": "Mayhem MC-Matrix Mk.1",
+    "economy": {
+      "decay": 0.025,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "9f620f47db2d",
+    "name": "Exceptional Mayhem MC-Matrix Mk.2 (L)",
+    "economy": {
+      "decay": 0.025,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "314999b22e12",
+    "name": "Stable Turrelion Amp",
+    "economy": {
+      "decay": 2.2,
+      "ammo_burn": 2000
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 90,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "58bafe4212f9",
+    "name": "ArMatrix EXPA-50 (L)",
+    "economy": {
+      "decay": 0.5,
+      "ammo_burn": 900
+    },
+    "damage": {
+      "impact": 25,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 25,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "669beb0ee1a9",
+    "name": "ArMatrix EXPA-75 (L)",
+    "economy": {
+      "decay": 0.75,
+      "ammo_burn": 1350
+    },
+    "damage": {
+      "impact": 25,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 25,
+      "burn": 25,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ede2998287da",
+    "name": "ArMatrix EXPA-125 (L)",
+    "economy": {
+      "decay": 1.25,
+      "ammo_burn": 2250
+    },
+    "damage": {
+      "impact": 50,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 50,
+      "burn": 25,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "83d46e1ec069",
+    "name": "ArMatrix EXPA-100 (L)",
+    "economy": {
+      "decay": 1,
+      "ammo_burn": 1800
+    },
+    "damage": {
+      "impact": 25,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 50,
+      "burn": 25,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "e8ef2230bc72",
+    "name": "RDI Trauma Amplifier E2 (L)",
+    "economy": {
+      "decay": 0.25,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 2
+    }
+  },
+  {
+    "id": "2d0f158c0721",
+    "name": "ArMatrix EXPA-200 (L)",
+    "economy": {
+      "decay": 2,
+      "ammo_burn": 3600
+    },
+    "damage": {
+      "impact": 75,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 75,
+      "burn": 50,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "750e5ed9b9de",
+    "name": "Muzwed Energy V1 (L)",
+    "economy": {
+      "decay": 0.8,
+      "ammo_burn": 40
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": 2,
+      "shrapnel": null,
+      "burn": 3,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "c6d47b1f684a",
+    "name": "Muzwed Energy V2 (L)",
+    "economy": {
+      "decay": null,
+      "ammo_burn": 110
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 4,
+      "shrapnel": 0,
+      "burn": 8,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9d2cabaa99aa",
+    "name": "Muzwed Energy V3 (L)",
+    "economy": {
+      "decay": null,
+      "ammo_burn": 166
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": 6,
+      "shrapnel": null,
+      "burn": 10,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "6d01aebd8d8a",
+    "name": "Omegaton A105 Hypercharged",
+    "economy": {
+      "decay": 2.47,
+      "ammo_burn": 228
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": 3,
+      "shrapnel": null,
+      "burn": 18,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "18ded2671ef4",
+    "name": "Omegaton A105 Overcharged",
+    "economy": {
+      "decay": 2.47,
+      "ammo_burn": 175
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": 3,
+      "shrapnel": null,
+      "burn": 16,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "16f332ee42cc",
+    "name": "Omegaton A204 Hypercharged",
+    "economy": {
+      "decay": 3.315,
+      "ammo_burn": 374
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": 7,
+      "shrapnel": null,
+      "burn": 25,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "6a6c679cce94",
+    "name": "Omegaton A204 Overcharged",
+    "economy": {
+      "decay": 3.31,
+      "ammo_burn": 242
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": 6,
+      "shrapnel": null,
+      "burn": 20,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "6d455cdb232d",
+    "name": "Mayhem Trauma Amplifier E-137 (L)",
+    "economy": {
+      "decay": 25,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 137.5
+    }
+  },
+  {
+    "id": "747fe1d78586",
+    "name": "Melee Trauma Amplifier 8",
+    "economy": {
+      "decay": 8.001,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 36
+    }
+  },
+  {
+    "id": "07a81c3849b1",
+    "name": "Mestawy Melee V1 (L)",
+    "economy": {
+      "decay": null,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 2
+    }
+  },
+  {
+    "id": "561c5cfc32cc",
+    "name": "Melee Trauma Amplifier 4",
+    "economy": {
+      "decay": 4.445,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 20
+    }
+  },
+  {
+    "id": "96b9e6f19c41",
+    "name": "Melee Trauma Amplifier 8, Modified",
+    "economy": {
+      "decay": 7.766,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 36
+    }
+  },
+  {
+    "id": "0f0ea7b29b6f",
+    "name": "Kismet Premium Laser Booster 3 (L)",
+    "economy": {
+      "decay": 0.4,
+      "ammo_burn": 3800
+    },
+    "damage": {
+      "impact": 200,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "c3131e2c92a9",
+    "name": "Kismet Decay Deflector 4 (L)",
+    "economy": {
+      "decay": 0.5,
+      "ammo_burn": 1000
+    },
+    "damage": {
+      "impact": 1,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ad44c86fc76a",
+    "name": "Kismet Damage Amplifier 4 (L)",
+    "economy": {
+      "decay": 0.061,
+      "ammo_burn": 1159
+    },
+    "damage": {
+      "impact": 50,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "666290105df3",
+    "name": "Kismet Damage Amplifier 3 (L)",
+    "economy": {
+      "decay": 0.031,
+      "ammo_burn": 587
+    },
+    "damage": {
+      "impact": 25,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "cc382bb70b05",
+    "name": "MC-Matrix Mk. 1, TWEN Edition",
+    "economy": {
+      "decay": 0.0257,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "5721ca9a3713",
+    "name": "Bull Tac40 (L)",
+    "economy": {
+      "decay": 1.093,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 4,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 13,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "183ae03829fd",
+    "name": "Xent Tech Light Amplification Vine (L)",
+    "economy": {
+      "decay": 1.2,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 5,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "c5e8ae9b81c6",
+    "name": "Mayhem M-Matrix Alpha (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "9fb233ac487a",
+    "name": "Mayhem M-Matrix Beta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "4b07e382158d",
+    "name": "Mayhem M-Matrix Delta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "b0a72aa34900",
+    "name": "Mayhem M-Matrix Gamma (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": null,
+      "cut": null,
+      "stab": null,
+      "penetration": null,
+      "shrapnel": null,
+      "burn": null,
+      "cold": null,
+      "acid": null,
+      "electric": null
+    }
+  },
+  {
+    "id": "cea7892c39da",
+    "name": "Kismet Premium Laser Booster 1 (L)",
+    "economy": {
+      "decay": 0.05,
+      "ammo_burn": 475
+    },
+    "damage": {
+      "impact": 25,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "c0569f142f0a",
+    "name": "Kismet Premium Laser Booster 2 (L)",
+    "economy": {
+      "decay": 0.19,
+      "ammo_burn": 1805
+    },
+    "damage": {
+      "impact": 95,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2bf641202ee0",
+    "name": "Omegaton Decay Absorber 3 (L)",
+    "economy": {
+      "decay": 0.6,
+      "ammo_burn": 85
+    },
+    "damage": {
+      "impact": 1,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9631b31e05b9",
+    "name": "Kismet Assistance Module 4 (L)",
+    "economy": {
+      "decay": 0.3,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 1,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "171e09736fce",
+    "name": "Rage 20",
+    "economy": {
+      "decay": 1.063,
+      "ammo_burn": 415
+    },
+    "damage": {
+      "impact": 5,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 17,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "e238fa13e75e",
+    "name": "ArMatrix EXPA-150 (L)",
+    "economy": {
+      "decay": 1.5,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 50,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 50,
+      "burn": 50,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "183fdb3dcbb8",
+    "name": "ArMatrix B-Amplifier 4P (L)",
+    "economy": {
+      "decay": 0.064,
+      "ammo_burn": 84
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 4,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "0b64f545ffe7",
+    "name": "ArMatrix B-Amplifier 6P (L)",
+    "economy": {
+      "decay": 0.096,
+      "ammo_burn": 126
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 6,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "e33f6f2b4ba7",
+    "name": "ArMatrix B-Amplifier 8P (L)",
+    "economy": {
+      "decay": 0.128,
+      "ammo_burn": 168
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 8,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "29603e35abe1",
+    "name": "ArMatrix B-Amplifier 10P (L)",
+    "economy": {
+      "decay": 0.16,
+      "ammo_burn": 210
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 10,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "64938fe8abd7",
+    "name": "ArMatrix B-Amplifier 13P (L)",
+    "economy": {
+      "decay": 0.208,
+      "ammo_burn": 273
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 13,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "92863d08198f",
+    "name": "ArMatrix B-Amplifier 17P (L)",
+    "economy": {
+      "decay": 0.272,
+      "ammo_burn": 357
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 17,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "b33353a295a4",
+    "name": "ArMatrix B-Amplifier 20P (L)",
+    "economy": {
+      "decay": 0.32,
+      "ammo_burn": 420
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 20,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "33c66d7f0f57",
+    "name": "ArMatrix B-Amplifier 23P (L)",
+    "economy": {
+      "decay": 0.368,
+      "ammo_burn": 483
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 23,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "5261c8625346",
+    "name": "ArMatrix B-Amplifier 25P (L)",
+    "economy": {
+      "decay": 0.4,
+      "ammo_burn": 525
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 25,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "8da187879dcb",
+    "name": "ArMatrix B-Amplifier 28P (L)",
+    "economy": {
+      "decay": 0.448,
+      "ammo_burn": 588
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 28,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "8a7baeac3eed",
+    "name": "ArMatrix B-Amplifier 33P (L)",
+    "economy": {
+      "decay": 0.528,
+      "ammo_burn": 693
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 33,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a1179f42bb99",
+    "name": "ArMatrix B-Amplifier 37P (L)",
+    "economy": {
+      "decay": 0.592,
+      "ammo_burn": 777
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 37,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "567f5f2ea1b2",
+    "name": "ArMatrix B-Amplifier 42P (L)",
+    "economy": {
+      "decay": 0.672,
+      "ammo_burn": 882
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 42,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "32c2e4504132",
+    "name": "ArMatrix B-Amplifier 45P (L)",
+    "economy": {
+      "decay": 0.72,
+      "ammo_burn": 945
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 45,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "90f36216ef8b",
+    "name": "ArMatrix B-Amplifier 50P (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 50,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "29dd1e3bc41d",
+    "name": "ArMatrix B-Amplifier 55P (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 55,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "75968dd4a1e0",
+    "name": "ArMatrix B-Amplifier 60P (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 60,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "50150e47615c",
+    "name": "ArMatrix B-Amplifier 65P (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 65,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "de394fc992fc",
+    "name": "ArMatrix B-Amplifier 70P (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 70,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "18651a5889a0",
+    "name": "ArMatrix B-Amplifier 75P (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 75,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7e78c44d904b",
+    "name": "Bull Tac10 (L)",
+    "economy": {
+      "decay": 0.477,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 1,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "079e04905964",
+    "name": "Bull Tac20 (L)",
+    "economy": {
+      "decay": 1.195,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 2,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "dd3b57ce1877",
+    "name": "Loughlin NanoRep M-Amp 1 (L)",
+    "economy": {
+      "decay": 0.25,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 1
+    }
+  },
+  {
+    "id": "f56923bc29f6",
+    "name": "Bull Tac30 (L)",
+    "economy": {
+      "decay": 1.139,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 4,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 9,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "51c28e70fc6f",
+    "name": "Mayhem Trauma Amplifier 6",
+    "economy": {
+      "decay": 22.105,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 105
+    }
+  },
+  {
+    "id": "82a896e9a759",
+    "name": "Bull Tac50 (L)",
+    "economy": {
+      "decay": 1.311,
+      "ammo_burn": 400
+    },
+    "damage": {
+      "impact": 5,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 17,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "98928c691154",
+    "name": "Bull Tac60 (L)",
+    "economy": {
+      "decay": 1.779,
+      "ammo_burn": 400
+    },
+    "damage": {
+      "impact": 7,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 17,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9ab89de5b338",
+    "name": "Melee Bimodal Amplifier 2 (L)",
+    "economy": {
+      "decay": 0.952,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "79c7c19275c5",
+    "name": "Melee Bimodal Amplifier 3 (L)",
+    "economy": {
+      "decay": 1.428,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 6
+    }
+  },
+  {
+    "id": "3e758cafb9c5",
+    "name": "Bull TacElite (L)",
+    "economy": {
+      "decay": 3.207,
+      "ammo_burn": 900
+    },
+    "damage": {
+      "impact": 10,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 40,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "72a491dffe5b",
+    "name": "CDF BLP Power Amp 1 (L)",
+    "economy": {
+      "decay": 0.22,
+      "ammo_burn": 409
+    },
+    "damage": {
+      "impact": 8,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 10,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a802a2eb5b56",
+    "name": "Melee Durability Amplifier 3 (L)",
+    "economy": {
+      "decay": 0.25,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 1
+    }
+  },
+  {
+    "id": "90e7eef4acbb",
+    "name": "Melee Durability Amplifier 92 (L)",
+    "economy": {
+      "decay": 0.99,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "927f8c14d0e3",
+    "name": "NeoPsion Kinetic Amplifier 3",
+    "economy": {
+      "decay": 0.152,
+      "ammo_burn": 169
+    },
+    "damage": {
+      "impact": 8,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3bc49e88a61b",
+    "name": "NeoPsion Kinetic Amplifier 5 (L)",
+    "economy": {
+      "decay": 0.36,
+      "ammo_burn": 353
+    },
+    "damage": {
+      "impact": 18,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a1d6e51ad793",
+    "name": "NeoPsion Kinetic Amplifier 6 (L)",
+    "economy": {
+      "decay": 0.533,
+      "ammo_burn": 530
+    },
+    "damage": {
+      "impact": 27,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "f25bd3a65bea",
+    "name": "Enkidd Black Widow (L)",
+    "economy": {
+      "decay": 1.6,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 15,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "6f6e2c7bc9c7",
+    "name": "Enkidd Brown Recluse (L)",
+    "economy": {
+      "decay": 1.8,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 20,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7ce052553fa2",
+    "name": "Enkidd Camel Spider (L)",
+    "economy": {
+      "decay": 1.4,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 10,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "00776ed5cfbd",
+    "name": "Enkidd Red-Back (L)",
+    "economy": {
+      "decay": 1.2,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 5,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "e8db54aa7129",
+    "name": "NeoPsion Kinetic Amplifier Mk.1, TWEN Edition",
+    "economy": {
+      "decay": 0.67,
+      "ammo_burn": 850
+    },
+    "damage": {
+      "impact": 45,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3585283a9720",
+    "name": "Fi/Ra/Co Beast",
+    "economy": {
+      "decay": 2.366,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 2,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 17,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3850a11a02f9",
+    "name": "Fi/Ra/Co Beast, SGA Edition",
+    "economy": {
+      "decay": 2.826,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 3,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 18,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a1ffcd1c14b9",
+    "name": "Fi/Ra/Co Cause, Adjusted",
+    "economy": {
+      "decay": 4.102,
+      "ammo_burn": 245
+    },
+    "damage": {
+      "impact": 3,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 24,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "29a5acc4cfaf",
+    "name": "Fi/Ra/Co Cause, Improved",
+    "economy": {
+      "decay": 3.88,
+      "ammo_burn": 276
+    },
+    "damage": {
+      "impact": 4,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 24,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "18e3845c3408",
+    "name": "Fi/Ra/Co Cause, Modified",
+    "economy": {
+      "decay": 3.83,
+      "ammo_burn": 292
+    },
+    "damage": {
+      "impact": 5,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 24,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2801e4fbc53e",
+    "name": "Fi/Ra/Co Dante",
+    "economy": {
+      "decay": 4,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 3,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 28,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "4a66f665eb32",
+    "name": "Fi/Ra/Co Evil",
+    "economy": {
+      "decay": 5.95,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 3,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 33,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "0b1af41e2bf1",
+    "name": "Fi/Ra/Co Evil, Adjusted",
+    "economy": {
+      "decay": 5.95,
+      "ammo_burn": 320
+    },
+    "damage": {
+      "impact": 4,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 35,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "051163970708",
+    "name": "Fi/Ra/Co Evil, Improved",
+    "economy": {
+      "decay": 5.95,
+      "ammo_burn": 354
+    },
+    "damage": {
+      "impact": 5,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 36,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "5179bc768cee",
+    "name": "Fi/Ra/Co Evil, Modified",
+    "economy": {
+      "decay": 5.95,
+      "ammo_burn": 386
+    },
+    "damage": {
+      "impact": 6,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 37,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "55057e4dcdb5",
+    "name": "Fi/Ra/Co Evil, Augmented",
+    "economy": {
+      "decay": 0.6,
+      "ammo_burn": 954
+    },
+    "damage": {
+      "impact": 7,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 38,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "79db49eb7194",
+    "name": "Low Rider BLP Amp Mk II (L)",
+    "economy": {
+      "decay": 10.1,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 9,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 35,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ee97001802b1",
+    "name": "Mayhem B-Amplifier Alpha (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 998
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 45,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "08be957568dc",
+    "name": "Mayhem B-Amplifier Beta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 998
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 50,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2cb2d44bd107",
+    "name": "Mayhem B-Amplifier Delta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 998
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 60,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "4a0852f9d404",
+    "name": "Mayhem B-Amplifier Gamma (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 998
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 55,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "336333fd7889",
+    "name": "Rage 5 (L)",
+    "economy": {
+      "decay": 0.226,
+      "ammo_burn": 70
+    },
+    "damage": {
+      "impact": 1,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "96eb66f83afc",
+    "name": "Rage 10 (L)",
+    "economy": {
+      "decay": 0.467,
+      "ammo_burn": 165
+    },
+    "damage": {
+      "impact": 2,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 7,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "487d56962e75",
+    "name": "Rage 15 (L)",
+    "economy": {
+      "decay": 0.781,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 4,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 12,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "04dcd4601e12",
+    "name": "Rage 30 (L)",
+    "economy": {
+      "decay": 1.459,
+      "ammo_burn": 590
+    },
+    "damage": {
+      "impact": 7,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 24,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1c39a561a949",
+    "name": "Rage 35 (L)",
+    "economy": {
+      "decay": 1.574,
+      "ammo_burn": 650
+    },
+    "damage": {
+      "impact": 8,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 26,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ebb55c725d1a",
+    "name": "Rage 40 (L)",
+    "economy": {
+      "decay": 1.778,
+      "ammo_burn": 725
+    },
+    "damage": {
+      "impact": 9,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 29,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "485c68dee2e0",
+    "name": "Rage 45 (L)",
+    "economy": {
+      "decay": 2.098,
+      "ammo_burn": 860
+    },
+    "damage": {
+      "impact": 10,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 35,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "746e207c0fe9",
+    "name": "Rage 50 (L)",
+    "economy": {
+      "decay": 2.302,
+      "ammo_burn": 935
+    },
+    "damage": {
+      "impact": 11,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 38,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "68e117632430",
+    "name": "Omegaton A204, Supercharged",
+    "economy": {
+      "decay": 0.5,
+      "ammo_burn": 788
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 8,
+      "shrapnel": 0,
+      "burn": 30,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7455b9254ebe",
+    "name": "Rapper (L)",
+    "economy": {
+      "decay": 1.437,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 3,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 7,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "891f5acd5006",
+    "name": "Rapper Snapper (L)",
+    "economy": {
+      "decay": 1.843,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 6,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 14,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "94fa629fcf21",
+    "name": "RapSTAR (L)",
+    "economy": {
+      "decay": 2.757,
+      "ammo_burn": 800
+    },
+    "damage": {
+      "impact": 9,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 35,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "81b05dbba69b",
+    "name": "RDI Binary Amplifier (L)",
+    "economy": {
+      "decay": 0.02,
+      "ammo_burn": 700
+    },
+    "damage": {
+      "impact": 30,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 4,
+      "shrapnel": 0,
+      "burn": 30,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "e391e406c8ec",
+    "name": "T-Rap (L)",
+    "economy": {
+      "decay": 0.969,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 1,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7dffc79c706c",
+    "name": "ArMatrix L-Amplifier 4B (L)",
+    "economy": {
+      "decay": 0.064,
+      "ammo_burn": 84
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 4,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1e45bfad4bc6",
+    "name": "ArMatrix EXPA-175 (L)",
+    "economy": {
+      "decay": 1.75,
+      "ammo_burn": 3150
+    },
+    "damage": {
+      "impact": 50,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 75,
+      "burn": 50,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "83f9026983de",
+    "name": "ArMatrix L-Amplifier 13B (L)",
+    "economy": {
+      "decay": 0.208,
+      "ammo_burn": 273
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 13,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7929b1e7df1a",
+    "name": "ArMatrix L-Amplifier 23B (L)",
+    "economy": {
+      "decay": 0.368,
+      "ammo_burn": 483
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 23,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2d588d244b5c",
+    "name": "ArMatrix L-Amplifier 25B (L)",
+    "economy": {
+      "decay": 0.4,
+      "ammo_burn": 525
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 25,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "d095f06c5f1f",
+    "name": "ArMatrix L-Amplifier 33B (L)",
+    "economy": {
+      "decay": 0.528,
+      "ammo_burn": 693
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 33,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2e4f2258ca0e",
+    "name": "ArMatrix L-Amplifier 37B (L)",
+    "economy": {
+      "decay": 0.592,
+      "ammo_burn": 777
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 37,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "25c2a5050626",
+    "name": "ArMatrix L-Amplifier 42B (L)",
+    "economy": {
+      "decay": 0.672,
+      "ammo_burn": 882
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 42,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "f45210298c7f",
+    "name": "ArMatrix L-Amplifier 45B (L)",
+    "economy": {
+      "decay": 0.72,
+      "ammo_burn": 945
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 45,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7c5ff623a37d",
+    "name": "ArMatrix L-Amplifier 50B (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 50,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "bc0375149634",
+    "name": "ArMatrix L-Amplifier 55B (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 55,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "d079238dad89",
+    "name": "ArMatrix L-Amplifier 60B (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 60,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "474f1f879874",
+    "name": "ArMatrix L-Amplifier 65B (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 65,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a9a664ee9298",
+    "name": "ArMatrix L-Amplifier 70B (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 70,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "dea81367b91e",
+    "name": "ArMatrix L-Amplifier 75B (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1032
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 75,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a4f654d0243d",
+    "name": "Boom ACC (L)",
+    "economy": {
+      "decay": 1.437,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 9,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "21d852ad5628",
+    "name": "Boom BBC (L)",
+    "economy": {
+      "decay": 4.751,
+      "ammo_burn": 1200
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 7,
+      "shrapnel": 0,
+      "burn": 62,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "449cfb096b0a",
+    "name": "Boom CCC (L)",
+    "economy": {
+      "decay": 0.969,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 4,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "defc5160d2a8",
+    "name": "CDF Laser Power Amp 1 (L)",
+    "economy": {
+      "decay": 0.26,
+      "ammo_burn": 402
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 13,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "86517c373e46",
+    "name": "Omegaton Amplifier, Modified",
+    "economy": {
+      "decay": 7.68,
+      "ammo_burn": 400
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 55,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "d02f5fe057dc",
+    "name": "E-Amp 15",
+    "economy": {
+      "decay": 5.633,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 19,
+      "cold": 0,
+      "acid": 1,
+      "electric": 1
+    }
+  },
+  {
+    "id": "e3e1ef0ba4de",
+    "name": "Hotfoot 5 (L)",
+    "economy": {
+      "decay": 0.182,
+      "ammo_burn": 75
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 3,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "540d494c22a1",
+    "name": "Hotfoot 10 (L)",
+    "economy": {
+      "decay": 0.465,
+      "ammo_burn": 190
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 8,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "cc3dbdd29c02",
+    "name": "Hotfoot 15 (L)",
+    "economy": {
+      "decay": 0.79,
+      "ammo_burn": 325
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 4,
+      "shrapnel": 0,
+      "burn": 13,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "0e83f634e109",
+    "name": "Hotfoot 20 (L)",
+    "economy": {
+      "decay": 1.066,
+      "ammo_burn": 465
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 19,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9f452468ea16",
+    "name": "Hotfoot 25 (L)",
+    "economy": {
+      "decay": 1.261,
+      "ammo_burn": 565
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 6,
+      "shrapnel": 0,
+      "burn": 23,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "aae4e9622108",
+    "name": "Hotfoot 30 (L)",
+    "economy": {
+      "decay": 1.589,
+      "ammo_burn": 700
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 7,
+      "shrapnel": 0,
+      "burn": 29,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "20fe1bbfed11",
+    "name": "Hotfoot 35 (L)",
+    "economy": {
+      "decay": 1.826,
+      "ammo_burn": 820
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 8,
+      "shrapnel": 0,
+      "burn": 34,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "db1f807ef106",
+    "name": "Hotfoot 40 (L)",
+    "economy": {
+      "decay": 2.077,
+      "ammo_burn": 915
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 9,
+      "shrapnel": 0,
+      "burn": 38,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "6fe43c5e8cf5",
+    "name": "Hotfoot 45 (L)",
+    "economy": {
+      "decay": 2.351,
+      "ammo_burn": 1055
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 11,
+      "shrapnel": 0,
+      "burn": 43,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "37fb7e3f0d5c",
+    "name": "Hotfoot 50 (L)",
+    "economy": {
+      "decay": 2.509,
+      "ammo_burn": 1135
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 12,
+      "shrapnel": 0,
+      "burn": 46,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9b5ee643b803",
+    "name": "Marshall Laser Amp Mk I (L)",
+    "economy": {
+      "decay": 2.331,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 8,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9cb25037a4a1",
+    "name": "Mayhem L-Amplifier Beta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 998
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 49,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "5c24db5e6c64",
+    "name": "Mayhem L-Amplifier Delta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 998
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 69,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "68aac0c27a41",
+    "name": "Mayhem L-Amplifier Gamma (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 998
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 59,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2be0549fa181",
+    "name": "Omegaton A101",
+    "economy": {
+      "decay": 0.652,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "dcf9647d21d2",
+    "name": "Omegaton A102",
+    "economy": {
+      "decay": 0.521,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 7,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "32e84697997d",
+    "name": "Omegaton A103",
+    "economy": {
+      "decay": 1.606,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 10,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7b32a87ee33e",
+    "name": "Omegaton A104",
+    "economy": {
+      "decay": 2.039,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 12,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "fb62e7e5f138",
+    "name": "Omegaton A104, SGA Edition",
+    "economy": {
+      "decay": 2.267,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 13,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1caaa91b227e",
+    "name": "Omegaton A105",
+    "economy": {
+      "decay": 2.47,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 13,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "effe71267948",
+    "name": "Omegaton A105, Adjusted",
+    "economy": {
+      "decay": 2.476,
+      "ammo_burn": 121
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 14,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "29cefe85295e",
+    "name": "Omegaton A105, Improved",
+    "economy": {
+      "decay": 2.473,
+      "ammo_burn": 143
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 15,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "c2fac1d355c5",
+    "name": "Omegaton A106",
+    "economy": {
+      "decay": 2.902,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 15,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "68534fbb4c05",
+    "name": "Omegaton A201",
+    "economy": {
+      "decay": 0.521,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 2,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "cbb76b74dee2",
+    "name": "Omegaton A202",
+    "economy": {
+      "decay": 1.164,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 5,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "531dab7add53",
+    "name": "Omegaton A203",
+    "economy": {
+      "decay": 2.243,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 10,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "0736b5a2f294",
+    "name": "Omegaton A204",
+    "economy": {
+      "decay": 3.31,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 15,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "fe643f1c9d3a",
+    "name": "Omegaton A204, Adjusted",
+    "economy": {
+      "decay": 3.316,
+      "ammo_burn": 121
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 16,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "799aff335729",
+    "name": "Omegaton A204, Improved",
+    "economy": {
+      "decay": 3.311,
+      "ammo_burn": 143
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 17,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "598b6c6772a3",
+    "name": "Omegaton A204, SGA Edition",
+    "economy": {
+      "decay": 3.793,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 6,
+      "shrapnel": 0,
+      "burn": 16,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "14c4c32b15e0",
+    "name": "RDI Energy Amplifier Gamma",
+    "economy": {
+      "decay": 0.02,
+      "ammo_burn": 1100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 6,
+      "shrapnel": 0,
+      "burn": 45,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ba23a110adba",
+    "name": "Omegaton B101 (L)",
+    "economy": {
+      "decay": 0.002,
+      "ammo_burn": 23
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 1,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ccd23ddc46b2",
+    "name": "RDI Energy Amplifier Alpha (L)",
+    "economy": {
+      "decay": 0.01,
+      "ammo_burn": 350
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 15,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ddd4dd9dc869",
+    "name": "RDI Energy Amplifier Beta (L)",
+    "economy": {
+      "decay": 0.02,
+      "ammo_burn": 700
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 4,
+      "shrapnel": 0,
+      "burn": 30,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "cacecdb999c6",
+    "name": "Road-Monkey Laser Amp Mk I (L)",
+    "economy": {
+      "decay": 0.478,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 2,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "d97f9cf8a4da",
+    "name": "Road-Monkey Laser Amp Mk IV (L)",
+    "economy": {
+      "decay": 3,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 11,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "76f9f1e71e8a",
+    "name": "Rookie Laser Amp (L)",
+    "economy": {
+      "decay": 0.046,
+      "ammo_burn": 20
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 1,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "374e118f3541",
+    "name": "Shack-A-Lacka Laser Amp Mk I (L)",
+    "economy": {
+      "decay": 6.5,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 25,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "f6154cfa5017",
+    "name": "Shack-A-Lacka Laser Amp Mk II (L)",
+    "economy": {
+      "decay": 2.34,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 9,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "f22c8350a58d",
+    "name": "Shear Pro600 (L)",
+    "economy": {
+      "decay": 1.975,
+      "ammo_burn": 600
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 30,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3fac2ee24c21",
+    "name": "Shear Pro700 (L)",
+    "economy": {
+      "decay": 2.451,
+      "ammo_burn": 700
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 4,
+      "shrapnel": 0,
+      "burn": 35,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ff986d5c0a87",
+    "name": "RDI Energy Amplifier Gamma (L)",
+    "economy": {
+      "decay": 0.02,
+      "ammo_burn": 1000
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 6,
+      "shrapnel": 0,
+      "burn": 45,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "129c8d9175a3",
+    "name": "Shear Pro900 (L)",
+    "economy": {
+      "decay": 3.207,
+      "ammo_burn": 900
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 45,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "336ee84a558a",
+    "name": "Shear XR40 (L)",
+    "economy": {
+      "decay": 0.478,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 2,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "bc73bbad1757",
+    "name": "Shear XR55 (L)",
+    "economy": {
+      "decay": 0.931,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 7,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "f1b05fc45f68",
+    "name": "Shear XR60 (L)",
+    "economy": {
+      "decay": 1.139,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 11,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "355c947afd41",
+    "name": "Shear XR70 (L)",
+    "economy": {
+      "decay": 1.093,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 15,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "efd9ec4746d9",
+    "name": "Shear XR90 (L)",
+    "economy": {
+      "decay": 1.779,
+      "ammo_burn": 400
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 21,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3b9f424d9b51",
+    "name": "Xent Tech Light Amplification Crenshaw (L)",
+    "economy": {
+      "decay": 1.8,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 20,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9511ea7eb19a",
+    "name": "Xent Tech Light Amplification Sunset (L)",
+    "economy": {
+      "decay": 1.4,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 10,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2dc1b441de4d",
+    "name": "Xent Tech Light Amplification Wilshire (L)",
+    "economy": {
+      "decay": 1.6,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 15,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7efab9fd768f",
+    "name": "Loughlin HyperEdge M-Amp 1 (L)",
+    "economy": {
+      "decay": 0.889,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "2fcaea33a587",
+    "name": "Bull Tac70 (L)",
+    "economy": {
+      "decay": 1.975,
+      "ammo_burn": 600
+    },
+    "damage": {
+      "impact": 7,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 26,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "20392ef497bb",
+    "name": "DSEC BLP Amp v1 (L)",
+    "economy": {
+      "decay": 1.18,
+      "ammo_burn": 351
+    },
+    "damage": {
+      "impact": 5,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 14,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3b4971ccead4",
+    "name": "DSEC BLP Amp v2 (L)",
+    "economy": {
+      "decay": 3.1,
+      "ammo_burn": 524
+    },
+    "damage": {
+      "impact": 9,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 25,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "729de92edd92",
+    "name": "Fi/Ra/Co Angst",
+    "economy": {
+      "decay": 1.897,
+      "ammo_burn": 200
+    },
+    "damage": {
+      "impact": 1,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 14,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "623ff8b7775a",
+    "name": "Rage 25",
+    "economy": {
+      "decay": 1.255,
+      "ammo_burn": 515
+    },
+    "damage": {
+      "impact": 6,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 21,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "c9dc2cff9a74",
+    "name": "Rage 35",
+    "economy": {
+      "decay": 1.574,
+      "ammo_burn": 650
+    },
+    "damage": {
+      "impact": 8,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 26,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a81a700531e4",
+    "name": "ArMatrix L-Amplifier 6B (L)",
+    "economy": {
+      "decay": 0.096,
+      "ammo_burn": 126
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 6,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "590cf599ec01",
+    "name": "ArMatrix L-Amplifier 8B (L)",
+    "economy": {
+      "decay": 0.128,
+      "ammo_burn": 168
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 8,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "6976c04361d5",
+    "name": "Mayhem Trauma Amplifier 1",
+    "economy": {
+      "decay": 12,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 55
+    }
+  },
+  {
+    "id": "306260f300ea",
+    "name": "Mayhem Trauma Amplifier 2",
+    "economy": {
+      "decay": 14,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 65
+    }
+  },
+  {
+    "id": "1c43d6f25ae6",
+    "name": "Mayhem Trauma Amplifier 3",
+    "economy": {
+      "decay": 16,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 75
+    }
+  },
+  {
+    "id": "f7c0f4647e47",
+    "name": "Mayhem Trauma Amplifier 4",
+    "economy": {
+      "decay": 18,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 85
+    }
+  },
+  {
+    "id": "970a7d57b0f9",
+    "name": "Mayhem Trauma Amplifier 5",
+    "economy": {
+      "decay": 20,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 95
+    }
+  },
+  {
+    "id": "7afc869f1571",
+    "name": "ArMatrix L-Amplifier 10B (L)",
+    "economy": {
+      "decay": 0.16,
+      "ammo_burn": 210
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 10,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "4d016b33ae7d",
+    "name": "Mayhem Trauma Amplifier 7",
+    "economy": {
+      "decay": 24.21,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 115
+    }
+  },
+  {
+    "id": "3c00cda6707a",
+    "name": "ArMatrix L-Amplifier 17B (L)",
+    "economy": {
+      "decay": 0.272,
+      "ammo_burn": 357
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 17,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "8add3d92d011",
+    "name": "ArMatrix L-Amplifier 20B (L)",
+    "economy": {
+      "decay": 0.32,
+      "ammo_burn": 420
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 20,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "8b8c57d0162c",
+    "name": "ArMatrix L-Amplifier 28B (L)",
+    "economy": {
+      "decay": 0.448,
+      "ammo_burn": 588
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 28,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "20d1856420bc",
+    "name": "DSEC Laser Amp v1 (L)",
+    "economy": {
+      "decay": 1.02,
+      "ammo_burn": 312
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 12,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "155ba752e6e4",
+    "name": "DSEC Laser Amp v2 (L)",
+    "economy": {
+      "decay": 2.7,
+      "ammo_burn": 483
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 10,
+      "shrapnel": 0,
+      "burn": 21,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "c17610efb912",
+    "name": "E-Amp 11",
+    "economy": {
+      "decay": 0.711,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 6,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "8894dbe2c9d9",
+    "name": "ZX Sinkadus",
+    "economy": {
+      "decay": 0.032,
+      "ammo_burn": 40
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 2,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "dd0aa597e385",
+    "name": "E-Amp 14",
+    "economy": {
+      "decay": 4.311,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 18,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "f30ad4ab17bc",
+    "name": "Melee Trauma Amplifier 1",
+    "economy": {
+      "decay": 0.889,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "32a95d126ac3",
+    "name": "Melee Trauma Amplifier 1 (L)",
+    "economy": {
+      "decay": 0.889,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "df0d87ec073a",
+    "name": "Melee Trauma Amplifier 2",
+    "economy": {
+      "decay": 1.778,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 8
+    }
+  },
+  {
+    "id": "c5749c4e68ee",
+    "name": "Omegaton A104, Ancient",
+    "economy": {
+      "decay": 3.012,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 12,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "b509b27a25fd",
+    "name": "Loughlin HyperEdge M-Amp 2 (L)",
+    "economy": {
+      "decay": 1.778,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 8
+    }
+  },
+  {
+    "id": "328adf9808c3",
+    "name": "Melee Trauma Amplifier 2, FEN Edition",
+    "economy": {
+      "decay": 2.667,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 12
+    }
+  },
+  {
+    "id": "f2329a613820",
+    "name": "Melee Trauma Amplifier 3",
+    "economy": {
+      "decay": 3.556,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 16
+    }
+  },
+  {
+    "id": "fbfc27ebeaa8",
+    "name": "Loughlin NanoRep M-Amp 2 (L)",
+    "economy": {
+      "decay": 0.25,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 1
+    }
+  },
+  {
+    "id": "399113c2113c",
+    "name": "Melee Bimodal Amplifier 1 (L)",
+    "economy": {
+      "decay": 0.476,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 2
+    }
+  },
+  {
+    "id": "633df52c3db1",
+    "name": "Melee Durability Amplifier 1 (L)",
+    "economy": {
+      "decay": 0.25,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 1
+    }
+  },
+  {
+    "id": "0f1fa8adf8f6",
+    "name": "Melee Durability Amplifier 2 (L)",
+    "economy": {
+      "decay": 0.25,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 1
+    }
+  },
+  {
+    "id": "b43e78fe8846",
+    "name": "Melee Trauma Amplifier 6, Improved",
+    "economy": {
+      "decay": 6.108,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 28
+    }
+  },
+  {
+    "id": "69f10f1f6a97",
+    "name": "Melee Trauma Amplifier 7",
+    "economy": {
+      "decay": 7.112,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 32
+    }
+  },
+  {
+    "id": "fcd9e78fd7cf",
+    "name": "Melee Trauma Amplifier 7, TWEN Edition",
+    "economy": {
+      "decay": 7.112,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 35
+    }
+  },
+  {
+    "id": "f1fbcae24a49",
+    "name": "Melee Trauma Amplifier 2 (L)",
+    "economy": {
+      "decay": 1.778,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 8
+    }
+  },
+  {
+    "id": "4ddcb10dcff9",
+    "name": "Melee Trauma Amplifier 2, Adjusted",
+    "economy": {
+      "decay": 1.768,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 8
+    }
+  },
+  {
+    "id": "ced37a1a7c99",
+    "name": "Melee Trauma Amplifier 3 (L)",
+    "economy": {
+      "decay": 3.556,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 16
+    }
+  },
+  {
+    "id": "e515058de9d9",
+    "name": "Melee Trauma Amplifier 10, FEN Edition",
+    "economy": {
+      "decay": 10.668,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 48
+    }
+  },
+  {
+    "id": "8e4d0b8cf7ec",
+    "name": "Mayhem Kinetic Amplifier 1",
+    "economy": {
+      "decay": 1.2,
+      "ammo_burn": 1080
+    },
+    "damage": {
+      "impact": 55,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "91f96dd5c9c5",
+    "name": "Mayhem Kinetic Amplifier 2",
+    "economy": {
+      "decay": 1.4,
+      "ammo_burn": 1260
+    },
+    "damage": {
+      "impact": 65,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "eec71221a070",
+    "name": "Mayhem Kinetic Amplifier 3",
+    "economy": {
+      "decay": 1.6,
+      "ammo_burn": 1440
+    },
+    "damage": {
+      "impact": 75,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "8b216387fe2a",
+    "name": "Mayhem Kinetic Amplifier 4",
+    "economy": {
+      "decay": 1.8,
+      "ammo_burn": 1620
+    },
+    "damage": {
+      "impact": 85,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "cc560a802e81",
+    "name": "Mayhem Kinetic Amplifier 5",
+    "economy": {
+      "decay": 2,
+      "ammo_burn": 1800
+    },
+    "damage": {
+      "impact": 95,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "72dbcaf11658",
+    "name": "Mayhem MF-Amplifier Alpha (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 898
+    },
+    "damage": {
+      "impact": 42,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a5ed30fdead4",
+    "name": "Mayhem MF-Amplifier Beta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 898
+    },
+    "damage": {
+      "impact": 47,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "b1d76a665a84",
+    "name": "Mayhem MF-Amplifier Delta (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 898
+    },
+    "damage": {
+      "impact": 57,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "41125f80a15b",
+    "name": "Mayhem MF-Amplifier Gamma (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 898
+    },
+    "damage": {
+      "impact": 52,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "c85768cca505",
+    "name": "NeoPsion Kinetic Amplifier 1",
+    "economy": {
+      "decay": 0.042,
+      "ammo_burn": 42
+    },
+    "damage": {
+      "impact": 2,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1015e212a35f",
+    "name": "NeoPsion Kinetic Amplifier 1 (L)",
+    "economy": {
+      "decay": 0.045,
+      "ammo_burn": 39
+    },
+    "damage": {
+      "impact": 2,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "843f4b92d921",
+    "name": "NeoPsion Kinetic Amplifier 2",
+    "economy": {
+      "decay": 0.083,
+      "ammo_burn": 84
+    },
+    "damage": {
+      "impact": 4,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "802338b8084b",
+    "name": "NeoPsion Kinetic Amplifier 2 (L)",
+    "economy": {
+      "decay": 0.088,
+      "ammo_burn": 78
+    },
+    "damage": {
+      "impact": 4,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "45450f4bc407",
+    "name": "NeoPsion Kinetic Amplifier 3 (L)",
+    "economy": {
+      "decay": 0.164,
+      "ammo_burn": 157
+    },
+    "damage": {
+      "impact": 8,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "32701bb829ca",
+    "name": "NeoPsion Kinetic Amplifier 4",
+    "economy": {
+      "decay": 0.23,
+      "ammo_burn": 253
+    },
+    "damage": {
+      "impact": 12,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2e10781fd396",
+    "name": "NeoPsion Kinetic Amplifier 4 (L)",
+    "economy": {
+      "decay": 0.245,
+      "ammo_burn": 235
+    },
+    "damage": {
+      "impact": 12,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2fb309149eda",
+    "name": "NeoPsion Kinetic Amplifier 5",
+    "economy": {
+      "decay": 0.333,
+      "ammo_burn": 380
+    },
+    "damage": {
+      "impact": 18,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1cfdeb835371",
+    "name": "Melee Trauma Amplifier 5",
+    "economy": {
+      "decay": 5.334,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 24
+    }
+  },
+  {
+    "id": "a05f0e4efb90",
+    "name": "NeoPsion Kinetic Amplifier 6",
+    "economy": {
+      "decay": 0.5,
+      "ammo_burn": 570
+    },
+    "damage": {
+      "impact": 27,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "0e50fbefb7d6",
+    "name": "Melee Trauma Amplifier 6",
+    "economy": {
+      "decay": 6.223,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 28
+    }
+  },
+  {
+    "id": "7ee57664dcf0",
+    "name": "NeoPsion Kinetic Amplifier 7",
+    "economy": {
+      "decay": 0.67,
+      "ammo_burn": 758
+    },
+    "damage": {
+      "impact": 36,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3832bdcf9409",
+    "name": "NeoPsion Kinetic Amplifier 7 (L)",
+    "economy": {
+      "decay": 0.71,
+      "ammo_burn": 706
+    },
+    "damage": {
+      "impact": 36,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "125cce448ba7",
+    "name": "NeoPsion Kinetic Amplifier 7, FEN Edition",
+    "economy": {
+      "decay": 0.744,
+      "ammo_burn": 842
+    },
+    "damage": {
+      "impact": 40,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "5fb22aae8cca",
+    "name": "NeoPsion Kinetic Amplifier Mk.2, TWEN Edition",
+    "economy": {
+      "decay": 0.8,
+      "ammo_burn": 1142
+    },
+    "damage": {
+      "impact": 60,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "6ec3281876d5",
+    "name": "NeoPsion Kinetic Amplifier Mk.3, TWEN Edition",
+    "economy": {
+      "decay": 0.9,
+      "ammo_burn": 1742
+    },
+    "damage": {
+      "impact": 90,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a52cbbd58e3b",
+    "name": "Melee Trauma Amplifier 9",
+    "economy": {
+      "decay": 8.89,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 40
+    }
+  },
+  {
+    "id": "a3a0f12a7ee9",
+    "name": "Melee Trauma Amplifier 10",
+    "economy": {
+      "decay": 9.779,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 44
+    }
+  },
+  {
+    "id": "f0e05648ca80",
+    "name": "Melee Durability Amplifier 94 (L)",
+    "economy": {
+      "decay": 0.99,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "ed304a13a758",
+    "name": "Melee Durability Amplifier 96 (L)",
+    "economy": {
+      "decay": 0.99,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "7434d90745a7",
+    "name": "Melee Trauma Amplifier 9, TWEN Edition",
+    "economy": {
+      "decay": 9.34,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 46
+    }
+  },
+  {
+    "id": "51cf9392b90d",
+    "name": "Omegaton A105, Modified",
+    "economy": {
+      "decay": 0.473,
+      "ammo_burn": 362
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 16,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "01f628b50246",
+    "name": "Omegaton A204, Modified",
+    "economy": {
+      "decay": 0.5,
+      "ammo_burn": 444
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 5,
+      "shrapnel": 0,
+      "burn": 18,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "ae543170ff09",
+    "name": "Bull Tac25 (L)",
+    "economy": {
+      "decay": 0.929,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 2,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 6,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "3518df164876",
+    "name": "Bull Tac80 (L)",
+    "economy": {
+      "decay": 2.451,
+      "ammo_burn": 700
+    },
+    "damage": {
+      "impact": 8,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 31,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "b62c8340d0a9",
+    "name": "CDF BLP Power Amp 2 (L)",
+    "economy": {
+      "decay": 0.37,
+      "ammo_burn": 632
+    },
+    "damage": {
+      "impact": 11,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 17,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "bf8668b02df4",
+    "name": "CDF BLP Power Amp 3 (L)",
+    "economy": {
+      "decay": 0.44,
+      "ammo_burn": 810
+    },
+    "damage": {
+      "impact": 16,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 20,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "2b66f2b80674",
+    "name": "CDF BLP Power Amp 4 (L)",
+    "economy": {
+      "decay": 0.74,
+      "ammo_burn": 1400
+    },
+    "damage": {
+      "impact": 24,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 38,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "a820db02e519",
+    "name": "Low Rider BLP Amp Mk I (L)",
+    "economy": {
+      "decay": 4.643,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 6,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 14,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1243b93ea32c",
+    "name": "Mayhem B-Amplifier 110P (L)",
+    "economy": {
+      "decay": 0.787,
+      "ammo_burn": 1600
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 110,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "d3d01e863e6d",
+    "name": "RapMan (L)",
+    "economy": {
+      "decay": 1.831,
+      "ammo_burn": 500
+    },
+    "damage": {
+      "impact": 6,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 22,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "dd209fe14cb7",
+    "name": "Boom AAC (L)",
+    "economy": {
+      "decay": 1.831,
+      "ammo_burn": 500
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 3,
+      "shrapnel": 0,
+      "burn": 25,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "d88bcf9daddc",
+    "name": "Boom BCC (L)",
+    "economy": {
+      "decay": 1.847,
+      "ammo_burn": 300
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 18,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "47b3633360aa",
+    "name": "CDF Laser Power Amp 2 (L)",
+    "economy": {
+      "decay": 0.35,
+      "ammo_burn": 530
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 4,
+      "shrapnel": 0,
+      "burn": 20,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "eaeb9846e3bd",
+    "name": "CDF Laser Power Amp 3 (L)",
+    "economy": {
+      "decay": 0.52,
+      "ammo_burn": 880
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 12,
+      "shrapnel": 0,
+      "burn": 28,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "79146cebe15a",
+    "name": "CDF Laser Power Amp 4 (L)",
+    "economy": {
+      "decay": 0.96,
+      "ammo_burn": 1722
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 14,
+      "shrapnel": 0,
+      "burn": 64,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "01100fe46ed7",
+    "name": "E-Amp 12",
+    "economy": {
+      "decay": 1.555,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 9,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "b077734440e9",
+    "name": "E-Amp 13",
+    "economy": {
+      "decay": 2.943,
+      "ammo_burn": 100
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 1,
+      "shrapnel": 0,
+      "burn": 14,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "d03df51b0f01",
+    "name": "Marshall Laser Amp Mk II (L)",
+    "economy": {
+      "decay": 3.943,
+      "ammo_burn": null
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 15,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "9a3c390b9387",
+    "name": "Mayhem L-Amplifier Alpha (L)",
+    "economy": {
+      "decay": 0.019,
+      "ammo_burn": 898
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 39,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "8cd9384ae813",
+    "name": "Shear ProM (L)",
+    "economy": {
+      "decay": 3.773,
+      "ammo_burn": 1000
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 6,
+      "shrapnel": 0,
+      "burn": 51,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "15b1b72fb11a",
+    "name": "Shear ProMC (L)",
+    "economy": {
+      "decay": 4.847,
+      "ammo_burn": 1400
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 8,
+      "shrapnel": 0,
+      "burn": 70,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "4d5e8edf5f81",
+    "name": "Shear XR50 (L)",
+    "economy": {
+      "decay": 1.195,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 5,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "e170544a8b95",
+    "name": "Shear XR80 (L)",
+    "economy": {
+      "decay": 1.311,
+      "ammo_burn": 400
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 2,
+      "shrapnel": 0,
+      "burn": 20,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "399ac2c2914c",
+    "name": "Teenie Weenie Laser Amp Mk I (L)",
+    "economy": {
+      "decay": 0.692,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 3,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "1c8d52531718",
+    "name": "Teenie Weenie Laser Amp Mk II (L)",
+    "economy": {
+      "decay": 1.621,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 7,
+      "cold": 0,
+      "acid": 0,
+      "electric": 0
+    }
+  },
+  {
+    "id": "7d6d6438a3dc",
+    "name": "Loughlin Master M-Amp 1 (L)",
+    "economy": {
+      "decay": 0.476,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 2
+    }
+  },
+  {
+    "id": "41effa2df081",
+    "name": "Loughlin Master M-Amp 2 (L)",
+    "economy": {
+      "decay": 0.952,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 4
+    }
+  },
+  {
+    "id": "3c7d5c52e17b",
+    "name": "Loughlin Master M-Amp 4 (L)",
+    "economy": {
+      "decay": 1.904,
+      "ammo_burn": 0
+    },
+    "damage": {
+      "impact": 0,
+      "cut": 0,
+      "stab": 0,
+      "penetration": 0,
+      "shrapnel": 0,
+      "burn": 0,
+      "cold": 0,
+      "acid": 0,
+      "electric": 8
+    }
+  }
+]

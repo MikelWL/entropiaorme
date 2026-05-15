@@ -1,0 +1,23 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0
+
+pynput>=1.7.0
+
+# Screen reader
+numpy>=1.20.0
+opencv-python-headless>=4.9.0
+mss>=9.0.0
+# onnxruntime + onnxruntime-directml share the same `onnxruntime/` package dir;
+# whichever was installed last wins at import time. openocr-python (below)
+# hard-depends on plain `onnxruntime`, so a fresh `pip install -r` ends up with
+# plain `onnxruntime` shadowing directml. To restore DirectML provider visibility
+# on Windows, run after install:
+#     pip install --force-reinstall --no-deps onnxruntime-directml
+# `backend/build_app.py` performs this automatically before PyInstaller-freeze.
+onnxruntime-directml; platform_system == "Windows"
+onnxruntime; platform_system != "Windows"
+rapidfuzz>=3.0
+
+# Local OCR for skill / profession panel scans
+openocr-python>=0.1.5

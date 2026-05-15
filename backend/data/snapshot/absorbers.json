@@ -1,0 +1,58 @@
+[
+  {
+    "id": "3764bc060a0b",
+    "name": "ArMatrix Extender P10 (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1
+    }
+  },
+  {
+    "id": "725c49a00347",
+    "name": "ArMatrix Extender P20 (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2
+    }
+  },
+  {
+    "id": "57a59a0dd2a2",
+    "name": "Karona's Extender P20 (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2
+    }
+  },
+  {
+    "id": "e4c88923ded1",
+    "name": "Mayhem Extender P20",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2
+    }
+  },
+  {
+    "id": "aa81b103d28b",
+    "name": "Mayhem Extender P25",
+    "economy": {
+      "decay": null,
+      "absorption": 0.25
+    }
+  },
+  {
+    "id": "48c030be685c",
+    "name": "Mayhem Extender P30 (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.3
+    }
+  },
+  {
+    "id": "c9ff0b919777",
+    "name": "ArMatrix Extender P15 (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.15
+    }
+  }
+]

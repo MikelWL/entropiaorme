@@ -1,0 +1,6512 @@
+[
+  {
+    "name": "Animal Investigator",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Probing"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Scan Animal"
+        },
+        "weight": 46
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Biology"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Botany"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Xenobiology"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Zoology"
+        },
+        "weight": 2
+      }
+    ]
+  },
+  {
+    "name": "Armor Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Armor Technology"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Armor"
+        },
+        "weight": 32
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 29
+      }
+    ]
+  },
+  {
+    "name": "Attachment Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Attachments Technology"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Attachments"
+        },
+        "weight": 32
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 29
+      }
+    ]
+  },
+  {
+    "name": "BLP Pistoleer (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Handgun"
+        },
+        "weight": 38
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "BLP Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "BLP Sniper (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Rifle"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "BLP Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Ranged BLP (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "BLP Weaponry Technology"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Body Sculptor",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Beauty Sense"
+        },
+        "weight": 19
+      },
+      {
+        "skill": {
+          "name": "Body Sculpting"
+        },
+        "weight": 46
+      },
+      {
+        "skill": {
+          "name": "Plastic Surgery"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Quality Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Fashion Design"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Genetics"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "Tailor",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Quality Sense"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Fashion Design"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Glamor"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Make Textile"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Tailoring"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Colorer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Color Matching"
+        },
+        "weight": 20
+      },
+      {
+        "skill": {
+          "name": "Coloring"
+        },
+        "weight": 47
+      },
+      {
+        "skill": {
+          "name": "Coloring Methodology"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Fashion Design"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Glamor"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 5
+      }
+    ]
+  },
+  {
+    "name": "Cryogenic (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 17
+      },
+      {
+        "skill": {
+          "name": "Cryogenics"
+        },
+        "weight": 40
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 10
+      }
+    ]
+  },
+  {
+    "name": "Cryogenic (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Cryogenics"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 6
+      }
+    ]
+  },
+  {
+    "name": "Surveyor",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Geology"
+        },
+        "weight": 20
+      },
+      {
+        "skill": {
+          "name": "Ground Assessment"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Miner"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Mineral Sense"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Surveying"
+        },
+        "weight": 50
+      }
+    ]
+  },
+  {
+    "name": "Prospector",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Geology"
+        },
+        "weight": 21
+      },
+      {
+        "skill": {
+          "name": "Ground Assessment"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Miner"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Mineral Sense"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Prospecting"
+        },
+        "weight": 50
+      }
+    ]
+  },
+  {
+    "name": "Treasure Hunter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Archaeological Lore"
+        },
+        "weight": 16
+      },
+      {
+        "skill": {
+          "name": "Geology"
+        },
+        "weight": 21
+      },
+      {
+        "skill": {
+          "name": "Ground Assessment"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Miner"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Treasure Sense"
+        },
+        "weight": 38
+      }
+    ]
+  },
+  {
+    "name": "Decoy Dispenser",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Dispense Decoy"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 8
+      }
+    ]
+  },
+  {
+    "name": "Electro Kinetic (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 17
+      },
+      {
+        "skill": {
+          "name": "Electrokinesis"
+        },
+        "weight": 40
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 10
+      }
+    ]
+  },
+  {
+    "name": "Electro Kinetic (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Electrokinesis"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 6
+      }
+    ]
+  },
+  {
+    "name": "Electronics Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Equipment Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Electronic Equipment"
+        },
+        "weight": 34
+      },
+      {
+        "skill": {
+          "name": "Electronics"
+        },
+        "weight": 13
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 30
+      }
+    ]
+  },
+  {
+    "name": "Enhancer Constructor",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Attachments Technology"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Enhancer Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Enhancers"
+        },
+        "weight": 35
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Driller",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Drilling"
+        },
+        "weight": 55
+      },
+      {
+        "skill": {
+          "name": "Drilling Expertise"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Extraction"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Miner"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "Miner",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Drilling Expertise"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Extraction"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Miner"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Mining"
+        },
+        "weight": 56
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 3
+      }
+    ]
+  },
+  {
+    "name": "Archaelogist",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Archaeological Lore"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Artefact Preservation"
+        },
+        "weight": 52
+      },
+      {
+        "skill": {
+          "name": "Miner"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Precision Artefact Extraction"
+        },
+        "weight": 21
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 3
+      }
+    ]
+  },
+  {
+    "name": "Face Sculptor",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Beauty Sense"
+        },
+        "weight": 19
+      },
+      {
+        "skill": {
+          "name": "Face Sculpting"
+        },
+        "weight": 46
+      },
+      {
+        "skill": {
+          "name": "Plastic Surgery"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Quality Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Fashion Design"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Genetics"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "Carpenter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Carpentry"
+        },
+        "weight": 31
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Wood Carving"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Wood Processing"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Gardener",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Probing"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Geology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Biology"
+        },
+        "weight": 20
+      },
+      {
+        "skill": {
+          "name": "Botany"
+        },
+        "weight": 24
+      },
+      {
+        "skill": {
+          "name": "Genetics"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 5
+      }
+    ]
+  },
+  {
+    "name": "Gauss Sniper (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Rifle"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Gauss Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Ranged Gauss (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Gauss Weaponry Technology"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Hair Stylist",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Beauty Sense"
+        },
+        "weight": 19
+      },
+      {
+        "skill": {
+          "name": "Hair Stylist"
+        },
+        "weight": 46
+      },
+      {
+        "skill": {
+          "name": "Plastic Surgery"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Quality Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Fashion Design"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Genetics"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "Pet Handler",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Animal Lore"
+        },
+        "weight": 40
+      },
+      {
+        "skill": {
+          "name": "Animal Taming"
+        },
+        "weight": 20
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Zoology"
+        },
+        "weight": 19
+      }
+    ]
+  },
+  {
+    "name": "Paramedic",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 13
+      },
+      {
+        "skill": {
+          "name": "Diagnosis"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Doctor"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "First Aid"
+        },
+        "weight": 37
+      },
+      {
+        "skill": {
+          "name": "Medical Therapy"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Medicine"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Treatment"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 3
+      }
+    ]
+  },
+  {
+    "name": "Humanoid Investigator",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Probing"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Scan Human"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Biology"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 7
+      }
+    ]
+  },
+  {
+    "name": "Laser Pistoleer (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Handgun"
+        },
+        "weight": 38
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Laser Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Laser Sniper (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Rifle"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Laser Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Ranged Laser (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Laser Weaponry Technology"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Swordsman (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Inflict Melee Damage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Longblades"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Melee Damage Assessment"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Swordsman (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Heavy Melee Weapons"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Longblades"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Martial Arts"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Animal Looter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Butchering"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Skinning"
+        },
+        "weight": 35
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Biology"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Xenobiology"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Zoology"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Scavenging"
+        },
+        "weight": 5
+      }
+    ]
+  },
+  {
+    "name": "Mutant Looter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Reaping"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Scourging"
+        },
+        "weight": 35
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Biology"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Genetics"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Xenobiology"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Scavenging"
+        },
+        "weight": 5
+      }
+    ]
+  },
+  {
+    "name": "Robot Looter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Reclaiming"
+        },
+        "weight": 35
+      },
+      {
+        "skill": {
+          "name": "Salvaging"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Electronics"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Mechanics"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Robotology"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Scavenging"
+        },
+        "weight": 5
+      }
+    ]
+  },
+  {
+    "name": "Mechanical Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Equipment Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Mechanical Equipment"
+        },
+        "weight": 34
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 30
+      },
+      {
+        "skill": {
+          "name": "Mechanics"
+        },
+        "weight": 13
+      }
+    ]
+  },
+  {
+    "name": "Technology Investigator",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Probing"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Scan Technology"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Electronics"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Mechanics"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Robotology"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "Evader",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Avoidance"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Evade"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Athletics"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Quickness"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 5
+      }
+    ]
+  },
+  {
+    "name": "Mentor",
+    "skills": [
+      {
+        "skill": {
+          "name": "Mentor"
+        },
+        "weight": 100
+      }
+    ]
+  },
+  {
+    "name": "Metal Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Equipment Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Metal Equipment"
+        },
+        "weight": 34
+      },
+      {
+        "skill": {
+          "name": "Metallurgy"
+        },
+        "weight": 13
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 30
+      }
+    ]
+  },
+  {
+    "name": "Jammer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Avoidance"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Athletics"
+        },
+        "weight": 13
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Quickness"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Jamming"
+        },
+        "weight": 30
+      }
+    ]
+  },
+  {
+    "name": "Biotropic",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Diagnosis"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Bioregenesis"
+        },
+        "weight": 45
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 6
+      }
+    ]
+  },
+  {
+    "name": "Mutant Investigator",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Probing"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Scan Mutant"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Biology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Genetics"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Xenobiology"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "One Handed Clubber (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Clubs"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Inflict Melee Damage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Melee Damage Assessment"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "One Handed Clubber (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Clubs"
+        },
+        "weight": 38
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Light Melee Weapons"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Martial Arts"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Plasma Pistoleer (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Handgun"
+        },
+        "weight": 38
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Plasma Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Plasma Sniper (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Rifle"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Plasma Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Ranged Plasma (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Plasma Weaponry Technology"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Brawler (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Inflict Melee Damage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Melee Damage Assessment"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Power Fist"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Brawler (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Light Melee Weapons"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Martial Arts"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Power Fist"
+        },
+        "weight": 36
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Pyro Kinetic (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 17
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Pyrokinesis"
+        },
+        "weight": 40
+      }
+    ]
+  },
+  {
+    "name": "Pyro Kinetic (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Pyrokinesis"
+        },
+        "weight": 50
+      }
+    ]
+  },
+  {
+    "name": "Dodger",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Avoidance"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Dodge"
+        },
+        "weight": 31
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Athletics"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Quickness"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 7
+      }
+    ]
+  },
+  {
+    "name": "Resource Gatherer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Alertness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Athletics"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Geology"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Resource Gathering"
+        },
+        "weight": 34
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Biology"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Botany"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Genetics"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Zoology"
+        },
+        "weight": 5
+      }
+    ]
+  },
+  {
+    "name": "Robot Investigator",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Probing"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Scan Robot"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Electronics"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Mechanics"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Robotology"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "Knifefighter (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Inflict Melee Damage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Melee Damage Assessment"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Shortblades"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Knifefighter (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Light Melee Weapons"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Martial Arts"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Shortblades"
+        },
+        "weight": 38
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Captain",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Avoidance"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Deep Space Knowledge"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Spacecraft Pilot"
+        },
+        "weight": 30
+      },
+      {
+        "skill": {
+          "name": "Spacecraft Systems"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Gunner (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Deep Space Knowledge"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Mechanics"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Spacecraft Systems"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Gunner (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Spacecraft Weaponry"
+        },
+        "weight": 45
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Deep Space Knowledge"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Spacecraft Systems"
+        },
+        "weight": 15
+      }
+    ]
+  },
+  {
+    "name": "Spacecraft Engineering",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Spacecraft Weaponry"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Vehicle Technology"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Electronics"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Mechanics"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Spacecraft Systems"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Grenadier (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Inflict Ranged Damage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Ranged Damage Assessment"
+        },
+        "weight": 13
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Explosive Projectile Weaponry Technology"
+        },
+        "weight": 34
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 18
+      }
+    ]
+  },
+  {
+    "name": "Grenadier (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Support Weapon Systems"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Explosive Projectile Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Sweat Gatherer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Sweat Gatherer"
+        },
+        "weight": 80
+      }
+    ]
+  },
+  {
+    "name": "Animal Tamer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Whip"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Animal Lore"
+        },
+        "weight": 21
+      },
+      {
+        "skill": {
+          "name": "Animal Taming"
+        },
+        "weight": 38
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Zoology"
+        },
+        "weight": 13
+      }
+    ]
+  },
+  {
+    "name": "Telepath",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 20
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Telepathy"
+        },
+        "weight": 46
+      }
+    ]
+  },
+  {
+    "name": "Translocator",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Psyche"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Concentration"
+        },
+        "weight": 15
+      },
+      {
+        "skill": {
+          "name": "Force Merge"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Mindforce Harmony"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Power Catalyst"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Translocation"
+        },
+        "weight": 54
+      }
+    ]
+  },
+  {
+    "name": "Material Constructor",
+    "skills": [
+      {
+        "skill": {
+          "name": "Quality Sense"
+        },
+        "weight": 1
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Carpentry"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Material Extraction Methodology"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Texture Engineering"
+        },
+        "weight": 33
+      },
+      {
+        "skill": {
+          "name": "Make Textile"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Surface Composition"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Tailoring"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Material Designer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Quality Sense"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Carpentry"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Color Matching"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Coloring"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Fashion Design"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Glamor"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Make Textile"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Material Comprehension"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Surface Composition"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Tailoring"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Texture Pattern Matching"
+        },
+        "weight": 40
+      }
+    ]
+  },
+  {
+    "name": "Tier Upgrader",
+    "skills": [
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Enhancer Technology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Enhancers"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Tier Upgrading"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Evade"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Mining"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Computer"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 10
+      }
+    ]
+  },
+  {
+    "name": "Tool Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Tools"
+        },
+        "weight": 32
+      },
+      {
+        "skill": {
+          "name": "Tools Technology"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 29
+      }
+    ]
+  },
+  {
+    "name": "Two Handed Clubber (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Clubs"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Inflict Melee Damage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Melee Damage Assessment"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Two Handed Clubber (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Clubs"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Heavy Melee Weapons"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Martial Arts"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Vehicle Structural Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Vehicle Repairing"
+        },
+        "weight": 37
+      },
+      {
+        "skill": {
+          "name": "Vehicle Technology"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Intuition"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Electronics"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Mechanics"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Scientist"
+        },
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "name": "Vehicle Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Vehicle"
+        },
+        "weight": 37
+      },
+      {
+        "skill": {
+          "name": "Vehicle Technology"
+        },
+        "weight": 11
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 26
+      }
+    ]
+  },
+  {
+    "name": "Mounted BLP (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Heavy Weapons"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "BLP Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Mounted Laser (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Heavy Weapons"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Laser Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Mounted Grenadier (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Aim"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Commando"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Heavy Weapons"
+        },
+        "weight": 39
+      },
+      {
+        "skill": {
+          "name": "Marksmanship"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Explosive Projectile Weaponry Technology"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Coolness"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "BLP Weapons Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "BLP Weaponry Technology"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 30
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Gauss Weapons Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Gauss Weaponry Technology"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 30
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Laser Weapons Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Laser Weaponry Technology"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 31
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Longblades Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Longblades"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 31
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Plasma Weapons Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 31
+      },
+      {
+        "skill": {
+          "name": "Plasma Weaponry Technology"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Powerfist Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Power Fist"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 31
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Shortblades Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Shortblades"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 31
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 28
+      }
+    ]
+  },
+  {
+    "name": "Projectile Launcher Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": 28
+      },
+      {
+        "skill": {
+          "name": "Explosive Projectile Weaponry Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Industrialist"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Manufacture Weapons"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Weapon Technology"
+        },
+        "weight": 9
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": 26
+      }
+    ]
+  },
+  {
+    "name": "Whipper (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Inflict Melee Damage"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Kill Strike"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Melee Damage Assessment"
+        },
+        "weight": 14
+      },
+      {
+        "skill": {
+          "name": "Whip"
+        },
+        "weight": 25
+      },
+      {
+        "skill": {
+          "name": "Wounding"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Anatomy"
+        },
+        "weight": 20
+      }
+    ]
+  },
+  {
+    "name": "Whipper (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Agility"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Strength"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Reflexes"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Combat Sense"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Light Melee Weapons"
+        },
+        "weight": 7
+      },
+      {
+        "skill": {
+          "name": "Martial Arts"
+        },
+        "weight": 5
+      },
+      {
+        "skill": {
+          "name": "Melee Combat"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Weapons Handling"
+        },
+        "weight": 8
+      },
+      {
+        "skill": {
+          "name": "Whip"
+        },
+        "weight": 44
+      },
+      {
+        "skill": {
+          "name": "Bravado"
+        },
+        "weight": 6
+      },
+      {
+        "skill": {
+          "name": "Courage"
+        },
+        "weight": 3
+      },
+      {
+        "skill": {
+          "name": "Dexterity"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Serendipity"
+        },
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "name": "Mining Laser (Dmg)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Extraction"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Mineral Sense"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Surveying"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Prospecting"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Thermal Drilling"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Integrity Analysis"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Mining Laser Technology"
+        },
+        "weight": 20
+      },
+      {
+        "skill": {
+          "name": "Mining Laser Operator"
+        },
+        "weight": 30
+      }
+    ]
+  },
+  {
+    "name": "Mining Laser (Hit)",
+    "skills": [
+      {
+        "skill": {
+          "name": "Intelligence"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Extraction"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Mineral Sense"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Surveying"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Prospecting"
+        },
+        "weight": 4
+      },
+      {
+        "skill": {
+          "name": "Fracturing"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Thermal Drilling"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Integrity Analysis"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Mining Laser Technology"
+        },
+        "weight": 20
+      },
+      {
+        "skill": {
+          "name": "Mining Laser Operator"
+        },
+        "weight": 30
+      }
+    ]
+  },
+  {
+    "name": "Mining Laser Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Machinery"
+        },
+        "weight": 12
+      },
+      {
+        "skill": {
+          "name": "Manufacture Tools"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Manufacture Methodology"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Blueprint Comprehension"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Engineering"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Mining Laser Technology"
+        },
+        "weight": 40
+      }
+    ]
+  },
+  {
+    "name": "Mineable Looter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Perception"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Geology"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Analysis"
+        },
+        "weight": 2
+      },
+      {
+        "skill": {
+          "name": "Fragmentating"
+        },
+        "weight": 40
+      },
+      {
+        "skill": {
+          "name": "Beneficiating"
+        },
+        "weight": null
+      },
+      {
+        "skill": {
+          "name": "Scavenging"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Chemist",
+    "skills": [
+      {
+        "skill": {
+          "name": "Chemistry"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Baitfisher",
+    "skills": [
+      {
+        "skill": {
+          "name": "Baitfishing"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Fishing Gear Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Fishing Rod Technology"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Fishing Attachment Engineer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Fishing Attachment Technology"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Gastronomer",
+    "skills": [
+      {
+        "skill": {
+          "name": "Gastronomy"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Nutritionist",
+    "skills": [
+      {
+        "skill": {
+          "name": "Nutrition"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Provisioner",
+    "skills": [
+      {
+        "skill": {
+          "name": "Provisioning"
+        },
+        "weight": null
+      }
+    ]
+  },
+  {
+    "name": "Baiter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Angling"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Fishing"
+        },
+        "weight": 15
+      }
+    ]
+  },
+  {
+    "name": "Cast Fisher",
+    "skills": [
+      {
+        "skill": {
+          "name": "Casting"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Fishing"
+        },
+        "weight": 15
+      }
+    ]
+  },
+  {
+    "name": "Fly Fisher",
+    "skills": [
+      {
+        "skill": {
+          "name": "Fly Fishing"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Fishing"
+        },
+        "weight": 15
+      }
+    ]
+  },
+  {
+    "name": "Deep Ocean Fisher",
+    "skills": [
+      {
+        "skill": {
+          "name": "Deep Ocean Fishing"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Fishing"
+        },
+        "weight": 15
+      }
+    ]
+  },
+  {
+    "name": "Fish Looter",
+    "skills": [
+      {
+        "skill": {
+          "name": "Gutting"
+        },
+        "weight": 50
+      },
+      {
+        "skill": {
+          "name": "Baitfishing"
+        },
+        "weight": 10
+      },
+      {
+        "skill": {
+          "name": "Filleting"
+        },
+        "weight": 27
+      }
+    ]
+  }
+]
