@@ -23,3 +23,5 @@ Several of the earlier records predate two later structural decisions: the colla
 | [ADR-0013](0013-in-process-collapse.md) | Collapse to a single in-process Rust binary |
 | [ADR-0014](0014-release-engineering.md) | Bespoke installer, signed auto-update, and a provenance-bearing release pipeline |
 | [ADR-0015](0015-candle-ocr-backend-not-adopted.md) | Native candle OCR backend evaluated and not adopted; ONNX Runtime kept as the sole recogniser |
+| [ADR-0016](0016-retire-equivalence-oracle.md) | Retire the cross-language equivalence oracle; preserve the evidence as frozen Rust-side goldens |
+| [ADR-0017](0017-behavioural-contract-ownership.md) | Own the behavioural contract in this codebase; the goldens pin its ratified contract, not reference fidelity |
