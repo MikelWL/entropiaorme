@@ -137,6 +137,25 @@ impl AppState {
         self.data_dir.as_deref()
     }
 
+    /// Run `PRAGMA optimize` against the hydration database on a clean
+    /// shutdown, so SQLite refreshes the planner statistics for tables whose
+    /// shape has drifted since the last analysis (the recommended
+    /// once-per-connection-lifecycle maintenance call). Returns whether it
+    /// ran: `false` when no hydration state is composed (nothing to optimise)
+    /// or the pragma errored. Best-effort and side-effect-free on the data;
+    /// the shell calls it from its exit teardown.
+    pub async fn optimize_on_shutdown(&self) -> bool {
+        let pool = self
+            .hydration
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|hydration| hydration.pool().clone()));
+        let Some(pool) = pool else {
+            return false;
+        };
+        sqlx::query("PRAGMA optimize").execute(&pool).await.is_ok()
+    }
+
     /// Attach the bundled demo database path, enabling the guide-mode
     /// `/api/demo` surface. Without it those routes answer the 503
     /// service-unavailable floor.
@@ -567,6 +586,22 @@ where
     ArmRoutes::at(route).on(filter, native).into_method_router()
 }
 
+/// Map a served request path to the read handler whose per-endpoint latency
+/// the metrics registry breaks out, or `None` for every other route. Matches
+/// on the exact registered paths (the session-detail route carries a trailing
+/// id segment, so it is a prefix match). Query strings never reach here (the
+/// caller passes `uri().path()`).
+fn classify_read_handler(path: &str) -> Option<eo_wire::metrics::Handler> {
+    use eo_wire::metrics::Handler;
+    match path {
+        "/api/analytics/overview" => Some(Handler::AnalyticsOverview),
+        "/api/analytics/activity" => Some(Handler::AnalyticsActivity),
+        "/api/tracking/sessions" => Some(Handler::SessionList),
+        _ if path.starts_with("/api/tracking/session/") => Some(Handler::SessionDetail),
+        _ => None,
+    }
+}
+
 /// Observe-only per-request instrumentation. As the OUTERMOST layer it times
 /// the whole request (guards, CORS, and the handler) and records one sample
 /// into the metrics registry, emitting a structured trace with method, path,
@@ -585,6 +620,11 @@ async fn observe(req: Request, next: axum::middleware::Next) -> Response {
     // the metrics page's own polling must not inflate the figures it displays.
     if !path.starts_with("/api/dev/") {
         eo_wire::metrics::metrics().record_http_request(elapsed);
+        if method == http::Method::GET {
+            if let Some(handler) = classify_read_handler(&path) {
+                eo_wire::metrics::metrics().record_handler_latency(handler, elapsed);
+            }
+        }
     }
     tracing::debug!(
         target: "eo::http",
