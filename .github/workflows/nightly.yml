@@ -87,6 +87,44 @@ jobs:
       - name: Enforce the per-file mutation floors
         run: cargo run -q -p xtask -- mutation-floors --outcomes mutants.out/outcomes.json
 
+  advisory-watch:
+    name: Suppressed-advisory watch (quick-xml)
+    # Anti-rot guard for the vulnerability suppressions in .cargo/audit.toml and
+    # deny.toml. After an in-range dependency update (which pulls a fixed plist
+    # once upstream ships one), re-audit with the two watched quick-xml
+    # advisories un-suppressed. If they no longer fire, a fix has propagated and
+    # the suppression must be dropped, so fail loudly rather than let it rot.
+    # Nightly-only: this is a monitor, not a merge gate.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/src-tauri
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6190aa5fb88a88ee71c12769924bbe63a9ab152e # 1.96.0 (branch SHA; dtolnay has no semver release tags)
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        with:
+          tool: cargo-audit
+      - name: Watch suppressed quick-xml advisories for an upstream fix
+        run: |
+          set -euo pipefail
+          # Pull in-range dependency updates; once a released plist moves to
+          # quick-xml >= 0.41 this brings the fix into the tree.
+          cargo update -q
+          # Strip the two watched suppressions so the audit reports them if they
+          # are still present, then check the audit output for those IDs directly
+          # (robust to unrelated advisories the updated tree may surface).
+          sed -i -E '/RUSTSEC-2026-0194|RUSTSEC-2026-0195/d' .cargo/audit.toml
+          out=$(cargo audit 2>&1 || true)
+          if echo "$out" | grep -q 'RUSTSEC-2026-019[45]'; then
+            echo "quick-xml advisories still fire after an in-range update; suppression remains justified."
+          else
+            echo "::error::quick-xml advisories (RUSTSEC-2026-0194/-0195) no longer fire after an in-range update. A fix has propagated: bump plist and drop the suppression from .cargo/audit.toml and deny.toml."
+            exit 1
+          fi
+
   # Publish the mutation badge to the badges branch, from the trunk only. Kept
   # separate from the campaign job so the write-scoped token never attaches to a
   # run that builds repository code: this job runs no repository code, it only
