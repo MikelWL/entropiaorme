@@ -15,11 +15,12 @@ use std::sync::{Arc, Mutex};
 use eo_wire::normalizer::{to_python_json, Normalizer};
 use serde_json::{Map, Value};
 
-use crate::event_bus::{EventBus, Registration, Topic};
+use crate::bus_events::BusEvent;
+use crate::event_bus::{EventBus, Registration};
 
 #[derive(Default)]
 struct State {
-    events: Vec<(Topic, Value)>,
+    events: Vec<BusEvent>,
     installed: Option<Registration>,
 }
 
@@ -43,11 +44,11 @@ impl FingerprintRecorder {
             return;
         }
         let sink = self.state.clone();
-        let registration = bus.add_tap(move |topic, data| {
+        let registration = bus.add_tap(move |event| {
             sink.lock()
                 .expect("recorder state")
                 .events
-                .push((topic, data.clone()));
+                .push(event.clone());
         });
         state.installed = Some(registration);
     }
@@ -61,23 +62,29 @@ impl FingerprintRecorder {
     }
 
     /// A copy of the raw recorded events.
-    pub fn events(&self) -> Vec<(Topic, Value)> {
+    pub fn events(&self) -> Vec<BusEvent> {
         self.state.lock().expect("recorder state").events.clone()
     }
 
     /// Render the recorded events as the canonical fingerprint JSONL:
     /// one compact line per event in publish order, keys sorted, a
-    /// trailing newline whenever any events were recorded.
+    /// trailing newline whenever any events were recorded. The payload
+    /// JSON is the typed event's serde form, which reproduces the
+    /// previously hand-built maps exactly (pinned by the bus_events
+    /// parity tests), so committed goldens are unchanged.
     pub fn serialize(&self, normalizer: &mut Normalizer) -> String {
         let state = self.state.lock().expect("recorder state");
         if state.events.is_empty() {
             return String::new();
         }
         let mut lines = Vec::with_capacity(state.events.len());
-        for (topic, payload) in &state.events {
+        for event in &state.events {
             let mut entry = Map::new();
-            entry.insert("topic".into(), Value::from(topic.as_str()));
-            entry.insert("payload".into(), normalizer.normalize(payload));
+            entry.insert("topic".into(), Value::from(event.topic().as_str()));
+            entry.insert(
+                "payload".into(),
+                normalizer.normalize(&event.payload_value()),
+            );
             lines.push(to_python_json(&Value::Object(entry), None));
         }
         lines.join("\n") + "\n"
@@ -87,7 +94,9 @@ impl FingerprintRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::bus_events::{
+        GlobalPayload, LootGroupPayload, LootItem, LootTag, TickFlushedPayload,
+    };
 
     #[test]
     fn records_in_publish_order_and_serialises_the_golden_byte_form() {
@@ -96,19 +105,20 @@ mod tests {
         recorder.install(&bus);
         recorder.install(&bus); // Idempotent while installed.
 
-        bus.publish(
-            Topic::LootGroup,
-            &json!({
-                "type": "loot",
-                "timestamp": "2026-05-19T10:00:02",
-                "items": [{"item_name": "Wool", "quantity": 1, "value_ped": 1.5}],
-                "total_ped": 1.5,
-            }),
-        );
-        bus.publish(
-            Topic::TickFlushed,
-            &json!({"timestamp": "2026-05-19T10:00:02"}),
-        );
+        bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-05-19T10:00:02".into()),
+            items: vec![LootItem {
+                item_name: "Wool".into(),
+                quantity: 1,
+                value_ped: 1.5,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 1.5,
+        }));
+        bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("2026-05-19T10:00:02".into()),
+        }));
 
         let mut normalizer = Normalizer::new();
         let fingerprint = recorder.serialize(&mut normalizer);
@@ -117,7 +127,7 @@ mod tests {
         assert!(fingerprint.ends_with('\n'));
         assert_eq!(
             lines[0],
-            r#"{"payload": {"items": [{"item_name": "Wool", "quantity": 1, "value_ped": 1.5}], "timestamp": "<TS_1>", "total_ped": 1.5, "type": "loot"}, "topic": "loot_group"}"#
+            r#"{"payload": {"items": [{"is_enhancer_shrapnel": false, "item_name": "Wool", "quantity": 1, "value_ped": 1.5}], "timestamp": "<TS_1>", "total_ped": 1.5, "type": "loot"}, "topic": "loot_group"}"#
         );
         assert_eq!(
             lines[1],
@@ -130,9 +140,15 @@ mod tests {
         let bus = EventBus::new();
         let recorder = FingerprintRecorder::new();
         recorder.install(&bus);
-        bus.publish(Topic::Global, &json!({"value": 1}));
+        let global = BusEvent::Global(GlobalPayload::GlobalKill {
+            timestamp: "2026-05-19T10:00:02".into(),
+            player: "Test Player".into(),
+            creature: "Atrox".into(),
+            value: 1.0,
+        });
+        bus.publish(&global);
         recorder.uninstall(&bus);
-        bus.publish(Topic::Global, &json!({"value": 2}));
+        bus.publish(&global);
         assert_eq!(recorder.events().len(), 1);
 
         let mut normalizer = Normalizer::new();

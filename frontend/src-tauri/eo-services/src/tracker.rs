@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDateTime;
 use eo_wire::domain_events::{
-    DomainEvent, TrackingReason, TrackingSessionUpdated, TrackingSessionUpdatedPayload,
+    TrackingReason, TrackingSessionUpdated, TrackingSessionUpdatedPayload,
     TrackingSessionUpdatedTag, TrackingStatus,
 };
 use eo_wire::normalizer::round_half_even;
@@ -45,6 +45,7 @@ use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use sqlx::Row;
 use tokio::runtime::Handle;
 
+use crate::bus_events::{BusEvent, CombatPayload, GlobalPayload, SessionLifecyclePayload};
 use crate::clock::Clock;
 use crate::cost_engine::cost_per_shot_from_props;
 use crate::db::{decoded_f64, DbError};
@@ -54,7 +55,7 @@ use crate::mob_lookup_service::python_whitespace;
 use crate::session_summary::write_session_summary;
 use crate::tool_inference::DamageAttributor;
 use crate::tracking_models::{
-    ActiveSessionView, Kill, LootItem, ToolStats, TrackingReadout, TrackingSession,
+    ActiveSessionView, Kill, ToolStats, TrackingReadout, TrackingSession,
 };
 
 /// Loot groups with an identical fingerprint within this window are
@@ -887,10 +888,10 @@ impl HuntTracker {
             Ok::<(), DbError>(())
         })?;
 
-        self.bus.publish(
-            Topic::SessionStarted,
-            &serde_json::json!({"session_id": session_id}),
-        );
+        self.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: session_id.clone(),
+            }));
         self.emit_session_event(
             TrackingReason::Started,
             TrackingStatus::Active,
@@ -952,10 +953,10 @@ impl HuntTracker {
             Ok::<(), DbError>(())
         })?;
 
-        self.bus.publish(
-            Topic::SessionStopped,
-            &serde_json::json!({"session_id": session_id}),
-        );
+        self.bus
+            .publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+                session_id: session_id.clone(),
+            }));
         // `end_time` was stamped from the injected clock above, so the
         // required `occurred_at` always carries the stop instant.
         self.emit_session_event(
@@ -981,7 +982,7 @@ impl HuntTracker {
             return;
         }
         let mut subscriptions = self.subscriptions.lock().expect("subscriptions");
-        type Handler = fn(&HuntTracker, &Value);
+        type Handler = fn(&HuntTracker, &BusEvent);
         let pairs: [(Topic, Handler); 7] = [
             (Topic::Combat, Self::on_combat),
             (Topic::LootGroup, Self::on_loot),
@@ -1011,11 +1012,11 @@ impl HuntTracker {
     }
 
     /// Publish the coarse, frontend-facing tracking.session.updated
-    /// event: the typed envelope's JSON value rides the bus, so the
-    /// stream carries the same shape the original's model dump records
-    /// and the SSE bridge serialises. `occurred_at` is stamped from
-    /// the domain timestamp that triggered the event, not a fresh
-    /// clock read, so the event is deterministic under replay.
+    /// event: the typed envelope rides the bus directly, the same
+    /// shape the original's model dump records and the domain bridge
+    /// forwards. `occurred_at` is stamped from the domain timestamp
+    /// that triggered the event, not a fresh clock read, so the event
+    /// is deterministic under replay.
     fn emit_session_event(
         &self,
         reason: TrackingReason,
@@ -1023,18 +1024,17 @@ impl HuntTracker {
         occurred_ts: f64,
         session_id: Option<&str>,
     ) {
-        let event = DomainEvent::TrackingSessionUpdated(TrackingSessionUpdated {
-            topic: TrackingSessionUpdatedTag,
-            event_version: 1,
-            occurred_at: to_iso_utc(occurred_ts),
-            payload: TrackingSessionUpdatedPayload {
-                session_id: session_id.map(str::to_string),
-                status,
-                reason,
-            },
-        });
-        let value = serde_json::to_value(&event).expect("domain events always serialise");
-        self.bus.publish(Topic::TrackingSessionUpdated, &value);
+        self.bus
+            .publish(&BusEvent::TrackingSessionUpdated(TrackingSessionUpdated {
+                topic: TrackingSessionUpdatedTag,
+                event_version: 1,
+                occurred_at: to_iso_utc(occurred_ts),
+                payload: TrackingSessionUpdatedPayload {
+                    session_id: session_id.map(str::to_string),
+                    status,
+                    reason,
+                },
+            }));
     }
 
     fn refresh_loot_filter_locked(&self, state: &mut TrackerState) {
@@ -1384,31 +1384,37 @@ impl HuntTracker {
     /// mutates owned in-memory state, so it runs under the guard;
     /// there is no DB write or publish. Defensive incoming events
     /// stay out of the kills model.
-    fn on_combat(&self, data: &Value) {
+    fn on_combat(&self, event: &BusEvent) {
+        let BusEvent::Combat(payload) = event else {
+            return;
+        };
         let mut state = self.lock_state();
         if state.accumulator.is_none() {
             return;
         }
 
-        let event_type = data.get("type").and_then(Value::as_str).unwrap_or("");
-        let amount = data.get("amount").and_then(Value::as_f64).unwrap_or(0.0);
-        let timestamp = parse_bus_timestamp(data.get("timestamp"));
         // Whether this event actually changed the live session
         // readout: the coalesced tracking.session.updated fires only
         // on a real mutation, so a duplicate self-heal tick or an
-        // unhandled event type does not wake listeners for a no-op.
+        // unhandled combat kind does not wake listeners for a no-op.
         let mut mutated = false;
 
-        match event_type {
-            "damage_dealt" | "critical_hit" => {
-                self.record_offensive_shot(&mut state, amount, event_type == "critical_hit", true);
+        match payload {
+            CombatPayload::DamageDealt { amount, .. } => {
+                self.record_offensive_shot(&mut state, *amount, false, true);
                 mutated = true;
             }
-            "target_dodge" | "target_evade" | "target_jam" => {
+            CombatPayload::CriticalHit { amount, .. } => {
+                self.record_offensive_shot(&mut state, *amount, true, true);
+                mutated = true;
+            }
+            CombatPayload::TargetDodge { .. }
+            | CombatPayload::TargetEvade { .. }
+            | CombatPayload::TargetJam { .. } => {
                 self.record_offensive_shot(&mut state, 0.0, false, false);
                 mutated = true;
             }
-            "damage_received" => {
+            CombatPayload::DamageReceived { amount, .. } => {
                 state
                     .accumulator
                     .as_mut()
@@ -1416,11 +1422,11 @@ impl HuntTracker {
                     .damage_taken += amount;
                 mutated = true;
             }
-            "self_heal" => {
+            CombatPayload::SelfHeal { amount, timestamp } => {
                 // Deduplicate: tool activations produce multiple heal
                 // ticks in chat.log. Use the tool's reload time as the
                 // dedup window.
-                if let Some(timestamp) = timestamp {
+                if let Some(timestamp) = parse_timestamp_str(timestamp) {
                     let is_new_heal_activation = match state.last_heal_time {
                         None => true,
                         Some(last) => {
@@ -1429,7 +1435,7 @@ impl HuntTracker {
                     };
                     if is_new_heal_activation {
                         if (self.providers.weapon_attribution_trifecta)()
-                            && !heal_amount_matches_trifecta_tool(&state, amount)
+                            && !heal_amount_matches_trifecta_tool(&state, *amount)
                         {
                             return;
                         }
@@ -1447,7 +1453,13 @@ impl HuntTracker {
                     }
                 }
             }
-            _ => {}
+            // The player-defence kinds are parsed and recorded on the
+            // stream but do not move the session model, as before.
+            CombatPayload::PlayerDodge { .. }
+            | CombatPayload::PlayerEvade { .. }
+            | CombatPayload::PlayerJam { .. }
+            | CombatPayload::MobMiss { .. }
+            | CombatPayload::Deflect { .. } => {}
         }
 
         if mutated {
@@ -1460,35 +1472,31 @@ impl HuntTracker {
     /// the kill appended to the session under the guard; the kill is
     /// a detached value by then, so the persisting DB write runs
     /// after release.
-    fn on_loot(&self, data: &Value) {
+    fn on_loot(&self, event: &BusEvent) {
+        let BusEvent::LootGroup(group) = event else {
+            return;
+        };
         let kill = {
             let mut state = self.lock_state();
             if state.accumulator.is_none() || state.session.is_none() {
                 return;
             }
 
-            // A missing key reads as the original's `.get` default; a
-            // present non-list raises there (contained, no kill, no
-            // fingerprint stamp), so it drops the group here too.
-            let empty_items = Vec::new();
-            let items_raw = match data.get("items") {
-                None => &empty_items,
-                Some(Value::Array(items)) => items,
-                Some(_) => return,
-            };
-            let total_ped = data.get("total_ped").and_then(Value::as_f64).unwrap_or(0.0);
-            let now =
-                parse_bus_timestamp(data.get("timestamp")).unwrap_or_else(|| self.clock.now());
+            let total_ped = group.total_ped;
+            let now = group
+                .timestamp
+                .as_deref()
+                .and_then(parse_timestamp_str)
+                .unwrap_or_else(|| self.clock.now());
             let now_epoch = naive_to_epoch(now);
 
             // Loot deduplication (same fingerprint within 2s window).
-            let first_item = items_raw
+            let first_item = group
+                .items
                 .first()
-                .and_then(|item| item.get("item_name"))
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let fingerprint = (round_half_even(total_ped, 4), items_raw.len(), first_item);
+                .map(|item| item.item_name.clone())
+                .unwrap_or_default();
+            let fingerprint = (round_half_even(total_ped, 4), group.items.len(), first_item);
             if state.last_loot_fingerprint.as_ref() == Some(&fingerprint) {
                 if let Some(last) = state.last_loot_time {
                     if python_total_seconds(now - last) < LOOT_DEDUP_WINDOW_SECONDS {
@@ -1503,17 +1511,9 @@ impl HuntTracker {
             state.session_dirty = true;
 
             let mut items = Vec::new();
-            for item in items_raw {
-                let name = item.get("item_name").and_then(Value::as_str).unwrap_or("");
-                if is_tracked_loot(name, &state.loot_blacklist) {
-                    items.push(LootItem {
-                        item_name: name.to_string(),
-                        quantity: item.get("quantity").and_then(Value::as_i64).unwrap_or(1),
-                        value_ped: item.get("value_ped").and_then(Value::as_f64).unwrap_or(0.0),
-                        is_enhancer_shrapnel: item
-                            .get("is_enhancer_shrapnel")
-                            .is_some_and(value_truthy),
-                    });
+            for item in &group.items {
+                if is_tracked_loot(&item.item_name, &state.loot_blacklist) {
+                    items.push(item.clone());
                 }
             }
             let filtered_total_ped = round_half_even(
@@ -1579,20 +1579,19 @@ impl HuntTracker {
 
     /// Handle hotbar-driven weapon tool change: merges any 'Unknown'
     /// tool stats into the real tool when first detected.
-    fn on_tool_changed(&self, data: &Value) {
+    fn on_tool_changed(&self, event: &BusEvent) {
+        let BusEvent::ActiveToolChanged(payload) = event else {
+            return;
+        };
         let nudge_session_id = {
             let mut state = self.lock_state();
             if (self.providers.weapon_attribution_trifecta)() {
                 return;
             }
-            let Some(tool_name) = data
-                .get("tool_name")
-                .and_then(Value::as_str)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
-            else {
+            if payload.tool_name.is_empty() {
                 return;
-            };
+            }
+            let tool_name = payload.tool_name.clone();
             let tool_changed = state.active_hotbar_tool_name.as_deref() != Some(tool_name.as_str());
             state.active_hotbar_tool_name = Some(tool_name.clone());
 
@@ -1665,22 +1664,16 @@ impl HuntTracker {
     }
 
     /// Handle hotbar-driven heal tool equip.
-    fn on_heal_tool_changed(&self, data: &Value) {
+    fn on_heal_tool_changed(&self, event: &BusEvent) {
+        let BusEvent::ActiveHealToolChanged(payload) = event else {
+            return;
+        };
         if (self.providers.weapon_attribution_trifecta)() {
             return;
         }
-        let name = data
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        let cost = data
-            .get("cost_per_use_ped")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let reload_seconds = data
-            .get("reload_seconds")
-            .and_then(Value::as_f64)
-            .unwrap_or(2.5);
+        let name = Some(payload.tool_name.clone());
+        let cost = payload.cost_per_use_ped;
+        let reload_seconds = payload.reload_seconds;
 
         let nudge_session_id = {
             let mut state = self.lock_state();
@@ -1714,7 +1707,36 @@ impl HuntTracker {
     /// recently created kill (globals arrive shortly after loot). The
     /// in-memory tag lands under the guard, capturing the values the
     /// DB writes need; the UPDATE/INSERT run after release.
-    fn on_global(&self, data: &Value) {
+    fn on_global(&self, event: &BusEvent) {
+        let BusEvent::Global(payload) = event else {
+            return;
+        };
+        let (event_type, player, subject, raw_value, raw_ts) = match payload {
+            GlobalPayload::GlobalKill {
+                timestamp,
+                player,
+                creature,
+                value,
+            } => ("global_kill", player, creature, *value, timestamp),
+            GlobalPayload::HofKill {
+                timestamp,
+                player,
+                creature,
+                value,
+            } => ("hof_kill", player, creature, *value, timestamp),
+            GlobalPayload::GlobalItem {
+                timestamp,
+                player,
+                item,
+                value,
+            } => ("global_item", player, item, *value, timestamp),
+            GlobalPayload::HofItem {
+                timestamp,
+                player,
+                item,
+                value,
+            } => ("hof_item", player, item, *value, timestamp),
+        };
         let (session_id, kill_id, target_is_hof, event_type, mob_or_item, value_ped, ts) = {
             let mut state = self.lock_state();
             if state.session.is_none() {
@@ -1722,7 +1744,6 @@ impl HuntTracker {
             }
 
             // Filter for own player.
-            let player = data.get("player").and_then(Value::as_str).unwrap_or("");
             if self.providers.player_name.is_empty()
                 || player.to_lowercase() != self.providers.player_name.to_lowercase()
             {
@@ -1731,23 +1752,17 @@ impl HuntTracker {
 
             state.session_dirty = true;
             let session_id = state.session.as_ref().expect("checked above").id.clone();
-            let event_type = data
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            // `data.get("creature") or data.get("item") or "Unknown"`:
-            // the falsy chain, so an empty creature falls through.
-            let mob_or_item = [data.get("creature"), data.get("item")]
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .find(|name| !name.is_empty())
-                .unwrap_or("Unknown")
-                .to_string();
-            let value_ped = data.get("value").and_then(Value::as_f64).unwrap_or(0.0);
+            let event_type = event_type.to_string();
+            // The original's falsy chain on creature/item: an empty
+            // subject falls through to "Unknown".
+            let mob_or_item = if subject.is_empty() {
+                "Unknown".to_string()
+            } else {
+                subject.clone()
+            };
+            let value_ped = raw_value;
             let is_hof = matches!(event_type.as_str(), "hof_kill" | "hof_item");
-            let ts = parse_bus_timestamp(data.get("timestamp"))
+            let ts = parse_timestamp_str(raw_ts)
                 .map(naive_to_epoch)
                 .unwrap_or_else(|| naive_to_epoch(self.clock.now()));
 
@@ -1815,21 +1830,21 @@ impl HuntTracker {
 
     /// Handle an enhancer break event: update enhancer state for
     /// future shots. There is no DB write or publish.
-    fn on_enhancer_break(&self, data: &Value) {
+    fn on_enhancer_break(&self, event: &BusEvent) {
+        let BusEvent::EnhancerBreak(payload) = event else {
+            return;
+        };
         let mut state = self.lock_state();
         if state.accumulator.is_none() {
             return;
         }
 
-        let enhancer_name = data
-            .get("enhancer_name")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let item_name = data.get("item_name").and_then(Value::as_str).unwrap_or("");
-        // The original narrows with `isinstance(remaining, int)`; a
-        // fractional or missing count falls back to the
-        // decrement-one-slot path.
-        let remaining = data.get("remaining").and_then(Value::as_i64);
+        let enhancer_name = payload.enhancer_name.as_str();
+        let item_name = payload.item_name.as_str();
+        // The payload's break count drives the stack update directly
+        // (the parser guarantees an integer; the old missing-count
+        // decrement-one fallback had no producer).
+        let remaining = Some(payload.remaining);
 
         let applies = {
             let weapon = state
@@ -1869,7 +1884,10 @@ impl HuntTracker {
     /// tick actually changed the live session readout, stamped with
     /// the tick's own timestamp (already on the tick's loot/combat
     /// events) or the injected clock when the tick carries none.
-    fn on_tick_flushed(&self, data: &Value) {
+    fn on_tick_flushed(&self, event: &BusEvent) {
+        let BusEvent::TickFlushed(payload) = event else {
+            return;
+        };
         // Read/reset the dirty flag under the guard; publish after
         // release so a subscriber never runs while this tracker holds
         // its lock.
@@ -1886,24 +1904,17 @@ impl HuntTracker {
             session_id
         };
         // The original's three-way stamp: a datetime-equivalent string
-        // takes its instant, anything else present goes through
+        // takes its instant, an epoch-float string goes through
         // `float()` (an unparseable value raises there, contained with
         // the dirty flag already consumed: no event), and an absent
         // timestamp falls back to the injected clock.
-        let raw_ts = data.get("timestamp");
-        let occurred_ts = match raw_ts {
-            None | Some(Value::Null) => naive_to_epoch(self.clock.now()),
-            Some(value) => match parse_bus_timestamp(Some(value)) {
+        let occurred_ts = match &payload.timestamp {
+            None => naive_to_epoch(self.clock.now()),
+            Some(text) => match parse_timestamp_str(text) {
                 Some(instant) => naive_to_epoch(instant),
-                None => match value {
-                    Value::String(text) => match text.trim().parse::<f64>() {
-                        Ok(numeric) => numeric,
-                        Err(_) => return,
-                    },
-                    other => match other.as_f64() {
-                        Some(numeric) => numeric,
-                        None => return,
-                    },
+                None => match text.trim().parse::<f64>() {
+                    Ok(numeric) => numeric,
+                    Err(_) => return,
                 },
             },
         };
@@ -2118,9 +2129,16 @@ fn value_truthy(value: &Value) -> bool {
 /// Bus payload timestamps are the watcher's isoformat strings (whole
 /// seconds; a fractional suffix is tolerated for symmetry with the
 /// harness normaliser); the original receives `datetime` objects on
-/// its in-process bus.
+/// its in-process bus. Typed payloads carry their timestamps as
+/// `String` now, so only the pinning test still reads through `Value`.
+#[cfg(test)]
 pub(crate) fn parse_bus_timestamp(value: Option<&Value>) -> Option<NaiveDateTime> {
-    let raw = value?.as_str()?;
+    parse_timestamp_str(value?.as_str()?)
+}
+
+/// The payload timestamp form (isoformat, with or without fractional
+/// seconds) parsed back to the instant.
+pub(crate) fn parse_timestamp_str(raw: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f")
         .or_else(|_| NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S"))
         .ok()
@@ -2206,6 +2224,10 @@ pub fn to_iso_utc(ts: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus_events::{
+        ActiveHealToolChangedPayload, ActiveToolChangedPayload, EnhancerBreakPayload,
+        EnhancerBreakTag, LootGroupPayload, LootItem, LootTag, TickFlushedPayload,
+    };
     use crate::clock::MockClock;
     use crate::db::Db;
     use serde_json::json;
@@ -2254,8 +2276,10 @@ mod tests {
         fn capture(&self) -> Arc<StdMutex<Vec<(Topic, Value)>>> {
             let captured = Arc::new(StdMutex::new(Vec::new()));
             let sink = captured.clone();
-            self.bus.add_tap(move |topic, data| {
-                sink.lock().unwrap().push((topic, data.clone()));
+            self.bus.add_tap(move |event| {
+                sink.lock()
+                    .unwrap()
+                    .push((event.topic(), event.payload_value()));
             });
             captured
         }
@@ -2340,31 +2364,45 @@ mod tests {
         // Accumulate one kill with both shrapnel kinds, plus dangling
         // shots after it.
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Rifle"}));
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 30.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({
-                "type": "loot",
-                "timestamp": "2026-01-01T00:00:02",
-                "items": [
-                    {"item_name": "Animal Hide", "quantity": 1, "value_ped": 4.5,
-                     "is_enhancer_shrapnel": false},
-                    {"item_name": "Shrapnel", "quantity": 50, "value_ped": 0.5,
-                     "is_enhancer_shrapnel": false},
-                    {"item_name": "Shrapnel", "quantity": 10, "value_ped": 0.1,
-                     "is_enhancer_shrapnel": true},
-                ],
-                "total_ped": 5.1,
-            }),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 7.5, "timestamp": "2026-01-01T00:00:03"}),
-        );
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Rifle".into(),
+                source: None,
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 30.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:02".into()),
+            items: vec![
+                LootItem {
+                    item_name: "Animal Hide".into(),
+                    quantity: 1,
+                    value_ped: 4.5,
+                    is_enhancer_shrapnel: false,
+                },
+                LootItem {
+                    item_name: "Shrapnel".into(),
+                    quantity: 50,
+                    value_ped: 0.5,
+                    is_enhancer_shrapnel: false,
+                },
+                LootItem {
+                    item_name: "Shrapnel".into(),
+                    quantity: 10,
+                    value_ped: 0.1,
+                    is_enhancer_shrapnel: true,
+                },
+            ],
+            total_ped: 5.1,
+        }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 7.5,
+                timestamp: "2026-01-01T00:00:03".into(),
+            }));
 
         // A skill gain qualifies the session for a summary.
         rig.runtime.block_on(async {
@@ -2436,11 +2474,12 @@ mod tests {
         );
 
         // Producer events after the stop reach nothing.
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:11",
-                    "items": [], "total_ped": 0.0}),
-        );
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:11".into()),
+            items: vec![],
+            total_ped: 0.0,
+        }));
         assert_eq!(rig.scalar_i64("SELECT COUNT(*) FROM kills", &[]), 1);
 
         // The lifecycle's domain events: started, the hotbar weapon-switch
@@ -2645,41 +2684,55 @@ mod tests {
         });
         let session = tracker.start_session().unwrap();
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Rifle"}));
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 30.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "critical_hit", "amount": 10.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "target_dodge", "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_received", "amount": 5.0,
-                    "timestamp": "2026-01-01T00:00:01"}),
-        );
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Rifle".into(),
+                source: None,
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 30.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::CriticalHit {
+                amount: 10.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::TargetDodge {
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageReceived {
+                amount: 5.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
 
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({
-                "type": "loot",
-                "timestamp": "2026-01-01T00:00:02",
-                "items": [
-                    {"item_name": "Animal Hide", "quantity": 1, "value_ped": 4.5,
-                     "is_enhancer_shrapnel": false},
-                    {"item_name": "Universal Ammo", "quantity": 20, "value_ped": 0.2,
-                     "is_enhancer_shrapnel": false},
-                    {"item_name": "Shrapnel", "quantity": 10, "value_ped": 0.1,
-                     "is_enhancer_shrapnel": true},
-                ],
-                "total_ped": 4.8,
-            }),
-        );
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:02".into()),
+            items: vec![
+                LootItem {
+                    item_name: "Animal Hide".into(),
+                    quantity: 1,
+                    value_ped: 4.5,
+                    is_enhancer_shrapnel: false,
+                },
+                LootItem {
+                    item_name: "Universal Ammo".into(),
+                    quantity: 20,
+                    value_ped: 0.2,
+                    is_enhancer_shrapnel: false,
+                },
+                LootItem {
+                    item_name: "Shrapnel".into(),
+                    quantity: 10,
+                    value_ped: 0.1,
+                    is_enhancer_shrapnel: true,
+                },
+            ],
+            total_ped: 4.8,
+        }));
 
         let kill_id: String = rig.runtime.block_on(async {
             sqlx::query("SELECT id FROM kills WHERE session_id = ?")
@@ -2748,13 +2801,17 @@ mod tests {
 
         // The accumulator reset: an immediate second group carries
         // zero shots.
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:04",
-                    "items": [{"item_name": "Mud", "quantity": 1, "value_ped": 0.03,
-                               "is_enhancer_shrapnel": false}],
-                    "total_ped": 0.03}),
-        );
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:04".into()),
+            items: vec![LootItem {
+                item_name: "Mud".into(),
+                quantity: 1,
+                value_ped: 0.03,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 0.03,
+        }));
         assert_eq!(
             rig.scalar_i64(
                 "SELECT shots_fired FROM kills WHERE session_id = ? AND id != ?",
@@ -2771,38 +2828,37 @@ mod tests {
         tracker.start_session().unwrap();
 
         let group = |ts: &str| {
-            json!({"type": "loot", "timestamp": ts,
-                   "items": [{"item_name": "Animal Hide", "quantity": 1, "value_ped": 1.0,
-                              "is_enhancer_shrapnel": false}],
-                   "total_ped": 1.0})
+            BusEvent::LootGroup(LootGroupPayload {
+                kind: LootTag,
+                timestamp: Some(ts.into()),
+                items: vec![LootItem {
+                    item_name: "Animal Hide".into(),
+                    quantity: 1,
+                    value_ped: 1.0,
+                    is_enhancer_shrapnel: false,
+                }],
+                total_ped: 1.0,
+            })
         };
-        rig.bus
-            .publish(Topic::LootGroup, &group("2026-01-01T00:00:02"));
+        rig.bus.publish(&group("2026-01-01T00:00:02"));
         // Identical fingerprint inside the strict 2s window: dropped.
-        rig.bus
-            .publish(Topic::LootGroup, &group("2026-01-01T00:00:03"));
+        rig.bus.publish(&group("2026-01-01T00:00:03"));
         assert_eq!(rig.scalar_i64("SELECT COUNT(*) FROM kills", &[]), 1);
         // Exactly the window: recorded (the comparison is strict).
-        rig.bus
-            .publish(Topic::LootGroup, &group("2026-01-01T00:00:04"));
+        rig.bus.publish(&group("2026-01-01T00:00:04"));
         assert_eq!(rig.scalar_i64("SELECT COUNT(*) FROM kills", &[]), 2);
         // A different fingerprint inside the window: recorded.
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:05",
-                    "items": [{"item_name": "Mud", "quantity": 1, "value_ped": 1.0,
-                               "is_enhancer_shrapnel": false}],
-                    "total_ped": 1.0}),
-        );
-        assert_eq!(rig.scalar_i64("SELECT COUNT(*) FROM kills", &[]), 3);
-
-        // A present non-list items payload drops the group entirely
-        // (the original raises there, contained: no kill).
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:09",
-                    "items": null, "total_ped": 1.0}),
-        );
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:05".into()),
+            items: vec![LootItem {
+                item_name: "Mud".into(),
+                quantity: 1,
+                value_ped: 1.0,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 1.0,
+        }));
         assert_eq!(rig.scalar_i64("SELECT COUNT(*) FROM kills", &[]), 3);
     }
 
@@ -2821,62 +2877,82 @@ mod tests {
 
         let session = tracker.start_session().unwrap();
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Rifle"}));
-        rig.bus.publish(
-            Topic::ActiveHealToolChanged,
-            &json!({"tool_name": "FAP", "cost_per_use_ped": 0.02, "reload_seconds": 2.5}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 30.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "critical_hit", "amount": 10.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "target_dodge", "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:02",
-                    "items": [{"item_name": "Animal Hide", "quantity": 1, "value_ped": 5.0,
-                               "is_enhancer_shrapnel": false}],
-                    "total_ped": 5.0}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 20.0, "timestamp": "2026-01-01T00:00:03"}),
-        );
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:04",
-                    "items": [{"item_name": "Mud", "quantity": 1, "value_ped": 0.03,
-                               "is_enhancer_shrapnel": false}],
-                    "total_ped": 0.03}),
-        );
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Rifle".into(),
+                source: None,
+            }));
+        rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+            ActiveHealToolChangedPayload {
+                tool_name: "FAP".into(),
+                cost_per_use_ped: 0.02,
+                reload_seconds: 2.5,
+                source: None,
+            },
+        ));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 30.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::CriticalHit {
+                amount: 10.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::TargetDodge {
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:02".into()),
+            items: vec![LootItem {
+                item_name: "Animal Hide".into(),
+                quantity: 1,
+                value_ped: 5.0,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 5.0,
+        }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 20.0,
+                timestamp: "2026-01-01T00:00:03".into(),
+            }));
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:04".into()),
+            items: vec![LootItem {
+                item_name: "Mud".into(),
+                quantity: 1,
+                value_ped: 0.03,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 0.03,
+        }));
         // In-flight accumulator damage after the latest kill.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 7.5, "timestamp": "2026-01-01T00:00:05"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 7.5,
+                timestamp: "2026-01-01T00:00:05".into(),
+            }));
         // Two counted heals (the second exactly at the reload bound).
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 12.0, "timestamp": "2026-01-01T00:00:05"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 12.0,
-                    "timestamp": "2026-01-01T00:00:07.500000"}),
-        );
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 12.0,
+            timestamp: "2026-01-01T00:00:05".into(),
+        }));
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 12.0,
+            timestamp: "2026-01-01T00:00:07.500000".into(),
+        }));
         // A global correlated to the latest kill.
-        rig.bus.publish(
-            Topic::Global,
-            &json!({"type": "global_kill", "player": "hero", "creature": "Atrox",
-                    "value": 12.0, "timestamp": "2026-01-01T00:00:05"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Global(GlobalPayload::GlobalKill {
+                timestamp: "2026-01-01T00:00:05".into(),
+                player: "hero".into(),
+                creature: "Atrox".into(),
+                value: 12.0,
+            }));
         rig.runtime.block_on(async {
             sqlx::query(
                 "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
@@ -2948,25 +3024,32 @@ mod tests {
         tracker.start_session().unwrap();
 
         // Shots before any tool is known accumulate under "Unknown".
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 9.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "critical_hit", "amount": 4.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Pistol"}));
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 6.0, "timestamp": "2026-01-01T00:00:02"}),
-        );
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:03",
-                    "items": [], "total_ped": 0.0}),
-        );
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 9.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::CriticalHit {
+                amount: 4.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Pistol".into(),
+                source: None,
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 6.0,
+                timestamp: "2026-01-01T00:00:02".into(),
+            }));
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:03".into()),
+            items: vec![],
+            total_ped: 0.0,
+        }));
 
         let rows: Vec<(String, i64, f64, i64, f64)> = rig.runtime.block_on(async {
             sqlx::query(
@@ -3040,14 +3123,14 @@ mod tests {
         tracker.start_session().unwrap();
 
         // No heal tool equipped: the warning lands once, no cost.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 10.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 10.0, "timestamp": "2026-01-01T00:00:09"}),
-        );
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 10.0,
+            timestamp: "2026-01-01T00:00:01".into(),
+        }));
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 10.0,
+            timestamp: "2026-01-01T00:00:09".into(),
+        }));
         {
             let state = tracker.state.lock().unwrap();
             assert_eq!(
@@ -3057,24 +3140,28 @@ mod tests {
             assert_eq!(state.session_heal_cost, 0.0);
         }
 
-        rig.bus.publish(
-            Topic::ActiveHealToolChanged,
-            &json!({"tool_name": "FAP", "cost_per_use_ped": 0.03, "reload_seconds": 5.0}),
-        );
+        rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+            ActiveHealToolChangedPayload {
+                tool_name: "FAP".into(),
+                cost_per_use_ped: 0.03,
+                reload_seconds: 5.0,
+                source: None,
+            },
+        ));
         // Counted; then inside the 5s reload window (deduped); then at
         // the bound (counted: the comparison admits equality).
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 10.0, "timestamp": "2026-01-01T00:00:20"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 10.0, "timestamp": "2026-01-01T00:00:24"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 10.0, "timestamp": "2026-01-01T00:00:25"}),
-        );
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 10.0,
+            timestamp: "2026-01-01T00:00:20".into(),
+        }));
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 10.0,
+            timestamp: "2026-01-01T00:00:24".into(),
+        }));
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 10.0,
+            timestamp: "2026-01-01T00:00:25".into(),
+        }));
         let state = tracker.state.lock().unwrap();
         assert_eq!(state.session_heal_cost, 0.06);
         assert_eq!(state.session_warnings.len(), 1, "the warning fires once");
@@ -3090,30 +3177,39 @@ mod tests {
         let session = tracker.start_session().unwrap();
 
         let loot = |ts: &str, value: f64| {
-            json!({"type": "loot", "timestamp": ts,
-                   "items": [{"item_name": "Animal Hide", "quantity": 1, "value_ped": value,
-                              "is_enhancer_shrapnel": false}],
-                   "total_ped": value})
+            BusEvent::LootGroup(LootGroupPayload {
+                kind: LootTag,
+                timestamp: Some(ts.into()),
+                items: vec![LootItem {
+                    item_name: "Animal Hide".into(),
+                    quantity: 1,
+                    value_ped: value,
+                    is_enhancer_shrapnel: false,
+                }],
+                total_ped: value,
+            })
         };
-        rig.bus
-            .publish(Topic::LootGroup, &loot("2026-01-01T00:00:02", 1.0));
+        rig.bus.publish(&loot("2026-01-01T00:00:02", 1.0));
         // The wrong player never lands.
-        rig.bus.publish(
-            Topic::Global,
-            &json!({"type": "global_kill", "player": "Villain", "creature": "Atrox",
-                    "value": 8.0, "timestamp": "2026-01-01T00:00:03"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Global(GlobalPayload::GlobalKill {
+                timestamp: "2026-01-01T00:00:03".into(),
+                player: "Villain".into(),
+                creature: "Atrox".into(),
+                value: 8.0,
+            }));
         assert_eq!(
             rig.scalar_i64("SELECT COUNT(*) FROM notable_events", &[]),
             0
         );
         // Case-insensitive match (the configured name is stripped at
         // construction); a HoF inside the window tags the kill.
-        rig.bus.publish(
-            Topic::Global,
-            &json!({"type": "hof_kill", "player": "HERO", "creature": "Atrox",
-                    "value": 120.0, "timestamp": "2026-01-01T00:00:04"}),
-        );
+        rig.bus.publish(&BusEvent::Global(GlobalPayload::HofKill {
+            timestamp: "2026-01-01T00:00:04".into(),
+            player: "HERO".into(),
+            creature: "Atrox".into(),
+            value: 120.0,
+        }));
         assert_eq!(
             rig.scalar_i64(
                 "SELECT COUNT(*) FROM kills WHERE is_global = 1 AND is_hof = 1",
@@ -3131,13 +3227,14 @@ mod tests {
 
         // A stale global (past the 5s window) records the notable
         // event with no kill correlation.
+        rig.bus.publish(&loot("2026-01-01T00:00:10", 2.0));
         rig.bus
-            .publish(Topic::LootGroup, &loot("2026-01-01T00:00:10", 2.0));
-        rig.bus.publish(
-            Topic::Global,
-            &json!({"type": "global_kill", "player": "Hero", "item": "Rare Thing",
-                    "value": 50.0, "timestamp": "2026-01-01T00:00:16"}),
-        );
+            .publish(&BusEvent::Global(GlobalPayload::GlobalKill {
+                timestamp: "2026-01-01T00:00:16".into(),
+                player: "Hero".into(),
+                creature: "Rare Thing".into(),
+                value: 50.0,
+            }));
         assert_eq!(
             rig.scalar_i64(
                 "SELECT COUNT(*) FROM notable_events WHERE kill_id IS NULL \
@@ -3161,11 +3258,13 @@ mod tests {
         // An empty configured player name disables correlation.
         let unnamed = rig.tracker(Providers::default());
         unnamed.start_session().unwrap();
-        rig.bus.publish(
-            Topic::Global,
-            &json!({"type": "global_kill", "player": "", "creature": "Atrox",
-                    "value": 1.0, "timestamp": "2026-01-01T00:00:20"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Global(GlobalPayload::GlobalKill {
+                timestamp: "2026-01-01T00:00:20".into(),
+                player: "".into(),
+                creature: "Atrox".into(),
+                value: 1.0,
+            }));
         assert_eq!(
             rig.scalar_i64("SELECT COUNT(*) FROM notable_events", &[]),
             2
@@ -3189,7 +3288,10 @@ mod tests {
         });
         tracker.start_session().unwrap();
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Rifle"}));
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Rifle".into(),
+                source: None,
+            }));
         {
             let state = tracker.state.lock().unwrap();
             assert_eq!(
@@ -3204,16 +3306,24 @@ mod tests {
 
         // A non-damage enhancer never applies; a damage break naming
         // a different item never applies.
-        rig.bus.publish(
-            Topic::EnhancerBreak,
-            &json!({"type": "enhancer_break", "enhancer_name": "Accuracy Enhancer 5",
-                    "item_name": "Rifle Prime", "remaining": 150}),
-        );
-        rig.bus.publish(
-            Topic::EnhancerBreak,
-            &json!({"type": "enhancer_break", "enhancer_name": "Damage Enhancer 5",
-                    "item_name": "Sword", "remaining": 150}),
-        );
+        rig.bus
+            .publish(&BusEvent::EnhancerBreak(EnhancerBreakPayload {
+                kind: EnhancerBreakTag,
+                timestamp: "2026-01-01T00:00:01".into(),
+                enhancer_name: "Accuracy Enhancer 5".into(),
+                item_name: "Rifle Prime".into(),
+                remaining: 150,
+                shrapnel_ped: 0.0,
+            }));
+        rig.bus
+            .publish(&BusEvent::EnhancerBreak(EnhancerBreakPayload {
+                kind: EnhancerBreakTag,
+                timestamp: "2026-01-01T00:00:01".into(),
+                enhancer_name: "Damage Enhancer 5".into(),
+                item_name: "Sword".into(),
+                remaining: 150,
+                shrapnel_ped: 0.0,
+            }));
         {
             let state = tracker.state.lock().unwrap();
             assert_eq!(
@@ -3223,14 +3333,17 @@ mod tests {
         }
 
         // A matching break with a remaining count redistributes,
-        // front-loading the remainder; one without decrements the
-        // last positive slot. The match admits the observed hotbar
-        // spelling and lowercased-alphanumeric containment.
-        rig.bus.publish(
-            Topic::EnhancerBreak,
-            &json!({"type": "enhancer_break", "enhancer_name": "Damage Enhancer 5",
-                    "item_name": "rifle-prime", "remaining": 151}),
-        );
+        // front-loading the remainder. The match admits the observed
+        // hotbar spelling and lowercased-alphanumeric containment.
+        rig.bus
+            .publish(&BusEvent::EnhancerBreak(EnhancerBreakPayload {
+                kind: EnhancerBreakTag,
+                timestamp: "2026-01-01T00:00:01".into(),
+                enhancer_name: "Damage Enhancer 5".into(),
+                item_name: "rifle-prime".into(),
+                remaining: 151,
+                shrapnel_ped: 0.0,
+            }));
         {
             let state = tracker.state.lock().unwrap();
             assert_eq!(
@@ -3238,15 +3351,19 @@ mod tests {
                 vec![76, 75]
             );
         }
-        rig.bus.publish(
-            Topic::EnhancerBreak,
-            &json!({"type": "enhancer_break", "enhancer_name": "damage enh",
-                    "item_name": "Rifle"}),
-        );
+        rig.bus
+            .publish(&BusEvent::EnhancerBreak(EnhancerBreakPayload {
+                kind: EnhancerBreakTag,
+                timestamp: "2026-01-01T00:00:01".into(),
+                enhancer_name: "damage enh".into(),
+                item_name: "Rifle".into(),
+                remaining: 150,
+                shrapnel_ped: 0.0,
+            }));
         let state = tracker.state.lock().unwrap();
         assert_eq!(
             state.weapon_enhancer_states["Rifle Prime"].stacks,
-            vec![76, 74]
+            vec![75, 75]
         );
     }
 
@@ -3306,11 +3423,18 @@ mod tests {
 
         // Hotbar-driven changes are ignored in trifecta mode.
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Sword"}));
-        rig.bus.publish(
-            Topic::ActiveHealToolChanged,
-            &json!({"tool_name": "Other", "cost_per_use_ped": 9.9}),
-        );
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Sword".into(),
+                source: None,
+            }));
+        rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+            ActiveHealToolChangedPayload {
+                tool_name: "Other".into(),
+                cost_per_use_ped: 9.9,
+                reload_seconds: 2.5,
+                source: None,
+            },
+        ));
         {
             let state = tracker.state.lock().unwrap();
             assert_eq!(state.active_hotbar_tool_name, None);
@@ -3318,30 +3442,33 @@ mod tests {
             assert_eq!(state.heal_cost_per_use_ped, 0.02);
         }
 
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 7.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 7.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
         // Unmatched damage warns once and lands under "Unknown".
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 0.5, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 0.5, "timestamp": "2026-01-01T00:00:01"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 0.5,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 0.5,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
         // A critical inside the big weapon's regular band prefers the
         // big regular explanation.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "critical_hit", "amount": 25.0, "timestamp": "2026-01-01T00:00:02"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::CriticalHit {
+                amount: 25.0,
+                timestamp: "2026-01-01T00:00:02".into(),
+            }));
         // A countered shot attributes to the last offensive tool.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "target_jam", "timestamp": "2026-01-01T00:00:02"}),
-        );
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::TargetJam {
+            timestamp: "2026-01-01T00:00:02".into(),
+        }));
         {
             let state = tracker.state.lock().unwrap();
             let stats: Vec<(String, i64, f64)> = state
@@ -3368,19 +3495,19 @@ mod tests {
 
         // The trifecta heal band filters mismatched heal amounts
         // entirely (no dedup stamp, no cost).
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 50.0, "timestamp": "2026-01-01T00:00:03"}),
-        );
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 50.0,
+            timestamp: "2026-01-01T00:00:03".into(),
+        }));
         {
             let state = tracker.state.lock().unwrap();
             assert_eq!(state.session_heal_cost, 0.0);
             assert_eq!(state.last_heal_time, None);
         }
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "self_heal", "amount": 15.0, "timestamp": "2026-01-01T00:00:04"}),
-        );
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+            amount: 15.0,
+            timestamp: "2026-01-01T00:00:04".into(),
+        }));
         let state = tracker.state.lock().unwrap();
         assert_eq!(state.session_heal_cost, 0.02);
     }
@@ -3408,11 +3535,12 @@ mod tests {
             ..Providers::default()
         });
         let session = tagged.start_session().unwrap();
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:02",
-                    "items": [], "total_ped": 0.0}),
-        );
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:02".into()),
+            items: vec![],
+            total_ped: 0.0,
+        }));
         let mob: String = rig.runtime.block_on(async {
             sqlx::query("SELECT mob_name FROM kills WHERE session_id = ?")
                 .bind(&session.id)
@@ -3509,10 +3637,14 @@ mod tests {
         assert!(!tracker.is_tracking());
 
         tracker.start_session().unwrap();
-        rig.bus.publish(
-            Topic::ActiveHealToolChanged,
-            &json!({"tool_name": "FAP", "cost_per_use_ped": 0.03, "reload_seconds": 5.0}),
-        );
+        rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+            ActiveHealToolChangedPayload {
+                tool_name: "FAP".into(),
+                cost_per_use_ped: 0.03,
+                reload_seconds: 5.0,
+                source: None,
+            },
+        ));
         {
             let state = tracker.state.lock().unwrap();
             assert_eq!(state.confirmed_mob_name, "Young Atrox");
@@ -3545,22 +3677,21 @@ mod tests {
         let session = tracker.start_session().unwrap();
 
         // A clean tick wakes nothing.
-        rig.bus.publish(
-            Topic::TickFlushed,
-            &json!({"timestamp": "2026-01-01T00:00:01"}),
-        );
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("2026-01-01T00:00:01".into()),
+        }));
         assert_eq!(updated_events(&captured).len(), 1, "only the start event");
 
         // A mutating event then a tick: one update stamped with the
         // tick's own instant.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 5.0, "timestamp": "2026-01-01T00:00:02"}),
-        );
-        rig.bus.publish(
-            Topic::TickFlushed,
-            &json!({"timestamp": "2026-01-01T00:00:02"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 5.0,
+                timestamp: "2026-01-01T00:00:02".into(),
+            }));
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("2026-01-01T00:00:02".into()),
+        }));
         let events = updated_events(&captured);
         assert_eq!(events.len(), 2);
         assert_eq!(
@@ -3574,29 +3705,32 @@ mod tests {
         );
 
         // The dirty flag resets: the next tick is silent again.
-        rig.bus.publish(
-            Topic::TickFlushed,
-            &json!({"timestamp": "2026-01-01T00:00:03"}),
-        );
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("2026-01-01T00:00:03".into()),
+        }));
         assert_eq!(updated_events(&captured).len(), 2);
 
-        // A numeric tick timestamp passes straight through; a null
-        // one falls back to the injected clock.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 5.0, "timestamp": "2026-01-01T00:00:04"}),
-        );
+        // An epoch-numeric tick stamp passes straight through the
+        // float() leg; an absent one falls back to the injected clock.
         rig.bus
-            .publish(Topic::TickFlushed, &json!({"timestamp": 1735680000.0}));
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 5.0,
+                timestamp: "2026-01-01T00:00:04".into(),
+            }));
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("1735680000.0".into()),
+        }));
         let events = updated_events(&captured);
         assert_eq!(events[2]["occurred_at"], "2024-12-31T21:20:00+00:00");
 
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 5.0, "timestamp": "2026-01-01T00:00:05"}),
-        );
         rig.bus
-            .publish(Topic::TickFlushed, &json!({"timestamp": null}));
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 5.0,
+                timestamp: "2026-01-01T00:00:05".into(),
+            }));
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: None,
+        }));
         let events = updated_events(&captured);
         assert_eq!(
             events[3]["occurred_at"],
@@ -3607,28 +3741,31 @@ mod tests {
         // An unparseable timestamp drops the event (the original's
         // float() raise, contained) with the dirty flag consumed; a
         // numeric string passes through float() instead.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 5.0, "timestamp": "2026-01-01T00:00:06"}),
-        );
         rig.bus
-            .publish(Topic::TickFlushed, &json!({"timestamp": "garbage"}));
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 5.0,
+                timestamp: "2026-01-01T00:00:06".into(),
+            }));
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("garbage".into()),
+        }));
         assert_eq!(updated_events(&captured).len(), 4);
-        rig.bus.publish(
-            Topic::TickFlushed,
-            &json!({"timestamp": "2026-01-01T00:00:07"}),
-        );
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("2026-01-01T00:00:07".into()),
+        }));
         assert_eq!(
             updated_events(&captured).len(),
             4,
             "the dropped event consumed the dirty flag"
         );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 5.0, "timestamp": "2026-01-01T00:00:08"}),
-        );
         rig.bus
-            .publish(Topic::TickFlushed, &json!({"timestamp": "1735680000.5"}));
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 5.0,
+                timestamp: "2026-01-01T00:00:08".into(),
+            }));
+        rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: Some("1735680000.5".into()),
+        }));
         let events = updated_events(&captured);
         assert_eq!(events[4]["occurred_at"], "2024-12-31T21:20:00.500000+00:00");
     }
@@ -3646,7 +3783,10 @@ mod tests {
         // flushes on combat, so the overlay must be nudged directly or it
         // stays stale until the first attack.
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Rifle"}));
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Rifle".into(),
+                source: None,
+            }));
         let events = updated_events(&captured);
         assert_eq!(events.len(), 2, "the weapon-switch nudged immediately");
         assert_eq!(events[1]["payload"]["reason"], "updated");
@@ -3654,7 +3794,10 @@ mod tests {
 
         // Re-equipping the same weapon changes nothing: no nudge.
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Rifle"}));
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Rifle".into(),
+                source: None,
+            }));
         assert_eq!(
             updated_events(&captured).len(),
             2,
@@ -3662,10 +3805,14 @@ mod tests {
         );
 
         // A heal-tool equip nudges on the same direct path.
-        rig.bus.publish(
-            Topic::ActiveHealToolChanged,
-            &json!({"tool_name": "FAP-5", "cost_per_use_ped": 0.5, "reload_seconds": 2.5}),
-        );
+        rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+            ActiveHealToolChangedPayload {
+                tool_name: "FAP-5".into(),
+                cost_per_use_ped: 0.5,
+                reload_seconds: 2.5,
+                source: None,
+            },
+        ));
         assert_eq!(
             updated_events(&captured).len(),
             3,
@@ -3752,13 +3899,19 @@ mod tests {
         tracker.start_session().unwrap();
 
         let loot = |ts: &str, name: &str, value: f64| {
-            json!({"type": "loot", "timestamp": ts,
-                   "items": [{"item_name": name, "quantity": 1, "value_ped": value,
-                              "is_enhancer_shrapnel": false}],
-                   "total_ped": value})
+            BusEvent::LootGroup(LootGroupPayload {
+                kind: LootTag,
+                timestamp: Some(ts.into()),
+                items: vec![LootItem {
+                    item_name: name.into(),
+                    quantity: 1,
+                    value_ped: value,
+                    is_enhancer_shrapnel: false,
+                }],
+                total_ped: value,
+            })
         };
-        rig.bus
-            .publish(Topic::LootGroup, &loot("2026-01-01T00:00:02", "Hide", 2.0));
+        rig.bus.publish(&loot("2026-01-01T00:00:02", "Hide", 2.0));
         let readout = tracker.snapshot().unwrap();
         let active = readout.active.unwrap();
         // A costless kill: no rate, no multipliers (a >= admission
@@ -3778,8 +3931,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .enhancer_cost = 0.25;
-        rig.bus
-            .publish(Topic::LootGroup, &loot("2026-01-01T00:00:05", "Mud", 1.0));
+        rig.bus.publish(&loot("2026-01-01T00:00:05", "Mud", 1.0));
         tracker
             .lock_state()
             .accumulator
@@ -3817,20 +3969,21 @@ mod tests {
         });
         tracker.start_session().unwrap();
 
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 7.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "critical_hit", "amount": 25.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 7.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::CriticalHit {
+                amount: 25.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
         // The countered shot carries no inferred cost, so the static
         // equipment cost prices it: a new phase of the last tool.
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "target_jam", "timestamp": "2026-01-01T00:00:02"}),
-        );
+        rig.bus.publish(&BusEvent::Combat(CombatPayload::TargetJam {
+            timestamp: "2026-01-01T00:00:02".into(),
+        }));
         let state = tracker.lock_state();
         let stats: Vec<(String, f64, i64)> = state
             .accumulator
@@ -3858,19 +4011,22 @@ mod tests {
             ..Providers::default()
         });
         tracker.start_session().unwrap();
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 9.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 6.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:02",
-                    "items": [], "total_ped": 0.0}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 9.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 6.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:02".into()),
+            items: vec![],
+            total_ped: 0.0,
+        }));
         let kill_id: String = rig.runtime.block_on(async {
             sqlx::query("SELECT id FROM kills")
                 .fetch_one(&rig.pool)
@@ -3898,21 +4054,27 @@ mod tests {
         let rig = rig();
         let tracker = rig.tracker(Providers::default());
         tracker.start_session().unwrap();
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 9.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "Stick"}));
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 6.0, "timestamp": "2026-01-01T00:00:02"}),
-        );
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:03",
-                    "items": [], "total_ped": 0.0}),
-        );
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 9.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Stick".into(),
+                source: None,
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 6.0,
+                timestamp: "2026-01-01T00:00:02".into(),
+            }));
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:03".into()),
+            items: vec![],
+            total_ped: 0.0,
+        }));
         let rows: Vec<(String, i64, f64)> = rig.runtime.block_on(async {
             sqlx::query("SELECT tool_name, shots_fired, damage_dealt FROM kill_tool_stats")
                 .fetch_all(&rig.pool)
@@ -3947,11 +4109,20 @@ mod tests {
         });
         tracker.start_session().unwrap();
         rig.bus
-            .publish(Topic::ActiveToolChanged, &json!({"tool_name": "MyGun"}));
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "MyGun".into(),
+                source: None,
+            }));
 
-        let break_event = |item: &str| {
-            json!({"type": "enhancer_break", "enhancer_name": "Damage Enhancer 5",
-                   "item_name": item})
+        let break_event = |item: &str, remaining: i64| {
+            BusEvent::EnhancerBreak(EnhancerBreakPayload {
+                kind: EnhancerBreakTag,
+                timestamp: "2026-01-01T00:00:01".into(),
+                enhancer_name: "Damage Enhancer 5".into(),
+                item_name: item.into(),
+                remaining,
+                shrapnel_ped: 0.0,
+            })
         };
         let stacks = |tracker: &HuntTracker| {
             tracker.lock_state().weapon_enhancer_states["Blast Master"]
@@ -3961,18 +4132,16 @@ mod tests {
         // The canonical name contains the item; the item contains the
         // canonical name; the observed hotbar name contains the item;
         // the item contains the observed name. Each direction matches.
-        rig.bus.publish(Topic::EnhancerBreak, &break_event("Blast"));
+        rig.bus.publish(&break_event("Blast", 99));
         assert_eq!(stacks(&tracker), vec![99]);
-        rig.bus
-            .publish(Topic::EnhancerBreak, &break_event("Blast Master Deluxe"));
+        rig.bus.publish(&break_event("Blast Master Deluxe", 98));
         assert_eq!(stacks(&tracker), vec![98]);
-        rig.bus.publish(Topic::EnhancerBreak, &break_event("Gun"));
+        rig.bus.publish(&break_event("Gun", 97));
         assert_eq!(stacks(&tracker), vec![97]);
-        rig.bus
-            .publish(Topic::EnhancerBreak, &break_event("MyGun Deluxe"));
+        rig.bus.publish(&break_event("MyGun Deluxe", 96));
         assert_eq!(stacks(&tracker), vec![96]);
         // No containment in any direction: ignored.
-        rig.bus.publish(Topic::EnhancerBreak, &break_event("Sword"));
+        rig.bus.publish(&break_event("Sword", 90));
         assert_eq!(stacks(&tracker), vec![96]);
 
         // Stopping the session clears the weapon runtime wholesale.
@@ -4101,15 +4270,25 @@ mod tests {
             ..Providers::default()
         });
         tracker.start_session().unwrap();
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:02",
-                    "items": [{"item_name": "Mud", "quantity": 1, "value_ped": 1.0,
-                               "is_enhancer_shrapnel": false},
-                              {"item_name": "Hide", "quantity": 1, "value_ped": 2.0,
-                               "is_enhancer_shrapnel": false}],
-                    "total_ped": 3.0}),
-        );
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:02".into()),
+            items: vec![
+                LootItem {
+                    item_name: "Mud".into(),
+                    quantity: 1,
+                    value_ped: 1.0,
+                    is_enhancer_shrapnel: false,
+                },
+                LootItem {
+                    item_name: "Hide".into(),
+                    quantity: 1,
+                    value_ped: 2.0,
+                    is_enhancer_shrapnel: false,
+                },
+            ],
+            total_ped: 3.0,
+        }));
         assert_eq!(
             rig.scalar_f64("SELECT loot_total_ped FROM kills", &[]),
             2.0,
@@ -4214,10 +4393,11 @@ mod tests {
             ..Providers::default()
         });
         tracker.start_session().unwrap();
-        rig.bus.publish(
-            Topic::Combat,
-            &json!({"type": "damage_dealt", "amount": 7.0, "timestamp": "2026-01-01T00:00:01"}),
-        );
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 7.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
         let state = tracker.lock_state();
         let (key, stats) = &state.accumulator.as_ref().unwrap().tool_stats[0];
         assert_eq!(key, "Pistol");
@@ -4235,18 +4415,24 @@ mod tests {
             ..Providers::default()
         });
         let session = tracker.start_session().unwrap();
-        rig.bus.publish(
-            Topic::LootGroup,
-            &json!({"type": "loot", "timestamp": "2026-01-01T00:00:20",
-                    "items": [{"item_name": "Hide", "quantity": 1, "value_ped": 1.0,
-                               "is_enhancer_shrapnel": false}],
-                    "total_ped": 1.0}),
-        );
-        rig.bus.publish(
-            Topic::Global,
-            &json!({"type": "global_kill", "player": "Hero", "creature": "Atrox",
-                    "value": 9.0, "timestamp": "2026-01-01T00:00:25"}),
-        );
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:20".into()),
+            items: vec![LootItem {
+                item_name: "Hide".into(),
+                quantity: 1,
+                value_ped: 1.0,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 1.0,
+        }));
+        rig.bus
+            .publish(&BusEvent::Global(GlobalPayload::GlobalKill {
+                timestamp: "2026-01-01T00:00:25".into(),
+                player: "Hero".into(),
+                creature: "Atrox".into(),
+                value: 9.0,
+            }));
         assert_eq!(
             rig.scalar_i64(
                 "SELECT COUNT(*) FROM kills WHERE session_id = ? AND is_global = 1",

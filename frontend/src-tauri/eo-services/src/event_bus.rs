@@ -19,7 +19,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
+use crate::bus_events::BusEvent;
 
 /// The bus topics, mirroring the string constants in the original
 /// Python implementation plus the frontend-facing domain-event
@@ -62,8 +62,8 @@ impl Topic {
     }
 }
 
-type Subscriber = Arc<dyn Fn(&Value) + Send + Sync>;
-type Tap = Arc<dyn Fn(Topic, &Value) + Send + Sync>;
+type Subscriber = Arc<dyn Fn(&BusEvent) + Send + Sync>;
+type Tap = Arc<dyn Fn(&BusEvent) + Send + Sync>;
 
 /// A handle for removing a subscriber or tap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +89,7 @@ impl EventBus {
     pub fn subscribe(
         &self,
         topic: Topic,
-        callback: impl Fn(&Value) + Send + Sync + 'static,
+        callback: impl Fn(&BusEvent) + Send + Sync + 'static,
     ) -> Registration {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut registry = self.registry.lock().expect("bus registry");
@@ -121,8 +121,9 @@ impl EventBus {
 
     /// Install a full-stream observer: runs synchronously on the
     /// publisher's thread for every publish, before subscriber
-    /// dispatch, and sees the payload unchanged.
-    pub fn add_tap(&self, tap: impl Fn(Topic, &Value) + Send + Sync + 'static) -> Registration {
+    /// dispatch, and sees the typed event unchanged (its topic is
+    /// `event.topic()`).
+    pub fn add_tap(&self, tap: impl Fn(&BusEvent) + Send + Sync + 'static) -> Registration {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut registry = self.registry.lock().expect("bus registry");
         registry.taps.push((id, Arc::new(tap)));
@@ -139,13 +140,14 @@ impl EventBus {
     /// original contains exceptions. The snapshot is taken under the
     /// lock and dispatched after release (the original's tuple
     /// snapshot), so callbacks may re-enter the bus freely.
-    pub fn publish(&self, topic: Topic, data: &Value) {
+    pub fn publish(&self, event: &BusEvent) {
         // Observe-only event-throughput instrumentation: count the publish and
-        // emit a structured trace carrying the TOPIC ONLY, never `data` (which
-        // can hold chatlog-derived loot/skill content). Both are panic-free
-        // atomic/macro operations and run before dispatch, so they cannot
-        // perturb the synchronous fan-out the original contains exceptions
-        // around.
+        // emit a structured trace carrying the TOPIC ONLY, never the payload
+        // (which can hold chatlog-derived loot/skill content). Both are
+        // panic-free atomic/macro operations and run before dispatch, so they
+        // cannot perturb the synchronous fan-out the original contains
+        // exceptions around.
+        let topic = event.topic();
         eo_wire::metrics::metrics().record_event_published();
         tracing::trace!(target: "eo::events", topic = topic.as_str(), "event published");
         let (taps, subscribers): (Vec<Tap>, Vec<Subscriber>) = {
@@ -160,10 +162,10 @@ impl EventBus {
             )
         };
         for tap in taps {
-            let _ = catch_unwind(AssertUnwindSafe(|| tap(topic, data)));
+            let _ = catch_unwind(AssertUnwindSafe(|| tap(event)));
         }
         for callback in subscribers {
-            let _ = catch_unwind(AssertUnwindSafe(|| callback(data)));
+            let _ = catch_unwind(AssertUnwindSafe(|| callback(event)));
         }
     }
 }
@@ -171,21 +173,42 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::bus_events::{
+        CombatPayload, GlobalPayload, SkillGainPayload, SkillGainTag, TickFlushedPayload,
+    };
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
+
+    fn combat(amount: f64) -> BusEvent {
+        BusEvent::Combat(CombatPayload::DamageDealt {
+            amount,
+            timestamp: "2026-01-01T00:00:01".into(),
+        })
+    }
+
+    fn tick() -> BusEvent {
+        BusEvent::TickFlushed(TickFlushedPayload { timestamp: None })
+    }
 
     #[test]
     fn subscribers_receive_their_topic_only() {
         let bus = EventBus::new();
         let seen = Arc::new(AtomicUsize::new(0));
         let observed = seen.clone();
-        bus.subscribe(Topic::Combat, move |data| {
-            assert_eq!(data["amount"], 5.0);
+        bus.subscribe(Topic::Combat, move |event| {
+            let BusEvent::Combat(CombatPayload::DamageDealt { amount, .. }) = event else {
+                panic!("combat subscriber saw a foreign event: {event:?}");
+            };
+            assert_eq!(*amount, 5.0);
             observed.fetch_add(1, Ordering::SeqCst);
         });
-        bus.publish(Topic::Combat, &json!({"amount": 5.0}));
-        bus.publish(Topic::SkillGain, &json!({"amount": 1.0}));
+        bus.publish(&combat(5.0));
+        bus.publish(&BusEvent::SkillGain(SkillGainPayload {
+            kind: SkillGainTag,
+            timestamp: "2026-01-01T00:00:01".into(),
+            amount: 1.0,
+            skill_name: "Rifle".into(),
+        }));
         assert_eq!(seen.load(Ordering::SeqCst), 1);
         assert!(bus.has_subscribers(Topic::Combat));
         assert!(!bus.has_subscribers(Topic::SkillGain));
@@ -200,15 +223,20 @@ mod tests {
 
         let stream = Arc::new(Mutex::new(Vec::new()));
         let sink = stream.clone();
-        let tap = bus.add_tap(move |topic, data| {
-            sink.lock().unwrap().push((topic, data.clone()));
+        let tap = bus.add_tap(move |event| {
+            sink.lock().unwrap().push(event.clone());
         });
-        bus.publish(Topic::Global, &json!({"value": 1}));
-        bus.publish(Topic::TickFlushed, &json!({}));
+        bus.publish(&BusEvent::Global(GlobalPayload::GlobalKill {
+            timestamp: "2026-01-01T00:00:01".into(),
+            player: "Test Player".into(),
+            creature: "Atrox".into(),
+            value: 1.0,
+        }));
+        bus.publish(&tick());
         assert_eq!(stream.lock().unwrap().len(), 2);
-        assert_eq!(stream.lock().unwrap()[0].0, Topic::Global);
+        assert_eq!(stream.lock().unwrap()[0].topic(), Topic::Global);
         bus.remove_tap(tap);
-        bus.publish(Topic::Global, &json!({"value": 2}));
+        bus.publish(&tick());
         assert_eq!(stream.lock().unwrap().len(), 2);
     }
 
@@ -216,13 +244,13 @@ mod tests {
     fn panicking_callbacks_are_contained() {
         let bus = EventBus::new();
         let reached = Arc::new(AtomicUsize::new(0));
-        bus.add_tap(|_, _| panic!("tap down"));
+        bus.add_tap(|_| panic!("tap down"));
         bus.subscribe(Topic::Combat, |_| panic!("subscriber down"));
         let observed = reached.clone();
         bus.subscribe(Topic::Combat, move |_| {
             observed.fetch_add(1, Ordering::SeqCst);
         });
-        bus.publish(Topic::Combat, &json!({}));
+        bus.publish(&combat(1.0));
         assert_eq!(reached.load(Ordering::SeqCst), 1, "dispatch survives");
     }
 
@@ -234,8 +262,8 @@ mod tests {
         // increase across two publishes rather than an absolute value.
         let bus = EventBus::new();
         let before = eo_wire::metrics::metrics().snapshot().events_published;
-        bus.publish(Topic::Combat, &json!({"amount": 1.0}));
-        bus.publish(Topic::TickFlushed, &json!({}));
+        bus.publish(&combat(1.0));
+        bus.publish(&tick());
         let after = eo_wire::metrics::metrics().snapshot().events_published;
         assert!(
             after >= before + 2,

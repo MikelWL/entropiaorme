@@ -60,15 +60,10 @@ pub enum CombatPayload {
     SelfHeal { amount: f64, timestamp: String },
 }
 
-/// One item within a settled loot tick. `is_enhancer_shrapnel` is the
-/// same-tick refund match the watcher computes; always present.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct LootItem {
-    pub item_name: String,
-    pub quantity: i64,
-    pub value_ped: f64,
-    pub is_enhancer_shrapnel: bool,
-}
+/// One item within a settled loot tick: the tracking model's loot
+/// item rides the bus verbatim (`is_enhancer_shrapnel` is the
+/// same-tick refund match the watcher computes; always present).
+pub use crate::tracking_models::LootItem;
 
 /// The grouped loot event for one settled tick. `timestamp` is the
 /// tick boundary and serialises to `null` when the tick carried none,
@@ -229,8 +224,8 @@ impl BusEvent {
 mod tests {
     use super::*;
     use eo_wire::domain_events::{
-        ScanPhase, ScanStatusChangedPayload, ScanStatusChangedTag, TrackingReason, TrackingStatus,
-        TrackingSessionUpdatedPayload, TrackingSessionUpdatedTag,
+        ScanPhase, ScanStatusChangedPayload, ScanStatusChangedTag, TrackingReason,
+        TrackingSessionUpdatedPayload, TrackingSessionUpdatedTag, TrackingStatus,
     };
     use serde_json::json;
 
@@ -388,7 +383,10 @@ mod tests {
             session_id: "session-abc".into(),
         });
         assert_eq!(started.topic(), Topic::SessionStarted);
-        assert_eq!(started.payload_value(), json!({"session_id": "session-abc"}));
+        assert_eq!(
+            started.payload_value(),
+            json!({"session_id": "session-abc"})
+        );
     }
 
     #[test]
