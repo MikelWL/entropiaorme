@@ -7,15 +7,20 @@ outside SQLite entirely.
 
 The authoritative schema is the sqlx migration set under
 `frontend/src-tauri/eo-services/migrations/`, applied by the migrator in
-`frontend/src-tauri/eo-services/src/db.rs`. The set currently holds a single
-baseline migration, `0001_schema_baseline.sql`, which creates the complete
-schema (tables, indexes, and the timestamp-back-fill triggers) and stamps the
-schema-version row. The `Db::open` path opens the database, configures its
-session pragmas, adopts or refuses any pre-existing schema, and then runs the
-migrator (`MIGRATOR` in `db.rs`).
+`frontend/src-tauri/eo-services/src/db.rs`. The set holds a version-33 baseline
+migration, `0001_schema_baseline.sql`, which creates the complete base schema
+(tables, indexes, and the timestamp-back-fill triggers) and stamps the
+schema-version row, followed by forward-only additions:
+`0002_analytical_indexes.sql` (analytical read-path indexes plus a one-time
+`ANALYZE`) and `0003_session_summary_read_columns.sql` (extra
+`session_summaries` columns for the Activity and session-list reads). The
+`Db::open` path opens the database, configures its session pragmas, adopts or
+refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
+`db.rs`).
 
-The column descriptions below are taken from that baseline migration. The
-canonical table set is the one it defines.
+The column descriptions below reflect the schema after the full migration set.
+The canonical table set is the one the baseline defines; the later migrations add
+indexes and the `session_summaries` read columns noted in place.
 
 ## Overview
 
@@ -219,7 +224,7 @@ rewards).
 | `rank` | INTEGER | Not null. |
 | `skill_name` | TEXT | Not null. |
 | `ped_value` | REAL | Not null. |
-| `claimed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+| `claimed_at` | REAL | Not null; defaults to `unixepoch('now')`. Indexed (`idx_codex_claims_claimed_at`). |
 | `kind` | TEXT | Not null; defaults to `'rank'`. |
 | `attribute_name` | TEXT | Optional; set for attribute claims. |
 
@@ -340,7 +345,7 @@ One row per recorded hunting session, with session-level cost buckets.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | TEXT | Primary key. |
-| `started_at` | REAL | Not null. |
+| `started_at` | REAL | Not null; indexed (`idx_tracking_sessions_started_at`). |
 | `ended_at` | REAL | Null while the session is open. |
 | `is_active` | INTEGER | Not null; defaults to 1. |
 | `armour_cost` | REAL | Defaults to 0. |
@@ -362,7 +367,7 @@ analytics queries can read the total directly.
 | `mob_name` | TEXT | Optional. In tag-mode sessions the tag string is persisted here. |
 | `mob_species` | TEXT | Defaults to `''`. |
 | `mob_maturity` | TEXT | Defaults to `''`. |
-| `timestamp` | REAL | Not null. |
+| `timestamp` | REAL | Not null; indexed (`idx_kills_timestamp`) for the analytics time-window reads. |
 | `shots_fired` | INTEGER | Defaults to 0. |
 | `damage_dealt` | REAL | Defaults to 0. |
 | `damage_taken` | REAL | Defaults to 0. |
@@ -390,7 +395,11 @@ Per-tool combat statistics within a single kill. The
 | `cost_per_shot` | REAL | Defaults to 0. |
 
 A `UNIQUE(kill_id, tool_name, cost_per_shot)` constraint keeps one row per
-tool-and-cost combination per kill.
+tool-and-cost combination per kill. A covering index
+`idx_kill_tool_stats_covering(kill_id, cost_per_shot, shots_fired, tool_name)`
+(migration `0002`) carries `shots_fired` and `tool_name` alongside the join key,
+so the weapon-cost aggregate resolves from the index without a per-row table
+fetch.
 
 #### `kill_loot_items`
 
@@ -424,14 +433,19 @@ Notable in-session events (for example globals and Hall-of-Fame drops).
 
 #### `session_summaries`
 
-Per-session aggregates used by the character/prospect analytics path. This is a
-derived cache rather than a source of truth: a row is filled when a session ends
-and is lazily rebuilt on read if missing.
+Per-session aggregates that back the character/prospect path and, since the
+read-model work, the Activity and session-list reads as well. This is a derived
+cache rather than a source of truth: a row is filled when a session ends and is
+lazily rebuilt on read when missing or below the current `summary_version`.
+
+The base columns are created by the baseline; the read columns below the
+`computed_at` row are added by migration `0003` and healed in by the version
+bump (the code's `SUMMARY_VERSION` is 2).
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `session_id` | TEXT | Primary key. |
-| `summary_version` | INTEGER | Not null; defaults to 1. Cache-format version for invalidation. |
+| `summary_version` | INTEGER | Not null; column default 1. Cache-format version for invalidation; the code writes the current `SUMMARY_VERSION` and rebuilds any lower-versioned row on read. |
 | `started_at` | REAL | Not null. |
 | `ended_at` | REAL | Not null. |
 | `duration_hours` | REAL | Not null. |
@@ -451,16 +465,25 @@ and is lazily rebuilt on read if missing.
 | `dominant_tag` | TEXT | Optional. |
 | `dominant_weapon` | TEXT | Optional. |
 | `computed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+| `dominant_mob_kills` | INTEGER | Not null; defaults to 0 (migration `0003`). The dominant mob's kill count, summed by the Activity read. |
+| `dominant_tag_kills` | INTEGER | Not null; defaults to 0 (migration `0003`). The dominant tag's kill count. |
+| `activity_skill_tt` | REAL | Not null; defaults to 0 (migration `0003`). The raw session `SUM(ped_value)` the Activity read uses (distinct from the per-skill `regular_skill_tt`). |
+| `primary_mobs_json` | TEXT | Not null; defaults to `'[]'` (migration `0003`). The session-list top-three mob names as a JSON array. |
+| `primary_weapons_json` | TEXT | Not null; defaults to `'[]'` (migration `0003`). The session-list top-three weapon names as a JSON array. |
+| `globals` | INTEGER | Not null; defaults to 0 (migration `0003`). The session's global count. |
+| `hofs` | INTEGER | Not null; defaults to 0 (migration `0003`). The session's Hall-of-Fame count. |
 
 ## Migration mechanism
 
 Schema application is handled by the sqlx migrator (`MIGRATOR` in
-`eo-services/src/db.rs`) over the migration set in
-`eo-services/migrations/`. The set carries a single forward migration, the
-version-33 baseline (`0001_schema_baseline.sql`); sqlx records applied
-migrations in its own `_sqlx_migrations` ledger and never runs a down-migration.
-The version the baseline reproduces is pinned in `db.rs` by the
-`BASELINE_SCHEMA_VERSION` constant (33).
+`eo-services/src/db.rs`) over the migration set in `eo-services/migrations/`.
+The set carries the version-33 baseline (`0001_schema_baseline.sql`) followed by
+forward-only additions (`0002_analytical_indexes.sql`,
+`0003_session_summary_read_columns.sql`); sqlx records applied migrations in its
+own `_sqlx_migrations` ledger and never runs a down-migration. The version the
+baseline reproduces is pinned in `db.rs` by the `BASELINE_SCHEMA_VERSION`
+constant (33); the post-baseline migrations extend the schema in place and do
+not change that version row.
 
 ### The version-33 baseline
 
