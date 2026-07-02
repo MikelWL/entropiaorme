@@ -109,6 +109,8 @@ A file with an adopted floor must hold its score; a file without one is held to 
 
 The equivalence goldens (the corpus fingerprints, DB-state snapshots, and HTTP-response goldens under `fixtures/corpus/`; the contract snapshots under `contracts/`; the wire fixtures under `eo-wire/tests/fixtures/`) assert by default. A deliberate behaviour change is re-ratified by regenerating the affected goldens and reviewing the resulting diff, then recording that the diff is a genuine intended change rather than a regression.
 
+What the goldens pin going forward is this codebase's own ratified contract, not fidelity to the retired reference implementation: they move only through ratification, and a golden whose bytes encoded an artefact of that reference (a representation detail, a transport-envelope shape, an error-message text) may be changed as a ratifiable behaviour decision. See [ADR-0017](docs/src/adr/0017-behavioural-contract-ownership.md). The equivalence evidence banked at the crossing is untouched by this: it records what was proven equal at the port, and the byte-for-byte re-assertions above still hold it.
+
 Regenerating a golden re-ratifies whatever the pipeline currently produces, so an unmarked, unscrutinised change can silently lock in a regression: the expected output simply moves to match the regressed code, and every assertion passes again. The first generation of a new golden is the most dangerous case, because no prior golden means no assertion fails, so an over-emission can be pinned as "expected" and pass silently. Treat any golden diff as a behaviour-change review, never a mechanical step.
 
 ### Adversarial ratification (the review step)

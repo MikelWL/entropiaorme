@@ -29,3 +29,4 @@
   - [ADR-0014: Release engineering](adr/0014-release-engineering.md)
   - [ADR-0015: Candle OCR backend not adopted](adr/0015-candle-ocr-backend-not-adopted.md)
   - [ADR-0016: Retire the cross-language equivalence oracle](adr/0016-retire-equivalence-oracle.md)
+  - [ADR-0017: Own the behavioural contract in this codebase](adr/0017-behavioural-contract-ownership.md)
