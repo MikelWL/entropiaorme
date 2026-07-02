@@ -41,7 +41,7 @@ use eo_wire::domain_events::{
 };
 use eo_wire::normalizer::round_half_even;
 use serde_json::{Map, Value};
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use sqlx::Row;
 use tokio::runtime::Handle;
 
@@ -393,20 +393,23 @@ impl HuntTracker {
                     Some(latest) if latest != 0.0 => latest,
                     _ => started_at,
                 };
+                // Each orphan closes atomically: the same one-commit
+                // grouping the stop path uses, so a failure mid-recovery
+                // leaves that session untouched and still recoverable.
+                let mut tx = self.pool.begin().await?;
                 sqlx::query(
                     "UPDATE tracking_sessions SET ended_at = ?, is_active = 0 WHERE id = ?",
                 )
                 .bind(ended_at)
                 .bind(&session_id)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await?;
 
                 let end_dt = epoch_to_naive(ended_at);
-                self.create_enhancer_rebate_ledger_entry(&session_id, end_dt)
-                    .await?;
-                self.create_shrapnel_ledger_entry(&session_id, end_dt)
-                    .await?;
-                write_session_summary(&self.pool, &session_id).await?;
+                Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_dt).await?;
+                Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_dt).await?;
+                write_session_summary(&mut tx, &session_id).await?;
+                tx.commit().await?;
             }
             Ok(())
         })
@@ -924,11 +927,12 @@ impl HuntTracker {
             (snapshot, session_id, end_time, heal_cost, dangling_cost)
         };
 
-        // The original groups these writes under one commit; the port
-        // issues them sequentially on the autocommit pool (the summary
-        // helper owns its own statements), reaching the same durable
-        // state with narrower crash atomicity.
+        // One transaction over the whole stop sequence, matching the
+        // original's single commit: a failure (or crash) mid-way leaves
+        // no half-stopped session, no orphaned ledger gains, and no
+        // summary computed from a partially persisted stop.
         self.block_on(async {
+            let mut tx = self.pool.begin().await?;
             sqlx::query(
                 "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
                  heal_cost = ?, dangling_cost = ? WHERE id = ?",
@@ -937,15 +941,14 @@ impl HuntTracker {
             .bind(heal_cost)
             .bind(dangling_cost)
             .bind(&session_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
             // Auto-generate ledger gains derived from persisted loot
             // rows.
-            self.create_enhancer_rebate_ledger_entry(&session_id, end_time)
-                .await?;
-            self.create_shrapnel_ledger_entry(&session_id, end_time)
-                .await?;
-            write_session_summary(&self.pool, &session_id).await?;
+            Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_time).await?;
+            Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_time).await?;
+            write_session_summary(&mut tx, &session_id).await?;
+            tx.commit().await?;
             Ok::<(), DbError>(())
         })?;
 
@@ -1988,7 +1991,7 @@ impl HuntTracker {
     /// trade-terminal conversion premium), recorded as a markup
     /// ledger gain.
     async fn create_shrapnel_ledger_entry(
-        &self,
+        conn: &mut SqliteConnection,
         session_id: &str,
         end_time: NaiveDateTime,
     ) -> Result<(), DbError> {
@@ -2001,7 +2004,7 @@ impl HuntTracker {
              AND kli.deactivated_at IS NULL",
         )
         .bind(session_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
         let shrapnel_ped = decoded_f64(&row, 0);
         if shrapnel_ped <= 0.0 {
@@ -2018,7 +2021,7 @@ impl HuntTracker {
         .bind("Shrapnel Conversion")
         .bind(margin)
         .bind("convert")
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
         Ok(())
     }
@@ -2026,7 +2029,7 @@ impl HuntTracker {
     /// Session-end rebate on enhancer-break Shrapnel (full TT value
     /// returned by breaks), recorded as a markup ledger gain.
     async fn create_enhancer_rebate_ledger_entry(
-        &self,
+        conn: &mut SqliteConnection,
         session_id: &str,
         end_time: NaiveDateTime,
     ) -> Result<(), DbError> {
@@ -2038,7 +2041,7 @@ impl HuntTracker {
              AND kli.deactivated_at IS NULL",
         )
         .bind(session_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
         let rebate = decoded_f64(&row, 0);
         if rebate <= 0.0 {
@@ -2054,7 +2057,7 @@ impl HuntTracker {
         .bind("Enhancer Shrapnel Rebate")
         .bind(round_half_even(rebate, 4))
         .bind("enhancer")
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
         Ok(())
     }
@@ -2580,6 +2583,56 @@ mod tests {
                 &[],
             ),
             1
+        );
+    }
+
+    #[test]
+    fn a_failed_stop_rolls_back_every_stop_write() {
+        let rig = rig();
+        let tracker = rig.tracker(Providers::default());
+        let session = tracker.start_session().unwrap();
+        // A kill with convertible Shrapnel and a skill gain, so the stop
+        // sequence writes the session close, a ledger gain, and a summary.
+        rig.execute(
+            "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
+             timestamp, shots_fired, damage_dealt, damage_taken, critical_hits, \
+             cost_ped, enhancer_cost, loot_total_ped, is_global, is_hof) \
+             VALUES ('k1', (SELECT id FROM tracking_sessions WHERE is_active = 1), \
+             'Atrox', '', '', 1500.0, 3, 30.0, 0.0, 0, 0.15, 0.0, 80.0, 0, 0)",
+        );
+        rig.execute(
+            "INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, \
+             is_enhancer_shrapnel) VALUES ('k1', 'Shrapnel', 500, 50.0, 0)",
+        );
+        rig.execute(
+            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+             VALUES ((SELECT id FROM tracking_sessions WHERE is_active = 1), 1100.0, \
+             'Rifle', 1.0, 0.5)",
+        );
+        // Force the final statement of the stop sequence to fail.
+        rig.execute("DROP TABLE session_summaries");
+
+        assert!(tracker.stop_session().is_err());
+
+        // The whole stop transaction rolled back: the session is still
+        // active with no end stamp, and no ledger gain landed.
+        assert_eq!(
+            rig.scalar_i64(
+                "SELECT is_active FROM tracking_sessions WHERE id = ?",
+                &[&session.id],
+            ),
+            1
+        );
+        assert_eq!(
+            rig.scalar_i64(
+                "SELECT COUNT(*) FROM tracking_sessions WHERE id = ? AND ended_at IS NOT NULL",
+                &[&session.id],
+            ),
+            0
+        );
+        assert_eq!(
+            rig.scalar_i64("SELECT COUNT(*) FROM ledger_entries", &[]),
+            0
         );
     }
 

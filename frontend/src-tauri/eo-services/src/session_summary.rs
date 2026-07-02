@@ -7,7 +7,7 @@
 //! here surfaces through the prospect reads rather than the goldens.)
 
 use serde_json::{json, Map, Value};
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use sqlx::Row;
 
 use crate::character_calc::ATTRIBUTE_SKILLS;
@@ -25,7 +25,7 @@ pub const DOMINANCE_THRESHOLD: f64 = 0.6;
 /// filters (zero cycled value, zero duration, no gain totals).
 #[allow(clippy::too_many_lines)]
 pub async fn compute_session_summary(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     session_id: &str,
 ) -> Result<Option<Map<String, Value>>, DbError> {
     let session = sqlx::query(
@@ -34,7 +34,7 @@ pub async fn compute_session_summary(
          FROM tracking_sessions WHERE id = ? AND ended_at IS NOT NULL",
     )
     .bind(session_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await?;
     let Some(session) = session else {
         return Ok(None);
@@ -47,7 +47,7 @@ pub async fn compute_session_summary(
 
     let has_gains = sqlx::query("SELECT 1 FROM skill_gains WHERE session_id = ? LIMIT 1")
         .bind(session_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await;
     // The original tolerates the gains table being absent entirely
     // (its operational-error catch). Any other failure propagates:
@@ -67,7 +67,7 @@ pub async fn compute_session_summary(
          FROM kills WHERE session_id = ?",
     )
     .bind(session_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     let kills: i64 = kill_totals.try_get(0)?;
     let loot_tt = decoded_f64(&kill_totals, 1);
@@ -80,7 +80,7 @@ pub async fn compute_session_summary(
          WHERE k.session_id = ?",
     )
     .bind(session_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     let weapon_cost = decoded_f64(&weapon_row, 0);
 
@@ -92,7 +92,7 @@ pub async fn compute_session_summary(
          ORDER BY COUNT(*) DESC, mob_name ASC",
     )
     .bind(session_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let mut dominant_mob: Option<String> = None;
     let mut dominant_tag: Option<String> = None;
@@ -131,7 +131,7 @@ pub async fn compute_session_summary(
          ORDER BY SUM(ts.shots_fired) DESC, ts.tool_name ASC",
     )
     .bind(session_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let mut dominant_weapon: Option<String> = None;
     if !tool_rows.is_empty() {
@@ -152,7 +152,7 @@ pub async fn compute_session_summary(
          GROUP BY mob_name ORDER BY COUNT(*) DESC LIMIT 3",
     )
     .bind(session_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let primary_mobs: Vec<String> = primary_mob_rows
         .iter()
@@ -164,7 +164,7 @@ pub async fn compute_session_summary(
          GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC LIMIT 3",
     )
     .bind(session_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let primary_weapons: Vec<String> = primary_weapon_rows
         .iter()
@@ -179,7 +179,7 @@ pub async fn compute_session_summary(
          WHERE session_id = ? AND ped_value IS NOT NULL",
     )
     .bind(session_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     let activity_skill_tt = decoded_f64(&activity_skill_row, 0);
 
@@ -192,7 +192,7 @@ pub async fn compute_session_summary(
          FROM notable_events WHERE session_id = ?",
     )
     .bind(session_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     let globals: i64 = notable_row.try_get(0)?;
     let hofs: i64 = notable_row.try_get(1)?;
@@ -204,7 +204,7 @@ pub async fn compute_session_summary(
          GROUP BY skill_name",
     )
     .bind(session_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let mut regular_skill_ped = Map::new();
     for row in &regular_rows {
@@ -226,7 +226,7 @@ pub async fn compute_session_summary(
     for skill in ATTRIBUTE_SKILLS {
         attr_query = attr_query.bind(skill);
     }
-    let attr_rows = attr_query.fetch_all(pool).await?;
+    let attr_rows = attr_query.fetch_all(&mut *conn).await?;
     let mut attribute_levels = Map::new();
     for row in &attr_rows {
         let name: String = row.try_get(0)?;
@@ -305,12 +305,17 @@ pub async fn compute_session_summary(
 
 /// Compute and upsert the summary row; clears any stale row when the
 /// session does not qualify. The caller owns the surrounding commit
-/// semantics, exactly as the original documents.
-pub async fn write_session_summary(pool: &SqlitePool, session_id: &str) -> Result<(), DbError> {
-    let Some(summary) = compute_session_summary(pool, session_id).await? else {
+/// semantics, exactly as the original documents: the session-stop and
+/// orphan-recovery paths run this inside their write transaction, so
+/// the computation reads the not-yet-committed session end stamp.
+pub async fn write_session_summary(
+    conn: &mut SqliteConnection,
+    session_id: &str,
+) -> Result<(), DbError> {
+    let Some(summary) = compute_session_summary(&mut *conn, session_id).await? else {
         sqlx::query("DELETE FROM session_summaries WHERE session_id = ?")
             .bind(session_id)
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
         return Ok(());
     };
@@ -358,7 +363,7 @@ pub async fn write_session_summary(pool: &SqlitePool, session_id: &str) -> Resul
     .bind(primary_weapons_json)
     .bind(summary["globals"].as_i64())
     .bind(summary["hofs"].as_i64())
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
@@ -421,9 +426,10 @@ pub async fn heal_summaries(pool: &SqlitePool) -> Result<(), DbError> {
     .bind(SUMMARY_VERSION)
     .fetch_all(pool)
     .await?;
+    let mut conn = pool.acquire().await?;
     for row in &missing {
         use sqlx::Row as _;
-        write_session_summary(pool, row.get(0)).await?;
+        write_session_summary(&mut conn, row.get(0)).await?;
     }
     Ok(())
 }
@@ -528,7 +534,10 @@ mod tests {
     async fn the_standard_session_computes_every_field() {
         let (_dir, pool) = pool().await;
         seed_standard(&pool).await;
-        let summary = compute_session_summary(&pool, "s1").await.unwrap().unwrap();
+        let summary = compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(summary["id"], Value::from("s1"));
         assert_eq!(summary["startedAt"], Value::from(1000.0));
@@ -602,7 +611,10 @@ mod tests {
             "UPDATE kill_tool_stats SET shots_fired = 20 WHERE tool_name = 'Pistol'",
         )
         .await;
-        let summary = compute_session_summary(&pool, "s1").await.unwrap().unwrap();
+        let summary = compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(summary["dominantMob"], Value::from("Young Atrox"));
         assert_eq!(summary["dominantWeapon"], Value::from("Rifle"));
 
@@ -622,7 +634,10 @@ mod tests {
             "UPDATE kill_tool_stats SET shots_fired = 25 WHERE tool_name = 'Pistol'",
         )
         .await;
-        let summary = compute_session_summary(&pool, "s1").await.unwrap().unwrap();
+        let summary = compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(summary["dominantMob"], Value::Null);
         assert_eq!(summary["dominantTag"], Value::Null);
         assert_eq!(summary["dominantWeapon"], Value::Null);
@@ -638,7 +653,10 @@ mod tests {
             "UPDATE kills SET mob_species = '', mob_maturity = '' WHERE mob_species = 'Atrox'",
         )
         .await;
-        let summary = compute_session_summary(&pool, "s1").await.unwrap().unwrap();
+        let summary = compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(summary["dominantMob"], Value::Null);
         assert_eq!(summary["dominantTag"], Value::from("Young Atrox"));
 
@@ -648,7 +666,10 @@ mod tests {
             "UPDATE kills SET mob_maturity = 'Young' WHERE mob_name = 'Young Atrox'",
         )
         .await;
-        let summary = compute_session_summary(&pool, "s1").await.unwrap().unwrap();
+        let summary = compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(summary["dominantMob"], Value::from("Young Atrox"));
         assert_eq!(summary["dominantTag"], Value::Null);
     }
@@ -664,10 +685,12 @@ mod tests {
             "UPDATE tracking_sessions SET ended_at = NULL WHERE id = 's1'",
         )
         .await;
-        assert!(compute_session_summary(&pool, "s1")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         // Zero duration refuses.
         run(
@@ -675,10 +698,12 @@ mod tests {
             "UPDATE tracking_sessions SET ended_at = 1000.0 WHERE id = 's1'",
         )
         .await;
-        assert!(compute_session_summary(&pool, "s1")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+                .await
+                .unwrap()
+                .is_none()
+        );
         run(
             &pool,
             "UPDATE tracking_sessions SET ended_at = 8200.0 WHERE id = 's1'",
@@ -692,7 +717,10 @@ mod tests {
             "UPDATE skill_gains SET ped_value = 0.0 WHERE skill_name = 'Rifle'",
         )
         .await;
-        let summary = compute_session_summary(&pool, "s1").await.unwrap().unwrap();
+        let summary = compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(summary["regularSkillTt"], Value::from(0.0));
         assert_eq!(summary["attributeLevelsTotal"], Value::from(0.75));
         run(
@@ -700,36 +728,44 @@ mod tests {
             "DELETE FROM skill_gains WHERE skill_name = 'Agility'",
         )
         .await;
-        assert!(compute_session_summary(&pool, "s1")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+                .await
+                .unwrap()
+                .is_none()
+        );
         run(
             &pool,
             "UPDATE skill_gains SET ped_value = 0.5 WHERE skill_name = 'Rifle'",
         )
         .await;
-        assert!(compute_session_summary(&pool, "s1")
-            .await
-            .unwrap()
-            .is_some());
+        assert!(
+            compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+                .await
+                .unwrap()
+                .is_some()
+        );
 
         // No skill-gain rows at all refuses; so does the table
         // being absent entirely (the original's tolerated case).
         run(&pool, "DELETE FROM skill_gains").await;
-        assert!(compute_session_summary(&pool, "s1")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+                .await
+                .unwrap()
+                .is_none()
+        );
         run(
             &pool,
             "ALTER TABLE skill_gains RENAME TO skill_gains_parked",
         )
         .await;
-        assert!(compute_session_summary(&pool, "s1")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+                .await
+                .unwrap()
+                .is_none()
+        );
         run(
             &pool,
             "ALTER TABLE skill_gains_parked RENAME TO skill_gains",
@@ -751,10 +787,12 @@ mod tests {
         )
         .await;
         run(&pool, "UPDATE kills SET enhancer_cost = 0").await;
-        assert!(compute_session_summary(&pool, "s1")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            compute_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -762,7 +800,9 @@ mod tests {
         let (_dir, pool) = pool().await;
         seed_standard(&pool).await;
 
-        write_session_summary(&pool, "s1").await.unwrap();
+        write_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap();
         let row = sqlx::query(
             "SELECT summary_version, duration_hours, cycled_ped, dominant_mob, dominant_weapon, \
              regular_skill_ped_json FROM session_summaries WHERE session_id = 's1'",
@@ -783,7 +823,9 @@ mod tests {
             "UPDATE tracking_sessions SET ended_at = 1000.0 WHERE id = 's1'",
         )
         .await;
-        write_session_summary(&pool, "s1").await.unwrap();
+        write_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap();
         let count: i64 = sqlx::query("SELECT COUNT(*) FROM session_summaries")
             .fetch_one(&pool)
             .await
@@ -798,7 +840,9 @@ mod tests {
             "UPDATE tracking_sessions SET ended_at = 8200.0 WHERE id = 's1'",
         )
         .await;
-        write_session_summary(&pool, "s1").await.unwrap();
+        write_session_summary(&mut pool.acquire().await.unwrap(), "s1")
+            .await
+            .unwrap();
         delete_session_summary(&pool, "s1").await.unwrap();
         delete_session_summary(&pool, "s1").await.unwrap();
         let count: i64 = sqlx::query("SELECT COUNT(*) FROM session_summaries")
