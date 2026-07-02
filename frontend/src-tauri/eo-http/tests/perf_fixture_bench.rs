@@ -74,7 +74,7 @@ fn read_path_latency_against_a_real_database() {
     let dir = tempfile::tempdir().expect("temp dir");
 
     // Copy the source database into the temp dir before opening it: the source
-    // is read once and never written, and the WAL/optimize the open triggers
+    // is read once and never written, and the WAL and `PRAGMA optimize` the open triggers
     // land on the throwaway copy. Only the main database file is copied (a
     // quiesced database has no live WAL frames to carry).
     let working = dir.path().join("entropia_orme.db");
@@ -85,7 +85,7 @@ fn read_path_latency_against_a_real_database() {
         .block_on(Db::open(&working))
         .expect("open+migrate the copied database");
 
-    // Whether ANALYZE has ever produced planner statistics on this database.
+    // Whether `ANALYZE` has ever produced planner statistics on this database.
     let has_stat1: bool = runtime.block_on(async {
         use sqlx::Row as _;
         sqlx::query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'")

@@ -301,7 +301,7 @@ pub(crate) fn run_exit_teardown(app: &tauri::AppHandle) {
     }
 
     // With the producers stopped (no writes in flight), refresh the database's
-    // planner statistics via PRAGMA optimize before the connection closes: the
+    // planner statistics via `PRAGMA optimize` before the connection closes: the
     // recommended once-per-lifecycle maintenance call, kept off the hot path by
     // running only here at exit.
     if let Some(substrate) = app.try_state::<ApiSubstrate>() {

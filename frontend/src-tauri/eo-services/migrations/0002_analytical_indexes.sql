@@ -20,8 +20,8 @@ CREATE INDEX idx_tracking_sessions_started_at ON tracking_sessions(started_at);
 CREATE INDEX idx_kill_tool_stats_covering
     ON kill_tool_stats(kill_id, cost_per_shot, shots_fired, tool_name);
 
--- Build planner statistics. The application had never run ANALYZE, so the
+-- Build planner statistics. The application had never run `ANALYZE`, so the
 -- planner chose plans without knowing index selectivity; run it once here now
--- that the analytical indexes exist. PRAGMA optimize on shutdown keeps the
+-- that the analytical indexes exist. `PRAGMA optimize` on shutdown keeps the
 -- statistics current thereafter.
 ANALYZE;
