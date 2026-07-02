@@ -567,6 +567,22 @@ where
     ArmRoutes::at(route).on(filter, native).into_method_router()
 }
 
+/// Map a served request path to the read handler whose per-endpoint latency
+/// the metrics registry breaks out, or `None` for every other route. Matches
+/// on the exact registered paths (the session-detail route carries a trailing
+/// id segment, so it is a prefix match). Query strings never reach here (the
+/// caller passes `uri().path()`).
+fn classify_read_handler(path: &str) -> Option<eo_wire::metrics::Handler> {
+    use eo_wire::metrics::Handler;
+    match path {
+        "/api/analytics/overview" => Some(Handler::AnalyticsOverview),
+        "/api/analytics/activity" => Some(Handler::AnalyticsActivity),
+        "/api/tracking/sessions" => Some(Handler::SessionList),
+        _ if path.starts_with("/api/tracking/session/") => Some(Handler::SessionDetail),
+        _ => None,
+    }
+}
+
 /// Observe-only per-request instrumentation. As the OUTERMOST layer it times
 /// the whole request (guards, CORS, and the handler) and records one sample
 /// into the metrics registry, emitting a structured trace with method, path,
@@ -585,6 +601,11 @@ async fn observe(req: Request, next: axum::middleware::Next) -> Response {
     // the metrics page's own polling must not inflate the figures it displays.
     if !path.starts_with("/api/dev/") {
         eo_wire::metrics::metrics().record_http_request(elapsed);
+        if method == http::Method::GET {
+            if let Some(handler) = classify_read_handler(&path) {
+                eo_wire::metrics::metrics().record_handler_latency(handler, elapsed);
+            }
+        }
     }
     tracing::debug!(
         target: "eo::http",
