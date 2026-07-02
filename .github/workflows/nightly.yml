@@ -109,7 +109,7 @@ jobs:
           tool: cargo-audit
       - name: Watch suppressed quick-xml advisories for an upstream fix
         run: |
-          set -uo pipefail
+          set -euo pipefail
           # Pull in-range dependency updates; once a released plist moves to
           # quick-xml >= 0.41 this brings the fix into the tree.
           cargo update -q
