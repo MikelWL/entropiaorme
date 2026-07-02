@@ -26,10 +26,13 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-# The Windows-graph subset of .cargo/audit.toml (single source of
-# rationale). All are `unmaintained` warnings on transitive crates inside
-# the Tauri toolchain; none are vulnerability advisories, none are
-# actionable without an upstream Tauri release.
+# The Windows-graph subset of .cargo/audit.toml (single source of full
+# rationale). Most are `unmaintained` warnings on transitive Tauri-toolchain
+# crates. The two quick-xml entries are DoS *vulnerability* advisories,
+# suppressed only because a reachability audit proved their XML-parse path is
+# dead code in the Windows artefact; the `wrappers = ["plist"]` ban below pins
+# that assumption structurally. Drop them when plist reaches quick-xml >= 0.41.
+# Review both files together on every Tauri bump.
 ignore = [
     "RUSTSEC-2025-0075", # unic-char-range (build-time Unicode data)
     "RUSTSEC-2025-0080", # unic-common
@@ -37,6 +40,8 @@ ignore = [
     "RUSTSEC-2025-0098", # unic-ucd-version
     "RUSTSEC-2025-0100", # unic-ucd-ident
     "RUSTSEC-2025-0057", # fxhash (no trust-bearing usage)
+    "RUSTSEC-2026-0194", # quick-xml: quadratic duplicate-attribute check (DoS; see audit.toml)
+    "RUSTSEC-2026-0195", # quick-xml: unbounded NsReader ns-alloc (DoS; API unused by plist)
 ]
 
 [licenses]
@@ -70,6 +75,16 @@ wildcards = "deny"
 # from the wildcard ban so it still bites a real registry crate pinned to "*"
 # while the normal workspace shape is allowed.
 allow-wildcard-paths = true
+
+# quick-xml carries live DoS advisories (RUSTSEC-2026-0194 / -0195), suppressed
+# in [advisories] above only because it is reachable solely as a transitive
+# child of plist, whose XML-parse path is dead code in the Windows artefact. Pin
+# that reachability assumption structurally: allow quick-xml ONLY under plist, so
+# any future change introducing a new quick-xml path (a first-party XML parser, a
+# different dependency) trips CI and forces the suppression to be revisited.
+[[bans.deny]]
+name = "quick-xml"
+wrappers = ["plist"]
 
 [sources]
 unknown-registry = "deny"
