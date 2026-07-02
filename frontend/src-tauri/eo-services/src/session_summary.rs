@@ -573,8 +573,14 @@ mod tests {
         assert_eq!(summary["activitySkillTt"], Value::from(0.75));
         // Primary lists: mobs by kill count, weapons by total shots (Unknown
         // excluded).
-        assert_eq!(summary["primaryMobs"], serde_json::json!(["Young Atrox", "Snable"]));
-        assert_eq!(summary["primaryWeapons"], serde_json::json!(["Rifle", "Pistol"]));
+        assert_eq!(
+            summary["primaryMobs"],
+            serde_json::json!(["Young Atrox", "Snable"])
+        );
+        assert_eq!(
+            summary["primaryWeapons"],
+            serde_json::json!(["Rifle", "Pistol"])
+        );
         // No notable events seeded.
         assert_eq!(summary["globals"], Value::from(0_i64));
         assert_eq!(summary["hofs"], Value::from(0_i64));

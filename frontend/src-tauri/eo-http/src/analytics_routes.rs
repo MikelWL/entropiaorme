@@ -650,9 +650,16 @@ async fn load_activity_sessions(pool: &SqlitePool) -> Result<Vec<SessionAgg>, Db
         let id = row.get::<String, _>(0);
         let started: f64 = row.try_get::<f64, _>(1).unwrap_or(0.0);
         let ended: f64 = row.try_get::<f64, _>(2).unwrap_or(0.0);
-        let agg =
-            raw_session_agg(pool, &id, started, ended, as_float(row, 3), as_float(row, 4), as_float(row, 5))
-                .await?;
+        let agg = raw_session_agg(
+            pool,
+            &id,
+            started,
+            ended,
+            as_float(row, 3),
+            as_float(row, 4),
+            as_float(row, 5),
+        )
+        .await?;
         sessions.insert(id, agg);
     }
 
@@ -763,7 +770,10 @@ async fn raw_session_agg(
     .fetch_all(pool)
     .await?;
     if !mob_rows.is_empty() {
-        let total_known: i64 = mob_rows.iter().map(|r| r.try_get::<i64, _>(3).unwrap_or(0)).sum();
+        let total_known: i64 = mob_rows
+            .iter()
+            .map(|r| r.try_get::<i64, _>(3).unwrap_or(0))
+            .sum();
         if total_known > 0 {
             let top_name: String = mob_rows[0].get(0);
             let top_species: String = mob_rows[0].get(1);

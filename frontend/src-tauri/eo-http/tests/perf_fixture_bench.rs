@@ -127,7 +127,10 @@ fn read_path_latency_against_a_real_database() {
         .as_ref()
         .map(|id| format!("/api/tracking/session/{id}"));
     let mut endpoints: Vec<(&str, String)> = vec![
-        ("overview_all", "/api/analytics/overview?period=all".to_string()),
+        (
+            "overview_all",
+            "/api/analytics/overview?period=all".to_string(),
+        ),
         ("activity", "/api/analytics/activity".to_string()),
         ("session_list", "/api/tracking/sessions".to_string()),
     ];
