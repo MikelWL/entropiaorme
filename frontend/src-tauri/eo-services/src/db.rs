@@ -506,6 +506,28 @@ mod tests {
         Db::open(&dir.join("entropia_orme.db")).await.unwrap()
     }
 
+    /// A database exactly as a version-33 backend leaves it: the baseline
+    /// schema and version row, with no sqlx migration ledger and none of the
+    /// post-baseline migration objects. Built by running the baseline
+    /// migration SQL directly rather than the full native chain, so an
+    /// adoption test then exercises the post-baseline chain against a genuine
+    /// baseline, and the helper stays correct as later migrations are added.
+    async fn backend_baseline_pool(path: &std::path::Path) -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::raw_sql(include_str!("../migrations/0001_schema_baseline.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
     #[tokio::test]
     async fn hotbar_equipment_row_reads_name_type_and_properties_by_id() {
         let dir = tempfile::tempdir().unwrap();
@@ -641,10 +663,12 @@ mod tests {
                 .unwrap()
             }
         };
-        // The fresh backend schema at version 33: 23 declared tables
-        // (sqlite_sequence arrives automatically), 18 indexes, 8 triggers.
+        // The fresh backend schema at version 33 (23 declared tables;
+        // sqlite_sequence arrives automatically) plus the analytical-index
+        // migration: 18 baseline indexes + 4 analytical = 22 indexes, 8
+        // triggers.
         assert_eq!(count("table").await, 23);
-        assert_eq!(count("index").await, 18);
+        assert_eq!(count("index").await, 22);
         assert_eq!(count("trigger").await, 8);
 
         let version: String =
@@ -697,26 +721,22 @@ mod tests {
     async fn backend_created_baseline_database_is_adopted_with_data_intact() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("entropia_orme.db");
-        // First open: the chain creates everything. Simulate the backend's
-        // ownership by seeding data and DELETING the sqlx ledger, leaving
-        // exactly what a backend-created version-33 database looks like.
+        // A backend-created version-33 database: the baseline schema, seeded,
+        // with no sqlx ledger (exactly what the backend leaves).
         {
-            let db = Db::open(&path).await.unwrap();
+            let pool = backend_baseline_pool(&path).await;
             sqlx::query(
                 "INSERT INTO tracking_sessions (id, started_at, is_active) \
                  VALUES ('kept', 1.0, 0)",
             )
-            .execute(&db.pool)
+            .execute(&pool)
             .await
             .unwrap();
-            sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(&db.pool)
-                .await
-                .unwrap();
+            pool.close().await;
         }
 
-        // Re-open: adoption must mark the baseline applied without DDL,
-        // and the post-adoption run must validate the ledger row.
+        // Re-open: adoption marks the baseline applied without DDL, then the
+        // post-baseline chain runs, and the migrator validates every ledger row.
         let db = Db::open(&path).await.unwrap();
         let kept: String = sqlx::query_scalar("SELECT id FROM tracking_sessions")
             .fetch_one(&db.pool)
@@ -727,7 +747,8 @@ mod tests {
             .fetch_one(&db.pool)
             .await
             .unwrap();
-        assert_eq!(ledger, 1);
+        // The baseline stamp plus every post-baseline migration.
+        assert_eq!(ledger, MIGRATOR.migrations.len() as i64);
     }
 
     #[tokio::test]
@@ -791,36 +812,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("entropia_orme.db");
         // Synthesise the real in-the-wild surface: a v0.1.0-lineage database
-        // last owned by the Python backend at version 32. Start from a fresh
-        // baseline, then walk it back to v32: re-create the table v33 dropped
-        // (with a row, to prove the drop is the only loss), stamp the version
-        // row back to 32, and remove the sqlx ledger so the open path sees an
-        // unadopted below-baseline database.
+        // last owned by the Python backend at version 32. Start from the
+        // backend baseline (v33 schema, no sqlx ledger), then walk it back to
+        // v32: re-create the table v33 dropped (with a row, to prove the drop
+        // is the only loss) and stamp the version row back to 32.
         {
-            let db = Db::open(&path).await.unwrap();
+            let pool = backend_baseline_pool(&path).await;
             sqlx::query(
                 "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
                  VALUES ('keep-me', '2026-01-01', 'markup', 'survives upgrade', 4.2, 'manual')",
             )
-            .execute(&db.pool)
+            .execute(&pool)
             .await
             .unwrap();
             sqlx::query("CREATE TABLE tt_curve_observations (id INTEGER PRIMARY KEY, value REAL)")
-                .execute(&db.pool)
+                .execute(&pool)
                 .await
                 .unwrap();
             sqlx::query("INSERT INTO tt_curve_observations (value) VALUES (1.0)")
-                .execute(&db.pool)
+                .execute(&pool)
                 .await
                 .unwrap();
             sqlx::query("UPDATE db_metadata SET value = '32' WHERE key = 'version'")
-                .execute(&db.pool)
+                .execute(&pool)
                 .await
                 .unwrap();
-            sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(&db.pool)
-                .await
-                .unwrap();
+            pool.close().await;
         }
 
         // Re-open: the v32 rung runs, then adoption stamps the baseline and the
@@ -848,7 +865,11 @@ mod tests {
             .fetch_one(&db.pool)
             .await
             .unwrap();
-        assert_eq!(ledger, 1, "the baseline is stamped exactly once");
+        assert_eq!(
+            ledger,
+            MIGRATOR.migrations.len() as i64,
+            "the baseline is stamped once, then the post-baseline chain runs"
+        );
 
         // The user's data survives the upgrade untouched.
         let (description, amount): (String, f64) =
@@ -890,11 +911,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = fresh_db(dir.path()).await;
         let master = db.schema_master().await.unwrap();
-        // 23 declared tables + the migration ledger + 18 indexes +
-        // 8 triggers (only SQLite's own bookkeeping is excluded; the
-        // conformance comparison filters the ledger externally as its
-        // one deliberate difference).
-        assert_eq!(master.len(), 24 + 18 + 8);
+        // 23 declared tables + the migration ledger + 22 indexes (18
+        // baseline + 4 analytical) + 8 triggers (only SQLite's own
+        // bookkeeping is excluded; the conformance comparison filters the
+        // ledger externally as its one deliberate difference).
+        assert_eq!(master.len(), 24 + 22 + 8);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

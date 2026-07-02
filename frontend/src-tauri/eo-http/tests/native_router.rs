@@ -44,6 +44,22 @@ async fn serve_substrate() -> (Arc<AppState>, tempfile::TempDir) {
     (state, dir)
 }
 
+#[tokio::test]
+async fn optimize_on_shutdown_runs_over_a_composed_state_and_no_ops_without_one() {
+    // A composed hydration state has a pool to optimise.
+    let (state, _dir) = serve_substrate().await;
+    assert!(
+        state.optimize_on_shutdown().await,
+        "PRAGMA optimize runs against the composed hydration pool"
+    );
+    // A bare substrate with no hydration has nothing to optimise.
+    let bare = Arc::new(AppState::new(0));
+    assert!(
+        !bare.optimize_on_shutdown().await,
+        "no hydration state means nothing to optimise"
+    );
+}
+
 async fn get(state: &Arc<AppState>, path: &str) -> (http::StatusCode, http::HeaderMap, Vec<u8>) {
     request(state, "GET", path, &[]).await
 }

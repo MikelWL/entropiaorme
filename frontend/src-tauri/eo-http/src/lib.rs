@@ -137,6 +137,25 @@ impl AppState {
         self.data_dir.as_deref()
     }
 
+    /// Run `PRAGMA optimize` against the hydration database on a clean
+    /// shutdown, so SQLite refreshes the planner statistics for tables whose
+    /// shape has drifted since the last analysis (the recommended
+    /// once-per-connection-lifecycle maintenance call). Returns whether it
+    /// ran: `false` when no hydration state is composed (nothing to optimise)
+    /// or the pragma errored. Best-effort and side-effect-free on the data;
+    /// the shell calls it from its exit teardown.
+    pub async fn optimize_on_shutdown(&self) -> bool {
+        let pool = self
+            .hydration
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|hydration| hydration.pool().clone()));
+        let Some(pool) = pool else {
+            return false;
+        };
+        sqlx::query("PRAGMA optimize").execute(&pool).await.is_ok()
+    }
+
     /// Attach the bundled demo database path, enabling the guide-mode
     /// `/api/demo` surface. Without it those routes answer the 503
     /// service-unavailable floor.
