@@ -22,6 +22,7 @@ use std::collections::BTreeSet;
 
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
+use eo_services::db::DbError;
 use eo_services::tracker::naive_to_epoch;
 use serde_json::{json, Map, Value};
 use sqlx::sqlite::SqliteRow;
@@ -624,193 +625,185 @@ struct SessionAgg {
     cycled_ped: f64,
 }
 
-async fn load_activity_sessions(pool: &SqlitePool) -> Result<Vec<SessionAgg>, sqlx::Error> {
-    // Ordered map keyed by session id, preserving SELECT row order.
-    let mut ids: Vec<String> = Vec::new();
-    let mut sessions: std::collections::HashMap<String, SessionAgg> =
-        std::collections::HashMap::new();
+async fn load_activity_sessions(pool: &SqlitePool) -> Result<Vec<SessionAgg>, DbError> {
+    // Read the per-session aggregates from the materialised summaries instead
+    // of re-aggregating the raw tables on every request. Heal first so a read
+    // after a summary-version bump (or on a fresh install) sees current rows.
+    eo_services::session_summary::heal_summaries(pool).await?;
+    let mut sessions = read_summary_activity_aggs(pool).await?;
 
-    let session_rows = sqlx::query(
-        "SELECT id, started_at, ended_at, COALESCE(armour_cost, 0), COALESCE(heal_cost, 0), \
-         COALESCE(dangling_cost, 0) FROM tracking_sessions WHERE ended_at IS NOT NULL",
+    // Reconcile the sessions Activity counts but a summary never holds: an
+    // ended session with kills and cost but no skill gains qualifies for
+    // Activity yet fails the summary's gains requirement, so it has no summary
+    // row. Rare (usually none); computed raw only for those ids, so the cost
+    // scales with the divergence, not the whole history.
+    let divergent = sqlx::query(
+        "SELECT s.id, s.started_at, s.ended_at, COALESCE(s.armour_cost, 0), \
+         COALESCE(s.heal_cost, 0), COALESCE(s.dangling_cost, 0) \
+         FROM tracking_sessions s \
+         LEFT JOIN session_summaries ss ON ss.session_id = s.id \
+         WHERE s.ended_at IS NOT NULL AND ss.session_id IS NULL",
     )
     .fetch_all(pool)
     .await?;
-    for row in &session_rows {
+    for row in &divergent {
         let id = row.get::<String, _>(0);
         let started: f64 = row.try_get::<f64, _>(1).unwrap_or(0.0);
         let ended: f64 = row.try_get::<f64, _>(2).unwrap_or(0.0);
-        let duration_seconds = (ended - started).max(0.0);
-        let agg = SessionAgg {
-            duration_hours: duration_seconds / 3600.0,
-            armour_cost: as_float(row, 3),
-            heal_cost: as_float(row, 4),
-            dangling_cost: as_float(row, 5),
-            ..SessionAgg::default()
-        };
-        ids.push(id.clone());
+        let agg =
+            raw_session_agg(pool, &id, started, ended, as_float(row, 3), as_float(row, 4), as_float(row, 5))
+                .await?;
         sessions.insert(id, agg);
     }
 
-    if sessions.is_empty() {
-        return Ok(Vec::new());
-    }
+    // Activity's own qualifying filter. Order-independent: the slice builders
+    // regroup and re-sort by (-kills, -cycled, name), and each group's name is
+    // unique, so the map iteration order never reaches the response.
+    Ok(sessions
+        .into_values()
+        .filter(|s| s.duration_hours > 0.0 && s.cycled_ped > 0.0 && s.kills > 0)
+        .collect())
+}
 
-    let kill_rows = sqlx::query(
-        "SELECT session_id, COUNT(*), COALESCE(SUM(loot_total_ped), 0), \
-         COALESCE(SUM(enhancer_cost), 0) FROM kills GROUP BY session_id",
+/// The per-session Activity aggregates read straight from `session_summaries`,
+/// keyed by session id. Every field the slice builders read comes from a stored
+/// column (the cost components that only fed `cycled_ped` are left at their
+/// defaults, since the stored `cycled_ped` already carries their rounded sum).
+async fn read_summary_activity_aggs(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashMap<String, SessionAgg>, DbError> {
+    let rows = sqlx::query(
+        "SELECT session_id, duration_hours, kills, loot_tt, cycled_ped, activity_skill_tt, \
+         dominant_mob, dominant_tag, dominant_weapon, dominant_mob_kills, dominant_tag_kills \
+         FROM session_summaries",
     )
     .fetch_all(pool)
     .await?;
-    for row in &kill_rows {
-        // The FK session_id is NOT NULL in production; a NULL is skipped to
-        // mirror the reference's `sessions.get(None)` miss (and to keep a
-        // malformed row from aborting the decode) rather than to admit one.
-        let Some(sid) = row.try_get::<Option<String>, _>(0).ok().flatten() else {
-            continue;
-        };
-        if let Some(s) = sessions.get_mut(&sid) {
-            s.kills = row.get::<i64, _>(1);
-            s.loot_tt = as_float(row, 2);
-            s.enhancer_cost = as_float(row, 3);
-        }
-    }
-
-    let weapon_rows = sqlx::query(
-        "SELECT k.session_id, COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0), \
-         COALESCE(SUM(ts.shots_fired), 0) FROM kill_tool_stats ts \
-         JOIN kills k ON k.id = ts.kill_id GROUP BY k.session_id",
-    )
-    .fetch_all(pool)
-    .await?;
-    for row in &weapon_rows {
-        let Some(sid) = row.try_get::<Option<String>, _>(0).ok().flatten() else {
-            continue;
-        };
-        if let Some(s) = sessions.get_mut(&sid) {
-            s.weapon_cost = as_float(row, 1);
-            s.weapon_shots = as_float(row, 2);
-        }
-    }
-
-    let skill_rows = sqlx::query(
-        "SELECT session_id, COALESCE(SUM(ped_value), 0) FROM skill_gains \
-         WHERE ped_value IS NOT NULL GROUP BY session_id",
-    )
-    .fetch_all(pool)
-    .await?;
-    for row in &skill_rows {
-        let Some(sid) = row.try_get::<Option<String>, _>(0).ok().flatten() else {
-            continue;
-        };
-        if let Some(s) = sessions.get_mut(&sid) {
-            s.skill_tt = as_float(row, 1);
-        }
-    }
-
-    // Dominant mob/tag: groups per session, ordered COUNT desc then name asc.
-    let group_rows = sqlx::query(
-        "SELECT session_id, mob_name, COALESCE(mob_species, ''), COALESCE(mob_maturity, ''), \
-         COUNT(*) FROM kills WHERE mob_name IS NOT NULL AND mob_name != 'Unknown' \
-         GROUP BY session_id, mob_name, mob_species, mob_maturity \
-         ORDER BY session_id, COUNT(*) DESC, mob_name ASC",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut groups_by_session: std::collections::HashMap<
-        String,
-        Vec<(String, String, String, i64)>,
-    > = std::collections::HashMap::new();
-    let mut group_order: Vec<String> = Vec::new();
-    for row in &group_rows {
-        let Some(sid) = row.try_get::<Option<String>, _>(0).ok().flatten() else {
-            continue;
-        };
-        let entry = groups_by_session.entry(sid.clone()).or_insert_with(|| {
-            group_order.push(sid.clone());
-            Vec::new()
-        });
-        entry.push((
-            row.get::<String, _>(1),
-            row.get::<String, _>(2),
-            row.get::<String, _>(3),
-            row.get::<i64, _>(4),
-        ));
-    }
-    for sid in &group_order {
-        let groups = &groups_by_session[sid];
-        let Some(s) = sessions.get_mut(sid) else {
-            continue;
-        };
-        let total_known: i64 = groups.iter().map(|g| g.3).sum();
-        if total_known <= 0 {
-            continue;
-        }
-        let top = &groups[0];
-        if (top.3 as f64 / total_known as f64) < ACTIVITY_DOMINANCE_THRESHOLD {
-            continue;
-        }
-        if !top.1.is_empty() || !top.2.is_empty() {
-            s.dominant_mob = Some(top.0.clone());
-            s.dominant_mob_kills = top.3;
-        } else {
-            s.dominant_tag = Some(top.0.clone());
-            s.dominant_tag_kills = top.3;
-        }
-    }
-
-    // Dominant weapon: by total shots, ordered desc then name asc.
-    let weapon_groups = sqlx::query(
-        "SELECT k.session_id, ts.tool_name, COALESCE(SUM(ts.shots_fired), 0) as total_shots \
-         FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
-         WHERE ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
-         GROUP BY k.session_id, ts.tool_name \
-         ORDER BY k.session_id, total_shots DESC, ts.tool_name ASC",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut weapons_by_session: std::collections::HashMap<String, Vec<(String, f64)>> =
-        std::collections::HashMap::new();
-    let mut weapon_order: Vec<String> = Vec::new();
-    for row in &weapon_groups {
-        let Some(sid) = row.try_get::<Option<String>, _>(0).ok().flatten() else {
-            continue;
-        };
-        let entry = weapons_by_session.entry(sid.clone()).or_insert_with(|| {
-            weapon_order.push(sid.clone());
-            Vec::new()
-        });
-        entry.push((row.get::<String, _>(1), as_float(row, 2)));
-    }
-    for sid in &weapon_order {
-        let groups = &weapons_by_session[sid];
-        let Some(s) = sessions.get_mut(sid) else {
-            continue;
-        };
-        let total_shots: f64 = groups.iter().map(|g| g.1).sum();
-        if total_shots <= 0.0 {
-            continue;
-        }
-        let top = &groups[0];
-        if (top.1 / total_shots) >= ACTIVITY_DOMINANCE_THRESHOLD {
-            s.dominant_weapon = Some(top.0.clone());
-        }
-    }
-
-    // cycledPed + the three filters, in original session order.
-    let mut result = Vec::new();
-    for id in &ids {
-        let mut s = sessions.remove(id).expect("session present");
-        s.cycled_ped = eo_wire::normalizer::round_half_even(
-            s.weapon_cost + s.enhancer_cost + s.armour_cost + s.heal_cost + s.dangling_cost,
-            4,
+    let mut out = std::collections::HashMap::with_capacity(rows.len());
+    for row in &rows {
+        let id = row.get::<String, _>(0);
+        out.insert(
+            id,
+            SessionAgg {
+                duration_hours: as_float(row, 1),
+                kills: row.try_get::<i64, _>(2).unwrap_or(0),
+                loot_tt: as_float(row, 3),
+                cycled_ped: as_float(row, 4),
+                skill_tt: as_float(row, 5),
+                dominant_mob: row.get::<Option<String>, _>(6),
+                dominant_tag: row.get::<Option<String>, _>(7),
+                dominant_weapon: row.get::<Option<String>, _>(8),
+                dominant_mob_kills: row.try_get::<i64, _>(9).unwrap_or(0),
+                dominant_tag_kills: row.try_get::<i64, _>(10).unwrap_or(0),
+                ..SessionAgg::default()
+            },
         );
-        if s.duration_hours <= 0.0 || s.cycled_ped <= 0.0 || s.kills <= 0 {
-            continue;
-        }
-        result.push(s);
     }
-    Ok(result)
+    Ok(out)
+}
+
+/// Compute one session's Activity aggregate directly from the raw tables, for
+/// the reconciliation path (an ended session with no summary row). Mirrors the
+/// summary's own per-session computation query for query, so an included
+/// no-gains session carries the same numbers a summary would if it held one.
+async fn raw_session_agg(
+    pool: &SqlitePool,
+    session_id: &str,
+    started_at: f64,
+    ended_at: f64,
+    armour_cost: f64,
+    heal_cost: f64,
+    dangling_cost: f64,
+) -> Result<SessionAgg, DbError> {
+    let mut agg = SessionAgg {
+        duration_hours: (ended_at - started_at).max(0.0) / 3600.0,
+        armour_cost,
+        heal_cost,
+        dangling_cost,
+        ..SessionAgg::default()
+    };
+
+    let kill_row = sqlx::query(
+        "SELECT COUNT(*), COALESCE(SUM(loot_total_ped), 0), COALESCE(SUM(enhancer_cost), 0) \
+         FROM kills WHERE session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    agg.kills = kill_row.get::<i64, _>(0);
+    agg.loot_tt = as_float(&kill_row, 1);
+    agg.enhancer_cost = as_float(&kill_row, 2);
+
+    let weapon_row = sqlx::query(
+        "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0), \
+         COALESCE(SUM(ts.shots_fired), 0) FROM kill_tool_stats ts \
+         JOIN kills k ON k.id = ts.kill_id WHERE k.session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    agg.weapon_cost = as_float(&weapon_row, 0);
+    agg.weapon_shots = as_float(&weapon_row, 1);
+
+    let skill_row = sqlx::query(
+        "SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains \
+         WHERE session_id = ? AND ped_value IS NOT NULL",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    agg.skill_tt = as_float(&skill_row, 0);
+
+    let mob_rows = sqlx::query(
+        "SELECT mob_name, COALESCE(mob_species, ''), COALESCE(mob_maturity, ''), COUNT(*) \
+         FROM kills WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
+         GROUP BY mob_name, mob_species, mob_maturity ORDER BY COUNT(*) DESC, mob_name ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    if !mob_rows.is_empty() {
+        let total_known: i64 = mob_rows.iter().map(|r| r.try_get::<i64, _>(3).unwrap_or(0)).sum();
+        if total_known > 0 {
+            let top_name: String = mob_rows[0].get(0);
+            let top_species: String = mob_rows[0].get(1);
+            let top_maturity: String = mob_rows[0].get(2);
+            let top_count: i64 = mob_rows[0].get(3);
+            if top_count as f64 / total_known as f64 >= ACTIVITY_DOMINANCE_THRESHOLD {
+                if !top_species.is_empty() || !top_maturity.is_empty() {
+                    agg.dominant_mob = Some(top_name);
+                    agg.dominant_mob_kills = top_count;
+                } else {
+                    agg.dominant_tag = Some(top_name);
+                    agg.dominant_tag_kills = top_count;
+                }
+            }
+        }
+    }
+
+    let tool_rows = sqlx::query(
+        "SELECT ts.tool_name, COALESCE(SUM(ts.shots_fired), 0) \
+         FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
+         WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
+         GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC, ts.tool_name ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    if !tool_rows.is_empty() {
+        let total_shots: f64 = tool_rows.iter().map(|r| as_float(r, 1)).sum();
+        let top_name: String = tool_rows[0].get(0);
+        let top_shots = as_float(&tool_rows[0], 1);
+        if total_shots > 0.0 && top_shots / total_shots >= ACTIVITY_DOMINANCE_THRESHOLD {
+            agg.dominant_weapon = Some(top_name);
+        }
+    }
+
+    agg.cycled_ped = eo_wire::normalizer::round_half_even(
+        agg.weapon_cost + agg.enhancer_cost + agg.armour_cost + agg.heal_cost + agg.dangling_cost,
+        4,
+    );
+    Ok(agg)
 }
 
 /// `_build_activity_slice_rows`: group sessions by a dominant field, sum the
@@ -878,7 +871,7 @@ fn build_activity_slice_rows(
     rows.into_iter().map(|(_, _, _, row)| row).collect()
 }
 
-async fn activity_impl(pool: &SqlitePool) -> Result<Value, sqlx::Error> {
+async fn activity_impl(pool: &SqlitePool) -> Result<Value, DbError> {
     let sessions = load_activity_sessions(pool).await?;
     let mob = build_activity_slice_rows(
         &sessions,
@@ -1340,32 +1333,26 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn memory_pool() -> SqlitePool {
+        use std::str::FromStr;
+        // Match the production connection surface (foreign keys off, as the app
+        // opens the database) so the schema's REFERENCES clauses stay
+        // declarative here too.
+        let options = sqlx::sqlite::SqliteConnectOptions::from_str("sqlite::memory:")
+            .expect("memory url")
+            .foreign_keys(false);
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect("sqlite::memory:")
+            .connect_with(options)
             .await
             .expect("memory pool");
-        for ddl in [
-            "CREATE TABLE tracking_sessions(id TEXT PRIMARY KEY, started_at REAL, ended_at REAL, \
-             armour_cost REAL, heal_cost REAL, dangling_cost REAL)",
-            "CREATE TABLE kills(id TEXT PRIMARY KEY, session_id TEXT, mob_name TEXT, \
-             mob_species TEXT, mob_maturity TEXT, timestamp REAL, enhancer_cost REAL, \
-             loot_total_ped REAL)",
-            "CREATE TABLE kill_tool_stats(id INTEGER PRIMARY KEY, kill_id TEXT, tool_name TEXT, \
-             shots_fired INTEGER, cost_per_shot REAL)",
-            "CREATE TABLE skill_gains(id INTEGER PRIMARY KEY, session_id TEXT, timestamp REAL, \
-             ped_value REAL)",
-            "CREATE TABLE codex_claims(id INTEGER PRIMARY KEY, claimed_at REAL, ped_value REAL)",
-            "CREATE TABLE quest_claims(id INTEGER PRIMARY KEY, claimed_at REAL, ped_value REAL)",
-            "CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, date TEXT, type TEXT, \
-             description TEXT, amount REAL, tag TEXT)",
-            "CREATE TABLE ledger_presets(id TEXT PRIMARY KEY, name TEXT, type TEXT, \
-             description TEXT, amount REAL, tag TEXT, created_at REAL)",
-            "CREATE TABLE inventory_items(id TEXT PRIMARY KEY, name TEXT, tt_value REAL, \
-             markup_paid REAL, notes TEXT, acquired_at TEXT, updated_at REAL)",
-        ] {
-            sqlx::query(ddl).execute(&pool).await.expect("ddl");
-        }
+        // Build the real schema (the same migration chain the app runs), so the
+        // reads that now depend on the full surface (session_summaries,
+        // notable_events, the complete skill_gains columns) exercise the true
+        // shape rather than a hand-trimmed subset.
+        sqlx::migrate!("../eo-services/migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
         pool
     }
 
@@ -1487,27 +1474,44 @@ mod tests {
                 .bind(&kid).bind("Opalo").bind(30_i64).bind(0.01)
                 .execute(pool).await.expect("seed");
         }
-        sqlx::query("INSERT INTO skill_gains(session_id,timestamp,ped_value) VALUES(?,?,?)")
-            .bind("sess-a")
-            .bind(recent)
-            .bind(3.0)
-            .execute(pool)
-            .await
-            .expect("seed");
-        sqlx::query("INSERT INTO skill_gains(session_id,timestamp,ped_value) VALUES(?,?,?)")
-            .bind("sess-b")
-            .bind(prior)
-            .bind(1.0)
-            .execute(pool)
-            .await
-            .expect("seed");
-        sqlx::query("INSERT INTO codex_claims(claimed_at,ped_value) VALUES(?,?)")
-            .bind(recent)
-            .bind(7.0)
-            .execute(pool)
-            .await
-            .expect("seed");
-        sqlx::query("INSERT INTO quest_claims(claimed_at,ped_value) VALUES(?,?)")
+        sqlx::query(
+            "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount,ped_value) \
+             VALUES(?,?,?,?,?)",
+        )
+        .bind("sess-a")
+        .bind(recent)
+        .bind("Laser Weaponry Technology")
+        .bind(1.0)
+        .bind(3.0)
+        .execute(pool)
+        .await
+        .expect("seed");
+        sqlx::query(
+            "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount,ped_value) \
+             VALUES(?,?,?,?,?)",
+        )
+        .bind("sess-b")
+        .bind(prior)
+        .bind("Laser Weaponry Technology")
+        .bind(1.0)
+        .bind(1.0)
+        .execute(pool)
+        .await
+        .expect("seed");
+        sqlx::query(
+            "INSERT INTO codex_claims(species_name,rank,skill_name,claimed_at,ped_value) \
+             VALUES(?,?,?,?,?)",
+        )
+        .bind("Atrox")
+        .bind(1_i64)
+        .bind("Rifle")
+        .bind(recent)
+        .bind(7.0)
+        .execute(pool)
+        .await
+        .expect("seed");
+        sqlx::query("INSERT INTO quest_claims(quest_name,claimed_at,ped_value) VALUES(?,?,?)")
+            .bind("A Quest")
             .bind(recent)
             .bind(4.0)
             .execute(pool)
@@ -1783,21 +1787,21 @@ mod tests {
         assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
     }
 
-    /// A kill carrying a NULL session_id (forbidden by the production FK but
-    /// representable here) is skipped, not decoded into a panic, matching the
-    /// reference's `sessions.get(None)` miss.
+    /// A kill referencing a session that does not exist (representable with
+    /// foreign keys off, as the app runs) is not counted: it belongs to no
+    /// session, so it never enters any session's aggregate.
     #[tokio::test]
-    async fn activity_tolerates_a_null_session_id_row() {
+    async fn activity_ignores_a_kill_for_a_missing_session() {
         let pool = memory_pool().await;
         // A valid completed session with one dominant-mob kill.
         seed_filter_session(&pool, "ok", "Real", 1000.0, 1000.0 + 3600.0, 5.0, 2).await;
-        // An orphan kill with no session_id (and no matching session row).
+        // An orphan kill whose session_id matches no tracking_sessions row.
         sqlx::query(
             "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
-             VALUES('orphan',NULL,'Ghost','Spec','Young',1.0,0,9.0)",
+             VALUES('orphan','ghost-session','Ghost','Spec','Young',1.0,0,9.0)",
         )
         .execute(&pool).await.expect("seed");
-        // Must not panic; only the real session's mob is compared.
+        // Only the real session's mob is compared; the orphan is ignored.
         let v = activity_impl(&pool).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);

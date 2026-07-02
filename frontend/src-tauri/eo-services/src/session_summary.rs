@@ -14,7 +14,10 @@ use crate::character_calc::ATTRIBUTE_SKILLS;
 use crate::db::{decoded_f64, DbError};
 use eo_wire::normalizer::{round_half_even, to_python_json};
 
-pub const SUMMARY_VERSION: i64 = 1;
+// Bumped to 2 when the Activity/session-list read columns (dominant kill
+// counts, raw session skill-TT, primary mob/weapon lists, global/HOF counts)
+// were added: a below-version row heals on the next read.
+pub const SUMMARY_VERSION: i64 = 2;
 pub const DOMINANCE_THRESHOLD: f64 = 0.6;
 
 /// The computed summary for one completed session, or None when the
@@ -93,6 +96,10 @@ pub async fn compute_session_summary(
     .await?;
     let mut dominant_mob: Option<String> = None;
     let mut dominant_tag: Option<String> = None;
+    // The dominant's own kill count (Activity sums these across sessions),
+    // carried on whichever of mob/tag the dominant classified as.
+    let mut dominant_mob_kills: i64 = 0;
+    let mut dominant_tag_kills: i64 = 0;
     if !mob_rows.is_empty() {
         let total_known: i64 = mob_rows
             .iter()
@@ -106,8 +113,10 @@ pub async fn compute_session_summary(
             if top_count as f64 / total_known as f64 >= DOMINANCE_THRESHOLD {
                 if !top_species.is_empty() || !top_maturity.is_empty() {
                     dominant_mob = Some(top_name);
+                    dominant_mob_kills = top_count;
                 } else {
                     dominant_tag = Some(top_name);
+                    dominant_tag_kills = top_count;
                 }
             }
         }
@@ -133,6 +142,60 @@ pub async fn compute_session_summary(
             dominant_weapon = Some(top_name);
         }
     }
+
+    // The session-list "primary" top-three lists: ungated (unlike the dominant
+    // fields), by kill count for mobs and by total shots for weapons. Same SQL
+    // the list read runs, so the stored order matches it row for row.
+    let primary_mob_rows = sqlx::query(
+        "SELECT mob_name FROM kills \
+         WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
+         GROUP BY mob_name ORDER BY COUNT(*) DESC LIMIT 3",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    let primary_mobs: Vec<String> = primary_mob_rows
+        .iter()
+        .map(|row| row.try_get::<String, _>(0))
+        .collect::<Result<_, _>>()?;
+    let primary_weapon_rows = sqlx::query(
+        "SELECT ts.tool_name FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
+         WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
+         GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC LIMIT 3",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    let primary_weapons: Vec<String> = primary_weapon_rows
+        .iter()
+        .map(|row| row.try_get::<String, _>(0))
+        .collect::<Result<_, _>>()?;
+
+    // Activity's raw session skill-TT: SUM(ped_value) over the session (not the
+    // per-skill, positive-only regular_skill_tt), so the Activity read reproduces
+    // its pesPer100Ped exactly.
+    let activity_skill_row = sqlx::query(
+        "SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains \
+         WHERE session_id = ? AND ped_value IS NOT NULL",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    let activity_skill_tt = decoded_f64(&activity_skill_row, 0);
+
+    // The session's global / HOF counts, from the notable-events prefixes the
+    // session-list read counts.
+    let notable_row = sqlx::query(
+        "SELECT \
+           COALESCE(SUM(CASE WHEN event_type LIKE 'global_%' THEN 1 ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN event_type LIKE 'hof_%' THEN 1 ELSE 0 END), 0) \
+         FROM notable_events WHERE session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    let globals: i64 = notable_row.try_get(0)?;
+    let hofs: i64 = notable_row.try_get(1)?;
 
     let regular_rows = sqlx::query(
         "SELECT skill_name, COALESCE(SUM(ped_value), 0) \
@@ -223,6 +286,20 @@ pub async fn compute_session_summary(
         "cycledPed".into(),
         Value::from(round_half_even(cycled_ped, 4)),
     );
+    // Activity/session-list read columns (SUMMARY_VERSION 2).
+    summary.insert("dominantMobKills".into(), Value::from(dominant_mob_kills));
+    summary.insert("dominantTagKills".into(), Value::from(dominant_tag_kills));
+    summary.insert("activitySkillTt".into(), Value::from(activity_skill_tt));
+    summary.insert(
+        "primaryMobs".into(),
+        Value::Array(primary_mobs.into_iter().map(Value::from).collect()),
+    );
+    summary.insert(
+        "primaryWeapons".into(),
+        Value::Array(primary_weapons.into_iter().map(Value::from).collect()),
+    );
+    summary.insert("globals".into(), Value::from(globals));
+    summary.insert("hofs".into(), Value::from(hofs));
     Ok(Some(summary))
 }
 
@@ -237,14 +314,22 @@ pub async fn write_session_summary(pool: &SqlitePool, session_id: &str) -> Resul
             .await?;
         return Ok(());
     };
+    // The two primary lists persist as compact JSON arrays; the read paths
+    // parse them straight back into the same string vectors.
+    let primary_mobs_json =
+        serde_json::to_string(&summary["primaryMobs"]).expect("primaryMobs serialises");
+    let primary_weapons_json =
+        serde_json::to_string(&summary["primaryWeapons"]).expect("primaryWeapons serialises");
     sqlx::query(
         "INSERT OR REPLACE INTO session_summaries (\
          session_id, summary_version, started_at, ended_at, duration_hours, \
          kills, loot_tt, weapon_cost, enhancer_cost, armour_cost, heal_cost, \
          dangling_cost, cycled_ped, regular_skill_ped_json, attribute_levels_json, \
          regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, \
-         dominant_weapon, computed_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
+         dominant_weapon, dominant_mob_kills, dominant_tag_kills, activity_skill_tt, \
+         primary_mobs_json, primary_weapons_json, globals, hofs, computed_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+         ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
     )
     .bind(summary["id"].as_str())
     .bind(SUMMARY_VERSION)
@@ -266,6 +351,13 @@ pub async fn write_session_summary(pool: &SqlitePool, session_id: &str) -> Resul
     .bind(summary["dominantMob"].as_str())
     .bind(summary["dominantTag"].as_str())
     .bind(summary["dominantWeapon"].as_str())
+    .bind(summary["dominantMobKills"].as_i64())
+    .bind(summary["dominantTagKills"].as_i64())
+    .bind(summary["activitySkillTt"].as_f64())
+    .bind(primary_mobs_json)
+    .bind(primary_weapons_json)
+    .bind(summary["globals"].as_i64())
+    .bind(summary["hofs"].as_i64())
     .execute(pool)
     .await?;
     Ok(())
@@ -313,10 +405,12 @@ fn row_to_prospect_dict(row: &sqlx::sqlite::SqliteRow) -> Value {
     })
 }
 
-/// All qualifying completed-session summaries, lazily rebuilding any
-/// missing or stale-version rows first so new installs converge on
-/// first read without a migration.
-pub async fn load_prospect_sessions(pool: &SqlitePool) -> Result<Vec<Value>, DbError> {
+/// Rebuild every missing or stale-version summary row, so a read taken after a
+/// `SUMMARY_VERSION` bump (or on a fresh install) sees current rows without a
+/// data migration. Shared by every summary reader (the prospect surface and the
+/// Activity / session-list reads); once the rows converge it finds nothing and
+/// is cheap.
+pub async fn heal_summaries(pool: &SqlitePool) -> Result<(), DbError> {
     let missing = sqlx::query(
         "SELECT s.id FROM tracking_sessions s \
          LEFT JOIN session_summaries ss ON ss.session_id = s.id \
@@ -331,6 +425,14 @@ pub async fn load_prospect_sessions(pool: &SqlitePool) -> Result<Vec<Value>, DbE
         use sqlx::Row as _;
         write_session_summary(pool, row.get(0)).await?;
     }
+    Ok(())
+}
+
+/// All qualifying completed-session summaries, lazily rebuilding any
+/// missing or stale-version rows first so new installs converge on
+/// first read without a migration.
+pub async fn load_prospect_sessions(pool: &SqlitePool) -> Result<Vec<Value>, DbError> {
+    heal_summaries(pool).await?;
 
     let rows = sqlx::query(
         "SELECT session_id, started_at, ended_at, duration_hours, kills, loot_tt, \
@@ -462,6 +564,20 @@ mod tests {
             serde_json::json!({"Agility": 0.75})
         );
         assert_eq!(summary["attributeLevelsTotal"], Value::from(0.75));
+        // Read columns (SUMMARY_VERSION 2). Atrox is the dominant mob with its
+        // 3 kills; no dominant tag.
+        assert_eq!(summary["dominantMobKills"], Value::from(3_i64));
+        assert_eq!(summary["dominantTagKills"], Value::from(0_i64));
+        // Raw SUM(ped_value): Rifle 0.5 + 0.25 + Anatomy 0.0 (NULL Agility/Health
+        // excluded).
+        assert_eq!(summary["activitySkillTt"], Value::from(0.75));
+        // Primary lists: mobs by kill count, weapons by total shots (Unknown
+        // excluded).
+        assert_eq!(summary["primaryMobs"], serde_json::json!(["Young Atrox", "Snable"]));
+        assert_eq!(summary["primaryWeapons"], serde_json::json!(["Rifle", "Pistol"]));
+        // No notable events seeded.
+        assert_eq!(summary["globals"], Value::from(0_i64));
+        assert_eq!(summary["hofs"], Value::from(0_i64));
     }
 
     #[tokio::test]
