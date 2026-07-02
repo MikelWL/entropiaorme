@@ -41,7 +41,7 @@ const SAMPLES: usize = 15;
 /// an even count).
 fn median(sorted: &[f64]) -> f64 {
     let n = sorted.len();
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     } else {
         sorted[n / 2]
