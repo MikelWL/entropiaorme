@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
+use eo_services::db::DbError;
 use eo_services::tracker::naive_to_epoch;
 use serde_json::{json, Value};
 use sqlx::sqlite::SqliteRow;
@@ -140,13 +141,21 @@ fn duration_seconds(
 
 // ── list_sessions_impl ──
 
-pub(crate) async fn list_sessions_impl(pool: &SqlitePool, now: f64) -> Result<Value, sqlx::Error> {
+pub(crate) async fn list_sessions_impl(pool: &SqlitePool, now: f64) -> Result<Value, DbError> {
+    // Heal so ended sessions carry current summaries, then read each recent
+    // session's row from its summary, computing raw only the ones a summary
+    // never holds: the active session, and any non-qualifying ended session.
+    eo_services::session_summary::heal_summaries(pool).await?;
+
     let rows = sqlx::query(
         "SELECT id, started_at, ended_at, is_active \
          FROM tracking_sessions ORDER BY started_at DESC LIMIT 20",
     )
     .fetch_all(pool)
     .await?;
+
+    let ids: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
+    let summaries = fetch_list_summaries(pool, &ids).await?;
 
     let mut sessions = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -155,94 +164,212 @@ pub(crate) async fn list_sessions_impl(pool: &SqlitePool, now: f64) -> Result<Va
         let ended_at = row.try_get::<Option<f64>, _>(2).ok().flatten();
         let is_active = row.get::<i64, _>(3) != 0;
 
-        let duration = duration_seconds(started_at, ended_at, is_active, now);
-
-        // Cost: weapon cycling + heal + enhancer + armour + dangling.
-        let weapon_cost = scalar(
-            pool,
-            "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
-             FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE k.session_id = ?",
-            &sid,
-        )
-        .await?;
-        let enhancer_cost = scalar(
-            pool,
-            "SELECT COALESCE(SUM(k.enhancer_cost), 0) FROM kills k WHERE k.session_id = ?",
-            &sid,
-        )
-        .await?;
-        let sess_costs = sqlx::query(
-            "SELECT COALESCE(armour_cost, 0), COALESCE(heal_cost, 0), COALESCE(dangling_cost, 0) \
-             FROM tracking_sessions WHERE id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(pool)
-        .await?;
-        let armour_cost = as_f64(&sql_number(&sess_costs, 0));
-        let heal_cost = as_f64(&sql_number(&sess_costs, 1));
-        let dangling_cost = as_f64(&sql_number(&sess_costs, 2));
-        let weapon_cost = as_f64(&weapon_cost);
-        let enhancer_cost = as_f64(&enhancer_cost);
-        let cost = weapon_cost + heal_cost + enhancer_cost + armour_cost + dangling_cost;
-
-        // Returns: sum of loot.
-        let returns = as_f64(
-            &scalar(
-                pool,
-                "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
-                &sid,
-            )
-            .await?,
-        );
-
-        let primary_mobs = string_column(
-            pool,
-            "SELECT mob_name FROM kills \
-             WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
-             GROUP BY mob_name ORDER BY COUNT(*) DESC LIMIT 3",
-            &sid,
-        )
-        .await?;
-        let primary_weapons = string_column(
-            pool,
-            "SELECT ts.tool_name FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
-             WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
-             GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC LIMIT 3",
-            &sid,
-        )
-        .await?;
-
-        let net = returns - cost;
-        let return_rate = if cost > 0.0 { returns / cost } else { 0.0 };
-
-        let counts = sqlx::query(
-            "SELECT \
-               COALESCE(SUM(CASE WHEN event_type LIKE 'global_%' THEN 1 ELSE 0 END), 0), \
-               COALESCE(SUM(CASE WHEN event_type LIKE 'hof_%' THEN 1 ELSE 0 END), 0) \
-             FROM notable_events WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(pool)
-        .await?;
-        let globals = counts.get::<i64, _>(0);
-        let hofs = counts.get::<i64, _>(1);
-
-        sessions.push(json!({
-            "id": sid,
-            "startTime": ts_to_iso(started_at),
-            "endTime": ts_to_iso(ended_at),
-            "duration": duration,
-            "primaryMobs": primary_mobs,
-            "primaryWeapons": primary_weapons,
-            "cost": round(cost, 2),
-            "returns": round(returns, 2),
-            "net": round(net, 2),
-            "returnRate": round(return_rate, 4),
-            "globals": globals,
-            "hofs": hofs,
-        }));
+        let session = match summaries.get(&sid) {
+            // A summary only exists for an ended, qualifying session; the
+            // header's own state is used for the time fields regardless.
+            Some(summary) if !is_active => {
+                list_row_from_summary(&sid, started_at, ended_at, is_active, now, summary)
+            }
+            _ => list_row_from_raw(pool, &sid, started_at, ended_at, is_active, now).await?,
+        };
+        sessions.push(session);
     }
     Ok(Value::Array(sessions))
+}
+
+/// The session-list columns read from `session_summaries` (the cost
+/// components are summed at read time in the response's order; the primary
+/// lists are the stored JSON arrays parsed back).
+struct ListSummary {
+    weapon_cost: f64,
+    heal_cost: f64,
+    enhancer_cost: f64,
+    armour_cost: f64,
+    dangling_cost: f64,
+    loot_tt: f64,
+    primary_mobs: Value,
+    primary_weapons: Value,
+    globals: i64,
+    hofs: i64,
+}
+
+/// Batch-read the summaries for the listed session ids in one query (only the
+/// ended, qualifying ones will have a row).
+async fn fetch_list_summaries(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, ListSummary>, DbError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(", ");
+    let sql = format!(
+        "SELECT session_id, weapon_cost, heal_cost, enhancer_cost, armour_cost, dangling_cost, \
+         loot_tt, primary_mobs_json, primary_weapons_json, globals, hofs \
+         FROM session_summaries WHERE session_id IN ({placeholders})"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for id in ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(pool).await?;
+    let mut out = std::collections::HashMap::with_capacity(rows.len());
+    for row in &rows {
+        let sid = row.get::<String, _>(0);
+        out.insert(
+            sid,
+            ListSummary {
+                weapon_cost: as_f64(&sql_number(row, 1)),
+                heal_cost: as_f64(&sql_number(row, 2)),
+                enhancer_cost: as_f64(&sql_number(row, 3)),
+                armour_cost: as_f64(&sql_number(row, 4)),
+                dangling_cost: as_f64(&sql_number(row, 5)),
+                loot_tt: as_f64(&sql_number(row, 6)),
+                primary_mobs: parse_string_array(&row.get::<String, _>(7)),
+                primary_weapons: parse_string_array(&row.get::<String, _>(8)),
+                globals: row.get::<i64, _>(9),
+                hofs: row.get::<i64, _>(10),
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// Parse a stored JSON string-array column back into a `Value::Array`.
+fn parse_string_array(text: &str) -> Value {
+    serde_json::from_str(text).unwrap_or_else(|_| Value::Array(Vec::new()))
+}
+
+/// Build one session-list row from a summary row (the fast path).
+fn list_row_from_summary(
+    session_id: &str,
+    started_at: Option<f64>,
+    ended_at: Option<f64>,
+    is_active: bool,
+    now: f64,
+    summary: &ListSummary,
+) -> Value {
+    let duration = duration_seconds(started_at, ended_at, is_active, now);
+    let cost = summary.weapon_cost
+        + summary.heal_cost
+        + summary.enhancer_cost
+        + summary.armour_cost
+        + summary.dangling_cost;
+    let returns = summary.loot_tt;
+    let net = returns - cost;
+    let return_rate = if cost > 0.0 { returns / cost } else { 0.0 };
+    json!({
+        "id": session_id,
+        "startTime": ts_to_iso(started_at),
+        "endTime": ts_to_iso(ended_at),
+        "duration": duration,
+        "primaryMobs": summary.primary_mobs,
+        "primaryWeapons": summary.primary_weapons,
+        "cost": round(cost, 2),
+        "returns": round(returns, 2),
+        "net": round(net, 2),
+        "returnRate": round(return_rate, 4),
+        "globals": summary.globals,
+        "hofs": summary.hofs,
+    })
+}
+
+/// Build one session-list row straight from the raw tables (the fallback for
+/// the active session and any ended session without a summary).
+async fn list_row_from_raw(
+    pool: &SqlitePool,
+    session_id: &str,
+    started_at: Option<f64>,
+    ended_at: Option<f64>,
+    is_active: bool,
+    now: f64,
+) -> Result<Value, DbError> {
+    let duration = duration_seconds(started_at, ended_at, is_active, now);
+
+    // Cost: weapon cycling + heal + enhancer + armour + dangling.
+    let weapon_cost = scalar(
+        pool,
+        "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
+         FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE k.session_id = ?",
+        session_id,
+    )
+    .await?;
+    let enhancer_cost = scalar(
+        pool,
+        "SELECT COALESCE(SUM(k.enhancer_cost), 0) FROM kills k WHERE k.session_id = ?",
+        session_id,
+    )
+    .await?;
+    let sess_costs = sqlx::query(
+        "SELECT COALESCE(armour_cost, 0), COALESCE(heal_cost, 0), COALESCE(dangling_cost, 0) \
+         FROM tracking_sessions WHERE id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    let armour_cost = as_f64(&sql_number(&sess_costs, 0));
+    let heal_cost = as_f64(&sql_number(&sess_costs, 1));
+    let dangling_cost = as_f64(&sql_number(&sess_costs, 2));
+    let weapon_cost = as_f64(&weapon_cost);
+    let enhancer_cost = as_f64(&enhancer_cost);
+    let cost = weapon_cost + heal_cost + enhancer_cost + armour_cost + dangling_cost;
+
+    // Returns: sum of loot.
+    let returns = as_f64(
+        &scalar(
+            pool,
+            "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
+            session_id,
+        )
+        .await?,
+    );
+
+    let primary_mobs = string_column(
+        pool,
+        "SELECT mob_name FROM kills \
+         WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
+         GROUP BY mob_name ORDER BY COUNT(*) DESC LIMIT 3",
+        session_id,
+    )
+    .await?;
+    let primary_weapons = string_column(
+        pool,
+        "SELECT ts.tool_name FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
+         WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
+         GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC LIMIT 3",
+        session_id,
+    )
+    .await?;
+
+    let net = returns - cost;
+    let return_rate = if cost > 0.0 { returns / cost } else { 0.0 };
+
+    let counts = sqlx::query(
+        "SELECT \
+           COALESCE(SUM(CASE WHEN event_type LIKE 'global_%' THEN 1 ELSE 0 END), 0), \
+           COALESCE(SUM(CASE WHEN event_type LIKE 'hof_%' THEN 1 ELSE 0 END), 0) \
+         FROM notable_events WHERE session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    let globals = counts.get::<i64, _>(0);
+    let hofs = counts.get::<i64, _>(1);
+
+    Ok(json!({
+        "id": session_id,
+        "startTime": ts_to_iso(started_at),
+        "endTime": ts_to_iso(ended_at),
+        "duration": duration,
+        "primaryMobs": primary_mobs,
+        "primaryWeapons": primary_weapons,
+        "cost": round(cost, 2),
+        "returns": round(returns, 2),
+        "net": round(net, 2),
+        "returnRate": round(return_rate, 4),
+        "globals": globals,
+        "hofs": hofs,
+    }))
 }
 
 /// A single-scalar aggregate bound to one session id, engine-typed.
@@ -1110,34 +1237,23 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn memory_pool() -> SqlitePool {
+        use std::str::FromStr;
+        // Match the production connection surface (foreign keys off) and build
+        // the real schema via the migration chain, so the reads that now depend
+        // on the full surface (session_summaries with its read columns) run
+        // against the true shape rather than a hand-trimmed subset.
+        let options = sqlx::sqlite::SqliteConnectOptions::from_str("sqlite::memory:")
+            .expect("memory url")
+            .foreign_keys(false);
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect("sqlite::memory:")
+            .connect_with(options)
             .await
             .expect("memory pool");
-        for ddl in [
-            "CREATE TABLE tracking_sessions(id TEXT PRIMARY KEY, started_at REAL, ended_at REAL, \
-             is_active INTEGER, armour_cost REAL, heal_cost REAL, dangling_cost REAL, \
-             mob_tracking_mode TEXT, updated_at REAL)",
-            "CREATE TABLE kills(id TEXT PRIMARY KEY, session_id TEXT, mob_name TEXT, \
-             mob_species TEXT, mob_maturity TEXT, timestamp REAL, shots_fired INTEGER, \
-             damage_dealt REAL, damage_taken REAL, critical_hits INTEGER, cost_ped REAL, \
-             enhancer_cost REAL, loot_total_ped REAL, is_global INTEGER, is_hof INTEGER, \
-             original_mob_name TEXT)",
-            "CREATE TABLE kill_tool_stats(id INTEGER PRIMARY KEY, kill_id TEXT, tool_name TEXT, \
-             shots_fired INTEGER, damage_dealt REAL, critical_hits INTEGER, cost_per_shot REAL)",
-            "CREATE TABLE kill_loot_items(id INTEGER PRIMARY KEY, kill_id TEXT, item_name TEXT, \
-             quantity INTEGER, value_ped REAL, is_enhancer_shrapnel INTEGER, deactivated_at REAL)",
-            "CREATE TABLE skill_gains(id INTEGER PRIMARY KEY, session_id TEXT, timestamp REAL, \
-             skill_name TEXT, amount REAL, ped_value REAL, created_at REAL)",
-            "CREATE TABLE skill_calibrations(id INTEGER PRIMARY KEY, skill_name TEXT, level REAL, \
-             source TEXT, scanned_at REAL)",
-            "CREATE TABLE notable_events(id INTEGER PRIMARY KEY, session_id TEXT, kill_id TEXT, \
-             event_type TEXT, mob_or_item TEXT, value_ped REAL, timestamp REAL)",
-            "CREATE TABLE session_summaries(session_id TEXT PRIMARY KEY, computed_at REAL)",
-        ] {
-            sqlx::query(ddl).execute(&pool).await.expect("ddl");
-        }
+        sqlx::migrate!("../eo-services/migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
         pool
     }
 
@@ -1510,10 +1626,21 @@ mod tests {
             .await
             .unwrap();
         }
-        sqlx::query("INSERT INTO session_summaries(session_id,computed_at) VALUES('ended',1.0)")
-            .execute(pool)
-            .await
-            .unwrap();
+        // A stale summary cache row for 'ended' to watch an edit invalidate.
+        // The real schema's NOT NULL columns are filled with placeholder
+        // values; only the row's existence (and its later deletion) matters.
+        sqlx::query(
+            "INSERT INTO session_summaries(\
+             session_id, started_at, ended_at, duration_hours, kills, loot_tt, \
+             weapon_cost, enhancer_cost, armour_cost, heal_cost, dangling_cost, cycled_ped, \
+             regular_skill_ped_json, attribute_levels_json, regular_skill_tt, \
+             attribute_levels_total, computed_at) \
+             VALUES('ended', 1000.0, 4600.0, 1.0, 3, 35.0, 0.0, 0.0, 5.0, 0.0, 0.0, 5.0, \
+             '{}', '{}', 0.0, 0.0, 1.0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     async fn summary_exists(pool: &SqlitePool) -> bool {
