@@ -7,6 +7,7 @@
 //! [`cost_engine`] is the pure-arithmetic leaf its per-unit `cargo test`
 //! loop runs on.
 
+pub mod bus_events;
 pub mod character_calc;
 pub mod chatlog_parser;
 pub mod chatlog_watcher;
