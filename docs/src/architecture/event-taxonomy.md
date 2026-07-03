@@ -2,7 +2,7 @@
 
 EntropiaOrme is an analytical desktop application whose Rust core observes a stream of game-state changes (parsed chat-log lines, manual skill scans) and pushes the resulting changes to the frontend windows without polling. Internally this is built as **two distinct event systems**, layered so that each solves a different problem. This page documents both layers end to end: from the low-level, synchronous, in-process topics that core services use to coordinate, up to the coarse typed envelopes that cross to the webview over the in-process Tauri event bridge.
 
-The two-layer shape is implemented in Rust under `frontend/src-tauri/`: the low-level bus lives in the `eo-services` crate (`frontend/src-tauri/eo-services/src/event_bus.rs`), and the domain envelopes and the fan-out hub live in the `eo-wire` crate (`frontend/src-tauri/eo-wire/src/domain_events.rs` and `frontend/src-tauri/eo-wire/src/sse.rs`). This began life as a Python FastAPI sidecar that was kept on only as a cross-language equivalence test oracle; that oracle has since been retired and its tree removed, so the Rust implementation is now the only one. The wire contract the two implementations shared is preserved as the committed schema snapshot the Rust types are asserted against.
+The two-layer shape is implemented in Rust under `frontend/src-tauri/`: the low-level bus lives in the `eo-services` crate (`frontend/src-tauri/eo-services/src/event_bus.rs`, with its typed payloads in `frontend/src-tauri/eo-services/src/bus_events.rs`), and the domain envelopes and the typed broadcast channel live in the `eo-wire` crate (`frontend/src-tauri/eo-wire/src/domain_events.rs` and `frontend/src-tauri/eo-wire/src/bus.rs`). This began life as a Python FastAPI sidecar that was kept on only as a cross-language equivalence test oracle; that oracle has since been retired and its tree removed, so the Rust implementation is now the only one. The wire contract the two implementations shared is preserved as the committed schema snapshot the Rust types are asserted against.
 
 For the wider context of where this fits, see the [architecture overview](overview.md) and the [service map](service-map.md). The two design decisions that shape this layer are recorded as [ADR 0002: the event spine](../adr/0002-event-spine.md) and [ADR 0009: push-to-pull invalidation](../adr/0009-push-to-pull-invalidation.md).
 
@@ -12,28 +12,28 @@ The system has two event layers with deliberately different shapes and audiences
 
 | | Low-level in-process bus | Domain event envelopes |
 | --- | --- | --- |
-| Defined in | `frontend/src-tauri/eo-services/src/event_bus.rs` | `frontend/src-tauri/eo-wire/src/domain_events.rs` |
+| Defined in | `frontend/src-tauri/eo-services/src/event_bus.rs` (payloads in `bus_events.rs`) | `frontend/src-tauri/eo-wire/src/domain_events.rs` |
 | Topic form | a `Topic` enum whose `as_str()` yields string constants (`"combat"`, `"loot_group"`, ...) | dotted domain strings (`"tracking.session.updated"`, ...) |
-| Payload | a loose `serde_json::Value` | a closed, typed envelope struct |
+| Payload | a typed `BusEvent` enum, one variant per topic with a per-topic payload struct | a closed, typed envelope struct |
 | Granularity | one raw mutation (a single parsed combat line, one loot group) | one coarse change ("the live session changed") |
 | Audience | other core services in the same process | the frontend, over the in-process bridge |
 | Crosses to the webview? | never | yes, serialised to JSON |
-| Dispatch | synchronous, on the publishing thread | synchronous publish on the bus, then re-validated and fanned out by the hub |
+| Dispatch | synchronous, on the publishing thread | synchronous publish on the bus, then republished onto the typed broadcast channel |
 
 The **low-level bus** is intra-core wiring. As the domain-events module puts it, a frontend window does not want "a damage_dealt combat line", it wants "the live session aggregates changed". The raw topics are at the wrong granularity to push to a webview: they are numerous, fine-grained, and carry core-shaped values (snake_case keys, raw float timestamps) that have no business on a public wire.
 
 The **domain event layer** is the coarse, frontend-facing subset. Each domain event is a typed envelope carrying a `type` discriminator, so the wire format is a serde-compatible tagged JSON object. The set of domain events is small and curated; the low-level topics stay inside the process and are never forwarded.
 
-The two layers share one piece of plumbing: typed domain envelopes are serialised to JSON and published on the *same* `EventBus` instance as the loose low-level topics. `EventBus::publish` takes a `&serde_json::Value`, so "a typed envelope on a domain topic" is a producer-side convention the type system does not enforce at the bus seam. The fan-out hub re-validates at dispatch for exactly this reason: `subscribe_sse_bridge` (in `frontend/src-tauri/entropia-orme/src/composition.rs`) deserialises each value back into a `DomainEvent` and drops anything that fails, so a non-envelope value on a domain topic can never be forwarded as an untyped frame. The typed-ness is therefore guaranteed at both ends: the producer constructs a typed envelope before serialising, and the bridge re-validates before framing.
+The two layers share one piece of plumbing: the two domain envelopes ride the *same* `EventBus` instance as the low-level topics, as the two domain-topic variants of the `BusEvent` enum, which carry the `eo-wire` envelope types (`TrackingSessionUpdated`, `ScanStatusChanged`) directly. `EventBus::publish` takes a `&BusEvent` and derives the topic from the variant, so "a typed envelope on a domain topic" is enforced by construction at the bus seam: a foreign value on a domain topic is unrepresentable, and no runtime re-validation exists because none is needed. `subscribe_domain_bridge` (in `frontend/src-tauri/entropia-orme/src/composition.rs`) republishes those two variants' envelopes, still typed, onto the broadcast channel the shell's bridge consumes.
 
 ### The bus mechanics
 
 The bus in `frontend/src-tauri/eo-services/src/event_bus.rs` is a thread-safe synchronous pub/sub:
 
-- `subscribe(topic, callback)` returns a `Registration` handle; `unsubscribe(topic, registration)` removes it. Subscription is per-topic by design.
-- `publish(topic, data)` snapshots the subscriber list (and the taps) under a `Mutex`, then dispatches outside the lock. Each callback runs synchronously on the publisher's thread.
+- `subscribe(topic, callback)` returns a `Registration` handle; `unsubscribe(topic, registration)` removes it. Subscription is per-topic by design; callbacks take `&BusEvent` and match the variant they expect.
+- `publish(&BusEvent)` derives the topic from the variant, snapshots the subscriber list (and the taps) under a `Mutex`, then dispatches outside the lock. Each callback runs synchronously on the publisher's thread.
 - A subscriber that panics does not break dispatch: each callback runs inside `catch_unwind`, so a panic is contained and dispatch continues to the next subscriber.
-- `add_tap(tap)` installs a **full-stream observer** called with every `(topic, data)` pair that crosses `publish`, regardless of topic, before subscriber dispatch. Because subscription is per-topic, a tap is the only supported way to observe the complete publish stream (new topics included). Taps are likewise panic-contained.
+- `add_tap(tap)` installs a **full-stream observer** called with every `BusEvent` that crosses `publish`, regardless of topic, before subscriber dispatch. Because subscription is per-topic, a tap is the only supported way to observe the complete publish stream (new topics included); the replay recorder's fingerprint capture rides one. Taps are likewise panic-contained.
 
 ## Low-level topics
 
@@ -53,7 +53,7 @@ The variants of the `Topic` enum in `frontend/src-tauri/eo-services/src/event_bu
 | `MissionReceived` | `mission_received` | A mission was received. |
 | `TickFlushed` | `tick_flushed` | The settling boundary: a parse tick has closed and every per-event subscriber write for that tick has completed. |
 
-The same enum also carries the two frontend-facing domain topics (`TrackingSessionUpdated`, `ScanStatusChanged`), whose `as_str()` returns the dotted constants from `frontend/src-tauri/eo-wire/src/domain_events.rs`, because the typed envelopes ride this same bus before the hub forwards them.
+The same enum also carries the two frontend-facing domain topics (`TrackingSessionUpdated`, `ScanStatusChanged`), whose `as_str()` returns the dotted constants from `frontend/src-tauri/eo-wire/src/domain_events.rs`, because the typed envelopes ride this same bus before the bridge republishes them onto the broadcast channel.
 
 ### The tick_flushed settling boundary
 
@@ -120,42 +120,25 @@ pub enum DomainEvent {
 }
 ```
 
-The `#[serde(untagged)]` dispatch is made exact by the closed topic-tag fields: a frame routes to the one variant whose `type` literal it carries, and a missing or unrecognised `type` fails outright, so adding a new member changes neither the existing members nor the wire format. Every call site (the bus publish, the hub serialiser, the schema snapshot) routes through this union unchanged. The schema snapshot records the union as a `oneOf` over the two `$def`s with a `discriminator` mapping keyed on `type`. `DomainEvent::topic()` returns the variant's wire topic, and `to_wire_json()` yields the compact envelope JSON.
+The `#[serde(untagged)]` dispatch is made exact by the closed topic-tag fields: a frame routes to the one variant whose `type` literal it carries, and a missing or unrecognised `type` fails outright, so adding a new member changes neither the existing members nor the wire format. Every call site (the bus publish, the broadcast channel, the schema snapshot) routes through this union unchanged. The schema snapshot records the union as a `oneOf` over the two `$def`s with a `discriminator` mapping keyed on `type`. `DomainEvent::topic()` returns the variant's wire topic, and `to_wire_json()` yields the compact envelope JSON.
 
-## The fan-out hub
+## The typed broadcast channel
 
-Domain events leave the producer spine through a fan-out hub and reach the frontend over the in-process Tauri event bridge. The hub (`SseHub`, in `frontend/src-tauri/eo-wire/src/sse.rs`) is the broker; the bridge that drains it is described under [The bridge and the frontend relay](#the-bridge-and-the-frontend-relay).
+Domain events leave the producer spine through a typed broadcast channel and reach the frontend over the in-process Tauri event bridge. The channel (`DomainBus`, in `frontend/src-tauri/eo-wire/src/bus.rs`) is the broker; the bridge task that consumes it is described under [The bridge and the frontend relay](#the-bridge-and-the-frontend-relay).
 
-### The hub: fan-out broker
+### The channel: typed fan-out
 
-`SseHub` is fed by `subscribe_sse_bridge`, which subscribes the two domain topics on the bus and dispatches each validated envelope into the hub. The forwarded set is exactly `[Topic::TrackingSessionUpdated, Topic::ScanStatusChanged]`; the low-level topics stay intra-core and are deliberately not forwarded.
+`DomainBus` wraps a tokio `broadcast::Sender<DomainEvent>`. It is fed by `subscribe_domain_bridge` (in `frontend/src-tauri/entropia-orme/src/composition.rs`), which subscribes the two domain topics on the bus and republishes each typed envelope onto the channel. The forwarded set is exactly `[Topic::TrackingSessionUpdated, Topic::ScanStatusChanged]`; the low-level topics stay intra-core and are deliberately not forwarded.
 
-The work spans a thread boundary. `EventBus::publish` runs synchronously on whatever thread mutated state (for the tick-coalesced tracking event, that is the chat-log watcher's OS thread). The hub crosses the boundary in one place and one direction:
+The work spans a thread boundary. `EventBus::publish` runs synchronously on whatever thread mutated state (for the tick-coalesced tracking event, that is the chat-log watcher's OS thread). The channel crosses the boundary in one place and one direction: the bus subscriber closure runs on the **publisher** thread and calls `DomainBus::publish` (a non-blocking broadcast send), and the bridge task consumes its `subscribe()` receiver asynchronously on the runtime. The envelope stays typed end to end; nothing is serialised until the bridge hands it to the Tauri emitter.
 
-- The bus subscriber closure runs on the **publisher** thread. It deserialises the value back into a `DomainEvent` (a value that is not a `DomainEvent`, which would be an upstream programming error, is dropped rather than forwarded as an untyped frame: this is the runtime re-validation that compensates for the bus's loosely-typed `Value` payload) and calls `SseHub::dispatch`.
-- `dispatch` assigns the frame's sequence number, builds the frame, and offers it to every connected client's queue, signalling each client's `Notify`. A client's asynchronous `next_frame` (driven by the in-process bridge task on the runtime) then wakes and pops.
+`DomainBus` also carries taps (`add_tap`): full-stream observers of every published envelope, mirroring the low-level bus's tap affordance for tests and capture harnesses.
 
-The hub state (the connection registry, the sequence counter) is guarded by a single `Mutex`, and each client's queue carries its own lock and `Notify`, so dispatch and drain do not contend beyond the brief registry critical section.
+#### Bounded delivery with skip-to-live
 
-#### The frame format and sequence number
+The broadcast channel is bounded (capacity 256, set at composition). A stalled or slow receiver cannot grow memory without limit: a receiver that falls more than the capacity behind observes a lag error (`RecvError::Lagged`) on its next receive and skips ahead to the oldest retained event. This preserves the self-healing property the retired per-client drop-oldest queues provided, in channel semantics: under push-to-pull the newest event is the one that triggers the freshest hydration, so it is never the one lost, and a skipped event is compensated by the snapshot re-hydration the next received event triggers, which reflects every intervening change.
 
-`dispatch` builds each frame as:
-
-```
-id: {seq}\nevent: {topic}\ndata: {data_json}\n\n
-```
-
-- `id:` is a monotonic sequence number (`state.seq += 1`), shared across every client's copy of a frame so a consumer can reason about gaps.
-- `event:` carries the domain topic, so the bridge can route a frame without parsing its body.
-- `data:` is the compact envelope JSON.
-
-This is a server-sent-events frame format, a lineage of the retired HTTP transport; in the shipped application the frames are consumed in-process by the bridge rather than written to an HTTP response.
-
-#### Bounded queues with drop-oldest
-
-Each connected client gets its own bounded queue, sized `DEFAULT_MAX_QUEUE = 256` frames. A stalled or slow reader cannot grow memory without limit: when its queue is full, `ClientQueue::offer` drops the **oldest** frame before enqueuing the new one. Drop-oldest (not drop-newest) is correct under push-to-pull: the newest frame is the one that triggers the freshest hydration, so it must never be the one discarded. A dropped frame is therefore self-healing: the next frame the reader does receive triggers a snapshot re-hydration that reflects every intervening change.
-
-Client registration is RAII. `SseHub::register` returns an `SseClient` whose `Drop` unregisters it from the hub, so there is no app-lifetime background task and no explicit teardown call: when the in-process bridge that holds the one long-lived client is dropped, the registration goes with it. The 15-second keep-alive and the `: ready` opening comment that belonged to the retired HTTP handler are transport-loop concerns; in the shipped application, where the hub is drained by an in-process bridge rather than served over HTTP, they do not apply.
+There is no frame format, no sequence number, and no client registry. The retired HTTP-era fan-out hub rendered each envelope into a server-sent-events text frame that the shell then string-parsed back into JSON; the typed channel deletes that round trip entirely. A receiver's lifetime is its own: dropping the `broadcast::Receiver` ends the subscription, so there is no registration to tear down.
 
 ## Producers and coalescing
 
@@ -163,13 +146,13 @@ Two core services produce domain events. Both share a discipline: **they publish
 
 ### The tracker
 
-The tracker (`frontend/src-tauri/eo-services/src/tracker.rs`) produces `tracking.session.updated` via its `emit_session_event` helper, which builds a typed `TrackingSessionUpdated`, serialises it to a `Value`, and publishes it on `Topic::TrackingSessionUpdated`. It emits in three situations:
+The tracker (`frontend/src-tauri/eo-services/src/tracker.rs`) produces `tracking.session.updated` via its `emit_session_event` helper, which builds a typed `TrackingSessionUpdated` and publishes it as the `BusEvent::TrackingSessionUpdated` variant. It emits in three situations:
 
 - **Session started.** `start_session` builds the new session state under the lock, then (after releasing it) does the DB insert and emits the started event with `status="active"`, `reason="started"`, stamped with the session start time.
 - **Session stopped.** `stop_session` finalises the session, then emits the stopped event with `status="idle"`, `reason="stopped"`, stamped from the injected clock's end time.
 - **Tick advanced.** This is where `Topic::TickFlushed` does its work. While a session is active, the tracker subscribes to `Topic::TickFlushed`. Its handler `on_tick_flushed` coalesces a settled tick's mutations into one `tracking.session.updated` (`reason="updated"`). Critically, it emits **only when the tick actually changed the live readout**: the P&L handlers set a `session_dirty` flag, and the handler reads and resets that flag under the lock; if the flag is clear (a tick of unrelated chat traffic), nothing is published, so an idle tick does not wake every frontend listener. The event is stamped with the tick's own timestamp; a settled tick that carries no timestamp falls back to the injected clock, so the required `occurred_at` always names a real instant.
 
-In all three paths the published value is a typed `TrackingSessionUpdated` instance serialised to a `Value`, with `occurred_at` produced by `to_iso_utc(...)`. The `session_id` is captured under the lock and passed into the emit helper rather than re-read off the live session, so the published id provably belongs to the session whose mutation the event describes even if a concurrent `stop_session` has since cleared it.
+In all three paths the published value is a typed `TrackingSessionUpdated` instance, with `occurred_at` produced by `to_iso_utc(...)`. The `session_id` is captured under the lock and passed into the emit helper rather than re-read off the live session, so the published id provably belongs to the session whose mutation the event describes even if a concurrent `stop_session` has since cleared it.
 
 ### The manual-scan service
 
@@ -183,10 +166,10 @@ Both producers follow the **push-to-pull** model (see [ADR 0009](../adr/0009-pus
 
 ## The bridge and the frontend relay
 
-In the shipped application the producer spine's frames are forwarded onto the Tauri event bus **in-process** by the shell's domain-event bridge (`spawn_domain_event_bridge` in `frontend/src-tauri/entropia-orme/src/lib.rs`), the native replacement for the frontend's former `EventSource` relay. The bridge registers a client on the producer spine's hub, drains its frames, and applies the same two transforms the old relay did before re-emitting onto the bus, so every window (including hidden overlays) receives core state changes by subscription rather than by polling.
+In the shipped application the producer spine's domain events are forwarded onto the Tauri event bus **in-process** by the shell's domain-event bridge (`spawn_domain_event_bridge` in `frontend/src-tauri/entropia-orme/src/lib.rs`), the native replacement for the frontend's former `EventSource` relay. The bridge subscribes the typed broadcast channel, receives each envelope already typed, and applies the one transform the Tauri event system needs before re-emitting, so every window (including hidden overlays) receives core state changes by subscription rather than by polling.
 
 - **The dot-to-colon rename.** Tauri event names admit only alphanumerics and `-`, `/`, `:`, `_` (no dots), so `domain_topic_to_tauri_event` namespaces the dotted wire topic with colons: `tracking.session.updated` is re-emitted as `tracking:session:updated`, and `scan.status.changed` as `scan:status:changed`. This is the **only** topic transform; the wire contract keeps the dotted form throughout.
 
-- **Whole-envelope forwarding.** For each frame the bridge parses the `data` JSON (via `parse_domain_frame`) and re-emits the **whole** envelope (`type`, `event_version`, `occurred_at`, `payload`) onto the colon-form Tauri topic, not just the payload, so a topic-aware consumer sees the full contract. A frame whose JSON fails to parse is logged and dropped.
+- **Whole-envelope forwarding.** The bridge emits the **whole** typed envelope (`type`, `event_version`, `occurred_at`, `payload`) onto the colon-form Tauri topic, not just the payload, so a topic-aware consumer sees the full contract; the Tauri emitter serialises it, the first and only serialisation on the path. A receiver that falls behind the channel's capacity observes a lag error, which is logged, and skips to live (the snapshot re-hydration the next event triggers absorbs the gap).
 
 The frontend half (`frontend/src/lib/realtime/eventRelay.ts`) now owns only the **re-hydrate nudge**. It listens for the `substrate:native-installed` event the shell emits once the native services compose, and fires a payload-less re-hydrate on each consumer's topic. Each topic-aware consumer (the tracking and scan stores, the overlay) subscribes through its typed topic and re-reads rather than reduces, so a payload-less frame reads as "re-hydrate" rather than as an idle session; this keeps a freshly live (or re-composed) core from leaving a window showing stale data. The nudge stays frontend-owned because it must fire after the webview is listening, which an emit at install time cannot guarantee on a cold load. The relay returns a stop function the layout hands back to Svelte for teardown on window close.

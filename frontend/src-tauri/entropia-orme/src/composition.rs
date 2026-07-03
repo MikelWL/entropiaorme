@@ -856,11 +856,6 @@ fn read_skill_page_levels(
         .collect()
 }
 
-/// Build and start the producer spine over the shared pool and clock.
-/// The providers are wired faithfully to the original Python composition:
-/// every lookup the tracker consults reads through
-/// the same database or the same config read-through the native
-/// `ConfigService` writes.
 /// Subscriber backlog bound for the typed domain channel (the shell's
 /// emit bridge is the one live subscriber; a receiver that falls behind
 /// observes a lag error and skips ahead rather than stalling publishers).
@@ -879,6 +874,11 @@ enum ComposeError {
     Config(#[from] std::io::Error),
 }
 
+/// Build and start the producer spine over the shared pool and clock.
+/// The providers are wired faithfully to the original Python composition:
+/// every lookup the tracker consults reads through
+/// the same database or the same config read-through the native
+/// `ConfigService` writes.
 fn compose_producers(
     db: Db,
     clock: Arc<dyn Clock>,
