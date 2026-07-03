@@ -36,6 +36,27 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// Collapse an internal failure to the generic boundary error,
+    /// logging the source server-side first: the boundary invariant is
+    /// that detail is logged, never serialised, so this is the one
+    /// sanctioned way to produce [`ApiError::Internal`] from a source
+    /// error. Use as `.map_err(ApiError::internal("context"))`.
+    pub fn internal<E: std::fmt::Display>(context: &'static str) -> impl FnOnce(E) -> Self {
+        move |source| {
+            tracing::error!(target: "eo::api", %source, "{context} failed");
+            Self::Internal
+        }
+    }
+
+    /// [`ApiError::Internal`] for an invalid-state condition with no
+    /// source error (a stored row missing a required member), logged
+    /// server-side with its context so the opaque reply stays
+    /// diagnosable.
+    pub fn invalid_state(context: impl std::fmt::Display) -> Self {
+        tracing::error!(target: "eo::api", "{context}");
+        Self::Internal
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::BadRequest {
             message: message.into(),

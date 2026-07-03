@@ -253,7 +253,7 @@ fn entity_name(entity: &Value) -> Result<String, ApiError> {
         .get("name")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or(ApiError::Internal)
+        .ok_or_else(|| ApiError::invalid_state("stored entity missing a string name"))
 }
 
 /// A stored markup value (`props[key] or 100`), as the number the
@@ -276,7 +276,8 @@ fn search_hit(row: &Value) -> EquipmentSearchHit {
 
 /// The typed cost lines from the cost engine's breakdown value.
 fn breakdown_lines(cost_result: &Value) -> Result<Vec<CostBreakdownLine>, ApiError> {
-    serde_json::from_value(cost_result["costBreakdown"].clone()).map_err(|_| ApiError::Internal)
+    serde_json::from_value(cost_result["costBreakdown"].clone())
+        .map_err(ApiError::internal("cost-breakdown shaping"))
 }
 
 /// Convert a library row to the list shape. The internal error mirrors
@@ -292,7 +293,9 @@ fn row_to_summary(
         let weapon_e = props
             .get("weapon_entity")
             .filter(|v| !v.is_null())
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(|| {
+                ApiError::invalid_state(format!("stored weapon row {id} missing weapon_entity"))
+            })?;
         let amp_e = props.get("amp_entity").filter(|v| !v.is_null());
         let enhancers = stored_enhancers(props).max(0);
         let cost_result = cost_per_shot_from_props(props, None);
@@ -339,7 +342,9 @@ fn row_to_summary(
     let tool_e = props
         .get("tool_entity")
         .filter(|v| !v.is_null())
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(|| {
+            ApiError::invalid_state(format!("stored healing row {id} missing tool_entity"))
+        })?;
     let markup = props.get("markup").and_then(Value::as_f64).unwrap_or(100.0) / 100.0;
     Ok(EquipmentSummary {
         id: id.to_string(),
@@ -370,7 +375,9 @@ fn row_to_detail(
         let weapon_e = props
             .get("weapon_entity")
             .filter(|v| !v.is_null())
-            .ok_or(ApiError::Internal)?;
+            .ok_or_else(|| {
+                ApiError::invalid_state(format!("stored weapon row {id} missing weapon_entity"))
+            })?;
         let enhancers = stored_enhancers(props).max(0);
         let cost_result = cost_per_shot_from_props(props, None);
 
@@ -461,7 +468,9 @@ fn row_to_detail(
     let tool_e = props
         .get("tool_entity")
         .filter(|v| !v.is_null())
-        .ok_or(ApiError::Internal)?;
+        .ok_or_else(|| {
+            ApiError::invalid_state(format!("stored healing row {id} missing tool_entity"))
+        })?;
     let markup_pct = stored_markup(props, "markup");
     let cost = heal_cost_per_use(tool_e, markup_pct / 100.0);
     let decay = eco_or_zero(tool_e, "decay");
@@ -534,7 +543,7 @@ impl Api {
         )
         .fetch_all(self.read())
         .await
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(ApiError::internal("equipment library read"))?;
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
             results.push(summary_from_row(&row)?);
@@ -558,7 +567,7 @@ impl Api {
         .bind(to_python_json_dumps(&built.props))
         .execute(self.write())
         .await
-        .map_err(|_| ApiError::Internal)?
+        .map_err(ApiError::internal("equipment insert"))?
         .last_insert_rowid();
         let row = sqlx::query(
             "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
@@ -566,7 +575,7 @@ impl Api {
         .bind(inserted)
         .fetch_one(self.read())
         .await
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(ApiError::internal("inserted equipment read-back"))?;
         summary_from_row(&row)
     }
 
@@ -580,7 +589,7 @@ impl Api {
             .bind(item_id)
             .fetch_optional(self.read())
             .await
-            .map_err(|_| ApiError::Internal)?
+            .map_err(ApiError::internal("equipment row lookup"))?
             .ok_or_else(|| ApiError::not_found(format!("Equipment item {item_id} not found")))?;
         let existing_type: String = existing.get("item_type");
         if existing_type != req.kind.as_str() {
@@ -596,21 +605,22 @@ impl Api {
         .bind(item_id)
         .execute(self.write())
         .await
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(ApiError::internal("equipment update"))?;
         let row = sqlx::query(
             "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
         )
         .bind(item_id)
         .fetch_one(self.read())
         .await
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(ApiError::internal("updated equipment read-back"))?;
         summary_from_row(&row)
     }
 
     /// Delete a stored entry; refused while a trifecta preset references
     /// it. Idempotent over a missing row.
     pub async fn equipment_delete(&self, item_id: i64) -> Result<(), ApiError> {
-        let config = load_config_readonly(&self.data_dir).map_err(|_| ApiError::Internal)?;
+        let config = load_config_readonly(&self.data_dir)
+            .map_err(ApiError::internal("settings read for the delete guard"))?;
         let referenced = config.trifecta_presets.iter().any(|preset| {
             [preset.small_weapon_id, preset.big_weapon_id, preset.heal_id].contains(&Some(item_id))
         });
@@ -623,7 +633,7 @@ impl Api {
             .bind(item_id)
             .execute(self.write())
             .await
-            .map_err(|_| ApiError::Internal)?;
+            .map_err(ApiError::internal("equipment delete"))?;
         Ok(())
     }
 
@@ -636,14 +646,15 @@ impl Api {
         .bind(item_id)
         .fetch_optional(self.read())
         .await
-        .map_err(|_| ApiError::Internal)?
+        .map_err(ApiError::internal("equipment detail lookup"))?
         .ok_or_else(|| ApiError::not_found(format!("Equipment item {item_id} not found")))?;
         let id: i64 = row.get("id");
         let name: String = row.get("name");
         let item_type: String = row.get("item_type");
         let catalog_id: Option<String> = row.get("catalog_id");
         let raw_props: String = row.get("properties_json");
-        let props = serde_json::from_str::<Value>(&raw_props).map_err(|_| ApiError::Internal)?;
+        let props = serde_json::from_str::<Value>(&raw_props)
+            .map_err(ApiError::internal("stored equipment props parse"))?;
         row_to_detail(id, &name, &item_type, catalog_id.as_deref(), &props)
     }
 
@@ -766,6 +777,7 @@ fn summary_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<EquipmentSummary, A
     let name: String = row.get("name");
     let item_type: String = row.get("item_type");
     let raw_props: String = row.get("properties_json");
-    let props = serde_json::from_str::<Value>(&raw_props).map_err(|_| ApiError::Internal)?;
+    let props = serde_json::from_str::<Value>(&raw_props)
+        .map_err(ApiError::internal("stored equipment props parse"))?;
     row_to_summary(id, &name, &item_type, &props)
 }
