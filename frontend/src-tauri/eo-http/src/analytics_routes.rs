@@ -214,29 +214,102 @@ fn family_value(sum: Option<f64>) -> Value {
     sum.map_or(json!(0), |value| json!(value))
 }
 
-async fn rollup_family_sums(
+/// The `daily_rollups` family-sum columns, position-matched to
+/// [`FamilySums`] (loot, weapon, enhancer, armour, heal, dangling, skill,
+/// codex, quest).
+const ROLLUP_FAMILY_COLS: [&str; 9] = [
+    "loot_tt",
+    "weapon_cost",
+    "enhancer_cost",
+    "armour_cost",
+    "heal_cost",
+    "dangling_cost",
+    "skill_tt",
+    "codex_pes",
+    "quest_pes",
+];
+
+/// The rollup-side family sums for several windows in ONE conditional-
+/// aggregation pass over `daily_rollups`, so the Overview reads the rollup
+/// range once however many windows it reports (the period window plus the
+/// two fixed trend windows), rather than re-scanning the rollups per
+/// window. Each returned slot holds the same nine verbatim sums a
+/// single-range [`rollup_family_sums`] would (NULL preserved as `None`), so
+/// the per-window merge with the raw edges is unchanged and the response is
+/// byte-identical. A window with no full rollup days contributes an
+/// all-`None` slot.
+///
+/// Day keys are canonical `YYYY-MM-DD` (chrono `%Y-%m-%d`, produced by
+/// [`daily_rollup::epoch_day`]/[`daily_rollup::day_range`]): they sort
+/// lexically and carry no quotes, so they inline into the CASE guards the
+/// same way this file's other composed statements inline column and period
+/// expressions (`AssertSqlSafe`, never caller data).
+async fn rollup_family_sums_multi(
     pool: &SqlitePool,
-    lo: Option<&str>,
-    hi: &str,
-) -> Result<FamilySums, sqlx::Error> {
-    let mut sql = String::from(
-        "SELECT SUM(loot_tt), SUM(weapon_cost), SUM(enhancer_cost), SUM(armour_cost), \
-         SUM(heal_cost), SUM(dangling_cost), SUM(skill_tt), SUM(codex_pes), SUM(quest_pes) \
-         FROM daily_rollups WHERE day <= ?",
+    windows: &[HybridWindow],
+) -> Result<Vec<FamilySums>, sqlx::Error> {
+    let mut out = vec![[None; 9]; windows.len()];
+
+    // The windows that actually cover full rollup days, paired with their
+    // index back into `out`.
+    let active: Vec<(usize, Option<&str>, &str)> = windows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, window)| {
+            window
+                .rollup_days
+                .as_ref()
+                .map(|(lo, hi)| (index, lo.as_deref(), hi.as_str()))
+        })
+        .collect();
+    if active.is_empty() {
+        return Ok(out);
+    }
+
+    // One CASE-guarded SUM per (window, family): the conditional-aggregation
+    // pass. Columns are emitted window-major, family-minor, matching the
+    // read-back below.
+    let mut cols: Vec<String> = Vec::with_capacity(active.len() * 9);
+    for (_, lo, hi) in &active {
+        for col in ROLLUP_FAMILY_COLS {
+            let guard = match lo {
+                Some(lo) => format!("day >= '{lo}' AND day <= '{hi}'"),
+                None => format!("day <= '{hi}'"),
+            };
+            cols.push(format!("SUM(CASE WHEN {guard} THEN {col} END)"));
+        }
+    }
+
+    // Bound the single scan to the union of the windows' day ranges: up to
+    // the greatest `hi`, and down to the least `lo` only when every active
+    // window has a lower bound (an all-time window leaves the scan unbounded
+    // below, exactly as the per-window `rollup_family_sums` did).
+    let max_hi = active.iter().map(|(_, _, hi)| *hi).max().expect("active");
+    let min_lo = active
+        .iter()
+        .all(|(_, lo, _)| lo.is_some())
+        .then(|| active.iter().filter_map(|(_, lo, _)| *lo).min())
+        .flatten();
+    let mut where_clause = format!("day <= '{max_hi}'");
+    if let Some(min_lo) = min_lo {
+        where_clause.push_str(&format!(" AND day >= '{min_lo}'"));
+    }
+
+    let sql = format!(
+        "SELECT {} FROM daily_rollups WHERE {where_clause}",
+        cols.join(", ")
     );
-    if lo.is_some() {
-        sql.push_str(" AND day >= ?");
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_one(pool).await?;
+
+    for (slot, (out_index, _, _)) in active.iter().enumerate() {
+        let base = slot * 9;
+        let mut sums: FamilySums = [None; 9];
+        for (family, value) in sums.iter_mut().enumerate() {
+            *value = row.try_get(base + family)?;
+        }
+        out[*out_index] = sums;
     }
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(hi);
-    if let Some(lo) = lo {
-        query = query.bind(lo);
-    }
-    let row = query.fetch_one(pool).await?;
-    let mut sums: FamilySums = [None; 9];
-    for (index, slot) in sums.iter_mut().enumerate() {
-        *slot = row.try_get(index)?;
-    }
-    Ok(sums)
+    Ok(out)
 }
 
 /// One raw part's family sums over `[start, end)`, verbatim (NULL kept)
@@ -434,20 +507,22 @@ async fn ledger_by_tag(
 /// below the rollup watermark aggregate O(days) from `daily_rollups`;
 /// the partial edge days and the un-rolled tail aggregate from bounded
 /// raw windows.
-async fn compute_metrics(
+/// One window's metrics, given its pre-computed hybrid split and the
+/// rollup-side family sums from the batched [`rollup_family_sums_multi`]
+/// pass. Adds the window's bounded raw edges and its per-window ledger
+/// totals, then shapes the gains/losses breakdown exactly as the
+/// single-pass path did (the batched rollup sums are identical to the
+/// per-window ones, so the merge and the response are byte-for-byte
+/// unchanged).
+async fn assemble_metrics(
     pool: &SqlitePool,
-    watermark: &str,
+    window: &HybridWindow,
+    rollup_sums: FamilySums,
     epoch_start: Option<f64>,
     epoch_end: Option<f64>,
+    watermark: &str,
 ) -> Result<Metrics, sqlx::Error> {
-    let window = hybrid_window(epoch_start, epoch_end, watermark);
-    let mut sums: FamilySums = [None; 9];
-    if let Some((lo, hi)) = &window.rollup_days {
-        merge_family_sums(
-            &mut sums,
-            rollup_family_sums(pool, lo.as_deref(), hi).await?,
-        );
-    }
+    let mut sums = rollup_sums;
     for range in &window.raw_ranges {
         merge_family_sums(&mut sums, raw_family_sums(pool, *range).await?);
     }
@@ -603,7 +678,33 @@ async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError
     let pool = db.read();
     let epoch_start = period_epoch(period, now);
 
-    let m = compute_metrics(pool, &watermark, epoch_start, None).await?;
+    // The Overview reports three metric windows: the requested period
+    // window, and the two fixed trend windows (recent-30d, prior-30d, the
+    // pair independent of the period). Their rollup-side family sums come
+    // from a single conditional-aggregation pass over `daily_rollups` (the
+    // Overview reads the rollup range once); each window then adds its own
+    // bounded raw edges and per-window ledger totals.
+    let day_30 = now - 30.0 * 86400.0;
+    let day_60 = now - 60.0 * 86400.0;
+    let window_bounds = [
+        (epoch_start, None),
+        (Some(day_30), None),
+        (Some(day_60), Some(day_30)),
+    ];
+    let windows: Vec<HybridWindow> = window_bounds
+        .iter()
+        .map(|&(start, end)| hybrid_window(start, end, &watermark))
+        .collect();
+    let rollup_sums = rollup_family_sums_multi(pool, &windows).await?;
+    let mut metrics = Vec::with_capacity(window_bounds.len());
+    for ((start, end), (window, sums)) in window_bounds.iter().zip(windows.iter().zip(rollup_sums)) {
+        metrics.push(assemble_metrics(pool, window, sums, *start, *end, &watermark).await?);
+    }
+    let mut metrics = metrics.into_iter();
+    let m = metrics.next().expect("period window metrics");
+    let rate_30d = rate_from_metrics(&metrics.next().expect("recent-30d window metrics"));
+    let rate_prior = rate_from_metrics(&metrics.next().expect("prior-30d window metrics"));
+
     let total_ledger_gains = sum_values(&m.ledger_gains);
     let total_ledger_losses = sum_values(&m.ledger_losses);
     let total_gains = m.loot_tt.as_f64().unwrap_or(0.0) + total_ledger_gains;
@@ -615,11 +716,6 @@ async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError
     };
 
     // Trend: always recent-30d vs prior-30d, independent of period.
-    let day_30 = now - 30.0 * 86400.0;
-    let day_60 = now - 60.0 * 86400.0;
-    let rate_30d = rate_from_metrics(&compute_metrics(pool, &watermark, Some(day_30), None).await?);
-    let rate_prior =
-        rate_from_metrics(&compute_metrics(pool, &watermark, Some(day_60), Some(day_30)).await?);
     let trend = if rate_30d > 0.0 && rate_prior > 0.0 {
         if rate_30d > rate_prior * 1.02 {
             "improving"
@@ -870,7 +966,7 @@ async fn raw_breakdown(
 
 /// Build the timeline / monthly breakdown: per-source bucketed sums merged
 /// over the union of all buckets, then one point per bucket in sorted order.
-/// Hybrid over the rollup watermark, exactly as [`compute_metrics`].
+/// Hybrid over the rollup watermark, exactly as [`assemble_metrics`].
 async fn breakdown_points(
     pool: &SqlitePool,
     watermark: &str,
