@@ -65,6 +65,13 @@ fn canonical_day(day: &str) -> Option<NaiveDate> {
     (parsed.format("%Y-%m-%d").to_string() == day).then_some(parsed)
 }
 
+/// The `[00:00, next 00:00)` UTC epoch window of a canonical day key,
+/// or None for a stray key. The read path partitions its windows on
+/// these boundaries.
+pub fn day_range(day: &str) -> Option<(f64, f64)> {
+    canonical_day(day).map(day_bounds)
+}
+
 /// The `[00:00, next 00:00)` UTC epoch window of a canonical day.
 fn day_bounds(date: NaiveDate) -> (f64, f64) {
     let start = date.and_hms_opt(0, 0, 0).expect("midnight exists");

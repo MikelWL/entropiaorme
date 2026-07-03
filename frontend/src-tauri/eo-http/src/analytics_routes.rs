@@ -22,6 +22,7 @@ use std::collections::BTreeSet;
 
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
+use eo_services::daily_rollup;
 use eo_services::db::DbError;
 use eo_services::tracker::naive_to_epoch;
 use serde_json::{json, Map, Value};
@@ -129,41 +130,201 @@ fn where_epoch(col: &str, start: Option<f64>, end: Option<f64>) -> (String, Vec<
     )
 }
 
-/// WHERE clause + ISO-date params for an ISO-date TEXT column.
-fn where_iso(col: &str, start: Option<f64>, end: Option<f64>) -> (String, Vec<String>) {
-    let mut parts = Vec::new();
-    let mut params = Vec::new();
-    if let Some(s) = start {
-        parts.push(format!("{col} >= ?"));
-        params.push(epoch_to_iso(s));
-    }
-    if let Some(e) = end {
-        parts.push(format!("{col} < ?"));
-        params.push(epoch_to_iso(e));
-    }
-    (
-        if parts.is_empty() {
-            "1=1".to_string()
-        } else {
-            parts.join(" AND ")
-        },
-        params,
-    )
+// ── The hybrid rollup/raw window split ──
+
+/// The hybrid split of an epoch window against the daily-rollup
+/// watermark: whole days at or below the watermark aggregate from
+/// `daily_rollups` (O(days), not O(rows)); partial edge days and
+/// everything past the watermark aggregate from the raw tables
+/// (bounded: at most one head day, plus the un-rolled tail from the
+/// watermark on). The parts partition `[start, end)` exactly, so the
+/// hybrid reproduces the raw-only aggregates.
+struct HybridWindow {
+    /// Inclusive rollup day-key range; a `None` lower bound is
+    /// unbounded (the all-time period).
+    rollup_days: Option<(Option<String>, String)>,
+    /// The raw epoch ranges complementing the rollup days.
+    raw_ranges: Vec<(Option<f64>, Option<f64>)>,
 }
 
-/// Run a single-scalar epoch-filtered aggregate, returning the engine-typed
-/// number (`COALESCE(SUM(...), 0)`).
-async fn scalar_epoch(
+fn hybrid_window(start: Option<f64>, end: Option<f64>, watermark: &str) -> HybridWindow {
+    let day_range = |day: &str| daily_rollup::day_range(day).expect("canonical day");
+    // Everything past the watermark day's end is raw territory; rollups
+    // can serve full days up to this cut.
+    let boundary = day_range(watermark).1;
+    let cut = end.map_or(boundary, |e| e.min(boundary));
+
+    // First full day at or after start (None = unbounded below).
+    let lo_day = start.map(|s| {
+        let day = daily_rollup::epoch_day(s);
+        let (d0, d1) = day_range(&day);
+        if s <= d0 {
+            day
+        } else {
+            daily_rollup::epoch_day(d1)
+        }
+    });
+    // Last full day ending at or before the cut.
+    let hi_day = daily_rollup::epoch_day(day_range(&daily_rollup::epoch_day(cut)).0 - 1.0);
+
+    let full_days_exist = lo_day
+        .as_ref()
+        .is_none_or(|lo| lo.as_str() <= hi_day.as_str());
+    if !full_days_exist {
+        return HybridWindow {
+            rollup_days: None,
+            raw_ranges: vec![(start, end)],
+        };
+    }
+
+    let mut raw_ranges = Vec::new();
+    if let (Some(s), Some(lo)) = (start, &lo_day) {
+        let lo_start = day_range(lo).0;
+        if s < lo_start {
+            raw_ranges.push((Some(s), Some(lo_start)));
+        }
+    }
+    let hi_end = day_range(&hi_day).1;
+    if end.is_none_or(|e| e > hi_end) {
+        raw_ranges.push((Some(hi_end), end));
+    }
+    HybridWindow {
+        rollup_days: Some((lo_day, hi_day)),
+        raw_ranges,
+    }
+}
+
+/// The nine aggregate-family sums of one window part, position-matched
+/// to the `daily_rollups` family columns (loot, weapon, enhancer,
+/// armour, heal, dangling, skill, codex, quest). A sum stays None when
+/// the part had no contributing rows, so the merged result reproduces
+/// the raw engine typing: an all-empty window leaves the wire as an
+/// integer zero, exactly as `COALESCE(SUM(...), 0)` does.
+type FamilySums = [Option<f64>; 9];
+
+fn merge_family_sums(into: &mut FamilySums, from: FamilySums) {
+    for (slot, value) in into.iter_mut().zip(from) {
+        if let Some(value) = value {
+            *slot = Some(slot.unwrap_or(0.0) + value);
+        }
+    }
+}
+
+fn family_value(sum: Option<f64>) -> Value {
+    sum.map_or(json!(0), |value| json!(value))
+}
+
+async fn rollup_family_sums(
     pool: &SqlitePool,
-    sql: String,
-    params: &[f64],
-) -> Result<Value, sqlx::Error> {
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for value in params {
-        query = query.bind(*value);
+    lo: Option<&str>,
+    hi: &str,
+) -> Result<FamilySums, sqlx::Error> {
+    let mut sql = String::from(
+        "SELECT SUM(loot_tt), SUM(weapon_cost), SUM(enhancer_cost), SUM(armour_cost), \
+         SUM(heal_cost), SUM(dangling_cost), SUM(skill_tt), SUM(codex_pes), SUM(quest_pes) \
+         FROM daily_rollups WHERE day <= ?",
+    );
+    if lo.is_some() {
+        sql.push_str(" AND day >= ?");
+    }
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(hi);
+    if let Some(lo) = lo {
+        query = query.bind(lo);
     }
     let row = query.fetch_one(pool).await?;
-    Ok(sql_number(&row, 0))
+    let mut sums: FamilySums = [None; 9];
+    for (index, slot) in sums.iter_mut().enumerate() {
+        *slot = row.try_get(index)?;
+    }
+    Ok(sums)
+}
+
+/// One raw part's family sums over `[start, end)`, verbatim (NULL kept)
+/// so the merge preserves engine typing.
+async fn raw_family_sums(
+    pool: &SqlitePool,
+    range: (Option<f64>, Option<f64>),
+) -> Result<FamilySums, sqlx::Error> {
+    async fn fetch(
+        pool: &SqlitePool,
+        sql: String,
+        params: &[f64],
+        sums: usize,
+    ) -> Result<Vec<Option<f64>>, sqlx::Error> {
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for value in params {
+            query = query.bind(*value);
+        }
+        let row = query.fetch_one(pool).await?;
+        (0..sums).map(|index| row.try_get(index)).collect()
+    }
+
+    let (start, end) = range;
+    let mut sums: FamilySums = [None; 9];
+    let (w, p) = where_epoch("timestamp", start, end);
+    let kills = fetch(
+        pool,
+        format!("SELECT SUM(loot_total_ped), SUM(enhancer_cost) FROM kills WHERE {w}"),
+        &p,
+        2,
+    )
+    .await?;
+    sums[0] = kills[0];
+    sums[2] = kills[1];
+
+    let (w, p) = where_epoch("k.timestamp", start, end);
+    let weapon = fetch(
+        pool,
+        format!(
+            "SELECT SUM(ts.cost_per_shot * ts.shots_fired) \
+             FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE {w}"
+        ),
+        &p,
+        1,
+    )
+    .await?;
+    sums[1] = weapon[0];
+
+    let (w, p) = where_epoch("started_at", start, end);
+    let sessions = fetch(
+        pool,
+        format!(
+            "SELECT SUM(armour_cost), SUM(heal_cost), SUM(dangling_cost) \
+             FROM tracking_sessions WHERE {w}"
+        ),
+        &p,
+        3,
+    )
+    .await?;
+    sums[3] = sessions[0];
+    sums[4] = sessions[1];
+    sums[5] = sessions[2];
+
+    let (w, p) = where_epoch("timestamp", start, end);
+    sums[6] = fetch(
+        pool,
+        format!("SELECT SUM(ped_value) FROM skill_gains WHERE {w}"),
+        &p,
+        1,
+    )
+    .await?[0];
+    let (w, p) = where_epoch("claimed_at", start, end);
+    sums[7] = fetch(
+        pool,
+        format!("SELECT SUM(ped_value) FROM codex_claims WHERE {w}"),
+        &p,
+        1,
+    )
+    .await?[0];
+    let (w, p) = where_epoch("claimed_at", start, end);
+    sums[8] = fetch(
+        pool,
+        format!("SELECT SUM(ped_value) FROM quest_claims WHERE {w}"),
+        &p,
+        1,
+    )
+    .await?[0];
+    Ok(sums)
 }
 
 /// A day/month-keyed aggregate (`SELECT <bucket>, COALESCE(SUM(...), 0) ...
@@ -204,81 +365,102 @@ struct Metrics {
     ledger_losses: Map<String, Value>,
 }
 
-/// `SELECT le.tag, COALESCE(SUM(le.amount), 0) ... GROUP BY le.tag`, rounded
-/// to two places and collected in SQL row order.
+/// Per-tag ledger totals for a window, rounded to two places and
+/// collected in tag order (the order the raw `GROUP BY le.tag` sorter
+/// emits). Ledger windows are day-granular (`le.date` is TEXT), so the
+/// split is purely lexical: date keys at or below the watermark are all
+/// rolled up (the heal sweeps stray spellings); later keys read raw.
+/// Part totals stay unrounded until the final merge.
 async fn ledger_by_tag(
     pool: &SqlitePool,
     entry_type: &str,
-    led_w: &str,
-    led_p: &[String],
+    epoch_start: Option<f64>,
+    epoch_end: Option<f64>,
+    watermark: &str,
 ) -> Result<Map<String, Value>, sqlx::Error> {
+    let mut totals: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+    let bounds = |column: &str| {
+        let mut sql = String::new();
+        let mut params = Vec::new();
+        if let Some(start) = epoch_start {
+            sql.push_str(&format!(" AND {column} >= ?"));
+            params.push(epoch_to_iso(start));
+        }
+        if let Some(end) = epoch_end {
+            sql.push_str(&format!(" AND {column} < ?"));
+            params.push(epoch_to_iso(end));
+        }
+        (sql, params)
+    };
+
+    let (extra, params) = bounds("day");
     let sql = format!(
-        "SELECT le.tag, COALESCE(SUM(le.amount), 0) \
-         FROM ledger_entries le WHERE le.type = '{entry_type}' AND {led_w} \
-         GROUP BY le.tag"
+        "SELECT tag, SUM(amount) FROM daily_ledger_rollups \
+         WHERE entry_type = ? AND day <= ?{extra} GROUP BY tag"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for value in led_p {
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(entry_type)
+        .bind(watermark);
+    for value in &params {
         query = query.bind(value);
     }
-    let rows = query.fetch_all(pool).await?;
+    for row in &query.fetch_all(pool).await? {
+        *totals.entry(row.get(0)).or_insert(0.0) += row.get::<f64, _>(1);
+    }
+
+    let (extra, params) = bounds("le.date");
+    let sql = format!(
+        "SELECT le.tag, SUM(le.amount) FROM ledger_entries le \
+         WHERE le.type = ? AND le.date > ?{extra} GROUP BY le.tag"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(entry_type)
+        .bind(watermark);
+    for value in &params {
+        query = query.bind(value);
+    }
+    for row in &query.fetch_all(pool).await? {
+        *totals.entry(row.get(0)).or_insert(0.0) += row.get::<f64, _>(1);
+    }
+
     let mut out = Map::new();
-    for row in &rows {
-        out.insert(row.get::<String, _>(0), rounded(&sql_number(row, 1), 2));
+    for (tag, total) in totals {
+        out.insert(tag, rounded(&json!(total), 2));
     }
     Ok(out)
 }
 
+/// One window's metrics through the hybrid split: full days at or
+/// below the rollup watermark aggregate O(days) from `daily_rollups`;
+/// the partial edge days and the un-rolled tail aggregate from bounded
+/// raw windows.
 async fn compute_metrics(
     pool: &SqlitePool,
+    watermark: &str,
     epoch_start: Option<f64>,
     epoch_end: Option<f64>,
 ) -> Result<Metrics, sqlx::Error> {
-    let (enc_w, enc_p) = where_epoch("k.timestamp", epoch_start, epoch_end);
-    let (sg_w, sg_p) = where_epoch("sg.timestamp", epoch_start, epoch_end);
-    let (led_w, led_p) = where_iso("le.date", epoch_start, epoch_end);
-    let (cc_w, cc_p) = where_epoch("cc.claimed_at", epoch_start, epoch_end);
-    let (qc_w, qc_p) = where_epoch("qc.claimed_at", epoch_start, epoch_end);
-    let (sess_w, sess_p) = where_epoch("s.started_at", epoch_start, epoch_end);
-
-    let loot_tt = scalar_epoch(
-        pool,
-        format!("SELECT COALESCE(SUM(k.loot_total_ped), 0) FROM kills k WHERE {enc_w}"),
-        &enc_p,
-    )
-    .await?;
-
-    let weapon = scalar_epoch(
-        pool,
-        format!(
-            "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
-             FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE {enc_w}"
-        ),
-        &enc_p,
-    )
-    .await?;
-
-    let enhancer = scalar_epoch(
-        pool,
-        format!("SELECT COALESCE(SUM(k.enhancer_cost), 0) FROM kills k WHERE {enc_w}"),
-        &enc_p,
-    )
-    .await?;
-
-    let sess_row = {
-        let sql = format!(
-            "SELECT COALESCE(SUM(s.armour_cost), 0), COALESCE(SUM(s.heal_cost), 0), \
-             COALESCE(SUM(s.dangling_cost), 0) FROM tracking_sessions s WHERE {sess_w}"
+    let window = hybrid_window(epoch_start, epoch_end, watermark);
+    let mut sums: FamilySums = [None; 9];
+    if let Some((lo, hi)) = &window.rollup_days {
+        merge_family_sums(
+            &mut sums,
+            rollup_family_sums(pool, lo.as_deref(), hi).await?,
         );
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-        for value in &sess_p {
-            query = query.bind(*value);
-        }
-        query.fetch_one(pool).await?
-    };
-    let armour = sql_number(&sess_row, 0);
-    let healing = sql_number(&sess_row, 1);
-    let dangling = sql_number(&sess_row, 2);
+    }
+    for range in &window.raw_ranges {
+        merge_family_sums(&mut sums, raw_family_sums(pool, *range).await?);
+    }
+
+    let loot_tt = family_value(sums[0]);
+    let weapon = family_value(sums[1]);
+    let enhancer = family_value(sums[2]);
+    let armour = family_value(sums[3]);
+    let healing = family_value(sums[4]);
+    let dangling = family_value(sums[5]);
+    let skill_tt = family_value(sums[6]);
+    let codex_pes = family_value(sums[7]);
+    let quest_pes = family_value(sums[8]);
 
     // weapon + heal + enhancer + armour + dangling (the reference's order).
     let tracking_cost = number_sum(
@@ -289,27 +471,8 @@ async fn compute_metrics(
         &dangling,
     );
 
-    let skill_tt = scalar_epoch(
-        pool,
-        format!("SELECT COALESCE(SUM(sg.ped_value), 0) FROM skill_gains sg WHERE {sg_w}"),
-        &sg_p,
-    )
-    .await?;
-    let codex_pes = scalar_epoch(
-        pool,
-        format!("SELECT COALESCE(SUM(cc.ped_value), 0) FROM codex_claims cc WHERE {cc_w}"),
-        &cc_p,
-    )
-    .await?;
-    let quest_pes = scalar_epoch(
-        pool,
-        format!("SELECT COALESCE(SUM(qc.ped_value), 0) FROM quest_claims qc WHERE {qc_w}"),
-        &qc_p,
-    )
-    .await?;
-
-    let ledger_gains = ledger_by_tag(pool, "markup", &led_w, &led_p).await?;
-    let ledger_losses = ledger_by_tag(pool, "expense", &led_w, &led_p).await?;
+    let ledger_gains = ledger_by_tag(pool, "markup", epoch_start, epoch_end, watermark).await?;
+    let ledger_losses = ledger_by_tag(pool, "expense", epoch_start, epoch_end, watermark).await?;
 
     Ok(Metrics {
         loot_tt,
@@ -344,42 +507,99 @@ fn rate_from_metrics(m: &Metrics) -> f64 {
     }
 }
 
-/// `bucket -> {tag -> rounded amount}` from a `GROUP BY bucket, le.tag` query,
-/// preserving SQL row order for both the outer and inner maps.
+/// `bucket -> {tag -> rounded amount}` for the timeline / monthly
+/// breakdowns, hybrid over the same lexical watermark split as
+/// [`ledger_by_tag`]: rolled date keys read `daily_ledger_rollups`,
+/// later keys read raw. Both maps emit in (bucket, tag) order, the
+/// order the raw `GROUP BY` sorter produced; part sums merge unrounded
+/// (month buckets can span the split) and round once.
 async fn ledger_buckets(
     pool: &SqlitePool,
-    bucket_expr: &str,
+    kind: BucketKind,
     entry_type: &str,
-    led_w: &str,
-    led_p: &[String],
+    epoch_start: Option<f64>,
+    watermark: &str,
 ) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, sqlx::Error> {
+    let mut sums: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>> =
+        std::collections::BTreeMap::new();
+    let start_iso = epoch_start.map(epoch_to_iso);
+
+    let bucket_expr = match kind {
+        BucketKind::Day => "day",
+        BucketKind::Month => "strftime('%Y-%m', day)",
+    };
+    let extra = if start_iso.is_some() {
+        " AND day >= ?"
+    } else {
+        ""
+    };
     let sql = format!(
-        "SELECT {bucket_expr} as bucket, le.tag, COALESCE(SUM(le.amount), 0) \
-         FROM ledger_entries le WHERE le.type = '{entry_type}' AND {led_w} \
-         GROUP BY bucket, le.tag"
+        "SELECT {bucket_expr} AS bucket, tag, SUM(amount) FROM daily_ledger_rollups \
+         WHERE entry_type = ? AND day <= ?{extra} GROUP BY bucket, tag"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for value in led_p {
-        query = query.bind(value);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(entry_type)
+        .bind(watermark);
+    if let Some(start) = &start_iso {
+        query = query.bind(start);
     }
-    let rows = query.fetch_all(pool).await?;
+    for row in &query.fetch_all(pool).await? {
+        *sums
+            .entry(row.get(0))
+            .or_default()
+            .entry(row.get(1))
+            .or_insert(0.0) += row.get::<f64, _>(2);
+    }
+
+    let bucket_expr = match kind {
+        BucketKind::Day => "le.date",
+        BucketKind::Month => "strftime('%Y-%m', le.date)",
+    };
+    let extra = if start_iso.is_some() {
+        " AND le.date >= ?"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "SELECT {bucket_expr} AS bucket, le.tag, SUM(le.amount) FROM ledger_entries le \
+         WHERE le.type = ? AND le.date > ?{extra} GROUP BY bucket, le.tag"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(entry_type)
+        .bind(watermark);
+    if let Some(start) = &start_iso {
+        query = query.bind(start);
+    }
+    for row in &query.fetch_all(pool).await? {
+        *sums
+            .entry(row.get(0))
+            .or_default()
+            .entry(row.get(1))
+            .or_insert(0.0) += row.get::<f64, _>(2);
+    }
+
     let mut out: std::collections::BTreeMap<String, Map<String, Value>> =
         std::collections::BTreeMap::new();
-    for row in &rows {
-        let bucket = row.get::<String, _>(0);
-        let tag = row.get::<String, _>(1);
-        let amount = rounded(&sql_number(row, 2), 2);
-        out.entry(bucket).or_default().insert(tag, amount);
+    for (bucket, tags) in sums {
+        let entry = out.entry(bucket).or_default();
+        for (tag, amount) in tags {
+            entry.insert(tag, rounded(&json!(amount), 2));
+        }
     }
     Ok(out)
 }
 
 // ── overview_impl ──
 
-async fn overview_impl(pool: &SqlitePool, now: f64, period: &str) -> Result<Value, sqlx::Error> {
+/// The Overview aggregate. Scaling is O(days), not O(rows): the heal
+/// brings the daily rollups current (steady-state, a single metadata
+/// read), and every window then aggregates rollup rows plus bounded raw
+/// edges (see [`hybrid_window`]).
+async fn overview_impl(pool: &SqlitePool, now: f64, period: &str) -> Result<Value, DbError> {
+    let watermark = daily_rollup::heal_rollups(pool, now).await?;
     let epoch_start = period_epoch(period, now);
 
-    let m = compute_metrics(pool, epoch_start, None).await?;
+    let m = compute_metrics(pool, &watermark, epoch_start, None).await?;
     let total_ledger_gains = sum_values(&m.ledger_gains);
     let total_ledger_losses = sum_values(&m.ledger_losses);
     let total_gains = m.loot_tt.as_f64().unwrap_or(0.0) + total_ledger_gains;
@@ -393,8 +613,9 @@ async fn overview_impl(pool: &SqlitePool, now: f64, period: &str) -> Result<Valu
     // Trend: always recent-30d vs prior-30d, independent of period.
     let day_30 = now - 30.0 * 86400.0;
     let day_60 = now - 60.0 * 86400.0;
-    let rate_30d = rate_from_metrics(&compute_metrics(pool, Some(day_30), None).await?);
-    let rate_prior = rate_from_metrics(&compute_metrics(pool, Some(day_60), Some(day_30)).await?);
+    let rate_30d = rate_from_metrics(&compute_metrics(pool, &watermark, Some(day_30), None).await?);
+    let rate_prior =
+        rate_from_metrics(&compute_metrics(pool, &watermark, Some(day_60), Some(day_30)).await?);
     let trend = if rate_30d > 0.0 && rate_prior > 0.0 {
         if rate_30d > rate_prior * 1.02 {
             "improving"
@@ -408,9 +629,10 @@ async fn overview_impl(pool: &SqlitePool, now: f64, period: &str) -> Result<Valu
     };
 
     // Daily breakdown (the point key is "date", the monthly point's is "month").
-    let timeline = breakdown_points(pool, epoch_start, "date", BucketKind::Day).await?;
+    let timeline = breakdown_points(pool, &watermark, epoch_start, "date", BucketKind::Day).await?;
     // Monthly breakdown.
-    let monthly = breakdown_points(pool, epoch_start, "month", BucketKind::Month).await?;
+    let monthly =
+        breakdown_points(pool, &watermark, epoch_start, "month", BucketKind::Month).await?;
 
     let cycled_breakdown = json!({
         "weapon": rounded(&m.weapon, 2),
@@ -457,131 +679,239 @@ enum BucketKind {
     Month,
 }
 
-/// Build the timeline / monthly breakdown: per-source bucketed sums merged
-/// over the union of all buckets, then one point per bucket in sorted order.
-async fn breakdown_points(
-    pool: &SqlitePool,
-    epoch_start: Option<f64>,
-    bucket_label: &str,
-    kind: BucketKind,
-) -> Result<Value, sqlx::Error> {
-    let (enc_w, enc_p) = where_epoch("k.timestamp", epoch_start, None);
-    let (sg_w, sg_p) = where_epoch("sg.timestamp", epoch_start, None);
-    let (cc_w, cc_p) = where_epoch("cc.claimed_at", epoch_start, None);
-    let (qc_w, qc_p) = where_epoch("qc.claimed_at", epoch_start, None);
-    let (sess_w, sess_p) = where_epoch("s.started_at", epoch_start, None);
-    let (led_w, led_p) = where_iso("le.date", epoch_start, None);
+/// The seven per-bucket family maps plus the bucket-membership set the
+/// point loop consumes. Buckets with rows whose sums are NULL matter
+/// only for membership (their emitted values coincide with the absent
+/// key's integer-zero default), so the rollup side contributes NULL
+/// family sums as absent keys and membership through `has_rows`.
+#[derive(Default)]
+struct BreakdownMaps {
+    loot: Map<String, Value>,
+    weapon: Map<String, Value>,
+    enhancer: Map<String, Value>,
+    sess: Map<String, Value>,
+    skill: Map<String, Value>,
+    codex: Map<String, Value>,
+    quest: Map<String, Value>,
+    members: BTreeSet<String>,
+}
 
-    // The bucket expression differs for unix-timestamp columns vs the
-    // ledger's ISO-date TEXT column (which strftime parses directly).
+impl BreakdownMaps {
+    /// Merge one bucket's value into a family map. Day buckets never
+    /// collide across parts (the hybrid ranges partition the timeline);
+    /// month buckets can span the split and sum engine-typed.
+    fn merge(map: &mut Map<String, Value>, bucket: &str, value: Value) {
+        match map.get(bucket) {
+            Some(existing) => {
+                let total = number_sum(existing, &value);
+                map.insert(bucket.to_string(), total);
+            }
+            None => {
+                map.insert(bucket.to_string(), value);
+            }
+        }
+    }
+}
+
+/// Collect the rollup side of the breakdown maps: one pass over the
+/// rolled days (or their month groups).
+async fn rollup_breakdown(
+    pool: &SqlitePool,
+    maps: &mut BreakdownMaps,
+    kind: BucketKind,
+    lo: Option<&str>,
+    hi: &str,
+) -> Result<(), sqlx::Error> {
+    let extra = if lo.is_some() { " AND day >= ?" } else { "" };
+    let sql = match kind {
+        BucketKind::Day => format!(
+            "SELECT day AS bucket, has_rows, loot_tt, weapon_cost, enhancer_cost, \
+             armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes \
+             FROM daily_rollups WHERE day <= ?{extra} ORDER BY bucket"
+        ),
+        BucketKind::Month => format!(
+            "SELECT strftime('%Y-%m', day) AS bucket, MAX(has_rows), SUM(loot_tt), \
+             SUM(weapon_cost), SUM(enhancer_cost), SUM(armour_cost), SUM(heal_cost), \
+             SUM(dangling_cost), SUM(skill_tt), SUM(codex_pes), SUM(quest_pes) \
+             FROM daily_rollups WHERE day <= ?{extra} GROUP BY bucket ORDER BY bucket"
+        ),
+    };
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(hi);
+    if let Some(lo) = lo {
+        query = query.bind(lo);
+    }
+    for row in &query.fetch_all(pool).await? {
+        let bucket = row.get::<String, _>(0);
+        if row.get::<i64, _>(1) != 0 {
+            maps.members.insert(bucket.clone());
+        }
+        let family = |index: usize| row.try_get::<Option<f64>, _>(index);
+        for (map, index) in [
+            (&mut maps.loot, 2),
+            (&mut maps.weapon, 3),
+            (&mut maps.enhancer, 4),
+            (&mut maps.skill, 8),
+            (&mut maps.codex, 9),
+            (&mut maps.quest, 10),
+        ] {
+            if let Some(value) = family(index)? {
+                BreakdownMaps::merge(map, &bucket, json!(value));
+            }
+        }
+        // The session-cost leg mirrors the raw query's
+        // COALESCE(SUM(armour),0) + COALESCE(SUM(heal),0) +
+        // COALESCE(SUM(dangling),0): integer zeros for NULL legs, a
+        // bucket only when any session existed (subsumed by has_rows
+        // membership; an absent key emits the same integer zero).
+        let armour = family(5)?;
+        let heal = family(6)?;
+        let dangling = family(7)?;
+        if armour.is_some() || heal.is_some() || dangling.is_some() {
+            let leg = |sum: Option<f64>| sum.map_or(json!(0), |value| json!(value));
+            let total = number_sum(&number_sum(&leg(armour), &leg(heal)), &leg(dangling));
+            BreakdownMaps::merge(&mut maps.sess, &bucket, total);
+        }
+    }
+    Ok(())
+}
+
+/// Collect one raw range's side of the breakdown maps: the original
+/// per-source bucketed queries, windowed to the range.
+async fn raw_breakdown(
+    pool: &SqlitePool,
+    maps: &mut BreakdownMaps,
+    kind: BucketKind,
+    range: (Option<f64>, Option<f64>),
+) -> Result<(), sqlx::Error> {
+    let (start, end) = range;
     let ts_bucket = |col: &str| match kind {
         BucketKind::Day => format!("date({col}, 'unixepoch')"),
         BucketKind::Month => format!("strftime('%Y-%m', {col}, 'unixepoch')"),
     };
-    let iso_bucket = |col: &str| match kind {
-        BucketKind::Day => col.to_string(),
-        BucketKind::Month => format!("strftime('%Y-%m', {col})"),
-    };
+    let (enc_w, enc_p) = where_epoch("k.timestamp", start, end);
+    let (sg_w, sg_p) = where_epoch("sg.timestamp", start, end);
+    let (cc_w, cc_p) = where_epoch("cc.claimed_at", start, end);
+    let (qc_w, qc_p) = where_epoch("qc.claimed_at", start, end);
+    let (sess_w, sess_p) = where_epoch("s.started_at", start, end);
 
-    let loot = bucketed_epoch(
-        pool,
-        format!(
-            "SELECT {} as bucket, COALESCE(SUM(k.loot_total_ped), 0) FROM kills k WHERE {enc_w} GROUP BY bucket",
-            ts_bucket("k.timestamp")
+    let sources: [(&mut Map<String, Value>, String, &Vec<f64>); 7] = [
+        (
+            &mut maps.loot,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(k.loot_total_ped), 0) FROM kills k WHERE {enc_w} GROUP BY bucket",
+                ts_bucket("k.timestamp")
+            ),
+            &enc_p,
         ),
-        &enc_p,
-    )
-    .await?;
-    let weapon = bucketed_epoch(
-        pool,
-        format!(
-            "SELECT {} as bucket, COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
-             FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE {enc_w} GROUP BY bucket",
-            ts_bucket("k.timestamp")
+        (
+            &mut maps.weapon,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
+                 FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE {enc_w} GROUP BY bucket",
+                ts_bucket("k.timestamp")
+            ),
+            &enc_p,
         ),
-        &enc_p,
-    )
-    .await?;
-    let enhancer = bucketed_epoch(
-        pool,
-        format!(
-            "SELECT {} as bucket, COALESCE(SUM(k.enhancer_cost), 0) FROM kills k WHERE {enc_w} GROUP BY bucket",
-            ts_bucket("k.timestamp")
+        (
+            &mut maps.enhancer,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(k.enhancer_cost), 0) FROM kills k WHERE {enc_w} GROUP BY bucket",
+                ts_bucket("k.timestamp")
+            ),
+            &enc_p,
         ),
-        &enc_p,
-    )
-    .await?;
-    let sess = bucketed_epoch(
-        pool,
-        format!(
-            "SELECT {} as bucket, COALESCE(SUM(s.armour_cost), 0) + COALESCE(SUM(s.heal_cost), 0) \
-             + COALESCE(SUM(s.dangling_cost), 0) FROM tracking_sessions s WHERE {sess_w} GROUP BY bucket",
-            ts_bucket("s.started_at")
+        (
+            &mut maps.sess,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(s.armour_cost), 0) + COALESCE(SUM(s.heal_cost), 0) \
+                 + COALESCE(SUM(s.dangling_cost), 0) FROM tracking_sessions s WHERE {sess_w} GROUP BY bucket",
+                ts_bucket("s.started_at")
+            ),
+            &sess_p,
         ),
-        &sess_p,
-    )
-    .await?;
+        (
+            &mut maps.skill,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(sg.ped_value), 0) FROM skill_gains sg WHERE {sg_w} GROUP BY bucket",
+                ts_bucket("sg.timestamp")
+            ),
+            &sg_p,
+        ),
+        (
+            &mut maps.codex,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(cc.ped_value), 0) FROM codex_claims cc WHERE {cc_w} GROUP BY bucket",
+                ts_bucket("cc.claimed_at")
+            ),
+            &cc_p,
+        ),
+        (
+            &mut maps.quest,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(qc.ped_value), 0) FROM quest_claims qc WHERE {qc_w} GROUP BY bucket",
+                ts_bucket("qc.claimed_at")
+            ),
+            &qc_p,
+        ),
+    ];
+    for (map, sql, params) in sources {
+        let buckets = bucketed_epoch(pool, sql, params).await?;
+        for (bucket, value) in buckets {
+            maps.members.insert(bucket.clone());
+            BreakdownMaps::merge(map, &bucket, value);
+        }
+    }
+    Ok(())
+}
+
+/// Build the timeline / monthly breakdown: per-source bucketed sums merged
+/// over the union of all buckets, then one point per bucket in sorted order.
+/// Hybrid over the rollup watermark, exactly as [`compute_metrics`].
+async fn breakdown_points(
+    pool: &SqlitePool,
+    watermark: &str,
+    epoch_start: Option<f64>,
+    bucket_label: &str,
+    kind: BucketKind,
+) -> Result<Value, sqlx::Error> {
+    let window = hybrid_window(epoch_start, None, watermark);
+    let mut maps = BreakdownMaps::default();
+    if let Some((lo, hi)) = &window.rollup_days {
+        rollup_breakdown(pool, &mut maps, kind, lo.as_deref(), hi).await?;
+    }
+    for range in &window.raw_ranges {
+        raw_breakdown(pool, &mut maps, kind, *range).await?;
+    }
 
     // cost = weapon + enhancer + sess over the union of their buckets.
     let mut cost: Map<String, Value> = Map::new();
     let mut cost_keys: BTreeSet<String> = BTreeSet::new();
-    for k in weapon.keys().chain(enhancer.keys()).chain(sess.keys()) {
+    for k in maps
+        .weapon
+        .keys()
+        .chain(maps.enhancer.keys())
+        .chain(maps.sess.keys())
+    {
         cost_keys.insert(k.clone());
     }
     for key in &cost_keys {
         let zero = json!(0);
         let total = number_sum(
             &number_sum(
-                weapon.get(key).unwrap_or(&zero),
-                enhancer.get(key).unwrap_or(&zero),
+                maps.weapon.get(key).unwrap_or(&zero),
+                maps.enhancer.get(key).unwrap_or(&zero),
             ),
-            sess.get(key).unwrap_or(&zero),
+            maps.sess.get(key).unwrap_or(&zero),
         );
         cost.insert(key.clone(), total);
     }
 
-    let skill = bucketed_epoch(
-        pool,
-        format!(
-            "SELECT {} as bucket, COALESCE(SUM(sg.ped_value), 0) FROM skill_gains sg WHERE {sg_w} GROUP BY bucket",
-            ts_bucket("sg.timestamp")
-        ),
-        &sg_p,
-    )
-    .await?;
-    let codex = bucketed_epoch(
-        pool,
-        format!(
-            "SELECT {} as bucket, COALESCE(SUM(cc.ped_value), 0) FROM codex_claims cc WHERE {cc_w} GROUP BY bucket",
-            ts_bucket("cc.claimed_at")
-        ),
-        &cc_p,
-    )
-    .await?;
-    let quest = bucketed_epoch(
-        pool,
-        format!(
-            "SELECT {} as bucket, COALESCE(SUM(qc.ped_value), 0) FROM quest_claims qc WHERE {qc_w} GROUP BY bucket",
-            ts_bucket("qc.claimed_at")
-        ),
-        &qc_p,
-    )
-    .await?;
-
-    let gains = ledger_buckets(pool, &iso_bucket("le.date"), "markup", &led_w, &led_p).await?;
-    let losses = ledger_buckets(pool, &iso_bucket("le.date"), "expense", &led_w, &led_p).await?;
+    let gains = ledger_buckets(pool, kind, "markup", epoch_start, watermark).await?;
+    let losses = ledger_buckets(pool, kind, "expense", epoch_start, watermark).await?;
 
     // all buckets, sorted (lexicographic == chronological for these forms).
-    let mut all: BTreeSet<String> = BTreeSet::new();
-    for k in loot
-        .keys()
-        .chain(cost.keys())
-        .chain(skill.keys())
-        .chain(codex.keys())
-        .chain(quest.keys())
-        .chain(gains.keys())
-        .chain(losses.keys())
-    {
+    let mut all: BTreeSet<String> = maps.members;
+    for k in gains.keys().chain(losses.keys()) {
         all.insert(k.clone());
     }
 
@@ -590,10 +920,10 @@ async fn breakdown_points(
     for bucket in &all {
         points.push(json!({
             bucket_label: bucket,
-            "lootTt": float_field(rounded(loot.get(bucket).unwrap_or(&zero), 4)),
-            "pes": float_field(rounded(skill.get(bucket).unwrap_or(&zero), 4)),
-            "codexPes": float_field(rounded(codex.get(bucket).unwrap_or(&zero), 4)),
-            "questPes": float_field(rounded(quest.get(bucket).unwrap_or(&zero), 4)),
+            "lootTt": float_field(rounded(maps.loot.get(bucket).unwrap_or(&zero), 4)),
+            "pes": float_field(rounded(maps.skill.get(bucket).unwrap_or(&zero), 4)),
+            "codexPes": float_field(rounded(maps.codex.get(bucket).unwrap_or(&zero), 4)),
+            "questPes": float_field(rounded(maps.quest.get(bucket).unwrap_or(&zero), 4)),
             "ledgerGains": gains.get(bucket).cloned().map(Value::Object).unwrap_or_else(|| json!({})),
             "trackingCost": float_field(rounded(cost.get(bucket).unwrap_or(&zero), 4)),
             "ledgerLosses": losses.get(bucket).cloned().map(Value::Object).unwrap_or_else(|| json!({})),
@@ -914,6 +1244,10 @@ async fn activity_impl(pool: &SqlitePool) -> Result<Value, DbError> {
 
 impl HydrationState {
     /// GET /api/analytics/overview?period=...
+    ///
+    /// Scales O(days), not O(kills): the aggregates read the daily
+    /// rollup projection for completed days and touch the raw tables
+    /// only for the partial edge days (see [`overview_impl`]).
     pub async fn analytics_overview(&self, period: &str) -> Response<Body> {
         let now = naive_to_epoch(self.clock.now());
         match overview_impl(self.pool(), now, period).await {
