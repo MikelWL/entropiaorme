@@ -945,8 +945,17 @@ impl HuntTracker {
         // so its growth over a tracked session is bounded. Best-effort: the
         // stop's data is already committed, and TRUNCATE can be briefly blocked
         // by an in-flight reader (it simply retries at the next session end), so
-        // a failure here must not fail the stop.
-        let _ = self.block_on(self.db.checkpoint_truncate());
+        // a failure here must not fail the stop. A failure is logged rather than
+        // swallowed, so a persistently failing checkpoint (a stuck reader) leaves
+        // a diagnostic trail instead of silently unbounded WAL growth.
+        if let Err(error) = self.block_on(self.db.checkpoint_truncate()) {
+            tracing::warn!(
+                target: "eo::tracker",
+                %session_id,
+                %error,
+                "WAL checkpoint at session end failed; log growth is not bounded this stop",
+            );
+        }
 
         self.bus
             .publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
