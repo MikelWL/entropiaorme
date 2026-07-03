@@ -63,7 +63,7 @@ Zero suspected-swept-regression and zero nondeterministic-pin findings.
 
 ```
 ORACLE-RATIFICATION
-range: worktree@refactor/equipment-typed-commands (merge-base 1dd0d94)
+range: 1dd0d94..HEAD
 goldens: frontend/src-tauri/contracts/openapi.snapshot.json, frontend/src/lib/api/schema.d.ts
 VERDICT: ratification-sound
 ```
