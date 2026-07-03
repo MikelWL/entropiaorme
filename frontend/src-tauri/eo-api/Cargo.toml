@@ -1,0 +1,26 @@
+# The IPC facade: the application boundary the typed Tauri commands call
+# into. Owns the request/response DTO types (serde + JSON-Schema derives,
+# the source the TypeScript bindings generate from) and one async method
+# per operation over the domain services. Deliberately Tauri-free, like
+# the other backend members: the shell wraps each method in a thin
+# `#[tauri::command]`.
+
+[package]
+name = "eo-api"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eo-services = { workspace = true }
+eo-wire = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = { workspace = true }
