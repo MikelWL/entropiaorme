@@ -43,6 +43,10 @@
 	let presets = $state<LedgerPreset[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	// Keyset pagination: the cursor for the next server page (null once the
+	// whole ledger is loaded), and whether a "load more" fetch is in flight.
+	let nextCursor = $state<string | null>(null);
+	let loadingMore = $state(false);
 
 	// Form state
 	let entryType = $state<LedgerEntryType>('expense');
@@ -105,16 +109,34 @@
 		loading = true;
 		error = null;
 		try {
-			const [entryRows, presetRows] = await Promise.all([
+			const [entryPage, presetRows] = await Promise.all([
 				getLedgerEntries(),
 				getLedgerPresets()
 			]);
-			entries = entryRows;
+			entries = entryPage.items;
+			nextCursor = entryPage.nextCursor;
 			presets = presetRows;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load ledger';
 		} finally {
 			loading = false;
+		}
+	}
+
+	// Fetch the next keyset page and append it, growing the client paginator's
+	// range. Older entries stay reachable without loading the whole table up
+	// front.
+	async function loadMoreEntries() {
+		if (!nextCursor || loadingMore) return;
+		loadingMore = true;
+		try {
+			const page = await getLedgerEntries(nextCursor);
+			entries = [...entries, ...page.items];
+			nextCursor = page.nextCursor;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load more entries';
+		} finally {
+			loadingMore = false;
 		}
 	}
 
@@ -575,6 +597,19 @@
 								Next
 							</Button>
 						</div>
+					</div>
+				{/if}
+
+				{#if nextCursor}
+					<div class="flex justify-center mt-4">
+						<Button
+							size="sm"
+							variant="ghost"
+							disabled={loadingMore}
+							onclick={loadMoreEntries}
+						>
+							{loadingMore ? 'Loading...' : 'Load more entries'}
+						</Button>
 					</div>
 				{/if}
 			{/if}

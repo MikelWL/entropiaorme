@@ -156,6 +156,18 @@ impl AppState {
         sqlx::query("PRAGMA optimize").execute(&pool).await.is_ok()
     }
 
+    /// The application database handle, when hydration state is composed.
+    /// The developer-mode maintenance routes (database compaction, the
+    /// projection rebuild-and-verify) reach the reader/writer seam through
+    /// it; `None` when nothing is composed, which those routes read as
+    /// gate-off (404).
+    pub(crate) fn hydration_db(&self) -> Option<eo_services::db::Db> {
+        self.hydration
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|hydration| hydration.db.clone()))
+    }
+
     /// Attach the bundled demo database path, enabling the guide-mode
     /// `/api/demo` surface. Without it those routes answer the 503
     /// service-unavailable floor.

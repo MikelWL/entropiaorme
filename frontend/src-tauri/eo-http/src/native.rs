@@ -1433,11 +1433,13 @@ async fn demo_analytics_activity(state: Arc<AppState>, _req: Request) -> Respons
     demo.analytics_activity().await
 }
 
-async fn demo_analytics_ledger(state: Arc<AppState>, _req: Request) -> Response<Body> {
+async fn demo_analytics_ledger(state: Arc<AppState>, req: Request) -> Response<Body> {
     let Some(demo) = crate::demo::ensure_demo(&state).await else {
         return service_unavailable();
     };
-    demo.list_ledger().await
+    let query = QueryString::parse(req.uri().query());
+    let limit = query.last("limit").and_then(|raw| raw.parse::<i64>().ok());
+    demo.list_ledger(query.last("cursor"), limit).await
 }
 
 async fn demo_analytics_ledger_presets(state: Arc<AppState>, _req: Request) -> Response<Body> {
@@ -1852,11 +1854,13 @@ fn string_path_id(raw_segment: &str) -> Result<String, Box<Response<Body>>> {
     Ok(decoded)
 }
 
-async fn ledger_list(state: Arc<AppState>, _req: Request) -> Response<Body> {
+async fn ledger_list(state: Arc<AppState>, req: Request) -> Response<Body> {
     let Some(hydration) = state.hydration() else {
         return service_unavailable();
     };
-    hydration.list_ledger().await
+    let query = QueryString::parse(req.uri().query());
+    let limit = query.last("limit").and_then(|raw| raw.parse::<i64>().ok());
+    hydration.list_ledger(query.last("cursor"), limit).await
 }
 
 async fn ledger_create(state: Arc<AppState>, req: Request) -> Response<Body> {

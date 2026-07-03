@@ -27,6 +27,7 @@ pub mod game_data_store;
 pub mod hotbar_listener;
 pub mod keystroke_source;
 pub mod loot_filter;
+pub mod maintenance;
 pub mod mob_lookup_service;
 pub mod observability_config;
 pub mod ocr_engine;

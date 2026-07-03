@@ -546,6 +546,36 @@ async fn compose_with(
             return Composition::Declined;
         }
     };
+    // A bounded corruption probe: PRAGMA quick_check on a reader connection,
+    // time-boxed and run off the launch path so it never stalls startup. A
+    // problem, or a budget overrun on a very large database, is logged and
+    // the app keeps serving (degrade, never crash).
+    {
+        let probe_db = db.clone();
+        tokio::spawn(async move {
+            use eo_services::db::QuickCheckOutcome;
+            match probe_db
+                .quick_check_budgeted(eo_services::db::STARTUP_QUICK_CHECK_BUDGET)
+                .await
+            {
+                QuickCheckOutcome::Ok => {}
+                QuickCheckOutcome::Corrupt(report) => tracing::error!(
+                    target: "eo::composition",
+                    "startup quick_check reported database problems: {report}"
+                ),
+                QuickCheckOutcome::OverBudget => tracing::warn!(
+                    target: "eo::composition",
+                    "startup quick_check exceeded its budget and was skipped; \
+                     the database is left unprobed this launch"
+                ),
+                QuickCheckOutcome::Error(err) => tracing::warn!(
+                    target: "eo::composition",
+                    "startup quick_check could not run: {err}"
+                ),
+            }
+        });
+    }
+
     let game_data = match GameDataStore::new(&snapshot) {
         Ok(store) => Arc::new(store),
         Err(err) => {

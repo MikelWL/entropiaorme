@@ -689,12 +689,25 @@ export async function getAnalyticsActivity(): Promise<ActivityData> {
 	);
 }
 
-export async function getLedgerEntries(): Promise<LedgerEntry[]> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/ledger')
-			: client.GET('/api/analytics/ledger'),
-	);
+/** One keyset page of ledger entries plus the cursor for the next page
+ * (null on the last page), read from the `X-Next-Cursor` response header. */
+export interface LedgerPage {
+	items: LedgerEntry[];
+	nextCursor: string | null;
+}
+
+export async function getLedgerEntries(cursor?: string, limit?: number): Promise<LedgerPage> {
+	const query = {
+		...(cursor ? { cursor } : {}),
+		...(limit != null ? { limit } : {}),
+	};
+	const { data, response } = await (guideState.isActive
+		? client.GET('/api/demo/analytics/ledger', { params: { query } })
+		: client.GET('/api/analytics/ledger', { params: { query } }));
+	return {
+		items: (data ?? []) as LedgerEntry[],
+		nextCursor: response.headers.get('x-next-cursor'),
+	};
 }
 
 export async function addLedgerEntry(entry: Omit<LedgerEntry, 'id'>): Promise<LedgerEntry> {

@@ -49,13 +49,19 @@ vi.mock('$lib/guide/state.svelte', () => ({ guideState }));
 import * as api from './index';
 
 const DATA = { marker: 'payload' } as const;
+// GET results also carry a `response` (the raw Response) so header-reading
+// callers like `getLedgerEntries` (which reads the X-Next-Cursor pagination
+// header) have one; `unwrap`-based callers ignore it.
+const GET_RESULT = { data: DATA, response: { headers: new Headers() } };
 
 beforeEach(() => {
 	guideState.isActive = false;
-	for (const mock of [clientGet, clientPost, clientPut, clientPatch, clientDelete]) {
+	for (const mock of [clientPost, clientPut, clientPatch, clientDelete]) {
 		mock.mockReset();
 		mock.mockResolvedValue({ data: DATA });
 	}
+	clientGet.mockReset();
+	clientGet.mockResolvedValue(GET_RESULT);
 });
 
 type Verb = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -532,7 +538,7 @@ describe('guide-mode demo dispatch', () => {
 		expect(clientGet.mock.calls[0][0]).toBe(realPath);
 
 		clientGet.mockClear();
-		clientGet.mockResolvedValue({ data: DATA });
+		clientGet.mockResolvedValue(GET_RESULT);
 		guideState.isActive = true;
 		await call();
 		expect(clientGet).toHaveBeenCalledTimes(1);
@@ -549,7 +555,7 @@ describe('guide-mode demo dispatch', () => {
 		});
 
 		clientGet.mockClear();
-		clientGet.mockResolvedValue({ data: DATA });
+		clientGet.mockResolvedValue(GET_RESULT);
 		guideState.isActive = true;
 		await api.getAnalyticsOverview();
 		expect(clientGet).toHaveBeenCalledWith('/api/demo/analytics/overview', {
@@ -708,7 +714,7 @@ describe('getCharacterProspect', () => {
 		});
 
 		clientGet.mockClear();
-		clientGet.mockResolvedValue({ data: DATA });
+		clientGet.mockResolvedValue(GET_RESULT);
 		await api.getCharacterProspect({
 			profession: 'Sniper (Hit)',
 			targetLevel: 40,

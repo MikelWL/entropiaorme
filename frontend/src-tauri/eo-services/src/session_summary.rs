@@ -463,6 +463,19 @@ pub async fn delete_session_summary(pool: &SqlitePool, session_id: &str) -> Resu
     Ok(())
 }
 
+/// Drop and regenerate every session-summary row from the raw tracking
+/// tables: the proof the summaries are a pure function of those tables, and
+/// the maintenance reset behind the rebuild command. [`heal_summaries`]
+/// rewrites exactly the qualifying (ended, skill-bearing) sessions, so a
+/// full delete followed by a heal reproduces the incrementally-maintained
+/// set. Runs on the writer.
+pub async fn rebuild_summaries(pool: &SqlitePool) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM session_summaries")
+        .execute(pool)
+        .await?;
+    heal_summaries(pool).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

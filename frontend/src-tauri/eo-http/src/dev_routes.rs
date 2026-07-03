@@ -15,7 +15,7 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::AppState;
@@ -28,6 +28,8 @@ pub fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
             "/api/dev/crash-reporting",
             get(crash_reporting_status).post(set_crash_reporting),
         )
+        .route("/api/dev/compact-database", post(compact_database))
+        .route("/api/dev/rebuild-projections", post(rebuild_projections))
 }
 
 /// The metrics snapshot (throughput counts, latency histograms, and the
@@ -91,6 +93,70 @@ async fn set_crash_reporting(State(state): State<Arc<AppState>>, body: Bytes) ->
 
 fn crash_reporting_body(enabled: bool) -> String {
     format!(r#"{{"crash_reporting_enabled":{enabled}}}"#)
+}
+
+/// Compact the database into a fresh copy via `VACUUM INTO`, reclaiming the
+/// free pages that churn leaves behind. Writes `entropia_orme-compacted.db`
+/// beside the live database and returns its path and byte size; the live
+/// file is only read, never locked for the rewrite (off the hot path).
+/// Gate-off, no data dir, or no composed database => 404.
+async fn compact_database(State(state): State<Arc<AppState>>) -> Response {
+    if !state.developer_mode() {
+        return not_found();
+    }
+    let (Some(db), Some(data_dir)) = (state.hydration_db(), state.data_dir()) else {
+        return not_found();
+    };
+    let dest = data_dir.join("entropia_orme-compacted.db");
+    // VACUUM INTO refuses to overwrite an existing file; clear any prior
+    // copy from an earlier compaction first.
+    let _ = std::fs::remove_file(&dest);
+    match db.vacuum_into(&dest).await {
+        Ok(()) => {
+            let bytes = std::fs::metadata(&dest).map(|meta| meta.len()).unwrap_or(0);
+            let body = serde_json::json!({
+                "path": dest.to_string_lossy(),
+                "bytes": bytes,
+            });
+            json_response(http::StatusCode::OK, body.to_string())
+        }
+        Err(_) => json_response(
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"detail":"database compaction failed"}"#.to_string(),
+        ),
+    }
+}
+
+/// Rebuild every read-model projection (daily rollups, ledger rollups,
+/// session summaries) from the raw tracking tables and report whether each
+/// rebuilt byte-identically to the incrementally-maintained rows: the CQRS
+/// rebuildability proof, runnable on demand. A `false` in any `matched`
+/// names a projection whose incremental maintenance drifted. Gate-off or no
+/// composed database => 404.
+async fn rebuild_projections(State(state): State<Arc<AppState>>) -> Response {
+    if !state.developer_mode() {
+        return not_found();
+    }
+    let Some(db) = state.hydration_db() else {
+        return not_found();
+    };
+    // A maintenance action, off the equivalence surface: the wall clock sets
+    // the heal watermark (yesterday). The rebuild and the incremental heal
+    // share this `now`, so the equality proof is independent of its value.
+    let now = eo_services::tracker::naive_to_epoch(chrono::Utc::now().naive_utc());
+    match eo_services::maintenance::rebuild_and_verify(&db, now).await {
+        Ok(report) => {
+            let body = serde_json::json!({
+                "allMatched": report.all_matched(),
+                "tables": report.tables,
+            });
+            json_response(http::StatusCode::OK, body.to_string())
+        }
+        Err(_) => json_response(
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"detail":"projection rebuild failed"}"#.to_string(),
+        ),
+    }
 }
 
 /// A 404 in the backend's `{"detail": ...}` shape, so a gate-off dev route is
@@ -171,6 +237,89 @@ mod tests {
         let snapshot: eo_wire::metrics::MetricsSnapshot =
             serde_json::from_slice(&bytes).expect("the body is a metrics snapshot");
         assert!(snapshot.events_published >= 1);
+    }
+
+    /// A composed state with a real database, a data dir, and developer mode
+    /// on: what the maintenance routes need to serve.
+    async fn composed_dev_state(dir: &Path) -> Arc<AppState> {
+        use crate::hydration::HydrationState;
+        let db = eo_services::db::Db::open(&dir.join("entropia_orme.db"))
+            .await
+            .unwrap();
+        let game_data =
+            Arc::new(eo_services::game_data_store::GameDataStore::new(&dir.join("empty")).unwrap());
+        let hydration = Arc::new(HydrationState::new(
+            db,
+            game_data,
+            Arc::new(eo_services::clock::RealClock::new()),
+            dir.to_path_buf(),
+        ));
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"developer_mode_enabled":true}"#,
+        )
+        .unwrap();
+        Arc::new(
+            AppState::new(8421)
+                .with_hydration(hydration)
+                .with_data_dir(dir.to_path_buf()),
+        )
+    }
+
+    async fn post(state: Arc<AppState>, uri: &str) -> (http::StatusCode, Vec<u8>) {
+        let response = build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, bytes.to_vec())
+    }
+
+    #[tokio::test]
+    async fn compact_and_rebuild_are_404_when_developer_mode_is_off() {
+        let dir = tempfile::tempdir().unwrap();
+        for uri in ["/api/dev/compact-database", "/api/dev/rebuild-projections"] {
+            let (status, _) = post(state_with_dev_mode(dir.path(), false), uri).await;
+            assert_eq!(
+                status,
+                http::StatusCode::NOT_FOUND,
+                "{uri} is off the default surface"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rebuild_projections_reports_every_model_matching_under_dev_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = composed_dev_state(dir.path()).await;
+        let (status, body) = post(state, "/api/dev/rebuild-projections").await;
+        assert_eq!(status, http::StatusCode::OK);
+        let report: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(report["allMatched"], true, "{report}");
+        assert_eq!(report["tables"].as_array().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn compact_database_writes_a_copy_under_dev_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = composed_dev_state(dir.path()).await;
+        let (status, body) = post(state, "/api/dev/compact-database").await;
+        assert_eq!(status, http::StatusCode::OK);
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            result["bytes"].as_u64().unwrap() > 0,
+            "the compacted copy has a real size: {result}"
+        );
+        assert!(dir.path().join("entropia_orme-compacted.db").exists());
     }
 
     #[tokio::test]

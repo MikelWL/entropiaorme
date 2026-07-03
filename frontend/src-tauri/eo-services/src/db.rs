@@ -143,6 +143,28 @@ const READER_POOL_SIZE: u32 = 4;
 /// so the resident cost tracks real working set, not the ceiling.
 const CACHE_SIZE_KIB: &str = "-64000";
 
+/// The startup corruption probe's time budget: `PRAGMA quick_check` is far
+/// cheaper than a full `integrity_check`, but still O(database), so it is
+/// bounded and run off the launch path. A database large enough to exceed
+/// this is left unprobed (and logged), never blocking startup.
+pub const STARTUP_QUICK_CHECK_BUDGET: Duration = Duration::from_secs(5);
+
+/// The outcome of the budgeted startup corruption probe
+/// ([`Db::quick_check_budgeted`]).
+#[derive(Debug)]
+pub enum QuickCheckOutcome {
+    /// `PRAGMA quick_check` returned the single `ok` row: no problems found.
+    Ok,
+    /// The probe found problems; the payload is SQLite's own report, one
+    /// finding per `; `-joined segment.
+    Corrupt(String),
+    /// The probe did not finish within its budget and was abandoned, so
+    /// startup was not blocked. The database is left unprobed this launch.
+    OverBudget,
+    /// The probe could not run (a driver error, not a corruption verdict).
+    Error(DbError),
+}
+
 /// The application database handle. Cloning shares the underlying pools
 /// (the composition root still opens the database exactly once); a clone
 /// is a handle, never a second owner.
@@ -189,6 +211,49 @@ impl Db {
             .execute(self.write())
             .await?;
         Ok(())
+    }
+
+    /// Write a compacted copy of the database to `dest` via `VACUUM INTO`,
+    /// reclaiming the free pages that accumulate as rows churn. Unlike a
+    /// plain `VACUUM`, this never rewrites or locks the live file for the
+    /// duration: it only reads the live database and writes a fresh,
+    /// defragmented copy at `dest`, so a user can trigger it off the hot
+    /// path without stalling live tracking. Runs on the writer (`VACUUM`
+    /// cannot execute inside a transaction and serialises with writes).
+    ///
+    /// `dest` must not already exist: SQLite refuses to overwrite. The
+    /// caller clears any prior copy first. The path is bound as a
+    /// parameter, so no path text is composed into the statement.
+    pub async fn vacuum_into(&self, dest: &Path) -> Result<(), DbError> {
+        sqlx::query("VACUUM INTO ?")
+            .bind(dest.to_string_lossy().as_ref())
+            .execute(self.write())
+            .await?;
+        Ok(())
+    }
+
+    /// Run `PRAGMA quick_check` on a reader connection, abandoning it if it
+    /// exceeds `budget`. `quick_check` is far cheaper than a full
+    /// `integrity_check` (it skips the costly index-vs-table cross checks)
+    /// but is still O(database), so it is bounded and meant to run off the
+    /// launch path: a corruption signal surfaces (through the caller's
+    /// logging) without ever stalling startup or crashing on a problem.
+    /// Read-only; never mutates.
+    pub async fn quick_check_budgeted(&self, budget: Duration) -> QuickCheckOutcome {
+        let probe = sqlx::query("PRAGMA quick_check").fetch_all(self.read());
+        match tokio::time::timeout(budget, probe).await {
+            Err(_elapsed) => QuickCheckOutcome::OverBudget,
+            Ok(Err(error)) => QuickCheckOutcome::Error(error.into()),
+            Ok(Ok(rows)) => {
+                let lines: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
+                // A healthy database answers with the single row `ok`.
+                if lines.len() == 1 && lines[0] == "ok" {
+                    QuickCheckOutcome::Ok
+                } else {
+                    QuickCheckOutcome::Corrupt(lines.join("; "))
+                }
+            }
+        }
     }
 
     /// Rebind a handle over an already-opened pool, used as both the
@@ -485,8 +550,10 @@ async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool, DbError> {
 }
 
 /// One row as the snapshot emitter expects it: column-ordered keys, JSON
-/// values typed by the stored value (integer, real, text, null).
-fn row_to_json(row: &sqlx::sqlite::SqliteRow) -> Result<Value, DbError> {
+/// values typed by the stored value (integer, real, text, null). Shared by
+/// the snapshot catalogue and the projection-rebuild verifier, both of
+/// which compare rows by their canonical serialisation.
+pub(crate) fn row_to_json(row: &sqlx::sqlite::SqliteRow) -> Result<Value, DbError> {
     use sqlx::{Column, TypeInfo, ValueRef};
     let mut object = Map::new();
     for column in row.columns() {
@@ -719,6 +786,85 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 200);
+    }
+
+    #[tokio::test]
+    async fn vacuum_into_writes_a_valid_compacted_copy_and_leaves_the_live_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entropia_orme.db");
+        let db = Db::open(&path).await.unwrap();
+
+        // Seed then delete most rows, leaving free pages the compaction packs.
+        for i in 0..500 {
+            sqlx::query(
+                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)",
+            )
+            .bind(format!("s-{i}"))
+            .bind(i as f64)
+            .execute(db.write())
+            .await
+            .unwrap();
+        }
+        sqlx::query("DELETE FROM tracking_sessions WHERE id != 's-0'")
+            .execute(db.write())
+            .await
+            .unwrap();
+
+        let dest = dir.path().join("entropia_orme-compacted.db");
+        db.vacuum_into(&dest).await.unwrap();
+        assert!(dest.exists(), "the compacted copy is written");
+
+        // The copy is a standalone, readable database carrying the live row
+        // (opened raw, without re-running migrations).
+        let copy = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(&dest))
+            .await
+            .unwrap();
+        let copied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
+            .fetch_one(&copy)
+            .await
+            .unwrap();
+        assert_eq!(copied, 1, "the compacted copy carries the surviving row");
+
+        // The live database is untouched and still serves.
+        let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
+            .fetch_one(db.read())
+            .await
+            .unwrap();
+        assert_eq!(live, 1);
+    }
+
+    #[tokio::test]
+    async fn quick_check_reports_ok_on_a_healthy_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("entropia_orme.db"))
+            .await
+            .unwrap();
+        let outcome = db.quick_check_budgeted(Duration::from_secs(30)).await;
+        assert!(
+            matches!(outcome, QuickCheckOutcome::Ok),
+            "a freshly migrated database is healthy: {outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn quick_check_honours_its_budget_and_returns_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("entropia_orme.db"))
+            .await
+            .unwrap();
+        // A vanishing budget forces the timeout arm on all but the fastest
+        // machines; either way the call returns promptly and never hangs,
+        // which is the startup guarantee under test.
+        let outcome = db.quick_check_budgeted(Duration::from_nanos(1)).await;
+        assert!(
+            matches!(
+                outcome,
+                QuickCheckOutcome::OverBudget | QuickCheckOutcome::Ok
+            ),
+            "a starved budget yields OverBudget (or Ok if it beat the clock): {outcome:?}"
+        );
     }
 
     #[tokio::test]

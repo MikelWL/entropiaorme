@@ -1142,6 +1142,13 @@ async fn set_armour_cost_impl(
         [eo_services::daily_rollup::epoch_day(started_at)],
     )
     .await?;
+    // Armour is a cost component of the session summary (it feeds cycled_ped
+    // and the stored armour_cost), so editing it on an ENDED session leaves
+    // that session's Activity / session-list aggregates stale until a
+    // version bump. Reland the summary in the same transaction so every read
+    // model stays consistent with the raw edit. On an active session (which
+    // has no summary) this is a no-op.
+    eo_services::session_summary::write_session_summary(&mut tx, session_id).await?;
     tx.commit().await?;
     Ok(json!({
         "sessionId": session_id,
@@ -2005,6 +2012,25 @@ mod tests {
             rollup_family(&pool, "armour_cost").await,
             Some(7.5),
             "the backdated edit relanded the day"
+        );
+    }
+
+    #[tokio::test]
+    async fn armour_cost_edit_invalidates_the_ended_sessions_stale_summary() {
+        let pool = memory_pool().await;
+        seed_edit(&pool).await;
+        assert!(summary_exists(&pool).await, "the seed placed a summary row");
+
+        // Armour is a summary cost component, so editing it on an ended
+        // session must not leave the summary holding the pre-edit value. The
+        // seeded 'ended' session has no skill gains, so it does not qualify
+        // for a summary and the reland clears the now-stale placeholder
+        // (rather than leaving Activity / the session list stale until a
+        // version bump). Either way the read model is no longer stale.
+        set_armour_cost_impl(&pool, "ended", 2.5).await.unwrap();
+        assert!(
+            !summary_exists(&pool).await,
+            "the armour edit invalidated the stale summary"
         );
     }
 
