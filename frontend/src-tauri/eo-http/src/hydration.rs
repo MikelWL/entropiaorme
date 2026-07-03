@@ -487,7 +487,9 @@ impl HydrationState {
             .await
         {
             Ok(options) => json_response(&json!(options), if_none_match),
-            Err(CodexError::Invalid(_)) | Err(CodexError::Db(_)) => internal_error(),
+            Err(CodexError::Invalid(_)) | Err(CodexError::Db(_) | CodexError::Rollup(_)) => {
+                internal_error()
+            }
         }
     }
 
@@ -656,7 +658,7 @@ impl HydrationState {
                 Err(QuestError::Invalid(message)) => {
                     error_response(StatusCode::CONFLICT, &detail(&message))
                 }
-                Err(QuestError::Db(_)) => internal_error(),
+                Err(QuestError::Db(_) | QuestError::Rollup(_)) => internal_error(),
             };
         }
         if action == "decline" {
@@ -700,7 +702,7 @@ impl HydrationState {
             Err(CodexError::Invalid(message)) => {
                 error_response(StatusCode::BAD_REQUEST, &detail(&message))
             }
-            Err(CodexError::Db(_)) => internal_error(),
+            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
         }
     }
 
@@ -715,7 +717,7 @@ impl HydrationState {
             Err(CodexError::Invalid(message)) => {
                 error_response(StatusCode::BAD_REQUEST, &detail(&message))
             }
-            Err(CodexError::Db(_)) => internal_error(),
+            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
         }
     }
 
@@ -742,7 +744,7 @@ impl HydrationState {
             Err(CodexError::Invalid(message)) => {
                 error_response(StatusCode::BAD_REQUEST, &detail(&message))
             }
-            Err(CodexError::Db(_)) => internal_error(),
+            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
         }
     }
 
@@ -766,7 +768,7 @@ impl HydrationState {
             Err(CodexError::Invalid(message)) => {
                 error_response(StatusCode::BAD_REQUEST, &detail(&message))
             }
-            Err(CodexError::Db(_)) => internal_error(),
+            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
         }
     }
 }

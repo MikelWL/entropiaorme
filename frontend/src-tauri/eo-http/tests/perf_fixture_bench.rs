@@ -131,6 +131,18 @@ fn read_path_latency_against_a_real_database() {
             "overview_all",
             "/api/analytics/overview?period=all".to_string(),
         ),
+        (
+            "overview_30d",
+            "/api/analytics/overview?period=30d".to_string(),
+        ),
+        (
+            "overview_90d",
+            "/api/analytics/overview?period=90d".to_string(),
+        ),
+        (
+            "overview_1y",
+            "/api/analytics/overview?period=1y".to_string(),
+        ),
         ("activity", "/api/analytics/activity".to_string()),
         ("session_list", "/api/tracking/sessions".to_string()),
     ];
@@ -138,9 +150,29 @@ fn read_path_latency_against_a_real_database() {
         endpoints.push(("session_detail", detail.clone()));
     }
 
+    // The very first Overview read pays any one-time projection
+    // backfill (the daily-rollup heal walks the database's history
+    // once); report it separately so the steady-state medians below
+    // stay honest.
+    let first_call_ms = runtime.block_on(async {
+        let started = Instant::now();
+        let response = dispatch_in_process(
+            state.clone(),
+            "GET",
+            "/api/analytics/overview?period=all",
+            &[],
+            vec![],
+        )
+        .await
+        .expect("first overview dispatch");
+        assert_eq!(response.status, 200, "first overview status");
+        started.elapsed().as_secs_f64() * 1000.0
+    });
+
     println!("\n=== read-path latency over a real database ===");
     println!("copied file size: {} bytes", bytes_before);
     println!("sqlite_stat1 present (ANALYZE has run): {has_stat1}");
+    println!("first overview call (incl. one-time rollup backfill): {first_call_ms:.1} ms");
     println!(
         "warmups: {WARMUPS}, samples: {SAMPLES}\n{:<16} {:>10} {:>10} {:>10} {:>10}",
         "endpoint", "median_ms", "p95_ms", "min_ms", "max_ms"
