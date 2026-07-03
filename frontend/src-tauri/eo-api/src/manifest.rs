@@ -10,7 +10,8 @@
 //! this manifest, so a command cannot ship unbound and a binding cannot
 //! outlive its command.
 
-use schemars::{schema_for, Schema};
+use schemars::schema_for;
+use serde_json::Value;
 
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
@@ -20,15 +21,16 @@ use crate::ApiError;
 /// One argument of a typed command.
 pub struct ArgSpec {
     pub name: &'static str,
-    pub schema: Schema,
+    pub schema: Value,
 }
 
 /// One typed command: its invoke name, arguments, and return schema
-/// (`None` for a void return).
+/// (`None` for a void return). Schemas are plain JSON values so the
+/// generator needs no schema-crate dependency of its own.
 pub struct CommandSpec {
     pub name: &'static str,
     pub args: Vec<ArgSpec>,
-    pub returns: Option<Schema>,
+    pub returns: Option<Value>,
 }
 
 /// The full typed command surface, in emission order.
@@ -39,47 +41,47 @@ pub fn manifest() -> Vec<CommandSpec> {
             args: vec![
                 ArgSpec {
                     name: "q",
-                    schema: schema_for!(String),
+                    schema: schema(schema_for!(String)),
                 },
                 ArgSpec {
                     name: "kind",
-                    schema: schema_for!(SearchKind),
+                    schema: schema(schema_for!(SearchKind)),
                 },
             ],
-            returns: Some(schema_for!(Vec<EquipmentSearchHit>)),
+            returns: Some(schema(schema_for!(Vec<EquipmentSearchHit>))),
         },
         CommandSpec {
             name: "equipment_library",
             args: Vec::new(),
-            returns: Some(schema_for!(Vec<EquipmentSummary>)),
+            returns: Some(schema(schema_for!(Vec<EquipmentSummary>))),
         },
         CommandSpec {
             name: "equipment_add",
             args: vec![ArgSpec {
                 name: "req",
-                schema: schema_for!(EquipmentRequest),
+                schema: schema(schema_for!(EquipmentRequest)),
             }],
-            returns: Some(schema_for!(EquipmentSummary)),
+            returns: Some(schema(schema_for!(EquipmentSummary))),
         },
         CommandSpec {
             name: "equipment_update",
             args: vec![
                 ArgSpec {
                     name: "item_id",
-                    schema: schema_for!(i64),
+                    schema: schema(schema_for!(i64)),
                 },
                 ArgSpec {
                     name: "req",
-                    schema: schema_for!(EquipmentRequest),
+                    schema: schema(schema_for!(EquipmentRequest)),
                 },
             ],
-            returns: Some(schema_for!(EquipmentSummary)),
+            returns: Some(schema(schema_for!(EquipmentSummary))),
         },
         CommandSpec {
             name: "equipment_delete",
             args: vec![ArgSpec {
                 name: "item_id",
-                schema: schema_for!(i64),
+                schema: schema(schema_for!(i64)),
             }],
             returns: None,
         },
@@ -87,16 +89,21 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "equipment_detail",
             args: vec![ArgSpec {
                 name: "item_id",
-                schema: schema_for!(i64),
+                schema: schema(schema_for!(i64)),
             }],
-            returns: Some(schema_for!(EquipmentDetail)),
+            returns: Some(schema(schema_for!(EquipmentDetail))),
         },
     ]
 }
 
 /// The IPC error contract's schema, emitted alongside the commands.
-pub fn error_schema() -> Schema {
-    schema_for!(ApiError)
+pub fn error_schema() -> Value {
+    schema(schema_for!(ApiError))
+}
+
+/// A derived schema as its plain JSON value.
+fn schema(schema: schemars::Schema) -> Value {
+    serde_json::to_value(schema).expect("a derived schema serialises")
 }
 
 #[cfg(test)]

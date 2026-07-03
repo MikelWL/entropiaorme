@@ -1,3 +1,4 @@
+mod commands;
 mod composition;
 mod crash;
 mod resources;
@@ -226,6 +227,14 @@ pub fn run() {
             hide_scan_overlay,
             api_request,
             capture_png,
+            // The typed IPC commands (held in lock-step with the eo-api
+            // manifest by the parity test in `commands`).
+            commands::equipment_search,
+            commands::equipment_library,
+            commands::equipment_add,
+            commands::equipment_update,
+            commands::equipment_delete,
+            commands::equipment_detail,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -403,6 +412,9 @@ fn install_native_services(
     // the shared OS hook and the scan resets in-flight state on close.
     let exit_spacebar = composed.spacebar_listener.clone();
     let exit_skill_scan = composed.skill_scan.clone();
+    // The typed-command facade, published to its managed slot alongside
+    // the HTTP substrate state below.
+    let composed_api = composed.api.clone();
     // The producer-spine handles are cloned out of the spine here, BEFORE it
     // moves into the Tauri-managed holder below, so the HTTP routes serve over
     // the same handles the exit-seam teardown stops, and the settings-write
@@ -436,12 +448,13 @@ fn install_native_services(
         spacebar: exit_spacebar,
         skill_scan: exit_skill_scan,
     });
-    // Publish the composed state to the IPC command LAST: until now
-    // `api_request` errors with "backend substrate not ready", so by the time
-    // any request dispatches every native service is present (there is no
-    // absent-service window to fall back from). Then signal the frontend that
-    // the backend is live so it (re-)hydrates its
-    // initial reads.
+    // Publish the composed state to the IPC commands LAST: until now
+    // `api_request` and the typed commands answer their not-ready
+    // contract, so by the time any request dispatches every native
+    // service is present (there is no absent-service window to fall
+    // back from). Then signal the frontend that the backend is live so
+    // it (re-)hydrates its initial reads.
+    app.manage(commands::ApiFacade(composed_api));
     app.manage(ApiSubstrate(state.clone()));
     let _ = app.emit("substrate:native-installed", ());
 }

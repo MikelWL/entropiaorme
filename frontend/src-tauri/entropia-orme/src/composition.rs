@@ -432,6 +432,10 @@ impl ProducerState {
 /// their routes flip.
 pub struct Composed {
     pub hydration: Arc<HydrationState>,
+    /// The typed-command facade (the application boundary the typed
+    /// Tauri commands dispatch into), sharing the hydration surface's
+    /// database and catalogue handles.
+    pub api: Arc<eo_api::Api>,
     pub producers: ProducerState,
     pub ocr_engine: Option<Arc<OcrEngine>>,
     /// The manual skill-scan state machine, composed on the spine bus (its
@@ -658,9 +662,18 @@ async fn compose_with(
     )
     .await;
 
+    // The typed-command facade shares the read surface's handles; families
+    // migrate onto it from the in-process HTTP router one by one, and both
+    // serve over the same pools during the migration.
+    let api = Arc::new(eo_api::Api::new(
+        db.clone(),
+        game_data.clone(),
+        data_dir.clone(),
+    ));
     let hydration = Arc::new(HydrationState::new(db, game_data, clock, data_dir));
     Composition::Ready(Composed {
         hydration,
+        api,
         producers,
         ocr_engine,
         skill_scan,

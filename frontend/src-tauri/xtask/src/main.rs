@@ -17,6 +17,7 @@
 
 mod authoring;
 mod bump_version;
+mod gen_ts;
 mod git;
 mod mutation_floors;
 mod no_bare_setinterval;
@@ -38,6 +39,7 @@ SUBCOMMANDS:
     mutation-floors --outcomes <PATH>         enforce per-file cargo-mutants score floors
     no-bare-setinterval [--warn-only]         forbid bare setInterval and the retired tracking event in the frontend
     bump-version <NEW_VERSION>                rewrite the app version stamps in lock-step
+    gen-ts [--check]                          emit the TypeScript bindings for the typed IPC commands
 ";
 
 fn main() -> ExitCode {
@@ -55,6 +57,7 @@ fn main() -> ExitCode {
         "mutation-floors" => mutation_floors::run(rest),
         "no-bare-setinterval" => no_bare_setinterval::run(rest),
         "bump-version" => bump_version::run(rest),
+        "gen-ts" => gen_ts::run(rest),
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
