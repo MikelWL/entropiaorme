@@ -6,8 +6,11 @@
 
 use chrono::NaiveDateTime;
 
-/// A single item received from a loot drop.
-#[derive(Debug, Clone, PartialEq)]
+/// A single item received from a loot drop. Serialises to its wire
+/// field names directly: the loot-group bus payload carries these
+/// items verbatim (see `bus_events`), so the serde shape is part of
+/// the event-stream fingerprint contract.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct LootItem {
     pub item_name: String,
     pub quantity: i64,

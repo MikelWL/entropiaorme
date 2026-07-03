@@ -66,6 +66,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eo_http::hydration::HydrationState;
+use eo_services::bus_events::BusEvent;
 use eo_services::chatlog_watcher::{ChatlogWatcher, QuestRewardFilter};
 use eo_services::clock::{Clock, RealClock};
 use eo_services::config_service::{
@@ -93,8 +94,8 @@ use eo_services::skill_tracker::SkillTracker;
 pub use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
 use eo_services::tracker::{naive_to_epoch, EquipmentProfile, HuntTracker, Providers};
 use eo_services::trifecta_service::{describe_trifecta, TrifectaPreset};
+use eo_wire::bus::DomainBus;
 use eo_wire::domain_events::DomainEvent;
-use eo_wire::sse::SseHub;
 use serde_json::{Map, Value};
 
 /// The repository root, compiled into dev builds (the manifest dir is
@@ -285,12 +286,12 @@ pub struct ProducerState {
     // [`ProducerState::stop`]; `restart`/`stop` take `&self`, so sharing is safe.
     watcher: Arc<ChatlogWatcher>,
     tracker: Arc<HuntTracker>,
-    // The SSE fan-out hub. The bus bridge (subscribed below) holds clones
-    // of this through its subscriber closures, and the HTTP `/api/events`
-    // handler serves over a clone handed off before this state moves into
-    // the Tauri holder, so the publisher side and the stream side share
-    // one hub.
-    sse_hub: Arc<SseHub>,
+    // The typed domain-event channel. The bus bridge (subscribed below)
+    // holds clones of this through its subscriber closures, and the shell's
+    // Tauri-emit bridge subscribes over a clone handed off before this
+    // state moves into the Tauri holder, so the publisher side and the
+    // emit side share one channel.
+    domain_bus: Arc<DomainBus>,
     // The settings writer. Held here so the producer spine and the HTTP
     // write path share one service; a clone is handed to the app state at
     // composition. Mutex-guarded because `update`/`reset` take `&mut self`.
@@ -302,8 +303,8 @@ pub struct ProducerState {
     // The in-process event bus the whole spine publishes on. Stored (rather
     // than left implicit on the subscriber handles) so the scan services
     // composed alongside the spine publish `scan.status.changed` on the SAME
-    // bus the SSE bridge subscribes, and so the `/api/events` stream carries
-    // scan-status frames once the scan routes flip.
+    // bus the domain bridge subscribes, and so the shell's Tauri-emit
+    // bridge carries scan-status envelopes exactly as session ones.
     bus: Arc<EventBus>,
     // The hotbar key listener. A producer (it publishes tool-change events on
     // the bus), gated on the hotbar-hooks toggle and an active session; held
@@ -366,13 +367,13 @@ impl ProducerState {
         self.tracker.clone()
     }
 
-    /// A handle to the composed SSE hub. The `/api/events` stream serves
-    /// over this same `Arc<SseHub>`: the composition handoff clones it into
-    /// the HTTP app state before this `ProducerState` moves into the
-    /// Tauri-managed producer holder, so the stream and the producer-bus
-    /// bridge share one hub.
-    pub fn sse_hub_handle(&self) -> Arc<SseHub> {
-        self.sse_hub.clone()
+    /// A handle to the composed domain-event channel. The shell's
+    /// Tauri-emit bridge subscribes over this same `Arc<DomainBus>`: the
+    /// composition handoff clones it before this `ProducerState` moves into
+    /// the Tauri-managed producer holder, so the emit side and the
+    /// producer-bus bridge share one channel.
+    pub fn domain_bus_handle(&self) -> Arc<DomainBus> {
+        self.domain_bus.clone()
     }
 
     /// A handle to the composed settings writer. The settings-write routes
@@ -395,8 +396,8 @@ impl ProducerState {
 
     /// A handle to the spine's event bus. The scan services compose on this
     /// same `Arc<EventBus>`, so their `scan.status.changed` envelopes reach
-    /// the SSE bridge (subscribed in [`compose_producers`]) and the
-    /// `/api/events` stream, exactly as the tracker's session frames do.
+    /// the domain bridge (subscribed in [`compose_producers`]) and the
+    /// shell's Tauri-emit bridge, exactly as the tracker's session events do.
     pub fn bus_handle(&self) -> Arc<EventBus> {
         self.bus.clone()
     }
@@ -860,6 +861,11 @@ fn read_skill_page_levels(
 /// every lookup the tracker consults reads through
 /// the same database or the same config read-through the native
 /// `ConfigService` writes.
+/// Subscriber backlog bound for the typed domain channel (the shell's
+/// emit bridge is the one live subscriber; a receiver that falls behind
+/// observes a lag error and skips ahead rather than stalling publishers).
+const DOMAIN_BUS_CAPACITY: usize = 256;
+
 fn compose_producers(
     db: Db,
     clock: Arc<dyn Clock>,
@@ -874,15 +880,15 @@ fn compose_producers(
     let runtime = tokio::runtime::Handle::current();
     let bus = Arc::new(EventBus::new());
 
-    // The SSE bridge: forward the frontend-facing domain topics off the
-    // in-process bus to the `/api/events` fan-out hub, mirroring the
-    // Python reference's `EventStreamHub`. Subscribed here, before the watcher's
+    // The domain bridge: forward the frontend-facing domain topics off the
+    // in-process bus onto the typed broadcast channel the shell's
+    // Tauri-emit bridge consumes. Subscribed here, before the watcher's
     // tail thread starts, so an event published the instant a producer
-    // ticks is never raced away from a connected stream. The hub is held
-    // in `ProducerState` (and through these subscriber closures), and a
-    // clone is handed to the HTTP layer at composition.
-    let sse_hub = Arc::new(SseHub::new(eo_wire::sse::DEFAULT_MAX_QUEUE));
-    subscribe_sse_bridge(&bus, &sse_hub);
+    // ticks is never raced away from a connected subscriber. The channel is
+    // held in `ProducerState` (and through these subscriber closures), and
+    // a clone is handed to the shell at composition.
+    let domain_bus = Arc::new(DomainBus::new(DOMAIN_BUS_CAPACITY));
+    subscribe_domain_bridge(&bus, &domain_bus);
 
     // The config read-through: producers read the live config the same
     // way the read surface does (`settings.json`, now written solely by
@@ -953,7 +959,7 @@ fn compose_producers(
     Ok(ProducerState {
         watcher,
         tracker,
-        sse_hub,
+        domain_bus,
         config_service,
         skill_tracker,
         bus,
@@ -1038,24 +1044,26 @@ fn heal_cost_from_props(properties_json: &str) -> (f64, f64) {
     )
 }
 
-/// Bridge the producer bus's frontend-facing domain topics onto the SSE
-/// fan-out hub, mirroring the Python reference's `EventStreamHub`: the same
-/// two topics, the same drop-non-domain-payload contract. Each publish carries
-/// the full `DomainEvent` serialised to a `Value` (see the tracker and
-/// skill-scan publish sites); the bridge deserialises it back and hands the
-/// typed envelope to the hub, which assigns the shared sequence number and
-/// frames it. A payload that is not a `DomainEvent` on a domain topic would
-/// be an upstream programming error, so it is dropped rather than forwarded
-/// as an untyped frame. The subscriptions live in the bus (held alive by
-/// the producer spine) and capture hub clones, so they need no separate
-/// registration store; they drop with the bus when the spine tears down.
-fn subscribe_sse_bridge(bus: &EventBus, hub: &Arc<SseHub>) {
+/// Bridge the producer bus's frontend-facing domain topics onto the typed
+/// broadcast channel: the same two topics, now carried as typed envelopes
+/// end to end (the tracker and skill-scan publish sites construct them
+/// directly, so there is no serialise-and-reparse step left on the path).
+/// The subscriptions live in the bus (held alive by the producer spine)
+/// and capture channel clones, so they need no separate registration
+/// store; they drop with the bus when the spine tears down.
+fn subscribe_domain_bridge(bus: &EventBus, domain_bus: &Arc<DomainBus>) {
     for topic in [Topic::TrackingSessionUpdated, Topic::ScanStatusChanged] {
-        let hub = hub.clone();
-        bus.subscribe(topic, move |value| {
-            if let Ok(event) = serde_json::from_value::<DomainEvent>(value.clone()) {
-                hub.dispatch(&event);
+        let domain_bus = domain_bus.clone();
+        bus.subscribe(topic, move |event| match event {
+            BusEvent::TrackingSessionUpdated(envelope) => {
+                domain_bus.publish(DomainEvent::TrackingSessionUpdated(envelope.clone()));
             }
+            BusEvent::ScanStatusChanged(envelope) => {
+                domain_bus.publish(DomainEvent::ScanStatusChanged(envelope.clone()));
+            }
+            // A foreign event on a domain topic is unrepresentable at the
+            // publish site; nothing to forward.
+            _ => {}
         });
     }
 }
@@ -2063,7 +2071,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sse_bridge_forwards_domain_events_to_a_hub_client() {
+    async fn the_domain_bridge_forwards_typed_envelopes_to_a_subscriber() {
+        use eo_services::bus_events::BusEvent;
         use eo_wire::domain_events::{
             ScanPhase, ScanStatusChanged, ScanStatusChangedPayload, ScanStatusChangedTag,
             TrackingReason, TrackingSessionUpdated, TrackingSessionUpdatedPayload,
@@ -2071,14 +2080,14 @@ mod tests {
         };
 
         let bus = EventBus::new();
-        let hub = Arc::new(SseHub::new(eo_wire::sse::DEFAULT_MAX_QUEUE));
-        subscribe_sse_bridge(&bus, &hub);
-        let client = hub.register();
+        let domain_bus = Arc::new(DomainBus::new(DOMAIN_BUS_CAPACITY));
+        subscribe_domain_bridge(&bus, &domain_bus);
+        let mut receiver = domain_bus.subscribe();
 
-        // A tracking event published on the bus (the full DomainEvent
-        // serialised, exactly as the tracker publishes it) is reframed by
-        // the hub and delivered to the client.
-        let tracking = DomainEvent::TrackingSessionUpdated(TrackingSessionUpdated {
+        // A tracking envelope published on the bus (typed end to end,
+        // exactly as the tracker publishes it) is forwarded to the
+        // channel's subscriber unchanged.
+        let tracking = TrackingSessionUpdated {
             topic: TrackingSessionUpdatedTag,
             event_version: 1,
             occurred_at: "2026-01-01T00:00:00Z".to_string(),
@@ -2087,71 +2096,43 @@ mod tests {
                 status: TrackingStatus::Active,
                 reason: TrackingReason::Started,
             },
-        });
-        bus.publish(
-            Topic::TrackingSessionUpdated,
-            &serde_json::to_value(&tracking).unwrap(),
-        );
+        };
+        bus.publish(&BusEvent::TrackingSessionUpdated(tracking.clone()));
         assert_eq!(
-            client.next_frame().await,
-            format!(
-                "id: 1\nevent: tracking.session.updated\ndata: {}\n\n",
-                tracking.to_wire_json()
-            )
+            receiver.recv().await.expect("the envelope arrives"),
+            DomainEvent::TrackingSessionUpdated(tracking)
         );
 
-        // The other bridged topic is delivered too, sharing the hub's
-        // process-monotonic sequence.
-        let scan = DomainEvent::ScanStatusChanged(ScanStatusChanged {
+        // The other bridged topic is delivered too, on the same channel.
+        let scan = ScanStatusChanged {
             topic: ScanStatusChangedTag,
             event_version: 1,
             occurred_at: "2026-01-01T00:00:01Z".to_string(),
             payload: ScanStatusChangedPayload {
                 phase: ScanPhase::Capturing,
             },
-        });
-        bus.publish(
-            Topic::ScanStatusChanged,
-            &serde_json::to_value(&scan).unwrap(),
-        );
+        };
+        bus.publish(&BusEvent::ScanStatusChanged(scan.clone()));
         assert_eq!(
-            client.next_frame().await,
-            format!(
-                "id: 2\nevent: scan.status.changed\ndata: {}\n\n",
-                scan.to_wire_json()
-            )
+            receiver.recv().await.expect("the envelope arrives"),
+            DomainEvent::ScanStatusChanged(scan)
         );
-    }
-
-    #[tokio::test]
-    async fn sse_bridge_drops_a_non_domain_payload() {
-        let bus = EventBus::new();
-        let hub = Arc::new(SseHub::new(eo_wire::sse::DEFAULT_MAX_QUEUE));
-        subscribe_sse_bridge(&bus, &hub);
-        let client = hub.register();
-
-        // A payload that does not deserialise to a DomainEvent on a domain
-        // topic is an upstream programming error: the bridge drops it rather
-        // than forward an untyped frame, so no frame ever reaches the client.
-        bus.publish(
-            Topic::TrackingSessionUpdated,
-            &serde_json::json!({"unexpected": "shape"}),
-        );
-        let delivered = tokio::time::timeout(Duration::from_millis(100), client.next_frame()).await;
-        assert!(delivered.is_err(), "a non-domain payload yields no frame");
     }
 
     /// The LIVE scan-status path now the scan composes on the spine bus: a
     /// status-moving verb on a `SkillScanManual` built over the same bus the
-    /// bridge subscribes reaches an SSE client as a `scan.status.changed`
-    /// frame, end to end (the bridge-forwards test publishes the event
-    /// directly; this proves the scan's own publish flows through it).
+    /// bridge subscribes reaches a domain-channel subscriber as a typed
+    /// `scan.status.changed` envelope, end to end (the bridge-forwards test
+    /// publishes the event directly; this proves the scan's own publish
+    /// flows through it).
     #[tokio::test]
-    async fn the_composed_scan_delivers_a_status_frame_to_an_sse_client() {
+    async fn the_composed_scan_delivers_a_status_envelope_to_a_subscriber() {
+        use eo_wire::domain_events::ScanPhase;
+
         let bus = Arc::new(EventBus::new());
-        let hub = Arc::new(SseHub::new(eo_wire::sse::DEFAULT_MAX_QUEUE));
-        subscribe_sse_bridge(&bus, &hub);
-        let client = hub.register();
+        let domain_bus = Arc::new(DomainBus::new(DOMAIN_BUS_CAPACITY));
+        subscribe_domain_bridge(&bus, &domain_bus);
+        let mut receiver = domain_bus.subscribe();
 
         let clock: Arc<dyn Clock> = Arc::new(MockClock::new(None, 0.0));
         let scan = SkillScanManual::new(
@@ -2166,16 +2147,12 @@ mod tests {
             None,
             0,
         );
-        // `start` moves the status idle -> capturing, publishing one frame.
+        // `start` moves the status idle -> capturing, publishing one envelope.
         scan.start(Some(2));
-        let frame = client.next_frame().await;
-        assert!(
-            frame.contains("event: scan.status.changed"),
-            "the scan's status publish reaches the stream: {frame}"
-        );
-        assert!(
-            frame.contains("capturing"),
-            "the frame carries the moved phase: {frame}"
-        );
+        let event = receiver.recv().await.expect("the envelope arrives");
+        let DomainEvent::ScanStatusChanged(envelope) = event else {
+            panic!("the scan publish routed to the wrong variant: {event:?}");
+        };
+        assert_eq!(envelope.payload.phase, ScanPhase::Capturing);
     }
 }

@@ -21,15 +21,15 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 use tokio::runtime::Handle;
 
+use crate::bus_events::BusEvent;
 use crate::character_calc::ATTRIBUTE_SKILLS;
 use crate::clock::Clock;
 use crate::event_bus::{EventBus, Registration, Topic};
-use crate::tracker::{naive_to_epoch, parse_bus_timestamp};
+use crate::tracker::{naive_to_epoch, parse_timestamp_str};
 use crate::tt_value_curve::tt_value_of_gain;
 
 /// Seconds a registered codex-claim suppression stays armed.
@@ -72,7 +72,7 @@ impl SkillTracker {
             state: Mutex::new(SkillState::default()),
             _subscriptions: Mutex::new(Vec::new()),
         });
-        type Handler = fn(&SkillTracker, &Value);
+        type Handler = fn(&SkillTracker, &BusEvent);
         let pairs: [(Topic, Handler); 3] = [
             (Topic::SkillGain, Self::on_skill_gain),
             (Topic::SessionStarted, Self::on_session_start),
@@ -116,13 +116,13 @@ impl SkillTracker {
             .insert(skill_name.to_string(), expiry);
     }
 
-    fn on_session_start(&self, data: &Value) {
+    fn on_session_start(&self, event: &BusEvent) {
+        let BusEvent::SessionStarted(payload) = event else {
+            return;
+        };
         let mut state = self.lock_state();
         state.active = true;
-        state.session_id = data
-            .get("session_id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        state.session_id = Some(payload.session_id.clone());
         state.session_skills.clear();
         state.session_skill_tt.clear();
         // A suppression armed in a prior session must not carry into
@@ -130,7 +130,7 @@ impl SkillTracker {
         state.suppressed_claims.clear();
     }
 
-    fn on_session_stop(&self, _data: &Value) {
+    fn on_session_stop(&self, _event: &BusEvent) {
         let mut state = self.lock_state();
         state.active = false;
         state.session_id = None;
@@ -139,7 +139,10 @@ impl SkillTracker {
         state.suppressed_claims.clear();
     }
 
-    fn on_skill_gain(&self, data: &Value) {
+    fn on_skill_gain(&self, event: &BusEvent) {
+        let BusEvent::SkillGain(payload) = event else {
+            return;
+        };
         // Capture the decision under the guard; the database
         // statements run after release, then the totals land.
         let (session_id, skill_name, amount, ts_epoch) = {
@@ -150,25 +153,15 @@ impl SkillTracker {
             let Some(session_id) = state.session_id.clone() else {
                 return;
             };
-            // The original indexes these keys (a missing one raises,
-            // contained by the bus); the watcher always supplies them.
-            let Some(skill_name) = data
-                .get("skill_name")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-            else {
-                return;
-            };
-            let Some(amount) = data.get("amount").and_then(Value::as_f64) else {
-                return;
-            };
+            let skill_name = payload.skill_name.clone();
+            let amount = payload.amount;
             // Bus timestamps are the watcher's isoformat strings; the
             // original's float passthrough is kept for numeric stamps.
-            let ts_epoch = match parse_bus_timestamp(data.get("timestamp")) {
+            let ts_epoch = match parse_timestamp_str(&payload.timestamp) {
                 Some(instant) => naive_to_epoch(instant),
-                None => match data.get("timestamp").and_then(Value::as_f64) {
-                    Some(numeric) => numeric,
-                    None => return,
+                None => match payload.timestamp.trim().parse::<f64>() {
+                    Ok(numeric) => numeric,
+                    Err(_) => return,
                 },
             };
 
@@ -253,9 +246,9 @@ impl SkillTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus_events::{SessionLifecyclePayload, SkillGainPayload, SkillGainTag};
     use crate::clock::MockClock;
     use crate::db::{decoded_f64, Db};
-    use serde_json::json;
 
     struct Rig {
         _dir: tempfile::TempDir,
@@ -294,15 +287,18 @@ mod tests {
     impl Rig {
         fn start_session(&self) {
             self.bus
-                .publish(Topic::SessionStarted, &json!({"session_id": "s1"}));
+                .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                    session_id: "s1".into(),
+                }));
         }
 
         fn gain(&self, name: &str, amount: f64, ts: &str) {
-            self.bus.publish(
-                Topic::SkillGain,
-                &json!({"type": "skill_gain", "skill_name": name, "amount": amount,
-                        "timestamp": ts}),
-            );
+            self.bus.publish(&BusEvent::SkillGain(SkillGainPayload {
+                kind: SkillGainTag,
+                timestamp: ts.into(),
+                amount,
+                skill_name: name.into(),
+            }));
         }
 
         fn gains_count(&self) -> i64 {
@@ -392,7 +388,9 @@ mod tests {
         );
 
         rig.bus
-            .publish(Topic::SessionStopped, &json!({"session_id": "s1"}));
+            .publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
         rig.gain("Rifle", 0.5, "2026-01-01T00:00:03");
         assert_eq!(rig.gains_count(), 1, "stopped gains never record");
     }
@@ -479,7 +477,9 @@ mod tests {
         rig.tracker
             .suppress_next("Anatomy", SUPPRESS_TIMEOUT_SECONDS);
         rig.bus
-            .publish(Topic::SessionStopped, &json!({"session_id": "s1"}));
+            .publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
         rig.start_session();
         rig.gain("Anatomy", 1.0, "2026-01-01T00:00:06");
         assert_eq!(rig.gains_count(), 6, "a stop drops armed suppressions");
@@ -489,11 +489,12 @@ mod tests {
     fn numeric_timestamps_pass_straight_through() {
         let rig = rig();
         rig.start_session();
-        rig.bus.publish(
-            Topic::SkillGain,
-            &json!({"type": "skill_gain", "skill_name": "Rifle", "amount": 0.1,
-                    "timestamp": 1735680000.5}),
-        );
+        rig.bus.publish(&BusEvent::SkillGain(SkillGainPayload {
+            kind: SkillGainTag,
+            timestamp: "1735680000.5".into(),
+            amount: 0.1,
+            skill_name: "Rifle".into(),
+        }));
         let (_, _, _, ts) = rig.last_gain();
         assert_eq!(ts, 1735680000.5);
     }

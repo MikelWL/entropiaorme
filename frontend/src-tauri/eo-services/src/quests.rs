@@ -31,6 +31,7 @@ use sqlx::{Row, SqlitePool};
 use tokio::runtime::Handle;
 use unicode_normalization::UnicodeNormalization;
 
+use crate::bus_events::BusEvent;
 use crate::clock::Clock;
 use crate::difflib::sequence_ratio;
 use crate::event_bus::{EventBus, Registration, Topic};
@@ -164,7 +165,7 @@ impl QuestService {
             .runtime
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(runtime);
-        type Handler = fn(&QuestService, &Value);
+        type Handler = fn(&QuestService, &BusEvent);
         let pairs: [(Topic, Handler); 3] = [
             (Topic::SessionStarted, Self::on_session_start),
             (Topic::SessionStopped, Self::on_session_stop),
@@ -198,26 +199,25 @@ impl QuestService {
         }
     }
 
-    fn on_session_start(&self, data: &Value) {
-        *self.lock_session() = data
-            .get("session_id")
-            .and_then(Value::as_str)
-            .map(String::from);
+    fn on_session_start(&self, event: &BusEvent) {
+        let BusEvent::SessionStarted(payload) = event else {
+            return;
+        };
+        *self.lock_session() = Some(payload.session_id.clone());
     }
 
-    fn on_session_stop(&self, _data: &Value) {
+    fn on_session_stop(&self, _event: &BusEvent) {
         *self.lock_session() = None;
     }
 
-    fn on_mission_received(&self, data: &Value) {
-        let mission_name = data
-            .get("mission_name")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if !mission_name.is_empty() {
+    fn on_mission_received(&self, event: &BusEvent) {
+        let BusEvent::MissionReceived(payload) = event else {
+            return;
+        };
+        if !payload.mission_name.is_empty() {
             // A failure surfaces nowhere, exactly as the original's
             // bus contains a handler exception.
-            let _ = self.block_on(self.start_quest_from_mission(mission_name));
+            let _ = self.block_on(self.start_quest_from_mission(&payload.mission_name));
         }
     }
 
@@ -2031,6 +2031,7 @@ fn python_str(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus_events::{MissionReceivedPayload, MissionReceivedTag, SessionLifecyclePayload};
     use crate::db::Db;
 
     async fn service_with_clock(
@@ -2623,7 +2624,9 @@ mod tests {
         // The bus feeds the active session; a session-scoped skill
         // completion writes a claim, and a repeat in the same session
         // dedupes the completion while duplicating the claim.
-        bus.publish(Topic::SessionStarted, &json!({"session_id": "sess-abc"}));
+        bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+            session_id: "sess-abc".into(),
+        }));
         clock.advance(60.0).unwrap();
         svc.complete_quest(qb).await.unwrap().unwrap();
         clock.advance(60.0).unwrap();
@@ -2999,7 +3002,9 @@ mod tests {
 
         // A session stop clears the tracked session: notable events
         // stop recording.
-        bus.publish(Topic::SessionStopped, &json!({}));
+        bus.publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+            session_id: "s1".into(),
+        }));
         svc.start_quest_from_mission("Geologist Survey")
             .await
             .unwrap();
@@ -3023,15 +3028,20 @@ mod tests {
                 .unwrap(),
         );
 
-        bus.publish(
-            Topic::MissionReceived,
-            &json!({"mission_name": "Iron Challenge"}),
-        );
+        bus.publish(&BusEvent::MissionReceived(MissionReceivedPayload {
+            kind: MissionReceivedTag,
+            timestamp: "2026-01-01T00:00:01".into(),
+            mission_name: "Iron Challenge".into(),
+        }));
         assert!(json_truthy(
             svc.get_quest(q).await.unwrap().unwrap().get("started_at")
         ));
         // A nameless event is ignored.
-        bus.publish(Topic::MissionReceived, &json!({}));
+        bus.publish(&BusEvent::MissionReceived(MissionReceivedPayload {
+            kind: MissionReceivedTag,
+            timestamp: "2026-01-01T00:00:01".into(),
+            mission_name: "".into(),
+        }));
     }
 
     #[tokio::test]
@@ -3192,7 +3202,9 @@ mod tests {
 
         // The original's truthiness gate treats an empty session id as
         // no session: the quest starts but no overlay event records.
-        bus.publish(Topic::SessionStarted, &json!({"session_id": ""}));
+        bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+            session_id: "".into(),
+        }));
         svc.start_quest_from_mission("Iron Challenge")
             .await
             .unwrap();

@@ -23,8 +23,13 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::NaiveDateTime;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
+use crate::bus_events::{
+    BusEvent, CombatPayload, EnhancerBreakPayload, EnhancerBreakTag, GlobalPayload,
+    LootGroupPayload, LootItem, LootTag, MissionReceivedPayload, MissionReceivedTag,
+    SkillGainPayload, SkillGainTag, TickFlushedPayload,
+};
 use crate::chatlog_parser::{parse_line, ChatEvent, EventType};
 use crate::event_bus::{EventBus, Topic};
 
@@ -53,6 +58,9 @@ pub type QuestRewardFilter = Arc<dyn Fn(&str, &[Value], &[Value]) -> Option<Valu
 /// A verbatim line observer (the recording controller's seam).
 pub type LineTap = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// Whether a parsed event type reaches the bus at all (`None` only
+/// for the internally buffered MissionComplete): the line-level
+/// buffering filter.
 fn bus_topic(event_type: EventType) -> Option<Topic> {
     match event_type {
         EventType::DamageDealt
@@ -76,6 +84,101 @@ fn bus_topic(event_type: EventType) -> Option<Topic> {
         EventType::MissionReceived => Some(Topic::MissionReceived),
         // Buffered for the quest-reward filter, never published.
         EventType::MissionComplete => None,
+    }
+}
+
+/// The typed bus event for one parsed chat event: the seam where the
+/// parser's capture map becomes a compiler-checked payload. The field
+/// reads default exactly as the previous consumers did (an extractor
+/// always sets its fields, so the defaults are dead in practice). Loot
+/// events group per tick and are built at the grouping site; a
+/// MissionComplete is buffered for the quest-reward filter and never
+/// published.
+fn typed_bus_event(event: &ChatEvent) -> Option<BusEvent> {
+    let timestamp = timestamp_string(event.timestamp);
+    let float = |key: &str| -> f64 { event.data.get(key).and_then(Value::as_f64).unwrap_or(0.0) };
+    let text = |key: &str| -> String {
+        event
+            .data
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let combat = |payload: CombatPayload| Some(BusEvent::Combat(payload));
+    match event.event_type {
+        EventType::DamageDealt => combat(CombatPayload::DamageDealt {
+            amount: float("amount"),
+            timestamp,
+        }),
+        EventType::CriticalHit => combat(CombatPayload::CriticalHit {
+            amount: float("amount"),
+            timestamp,
+        }),
+        EventType::DamageReceived => combat(CombatPayload::DamageReceived {
+            amount: float("amount"),
+            timestamp,
+        }),
+        EventType::SelfHeal => combat(CombatPayload::SelfHeal {
+            amount: float("amount"),
+            timestamp,
+        }),
+        EventType::TargetDodge => combat(CombatPayload::TargetDodge { timestamp }),
+        EventType::TargetEvade => combat(CombatPayload::TargetEvade { timestamp }),
+        EventType::TargetJam => combat(CombatPayload::TargetJam { timestamp }),
+        EventType::PlayerDodge => combat(CombatPayload::PlayerDodge { timestamp }),
+        EventType::PlayerEvade => combat(CombatPayload::PlayerEvade { timestamp }),
+        EventType::PlayerJam => combat(CombatPayload::PlayerJam { timestamp }),
+        EventType::MobMiss => combat(CombatPayload::MobMiss { timestamp }),
+        EventType::Deflect => combat(CombatPayload::Deflect { timestamp }),
+        EventType::SkillGain => Some(BusEvent::SkillGain(SkillGainPayload {
+            kind: SkillGainTag,
+            timestamp,
+            amount: float("amount"),
+            skill_name: text("skill_name"),
+        })),
+        EventType::EnhancerBreak => Some(BusEvent::EnhancerBreak(EnhancerBreakPayload {
+            kind: EnhancerBreakTag,
+            timestamp,
+            enhancer_name: text("enhancer_name"),
+            item_name: text("item_name"),
+            remaining: event
+                .data
+                .get("remaining")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            shrapnel_ped: float("shrapnel_ped"),
+        })),
+        EventType::GlobalKill => Some(BusEvent::Global(GlobalPayload::GlobalKill {
+            timestamp,
+            player: text("player"),
+            creature: text("creature"),
+            value: float("value"),
+        })),
+        EventType::HofKill => Some(BusEvent::Global(GlobalPayload::HofKill {
+            timestamp,
+            player: text("player"),
+            creature: text("creature"),
+            value: float("value"),
+        })),
+        EventType::GlobalItem => Some(BusEvent::Global(GlobalPayload::GlobalItem {
+            timestamp,
+            player: text("player"),
+            item: text("item"),
+            value: float("value"),
+        })),
+        EventType::HofItem => Some(BusEvent::Global(GlobalPayload::HofItem {
+            timestamp,
+            player: text("player"),
+            item: text("item"),
+            value: float("value"),
+        })),
+        EventType::MissionReceived => Some(BusEvent::MissionReceived(MissionReceivedPayload {
+            kind: MissionReceivedTag,
+            timestamp,
+            mission_name: text("mission_name"),
+        })),
+        EventType::Loot | EventType::MissionComplete => None,
     }
 }
 
@@ -456,18 +559,9 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
 
     // Enhancer breaks before loot finalisation.
     for event in &enhancer_events {
-        let mut payload = Map::new();
-        payload.insert("type".into(), Value::from(event.event_type.as_str()));
-        payload.insert(
-            "timestamp".into(),
-            Value::from(timestamp_string(event.timestamp)),
-        );
-        for (key, value) in &event.data {
-            payload.insert(key.clone(), value.clone());
+        if let Some(event) = typed_bus_event(event) {
+            shared.bus.publish(&event);
         }
-        shared
-            .bus
-            .publish(Topic::EnhancerBreak, &Value::Object(payload));
     }
 
     // The grouped loot event.
@@ -480,77 +574,59 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
                 .get("value")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
-            items.push(serde_json::json!({
-                "item_name": event.data.get("item_name").cloned().unwrap_or(Value::from("")),
-                "quantity": event.data.get("quantity").cloned().unwrap_or(Value::from(1)),
-                "value_ped": event.data.get("value").cloned().unwrap_or(Value::from(0.0)),
-                "is_enhancer_shrapnel": refund_matches[index],
-            }));
+            items.push(LootItem {
+                item_name: event
+                    .data
+                    .get("item_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                quantity: event
+                    .data
+                    .get("quantity")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(1),
+                value_ped: value,
+                is_enhancer_shrapnel: refund_matches[index],
+            });
             total += value;
         }
-        let payload = serde_json::json!({
-            "type": EventType::Loot.as_str(),
-            "timestamp": tick_ts.map(timestamp_string),
-            "items": items,
-            "total_ped": eo_wire::normalizer::round_half_even(total, 4),
-        });
-        shared.bus.publish(Topic::LootGroup, &payload);
+        shared.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: tick_ts.map(timestamp_string),
+            items,
+            total_ped: eo_wire::normalizer::round_half_even(total, 4),
+        }));
     }
 
     // Mission events.
     for event in &mission_events {
-        let Some(topic) = bus_topic(event.event_type) else {
-            continue;
-        };
-        let mut payload = Map::new();
-        payload.insert("type".into(), Value::from(event.event_type.as_str()));
-        payload.insert(
-            "timestamp".into(),
-            Value::from(timestamp_string(event.timestamp)),
-        );
-        for (key, value) in &event.data {
-            payload.insert(key.clone(), value.clone());
+        if let Some(event) = typed_bus_event(event) {
+            shared.bus.publish(&event);
         }
-        shared.bus.publish(topic, &Value::Object(payload));
     }
 
     // Skill events.
     for event in &skill_events {
-        let mut payload = Map::new();
-        payload.insert("type".into(), Value::from(event.event_type.as_str()));
-        payload.insert(
-            "timestamp".into(),
-            Value::from(timestamp_string(event.timestamp)),
-        );
-        for (key, value) in &event.data {
-            payload.insert(key.clone(), value.clone());
+        if let Some(event) = typed_bus_event(event) {
+            shared.bus.publish(&event);
         }
-        shared
-            .bus
-            .publish(Topic::SkillGain, &Value::Object(payload));
     }
 
     // Everything else.
     for event in &other_events {
-        let Some(topic) = bus_topic(event.event_type) else {
-            continue;
-        };
-        let mut payload = Map::new();
-        payload.insert("type".into(), Value::from(event.event_type.as_str()));
-        payload.insert(
-            "timestamp".into(),
-            Value::from(timestamp_string(event.timestamp)),
-        );
-        for (key, value) in &event.data {
-            payload.insert(key.clone(), value.clone());
+        if let Some(event) = typed_bus_event(event) {
+            shared.bus.publish(&event);
         }
-        shared.bus.publish(topic, &Value::Object(payload));
     }
 
     // The settled-tick boundary lands last, after every per-event
     // publish above has dispatched synchronously.
-    let payload = serde_json::json!({ "timestamp": tick_ts.map(timestamp_string) });
-    shared.bus.publish(Topic::TickFlushed, &payload);
+    shared
+        .bus
+        .publish(&BusEvent::TickFlushed(TickFlushedPayload {
+            timestamp: tick_ts.map(timestamp_string),
+        }));
 
     tick.timestamp = None;
     shared.pending_tick.store(false, Ordering::SeqCst);
@@ -613,8 +689,10 @@ mod tests {
         let bus = Arc::new(EventBus::new());
         let stream = Arc::new(Mutex::new(Vec::new()));
         let sink = stream.clone();
-        bus.add_tap(move |topic, data| {
-            sink.lock().unwrap().push((topic, data.clone()));
+        bus.add_tap(move |event| {
+            sink.lock()
+                .unwrap()
+                .push((event.topic(), event.payload_value()));
         });
         let watcher = ChatlogWatcher::new(bus.clone(), &log_path, filter);
         watcher.start();
@@ -659,8 +737,8 @@ mod tests {
         let pipeline = pipeline(None);
         let received = Arc::new(Mutex::new(Vec::new()));
         let sink = received.clone();
-        pipeline.bus.subscribe(Topic::Combat, move |data| {
-            sink.lock().unwrap().push(data.clone());
+        pipeline.bus.subscribe(Topic::Combat, move |event| {
+            sink.lock().unwrap().push(event.payload_value());
         });
 
         // The head of an in-flight append: the tail must hold it
@@ -806,8 +884,8 @@ mod tests {
 
         let received = Arc::new(Mutex::new(Vec::new()));
         let sink = received.clone();
-        pipeline.bus.subscribe(Topic::Combat, move |data| {
-            sink.lock().unwrap().push(data.clone());
+        pipeline.bus.subscribe(Topic::Combat, move |event| {
+            sink.lock().unwrap().push(event.payload_value());
         });
         append(
             &pipeline,
@@ -835,8 +913,10 @@ mod tests {
         let bus = Arc::new(EventBus::new());
         let stream = Arc::new(Mutex::new(Vec::new()));
         let sink = stream.clone();
-        bus.add_tap(move |topic, data| {
-            sink.lock().unwrap().push((topic, data.clone()));
+        bus.add_tap(move |event| {
+            sink.lock()
+                .unwrap()
+                .push((event.topic(), event.payload_value()));
         });
         let watcher = ChatlogWatcher::new(bus.clone(), &log_path, None);
         watcher.start();
@@ -965,8 +1045,10 @@ mod tests {
         let bus = Arc::new(EventBus::new());
         let stream = Arc::new(Mutex::new(Vec::new()));
         let sink = stream.clone();
-        bus.add_tap(move |topic, data| {
-            sink.lock().unwrap().push((topic, data.clone()));
+        bus.add_tap(move |event| {
+            sink.lock()
+                .unwrap()
+                .push((event.topic(), event.payload_value()));
         });
 
         let started = Instant::now();
