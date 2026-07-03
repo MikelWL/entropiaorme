@@ -95,9 +95,10 @@ async fn snapshot(pool: &SqlitePool, sql: &'static str) -> Result<Vec<Value>, Db
 /// Heal the read models current, then drop and rebuild every one of them
 /// from the raw tracking tables, asserting the rebuilt rows are byte-
 /// identical to the incrementally-maintained ones. This is the proof that
-/// the projections are a pure function of the event source (plan decision
-/// 11) and the standing mitigation for projection staleness: a mismatch
-/// names the table whose incremental maintenance drifted from a rebuild.
+/// the projections are a pure function of the raw tracking tables (the CQRS
+/// rebuildability guarantee recorded in ADR-0018) and the standing
+/// mitigation for projection staleness: a mismatch names the table whose
+/// incremental maintenance drifted from a rebuild.
 ///
 /// Runs entirely on the writer: the rebuild is a write, and each snapshot
 /// reads back its own committed writes on the same serialised connection,
