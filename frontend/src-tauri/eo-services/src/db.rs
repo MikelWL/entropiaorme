@@ -3,13 +3,18 @@
 //! Design decisions, mirroring the original Python implementation and the porting
 //! references:
 //!
-//! - **Single-owner connection**: a `SqlitePool` capped at one
-//!   connection, so every statement serialises exactly as the backend's
-//!   single shared connection does today. Relaxing to N readers is a
-//!   later, benchmark-justified change re-validated against the DB-state
-//!   goldens.
-//! - **Identical session configuration**: WAL journal, NORMAL
-//!   synchronous, a 5-second busy timeout, and an 8 MB page cache.
+//! - **Writer/reader split**: one dedicated writer connection serialises
+//!   every write in-process, and a small reader pool serves reads
+//!   concurrently against the WAL, so a live write stream no longer
+//!   stalls dashboard reads. Callers pick the pool by intent
+//!   ([`Db::read`] for `SELECT`, [`Db::write`] for mutations); no other
+//!   module reaches a raw pool. (The original single-owner pool-of-one,
+//!   a faithful transcription of the backend's shared connection, was
+//!   the benchmark-justified renovation point once real databases
+//!   outgrew it; the split is response-invariant, re-validated against
+//!   the DB-state goldens.)
+//! - **Session configuration**: WAL journal, NORMAL synchronous, a
+//!   5-second busy timeout, and a 64 MB page cache per connection.
 //! - **Schema baseline**: the migration chain starts at the schema the
 //!   backend creates on a fresh install (version 33), statement text
 //!   verbatim, so a freshly-migrated native database is
@@ -126,54 +131,124 @@ pub(crate) fn decoded_f64(row: &sqlx::sqlite::SqliteRow, index: usize) -> f64 {
         })
 }
 
-/// The application database handle. Cloning shares the one underlying
-/// pool (the composition root still opens the database exactly once);
-/// a clone is a handle, never a second owner.
+/// The number of reader connections. SQLite in WAL mode serves many
+/// concurrent readers against one writer; a handful is ample for a
+/// desktop app's dashboard, and keeps the page-cache footprint bounded.
+const READER_POOL_SIZE: u32 = 4;
+
+/// The page cache each connection may grow to, in KiB (the leading `-`
+/// is SQLite's "kibibytes, not pages" sign): 64 MB, up from the original
+/// 8 MB, for a database heading past a gigabyte. Applied to every
+/// connection in both pools; pages are demand-allocated up to the limit,
+/// so the resident cost tracks real working set, not the ceiling.
+const CACHE_SIZE_KIB: &str = "-64000";
+
+/// The application database handle. Cloning shares the underlying pools
+/// (the composition root still opens the database exactly once); a clone
+/// is a handle, never a second owner.
+///
+/// Reads and writes travel separate pools: one dedicated writer
+/// connection serialises every write in-process (so two writers queue at
+/// the pool rather than colliding on SQLite's single-writer lock), while
+/// a small reader pool serves dashboard reads concurrently against the
+/// WAL. This is what stops a live write stream from stalling reads. See
+/// [`Db::read`] and [`Db::write`].
 #[derive(Debug, Clone)]
 pub struct Db {
-    pool: SqlitePool,
+    /// The single write connection. Every statement that mutates the
+    /// database (including write transactions and the migration chain)
+    /// runs here, so writes serialise through one owner.
+    writer: SqlitePool,
+    /// The reader pool. Plain reads run here, concurrently with the
+    /// writer under WAL, so a dashboard GET does not wait behind combat
+    /// writes.
+    reader: SqlitePool,
 }
 
 impl Db {
-    /// The underlying pool, for harnesses that drive raw statements
-    /// (the catalogue snapshot and the replay spike).
+    /// The reader pool, for plain reads (`SELECT` / `fetch_*`). Reads on
+    /// this pool run concurrently with the writer under WAL.
+    pub fn read(&self) -> &SqlitePool {
+        &self.reader
+    }
+
+    /// The writer pool (a single connection), for every mutating
+    /// statement and every write transaction (`execute`, `begin`). All
+    /// writes serialise here.
+    pub fn write(&self) -> &SqlitePool {
+        &self.writer
+    }
+
+    /// Transitional alias returning the writer pool, so call sites not yet
+    /// routed to [`Db::read`]/[`Db::write`] keep compiling (and keep the
+    /// original single-owner behaviour) during the migration. Removed once
+    /// every caller is routed; no production caller should remain on it.
+    #[doc(hidden)]
     pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+        &self.writer
     }
 
-    /// Rebind a handle over an already-opened pool. The composition
-    /// root still opens the application database exactly once via
-    /// [`Db::open`]; this exists for harnesses attaching to a database
-    /// another process created and migrated.
+    /// Checkpoint the WAL and truncate it to zero, bounding WAL growth
+    /// over a long-running session. Runs on the writer (a checkpoint is a
+    /// write operation). `TRUNCATE` blocks until it can reset the log,
+    /// which is the intended behaviour at a quiescent boundary (session
+    /// end), not on a hot path.
+    pub async fn checkpoint_truncate(&self) -> Result<(), DbError> {
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(self.write())
+            .await?;
+        Ok(())
+    }
+
+    /// Rebind a handle over an already-opened pool, used as both the
+    /// reader and the writer. The composition root opens the application
+    /// database via [`Db::open`] (which builds the genuine writer/reader
+    /// split); this exists for harnesses attaching to a database another
+    /// process created and migrated, and for in-memory test pools that
+    /// cannot span two pools (each `:memory:` connection is its own
+    /// database). Sharing one pool for both roles reproduces the original
+    /// single-owner behaviour exactly, which is what those harnesses want.
     pub fn from_pool(pool: SqlitePool) -> Db {
-        Db { pool }
+        Db {
+            writer: pool.clone(),
+            reader: pool,
+        }
     }
 
-    /// Open (creating if missing), adopt or refuse an existing schema,
-    /// and bring the migration chain up to date.
-    pub async fn open(path: &Path) -> Result<Db, DbError> {
-        let options = SqliteConnectOptions::new()
+    /// The connect options shared by both pools: WAL, NORMAL sync, a
+    /// five-second busy timeout, foreign keys off (matching the backend's
+    /// effective pragma surface, where `REFERENCES` clauses are
+    /// declarative), and the 64 MB page cache.
+    fn connect_options(path: &Path) -> SqliteConnectOptions {
+        SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5))
-            // The backend never enables foreign-key enforcement (the
-            // sqlite3 default), so the schema's REFERENCES clauses are
-            // declarative there; the driver here enables it by default,
-            // which would refuse writes the backend accepts (an overlay
-            // event for a session id with no surviving session row).
-            // Match the backend's effective pragma surface.
             .foreign_keys(false)
-            // 8 MB page cache, matching the backend's configuration.
-            .pragma("cache_size", "-8000");
-        let pool = SqlitePoolOptions::new()
+            .pragma("cache_size", CACHE_SIZE_KIB)
+    }
+
+    /// Open (creating if missing), adopt or refuse an existing schema,
+    /// and bring the migration chain up to date.
+    ///
+    /// The writer pool is built and migrated first; the reader pool is
+    /// opened only after the schema is current, so a reader connection
+    /// never observes a pre-migration database (reader connections are
+    /// lazy, but ordering the build removes any doubt).
+    pub async fn open(path: &Path) -> Result<Db, DbError> {
+        let writer = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(options)
+            .connect_with(Self::connect_options(path))
             .await?;
-        adopt_or_refuse(&pool).await?;
-        MIGRATOR.run(&pool).await?;
-        Ok(Db { pool })
+        adopt_or_refuse(&writer).await?;
+        MIGRATOR.run(&writer).await?;
+        let reader = SqlitePoolOptions::new()
+            .max_connections(READER_POOL_SIZE)
+            .connect_with(Self::connect_options(path))
+            .await?;
+        Ok(Db { writer, reader })
     }
 
     /// Open the application's own database at the composition root.
@@ -198,7 +273,7 @@ impl Db {
     /// The catalogue rows for the DB-state snapshot, each table in its
     /// deterministic order, shaped for the snapshot emitter.
     pub async fn snapshot_rows(&self) -> Result<Map<String, Value>, DbError> {
-        snapshot_rows(&self.pool).await
+        snapshot_rows(self.read()).await
     }
 
     /// One equipment-library row by id and item type: (id, name,
@@ -215,7 +290,7 @@ impl Db {
         )
         .bind(id)
         .bind(item_type)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.read())
         .await?;
         Ok(row)
     }
@@ -235,7 +310,7 @@ impl Db {
              WHERE id = ?",
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.read())
         .await?;
         Ok(row)
     }
@@ -261,7 +336,7 @@ impl Db {
              WHERE item_type = 'weapon' AND name LIKE ? ESCAPE '\\'",
         )
         .bind(format!("%{safe}%"))
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.read())
         .await?;
         Ok(row.map(|(properties_json,)| properties_json))
     }
@@ -284,7 +359,7 @@ impl Db {
         .bind(name)
         .bind(item_type)
         .bind(properties_json)
-        .execute(&self.pool)
+        .execute(self.write())
         .await?;
         Ok(())
     }
@@ -297,7 +372,7 @@ impl Db {
             "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL \
              AND name NOT LIKE 'sqlite_%' ORDER BY type, name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.read())
         .await?;
         Ok(rows)
     }
@@ -583,34 +658,71 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = fresh_db(dir.path()).await;
 
-        let journal: String = sqlx::query_scalar("PRAGMA journal_mode")
-            .fetch_one(&db.pool)
+        // The session pragmas hold on BOTH pools: the split configures the
+        // writer and the reader connections identically at connect time.
+        for (label, pool) in [("writer", db.write()), ("reader", db.read())] {
+            let journal: String = sqlx::query_scalar("PRAGMA journal_mode")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(journal, "wal", "{label} journal_mode");
+            let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(synchronous, 1, "{label} synchronous NORMAL");
+            let cache: i64 = sqlx::query_scalar("PRAGMA cache_size")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(cache, -64000, "{label} cache_size 64 MB");
+            let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                foreign_keys, 0,
+                "{label}: referential enforcement stays off, matching the backend's pragma surface"
+            );
+            let busy: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(busy, 5000, "{label} busy_timeout");
+        }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_truncate_resets_the_wal_and_keeps_data_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entropia_orme.db");
+        let db = Db::open(&path).await.unwrap();
+
+        // Grow the WAL with a batch of committed writes.
+        for i in 0..200 {
+            sqlx::query("INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)")
+                .bind(format!("s-{i}"))
+                .bind(i as f64)
+                .execute(db.write())
+                .await
+                .unwrap();
+        }
+        let wal = path.with_extension("db-wal");
+        let grown = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+        assert!(grown > 0, "the WAL should carry frames before the checkpoint");
+
+        db.checkpoint_truncate().await.unwrap();
+
+        // TRUNCATE resets the log to zero bytes (no reader held a snapshot).
+        let after = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+        assert_eq!(after, 0, "wal_checkpoint(TRUNCATE) empties the WAL");
+
+        // The committed data is intact and readable through the reader pool.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
+            .fetch_one(db.read())
             .await
             .unwrap();
-        assert_eq!(journal, "wal");
-        let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-        assert_eq!(synchronous, 1, "NORMAL");
-        let cache: i64 = sqlx::query_scalar("PRAGMA cache_size")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-        assert_eq!(cache, -8000);
-        let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            foreign_keys, 0,
-            "referential enforcement stays off, matching the backend's pragma surface"
-        );
-        let busy: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-        assert_eq!(busy, 5000);
+        assert_eq!(count, 200);
     }
 
     #[tokio::test]
@@ -619,7 +731,7 @@ mod tests {
         let db = fresh_db(dir.path()).await;
 
         let count = |kind: &'static str| {
-            let pool = db.pool.clone();
+            let pool = db.write().clone();
             async move {
                 sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND sql IS NOT NULL \
@@ -642,7 +754,7 @@ mod tests {
 
         let version: String =
             sqlx::query_scalar("SELECT value FROM db_metadata WHERE key = 'version'")
-                .fetch_one(&db.pool)
+                .fetch_one(db.write())
                 .await
                 .unwrap();
         assert_eq!(version, "33");
@@ -671,7 +783,7 @@ mod tests {
             "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES \
              ('s-2', 200.0, 0), ('s-1', 100.0, 1)",
         )
-        .execute(&db.pool)
+        .execute(db.write())
         .await
         .unwrap();
 
@@ -708,12 +820,12 @@ mod tests {
         // post-baseline chain runs, and the migrator validates every ledger row.
         let db = Db::open(&path).await.unwrap();
         let kept: String = sqlx::query_scalar("SELECT id FROM tracking_sessions")
-            .fetch_one(&db.pool)
+            .fetch_one(db.write())
             .await
             .unwrap();
         assert_eq!(kept, "kept");
         let ledger: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&db.pool)
+            .fetch_one(db.write())
             .await
             .unwrap();
         // The baseline stamp plus every post-baseline migration.
@@ -730,15 +842,15 @@ mod tests {
                 "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
                  VALUES ('keep-me', '2026-01-01', 'markup', 'survives refusal', 1.25, 'manual')",
             )
-            .execute(&db.pool)
+            .execute(db.write())
             .await
             .unwrap();
             sqlx::query("UPDATE db_metadata SET value = '28' WHERE key = 'version'")
-                .execute(&db.pool)
+                .execute(db.write())
                 .await
                 .unwrap();
             sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(&db.pool)
+                .execute(db.write())
                 .await
                 .unwrap();
         }
@@ -816,14 +928,14 @@ mod tests {
         // The retired table is gone, and the version row now matches a fresh
         // v33 database.
         assert!(
-            !table_exists(&db.pool, "tt_curve_observations")
+            !table_exists(db.write(), "tt_curve_observations")
                 .await
                 .unwrap(),
             "the v33 rung drops tt_curve_observations"
         );
         let version: String =
             sqlx::query_scalar("SELECT value FROM db_metadata WHERE key = 'version'")
-                .fetch_one(&db.pool)
+                .fetch_one(db.write())
                 .await
                 .unwrap();
         assert_eq!(
@@ -831,7 +943,7 @@ mod tests {
             "the upgrade bumps the version row to the baseline"
         );
         let ledger: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&db.pool)
+            .fetch_one(db.write())
             .await
             .unwrap();
         assert_eq!(
@@ -843,7 +955,7 @@ mod tests {
         // The user's data survives the upgrade untouched.
         let (description, amount): (String, f64) =
             sqlx::query_as("SELECT description, amount FROM ledger_entries WHERE id = 'keep-me'")
-                .fetch_one(&db.pool)
+                .fetch_one(db.write())
                 .await
                 .unwrap();
         assert_eq!((description.as_str(), amount), ("survives upgrade", 4.2));
@@ -858,11 +970,11 @@ mod tests {
         {
             let db = Db::open(&path).await.unwrap();
             sqlx::query("UPDATE db_metadata SET value = '31' WHERE key = 'version'")
-                .execute(&db.pool)
+                .execute(db.write())
                 .await
                 .unwrap();
             sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(&db.pool)
+                .execute(db.write())
                 .await
                 .unwrap();
         }
@@ -948,11 +1060,11 @@ mod tests {
         {
             let db = Db::open(&below).await.unwrap();
             sqlx::query("UPDATE db_metadata SET value = '28' WHERE key = 'version'")
-                .execute(&db.pool)
+                .execute(db.write())
                 .await
                 .unwrap();
             sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(&db.pool)
+                .execute(db.write())
                 .await
                 .unwrap();
         }
