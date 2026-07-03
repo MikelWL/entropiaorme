@@ -26,7 +26,9 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use sqlx::sqlite::SqliteConnection;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
+
+use crate::db::Db;
 use tokio::runtime::Handle;
 use unicode_normalization::UnicodeNormalization;
 
@@ -91,7 +93,7 @@ const QUEST_SELECT: &str = "\
 /// Quest operations: CRUD, playlists, the completion lifecycle,
 /// chat-log mission detection, and the analytics readers.
 pub struct QuestService {
-    pool: SqlitePool,
+    db: Db,
     clock: Arc<dyn Clock>,
     /// The active tracking session, fed by the bus handlers.
     current_session_id: Mutex<Option<String>>,
@@ -108,9 +110,9 @@ pub struct QuestService {
 }
 
 impl QuestService {
-    pub fn new(pool: SqlitePool, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self {
-            pool,
+            db,
             clock,
             current_session_id: Mutex::new(None),
             id_source: Mutex::new(Arc::new(|| uuid::Uuid::new_v4().to_string())),
@@ -219,7 +221,7 @@ impl QuestService {
         };
         let sql = format!("{QUEST_SELECT} {where_clause} ORDER BY q.created_at ASC");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(&self.pool)
+            .fetch_all(self.db.read())
             .await?;
         let mut quests = Vec::with_capacity(rows.len());
         for row in rows {
@@ -235,7 +237,7 @@ impl QuestService {
         let sql = format!("{QUEST_SELECT} WHERE q.id = ?");
         let Some(row) = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(quest_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.db.read())
             .await?
         else {
             return Ok(None);
@@ -262,7 +264,7 @@ impl QuestService {
             data.get("reward_is_skill"),
             data.get("expected_reward_markup_percent"),
         );
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.db.write().begin().await?;
         let query = sqlx::query(
             "INSERT INTO quests (name, planet, waypoint, cooldown_hours, \
              reward_ped, reward_is_skill, expected_reward_markup_percent, \
@@ -373,7 +375,7 @@ impl QuestService {
             }
         }
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.db.write().begin().await?;
         if !updates.is_empty() {
             let set_clause = updates
                 .iter()
@@ -408,13 +410,13 @@ impl QuestService {
         let affected =
             sqlx::query("UPDATE quests SET is_active = 0 WHERE id = ? AND is_active = 1")
                 .bind(quest_id)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?
                 .rows_affected();
         if affected > 0 {
             sqlx::query("DELETE FROM quest_playlist_items WHERE quest_id = ?")
                 .bind(quest_id)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?;
             return Ok(true);
         }
@@ -430,7 +432,7 @@ impl QuestService {
             sqlx::query("UPDATE quests SET started_at = ? WHERE id = ? AND is_active = 1")
                 .bind(now)
                 .bind(quest_id)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?
                 .rows_affected();
         if affected > 0 {
@@ -452,7 +454,7 @@ impl QuestService {
         let now = naive_to_epoch(self.clock.now());
         sqlx::query("UPDATE quests SET started_at = NULL WHERE id = ?")
             .bind(quest_id)
-            .execute(&self.pool)
+            .execute(self.db.write())
             .await?;
 
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64);
@@ -469,9 +471,9 @@ impl QuestService {
                 .bind(name)
                 .bind(reward)
                 .bind(now)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?;
-                let mut conn = self.pool.acquire().await?;
+                let mut conn = self.db.write().acquire().await?;
                 crate::daily_rollup::refresh_days(&mut conn, [crate::daily_rollup::epoch_day(now)])
                     .await?;
             } else {
@@ -487,9 +489,9 @@ impl QuestService {
                 .bind(format!("Quest: {name}"))
                 .bind(reward)
                 .bind("quest_reward")
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?;
-                let mut conn = self.pool.acquire().await?;
+                let mut conn = self.db.write().acquire().await?;
                 crate::daily_rollup::refresh_days(&mut conn, [date.as_str()]).await?;
             }
         }
@@ -516,7 +518,7 @@ impl QuestService {
         if !quest["started_at"].is_null() {
             sqlx::query("UPDATE quests SET started_at = NULL WHERE id = ? AND is_active = 1")
                 .bind(quest_id)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?;
             return self.get_quest(quest_id).await;
         }
@@ -527,7 +529,7 @@ impl QuestService {
 
         // The original groups the completion delete and the optional
         // reward undo under one commit.
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.db.write().begin().await?;
         sqlx::query(
             "DELETE FROM session_quest_completions \
              WHERE id = ( \
@@ -850,7 +852,7 @@ impl QuestService {
              WHERE q.is_active = 1 \
              ORDER BY q.name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await?;
 
         let mut results = Vec::new();
@@ -898,7 +900,7 @@ impl QuestService {
              WHERE quest_id = ? AND link_type = 'quest'",
         )
         .bind(quest_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await?;
         let session_ids: Vec<String> = rows.into_iter().map(|row| row.get(0)).collect();
         self.compute_session_set_stats(&session_ids).await
@@ -1006,7 +1008,7 @@ impl QuestService {
              WHERE playlist_id = ? AND link_type = 'playlist'",
         )
         .bind(playlist_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
@@ -1045,7 +1047,7 @@ impl QuestService {
              FROM tracking_sessions s \
              WHERE s.id IN ({placeholders}) AND s.is_active = 0"
         ))
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.read())
         .await?;
 
         let weapon_cost = bind_all(format!(
@@ -1054,7 +1056,7 @@ impl QuestService {
              JOIN kills k ON k.id = ts.kill_id \
              WHERE k.session_id IN ({placeholders})"
         ))
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.read())
         .await?;
 
         let enhancer_cost = bind_all(format!(
@@ -1062,7 +1064,7 @@ impl QuestService {
              FROM kills k \
              WHERE k.session_id IN ({placeholders})"
         ))
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.read())
         .await?;
 
         let loot_tt = bind_all(format!(
@@ -1070,7 +1072,7 @@ impl QuestService {
              FROM kills k \
              WHERE k.session_id IN ({placeholders})"
         ))
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.read())
         .await?;
 
         let skill_tt = bind_all(format!(
@@ -1078,7 +1080,7 @@ impl QuestService {
              FROM skill_gains sg \
              WHERE sg.session_id IN ({placeholders})"
         ))
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.read())
         .await?;
 
         Ok(json!({
@@ -1190,7 +1192,7 @@ impl QuestService {
         for quest_id in quest_ids {
             query = query.bind(quest_id);
         }
-        let row = query.fetch_one(&self.pool).await?;
+        let row = query.fetch_one(self.db.read()).await?;
         let value = sql_number(&row, 0);
         Ok(if json_truthy(Some(&value)) {
             value
@@ -1216,7 +1218,7 @@ impl QuestService {
         if let Some(group_type) = group_type {
             query = query.bind(group_type);
         }
-        let rows = query.fetch_all(&self.pool).await?;
+        let rows = query.fetch_all(self.db.read()).await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
 
@@ -1241,7 +1243,7 @@ impl QuestService {
         .bind(description)
         .bind(value_ped)
         .bind(now)
-        .execute(&self.pool)
+        .execute(self.db.write())
         .await;
     }
 
@@ -1269,7 +1271,7 @@ impl QuestService {
         .bind(&key)
         .bind(quest_id)
         .bind(ts)
-        .execute(&self.pool)
+        .execute(self.db.write())
         .await?;
         Ok(())
     }
@@ -1282,7 +1284,7 @@ impl QuestService {
              ORDER BY quest_id",
         )
         .bind(session_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
@@ -1297,7 +1299,7 @@ impl QuestService {
              WHERE session_id = ?",
         )
         .bind(session_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.read())
         .await?
         .map(|row| (row.get(1), row.get(2), row.get(3))))
     }
@@ -1324,7 +1326,7 @@ impl QuestService {
         .bind(quest_id)
         .bind(playlist_id)
         .bind(naive_to_epoch(self.clock.now()))
-        .execute(&self.pool)
+        .execute(self.db.write())
         .await?;
         Ok(())
     }
@@ -1366,7 +1368,7 @@ impl QuestService {
         };
         Ok(sqlx::query("SELECT name FROM quests WHERE id = ?")
             .bind(quest_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.db.read())
             .await?
             .map(|row| row.get(0)))
     }
@@ -1377,7 +1379,7 @@ impl QuestService {
         };
         Ok(sqlx::query("SELECT name FROM quest_playlists WHERE id = ?")
             .bind(playlist_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.db.read())
             .await?
             .map(|row| row.get(0)))
     }
@@ -1410,7 +1412,7 @@ impl QuestService {
              FROM quest_playlists {where_clause} ORDER BY created_at ASC"
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(&self.pool)
+            .fetch_all(self.db.read())
             .await?;
         let mut playlists = Vec::with_capacity(rows.len());
         for row in rows {
@@ -1426,7 +1428,7 @@ impl QuestService {
              FROM quest_playlists WHERE id = ?",
         )
         .bind(playlist_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.read())
         .await?
         else {
             return Ok(None);
@@ -1458,7 +1460,7 @@ impl QuestService {
     /// Create a playlist with classified items.
     pub async fn create_playlist(&self, data: &Value) -> Result<Value, QuestError> {
         let items = normalize_playlist_items(data)?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.db.write().begin().await?;
         let query = sqlx::query(
             "INSERT INTO quest_playlists (name, planet, estimated_minutes) VALUES (?, ?, ?)",
         );
@@ -1510,7 +1512,7 @@ impl QuestService {
             None
         };
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.db.write().begin().await?;
         if !updates.is_empty() {
             let set_clause = updates
                 .iter()
@@ -1537,13 +1539,13 @@ impl QuestService {
         let affected =
             sqlx::query("UPDATE quest_playlists SET is_active = 0 WHERE id = ? AND is_active = 1")
                 .bind(playlist_id)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?
                 .rows_affected();
         if affected > 0 {
             sqlx::query("DELETE FROM quest_playlist_items WHERE playlist_id = ?")
                 .bind(playlist_id)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await?;
             return Ok(true);
         }
@@ -1560,7 +1562,7 @@ impl QuestService {
              WHERE q.is_active = 1 \
              ORDER BY qm.mob_name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
@@ -1571,7 +1573,7 @@ impl QuestService {
         let rows =
             sqlx::query("SELECT mob_name FROM quest_mobs WHERE quest_id = ? ORDER BY mob_name")
                 .bind(quest_id)
-                .fetch_all(&self.pool)
+                .fetch_all(self.db.read())
                 .await?;
         Ok(rows
             .into_iter()
@@ -1587,7 +1589,7 @@ impl QuestService {
              WHERE qpi.quest_id = ? AND qp.is_active = 1",
         )
         .bind(quest_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await?;
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
@@ -1603,7 +1605,7 @@ impl QuestService {
         )
         .bind(playlist_id)
         .bind(PLAYLIST_GROUP_LONG_HORIZON)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await?;
         Ok(rows
             .into_iter()
@@ -2032,13 +2034,15 @@ fn python_str(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::bus_events::{MissionReceivedPayload, MissionReceivedTag, SessionLifecyclePayload};
-    use crate::db::Db;
+    use sqlx::SqlitePool;
 
     async fn service_with_clock(
         dir: &std::path::Path,
     ) -> (Arc<QuestService>, SqlitePool, Arc<crate::clock::MockClock>) {
         let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
-        let pool = db.pool().clone();
+        // Tests drive direct SQL through the writer pool (single connection),
+        // reproducing the original pool-of-one semantics.
+        let pool = db.write().clone();
         let clock = Arc::new(crate::clock::MockClock::new(
             Some(
                 chrono::NaiveDateTime::parse_from_str("2026-03-01 12:00:00", "%Y-%m-%d %H:%M:%S")
@@ -2046,7 +2050,10 @@ mod tests {
             ),
             0.0,
         ));
-        let svc = Arc::new(QuestService::new(pool.clone(), clock.clone()));
+        let svc = Arc::new(QuestService::new(
+            Db::from_pool(pool.clone()),
+            clock.clone(),
+        ));
         let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         svc.set_id_source(Arc::new(move || {
             let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;

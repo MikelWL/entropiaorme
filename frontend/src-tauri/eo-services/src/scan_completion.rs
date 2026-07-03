@@ -174,7 +174,7 @@ mod tests {
         let db = Db::open(&dir.path().join("entropia_orme.db"))
             .await
             .unwrap();
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
         (dir, pool)
     }
 

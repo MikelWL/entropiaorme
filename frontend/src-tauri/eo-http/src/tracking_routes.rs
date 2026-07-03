@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
-use eo_services::db::DbError;
+use eo_services::db::{Db, DbError};
 use eo_services::tracker::naive_to_epoch;
 use serde_json::{json, Value};
 use sqlx::sqlite::SqliteRow;
@@ -141,11 +141,13 @@ fn duration_seconds(
 
 // ── list_sessions_impl ──
 
-pub(crate) async fn list_sessions_impl(pool: &SqlitePool, now: f64) -> Result<Value, DbError> {
+pub(crate) async fn list_sessions_impl(db: &Db, now: f64) -> Result<Value, DbError> {
     // Heal so ended sessions carry current summaries, then read each recent
     // session's row from its summary, computing raw only the ones a summary
     // never holds: the active session, and any non-qualifying ended session.
-    eo_services::session_summary::heal_summaries(pool).await?;
+    // The heal is a write (writer); the reads run on the reader.
+    eo_services::session_summary::heal_summaries(db.write()).await?;
+    let pool = db.read();
 
     let rows = sqlx::query(
         "SELECT id, started_at, ended_at, is_active \
@@ -1153,7 +1155,7 @@ impl HydrationState {
     /// GET /api/tracking/sessions
     pub async fn tracking_sessions(&self, if_none_match: Option<&str>) -> Response<Body> {
         let now = naive_to_epoch(self.clock.now());
-        match list_sessions_impl(self.pool(), now).await {
+        match list_sessions_impl(&self.db, now).await {
             Ok(value) => json_response(&value, if_none_match),
             Err(_) => internal_error(),
         }
@@ -1166,7 +1168,7 @@ impl HydrationState {
         if_none_match: Option<&str>,
     ) -> Response<Body> {
         let now = naive_to_epoch(self.clock.now());
-        match get_session_impl(self.pool(), session_id, now).await {
+        match get_session_impl(self.read(), session_id, now).await {
             Ok(Some(value)) => json_response(&value, if_none_match),
             Ok(None) => error_response(StatusCode::NOT_FOUND, &detail("Session not found")),
             Err(_) => internal_error(),
@@ -1180,7 +1182,7 @@ impl HydrationState {
         limit: i64,
         if_none_match: Option<&str>,
     ) -> Response<Body> {
-        match tag_suggestions_impl(self.pool(), q, limit).await {
+        match tag_suggestions_impl(self.read(), q, limit).await {
             Ok(value) => json_response(&value, if_none_match),
             Err(_) => internal_error(),
         }
@@ -1193,7 +1195,7 @@ impl HydrationState {
         from_mob: &str,
         to_mob: &str,
     ) -> Response<Body> {
-        match rename_session_mob_impl(self.pool(), session_id, from_mob, to_mob).await {
+        match rename_session_mob_impl(self.write(), session_id, from_mob, to_mob).await {
             Ok(value) => plain_json_response(&value),
             Err(error) => error.into_response(),
         }
@@ -1205,7 +1207,7 @@ impl HydrationState {
         session_id: &str,
         current_mob: &str,
     ) -> Response<Body> {
-        match restore_session_mob_impl(self.pool(), session_id, current_mob).await {
+        match restore_session_mob_impl(self.write(), session_id, current_mob).await {
             Ok(value) => plain_json_response(&value),
             Err(error) => error.into_response(),
         }
@@ -1217,7 +1219,7 @@ impl HydrationState {
         session_id: &str,
         item_name: &str,
     ) -> Response<Body> {
-        match bulk_flip_loot_item(self.pool(), session_id, item_name, "deactivated").await {
+        match bulk_flip_loot_item(self.write(), session_id, item_name, "deactivated").await {
             Ok(value) => plain_json_response(&value),
             Err(error) => error.into_response(),
         }
@@ -1229,7 +1231,7 @@ impl HydrationState {
         session_id: &str,
         item_name: &str,
     ) -> Response<Body> {
-        match bulk_flip_loot_item(self.pool(), session_id, item_name, "active").await {
+        match bulk_flip_loot_item(self.write(), session_id, item_name, "active").await {
             Ok(value) => plain_json_response(&value),
             Err(error) => error.into_response(),
         }
@@ -1237,7 +1239,7 @@ impl HydrationState {
 
     /// POST /api/tracking/session/{session_id}/armour-cost
     pub async fn tracking_set_armour_cost(&self, session_id: &str, cost: f64) -> Response<Body> {
-        match set_armour_cost_impl(self.pool(), session_id, cost).await {
+        match set_armour_cost_impl(self.write(), session_id, cost).await {
             Ok(value) => plain_json_response(&value),
             Err(error) => error.into_response(),
         }
@@ -1426,7 +1428,9 @@ mod tests {
     async fn sessions_list_shapes_the_summary_row() {
         let pool = memory_pool().await;
         seed(&pool).await;
-        let value = list_sessions_impl(&pool, 0.0).await.unwrap();
+        let value = list_sessions_impl(&Db::from_pool(pool.clone()), 0.0)
+            .await
+            .unwrap();
         let wire = to_wire_json(&value);
         // cost = weapon(2.75) + heal(2.0) + enhancer(0.5) + armour(1.0) + dangling(0.5) = 6.75
         // returns = 5*10 + 1 = 51.0 ; net = 44.25 ; rate = 51/6.75 = 7.5556
@@ -1576,7 +1580,9 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let value = list_sessions_impl(&pool, start + 120.0).await.unwrap();
+        let value = list_sessions_impl(&Db::from_pool(pool.clone()), start + 120.0)
+            .await
+            .unwrap();
         assert!(to_wire_json(&value).contains("\"duration\":120"));
         // endTime is null for an active session.
         assert!(to_wire_json(&value).contains("\"endTime\":null"));

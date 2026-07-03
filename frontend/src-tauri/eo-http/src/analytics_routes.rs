@@ -4,8 +4,8 @@
 //! These handlers are router-resident SQL aggregation: the reference keeps
 //! every query and the camelCase shaping in the router itself (no service
 //! layer), reading only the single-owner connection and the injected clock.
-//! The port mirrors that, running the same statements over `self.pool()` and
-//! `self.clock`, and shaping the result to the `AnalyticsOverview` /
+//! The port mirrors that, running the same statements over `self.read()` /
+//! `self.write()` and `self.clock`, and shaping the result to the `AnalyticsOverview` /
 //! `AnalyticsActivity` response models byte-for-byte.
 //!
 //! The fidelity crux is pydantic's response-model coercion. A field typed
@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
 use eo_services::daily_rollup;
-use eo_services::db::DbError;
+use eo_services::db::{Db, DbError};
 use eo_services::tracker::naive_to_epoch;
 use serde_json::{json, Map, Value};
 use sqlx::sqlite::SqliteRow;
@@ -595,8 +595,12 @@ async fn ledger_buckets(
 /// brings the daily rollups current (steady-state, a single metadata
 /// read), and every window then aggregates rollup rows plus bounded raw
 /// edges (see [`hybrid_window`]).
-async fn overview_impl(pool: &SqlitePool, now: f64, period: &str) -> Result<Value, DbError> {
-    let watermark = daily_rollup::heal_rollups(pool, now).await?;
+async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError> {
+    // The lazy rollup heal is a write (route it to the writer, never a
+    // reader-held connection); every subsequent aggregate is a plain read
+    // on the reader pool.
+    let watermark = daily_rollup::heal_rollups(db.write(), now).await?;
+    let pool = db.read();
     let epoch_start = period_epoch(period, now);
 
     let m = compute_metrics(pool, &watermark, epoch_start, None).await?;
@@ -955,11 +959,13 @@ struct SessionAgg {
     cycled_ped: f64,
 }
 
-async fn load_activity_sessions(pool: &SqlitePool) -> Result<Vec<SessionAgg>, DbError> {
+async fn load_activity_sessions(db: &Db) -> Result<Vec<SessionAgg>, DbError> {
     // Read the per-session aggregates from the materialised summaries instead
-    // of re-aggregating the raw tables on every request. Heal first so a read
-    // after a summary-version bump (or on a fresh install) sees current rows.
-    eo_services::session_summary::heal_summaries(pool).await?;
+    // of re-aggregating the raw tables on every request. Heal first (a write,
+    // routed to the writer) so a read after a summary-version bump (or on a
+    // fresh install) sees current rows; the read itself runs on the reader.
+    eo_services::session_summary::heal_summaries(db.write()).await?;
+    let pool = db.read();
     let mut sessions = read_summary_activity_aggs(pool).await?;
 
     // Reconcile the sessions Activity counts but a summary never holds: an
@@ -1211,8 +1217,8 @@ fn build_activity_slice_rows(
     rows.into_iter().map(|(_, _, _, row)| row).collect()
 }
 
-async fn activity_impl(pool: &SqlitePool) -> Result<Value, DbError> {
-    let sessions = load_activity_sessions(pool).await?;
+async fn activity_impl(db: &Db) -> Result<Value, DbError> {
+    let sessions = load_activity_sessions(db).await?;
     let mob = build_activity_slice_rows(
         &sessions,
         |s| s.dominant_mob.clone(),
@@ -1250,7 +1256,7 @@ impl HydrationState {
     /// only for the partial edge days (see [`overview_impl`]).
     pub async fn analytics_overview(&self, period: &str) -> Response<Body> {
         let now = naive_to_epoch(self.clock.now());
-        match overview_impl(self.pool(), now, period).await {
+        match overview_impl(&self.db, now, period).await {
             Ok(value) => plain_json_response(&value),
             Err(_) => internal_error(),
         }
@@ -1259,7 +1265,7 @@ impl HydrationState {
     /// GET /api/analytics/activity (no conditional-GET contract: the
     /// analytics surface is outside the ETag middleware's prefixes).
     pub async fn analytics_activity(&self, _if_none_match: Option<&str>) -> Response<Body> {
-        match activity_impl(self.pool()).await {
+        match activity_impl(&self.db).await {
             Ok(value) => plain_json_response(&value),
             Err(_) => internal_error(),
         }
@@ -1318,7 +1324,7 @@ impl HydrationState {
             "SELECT id, date, type, description, amount, tag FROM ledger_entries \
              ORDER BY date DESC, id DESC",
         )
-        .fetch_all(self.pool())
+        .fetch_all(self.read())
         .await
         {
             Ok(rows) => plain_json_response(&Value::Array(rows.iter().map(ledger_item).collect())),
@@ -1339,7 +1345,7 @@ impl HydrationState {
         // One transaction over the insert and the rollup refresh: a
         // backdated entry relands its day's rollup with the write.
         let write = async {
-            let mut tx = self.pool().begin().await?;
+            let mut tx = self.write().begin().await?;
             sqlx::query(
                 "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
                  VALUES (?, ?, ?, ?, ?, ?)",
@@ -1370,7 +1376,7 @@ impl HydrationState {
         // Capture the entry's day before deleting so its rollup relands
         // in the same transaction; a vanished entry keeps the 404.
         let write = async {
-            let mut tx = self.pool().begin().await?;
+            let mut tx = self.write().begin().await?;
             let date: Option<String> =
                 sqlx::query_scalar("SELECT date FROM ledger_entries WHERE id = ?")
                     .bind(entry_id)
@@ -1400,7 +1406,7 @@ impl HydrationState {
             "SELECT id, name, type, description, amount, tag FROM ledger_presets \
              ORDER BY created_at ASC, id ASC",
         )
-        .fetch_all(self.pool())
+        .fetch_all(self.read())
         .await
         {
             Ok(rows) => plain_json_response(&Value::Array(rows.iter().map(preset_item).collect())),
@@ -1434,7 +1440,7 @@ impl HydrationState {
         .bind(description)
         .bind(amount)
         .bind(tag)
-        .execute(self.pool())
+        .execute(self.write())
         .await
         {
             Ok(_) => plain_json_response(&json!({
@@ -1449,7 +1455,7 @@ impl HydrationState {
     pub async fn delete_ledger_preset(&self, preset_id: &str) -> Response<Body> {
         match sqlx::query("DELETE FROM ledger_presets WHERE id = ?")
             .bind(preset_id)
-            .execute(self.pool())
+            .execute(self.write())
             .await
         {
             Ok(result) if result.rows_affected() == 0 => {
@@ -1466,7 +1472,7 @@ impl HydrationState {
             "SELECT id, name, tt_value, markup_paid, notes, acquired_at FROM inventory_items \
              ORDER BY acquired_at DESC, id DESC",
         )
-        .fetch_all(self.pool())
+        .fetch_all(self.read())
         .await
         {
             Ok(rows) => {
@@ -1483,7 +1489,7 @@ impl HydrationState {
              FROM inventory_items WHERE id = ?",
         )
         .bind(item_id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.read())
         .await
         {
             Ok(Some(row)) => plain_json_response(&inventory_item(&row)),
@@ -1517,7 +1523,7 @@ impl HydrationState {
         .bind(markup_paid)
         .bind(notes)
         .bind(&date)
-        .execute(self.pool())
+        .execute(self.write())
         .await
         .is_err()
         {
@@ -1539,7 +1545,7 @@ impl HydrationState {
     ) -> Response<Body> {
         match sqlx::query("SELECT id FROM inventory_items WHERE id = ?")
             .bind(item_id)
-            .fetch_optional(self.pool())
+            .fetch_optional(self.read())
             .await
         {
             Ok(Some(_)) => {}
@@ -1582,7 +1588,7 @@ impl HydrationState {
                 query = query.bind(value);
             }
             query = query.bind(item_id);
-            if query.execute(self.pool()).await.is_err() {
+            if query.execute(self.write()).await.is_err() {
                 return internal_error();
             }
         }
@@ -1593,7 +1599,7 @@ impl HydrationState {
     pub async fn delete_inventory_item(&self, item_id: &str) -> Response<Body> {
         match sqlx::query("DELETE FROM inventory_items WHERE id = ?")
             .bind(item_id)
-            .execute(self.pool())
+            .execute(self.write())
             .await
         {
             Ok(result) if result.rows_affected() == 0 => {
@@ -1619,7 +1625,7 @@ impl HydrationState {
              FROM inventory_items WHERE id = ?",
         )
         .bind(item_id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.read())
         .await
         {
             Ok(Some(row)) => row,
@@ -1641,7 +1647,7 @@ impl HydrationState {
             .unwrap_or_else(|| self.default_date());
         let sold_item = inventory_item(&row);
 
-        let mut tx = match self.pool().begin().await {
+        let mut tx = match self.write().begin().await {
             Ok(tx) => tx,
             Err(_) => return internal_error(),
         };
@@ -1773,7 +1779,7 @@ mod tests {
     #[tokio::test]
     async fn ledger_create_and_delete_reland_their_days_rollups() {
         let state = write_state().await;
-        heal_to_june_fifth(state.pool()).await;
+        heal_to_june_fifth(state.write()).await;
 
         // A backdated create lands its day's rollup with the insert.
         let (status, body) = body_of(
@@ -1784,7 +1790,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
-            ledger_rollup(state.pool(), "2026-06-02", "manual").await,
+            ledger_rollup(state.read(), "2026-06-02", "manual").await,
             Some(("expense".into(), 12.5))
         );
 
@@ -1793,7 +1799,7 @@ mod tests {
         let (status, _) = body_of(state.delete_ledger_entry(&id).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
-            ledger_rollup(state.pool(), "2026-06-02", "manual").await,
+            ledger_rollup(state.read(), "2026-06-02", "manual").await,
             None
         );
         let (status, _) = body_of(state.delete_ledger_entry("missing").await).await;
@@ -1803,12 +1809,12 @@ mod tests {
     #[tokio::test]
     async fn inventory_sale_relands_the_sold_days_rollup() {
         let state = write_state().await;
-        heal_to_june_fifth(state.pool()).await;
+        heal_to_june_fifth(state.write()).await;
         sqlx::query(
             "INSERT INTO inventory_items (id, name, tt_value, markup_paid, notes, acquired_at) \
              VALUES ('i1', 'Gun', 10.0, 2.0, NULL, '2026-05-01')",
         )
-        .execute(state.pool())
+        .execute(state.write())
         .await
         .unwrap();
 
@@ -1821,7 +1827,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
-            ledger_rollup(state.pool(), "2026-06-02", INVENTORY_SALE_TAG).await,
+            ledger_rollup(state.read(), "2026-06-02", INVENTORY_SALE_TAG).await,
             Some(("markup".into(), 8.0))
         );
     }
@@ -1846,7 +1852,9 @@ mod tests {
     #[tokio::test]
     async fn empty_overview_emits_the_engine_typed_zeros() {
         let pool = memory_pool().await;
-        let value = overview_impl(&pool, 1_800_000_000.0, "all").await.unwrap();
+        let value = overview_impl(&Db::from_pool(pool.clone()), 1_800_000_000.0, "all")
+            .await
+            .unwrap();
         // cycledBreakdown is an `Any` field: empty COALESCE sums leave the
         // integer zero on the wire, while the float-declared aggregates coerce.
         assert_eq!(
@@ -1862,7 +1870,7 @@ mod tests {
     #[tokio::test]
     async fn empty_activity_emits_three_empty_tables() {
         let pool = memory_pool().await;
-        let value = activity_impl(&pool).await.unwrap();
+        let value = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
         assert_eq!(
             to_wire_json(&value),
             "{\"mobComparisons\":[],\"tagComparisons\":[],\"weaponComparisons\":[]}"
@@ -1997,7 +2005,9 @@ mod tests {
         let now = 1_800_000_000.0;
         let pool = memory_pool().await;
         seed_scenario(&pool, now).await;
-        let v = overview_impl(&pool, now, "all").await.unwrap();
+        let v = overview_impl(&Db::from_pool(pool.clone()), now, "all")
+            .await
+            .unwrap();
         assert_eq!(v["returnsBreakdown"]["lootTt"], json!(65.0));
         assert_eq!(v["returnsBreakdown"]["pes"], json!(4.0));
         assert_eq!(v["returnsBreakdown"]["codexPes"], json!(7.0));
@@ -2022,7 +2032,9 @@ mod tests {
         // trend: recent-30d rate exceeds prior-30d rate beyond the 2% band.
         assert_eq!(v["trend"], json!("improving"));
         // period filter: 30d keeps only the recent window (markup in, expense out).
-        let v30 = overview_impl(&pool, now, "30d").await.unwrap();
+        let v30 = overview_impl(&Db::from_pool(pool.clone()), now, "30d")
+            .await
+            .unwrap();
         assert_eq!(v30["returnsBreakdown"]["lootTt"], json!(50.0));
         assert_eq!(v30["returnsBreakdown"]["ledger"]["loot_sale"], json!(12.5));
         assert_eq!(v30["lossesBreakdown"]["ledger"], json!({}));
@@ -2034,7 +2046,7 @@ mod tests {
         let now = 1_800_000_000.0;
         let pool = memory_pool().await;
         seed_scenario(&pool, now).await;
-        let v = activity_impl(&pool).await.unwrap();
+        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
         // sess-z (zero kills) filtered out; sess-a -> dominant mob, sess-b -> tag.
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
@@ -2077,7 +2089,7 @@ mod tests {
         seed_filter_session(&pool, "zcost", "Zerocost", 1000.0, 1000.0 + 3600.0, 0.0, 2).await;
         // zero duration (start == end) -> dropped by the duration guard alone.
         seed_filter_session(&pool, "zdur", "Zerodur", 1000.0, 1000.0, 5.0, 2).await;
-        let v = activity_impl(&pool).await.unwrap();
+        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1, "only the keeper survives the OR filter");
         assert_eq!(mobs[0]["mobName"], json!("Keeper"));
@@ -2147,7 +2159,11 @@ mod tests {
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(overview_impl(&pool, now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("declining")
         );
 
@@ -2156,7 +2172,11 @@ mod tests {
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
-            trend(overview_impl(&pool, now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("improving")
         );
 
@@ -2165,7 +2185,11 @@ mod tests {
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
-            trend(overview_impl(&pool, now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("stable")
         );
 
@@ -2175,7 +2199,11 @@ mod tests {
         let pool = memory_pool().await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(overview_impl(&pool, now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("stable")
         );
 
@@ -2183,7 +2211,11 @@ mod tests {
         let pool = memory_pool().await;
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(overview_impl(&pool, now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("stable")
         );
     }
@@ -2208,7 +2240,7 @@ mod tests {
             .bind(format!("nd-{i}")).bind(*mob).bind(1000.0 + i as f64)
             .execute(&pool).await.expect("seed");
         }
-        let v = activity_impl(&pool).await.unwrap();
+        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
         assert_eq!(v["mobComparisons"].as_array().unwrap().len(), 0);
         assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
 
@@ -2228,7 +2260,7 @@ mod tests {
             .bind(format!("as-{i}")).bind(1000.0 + i as f64)
             .execute(&pool).await.expect("seed");
         }
-        let v = activity_impl(&pool).await.unwrap();
+        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["mobName"], json!("Foo"));
@@ -2250,7 +2282,7 @@ mod tests {
         )
         .execute(&pool).await.expect("seed");
         // Only the real session's mob is compared; the orphan is ignored.
-        let v = activity_impl(&pool).await.unwrap();
+        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["mobName"], json!("Real"));

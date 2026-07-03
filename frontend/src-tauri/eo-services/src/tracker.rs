@@ -41,14 +41,14 @@ use eo_wire::domain_events::{
 };
 use eo_wire::normalizer::round_half_even;
 use serde_json::{Map, Value};
-use sqlx::sqlite::{SqliteConnection, SqlitePool};
+use sqlx::sqlite::SqliteConnection;
 use sqlx::Row;
 use tokio::runtime::Handle;
 
 use crate::bus_events::{BusEvent, CombatPayload, GlobalPayload, SessionLifecyclePayload};
 use crate::clock::Clock;
 use crate::cost_engine::cost_per_shot_from_props;
-use crate::db::{decoded_f64, DbError};
+use crate::db::{decoded_f64, Db, DbError};
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::loot_filter::{is_tracked_loot, normalize_blacklist};
 use crate::mob_lookup_service::python_whitespace;
@@ -269,7 +269,7 @@ struct TrackerState {
 
 pub struct HuntTracker {
     bus: Arc<EventBus>,
-    pool: SqlitePool,
+    db: Db,
     runtime: Handle,
     clock: Arc<dyn Clock>,
     providers: Providers,
@@ -286,7 +286,7 @@ impl HuntTracker {
     /// composition root keeps one `Arc` for the process lifetime.
     pub fn new(
         bus: Arc<EventBus>,
-        pool: SqlitePool,
+        db: Db,
         runtime: Handle,
         clock: Arc<dyn Clock>,
         mut providers: Providers,
@@ -306,7 +306,7 @@ impl HuntTracker {
 
         let tracker = Arc::new(Self {
             bus,
-            pool,
+            db,
             runtime,
             clock,
             providers,
@@ -365,14 +365,14 @@ impl HuntTracker {
         self.block_on(async {
             let rows =
                 sqlx::query("SELECT id, started_at FROM tracking_sessions WHERE is_active = 1")
-                    .fetch_all(&self.pool)
+                    .fetch_all(self.db.read())
                     .await?;
             for row in rows {
                 let session_id: String = row.try_get(0)?;
                 let started_at: f64 = row.try_get(1)?;
                 let kill_row = sqlx::query("SELECT MAX(timestamp) FROM kills WHERE session_id = ?")
                     .bind(&session_id)
-                    .fetch_one(&self.pool)
+                    .fetch_one(self.db.read())
                     .await?;
                 // The original's falsy fallback, not a None check: a
                 // zero maximum also falls back to the session start.
@@ -383,7 +383,7 @@ impl HuntTracker {
                 // Each orphan closes atomically: the same one-commit
                 // grouping the stop path uses, so a failure mid-recovery
                 // leaves that session untouched and still recoverable.
-                let mut tx = self.pool.begin().await?;
+                let mut tx = self.db.write().begin().await?;
                 sqlx::query(
                     "UPDATE tracking_sessions SET ended_at = ?, is_active = 0 WHERE id = ?",
                 )
@@ -569,7 +569,7 @@ impl HuntTracker {
                 "SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains WHERE session_id = ?",
             )
             .bind(&aggregated.session_id)
-            .fetch_one(&self.pool)
+            .fetch_one(self.db.read())
             .await?;
             let skill_tt = decoded_f64(&skill_row, 0);
 
@@ -582,7 +582,7 @@ impl HuntTracker {
                  ORDER BY timestamp DESC LIMIT 20",
             )
             .bind(&aggregated.session_id)
-            .fetch_all(&self.pool)
+            .fetch_all(self.db.read())
             .await?;
             let mut notable_rows = Vec::new();
             for row in rows {
@@ -870,7 +870,7 @@ impl HuntTracker {
             .bind(&session_id)
             .bind(start_ts)
             .bind(&session_mob_tracking_mode)
-            .execute(&self.pool)
+            .execute(self.db.write())
             .await?;
             Ok::<(), DbError>(())
         })?;
@@ -920,7 +920,7 @@ impl HuntTracker {
         // no half-stopped session, no orphaned ledger gains, and no
         // summary computed from a partially persisted stop.
         self.block_on(async {
-            let mut tx = self.pool.begin().await?;
+            let mut tx = self.db.write().begin().await?;
             sqlx::query(
                 "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
                  heal_cost = ?, dangling_cost = ? WHERE id = ?",
@@ -940,6 +940,22 @@ impl HuntTracker {
             tx.commit().await?;
             Ok::<(), DbError>(())
         })?;
+
+        // Session end is a quiescent boundary: checkpoint and truncate the WAL
+        // so its growth over a tracked session is bounded. Best-effort: the
+        // stop's data is already committed, and TRUNCATE can be briefly blocked
+        // by an in-flight reader (it simply retries at the next session end), so
+        // a failure here must not fail the stop. A failure is logged rather than
+        // swallowed, so a persistently failing checkpoint (a stuck reader) leaves
+        // a diagnostic trail instead of silently unbounded WAL growth.
+        if let Err(error) = self.block_on(self.db.checkpoint_truncate()) {
+            tracing::warn!(
+                target: "eo::tracker",
+                %session_id,
+                %error,
+                "WAL checkpoint at session end failed; log growth is not bounded this stop",
+            );
+        }
 
         self.bus
             .publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
@@ -1787,7 +1803,7 @@ impl HuntTracker {
         };
 
         let result = self.block_on(async {
-            let mut tx = self.pool.begin().await?;
+            let mut tx = self.db.write().begin().await?;
             if let Some(kill_id) = &kill_id {
                 sqlx::query("UPDATE kills SET is_global = 1, is_hof = ? WHERE id = ?")
                     .bind(i64::from(target_is_hof))
@@ -1921,7 +1937,7 @@ impl HuntTracker {
     /// items, under one commit.
     fn persist_kill(&self, kill: &Kill) {
         let result = self.block_on(async {
-            let mut tx = self.pool.begin().await?;
+            let mut tx = self.db.write().begin().await?;
             sqlx::query(
                 "INSERT OR REPLACE INTO kills \
                  (id, session_id, mob_name, mob_species, mob_maturity, \
@@ -2226,8 +2242,8 @@ mod tests {
         EnhancerBreakTag, LootGroupPayload, LootItem, LootTag, TickFlushedPayload,
     };
     use crate::clock::MockClock;
-    use crate::db::Db;
     use serde_json::json;
+    use sqlx::sqlite::SqlitePool;
     use std::sync::Mutex as StdMutex;
 
     struct Rig {
@@ -2248,7 +2264,11 @@ mod tests {
         let db = runtime
             .block_on(Db::open(&dir.path().join("entropia_orme.db")))
             .unwrap();
-        let pool = db.pool().clone();
+        // The test rig drives all SQL through the writer pool (a single
+        // connection), reproducing the original pool-of-one semantics; the
+        // reader/writer split is exercised by the perf and integration
+        // harnesses, not these unit tests.
+        let pool = db.write().clone();
         Rig {
             _dir: dir,
             runtime,
@@ -2262,7 +2282,7 @@ mod tests {
         fn tracker(&self, providers: Providers) -> Arc<HuntTracker> {
             HuntTracker::new(
                 self.bus.clone(),
-                self.pool.clone(),
+                Db::from_pool(self.pool.clone()),
                 self.runtime.handle().clone(),
                 self.clock.clone(),
                 providers,

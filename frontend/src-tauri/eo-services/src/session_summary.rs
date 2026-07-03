@@ -11,7 +11,7 @@ use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use sqlx::Row;
 
 use crate::character_calc::ATTRIBUTE_SKILLS;
-use crate::db::{decoded_f64, DbError};
+use crate::db::{decoded_f64, Db, DbError};
 use eo_wire::normalizer::{round_half_even, to_python_json};
 
 // Bumped to 2 when the Activity/session-list read columns (dominant kill
@@ -437,8 +437,10 @@ pub async fn heal_summaries(pool: &SqlitePool) -> Result<(), DbError> {
 /// All qualifying completed-session summaries, lazily rebuilding any
 /// missing or stale-version rows first so new installs converge on
 /// first read without a migration.
-pub async fn load_prospect_sessions(pool: &SqlitePool) -> Result<Vec<Value>, DbError> {
-    heal_summaries(pool).await?;
+pub async fn load_prospect_sessions(db: &Db) -> Result<Vec<Value>, DbError> {
+    // Heal (a write) on the writer; read the prospect rows on the reader.
+    heal_summaries(db.write()).await?;
+    let pool = db.read();
 
     let rows = sqlx::query(
         "SELECT session_id, started_at, ended_at, duration_hours, kills, loot_tt, \
@@ -464,14 +466,13 @@ pub async fn delete_session_summary(pool: &SqlitePool, session_id: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
 
     async fn pool() -> (tempfile::TempDir, SqlitePool) {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(&dir.path().join("entropia_orme.db"))
             .await
             .unwrap();
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
         (dir, pool)
     }
 
@@ -868,7 +869,7 @@ mod tests {
         let db = crate::db::Db::open(&dir.path().join("entropia_orme.db"))
             .await
             .unwrap();
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
 
         sqlx::query(
             "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, dangling_cost) \
@@ -952,7 +953,9 @@ mod tests {
         .await
         .unwrap();
 
-        let prospects = load_prospect_sessions(&pool).await.unwrap();
+        let prospects = load_prospect_sessions(&Db::from_pool(pool.clone()))
+            .await
+            .unwrap();
         assert_eq!(
             prospects,
             vec![

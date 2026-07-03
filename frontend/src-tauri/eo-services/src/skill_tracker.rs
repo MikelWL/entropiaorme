@@ -21,13 +21,13 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 use tokio::runtime::Handle;
 
 use crate::bus_events::BusEvent;
 use crate::character_calc::ATTRIBUTE_SKILLS;
 use crate::clock::Clock;
+use crate::db::Db;
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::tracker::{naive_to_epoch, parse_timestamp_str};
 use crate::tt_value_curve::tt_value_of_gain;
@@ -48,7 +48,7 @@ struct SkillState {
 }
 
 pub struct SkillTracker {
-    pool: SqlitePool,
+    db: Db,
     runtime: Handle,
     clock: Arc<dyn Clock>,
     state: Mutex<SkillState>,
@@ -59,14 +59,9 @@ pub struct SkillTracker {
 }
 
 impl SkillTracker {
-    pub fn new(
-        bus: &Arc<EventBus>,
-        pool: SqlitePool,
-        runtime: Handle,
-        clock: Arc<dyn Clock>,
-    ) -> Arc<Self> {
+    pub fn new(bus: &Arc<EventBus>, db: Db, runtime: Handle, clock: Arc<dyn Clock>) -> Arc<Self> {
         let tracker = Arc::new(Self {
-            pool,
+            db,
             runtime,
             clock,
             state: Mutex::new(SkillState::default()),
@@ -181,7 +176,7 @@ impl SkillTracker {
                  ORDER BY scanned_at DESC LIMIT 1",
             )
             .bind(&skill_name)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.db.read())
             .await
             .ok()
             .flatten()
@@ -205,7 +200,7 @@ impl SkillTracker {
                 .bind(&skill_name)
                 .bind(new_level)
                 .bind(ts_epoch)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await
             });
             // The original's raise aborts the rest of the handler
@@ -225,7 +220,7 @@ impl SkillTracker {
             .bind(&skill_name)
             .bind(amount)
             .bind(ped_value)
-            .execute(&self.pool)
+            .execute(self.db.write())
             .await
         });
         if result.is_err() {
@@ -255,7 +250,7 @@ mod tests {
         runtime: tokio::runtime::Runtime,
         bus: Arc<EventBus>,
         clock: Arc<MockClock>,
-        pool: SqlitePool,
+        db: Db,
         tracker: Arc<SkillTracker>,
     }
 
@@ -269,17 +264,15 @@ mod tests {
         let db = runtime
             .block_on(Db::open(&dir.path().join("entropia_orme.db")))
             .unwrap();
-        let pool = db.pool().clone();
         let bus = Arc::new(EventBus::new());
         let clock = Arc::new(MockClock::new(None, 0.0));
-        let tracker =
-            SkillTracker::new(&bus, pool.clone(), runtime.handle().clone(), clock.clone());
+        let tracker = SkillTracker::new(&bus, db.clone(), runtime.handle().clone(), clock.clone());
         Rig {
             _dir: dir,
             runtime,
             bus,
             clock,
-            pool,
+            db,
             tracker,
         }
     }
@@ -304,7 +297,7 @@ mod tests {
         fn gains_count(&self) -> i64 {
             self.runtime.block_on(async {
                 sqlx::query("SELECT COUNT(*) FROM skill_gains")
-                    .fetch_one(&self.pool)
+                    .fetch_one(self.db.read())
                     .await
                     .unwrap()
                     .try_get(0)
@@ -319,7 +312,7 @@ mod tests {
                      ORDER BY id",
                 )
                 .bind(name)
-                .fetch_all(&self.pool)
+                .fetch_all(self.db.read())
                 .await
                 .unwrap()
                 .iter()
@@ -337,7 +330,7 @@ mod tests {
                 .bind(name)
                 .bind(level)
                 .bind(scanned_at)
-                .execute(&self.pool)
+                .execute(self.db.write())
                 .await
                 .unwrap();
             });
@@ -349,7 +342,7 @@ mod tests {
                     "SELECT skill_name, amount, ped_value, timestamp FROM skill_gains \
                      ORDER BY id DESC LIMIT 1",
                 )
-                .fetch_one(&self.pool)
+                .fetch_one(self.db.read())
                 .await
                 .unwrap();
                 (

@@ -1909,7 +1909,7 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
     // connection, serialised access), exactly as composition wires it.
     let tracker = HuntTracker::new(
         bus.clone(),
-        db.pool().clone(),
+        eo_services::db::Db::from_pool(db.write().clone()),
         tokio::runtime::Handle::current(),
         clock.clone(),
         Providers::default(),
@@ -1920,7 +1920,7 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
     // as composition wires them, so the write routes serve natively here.
     let skill_tracker = SkillTracker::new(
         &bus,
-        db.pool().clone(),
+        eo_services::db::Db::from_pool(db.write().clone()),
         tokio::runtime::Handle::current(),
         clock.clone(),
     );
@@ -1949,7 +1949,7 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
         None,
         0,
     );
-    let completion_pool = db.pool().clone();
+    let completion_pool = db.write().clone();
     let completion_clock = clock.clone();
     let completion_runtime = tokio::runtime::Handle::current();
     skill_scan.set_completion_callback(Arc::new(move |levels: &[(String, f64)]| {
@@ -1992,7 +1992,7 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
     );
 
     let hydration = Arc::new(HydrationState::new(
-        eo_services::db::Db::from_pool(db.pool().clone()),
+        eo_services::db::Db::from_pool(db.write().clone()),
         game_data,
         clock,
         dir.path().to_path_buf(),

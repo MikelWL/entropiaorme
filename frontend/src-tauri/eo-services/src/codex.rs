@@ -30,13 +30,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
 use crate::clock::Clock;
 use crate::codex_categories::{
     build_rank_breakdown, get_category_for_rank, get_rank_cost, get_reward_ped, is_cat4_rank,
     skills_for_category, CAT4_SKILLS,
 };
+use crate::db::Db;
 use crate::game_data_store::GameDataStore;
 use crate::tracker::naive_to_epoch;
 use crate::tt_value_curve::levels_for_tt_value;
@@ -78,15 +79,15 @@ struct Species {
 
 /// Codex operations: species listing, rank breakdowns, claim recording.
 pub struct CodexService {
-    pool: SqlitePool,
+    db: Db,
     game_data: Arc<GameDataStore>,
     clock: Arc<dyn Clock>,
 }
 
 impl CodexService {
-    pub fn new(pool: SqlitePool, game_data: Arc<GameDataStore>, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(db: Db, game_data: Arc<GameDataStore>, clock: Arc<dyn Clock>) -> Self {
         Self {
-            pool,
+            db,
             game_data,
             clock,
         }
@@ -125,7 +126,7 @@ impl CodexService {
         }
 
         let rows = sqlx::query("SELECT species_name, current_rank FROM codex_progress")
-            .fetch_all(&self.pool)
+            .fetch_all(self.db.read())
             .await
             .map_err(CodexError::Db)?;
         let rank_map: HashMap<String, i64> = rows
@@ -175,7 +176,7 @@ impl CodexService {
              WHERE species_name = ? ORDER BY rank",
         )
         .bind(species_name)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.read())
         .await
         .map_err(CodexError::Db)?;
         // Built in query order so a duplicate rank's later row wins,
@@ -279,7 +280,7 @@ impl CodexService {
         // unchanged. (For the new-species rank-1 claim there is no row
         // yet, so the plain INSERT path applies and a racing second
         // INSERT conflicts onto the now-false guard.)
-        let mut tx = self.pool.begin().await.map_err(CodexError::Db)?;
+        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
         let advanced = sqlx::query(
             "INSERT INTO codex_progress (species_name, current_rank, updated_at) VALUES (?, ?, ?) \
              ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ? \
@@ -372,7 +373,7 @@ impl CodexService {
     /// cross-language differential never drove it.
     pub async fn unclaim_rank(&self, species_name: &str) -> Result<Value, CodexError> {
         let now = naive_to_epoch(self.clock.now());
-        let mut tx = self.pool.begin().await.map_err(CodexError::Db)?;
+        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
 
         let current_rank =
             sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = ?")
@@ -483,7 +484,7 @@ impl CodexService {
         .bind(now)
         .bind(rank)
         .bind(now)
-        .execute(&self.pool)
+        .execute(self.db.write())
         .await
         .map_err(CodexError::Db)?;
         Ok(json!({"speciesName": species_name, "rank": rank}))
@@ -671,7 +672,7 @@ impl CodexService {
             )));
         }
         let now = naive_to_epoch(self.clock.now());
-        let mut tx = self.pool.begin().await.map_err(CodexError::Db)?;
+        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
         sqlx::query(
             "INSERT INTO codex_claims \
              (species_name, rank, skill_name, ped_value, claimed_at, kind, attribute_name) \
@@ -734,7 +735,7 @@ impl CodexService {
         Ok(
             sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = ?")
                 .bind(species_name)
-                .fetch_optional(&self.pool)
+                .fetch_optional(self.db.read())
                 .await
                 .map_err(CodexError::Db)?
                 .map(|row| row.get(0))
@@ -751,7 +752,7 @@ impl CodexService {
              ORDER BY scanned_at DESC LIMIT 1",
         )
         .bind(skill_name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.read())
         .await
         .map_err(CodexError::Db)?
         .map(|row| row.get(0)))
@@ -794,7 +795,7 @@ mod tests {
 
     use super::*;
     use crate::clock::MockClock;
-    use crate::db::Db;
+    use sqlx::SqlitePool;
 
     fn start_instant() -> NaiveDateTime {
         NaiveDateTime::parse_from_str("2026-03-01 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap()
@@ -856,10 +857,10 @@ mod tests {
         std::fs::create_dir_all(&snapshot).unwrap();
         write_snapshot(&snapshot);
         let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
-        let pool = db.pool().clone();
+        let seed_pool = db.write().clone();
         let game_data = Arc::new(GameDataStore::new(&snapshot).unwrap());
         let clock = Arc::new(MockClock::new(Some(start_instant()), 0.0));
-        (CodexService::new(pool.clone(), game_data, clock), pool)
+        (CodexService::new(db, game_data, clock), seed_pool)
     }
 
     /// The standard calibration seed: Rifle twice (the newer scan

@@ -974,7 +974,7 @@ mod tests {
             "INSERT INTO equipment_library (id, name, item_type, properties_json) \
              VALUES (5, 'Opalo', 'weapon', '{}')",
         )
-        .execute(db.pool())
+        .execute(db.write())
         .await
         .unwrap();
         let game_data = std::sync::Arc::new(
