@@ -581,7 +581,7 @@ async fn compose_with(
     // around the connection pool, so the producers and the read surface
     // share one connection (one owner, serialised access) rather than
     // opening a second.
-    let producer_db = Db::from_pool(db.pool().clone());
+    let producer_db = db.clone();
     let producers = match compose_producers(
         producer_db,
         clock.clone(),
@@ -715,7 +715,6 @@ async fn compose_scan_services(
     Arc<SpacebarCaptureListener>,
 ) {
     let runtime = tokio::runtime::Handle::current();
-    let pool = db.pool().clone();
 
     // The calibrated panel grid and the canonical skill vocabulary the
     // panel reader resolves names against; both read existing snapshot
@@ -766,7 +765,7 @@ async fn compose_scan_services(
     // Hydrate the resting status from the persisted calibration history,
     // exactly as the Python reference seeds initial scan time and skill count.
     let (initial_scan_time, initial_skills_count) =
-        hydrate_skill_scan_state(&pool).await.unwrap_or((None, 0));
+        hydrate_skill_scan_state(db.read()).await.unwrap_or((None, 0));
 
     let skill_scan = SkillScanManual::new(
         scan_providers,
@@ -781,7 +780,7 @@ async fn compose_scan_services(
     // the same dual way the tracker's providers do; a persist error
     // surfaces on the scan status, exactly as the Python reference's caught
     // exception does.
-    let completion_pool = pool;
+    let completion_pool = db.write().clone();
     let completion_clock = clock.clone();
     let completion_runtime = runtime;
     skill_scan.set_completion_callback(Arc::new(move |levels: &[(String, f64)]| {
@@ -920,7 +919,7 @@ fn compose_producers(
     // auto-start) and supplies the watcher's quest-reward filter, so a
     // mission completion can suppress its reward echo just as the
     // Python reference's does.
-    let quests = Arc::new(QuestService::new(db.pool().clone(), clock.clone()));
+    let quests = Arc::new(QuestService::new(db.clone(), clock.clone()));
     quests.subscribe(&bus, runtime.clone());
 
     let watched_chatlog = chatlog_override.unwrap_or_else(|| PathBuf::from(&config.chatlog_path));
@@ -931,7 +930,7 @@ fn compose_producers(
         Some(quest_reward_filter),
     ));
 
-    let skill_tracker = SkillTracker::new(&bus, db.pool().clone(), runtime.clone(), clock.clone());
+    let skill_tracker = SkillTracker::new(&bus, db.clone(), runtime.clone(), clock.clone());
 
     // The input listeners share ONE keyboard source (the OS hook is
     // single-instance): a ref-counted wrapper makes the injected source
@@ -956,7 +955,7 @@ fn compose_producers(
 
     let tracker = HuntTracker::new(
         bus.clone(),
-        db.pool().clone(),
+        db.clone(),
         runtime.clone(),
         clock.clone(),
         build_providers(db, data_dir, &config, runtime.clone()),
@@ -1364,11 +1363,11 @@ mod tests {
         {
             let db = eo_services::db::Db::open(&db_path).await.unwrap();
             sqlx::query("UPDATE db_metadata SET value = '28' WHERE key = 'version'")
-                .execute(db.pool())
+                .execute(db.write())
                 .await
                 .unwrap();
             sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(db.pool())
+                .execute(db.write())
                 .await
                 .unwrap();
         }
@@ -1691,7 +1690,7 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
 
         // A frozen, plan-advanced clock, exactly the corpus oracle's
         // protocol: the watcher guards its own drain timeout against a
@@ -1781,7 +1780,7 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
 
         let start =
             chrono::NaiveDateTime::parse_from_str("2026-05-19 10:00:00", "%Y-%m-%d %H:%M:%S")
@@ -1884,7 +1883,7 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
 
         // A weapon whose name carries the fragment "Korss", with a
         // property object whose economy yields a known totalCostPerUse.
@@ -1985,7 +1984,7 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
         let props = serde_json::json!({
             "weapon_entity": {"economy": {"decay": 0.0, "ammo_burn": 25000}},
             "weapon_markup": 100,
@@ -2038,7 +2037,7 @@ mod tests {
         let db = Db::open_adopted(&dir.path().join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.pool().clone();
+        let pool = db.write().clone();
 
         // A producer-shaped write: a short transaction holding the single
         // connection briefly, exactly the shape of a tracker persistence

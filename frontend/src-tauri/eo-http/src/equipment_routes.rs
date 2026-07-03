@@ -392,7 +392,7 @@ impl HydrationState {
         let rows = match sqlx::query(
             "SELECT id, name, item_type, properties_json FROM equipment_library ORDER BY created_at",
         )
-        .fetch_all(self.pool())
+        .fetch_all(self.read())
         .await
         {
             Ok(rows) => rows,
@@ -426,7 +426,7 @@ impl HydrationState {
         .bind(&req.item_type)
         .bind(&stored_catalog_id)
         .bind(to_python_json_dumps(&props))
-        .execute(self.pool())
+        .execute(self.write())
         .await
         {
             Ok(result) => result.last_insert_rowid(),
@@ -436,7 +436,7 @@ impl HydrationState {
             "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
         )
         .bind(inserted)
-        .fetch_one(self.pool())
+        .fetch_one(self.read())
         .await
         {
             Ok(row) => row,
@@ -452,7 +452,7 @@ impl HydrationState {
     pub async fn equipment_update(&self, item_id: i64, req: &EquipmentRequest) -> Response<Body> {
         let existing = match sqlx::query("SELECT id, item_type FROM equipment_library WHERE id = ?")
             .bind(item_id)
-            .fetch_optional(self.pool())
+            .fetch_optional(self.read())
             .await
         {
             Ok(row) => row,
@@ -486,7 +486,7 @@ impl HydrationState {
         .bind(&stored_catalog_id)
         .bind(to_python_json_dumps(&props))
         .bind(item_id)
-        .execute(self.pool())
+        .execute(self.write())
         .await
         .is_err()
         {
@@ -497,7 +497,7 @@ impl HydrationState {
              FROM equipment_library WHERE id = ?",
         )
         .bind(item_id)
-        .fetch_one(self.pool())
+        .fetch_one(self.read())
         .await
         {
             Ok(row) => row,
@@ -525,7 +525,7 @@ impl HydrationState {
         }
         if sqlx::query("DELETE FROM equipment_library WHERE id = ?")
             .bind(item_id)
-            .execute(self.pool())
+            .execute(self.write())
             .await
             .is_err()
         {
@@ -545,7 +545,7 @@ impl HydrationState {
              FROM equipment_library WHERE id = ?",
         )
         .bind(item_id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.read())
         .await
         {
             Ok(row) => row,
@@ -1277,7 +1277,7 @@ mod tests {
         assert_eq!(shaped["enrichmentLevel"], json!(2));
         let stored: String =
             sqlx::query_scalar("SELECT properties_json FROM equipment_library WHERE id = 1")
-                .fetch_one(state.pool())
+                .fetch_one(state.read())
                 .await
                 .unwrap();
         assert!(stored.starts_with("{\"weapon_entity\": {\"id\": \"w1\""));
@@ -1301,7 +1301,7 @@ mod tests {
         assert_eq!(shaped["amplifierName"], json!(null));
         let stored: String =
             sqlx::query_scalar("SELECT properties_json FROM equipment_library WHERE id = 1")
-                .fetch_one(state.pool())
+                .fetch_one(state.read())
                 .await
                 .unwrap();
         assert!(

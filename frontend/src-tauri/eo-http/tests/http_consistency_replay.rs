@@ -237,7 +237,7 @@ async fn assert_consistency_goldens(scenario_name: &str) {
     let db = Db::open(&db_dir.path().join("entropia_orme.db"))
         .await
         .expect("migrated database");
-    let pool = db.pool().clone();
+    let pool = db.write().clone();
 
     let chatlog = db_dir.path().join("chat_testing.log");
     std::fs::File::create(&chatlog).expect("empty chatlog");
@@ -249,7 +249,7 @@ async fn assert_consistency_goldens(scenario_name: &str) {
 
     let tracker = HuntTracker::new(
         bus.clone(),
-        pool.clone(),
+        Db::from_pool(pool.clone()),
         tokio::runtime::Handle::current(),
         clock.clone(),
         Providers {

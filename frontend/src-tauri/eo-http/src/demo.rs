@@ -185,7 +185,7 @@ impl DemoState {
         let bus = Arc::new(EventBus::new());
         let tracker = HuntTracker::new(
             bus,
-            db.pool().clone(),
+            db.clone(),
             Handle::current(),
             clock.clone(),
             Providers::default(),
@@ -201,8 +201,12 @@ impl DemoState {
         })
     }
 
-    fn pool(&self) -> &sqlx::SqlitePool {
-        self.db.pool()
+    fn read(&self) -> &sqlx::SqlitePool {
+        self.db.read()
+    }
+
+    fn write(&self) -> &sqlx::SqlitePool {
+        self.db.write()
     }
 
     fn now_epoch(&self) -> f64 {
@@ -235,14 +239,14 @@ impl DemoState {
     //    demo prefix does not, so these call the impls and reply plainly) ──
 
     pub async fn list_sessions(&self) -> Response<Body> {
-        match list_sessions_impl(self.pool(), self.now_epoch()).await {
+        match list_sessions_impl(&self.db, self.now_epoch()).await {
             Ok(value) => plain_json_response(&value),
             Err(_) => internal_error(),
         }
     }
 
     pub async fn get_session(&self, session_id: &str) -> Response<Body> {
-        match get_session_impl(self.pool(), session_id, self.now_epoch()).await {
+        match get_session_impl(self.read(), session_id, self.now_epoch()).await {
             Ok(Some(value)) => plain_json_response(&value),
             Ok(None) => error_response(StatusCode::NOT_FOUND, &detail("Session not found")),
             Err(_) => internal_error(),
@@ -298,7 +302,7 @@ impl DemoState {
         let started_epoch = naive_to_epoch(started_naive);
         let session = &self.fixture.session;
 
-        let mut tx = self.pool().begin().await?;
+        let mut tx = self.write().begin().await?;
         sqlx::query(
             "INSERT INTO tracking_sessions \
              (id, started_at, ended_at, is_active, armour_cost, heal_cost, dangling_cost) \
@@ -503,7 +507,7 @@ impl DemoState {
     async fn lookup_equipment_id(&self, name: &str) -> Result<i64, DemoError> {
         sqlx::query_scalar::<_, i64>("SELECT id FROM equipment_library WHERE name = ?")
             .bind(name)
-            .fetch_optional(self.pool())
+            .fetch_optional(self.read())
             .await?
             .ok_or_else(|| DemoError::MissingEquipment(name.to_string()))
     }

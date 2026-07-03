@@ -48,10 +48,9 @@ impl HydrationState {
         clock: Arc<dyn Clock>,
         data_dir: PathBuf,
     ) -> Self {
-        let pool: SqlitePool = db.pool().clone();
         Self {
-            quests: QuestService::new(pool.clone(), clock.clone()),
-            codex: CodexService::new(pool, game_data.clone(), clock.clone()),
+            quests: QuestService::new(db.clone(), clock.clone()),
+            codex: CodexService::new(db.clone(), game_data.clone(), clock.clone()),
             db,
             game_data,
             clock,
@@ -59,8 +58,16 @@ impl HydrationState {
         }
     }
 
-    pub(crate) fn pool(&self) -> &SqlitePool {
-        self.db.pool()
+    /// The reader pool, for plain reads on the hydration/analytics read
+    /// surface (dashboard GETs run concurrently with combat writes).
+    pub(crate) fn read(&self) -> &SqlitePool {
+        self.db.read()
+    }
+
+    /// The writer pool, for the surface's mutations (ledger edits, claims,
+    /// equipment CRUD).
+    pub(crate) fn write(&self) -> &SqlitePool {
+        self.db.write()
     }
 }
 
@@ -682,7 +689,7 @@ impl HydrationState {
     async fn session_exists(&self, session_id: &str) -> Result<bool, sqlx::Error> {
         let row = sqlx::query("SELECT id FROM tracking_sessions WHERE id = ?")
             .bind(session_id)
-            .fetch_optional(self.pool())
+            .fetch_optional(self.read())
             .await?;
         Ok(row.is_some())
     }

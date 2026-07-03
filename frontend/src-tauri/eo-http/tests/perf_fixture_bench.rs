@@ -89,7 +89,7 @@ fn read_path_latency_against_a_real_database() {
     let has_stat1: bool = runtime.block_on(async {
         use sqlx::Row as _;
         sqlx::query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'")
-            .fetch_optional(db.pool())
+            .fetch_optional(db.read())
             .await
             .expect("stat1 probe")
             .map(|row| row.get::<i64, _>(0) == 1)

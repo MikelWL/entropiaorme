@@ -119,7 +119,7 @@ fn read_latency_idle_versus_under_write_load() {
         .expect("open+migrate the copied database");
     // The writer drives the pool directly; grab a handle before the read
     // surface takes ownership of the Db.
-    let writer_pool = db.pool().clone();
+    let writer_pool = db.write().clone();
 
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));

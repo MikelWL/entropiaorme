@@ -189,7 +189,10 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
     let db = runtime
         .block_on(Db::open(&dir.path().join("entropia_orme.db")))
         .expect("migrated database");
-    let pool = db.pool().clone();
+    // The oracle drives one connection (the writer pool), reproducing the
+    // original pool-of-one so the frozen fingerprint / DB-state goldens are
+    // unaffected by the reader/writer split.
+    let pool = db.write().clone();
 
     let chatlog = dir.path().join("chat_testing.log");
     std::fs::File::create(&chatlog).expect("empty chatlog");
@@ -206,7 +209,7 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
 
     let tracker = HuntTracker::new(
         bus.clone(),
-        pool.clone(),
+        Db::from_pool(pool.clone()),
         runtime.handle().clone(),
         clock.clone(),
         Providers {

@@ -149,7 +149,7 @@ impl AppState {
             .hydration
             .read()
             .ok()
-            .and_then(|guard| guard.as_ref().map(|hydration| hydration.pool().clone()));
+            .and_then(|guard| guard.as_ref().map(|hydration| hydration.write().clone()));
         let Some(pool) = pool else {
             return false;
         };

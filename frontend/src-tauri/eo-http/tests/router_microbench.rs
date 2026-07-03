@@ -138,7 +138,7 @@ fn replay_basic_hunt(
     let db = runtime
         .block_on(Db::open(&dir.join("entropia_orme.db")))
         .expect("migrated database");
-    let pool = db.pool().clone();
+    let pool = db.write().clone();
 
     let chatlog = dir.join("chat_testing.log");
     std::fs::File::create(&chatlog).expect("empty chatlog");
@@ -150,7 +150,7 @@ fn replay_basic_hunt(
 
     let tracker = HuntTracker::new(
         bus.clone(),
-        pool.clone(),
+        Db::from_pool(pool.clone()),
         runtime.handle().clone(),
         clock.clone(),
         Providers::default(),

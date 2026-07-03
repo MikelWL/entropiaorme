@@ -190,7 +190,7 @@ impl HydrationState {
 
     /// GET /api/character/prospect-options.
     pub async fn character_prospect_options(&self, _if_none_match: Option<&str>) -> Response<Body> {
-        let sessions = match eo_services::session_summary::load_prospect_sessions(self.pool()).await
+        let sessions = match eo_services::session_summary::load_prospect_sessions(&self.db).await
         {
             Ok(sessions) => sessions,
             Err(_) => return internal_error(),
@@ -227,7 +227,7 @@ impl HydrationState {
             Ok(levels) => levels,
             Err(_) => return internal_error(),
         };
-        let sessions = match eo_services::session_summary::load_prospect_sessions(self.pool()).await
+        let sessions = match eo_services::session_summary::load_prospect_sessions(&self.db).await
         {
             Ok(sessions) => sessions,
             Err(_) => return internal_error(),
@@ -377,7 +377,7 @@ impl HydrationState {
                 sqlx::query(
                     "WITH latest_ts AS (\n                        SELECT skill_name, MAX(scanned_at) AS ts\n                        FROM skill_calibrations\n                        GROUP BY skill_name\n                    )\n                    SELECT skill_name, level FROM skill_calibrations\n                    WHERE id IN (\n                        SELECT MAX(s2.id) FROM skill_calibrations s2\n                        JOIN latest_ts m ON s2.skill_name = m.skill_name AND s2.scanned_at = m.ts\n                        GROUP BY s2.skill_name\n                    )",
                 )
-                .fetch_all(self.pool())
+                .fetch_all(self.read())
                 .await?
             }
             Some(source) => {
@@ -386,7 +386,7 @@ impl HydrationState {
                 )
                 .bind(source)
                 .bind(source)
-                .fetch_all(self.pool())
+                .fetch_all(self.read())
                 .await?
             }
         };
@@ -402,7 +402,7 @@ impl HydrationState {
     /// Epoch timestamp of the most recent calibration, or None.
     async fn last_calibration_ts(&self) -> Result<Option<f64>, sqlx::Error> {
         let row = sqlx::query("SELECT MAX(scanned_at) as ts FROM skill_calibrations")
-            .fetch_one(self.pool())
+            .fetch_one(self.read())
             .await?;
         Ok(row.get("ts"))
     }
@@ -1746,7 +1746,7 @@ mod tests {
             .bind(level)
             .bind(source)
             .bind(ts)
-            .execute(db.pool())
+            .execute(db.write())
             .await
             .unwrap();
         }

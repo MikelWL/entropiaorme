@@ -179,15 +179,6 @@ impl Db {
         &self.writer
     }
 
-    /// Transitional alias returning the writer pool, so call sites not yet
-    /// routed to [`Db::read`]/[`Db::write`] keep compiling (and keep the
-    /// original single-owner behaviour) during the migration. Removed once
-    /// every caller is routed; no production caller should remain on it.
-    #[doc(hidden)]
-    pub fn pool(&self) -> &SqlitePool {
-        &self.writer
-    }
-
     /// Checkpoint the WAL and truncate it to zero, bounding WAL growth
     /// over a long-running session. Runs on the writer (a checkpoint is a
     /// write operation). `TRUNCATE` blocks until it can reset the log,
