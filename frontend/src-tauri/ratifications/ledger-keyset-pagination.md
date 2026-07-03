@@ -15,7 +15,7 @@ pages: newest first, ordered `(date DESC, id DESC)`, seeking past an opaque
 base64url `(date, id)` cursor, with the page size a `limit` query parameter
 (default 50, capped at 200) and the next page's cursor returned in an
 `X-Next-Cursor` response header (absent on the last page). The response **body
-stays a JSON array of `LedgerItem`** — the contract's body shape is unchanged —
+stays a JSON array of `LedgerItem`** (the contract's body shape is unchanged),
 so single-page consumers and the demo body golden (`analytics_ledger.txt`, 40
 entries, below the 50 default) are unaffected. `native.rs` and `demo.rs` thread
 the `cursor`/`limit` query params through.
@@ -45,7 +45,7 @@ is unaffected (which is why the demo body golden legitimately did not move). The
 added tests (`ledger_list_walks_every_entry_by_keyset_cursor`,
 `ledger_list_rejects_a_malformed_cursor`) confirm the pinned contract describes
 intended behaviour, not a snapshotted bug. This is a genuine, intended,
-backward-compatible contract extension — not a regression laundered into the
+backward-compatible contract extension, not a regression laundered into the
 golden.
 
 ```
