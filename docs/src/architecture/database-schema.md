@@ -12,8 +12,10 @@ migration, `0001_schema_baseline.sql`, which creates the complete base schema
 (tables, indexes, and the timestamp-back-fill triggers) and stamps the
 schema-version row, followed by forward-only additions:
 `0002_analytical_indexes.sql` (analytical read-path indexes plus a one-time
-`ANALYZE`) and `0003_session_summary_read_columns.sql` (extra
-`session_summaries` columns for the Activity and session-list reads). The
+`ANALYZE`), `0003_session_summary_read_columns.sql` (extra
+`session_summaries` columns for the Activity and session-list reads), and
+`0004_daily_rollups.sql` (the per-day analytics rollup projection behind the
+Overview, plus a ledger date index). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
@@ -162,7 +164,7 @@ shrapnel-conversion entries into it.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | TEXT | Primary key (caller-supplied identifier). |
-| `date` | TEXT | Not null; stored as a text date. |
+| `date` | TEXT | Not null; stored as a text date. Indexed (`idx_ledger_entries_date`, migration `0004`) for the windowed analytics reads and the rollup heal's stray-key sweep. |
 | `type` | TEXT | Not null. |
 | `description` | TEXT | Not null. |
 | `amount` | REAL | Not null; signed. |
@@ -473,14 +475,75 @@ bump (the code's `SUMMARY_VERSION` is 2).
 | `globals` | INTEGER | Not null; defaults to 0 (migration `0003`). The session's global count. |
 | `hofs` | INTEGER | Not null; defaults to 0 (migration `0003`). The session's Hall-of-Fame count. |
 
+#### `daily_rollups`
+
+Per-UTC-day sums of every aggregate family the analytics Overview and its
+breakdowns read (migration `0004`; see
+[ADR-0018](../adr/0018-daily-rollup-read-model.md)). Like `session_summaries`,
+this is a rebuildable projection over the raw tracking tables: rows are
+maintained eagerly at the write points, healed lazily on read (dirty flag,
+version bump, and the watermark walk described under `daily_rollup_meta`), and
+regenerate identically from scratch.
+
+Column nullability is load-bearing: each family column stores the raw per-day
+`SUM` verbatim, `NULL` when the day had no contributing rows, so aggregates over
+rollups reproduce the engine typing the raw queries put on the wire. `has_rows`
+carries the one distinction `NULL` sums erase: whether any source rows existed
+that day at all, which decides the day's membership in the timeline and monthly
+point sets.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `day` | TEXT | Primary key; ISO `YYYY-MM-DD`, UTC. Ledger dates that do not name a canonical calendar day get rows keyed by their literal text. |
+| `rollup_version` | INTEGER | Not null. Projection-format version; a below-version row heals on the next read. |
+| `dirty` | INTEGER | Not null; defaults to 0. Set inside a writing transaction when a backdated mutation touches the day; the eager recompute clears it, and the next heal repairs a crash between the two. |
+| `has_rows` | INTEGER | Not null; defaults to 0. Day-membership bit (see above). |
+| `loot_tt` | REAL | Nullable; `SUM(kills.loot_total_ped)` for the day. |
+| `weapon_cost` | REAL | Nullable; `SUM(cost_per_shot * shots_fired)` over the day's kill tool stats. |
+| `enhancer_cost` | REAL | Nullable; `SUM(kills.enhancer_cost)`. |
+| `armour_cost` | REAL | Nullable; `SUM(tracking_sessions.armour_cost)` by session start day. |
+| `heal_cost` | REAL | Nullable; `SUM(tracking_sessions.heal_cost)`. |
+| `dangling_cost` | REAL | Nullable; `SUM(tracking_sessions.dangling_cost)`. |
+| `skill_tt` | REAL | Nullable; `SUM(skill_gains.ped_value)`. |
+| `codex_pes` | REAL | Nullable; `SUM(codex_claims.ped_value)`. |
+| `quest_pes` | REAL | Nullable; `SUM(quest_claims.ped_value)`. |
+| `computed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+
+#### `daily_ledger_rollups`
+
+The per-day ledger sums by entry type and tag (migration `0004`), normalised so
+the window totals, per-day maps, and monthly merges each stay one SQL pass.
+Amounts are stored unrounded; rounding stays at response-build time.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `day` | TEXT | Part of the primary key; the `ledger_entries.date` text verbatim. |
+| `entry_type` | TEXT | Part of the primary key. |
+| `tag` | TEXT | Part of the primary key. |
+| `amount` | REAL | Not null; the unrounded per-day sum. |
+
+#### `daily_rollup_meta`
+
+The rollup heal watermark (migration `0004`): a single row whose
+`rolled_through` day is the split boundary the reader uses. Every day from the
+earliest data day up to and including it has a `daily_rollups` row; healing
+advances it to yesterday, so the in-flight day is always served from the raw
+tables and every day is re-verified once after it completes.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key; constrained to the single row `1`. |
+| `rolled_through` | TEXT | Not null; the inclusive ISO day the rollups are current through. |
+
 ## Migration mechanism
 
 Schema application is handled by the sqlx migrator (`MIGRATOR` in
 `eo-services/src/db.rs`) over the migration set in `eo-services/migrations/`.
 The set carries the version-33 baseline (`0001_schema_baseline.sql`) followed by
 forward-only additions (`0002_analytical_indexes.sql`,
-`0003_session_summary_read_columns.sql`); sqlx records applied migrations in its
-own `_sqlx_migrations` ledger and never runs a down-migration. The version the
+`0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`); sqlx records
+applied migrations in its own `_sqlx_migrations` ledger and never runs a
+down-migration. The version the
 baseline reproduces is pinned in `db.rs` by the `BASELINE_SCHEMA_VERSION`
 constant (33); the post-baseline migrations extend the schema in place and do
 not change that version row.
