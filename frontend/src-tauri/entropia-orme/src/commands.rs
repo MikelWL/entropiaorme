@@ -40,9 +40,7 @@ pub async fn equipment_search(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn equipment_library(
-    app: tauri::AppHandle,
-) -> Result<Vec<EquipmentSummary>, ApiError> {
+pub async fn equipment_library(app: tauri::AppHandle) -> Result<Vec<EquipmentSummary>, ApiError> {
     facade(&app)?.equipment_library().await
 }
 

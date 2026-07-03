@@ -260,13 +260,12 @@ fn in_process_router_microbench() {
     });
 
     // The baseline's endpoint set and order: health first, then the curated
-    // hydration GET surface, with the session-scoped templates filled. The
-    // two equipment reads measure the HTTP dispatch cost of the family ahead
-    // of its migration onto typed commands (the matched after-leg lives with
-    // the facade's own micro-benchmark).
+    // hydration GET surface, with the session-scoped templates filled. (The
+    // equipment reads measured here before their migration now live on the
+    // typed facade; their matched after-leg is eo-api's micro-benchmark.)
     let detail = format!("/api/tracking/session/{session_id}");
     let suggestion = format!("/api/tracking/session/{session_id}/quest-link-suggestion");
-    let endpoints: [(&str, &str); 13] = [
+    let endpoints: [(&str, &str); 11] = [
         ("GET_health", "/api/health"),
         ("GET_tracking_snapshot", "/api/tracking/snapshot"),
         ("GET_tracking_sessions", "/api/tracking/sessions"),
@@ -281,11 +280,6 @@ fn in_process_router_microbench() {
         ("GET_quests_playlists", "/api/quests/playlists"),
         ("GET_scan_skills_status", "/api/scan/skills/status"),
         ("GET_codex_meta_attributes", "/api/codex/meta/attributes"),
-        ("GET_equipment_library", "/api/equipment/library"),
-        (
-            "GET_equipment_search",
-            "/api/equipment/search?q=herb&type=weapon",
-        ),
     ];
 
     let rows: Vec<(String, f64, f64, f64, f64)> = runtime.block_on(async {

@@ -223,7 +223,9 @@ fn type_of(schema: &Value, defs: &mut Vec<(String, Value)>) -> Result<String, St
             return Ok(title.to_string());
         }
     }
-    if schema.get("oneOf").is_some() || schema.get("anyOf").is_some() || schema.get("enum").is_some()
+    if schema.get("oneOf").is_some()
+        || schema.get("anyOf").is_some()
+        || schema.get("enum").is_some()
     {
         return union_or_type(schema, defs);
     }
@@ -318,7 +320,10 @@ fn object_body(
     let mut out = String::from("{\n");
     for (name, child) in properties {
         if let Some(description) = child.get("description").and_then(Value::as_str) {
-            out.push_str(&format!("{indent}/** {} */\n", description.replace('\n', " ")));
+            out.push_str(&format!(
+                "{indent}/** {} */\n",
+                description.replace('\n', " ")
+            ));
         }
         let optional = if required.contains(&name.as_str()) {
             ""

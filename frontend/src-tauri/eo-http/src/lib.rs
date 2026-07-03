@@ -14,7 +14,6 @@ pub mod character_routes;
 pub mod cors;
 pub mod demo;
 pub mod dev_routes;
-pub mod equipment_routes;
 pub mod extract;
 pub mod hydration;
 pub mod native;

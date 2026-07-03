@@ -22,8 +22,8 @@ use std::sync::Arc;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 
-mod error;
 pub mod equipment;
+mod error;
 pub mod manifest;
 
 pub use error::ApiError;

@@ -132,7 +132,10 @@ async fn the_custom_consumable_cycle_matches_the_http_era_bytes() {
     assert!(api.equipment_library().await.unwrap().is_empty());
 
     // The stored name is stripped the reference way.
-    let added = api.equipment_add(&consumable("  Nutrio Bar  ")).await.unwrap();
+    let added = api
+        .equipment_add(&consumable("  Nutrio Bar  "))
+        .await
+        .unwrap();
     assert_eq!(added.id, "1");
     assert_eq!(added.name, "Nutrio Bar");
 
@@ -233,4 +236,3 @@ async fn a_trifecta_referenced_row_refuses_deletion() {
     );
     assert_eq!(api.equipment_library().await.unwrap().len(), 1);
 }
-

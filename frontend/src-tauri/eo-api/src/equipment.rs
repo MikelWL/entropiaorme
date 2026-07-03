@@ -282,7 +282,12 @@ fn breakdown_lines(cost_result: &Value) -> Result<Vec<CostBreakdownLine>, ApiErr
 /// Convert a library row to the list shape. The internal error mirrors
 /// the unreadable-row condition the HTTP layer answered a 500 for (a
 /// weapon or healing row missing its stored entity).
-fn row_to_summary(id: i64, name: &str, item_type: &str, props: &Value) -> Result<EquipmentSummary, ApiError> {
+fn row_to_summary(
+    id: i64,
+    name: &str,
+    item_type: &str,
+    props: &Value,
+) -> Result<EquipmentSummary, ApiError> {
     if item_type == "weapon" {
         let weapon_e = props
             .get("weapon_entity")
@@ -538,7 +543,10 @@ impl Api {
     }
 
     /// Store a new library entry.
-    pub async fn equipment_add(&self, req: &EquipmentRequest) -> Result<EquipmentSummary, ApiError> {
+    pub async fn equipment_add(
+        &self,
+        req: &EquipmentRequest,
+    ) -> Result<EquipmentSummary, ApiError> {
         let built = self.build_props(req)?;
         let inserted = sqlx::query(
             "INSERT INTO equipment_library (name, item_type, catalog_id, properties_json) \
@@ -635,8 +643,7 @@ impl Api {
         let item_type: String = row.get("item_type");
         let catalog_id: Option<String> = row.get("catalog_id");
         let raw_props: String = row.get("properties_json");
-        let props =
-            serde_json::from_str::<Value>(&raw_props).map_err(|_| ApiError::Internal)?;
+        let props = serde_json::from_str::<Value>(&raw_props).map_err(|_| ApiError::Internal)?;
         row_to_detail(id, &name, &item_type, catalog_id.as_deref(), &props)
     }
 
@@ -682,10 +689,7 @@ impl Api {
                 props.insert("scope_entity".into(), scope_e);
                 props.insert("scope_catalog_id".into(), json!(req.scope_catalog_id));
                 props.insert("absorber_entity".into(), absorber_e);
-                props.insert(
-                    "absorber_catalog_id".into(),
-                    json!(req.absorber_catalog_id),
-                );
+                props.insert("absorber_catalog_id".into(), json!(req.absorber_catalog_id));
                 props.insert("weapon_markup".into(), json!(req.weapon_markup));
                 props.insert("amp_markup".into(), json!(req.amp_markup));
                 props.insert("scope_markup".into(), json!(req.scope_markup));
