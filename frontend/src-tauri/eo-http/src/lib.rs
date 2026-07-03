@@ -669,24 +669,33 @@ pub struct InProcessResponse {
     pub body: Vec<u8>,
 }
 
+/// An in-process dispatch that never reached the router: the IPC
+/// descriptor did not assemble into a valid request. The command layer
+/// reports it to the webview rather than panicking.
+#[derive(Debug, thiserror::Error)]
+pub enum DispatchError {
+    #[error("malformed in-process request: {0}")]
+    MalformedRequest(#[from] http::Error),
+    #[error("in-process response body read failed: {0}")]
+    BodyRead(#[from] axum::Error),
+}
+
 /// Build the in-process request from the IPC descriptor (method, path-and-query,
 /// headers, body). Extracted from [`dispatch_in_process`] so the transport's
 /// request construction is unit-testable without composing the router. An
-/// invalid method or URI surfaces as an `Err` string (the command reports it)
+/// invalid method or URI surfaces as an `Err` (the command reports it)
 /// rather than a panic.
 fn build_in_process_request(
     method: &str,
     path_and_query: &str,
     headers: &[(String, String)],
     body: Vec<u8>,
-) -> Result<http::Request<axum::body::Body>, String> {
+) -> Result<http::Request<axum::body::Body>, DispatchError> {
     let mut builder = http::Request::builder().method(method).uri(path_and_query);
     for (name, value) in headers {
         builder = builder.header(name.as_str(), value.as_str());
     }
-    builder
-        .body(axum::body::Body::from(body))
-        .map_err(|err| format!("malformed in-process request: {err}"))
+    Ok(builder.body(axum::body::Body::from(body))?)
 }
 
 /// The webview's own origin, supplied to a same-process request that arrives
@@ -715,7 +724,7 @@ pub async fn dispatch_in_process(
     path_and_query: &str,
     headers: &[(String, String)],
     body: Vec<u8>,
-) -> Result<InProcessResponse, String> {
+) -> Result<InProcessResponse, DispatchError> {
     use tower::ServiceExt as _;
 
     // Supply the webview's allow-listed Origin when the caller sent none, so
@@ -755,8 +764,7 @@ pub async fn dispatch_in_process(
         })
         .collect();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .map_err(|err| format!("in-process response body read failed: {err}"))?
+        .await?
         .to_vec();
 
     Ok(InProcessResponse {

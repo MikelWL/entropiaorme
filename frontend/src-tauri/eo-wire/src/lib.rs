@@ -13,8 +13,8 @@
 //!
 //! The wire-contract spine sits beside them: [`domain_events`] (the typed
 //! frontend-facing event union, gated against the committed event-schema
-//! snapshot), [`bus`] (the monomorphic domain-event channel), and [`sse`]
-//! (the event-stream fan-out hub with its drop-oldest delivery shaping).
+//! snapshot) and [`bus`] (the monomorphic domain-event channel with its
+//! drop-behind delivery shaping).
 
 pub mod bus;
 pub mod db_snapshot;
@@ -24,7 +24,6 @@ pub mod http_fingerprint;
 pub mod metrics;
 pub mod models;
 pub mod normalizer;
-pub mod sse;
 
 /// Identifies this crate in diagnostics and smoke checks.
 pub fn crate_name() -> &'static str {

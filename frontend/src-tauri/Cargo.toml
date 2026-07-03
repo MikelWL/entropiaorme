@@ -127,6 +127,10 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 # background worker thread drains an MPSC channel so a slow disk never stalls a
 # hot path. MIT, already on the deny.toml allowlist.
 tracing-appender = "0.2"
+# Derived error types across the backend crates: every fallible seam carries
+# a typed error with a `source()` chain instead of a stringly `Result<_,
+# String>`; wire-facing texts live as explicit Display strings on variants.
+thiserror = "2"
 
 eo-http = { path = "eo-http" }
 eo-services = { path = "eo-services" }

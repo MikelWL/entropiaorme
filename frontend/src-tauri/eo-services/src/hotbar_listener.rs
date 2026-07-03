@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 
+use crate::bus_events::{ActiveHealToolChangedPayload, ActiveToolChangedPayload, BusEvent};
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::keystroke_source::{KeystrokeEvent, KeystrokeKind, KeystrokeSource};
 
@@ -249,27 +250,23 @@ fn resolve_hotbar_slot(bus: &EventBus, resolver: &HotbarResolver, slot: &str) {
     };
     match item_type.as_str() {
         "healing" => {
-            bus.publish(
-                Topic::ActiveHealToolChanged,
-                &serde_json::json!({
-                    "tool_name": name,
-                    "cost_per_use_ped": cost,
-                    "reload_seconds": reload_seconds,
-                    "source": format!("hotbar:{slot}"),
-                }),
-            );
+            bus.publish(&BusEvent::ActiveHealToolChanged(
+                ActiveHealToolChangedPayload {
+                    tool_name: name,
+                    cost_per_use_ped: cost,
+                    reload_seconds,
+                    source: Some(format!("hotbar:{slot}")),
+                },
+            ));
         }
         // Consumables are one-off actions: never switch the active
         // weapon in cost tracking.
         "consumable" => {}
         _ => {
-            bus.publish(
-                Topic::ActiveToolChanged,
-                &serde_json::json!({
-                    "tool_name": name,
-                    "source": format!("hotbar:{slot}"),
-                }),
-            );
+            bus.publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: name,
+                source: Some(format!("hotbar:{slot}")),
+            }));
         }
     }
 }
@@ -277,6 +274,7 @@ fn resolve_hotbar_slot(bus: &EventBus, resolver: &HotbarResolver, slot: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus_events::SessionLifecyclePayload;
     use crate::keystroke_source::MockKeystrokeSource;
     use chrono::{DateTime, Utc};
     use serde_json::Value;
@@ -298,8 +296,10 @@ mod tests {
         let bus = Arc::new(EventBus::new());
         let stream = Arc::new(Mutex::new(Vec::new()));
         let sink = stream.clone();
-        bus.add_tap(move |topic, data| {
-            sink.lock().unwrap().push((topic, data.clone()));
+        bus.add_tap(move |event| {
+            sink.lock()
+                .unwrap()
+                .push((event.topic(), event.payload_value()));
         });
         let source = Arc::new(MockKeystrokeSource::new());
         let listener = HotbarListener::new(bus.clone(), Some(source.clone()), resolver);
@@ -383,7 +383,10 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             let rig = rig(Some(standard_resolver()));
             rig.listener.set_hotbar_hooks_enabled(true);
-            rig.bus.publish(Topic::SessionStarted, &Value::Null);
+            rig.bus
+                .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                    session_id: "s1".into(),
+                }));
             rig.source.inject("1", now(), KeystrokeKind::Press);
             drain_resolutions(&rig);
             rig.listener.stop();
@@ -415,13 +418,22 @@ mod tests {
         rig.listener.set_hotbar_hooks_enabled(true);
         assert!(!rig.listener.is_running(), "no session yet");
 
-        rig.bus.publish(Topic::SessionStarted, &Value::Null);
+        rig.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
         assert!(rig.listener.is_running(), "toggle + session = running");
 
-        rig.bus.publish(Topic::SessionStopped, &Value::Null);
+        rig.bus
+            .publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
         assert!(!rig.listener.is_running());
 
-        rig.bus.publish(Topic::SessionStarted, &Value::Null);
+        rig.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
         rig.listener.set_hotbar_hooks_enabled(false);
         assert!(!rig.listener.is_running(), "toggle off stops the source");
         rig.listener.stop();
@@ -431,7 +443,10 @@ mod tests {
     fn presses_resolve_into_the_three_outcome_branches() {
         let rig = rig(Some(standard_resolver()));
         rig.listener.set_hotbar_hooks_enabled(true);
-        rig.bus.publish(Topic::SessionStarted, &Value::Null);
+        rig.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
 
         rig.source.inject("1", now(), KeystrokeKind::Press);
         drain_resolutions(&rig);
@@ -467,7 +482,10 @@ mod tests {
     fn filtering_drops_releases_and_non_slot_keys() {
         let rig = rig(Some(standard_resolver()));
         rig.listener.set_hotbar_hooks_enabled(true);
-        rig.bus.publish(Topic::SessionStarted, &Value::Null);
+        rig.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
 
         let taps = Arc::new(Mutex::new(Vec::new()));
         let sink = taps.clone();
@@ -494,7 +512,10 @@ mod tests {
         let resolver: HotbarResolver = Arc::new(|_| panic!("resolver down"));
         let rig = rig(Some(resolver));
         rig.listener.set_hotbar_hooks_enabled(true);
-        rig.bus.publish(Topic::SessionStarted, &Value::Null);
+        rig.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
         rig.source.inject("1", now(), KeystrokeKind::Press);
         std::thread::sleep(std::time::Duration::from_millis(50));
         rig.source.inject("2", now(), KeystrokeKind::Press);
@@ -521,7 +542,10 @@ mod tests {
         let rig = rig(Some(standard_resolver()));
         rig.listener.set_hotbar_hooks_enabled(true);
         rig.listener.stop();
-        rig.bus.publish(Topic::SessionStarted, &Value::Null);
+        rig.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
         assert!(
             !rig.listener.is_running(),
             "a stopped listener no longer reconciles on session events"

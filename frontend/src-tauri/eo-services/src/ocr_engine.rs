@@ -34,11 +34,60 @@ pub const TARGET_H: usize = 48;
 /// The minimum width/height ratio the padded input carries.
 pub const MAX_RATIO: f64 = 320.0 / 48.0;
 
+/// Why the recogniser could not load or could not read a cell. Every
+/// variant is log-facing (the scan surface reports engine availability
+/// as a queryable condition and per-cell failures degrade to empty
+/// reads); the Display texts match the messages the log has always
+/// carried.
+#[derive(Debug, thiserror::Error)]
+pub enum OcrError {
+    /// The input bytes did not decode as a PNG.
+    #[error("unreadable PNG: {0}")]
+    Png(#[from] image::ImageError),
+    /// The character dictionary beside the model could not be read.
+    #[error("unreadable character dict {}: {source}", path.display())]
+    DictUnreadable {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Session construction failed: the runtime library, the model
+    /// file, or the execution provider refused.
+    #[error("OCR engine load failed: {0}")]
+    EngineLoad(#[source] ort::Error),
+    /// The committed model declares no inputs to feed.
+    #[error("model declares no inputs")]
+    NoModelInputs,
+    /// A zero-dimension crop; refused before the resize arithmetic.
+    #[error("degenerate cell: {h}x{w}")]
+    DegenerateCell { h: usize, w: usize },
+    /// The caller's buffer does not match the declared cell geometry.
+    #[error("cell buffer is {len} bytes for {h}x{w} (expected {expected})")]
+    CellBufferSize {
+        len: usize,
+        h: usize,
+        w: usize,
+        expected: usize,
+    },
+    /// A runtime fault at one of the inference steps (input tensor,
+    /// session run, output tensor).
+    #[error("{context}: {source}")]
+    Inference {
+        context: &'static str,
+        #[source]
+        source: ort::Error,
+    },
+    /// The model's output tensor is not the (1, T, C) shape CTC expects.
+    #[error("expected a (1, T, C) output, got {dims:?}")]
+    OutputShape { dims: Vec<i64> },
+    /// The model's class axis disagrees with the decode alphabet.
+    #[error("model classes vs dict mismatch: {classes} vs {dict}")]
+    ClassCountMismatch { classes: usize, dict: usize },
+}
+
 /// Load a PNG as BGR u8 HWC (the cv2.imread convention); `(data, h, w)`.
-pub fn load_bgr_png(bytes: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
-    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
-        .map_err(|error| format!("unreadable PNG: {error}"))?
-        .to_rgb8();
+pub fn load_bgr_png(bytes: &[u8]) -> Result<(Vec<u8>, usize, usize), OcrError> {
+    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.to_rgb8();
     let (w, h) = img.dimensions();
     let (w, h) = (w as usize, h as usize);
     let mut out = vec![0u8; w * h * 3];
@@ -174,9 +223,11 @@ thread_local! {
 /// The decode alphabet: the character dictionary with the CTC blank
 /// prepended and the space appended (the engine's
 /// `use_space_char` merge).
-pub fn load_dict(path: &Path) -> Result<Vec<String>, String> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|error| format!("unreadable character dict {}: {error}", path.display()))?;
+pub fn load_dict(path: &Path) -> Result<Vec<String>, OcrError> {
+    let raw = std::fs::read_to_string(path).map_err(|source| OcrError::DictUnreadable {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let mut chars = vec!["blank".to_string()];
     for line in raw.lines() {
         chars.push(line.trim_matches(['\r', '\n']).to_string());
@@ -248,22 +299,15 @@ pub struct OcrEngine {
 /// plus `session.force_spinning_stop=1`). The optimisation level and
 /// thread counts mirror the EP-agnostic `new`; the sequential and
 /// anti-stutter options are added here for provider parity.
-fn base_session_options(builder: SessionBuilder) -> Result<SessionBuilder, String> {
-    builder
-        .with_optimization_level(GraphOptimizationLevel::Level3)
-        .map_err(|error| error.to_string())?
-        .with_intra_threads(1)
-        .map_err(|error| error.to_string())?
-        .with_inter_threads(1)
-        .map_err(|error| error.to_string())?
-        .with_parallel_execution(false)
-        .map_err(|error| error.to_string())?
-        .with_intra_op_spinning(false)
-        .map_err(|error| error.to_string())?
-        .with_inter_op_spinning(false)
-        .map_err(|error| error.to_string())?
-        .with_config_entry("session.force_spinning_stop", "1")
-        .map_err(|error| error.to_string())
+fn base_session_options(builder: SessionBuilder) -> Result<SessionBuilder, ort::Error> {
+    Ok(builder
+        .with_optimization_level(GraphOptimizationLevel::Level3)?
+        .with_intra_threads(1)?
+        .with_inter_threads(1)?
+        .with_parallel_execution(false)?
+        .with_intra_op_spinning(false)?
+        .with_inter_op_spinning(false)?
+        .with_config_entry("session.force_spinning_stop", "1")?)
 }
 
 impl OcrEngine {
@@ -275,21 +319,16 @@ impl OcrEngine {
     /// than panicking) when the ONNX Runtime library, the model, or the
     /// dict is absent: engine availability is a queryable condition on
     /// the scan surface, not an invariant.
-    pub fn new(model_path: &Path, dict_path: &Path) -> Result<Self, String> {
+    pub fn new(model_path: &Path, dict_path: &Path) -> Result<Self, OcrError> {
         let chars = load_dict(dict_path)?;
-        let session = (|| -> Result<Session, String> {
-            Session::builder()
-                .map_err(|error| error.to_string())?
-                .with_optimization_level(GraphOptimizationLevel::Level3)
-                .map_err(|error| error.to_string())?
-                .with_intra_threads(1)
-                .map_err(|error| error.to_string())?
-                .with_inter_threads(1)
-                .map_err(|error| error.to_string())?
+        let session = (|| -> Result<Session, ort::Error> {
+            Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_intra_threads(1)?
+                .with_inter_threads(1)?
                 .commit_from_file(model_path)
-                .map_err(|error| error.to_string())
         })()
-        .map_err(|error| format!("OCR engine load failed: {error}"))?;
+        .map_err(OcrError::EngineLoad)?;
         // The default-provider path does not run the DirectML attempt,
         // so it cannot honestly claim DirectML; record the runtime's own
         // default rather than fabricate a selection.
@@ -310,16 +349,11 @@ impl OcrEngine {
     /// attempt rebuilds CPU-only. The succeeding attempt also tells us
     /// which provider we actually got, recorded on the engine since this
     /// ort version exposes no `Session::get_providers()`.
-    pub fn new_with_providers(model_path: &Path, dict_path: &Path) -> Result<Self, String> {
+    pub fn new_with_providers(model_path: &Path, dict_path: &Path) -> Result<Self, OcrError> {
         let chars = load_dict(dict_path)?;
-        let build = |eps: Vec<ExecutionProviderDispatch>| -> Result<Session, String> {
-            let builder = Session::builder().map_err(|error| error.to_string())?;
-            let builder = builder
-                .with_execution_providers(eps)
-                .map_err(|error| error.to_string())?;
-            base_session_options(builder)?
-                .commit_from_file(model_path)
-                .map_err(|error| error.to_string())
+        let build = |eps: Vec<ExecutionProviderDispatch>| -> Result<Session, ort::Error> {
+            let builder = Session::builder()?.with_execution_providers(eps)?;
+            base_session_options(builder)?.commit_from_file(model_path)
         };
 
         let (session, provider) =
@@ -342,8 +376,8 @@ impl OcrEngine {
                         target: "eo::ocr",
                         "DirectML session init failed ({dml_error}); falling back to CPU"
                     );
-                    let session = build(vec![CPU::default().build()])
-                        .map_err(|error| format!("OCR engine load failed: {error}"))?;
+                    let session =
+                        build(vec![CPU::default().build()]).map_err(OcrError::EngineLoad)?;
                     (session, "CPUExecutionProvider")
                 }
             };
@@ -358,12 +392,12 @@ impl OcrEngine {
         session: Session,
         chars: Vec<String>,
         provider: &'static str,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, OcrError> {
         let input_name = session
             .inputs()
             .first()
             .map(|input| input.name().to_string())
-            .ok_or_else(|| "model declares no inputs".to_string())?;
+            .ok_or(OcrError::NoModelInputs)?;
         Ok(Self {
             session: Mutex::new(session),
             input_name,
@@ -393,18 +427,19 @@ impl OcrEngine {
     }
 
     /// Recognise one BGR HWC cell; `(text, score)`.
-    pub fn recognize_bgr(&self, img: &[u8], h: usize, w: usize) -> Result<(String, f64), String> {
+    pub fn recognize_bgr(&self, img: &[u8], h: usize, w: usize) -> Result<(String, f64), OcrError> {
         if h == 0 || w == 0 {
             // The original's resize raises catchably on a degenerate
             // crop; refuse before the arithmetic does anything wild.
-            return Err(format!("degenerate cell: {h}x{w}"));
+            return Err(OcrError::DegenerateCell { h, w });
         }
         if img.len() != h * w * 3 {
-            return Err(format!(
-                "cell buffer is {} bytes for {h}x{w} (expected {})",
-                img.len(),
-                h * w * 3
-            ));
+            return Err(OcrError::CellBufferSize {
+                len: img.len(),
+                h,
+                w,
+                expected: h * w * 3,
+            });
         }
         // Observe-only OCR-latency timing around the inference + decode (the
         // user-visible recognise cost). Recorded only on the success path; the
@@ -414,29 +449,41 @@ impl OcrEngine {
             let buf = &mut *buf.borrow_mut();
             preprocess_into(img, h, w, buf)
         });
-        let tensor = Tensor::from_array(([1usize, 3, TARGET_H, img_w], tensor_data))
-            .map_err(|error| format!("input tensor: {error}"))?;
+        let tensor =
+            Tensor::from_array(([1usize, 3, TARGET_H, img_w], tensor_data)).map_err(|source| {
+                OcrError::Inference {
+                    context: "input tensor",
+                    source,
+                }
+            })?;
         let mut session = self
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let outputs = session
             .run(ort::inputs![self.input_name.as_str() => tensor])
-            .map_err(|error| format!("session run: {error}"))?;
-        let (shape, data) = outputs[0]
-            .try_extract_tensor::<f32>()
-            .map_err(|error| format!("output tensor: {error}"))?;
+            .map_err(|source| OcrError::Inference {
+                context: "session run",
+                source,
+            })?;
+        let (shape, data) =
+            outputs[0]
+                .try_extract_tensor::<f32>()
+                .map_err(|source| OcrError::Inference {
+                    context: "output tensor",
+                    source,
+                })?;
         let dims: Vec<i64> = shape.iter().copied().collect();
         if dims.len() != 3 || dims[0] != 1 {
-            return Err(format!("expected a (1, T, C) output, got {dims:?}"));
+            return Err(OcrError::OutputShape { dims });
         }
         let t_len = dims[1] as usize;
         let n_classes = dims[2] as usize;
         if n_classes != self.chars.len() {
-            return Err(format!(
-                "model classes vs dict mismatch: {n_classes} vs {}",
-                self.chars.len()
-            ));
+            return Err(OcrError::ClassCountMismatch {
+                classes: n_classes,
+                dict: self.chars.len(),
+            });
         }
         let decoded = ctc_decode(data, t_len, n_classes, &self.chars);
         let elapsed = started.elapsed();
@@ -451,7 +498,7 @@ impl OcrEngine {
     }
 
     /// Recognise one PNG cell; `(text, score)`.
-    pub fn recognize_png(&self, png: &[u8]) -> Result<(String, f64), String> {
+    pub fn recognize_png(&self, png: &[u8]) -> Result<(String, f64), OcrError> {
         let (img, h, w) = load_bgr_png(png)?;
         self.recognize_bgr(&img, h, w)
     }

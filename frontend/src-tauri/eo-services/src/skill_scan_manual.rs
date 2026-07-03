@@ -24,11 +24,12 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
+use crate::bus_events::BusEvent;
 use crate::clock::Clock;
-use crate::event_bus::{EventBus, Topic};
+use crate::event_bus::EventBus;
 use crate::tracker::{naive_to_epoch, to_iso_utc};
 use eo_wire::domain_events::{
-    DomainEvent, ScanPhase, ScanStatusChanged, ScanStatusChangedPayload, ScanStatusChangedTag,
+    ScanPhase, ScanStatusChanged, ScanStatusChangedPayload, ScanStatusChangedTag,
 };
 
 /// The default page count; the user picks a different one per scan
@@ -45,10 +46,15 @@ pub type ScanRegion = ([i64; 2], [i64; 2]);
 /// `tap(panel, region, png)` after each successful page grab.
 pub type CaptureTap = Arc<dyn Fn(&str, &Value, &[u8]) + Send + Sync>;
 
-/// The completion callback: persists an accepted result. An error
-/// string surfaces on the status, exactly as the original's caught
-/// exception does.
-pub type CompletionCallback = Arc<dyn Fn(&[(String, f64)]) -> Result<(), String> + Send + Sync>;
+/// A completion failure: whatever error the wired persist path raises
+/// (the production callback surfaces [`crate::db::DbError`]); its
+/// rendered text surfaces on the status, exactly as the original's
+/// caught exception does.
+pub type CompletionError = Box<dyn std::error::Error + Send + Sync>;
+
+/// The completion callback: persists an accepted result.
+pub type CompletionCallback =
+    Arc<dyn Fn(&[(String, f64)]) -> Result<(), CompletionError> + Send + Sync>;
 
 /// One extracted page: `{canonical_name: level}` rows in panel order.
 pub type PageLevels = Vec<(String, f64)>;
@@ -271,14 +277,12 @@ impl SkillScanManual {
             state.last_emitted_key = key;
             phase
         };
-        let event = DomainEvent::ScanStatusChanged(ScanStatusChanged {
+        bus.publish(&BusEvent::ScanStatusChanged(ScanStatusChanged {
             topic: ScanStatusChangedTag,
             event_version: 1,
             occurred_at: to_iso_utc(naive_to_epoch(self.clock.now())),
             payload: ScanStatusChangedPayload { phase },
-        });
-        let value = serde_json::to_value(&event).expect("domain events always serialise");
-        bus.publish(Topic::ScanStatusChanged, &value);
+        }));
     }
 
     pub fn start(&self, page_count: Option<i64>) -> Value {
@@ -482,7 +486,8 @@ impl SkillScanManual {
             .expect("completion callback")
             .clone();
         if let Some(callback) = callback {
-            if let Err(message) = callback(&skills) {
+            if let Err(error) = callback(&skills) {
+                let message = error.to_string();
                 {
                     let mut state = self.lock_state();
                     state.error = Some(message.clone());
@@ -618,11 +623,12 @@ mod tests {
     fn capture_phases(bus: &EventBus) -> Arc<StdMutex<Vec<(String, Value)>>> {
         let seen = Arc::new(StdMutex::new(Vec::new()));
         let sink = seen.clone();
-        bus.add_tap(move |topic, data| {
-            if topic == Topic::ScanStatusChanged {
+        bus.add_tap(move |event| {
+            if event.topic() == crate::event_bus::Topic::ScanStatusChanged {
+                let data = event.payload_value();
                 sink.lock().unwrap().push((
                     data["payload"]["phase"].as_str().unwrap_or("?").to_string(),
-                    data.clone(),
+                    data,
                 ));
             }
         });
@@ -878,7 +884,7 @@ mod tests {
     #[test]
     fn a_failing_completion_keeps_the_review_open() {
         let (scan, _bus, _clock) = rig(providers(vec![vec![("Rifle".to_string(), 1.0)]]));
-        scan.set_completion_callback(Arc::new(|_| Err("disk full".to_string())));
+        scan.set_completion_callback(Arc::new(|_| Err("disk full".into())));
         scan.start(Some(1));
         scan.capture_current_page();
         scan.process();

@@ -110,7 +110,8 @@ async fn api_request(app: tauri::AppHandle, request: ApiRequest) -> Result<ApiRe
             &request.headers,
             body,
         )
-        .await?;
+        .await
+        .map_err(|error| error.to_string())?;
         Ok(ApiResponse {
             status: response.status,
             status_text: response.status_text,
@@ -135,7 +136,9 @@ async fn capture_png(app: tauri::AppHandle, page: u32) -> Result<String, String>
         .0
         .clone();
     let path = format!("/api/scan/skills/capture/{page}");
-    let response = eo_http::dispatch_in_process(state, "GET", &path, &[], Vec::new()).await?;
+    let response = eo_http::dispatch_in_process(state, "GET", &path, &[], Vec::new())
+        .await
+        .map_err(|error| error.to_string())?;
     if response.status != 200 {
         return Err(format!(
             "capture preview unavailable (status {})",
@@ -416,10 +419,10 @@ fn install_native_services(
         hotbar_listener: composed.producers.hotbar_handle(),
     });
     // Forward the producer spine's domain events onto the Tauri event bus, the
-    // native replacement for the frontend's old EventSource relay. Registers a
-    // consumer on the producer spine's SseHub while the spine is still in hand
-    // (it moves into managed state just below).
-    spawn_domain_event_bridge(app, &composed.producers.sse_hub_handle());
+    // native replacement for the frontend's old EventSource relay. Subscribes
+    // the producer spine's typed domain channel while the spine is still in
+    // hand (it moves into managed state just below).
+    spawn_domain_event_bridge(app, &composed.producers.domain_bus_handle());
     // Hand the producer spine to the exit seam so it stops the tail thread,
     // the hotbar listener, and ends any session on close.
     app.manage(Producers(Mutex::new(Some(composed.producers))));
@@ -449,49 +452,38 @@ fn domain_topic_to_tauri_event(topic: &str) -> String {
     topic.replace('.', ":")
 }
 
-/// Extract the `event:` topic and `data:` payload from one SSE frame
-/// (`id: N\nevent: <topic>\ndata: <json>\n\n`). The envelope JSON is in its
-/// compact wire form (no embedded newline), so a line scan recovers both
-/// fields exactly.
-fn parse_domain_frame(frame: &str) -> Option<(&str, &str)> {
-    let mut topic = None;
-    let mut data = None;
-    for line in frame.lines() {
-        if let Some(rest) = line.strip_prefix("event: ") {
-            topic = Some(rest);
-        } else if let Some(rest) = line.strip_prefix("data: ") {
-            data = Some(rest);
-        }
-    }
-    Some((topic?, data?))
-}
-
 /// Forward the producer spine's domain events onto the Tauri event bus: the
-/// native replacement for the frontend's old `EventSource` relay. Registers a
-/// consumer on the producer spine's `SseHub`, drains its frames, and re-emits
-/// each typed envelope on the colon-form Tauri topic every window subscribes
-/// to (`tracking:session:updated`, `scan:status:changed`). The webview sees
-/// the identical envelope it parsed off the SSE `data:` field, so the
-/// topic-aware consumers are unchanged. The hydrate nudge (a payload-less
-/// frame on start) stays frontend-owned: it must fire after the webview is
-/// listening, which an emit at install time cannot guarantee on a cold load.
-fn spawn_domain_event_bridge(app: &tauri::AppHandle, hub: &std::sync::Arc<eo_wire::sse::SseHub>) {
-    let client = hub.register();
+/// native replacement for the frontend's old `EventSource` relay. Subscribes
+/// the producer spine's typed domain channel and re-emits each envelope on
+/// the colon-form Tauri topic every window subscribes to
+/// (`tracking:session:updated`, `scan:status:changed`). The webview sees the
+/// identical envelope JSON the wire contract pins (`eo-wire`'s serde shape),
+/// so the topic-aware consumers are unchanged. A lagging receiver skips
+/// ahead to live events (drop-oldest, the same shedding the frame queues
+/// applied); the channel closing ends the task with the spine. The hydrate
+/// nudge (a payload-less frame on start) stays frontend-owned: it must fire
+/// after the webview is listening, which an emit at install time cannot
+/// guarantee on a cold load.
+fn spawn_domain_event_bridge(
+    app: &tauri::AppHandle,
+    domain_bus: &std::sync::Arc<eo_wire::bus::DomainBus>,
+) {
+    let mut receiver = domain_bus.subscribe();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            let frame = client.next_frame().await;
-            let Some((topic, data)) = parse_domain_frame(&frame) else {
-                continue;
-            };
-            match serde_json::from_str::<serde_json::Value>(data) {
-                Ok(value) => {
-                    let _ = app.emit(domain_topic_to_tauri_event(topic).as_str(), value);
+            match receiver.recv().await {
+                Ok(event) => {
+                    let _ = app.emit(domain_topic_to_tauri_event(event.topic()).as_str(), &event);
                 }
-                Err(err) => tracing::warn!(
-                    target: "eo::substrate",
-                    "dropping a malformed domain frame: {err}"
-                ),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        target: "eo::substrate",
+                        skipped,
+                        "domain-event bridge lagged; skipping to live events"
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -624,7 +616,7 @@ mod windows_runtime_icons {
 
 #[cfg(test)]
 mod tests {
-    use super::{domain_topic_to_tauri_event, parse_domain_frame};
+    use super::domain_topic_to_tauri_event;
 
     #[test]
     fn domain_topics_namespace_dots_to_colons_for_the_tauri_bus() {
@@ -638,27 +630,38 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_domain_frame_yields_its_topic_and_compact_envelope() {
-        // The exact shape the SseHub frames (see eo_wire::sse): the envelope is
-        // compact JSON on one line, so the data field is recovered whole.
-        let frame = concat!(
-            "id: 7\nevent: scan.status.changed\ndata: ",
-            "{\"type\":\"scan.status.changed\",\"event_version\":1,",
-            "\"occurred_at\":\"2024-12-31T21:20:00+00:00\",",
-            "\"payload\":{\"phase\":\"capturing\"}}\n\n"
+    #[tokio::test]
+    async fn the_domain_bridge_receives_typed_envelopes_with_their_wire_shape() {
+        // The bridge's emit payload is the typed envelope itself; its serde
+        // value equals the pinned wire JSON, so the webview's topic-aware
+        // consumers see the exact shape the old EventSource data field
+        // carried.
+        use eo_wire::domain_events::{
+            DomainEvent, ScanPhase, ScanStatusChanged, ScanStatusChangedPayload,
+            ScanStatusChangedTag,
+        };
+        let bus = eo_wire::bus::DomainBus::new(8);
+        let mut receiver = bus.subscribe();
+        let event = DomainEvent::ScanStatusChanged(ScanStatusChanged {
+            topic: ScanStatusChangedTag,
+            event_version: 1,
+            occurred_at: "2024-12-31T21:20:00+00:00".into(),
+            payload: ScanStatusChangedPayload {
+                phase: ScanPhase::Capturing,
+            },
+        });
+        bus.publish(event.clone());
+        let received = receiver.recv().await.expect("the envelope arrives");
+        assert_eq!(received, event);
+        assert_eq!(
+            domain_topic_to_tauri_event(received.topic()),
+            "scan:status:changed"
         );
-        let (topic, data) = parse_domain_frame(frame).expect("a well-formed frame parses");
-        assert_eq!(topic, "scan.status.changed");
-        let value: serde_json::Value = serde_json::from_str(data).expect("the data is JSON");
-        assert_eq!(value["type"], "scan.status.changed");
-        assert_eq!(value["payload"]["phase"], "capturing");
-    }
-
-    #[test]
-    fn a_frame_missing_a_field_does_not_parse() {
-        assert!(parse_domain_frame("id: 1\nevent: scan.status.changed\n\n").is_none());
-        assert!(parse_domain_frame(": ready\n\n").is_none());
+        assert_eq!(
+            serde_json::to_value(&received).expect("envelopes serialise"),
+            serde_json::from_str::<serde_json::Value>(&received.to_wire_json())
+                .expect("the wire JSON parses"),
+        );
     }
 
     /// The frontend reaches the backend only through the in-process IPC command,
