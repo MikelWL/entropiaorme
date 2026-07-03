@@ -30,3 +30,4 @@
   - [ADR-0015: Candle OCR backend not adopted](adr/0015-candle-ocr-backend-not-adopted.md)
   - [ADR-0016: Retire the cross-language equivalence oracle](adr/0016-retire-equivalence-oracle.md)
   - [ADR-0017: Own the behavioural contract in this codebase](adr/0017-behavioural-contract-ownership.md)
+  - [ADR-0018: Daily-rollup read model for the analytics Overview](adr/0018-daily-rollup-read-model.md)

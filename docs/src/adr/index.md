@@ -25,3 +25,4 @@ Several of the earlier records predate two later structural decisions: the colla
 | [ADR-0015](0015-candle-ocr-backend-not-adopted.md) | Native candle OCR backend evaluated and not adopted; ONNX Runtime kept as the sole recogniser |
 | [ADR-0016](0016-retire-equivalence-oracle.md) | Retire the cross-language equivalence oracle; preserve the evidence as frozen Rust-side goldens |
 | [ADR-0017](0017-behavioural-contract-ownership.md) | Own the behavioural contract in this codebase; the goldens pin its ratified contract, not reference fidelity |
+| [ADR-0018](0018-daily-rollup-read-model.md) | Daily-rollup read model: the Overview aggregates a rebuildable per-day projection, O(days) not O(rows) |
