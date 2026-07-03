@@ -20,7 +20,7 @@ Replace the HTTP-shaped transport with **typed Tauri commands over a service fac
 - **Per migrated family:** the typed commands land with facade-level tests replacing the HTTP-envelope tests, the frontend wrapper module swaps its implementation, the family's HTTP routes are deleted, and the OpenAPI snapshot is pruned to the families still served over HTTP (a ratified contract change per family, so the snapshot stays true at every increment). The strong-ETag conditional-GET contract ([ADR-0011](0011-etag-conditional-requests.md)) retires with the HTTP envelope family by family: over a same-process command there is no cache hierarchy to serve, and the event-driven re-hydration the frontend already runs is the freshness mechanism.
 - **Framework-envelope behaviour retires as a ratified contract change.** Typed commands enforce shapes at deserialisation, so the reproduced 422 envelopes, the surrogate-taint tracking, and the beyond-`i64` deferred-error rules (kept for byte-fidelity to the retired reference implementation) fall away where a family converts; under [ADR-0017](0017-behavioural-contract-ownership.md) those are behaviour decisions this codebase ratifies deliberately, family by family.
 
-The equipment family (search, library CRUD, item detail, cost calculation) is the first family served entirely by typed commands, and is the pattern the remaining families follow.
+The equipment family (search, library CRUD, item detail) is the first family served entirely by typed commands, and is the pattern the remaining families follow. Its standalone cost-calculation endpoint retired with the migration rather than converting: it had no caller, and the cost shaping it fronted lives on inside the library and detail responses.
 
 ## Consequences
 
