@@ -792,7 +792,7 @@ async fn compose_scan_services(
             complete_skill_scan(&pool, &levels, scan_time).await
         })
         .map(|_drift| ())
-        .map_err(|err| err.to_string())
+        .map_err(Into::into)
     }));
 
     // The repair-OCR provider seams: the same calibrated region lookup and
@@ -866,13 +866,26 @@ fn read_skill_page_levels(
 /// observes a lag error and skips ahead rather than stalling publishers).
 const DOMAIN_BUS_CAPACITY: usize = 256;
 
+/// Why the producer spine declined to compose: a database fault, or a
+/// settings store that refused to load (a corrupt or wrong-shape
+/// `settings.json` fails composition loudly rather than silently
+/// resetting user settings). The caller logs it and stands the native
+/// services down.
+#[derive(Debug, thiserror::Error)]
+enum ComposeError {
+    #[error(transparent)]
+    Db(#[from] eo_services::db::DbError),
+    #[error("settings store: {0}")]
+    Config(#[from] std::io::Error),
+}
+
 fn compose_producers(
     db: Db,
     clock: Arc<dyn Clock>,
     data_dir: &std::path::Path,
     chatlog_override: Option<PathBuf>,
     keystroke_source: Arc<dyn KeystrokeSource>,
-) -> Result<ProducerState, eo_services::db::DbError> {
+) -> Result<ProducerState, ComposeError> {
     // The producers run on the substrate's tokio runtime; the trackers
     // bridge their database work onto this handle from their own
     // (non-runtime) producer threads, exactly as the Python reference's
@@ -901,10 +914,7 @@ fn compose_producers(
     // wrong-shape settings file fails composition loudly (a terminal
     // decline), exactly as the reference's loader
     // would crash rather than silently reset user settings.
-    let config_service = Arc::new(Mutex::new(
-        ConfigService::new(data_dir)
-            .map_err(|e| eo_services::db::DbError::Driver(e.to_string()))?,
-    ));
+    let config_service = Arc::new(Mutex::new(ConfigService::new(data_dir)?));
 
     // The quest service is bus-subscribed (session tracking + mission
     // auto-start) and supplies the watcher's quest-reward filter, so a

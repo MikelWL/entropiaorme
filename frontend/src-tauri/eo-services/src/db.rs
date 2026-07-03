@@ -47,57 +47,48 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 /// The schema version the baseline migration reproduces.
 const BASELINE_SCHEMA_VERSION: i64 = 33;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum DbError {
     /// The on-disk schema predates the supported baseline; the backend
     /// process upgrades it on its own launch.
+    #[error("database schema version {found} predates the supported baseline {supported}")]
     UnsupportedSchemaVersion { found: i64, supported: i64 },
-    /// Any driver or migration failure.
-    Driver(String),
+    /// Any driver failure.
+    #[error(transparent)]
+    Driver(#[from] sqlx::Error),
+    /// A migration failure.
+    #[error(transparent)]
+    Migration(#[from] sqlx::migrate::MigrateError),
+    /// A stored value that does not decode into its domain shape.
+    #[error("{context}: {source}")]
+    Decode {
+        context: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A snapshot read met a column type outside the emitter's catalogue.
+    #[error("unsupported value type {type_name} in column {column}")]
+    UnsupportedValueType { type_name: String, column: String },
 }
-
-impl std::fmt::Display for DbError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DbError::UnsupportedSchemaVersion { found, supported } => write!(
-                f,
-                "database schema version {found} predates the supported baseline {supported}"
-            ),
-            DbError::Driver(message) => write!(f, "{message}"),
-        }
-    }
-}
-
-impl std::error::Error for DbError {}
 
 /// The composition-root open outcome over an application database (see
 /// [`Db::open_adopted`]): a pre-existing database that cannot be
 /// adopted quarantines (native arm stands down, file untouched), while
 /// a failure with no prior file is an ordinary environment error.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AdoptError {
+    #[error(
+        "existing database at {} cannot be adopted ({source}); native services stand \
+         down and the file is left untouched for diagnosis",
+        path.display()
+    )]
     Quarantined {
         path: std::path::PathBuf,
         source: DbError,
     },
+    #[error(transparent)]
     Fresh(DbError),
 }
-
-impl std::fmt::Display for AdoptError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AdoptError::Quarantined { path, source } => write!(
-                f,
-                "existing database at {} cannot be adopted ({source}); native services stand \
-                 down and the file is left untouched for diagnosis",
-                path.display()
-            ),
-            AdoptError::Fresh(source) => write!(f, "{source}"),
-        }
-    }
-}
-
-impl std::error::Error for AdoptError {}
 
 impl AdoptError {
     /// True when the decline is "the existing database is below the adoptable
@@ -116,18 +107,6 @@ impl AdoptError {
                 ..
             }
         )
-    }
-}
-
-impl From<sqlx::Error> for DbError {
-    fn from(err: sqlx::Error) -> Self {
-        DbError::Driver(err.to_string())
-    }
-}
-
-impl From<sqlx::migrate::MigrateError> for DbError {
-    fn from(err: sqlx::migrate::MigrateError) -> Self {
-        DbError::Driver(err.to_string())
     }
 }
 
@@ -445,30 +424,19 @@ fn row_to_json(row: &sqlx::sqlite::SqliteRow) -> Result<Value, DbError> {
     use sqlx::{Column, TypeInfo, ValueRef};
     let mut object = Map::new();
     for column in row.columns() {
-        let raw = row
-            .try_get_raw(column.ordinal())
-            .map_err(|e| DbError::Driver(e.to_string()))?;
+        let raw = row.try_get_raw(column.ordinal())?;
         let value = if raw.is_null() {
             Value::Null
         } else {
             match raw.type_info().name() {
-                "INTEGER" | "BOOLEAN" => Value::from(
-                    row.try_get::<i64, _>(column.ordinal())
-                        .map_err(|e| DbError::Driver(e.to_string()))?,
-                ),
-                "REAL" => Value::from(
-                    row.try_get::<f64, _>(column.ordinal())
-                        .map_err(|e| DbError::Driver(e.to_string()))?,
-                ),
-                "TEXT" => Value::from(
-                    row.try_get::<String, _>(column.ordinal())
-                        .map_err(|e| DbError::Driver(e.to_string()))?,
-                ),
+                "INTEGER" | "BOOLEAN" => Value::from(row.try_get::<i64, _>(column.ordinal())?),
+                "REAL" => Value::from(row.try_get::<f64, _>(column.ordinal())?),
+                "TEXT" => Value::from(row.try_get::<String, _>(column.ordinal())?),
                 other => {
-                    return Err(DbError::Driver(format!(
-                        "unsupported value type {other} in column {}",
-                        column.name()
-                    )))
+                    return Err(DbError::UnsupportedValueType {
+                        type_name: other.to_string(),
+                        column: column.name().to_string(),
+                    })
                 }
             }
         };
@@ -1003,24 +971,39 @@ mod tests {
         );
 
         // A fresh-path failure is likewise never the race.
-        assert!(!AdoptError::Fresh(DbError::Driver("boom".into())).is_below_baseline());
+        let boom = DbError::Driver(sqlx::Error::Protocol("boom".into()));
+        assert!(!AdoptError::Fresh(boom).is_below_baseline());
     }
 
     #[test]
     fn adopt_error_display_carries_the_path_and_the_stand_down() {
         let quarantined = AdoptError::Quarantined {
             path: std::path::PathBuf::from("somewhere/entropia_orme.db"),
-            source: DbError::Driver("file is not a database".into()),
+            source: DbError::Driver(sqlx::Error::Protocol("file is not a database".into())),
         };
         let rendered = quarantined.to_string();
         assert!(rendered.contains("somewhere"), "{rendered}");
         assert!(rendered.contains("cannot be adopted"), "{rendered}");
         assert!(rendered.contains("file is not a database"), "{rendered}");
         assert!(rendered.contains("left untouched"), "{rendered}");
+
+        // `Fresh` renders its source plainly, adding nothing of its own.
+        let inner = sqlx::Error::Protocol("boom".into());
+        let expected = inner.to_string();
         assert_eq!(
-            AdoptError::Fresh(DbError::Driver("boom".into())).to_string(),
-            "boom"
+            AdoptError::Fresh(DbError::Driver(inner)).to_string(),
+            expected
         );
+
+        // A contextualising variant carries its cause as a walkable source
+        // chain, not a flattened string.
+        let parse_err = serde_json::from_str::<Value>("not json").unwrap_err();
+        let err = DbError::Decode {
+            context: "equipment properties parse",
+            source: parse_err,
+        };
+        assert!(err.to_string().starts_with("equipment properties parse: "));
+        assert!(std::error::Error::source(&err).is_some());
     }
 
     #[tokio::test]

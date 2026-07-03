@@ -110,7 +110,8 @@ async fn api_request(app: tauri::AppHandle, request: ApiRequest) -> Result<ApiRe
             &request.headers,
             body,
         )
-        .await?;
+        .await
+        .map_err(|error| error.to_string())?;
         Ok(ApiResponse {
             status: response.status,
             status_text: response.status_text,
@@ -135,7 +136,9 @@ async fn capture_png(app: tauri::AppHandle, page: u32) -> Result<String, String>
         .0
         .clone();
     let path = format!("/api/scan/skills/capture/{page}");
-    let response = eo_http::dispatch_in_process(state, "GET", &path, &[], Vec::new()).await?;
+    let response = eo_http::dispatch_in_process(state, "GET", &path, &[], Vec::new())
+        .await
+        .map_err(|error| error.to_string())?;
     if response.status != 200 {
         return Err(format!(
             "capture preview unavailable (status {})",

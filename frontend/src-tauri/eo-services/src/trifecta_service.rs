@@ -75,8 +75,10 @@ pub async fn describe_trifecta(
             ));
         };
 
-        let props: Value = serde_json::from_str(&properties_json)
-            .map_err(|e| DbError::Driver(format!("equipment properties parse: {e}")))?;
+        let props: Value = serde_json::from_str(&properties_json).map_err(|e| DbError::Decode {
+            context: "equipment properties parse",
+            source: e,
+        })?;
         // `max(0, int(configured or 0))`, the same coercion the cost
         // engine applies (JSON ints and floats both truncate).
         let damage_enhancers = (props
@@ -159,8 +161,11 @@ pub async fn describe_trifecta(
         ));
     };
 
-    let heal_props: Value = serde_json::from_str(&heal_properties_json)
-        .map_err(|e| DbError::Driver(format!("equipment properties parse: {e}")))?;
+    let heal_props: Value =
+        serde_json::from_str(&heal_properties_json).map_err(|e| DbError::Decode {
+            context: "equipment properties parse",
+            source: e,
+        })?;
     let markup = heal_props
         .get("markup")
         .and_then(Value::as_f64)

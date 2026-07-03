@@ -46,10 +46,15 @@ pub type ScanRegion = ([i64; 2], [i64; 2]);
 /// `tap(panel, region, png)` after each successful page grab.
 pub type CaptureTap = Arc<dyn Fn(&str, &Value, &[u8]) + Send + Sync>;
 
-/// The completion callback: persists an accepted result. An error
-/// string surfaces on the status, exactly as the original's caught
-/// exception does.
-pub type CompletionCallback = Arc<dyn Fn(&[(String, f64)]) -> Result<(), String> + Send + Sync>;
+/// A completion failure: whatever error the wired persist path raises
+/// (the production callback surfaces [`crate::db::DbError`]); its
+/// rendered text surfaces on the status, exactly as the original's
+/// caught exception does.
+pub type CompletionError = Box<dyn std::error::Error + Send + Sync>;
+
+/// The completion callback: persists an accepted result.
+pub type CompletionCallback =
+    Arc<dyn Fn(&[(String, f64)]) -> Result<(), CompletionError> + Send + Sync>;
 
 /// One extracted page: `{canonical_name: level}` rows in panel order.
 pub type PageLevels = Vec<(String, f64)>;
@@ -481,7 +486,8 @@ impl SkillScanManual {
             .expect("completion callback")
             .clone();
         if let Some(callback) = callback {
-            if let Err(message) = callback(&skills) {
+            if let Err(error) = callback(&skills) {
+                let message = error.to_string();
                 {
                     let mut state = self.lock_state();
                     state.error = Some(message.clone());
@@ -878,7 +884,7 @@ mod tests {
     #[test]
     fn a_failing_completion_keeps_the_review_open() {
         let (scan, _bus, _clock) = rig(providers(vec![vec![("Rifle".to_string(), 1.0)]]));
-        scan.set_completion_callback(Arc::new(|_| Err("disk full".to_string())));
+        scan.set_completion_callback(Arc::new(|_| Err("disk full".into())));
         scan.start(Some(1));
         scan.capture_current_page();
         scan.process();

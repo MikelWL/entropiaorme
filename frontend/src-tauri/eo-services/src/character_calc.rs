@@ -290,6 +290,15 @@ struct PathSkill {
     ped: f64,
 }
 
+/// The path optimiser's one precondition, violated when a caller
+/// supplies both modes or neither. The route validates the mode
+/// contract itself and authors the same text as its 400 detail, so a
+/// service-level rejection is route-unreachable; the Display string is
+/// kept identical so the two surfaces can never drift apart silently.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("Exactly one of target_level or ped_budget must be provided")]
+pub struct PathOptimizerModeError;
+
 /// Cheapest skill allocation to reach a target profession level, or
 /// the best allocation for a PED budget, by greedy marginal-cost
 /// steps (optimal because the TT curve is convex). Exactly one of
@@ -299,9 +308,9 @@ pub fn profession_path_optimizer(
     profession: &Value,
     target_level: Option<f64>,
     ped_budget: Option<f64>,
-) -> Result<Value, String> {
+) -> Result<Value, PathOptimizerModeError> {
     if target_level.is_none() == ped_budget.is_none() {
-        return Err("Exactly one of target_level or ped_budget must be provided".to_string());
+        return Err(PathOptimizerModeError);
     }
 
     let current_prof = raw_profession_total(skill_levels, profession) / 10000.0;

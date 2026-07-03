@@ -109,33 +109,19 @@ impl Default for Providers {
 /// The mob/tag command preconditions the original raises as
 /// `RuntimeError`/`ValueError`; the messages match verbatim so the
 /// HTTP layer surfaces identical text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TrackerCommandError {
+    #[error("No active session")]
     NoActiveSession,
+    #[error("Active session is not in tag mode")]
     NotTagMode,
+    #[error("Tag cannot be empty")]
     EmptyTag,
+    #[error("Tag mode sessions do not allow manual mob locking")]
     TagModeLocksMob,
+    #[error("Manual mob entry is not enabled for this session")]
     ManualEntryDisabled,
 }
-
-impl std::fmt::Display for TrackerCommandError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let message = match self {
-            TrackerCommandError::NoActiveSession => "No active session",
-            TrackerCommandError::NotTagMode => "Active session is not in tag mode",
-            TrackerCommandError::EmptyTag => "Tag cannot be empty",
-            TrackerCommandError::TagModeLocksMob => {
-                "Tag mode sessions do not allow manual mob locking"
-            }
-            TrackerCommandError::ManualEntryDisabled => {
-                "Manual mob entry is not enabled for this session"
-            }
-        };
-        f.write_str(message)
-    }
-}
-
-impl std::error::Error for TrackerCommandError {}
 
 /// Combat stats since the last kill (or session start).
 #[derive(Default)]
