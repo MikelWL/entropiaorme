@@ -20,7 +20,7 @@ The native Rust persistence layer, `frontend/src-tauri/eo-services/src/db.rs`, s
 - **Writer/reader split.** The handle holds a dedicated writer pool (`max_connections(1)`) and a small reader pool (four connections). Every mutation and write transaction runs on the writer, so writes serialise through one owner in-process (two writers queue at the pool rather than colliding on SQLite's single-writer lock); plain reads run on the reader pool, concurrently with the writer under WAL, so a live combat write stream no longer stalls dashboard reads by monopolising the one connection. Callers pick the pool by intent through `read()` / `write()`; no other module reaches a raw pool.
 - **64 MB page cache** per connection (`cache_size = -64000`, up from the original 8 MB), so the repeated analytical scans keep their hot rollup and index pages resident on a large database instead of re-faulting them on every request.
 
-A cloned `Db` handle shares both pools rather than opening a further owner. The write path stays single-producer as before (the read model heals that ride a read path route their write to the writer, never a reader-held connection).
+A cloned `Db` handle shares both pools rather than opening a further owner. The write path stays single-producer as before: the lazy read-model heal that some read paths trigger routes its own write to the writer, never a reader-held connection.
 
 ## Consequences
 
