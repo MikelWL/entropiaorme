@@ -2050,7 +2050,10 @@ mod tests {
             ),
             0.0,
         ));
-        let svc = Arc::new(QuestService::new(Db::from_pool(pool.clone()), clock.clone()));
+        let svc = Arc::new(QuestService::new(
+            Db::from_pool(pool.clone()),
+            clock.clone(),
+        ));
         let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         svc.set_id_source(Arc::new(move || {
             let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;

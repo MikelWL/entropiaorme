@@ -26,8 +26,8 @@ use tokio::runtime::Handle;
 
 use crate::bus_events::BusEvent;
 use crate::character_calc::ATTRIBUTE_SKILLS;
-use crate::db::Db;
 use crate::clock::Clock;
+use crate::db::Db;
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::tracker::{naive_to_epoch, parse_timestamp_str};
 use crate::tt_value_curve::tt_value_of_gain;
@@ -59,12 +59,7 @@ pub struct SkillTracker {
 }
 
 impl SkillTracker {
-    pub fn new(
-        bus: &Arc<EventBus>,
-        db: Db,
-        runtime: Handle,
-        clock: Arc<dyn Clock>,
-    ) -> Arc<Self> {
+    pub fn new(bus: &Arc<EventBus>, db: Db, runtime: Handle, clock: Arc<dyn Clock>) -> Arc<Self> {
         let tracker = Arc::new(Self {
             db,
             runtime,
@@ -271,8 +266,7 @@ mod tests {
             .unwrap();
         let bus = Arc::new(EventBus::new());
         let clock = Arc::new(MockClock::new(None, 0.0));
-        let tracker =
-            SkillTracker::new(&bus, db.clone(), runtime.handle().clone(), clock.clone());
+        let tracker = SkillTracker::new(&bus, db.clone(), runtime.handle().clone(), clock.clone());
         Rig {
             _dir: dir,
             runtime,

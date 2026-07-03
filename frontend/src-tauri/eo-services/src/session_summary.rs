@@ -953,7 +953,9 @@ mod tests {
         .await
         .unwrap();
 
-        let prospects = load_prospect_sessions(&Db::from_pool(pool.clone())).await.unwrap();
+        let prospects = load_prospect_sessions(&Db::from_pool(pool.clone()))
+            .await
+            .unwrap();
         assert_eq!(
             prospects,
             vec![

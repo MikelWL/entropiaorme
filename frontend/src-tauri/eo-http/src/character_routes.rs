@@ -190,8 +190,7 @@ impl HydrationState {
 
     /// GET /api/character/prospect-options.
     pub async fn character_prospect_options(&self, _if_none_match: Option<&str>) -> Response<Body> {
-        let sessions = match eo_services::session_summary::load_prospect_sessions(&self.db).await
-        {
+        let sessions = match eo_services::session_summary::load_prospect_sessions(&self.db).await {
             Ok(sessions) => sessions,
             Err(_) => return internal_error(),
         };
@@ -227,8 +226,7 @@ impl HydrationState {
             Ok(levels) => levels,
             Err(_) => return internal_error(),
         };
-        let sessions = match eo_services::session_summary::load_prospect_sessions(&self.db).await
-        {
+        let sessions = match eo_services::session_summary::load_prospect_sessions(&self.db).await {
             Ok(sessions) => sessions,
             Err(_) => return internal_error(),
         };

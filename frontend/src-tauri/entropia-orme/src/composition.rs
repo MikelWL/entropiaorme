@@ -764,8 +764,9 @@ async fn compose_scan_services(
 
     // Hydrate the resting status from the persisted calibration history,
     // exactly as the Python reference seeds initial scan time and skill count.
-    let (initial_scan_time, initial_skills_count) =
-        hydrate_skill_scan_state(db.read()).await.unwrap_or((None, 0));
+    let (initial_scan_time, initial_skills_count) = hydrate_skill_scan_state(db.read())
+        .await
+        .unwrap_or((None, 0));
 
     let skill_scan = SkillScanManual::new(
         scan_providers,

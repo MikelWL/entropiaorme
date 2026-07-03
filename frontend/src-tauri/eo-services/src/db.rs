@@ -691,16 +691,21 @@ mod tests {
 
         // Grow the WAL with a batch of committed writes.
         for i in 0..200 {
-            sqlx::query("INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)")
-                .bind(format!("s-{i}"))
-                .bind(i as f64)
-                .execute(db.write())
-                .await
-                .unwrap();
+            sqlx::query(
+                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)",
+            )
+            .bind(format!("s-{i}"))
+            .bind(i as f64)
+            .execute(db.write())
+            .await
+            .unwrap();
         }
         let wal = path.with_extension("db-wal");
         let grown = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
-        assert!(grown > 0, "the WAL should carry frames before the checkpoint");
+        assert!(
+            grown > 0,
+            "the WAL should carry frames before the checkpoint"
+        );
 
         db.checkpoint_truncate().await.unwrap();
 

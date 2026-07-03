@@ -1428,7 +1428,9 @@ mod tests {
     async fn sessions_list_shapes_the_summary_row() {
         let pool = memory_pool().await;
         seed(&pool).await;
-        let value = list_sessions_impl(&Db::from_pool(pool.clone()), 0.0).await.unwrap();
+        let value = list_sessions_impl(&Db::from_pool(pool.clone()), 0.0)
+            .await
+            .unwrap();
         let wire = to_wire_json(&value);
         // cost = weapon(2.75) + heal(2.0) + enhancer(0.5) + armour(1.0) + dangling(0.5) = 6.75
         // returns = 5*10 + 1 = 51.0 ; net = 44.25 ; rate = 51/6.75 = 7.5556
@@ -1578,7 +1580,9 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let value = list_sessions_impl(&Db::from_pool(pool.clone()), start + 120.0).await.unwrap();
+        let value = list_sessions_impl(&Db::from_pool(pool.clone()), start + 120.0)
+            .await
+            .unwrap();
         assert!(to_wire_json(&value).contains("\"duration\":120"));
         // endTime is null for an active session.
         assert!(to_wire_json(&value).contains("\"endTime\":null"));

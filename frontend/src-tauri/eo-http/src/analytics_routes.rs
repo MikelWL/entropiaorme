@@ -1852,7 +1852,9 @@ mod tests {
     #[tokio::test]
     async fn empty_overview_emits_the_engine_typed_zeros() {
         let pool = memory_pool().await;
-        let value = overview_impl(&Db::from_pool(pool.clone()), 1_800_000_000.0, "all").await.unwrap();
+        let value = overview_impl(&Db::from_pool(pool.clone()), 1_800_000_000.0, "all")
+            .await
+            .unwrap();
         // cycledBreakdown is an `Any` field: empty COALESCE sums leave the
         // integer zero on the wire, while the float-declared aggregates coerce.
         assert_eq!(
@@ -2003,7 +2005,9 @@ mod tests {
         let now = 1_800_000_000.0;
         let pool = memory_pool().await;
         seed_scenario(&pool, now).await;
-        let v = overview_impl(&Db::from_pool(pool.clone()), now, "all").await.unwrap();
+        let v = overview_impl(&Db::from_pool(pool.clone()), now, "all")
+            .await
+            .unwrap();
         assert_eq!(v["returnsBreakdown"]["lootTt"], json!(65.0));
         assert_eq!(v["returnsBreakdown"]["pes"], json!(4.0));
         assert_eq!(v["returnsBreakdown"]["codexPes"], json!(7.0));
@@ -2028,7 +2032,9 @@ mod tests {
         // trend: recent-30d rate exceeds prior-30d rate beyond the 2% band.
         assert_eq!(v["trend"], json!("improving"));
         // period filter: 30d keeps only the recent window (markup in, expense out).
-        let v30 = overview_impl(&Db::from_pool(pool.clone()), now, "30d").await.unwrap();
+        let v30 = overview_impl(&Db::from_pool(pool.clone()), now, "30d")
+            .await
+            .unwrap();
         assert_eq!(v30["returnsBreakdown"]["lootTt"], json!(50.0));
         assert_eq!(v30["returnsBreakdown"]["ledger"]["loot_sale"], json!(12.5));
         assert_eq!(v30["lossesBreakdown"]["ledger"], json!({}));
@@ -2153,7 +2159,11 @@ mod tests {
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(overview_impl(&Db::from_pool(pool.clone()), now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("declining")
         );
 
@@ -2162,7 +2172,11 @@ mod tests {
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
-            trend(overview_impl(&Db::from_pool(pool.clone()), now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("improving")
         );
 
@@ -2171,7 +2185,11 @@ mod tests {
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
-            trend(overview_impl(&Db::from_pool(pool.clone()), now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("stable")
         );
 
@@ -2181,7 +2199,11 @@ mod tests {
         let pool = memory_pool().await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(overview_impl(&Db::from_pool(pool.clone()), now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("stable")
         );
 
@@ -2189,7 +2211,11 @@ mod tests {
         let pool = memory_pool().await;
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(overview_impl(&Db::from_pool(pool.clone()), now, "all").await.unwrap()),
+            trend(
+                overview_impl(&Db::from_pool(pool.clone()), now, "all")
+                    .await
+                    .unwrap()
+            ),
             json!("stable")
         );
     }
