@@ -632,11 +632,12 @@ mod tests {
             }
         };
         // The fresh backend schema at version 33 (23 declared tables;
-        // sqlite_sequence arrives automatically) plus the analytical-index
-        // migration: 18 baseline indexes + 4 analytical = 22 indexes, 8
-        // triggers.
-        assert_eq!(count("table").await, 23);
-        assert_eq!(count("index").await, 22);
+        // sqlite_sequence arrives automatically) plus the daily-rollup
+        // migration's three projection tables, and the index migrations:
+        // 18 baseline + 4 analytical + the ledger date index = 23 indexes,
+        // 8 triggers.
+        assert_eq!(count("table").await, 26);
+        assert_eq!(count("index").await, 23);
         assert_eq!(count("trigger").await, 8);
 
         let version: String =
@@ -879,11 +880,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = fresh_db(dir.path()).await;
         let master = db.schema_master().await.unwrap();
-        // 23 declared tables + the migration ledger + 22 indexes (18
-        // baseline + 4 analytical) + 8 triggers (only SQLite's own
+        // 26 declared tables (23 baseline + 3 daily-rollup projection) +
+        // the migration ledger + 23 indexes (18 baseline + 4 analytical +
+        // the ledger date index) + 8 triggers (only SQLite's own
         // bookkeeping is excluded; the conformance comparison filters the
         // ledger externally as its one deliberate difference).
-        assert_eq!(master.len(), 24 + 22 + 8);
+        assert_eq!(master.len(), 27 + 23 + 8);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

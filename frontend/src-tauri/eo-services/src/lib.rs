@@ -16,6 +16,7 @@ pub mod codex;
 pub mod codex_categories;
 pub mod config_service;
 pub mod cost_engine;
+pub mod daily_rollup;
 pub mod db;
 pub mod difflib;
 pub mod eu_window;
