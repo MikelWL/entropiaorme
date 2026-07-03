@@ -264,6 +264,34 @@ where
     Ok(())
 }
 
+/// Refresh every day a session's rows touch: its start and end days
+/// plus the distinct days of its kills and skill gains (a session can
+/// span midnight). The session-stop, orphan-recovery and loot-edit
+/// transactions run this after their writes; the auto-generated ledger
+/// entries those paths add are not enumerated here because their
+/// creators refresh their own date keys (orphan recovery backdates
+/// them below the watermark).
+pub async fn refresh_session_days(
+    conn: &mut SqliteConnection,
+    session_id: &str,
+) -> Result<(), DbError> {
+    let rows = sqlx::query(
+        "SELECT DISTINCT date(timestamp, 'unixepoch') FROM kills WHERE session_id = ? \
+         UNION SELECT DISTINCT date(timestamp, 'unixepoch') FROM skill_gains WHERE session_id = ? \
+         UNION SELECT date(started_at, 'unixepoch') FROM tracking_sessions WHERE id = ? \
+         UNION SELECT date(ended_at, 'unixepoch') FROM tracking_sessions \
+               WHERE id = ? AND ended_at IS NOT NULL",
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let days: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
+    refresh_days(conn, days).await
+}
+
 async fn rolled_through(conn: &mut SqliteConnection) -> Result<Option<String>, DbError> {
     let row = sqlx::query("SELECT rolled_through FROM daily_rollup_meta WHERE id = 1")
         .fetch_optional(conn)
@@ -739,6 +767,35 @@ mod tests {
         let row = rollup_row(&pool, "2001-09-06").await.unwrap();
         assert_eq!(row.try_get::<i64, _>(1).unwrap(), 0, "recomputed, clean");
         assert_eq!(row.try_get::<i64, _>(2).unwrap(), 1, "ledger row joined");
+        assert!(rollup_row(&pool, "2001-09-09").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_session_days_relands_every_day_the_session_touches() {
+        let (_dir, pool) = pool().await;
+        seed_calendar(&pool).await;
+        heal_rollups(&pool, NOW).await.unwrap();
+
+        // Retroactive edits on two of the session's days, then the hook:
+        // both reland; the session's today-side kill day stays unrolled.
+        run(
+            &pool,
+            "UPDATE kills SET loot_total_ped = 9.5 WHERE id = 'k3'",
+        )
+        .await;
+        run(
+            &pool,
+            "UPDATE tracking_sessions SET armour_cost = 0.5 WHERE id = 's1'",
+        )
+        .await;
+        {
+            let mut conn = pool.acquire().await.unwrap();
+            refresh_session_days(&mut conn, "s1").await.unwrap();
+        }
+        let row = rollup_row(&pool, "2001-09-08").await.unwrap();
+        assert_eq!(family(&row, 3), Some(9.5), "the kill day relanded");
+        let row = rollup_row(&pool, "2001-09-05").await.unwrap();
+        assert_eq!(family(&row, 6), Some(0.5), "the start day relanded");
         assert!(rollup_row(&pool, "2001-09-09").await.is_none());
     }
 

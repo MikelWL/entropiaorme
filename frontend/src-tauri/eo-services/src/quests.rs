@@ -69,6 +69,9 @@ pub enum QuestError {
     Invalid(String),
     #[error(transparent)]
     Db(#[from] sqlx::Error),
+    /// A daily-rollup refresh failure inside a quest write.
+    #[error(transparent)]
+    Rollup(#[from] crate::db::DbError),
 }
 
 /// The enriched quest SELECT: every quest column plus the latest
@@ -468,6 +471,9 @@ impl QuestService {
                 .bind(now)
                 .execute(&self.pool)
                 .await?;
+                let mut conn = self.pool.acquire().await?;
+                crate::daily_rollup::refresh_days(&mut conn, [crate::daily_rollup::epoch_day(now)])
+                    .await?;
             } else {
                 let ledger_id = self.next_id();
                 let date = to_iso_utc(now);
@@ -483,6 +489,8 @@ impl QuestService {
                 .bind("quest_reward")
                 .execute(&self.pool)
                 .await?;
+                let mut conn = self.pool.acquire().await?;
+                crate::daily_rollup::refresh_days(&mut conn, [date.as_str()]).await?;
             }
         }
 
@@ -1772,7 +1780,7 @@ async fn delete_latest_quest_claim(
     quest_id: i64,
 ) -> Result<bool, QuestError> {
     let Some(row) = sqlx::query(
-        "SELECT id FROM quest_claims \
+        "SELECT id, claimed_at FROM quest_claims \
          WHERE quest_id = ? \
          ORDER BY claimed_at DESC, id DESC \
          LIMIT 1",
@@ -1787,6 +1795,12 @@ async fn delete_latest_quest_claim(
         .bind(row.get::<i64, _>(0))
         .execute(&mut *conn)
         .await?;
+    // The undone claim may sit days back; reland its day's rollup.
+    crate::daily_rollup::refresh_days(
+        &mut *conn,
+        [crate::daily_rollup::epoch_day(row.get::<f64, _>(1))],
+    )
+    .await?;
     Ok(true)
 }
 
@@ -1798,7 +1812,7 @@ async fn delete_latest_quest_reward_entry(
     reward_ped: f64,
 ) -> Result<bool, QuestError> {
     let Some(row) = sqlx::query(
-        "SELECT id FROM ledger_entries \
+        "SELECT id, date FROM ledger_entries \
          WHERE type = 'markup' \
            AND tag = 'quest_reward' \
            AND description = ? \
@@ -1817,6 +1831,8 @@ async fn delete_latest_quest_reward_entry(
         .bind(row.get::<String, _>(0))
         .execute(&mut *conn)
         .await?;
+    // The undone reward may sit days back; reland its day's rollup.
+    crate::daily_rollup::refresh_days(&mut *conn, [row.get::<String, _>(1)]).await?;
     Ok(true)
 }
 
@@ -2069,6 +2085,68 @@ mod tests {
             "category": "hunt", "reward_description": "ammo",
             "mobs": [" Atrox ", "", "Atrax", "Atrox"],
         })
+    }
+
+    #[tokio::test]
+    async fn quest_claim_undo_relands_the_days_rollups() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_svc, pool) = service(dir.path()).await;
+
+        // A historical skill-reward claim and a liquid-reward ledger
+        // entry, both two days behind the heal watermark.
+        let claimed_at = 999_700_000.0; // inside 2001-09-05 UTC
+        sqlx::query(
+            "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
+             VALUES (7, 'Iron Atrox', 2.5, ?)",
+        )
+        .bind(claimed_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+             VALUES ('q1', '2001-09-05', 'markup', 'Quest: Daily Feffoid', 4.0, 'quest_reward')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        crate::daily_rollup::heal_rollups(&pool, claimed_at + 3.0 * 86_400.0)
+            .await
+            .unwrap();
+        let day = crate::daily_rollup::epoch_day(claimed_at);
+        let quest_pes: Option<f64> =
+            sqlx::query_scalar("SELECT quest_pes FROM daily_rollups WHERE day = ?")
+                .bind(&day)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(quest_pes, Some(2.5));
+
+        // Both undo paths reland their day inside the caller's commit
+        // semantics.
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(delete_latest_quest_claim(&mut conn, 7).await.unwrap());
+        assert!(
+            delete_latest_quest_reward_entry(&mut conn, "Daily Feffoid", 4.0)
+                .await
+                .unwrap()
+        );
+        drop(conn);
+        let quest_pes: Option<f64> =
+            sqlx::query_scalar("SELECT quest_pes FROM daily_rollups WHERE day = ?")
+                .bind(&day)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(quest_pes, None, "the undone claim left the day");
+        let ledger_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM daily_ledger_rollups WHERE day = ? AND tag = 'quest_reward'",
+        )
+        .bind(&day)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ledger_rows, 0, "the undone reward left the day");
     }
 
     #[tokio::test]

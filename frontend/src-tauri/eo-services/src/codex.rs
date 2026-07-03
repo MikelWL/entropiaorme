@@ -65,6 +65,9 @@ pub enum CodexError {
     Invalid(String),
     #[error(transparent)]
     Db(#[from] sqlx::Error),
+    /// A daily-rollup refresh failure inside a claim write.
+    #[error(transparent)]
+    Rollup(#[from] crate::db::DbError),
 }
 
 /// A species' codex parameters from the game-data catalogue.
@@ -313,6 +316,7 @@ impl CodexService {
         .execute(&mut *tx)
         .await
         .map_err(CodexError::Db)?;
+        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(now)]).await?;
 
         let current_level: Option<f64> = sqlx::query(
             "SELECT level FROM skill_calibrations WHERE skill_name = ? \
@@ -448,6 +452,10 @@ impl CodexService {
         .execute(&mut *tx)
         .await
         .map_err(CodexError::Db)?;
+        // The unclaimed reward may sit days back; reland its day's
+        // rollup inside the same transaction.
+        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(claimed_at)])
+            .await?;
 
         tx.commit().await.map_err(CodexError::Db)?;
 
@@ -663,6 +671,7 @@ impl CodexService {
             )));
         }
         let now = naive_to_epoch(self.clock.now());
+        let mut tx = self.pool.begin().await.map_err(CodexError::Db)?;
         sqlx::query(
             "INSERT INTO codex_claims \
              (species_name, rank, skill_name, ped_value, claimed_at, kind, attribute_name) \
@@ -672,9 +681,11 @@ impl CodexService {
         .bind(META_PED)
         .bind(now)
         .bind(attribute_name)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(CodexError::Db)?;
+        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(now)]).await?;
+        tx.commit().await.map_err(CodexError::Db)?;
         Ok(json!({
             "attributeName": attribute_name,
             "pedValue": META_PED,
@@ -877,7 +888,7 @@ mod tests {
     fn invalid(error: CodexError) -> String {
         match error {
             CodexError::Invalid(message) => message,
-            CodexError::Db(error) => panic!("expected a validation error, got: {error}"),
+            other => panic!("expected a validation error, got: {other}"),
         }
     }
 
@@ -1435,6 +1446,40 @@ mod tests {
             .get(0);
         assert_eq!(total, 5, "the scan-seeded calibrations are untouched");
         assert_eq!(svc.skill_level("Rifle").await.unwrap(), Some(100.0));
+    }
+
+    #[tokio::test]
+    async fn claim_and_unclaim_reland_the_claim_days_rollup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, pool) = service(dir.path()).await;
+        seed_calibrations(&pool).await;
+
+        svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
+
+        // Two days later the claim day is behind the heal watermark.
+        let claim_epoch = crate::tracker::naive_to_epoch(start_instant());
+        let claim_day = crate::daily_rollup::epoch_day(claim_epoch);
+        crate::daily_rollup::heal_rollups(&pool, claim_epoch + 2.0 * 86_400.0)
+            .await
+            .unwrap();
+        let codex_pes: Option<f64> =
+            sqlx::query_scalar("SELECT codex_pes FROM daily_rollups WHERE day = ?")
+                .bind(&claim_day)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(codex_pes, Some(0.1875));
+
+        // The unclaim deletes the now-historical claim and relands its
+        // day inside the same transaction.
+        svc.unclaim_rank("Boar").await.unwrap();
+        let codex_pes: Option<f64> =
+            sqlx::query_scalar("SELECT codex_pes FROM daily_rollups WHERE day = ?")
+                .bind(&claim_day)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(codex_pes, None, "no claims remain on the day");
     }
 
     #[tokio::test]

@@ -1002,20 +1002,28 @@ impl HydrationState {
         tag: &str,
     ) -> Response<Body> {
         let id = Uuid::new_v4().to_string();
-        match sqlx::query(
-            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(date)
-        .bind(kind)
-        .bind(description)
-        .bind(amount)
-        .bind(tag)
-        .execute(self.pool())
-        .await
-        {
-            Ok(_) => plain_json_response(&json!({
+        // One transaction over the insert and the rollup refresh: a
+        // backdated entry relands its day's rollup with the write.
+        let write = async {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query(
+                "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(date)
+            .bind(kind)
+            .bind(description)
+            .bind(amount)
+            .bind(tag)
+            .execute(&mut *tx)
+            .await?;
+            eo_services::daily_rollup::refresh_days(&mut tx, [date]).await?;
+            tx.commit().await?;
+            Ok::<(), eo_services::db::DbError>(())
+        };
+        match write.await {
+            Ok(()) => plain_json_response(&json!({
                 "id": id, "date": date, "type": kind,
                 "description": description, "amount": amount, "tag": tag,
             })),
@@ -1025,15 +1033,29 @@ impl HydrationState {
 
     /// DELETE /api/analytics/ledger/{entry_id}
     pub async fn delete_ledger_entry(&self, entry_id: &str) -> Response<Body> {
-        match sqlx::query("DELETE FROM ledger_entries WHERE id = ?")
-            .bind(entry_id)
-            .execute(self.pool())
-            .await
-        {
-            Ok(result) if result.rows_affected() == 0 => {
-                error_response(StatusCode::NOT_FOUND, &detail("Entry not found"))
-            }
-            Ok(_) => plain_json_response(&json!({"status": "deleted"})),
+        // Capture the entry's day before deleting so its rollup relands
+        // in the same transaction; a vanished entry keeps the 404.
+        let write = async {
+            let mut tx = self.pool().begin().await?;
+            let date: Option<String> =
+                sqlx::query_scalar("SELECT date FROM ledger_entries WHERE id = ?")
+                    .bind(entry_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let Some(date) = date else {
+                return Ok::<bool, eo_services::db::DbError>(false);
+            };
+            sqlx::query("DELETE FROM ledger_entries WHERE id = ?")
+                .bind(entry_id)
+                .execute(&mut *tx)
+                .await?;
+            eo_services::daily_rollup::refresh_days(&mut tx, [date]).await?;
+            tx.commit().await?;
+            Ok(true)
+        };
+        match write.await {
+            Ok(false) => error_response(StatusCode::NOT_FOUND, &detail("Entry not found")),
+            Ok(true) => plain_json_response(&json!({"status": "deleted"})),
             Err(_) => internal_error(),
         }
     }
@@ -1314,6 +1336,12 @@ impl HydrationState {
             {
                 return internal_error();
             }
+            if eo_services::daily_rollup::refresh_days(&mut tx, [&sold_at])
+                .await
+                .is_err()
+            {
+                return internal_error();
+            }
             json!({
                 "id": entry_id, "date": sold_at, "type": entry_type,
                 "description": description, "amount": amount, "tag": INVENTORY_SALE_TAG,
@@ -1386,6 +1414,82 @@ mod tests {
             Arc::new(MockClock::new(Some(naive), 0.0)),
             std::path::PathBuf::from("."),
         )
+    }
+
+    /// 2026-06-05T00:00:00Z: heals the rollup watermark past the
+    /// backdated days these tests write to, so the write hooks are
+    /// observable.
+    async fn heal_to_june_fifth(pool: &SqlitePool) {
+        eo_services::daily_rollup::heal_rollups(pool, 1_780_617_600.0)
+            .await
+            .unwrap();
+    }
+
+    async fn ledger_rollup(pool: &SqlitePool, day: &str, tag: &str) -> Option<(String, f64)> {
+        sqlx::query_as(
+            "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ? AND tag = ?",
+        )
+        .bind(day)
+        .bind(tag)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn ledger_create_and_delete_reland_their_days_rollups() {
+        let state = write_state().await;
+        heal_to_june_fifth(state.pool()).await;
+
+        // A backdated create lands its day's rollup with the insert.
+        let (status, body) = body_of(
+            state
+                .create_ledger_entry("2026-06-02", "expense", "ammo restock", 12.5, "manual")
+                .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            ledger_rollup(state.pool(), "2026-06-02", "manual").await,
+            Some(("expense".into(), 12.5))
+        );
+
+        // The delete relands it empty; a missing id keeps the 404.
+        let id = body["id"].as_str().unwrap().to_string();
+        let (status, _) = body_of(state.delete_ledger_entry(&id).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            ledger_rollup(state.pool(), "2026-06-02", "manual").await,
+            None
+        );
+        let (status, _) = body_of(state.delete_ledger_entry("missing").await).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn inventory_sale_relands_the_sold_days_rollup() {
+        let state = write_state().await;
+        heal_to_june_fifth(state.pool()).await;
+        sqlx::query(
+            "INSERT INTO inventory_items (id, name, tt_value, markup_paid, notes, acquired_at) \
+             VALUES ('i1', 'Gun', 10.0, 2.0, NULL, '2026-05-01')",
+        )
+        .execute(state.pool())
+        .await
+        .unwrap();
+
+        // Sold at a backdated date for an 8.0 markup delta.
+        let (status, _) = body_of(
+            state
+                .sell_inventory_item("i1", 20.0, None, Some("2026-06-02"))
+                .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            ledger_rollup(state.pool(), "2026-06-02", INVENTORY_SALE_TAG).await,
+            Some(("markup".into(), 8.0))
+        );
     }
 
     /// Status + parsed JSON body of a handler response.
