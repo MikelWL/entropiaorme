@@ -223,8 +223,8 @@ impl DemoState {
         self.hydration.analytics_activity(None).await
     }
 
-    pub async fn list_ledger(&self) -> Response<Body> {
-        self.hydration.list_ledger().await
+    pub async fn list_ledger(&self, cursor: Option<&str>, limit: Option<i64>) -> Response<Body> {
+        self.hydration.list_ledger(cursor, limit).await
     }
 
     pub async fn list_ledger_presets(&self) -> Response<Body> {
@@ -701,7 +701,7 @@ mod tests {
         );
         assert_matches_golden(
             "ledger",
-            &body_string(demo.list_ledger().await).await,
+            &body_string(demo.list_ledger(None, None).await).await,
             G_LEDGER,
         );
         assert_matches_golden(

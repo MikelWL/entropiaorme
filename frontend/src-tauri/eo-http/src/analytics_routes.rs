@@ -21,7 +21,7 @@
 use std::collections::BTreeSet;
 
 use axum::body::Body;
-use axum::http::{Response, StatusCode};
+use axum::http::{HeaderValue, Response, StatusCode};
 use eo_services::daily_rollup;
 use eo_services::db::{Db, DbError};
 use eo_services::tracker::naive_to_epoch;
@@ -1396,6 +1396,44 @@ fn preset_item(row: &SqliteRow) -> Value {
     })
 }
 
+/// The default ledger page size when the client names no `limit`.
+const LEDGER_PAGE_DEFAULT: i64 = 50;
+/// The largest ledger page a client may request; larger `limit` values clamp
+/// here, bounding the work a single request can ask for.
+const LEDGER_PAGE_MAX: i64 = 200;
+
+/// The opaque keyset cursor: base64url (no padding) of the JSON `[date, id]`
+/// of the last row on a page. Opaque so clients treat it as a token, and
+/// robust to any characters a user-entered ledger date or a UUID id carries.
+fn encode_ledger_cursor(date: &str, id: &str) -> String {
+    use base64::Engine as _;
+    let json = serde_json::to_vec(&[date, id]).expect("a cursor pair serialises");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
+}
+
+/// Decode a keyset cursor back to its `(date, id)` seek key, or `None` for a
+/// malformed token (which the handler answers as a 400).
+fn decode_ledger_cursor(token: &str) -> Option<(String, String)> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(token)
+        .ok()?;
+    let [date, id]: [String; 2] = serde_json::from_slice(&bytes).ok()?;
+    Some((date, id))
+}
+
+/// A ledger page: the entries as the JSON body (contract-stable array) plus
+/// the opaque `X-Next-Cursor` header when a further page exists.
+fn ledger_page_response(body: &Value, next_cursor: Option<&str>) -> Response<Body> {
+    let mut response = plain_json_response(body);
+    if let Some(cursor) = next_cursor {
+        if let Ok(value) = HeaderValue::from_str(cursor) {
+            response.headers_mut().insert("x-next-cursor", value);
+        }
+    }
+    response
+}
+
 /// `_inventory_row_to_dict`: (id, name, tt_value, markup_paid, notes, acquired_at).
 fn inventory_item(row: &SqliteRow) -> Value {
     json!({
@@ -1414,18 +1452,57 @@ impl HydrationState {
         epoch_to_iso(naive_to_epoch(self.clock.now()))
     }
 
-    /// GET /api/analytics/ledger
-    pub async fn list_ledger(&self) -> Response<Body> {
-        match sqlx::query(
-            "SELECT id, date, type, description, amount, tag FROM ledger_entries \
-             ORDER BY date DESC, id DESC",
-        )
-        .fetch_all(self.read())
-        .await
-        {
-            Ok(rows) => plain_json_response(&Value::Array(rows.iter().map(ledger_item).collect())),
-            Err(_) => internal_error(),
+    /// GET /api/analytics/ledger?cursor=&limit=
+    ///
+    /// Keyset (seek) pagination over the ledger, newest first. The body is
+    /// the page of entries (an array of `LedgerItem`, contract-stable); the
+    /// opaque `X-Next-Cursor` response header carries the cursor for the
+    /// following page and is absent once the last page is reached, so the
+    /// list no longer reads the whole table on every request. Without a
+    /// cursor the first page is served; `limit` bounds the page (default
+    /// [`LEDGER_PAGE_DEFAULT`], capped at [`LEDGER_PAGE_MAX`]).
+    pub async fn list_ledger(&self, cursor: Option<&str>, limit: Option<i64>) -> Response<Body> {
+        let page = limit.unwrap_or(LEDGER_PAGE_DEFAULT).clamp(1, LEDGER_PAGE_MAX);
+        let seek = match cursor {
+            None => None,
+            Some(token) => match decode_ledger_cursor(token) {
+                Some(key) => Some(key),
+                None => {
+                    return error_response(StatusCode::BAD_REQUEST, &detail("Invalid cursor"))
+                }
+            },
+        };
+
+        // The seek predicate reproduces the (date DESC, id DESC) order past
+        // the cursor row; one extra row is fetched to detect a further page.
+        let mut sql =
+            String::from("SELECT id, date, type, description, amount, tag FROM ledger_entries");
+        if seek.is_some() {
+            sql.push_str(" WHERE date < ? OR (date = ? AND id < ?)");
         }
+        sql.push_str(" ORDER BY date DESC, id DESC LIMIT ?");
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        if let Some((date, id)) = &seek {
+            query = query.bind(date).bind(date).bind(id);
+        }
+        let rows = match query.bind(page + 1).fetch_all(self.read()).await {
+            Ok(rows) => rows,
+            Err(_) => return internal_error(),
+        };
+
+        // A full extra row means another page follows: drop it and cut the
+        // next cursor from the last row actually served.
+        let has_more = rows.len() as i64 > page;
+        let kept = if has_more {
+            &rows[..page as usize]
+        } else {
+            &rows[..]
+        };
+        let items: Vec<Value> = kept.iter().map(ledger_item).collect();
+        let next_cursor = has_more.then(|| kept.last()).flatten().map(|row| {
+            encode_ledger_cursor(&row.get::<String, _>(1), &row.get::<String, _>(0))
+        });
+        ledger_page_response(&Value::Array(items), next_cursor.as_deref())
     }
 
     /// POST /api/analytics/ledger
@@ -2434,12 +2511,61 @@ mod tests {
         assert_eq!(body["tag"], json!("ammo"));
         assert!(body["id"].as_str().is_some(), "create generates an id");
 
-        let (status, list) = body_of(state.list_ledger().await).await;
+        let (status, list) = body_of(state.list_ledger(None, None).await).await;
         assert_eq!(status, StatusCode::OK);
         let rows = list.as_array().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["description"], json!("Ammo"));
         assert_eq!(rows[0]["id"], body["id"]);
+    }
+
+    /// Keyset pagination walks the whole ledger newest-first, one bounded
+    /// page at a time, following the `X-Next-Cursor` header with no overlap
+    /// and no gaps.
+    #[tokio::test]
+    async fn ledger_list_walks_every_entry_by_keyset_cursor() {
+        let state = write_state().await;
+        for day in ["01", "02", "03", "04", "05"] {
+            state
+                .create_ledger_entry(&format!("2026-05-{day}"), "expense", &format!("e{day}"), 1.0, "t")
+                .await;
+        }
+
+        let mut seen: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        // A generous cap: three pages of two cover five entries; more than
+        // this means the cursor is not converging.
+        for _ in 0..10 {
+            let response = state.list_ledger(cursor.as_deref(), Some(2)).await;
+            let next = response
+                .headers()
+                .get("x-next-cursor")
+                .map(|value| value.to_str().unwrap().to_string());
+            let (status, body) = body_of(response).await;
+            assert_eq!(status, StatusCode::OK);
+            let rows = body.as_array().unwrap();
+            assert!(rows.len() <= 2, "the page is bounded by the limit");
+            for row in rows {
+                seen.push(row["description"].as_str().unwrap().to_string());
+            }
+            match next {
+                Some(token) => cursor = Some(token),
+                None => break,
+            }
+        }
+        assert_eq!(
+            seen,
+            ["e05", "e04", "e03", "e02", "e01"],
+            "every entry appears once, newest first, across pages"
+        );
+    }
+
+    #[tokio::test]
+    async fn ledger_list_rejects_a_malformed_cursor() {
+        let state = write_state().await;
+        let (status, body) = body_of(state.list_ledger(Some("not a cursor!"), None).await).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["detail"], json!("Invalid cursor"));
     }
 
     /// The preset type guard: only 'expense'/'markup' pass; anything else is
@@ -2576,7 +2702,7 @@ mod tests {
         // Item removed; the emitted ledger row is the only one.
         let (_, inv) = body_of(state.list_inventory().await).await;
         assert_eq!(inv.as_array().unwrap().len(), 0);
-        let (_, ledger) = body_of(state.list_ledger().await).await;
+        let (_, ledger) = body_of(state.list_ledger(None, None).await).await;
         assert_eq!(ledger.as_array().unwrap().len(), 1);
 
         // LOSS: sale 5 under cost 12 -> expense 7.0; explicit description.
@@ -2614,7 +2740,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["ledgerEntry"], Value::Null);
         assert_eq!(body["soldItem"]["name"], json!("Even"));
-        let (_, ledger) = body_of(state.list_ledger().await).await;
+        let (_, ledger) = body_of(state.list_ledger(None, None).await).await;
         assert_eq!(ledger.as_array().unwrap().len(), 0, "no noise row");
         let (_, inv) = body_of(state.list_inventory().await).await;
         assert_eq!(inv.as_array().unwrap().len(), 0, "item removed");

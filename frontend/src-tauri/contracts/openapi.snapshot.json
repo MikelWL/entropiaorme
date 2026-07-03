@@ -6274,8 +6274,44 @@
     },
     "/api/analytics/ledger": {
       "get": {
-        "description": "List all ledger entries.\n\nThe activity ledger is liquid economy only. Codex rewards live in\n`codex_claims` and skill-typed quest rewards live in `quest_claims`.\nNew writes never produce PES-tagged ledger rows, so no read-side\nfilter is needed.",
+        "description": "List a page of ledger entries, newest first, via keyset (seek)\npagination.\n\nWithout a cursor the first page is returned; the opaque `X-Next-Cursor`\nresponse header carries the cursor for the following page and is absent\non the last page. `limit` bounds the page (default 50, capped at 200).\n\nThe activity ledger is liquid economy only. Codex rewards live in\n`codex_claims` and skill-typed quest rewards live in `quest_claims`.\nNew writes never produce PES-tagged ledger rows, so no read-side\nfilter is needed.",
         "operationId": "list_ledger_api_analytics_ledger_get",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque keyset cursor from a prior page's X-Next-Cursor header; omit for the first page.",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum entries per page (default 50, capped at 200).",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -6289,7 +6325,16 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Next-Cursor": {
+                "description": "Cursor for the next page; absent on the last page.",
+                "required": false,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "summary": "List Ledger",
@@ -7306,6 +7351,42 @@
     "/api/demo/analytics/ledger": {
       "get": {
         "operationId": "demo_list_ledger_api_demo_analytics_ledger_get",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque keyset cursor from a prior page's X-Next-Cursor header; omit for the first page.",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum entries per page (default 50, capped at 200).",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -7319,7 +7400,16 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Next-Cursor": {
+                "description": "Cursor for the next page; absent on the last page.",
+                "required": false,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "summary": "Demo List Ledger",

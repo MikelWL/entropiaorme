@@ -104,7 +104,12 @@ export interface paths {
         };
         /**
          * List Ledger
-         * @description List all ledger entries.
+         * @description List a page of ledger entries, newest first, via keyset (seek)
+         *     pagination.
+         *
+         *     Without a cursor the first page is returned; the opaque `X-Next-Cursor`
+         *     response header carries the cursor for the following page and is absent
+         *     on the last page. `limit` bounds the page (default 50, capped at 200).
          *
          *     The activity ledger is liquid economy only. Codex rewards live in
          *     `codex_claims` and skill-typed quest rewards live in `quest_claims`.
@@ -4155,7 +4160,12 @@ export interface operations {
     };
     list_ledger_api_analytics_ledger_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque keyset cursor from a prior page's X-Next-Cursor header; omit for the first page. */
+                cursor?: string | null;
+                /** @description Maximum entries per page (default 50, capped at 200). */
+                limit?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4165,6 +4175,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Cursor for the next page; absent on the last page. */
+                    "X-Next-Cursor"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4870,7 +4882,12 @@ export interface operations {
     };
     demo_list_ledger_api_demo_analytics_ledger_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque keyset cursor from a prior page's X-Next-Cursor header; omit for the first page. */
+                cursor?: string | null;
+                /** @description Maximum entries per page (default 50, capped at 200). */
+                limit?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4880,6 +4897,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description Cursor for the next page; absent on the last page. */
+                    "X-Next-Cursor"?: string;
                     [name: string]: unknown;
                 };
                 content: {
