@@ -37,7 +37,7 @@ Run the backend members alone (no Tauri toolchain required):
 
 ```sh
 cd frontend/src-tauri
-cargo nextest run -p eo-wire -p eo-http -p eo-services
+cargo nextest run -p eo-wire -p eo-http -p eo-services -p eo-api
 ```
 
 or, from the repository root, the `just` recipe that wraps the same command:
@@ -183,7 +183,9 @@ The `frontend` CI job runs `npm run lint` on every change, and a pre-commit hook
 
 ### Generated API client
 
-The typed frontend API client is generated from the committed OpenAPI snapshot (`frontend/src-tauri/contracts/openapi.snapshot.json`). The `frontend` CI job runs `npm run gen:api:check`, which regenerates the client and fails if the committed output drifts from the snapshot. Regenerate it with `npm run gen:api` (or `just gen-api`) after a change that moves the snapshot.
+The typed frontend API client for the families still on the HTTP transport is generated from the committed OpenAPI snapshot (`frontend/src-tauri/contracts/openapi.snapshot.json`). The `frontend` CI job runs `npm run gen:api:check`, which regenerates the client and fails if the committed output drifts from the snapshot. Regenerate it with `npm run gen:api` (or `just gen-api`) after a change that moves the snapshot.
+
+Families migrated onto typed IPC commands have their TypeScript bindings generated from the Rust DTOs instead (`frontend/src/lib/api/commands.gen.ts`, emitted by `cargo xtask gen-ts` from the `eo-api` command manifest). The Linux backend-members CI job runs `cargo xtask gen-ts --check`, which fails if the committed bindings drift from the manifest. Regenerate them with `just gen-ts` after a change that moves an `eo-api` DTO or the manifest.
 
 ### Runes-native frontend
 
@@ -277,7 +279,7 @@ cd frontend/src-tauri
 cargo fmt --check                                       # formatting, all members (apply with `cargo fmt`)
 cargo clippy --workspace --all-targets -- -D warnings   # lints, warnings promoted to errors
 cargo build                                             # compile check, all members (debug profile)
-cargo nextest run -p eo-wire -p eo-http -p eo-services  # backend members alone, no Tauri toolchain needed
+cargo nextest run -p eo-wire -p eo-http -p eo-services -p eo-api  # backend members alone, no Tauri toolchain needed
 cargo test --workspace --doc                            # doctests (nextest does not run them)
 cargo llvm-cov nextest --branch -p eo-wire -p eo-http -p eo-services  # branch coverage (nightly toolchain)
 cargo mutants -p eo-wire -p eo-http -p eo-services --in-place         # mutation testing (nightly CI cadence)

@@ -1,0 +1,41 @@
+# ADR-0019: Typed IPC commands over a service facade
+
+- Status: Accepted
+- Context: the collapse to a single in-process binary ([ADR-0013](0013-in-process-collapse.md)) kept the HTTP stack alive behind the `api_request` IPC command: the frontend's generated client builds HTTP-shaped requests, the shell dispatches them through a freshly built axum router per call, and the response travels back as an HTTP envelope re-hydrated into a `Response` object. Every layer of that stack now describes an internal function call.
+
+## Context and problem statement
+
+The application is one process. A frontend read reaches the backend as `invoke('api_request')`, yet the request still crosses a Host allowlist derived from a socket that no longer exists, a CORS layer whose `Origin` header the transport itself injects, a strong-ETag middleware computing SHA-256 hashes for a caller that never sends `If-None-Match`, framework-shaped 422 validation envelopes, a hand-written port of Python's `json.loads` semantics, and a router rebuilt from scratch on every dispatch. The contract is described by a 9,690-line committed OpenAPI snapshot, consumed by an `openapi-typescript` codegen step producing 6,599 lines of TypeScript, wired through `openapi-fetch`; roughly nineteen thousand lines of Rust exist to move JSON between two halves of the same process.
+
+The cost is not latency (in-process dispatch is sub-millisecond); it is that every endpoint pays a transport ceremony tax, every payload is serialised twice, a field-name typo is a runtime `undefined` rather than a compile error, and an entire OpenAPI toolchain is kept alive to describe calls no network ever carries.
+
+## Decision
+
+Replace the HTTP-shaped transport with **typed Tauri commands over a service facade**, migrated route-family by route-family behind the frontend's single client module.
+
+- **A Tauri-free facade crate (`eo-api`) is the application boundary.** It owns the request/response DTO types (plain `serde` structs) and one async method per operation, orchestrating the domain services (`eo-services`) exactly as the route handlers did. It is built whole from the composed services after the database opens and published to the IPC layer once complete (construct-then-share): no lock-guarded optional slots, no observable half-initialised state. The shell (`entropia-orme`) carries one thin `#[tauri::command]` per operation, delegating to the facade.
+- **Errors are a typed surface.** Facade methods return `Result<T, ApiError>`, a `thiserror` enum with a stable serialised shape (`kind` + `message`). The frontend wrapper maps it onto the existing thrown `ApiError` contract, so feature code keeps its error semantics while the transport stops encoding errors as HTTP status texts.
+- **TypeScript is generated from the Rust types by an owned `xtask` generator.** Each DTO derives a JSON-Schema description (`schemars`) alongside its `serde` implementation; a manifest in `eo-api` names every command with its argument and return types; `cargo xtask gen-ts` emits the TypeScript interfaces and typed `invoke` wrappers deterministically, and a `--check` mode holds the committed output in lock-step in CI, the same discipline the OpenAPI codegen had. `tauri-specta` was evaluated for this role and declined on stability evidence: as of 2026-05-08 its v2 line remains a release candidate (2.0.0-rc.25; the last stable release, 1.0.2, predates Tauri 2), and a pre-release dependency at the IPC trust boundary fails the bar a few hundred lines of owned emitter clear. A future stable release may reopen the comparison, but an owned generator already in hand carries no pressure to switch.
+- **The demo namespace migrates the same way.** The guide-mode read surface becomes typed demo commands sharing the live commands' DTO types, backed by the same lazily-built parallel demo state; the frontend keeps choosing per call, now between two typed functions. No residual HTTP dispatch is retained for it.
+- **Per migrated family:** the typed commands land with facade-level tests replacing the HTTP-envelope tests, the frontend wrapper module swaps its implementation, the family's HTTP routes are deleted, and the OpenAPI snapshot is pruned to the families still served over HTTP (a ratified contract change per family, so the snapshot stays true at every increment). The strong-ETag conditional-GET contract ([ADR-0011](0011-etag-conditional-requests.md)) retires with the HTTP envelope family by family: over a same-process command there is no cache hierarchy to serve, and the event-driven re-hydration the frontend already runs is the freshness mechanism.
+- **Framework-envelope behaviour retires as a ratified contract change.** Typed commands enforce shapes at deserialisation, so the reproduced 422 envelopes, the surrogate-taint tracking, and the beyond-`i64` deferred-error rules (kept for byte-fidelity to the retired reference implementation) fall away where a family converts; under [ADR-0017](0017-behavioural-contract-ownership.md) those are behaviour decisions this codebase ratifies deliberately, family by family.
+
+The equipment family (search, library CRUD, item detail, cost calculation) is the first family served entirely by typed commands, and is the pattern the remaining families follow.
+
+## Consequences
+
+A field name, an argument type, or a missing case is now a compile error on both sides of the language boundary: the Rust DTO is the single source, the generated TypeScript cannot drift from it (CI enforces regeneration), and the frontend calls a named typed function instead of assembling a path string. Each payload is serialised exactly once, at the process boundary. The per-dispatch router build, and eventually the router itself, disappear.
+
+The transport ceremony becomes deletable in measured steps: the FastAPI-shaped extraction and envelope layers, the Python-semantics JSON parser, the CORS and Host guards, the ETag middleware, the route-registration map, the OpenAPI snapshot, the generated schema types, and the `openapi-fetch`/`openapi-typescript` toolchain all exit with the last converted family. Until then the two transports coexist behind the same client module, and the OpenAPI snapshot continues to govern exactly the families still on HTTP.
+
+The IPC command surface widens from two commands to one per operation, which is the point: the boundary becomes explicit, capability-scoped, and visible to review, rather than a single string-routed tunnel. The reshaped seam is audited as part of completing the migration.
+
+See [ADR-0013](0013-in-process-collapse.md) for the in-process collapse this completes, [ADR-0017](0017-behavioural-contract-ownership.md) for the contract-ownership posture the ratified retirements rest on, [ADR-0010](0010-loose-response-models.md) for the response-model posture the typed DTOs supersede per family, and the [ADR index](index.md).
+
+## Evidence
+
+- `frontend/src-tauri/eo-api/` (the facade crate: DTOs, facade methods, the command manifest)
+- `frontend/src-tauri/entropia-orme/src/lib.rs` (the typed command wrappers beside the legacy `api_request` dispatch)
+- `frontend/src-tauri/xtask/src/gen_ts.rs` (the TypeScript generator and its CI drift check)
+- `frontend/src/lib/api/commands.gen.ts` (the committed generated output)
+- `frontend/src-tauri/eo-http/tests/router_microbench.rs` (the dispatch-path measurement either side of the migration)

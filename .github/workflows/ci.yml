@@ -393,8 +393,8 @@ jobs:
   rust-members:
     name: Rust backend members (nextest, Linux)
     runs-on: ubuntu-latest
-    # The native-backend members (eo-http, eo-services, eo-wire) must build and
-    # test without the Tauri toolchain. This runner is the structural proof: it
+    # The native-backend members (eo-api, eo-http, eo-services, eo-wire) must
+    # build and test without the Tauri toolchain. This runner is the structural proof: it
     # has none of the Tauri system stack installed (webkit2gtk et al.), and the
     # package selection keeps the shell crate (the only Tauri-coupled member)
     # out of the dependency graph entirely, so a GUI dependency creeping into
@@ -429,7 +429,12 @@ jobs:
         with:
           tool: cargo-nextest
       - name: Run the backend-member tests (nextest)
-        run: cargo nextest run -p eo-wire -p eo-http -p eo-services
+        run: cargo nextest run -p eo-wire -p eo-http -p eo-services -p eo-api
+      # Fails when the committed TypeScript bindings drift from the typed
+      # command manifest (the typed-command twin of the frontend job's
+      # OpenAPI drift gate).
+      - name: Check the generated TypeScript bindings are current
+        run: cargo run -q -p xtask -- gen-ts --check
       # The criterion micro-benchmark rail, compile-check only: shared CI
       # runners produce noisy timings, so benchmark figures are taken locally
       # when a hot path lands, and CI guarantees the benches keep building.
