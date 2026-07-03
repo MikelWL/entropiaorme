@@ -56,6 +56,17 @@ struct MockState {
     monotonic: f64,
 }
 
+/// A refused [`MockClock::advance`]: the delta would run the monotonic
+/// stream backwards (or through a non-finite value).
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "advance rejects negative and non-finite deltas (got {seconds}); \
+     freeze the wall clock instead of corrupting the monotonic stream"
+)]
+pub struct NonMonotonicAdvance {
+    pub seconds: f64,
+}
+
 /// The test clock: frozen by default, advanced explicitly.
 pub struct MockClock {
     state: Mutex<MockState>,
@@ -78,12 +89,9 @@ impl MockClock {
 
     /// Advance both streams together; negative deltas are refused to
     /// preserve the monotonic invariant.
-    pub fn advance(&self, seconds: f64) -> Result<(), String> {
+    pub fn advance(&self, seconds: f64) -> Result<(), NonMonotonicAdvance> {
         if !seconds.is_finite() || seconds < 0.0 {
-            return Err(format!(
-                "advance rejects negative and non-finite deltas (got {seconds}); \
-                 freeze the wall clock instead of corrupting the monotonic stream"
-            ));
+            return Err(NonMonotonicAdvance { seconds });
         }
         let mut state = self.state.lock().expect("mock clock state");
         state.now += Duration::microseconds((seconds * 1_000_000.0).round() as i64);

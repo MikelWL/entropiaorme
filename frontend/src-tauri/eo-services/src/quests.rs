@@ -21,7 +21,6 @@
 //! router layer, not here.
 
 use std::collections::HashSet;
-use std::fmt;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use regex::Regex;
@@ -64,27 +63,12 @@ pub const PLAYLIST_GROUP_LONG_HORIZON: &str = "long_horizon";
 /// quest router leaves these unhandled, so they surface as 500s, not
 /// 400s; the future router slice must preserve that. `Db` is a
 /// database failure (also 500).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum QuestError {
+    #[error("{0}")]
     Invalid(String),
-    Db(sqlx::Error),
-}
-
-impl fmt::Display for QuestError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            QuestError::Invalid(message) => write!(f, "{message}"),
-            QuestError::Db(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for QuestError {}
-
-impl From<sqlx::Error> for QuestError {
-    fn from(error: sqlx::Error) -> Self {
-        QuestError::Db(error)
-    }
+    #[error(transparent)]
+    Db(#[from] sqlx::Error),
 }
 
 /// The enriched quest SELECT: every quest column plus the latest

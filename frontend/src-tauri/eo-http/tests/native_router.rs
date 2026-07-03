@@ -1964,7 +1964,7 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
         } else {
             completion_runtime.block_on(fut)
         };
-        result.map(|_| ()).map_err(|err| err.to_string())
+        result.map(|_| ()).map_err(Into::into)
     }));
     let repair_ocr = Arc::new(RepairOcrService::new(RepairProviders {
         repair_region: Arc::new(|| Some(([10, 20], [110, 60]))),

@@ -61,34 +61,20 @@ const DEMO_SMALL_WEAPON: &str = "Jester D-1";
 const DEMO_BIG_WEAPON: &str = "Korss H400";
 const DEMO_HEAL_TOOL: &str = "Vivo T1";
 
-#[derive(Debug)]
+/// Why the demo surface could not prime or serve. Log-facing only: the
+/// demo routes reply with the generic 500 and log the failure.
+#[derive(Debug, thiserror::Error)]
 pub enum DemoError {
-    Io(std::io::Error),
-    Db(eo_services::db::DbError),
-    Sql(sqlx::Error),
-    Fixture(serde_json::Error),
+    #[error("demo data dir: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("demo database: {0}")]
+    Db(#[from] eo_services::db::DbError),
+    #[error("demo seed write: {0}")]
+    Sql(#[from] sqlx::Error),
+    #[error("demo fixture: {0}")]
+    Fixture(#[from] serde_json::Error),
+    #[error("demo equipment {0:?} is not in the bundled library")]
     MissingEquipment(String),
-}
-
-impl From<std::io::Error> for DemoError {
-    fn from(e: std::io::Error) -> Self {
-        DemoError::Io(e)
-    }
-}
-impl From<eo_services::db::DbError> for DemoError {
-    fn from(e: eo_services::db::DbError) -> Self {
-        DemoError::Db(e)
-    }
-}
-impl From<sqlx::Error> for DemoError {
-    fn from(e: sqlx::Error) -> Self {
-        DemoError::Sql(e)
-    }
-}
-impl From<serde_json::Error> for DemoError {
-    fn from(e: serde_json::Error) -> Self {
-        DemoError::Fixture(e)
-    }
 }
 
 // ── The committed fixture shape ──

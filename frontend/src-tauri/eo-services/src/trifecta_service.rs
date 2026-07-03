@@ -62,9 +62,19 @@ pub async fn describe_trifecta(
 
     let mut result = Map::new();
 
-    for (key, label, id) in [
-        ("small_weapon", "small weapon", small_id),
-        ("big_weapon", "big weapon", big_id),
+    for (key, label, parse_context, id) in [
+        (
+            "small_weapon",
+            "small weapon",
+            "small weapon properties parse",
+            small_id,
+        ),
+        (
+            "big_weapon",
+            "big weapon",
+            "big weapon properties parse",
+            big_id,
+        ),
     ] {
         let Some((row_id, name, properties_json)) = db.equipment_item(id, "weapon").await? else {
             return Ok((
@@ -75,8 +85,10 @@ pub async fn describe_trifecta(
             ));
         };
 
-        let props: Value = serde_json::from_str(&properties_json)
-            .map_err(|e| DbError::Driver(format!("equipment properties parse: {e}")))?;
+        let props: Value = serde_json::from_str(&properties_json).map_err(|e| DbError::Decode {
+            context: parse_context,
+            source: e,
+        })?;
         // `max(0, int(configured or 0))`, the same coercion the cost
         // engine applies (JSON ints and floats both truncate).
         let damage_enhancers = (props
@@ -159,8 +171,11 @@ pub async fn describe_trifecta(
         ));
     };
 
-    let heal_props: Value = serde_json::from_str(&heal_properties_json)
-        .map_err(|e| DbError::Driver(format!("equipment properties parse: {e}")))?;
+    let heal_props: Value =
+        serde_json::from_str(&heal_properties_json).map_err(|e| DbError::Decode {
+            context: "healing tool properties parse",
+            source: e,
+        })?;
     let markup = heal_props
         .get("markup")
         .and_then(Value::as_f64)

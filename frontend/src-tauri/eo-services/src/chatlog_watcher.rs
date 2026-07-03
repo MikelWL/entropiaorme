@@ -211,6 +211,22 @@ pub struct ChatlogWatcher {
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
+/// The watcher failed to drain within the deadline (see
+/// [`ChatlogWatcher::wait_until_drained`]): a test-surface diagnostic
+/// carrying what the tail loop had actually processed when time ran
+/// out.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "chatlog watcher did not drain to {min_lines} line(s) within {timeout:?} \
+     (read {read}, pending tick={pending_tick})"
+)]
+pub struct DrainTimeout {
+    pub min_lines: u64,
+    pub timeout: Duration,
+    pub read: u64,
+    pub pending_tick: bool,
+}
+
 impl ChatlogWatcher {
     pub fn new(
         bus: Arc<EventBus>,
@@ -268,19 +284,23 @@ impl ChatlogWatcher {
     /// and flushed any pending tick. The timeout always runs on the
     /// real clock: a watcher that never drains is a bug to surface,
     /// not a flake to sleep through.
-    pub fn wait_until_drained(&self, min_lines: u64, timeout: Duration) -> Result<(), String> {
+    pub fn wait_until_drained(
+        &self,
+        min_lines: u64,
+        timeout: Duration,
+    ) -> Result<(), DrainTimeout> {
         let deadline = Instant::now() + timeout;
         let (lock, condvar) = &self.shared.idle;
         let mut guard = lock.lock().expect("idle lock");
         while self.lines_seen() < min_lines || self.has_pending_tick() {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(format!(
-                    "chatlog watcher did not drain to {min_lines} line(s) within \
-                     {timeout:?} (read {}, pending tick={})",
-                    self.lines_seen(),
-                    self.has_pending_tick()
-                ));
+                return Err(DrainTimeout {
+                    min_lines,
+                    timeout,
+                    read: self.lines_seen(),
+                    pending_tick: self.has_pending_tick(),
+                });
             }
             let (next, _timed_out) = condvar
                 .wait_timeout(guard, remaining)

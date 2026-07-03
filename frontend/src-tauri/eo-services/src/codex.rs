@@ -27,7 +27,6 @@
 //! the race is closed.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -60,22 +59,13 @@ pub const META_PED: f64 = 1.0;
 /// The service's error surface: `Invalid` carries the original's
 /// `ValueError` messages verbatim (HTTP 400 at the router); `Db` is a
 /// database failure (HTTP 500).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CodexError {
+    #[error("{0}")]
     Invalid(String),
-    Db(sqlx::Error),
+    #[error(transparent)]
+    Db(#[from] sqlx::Error),
 }
-
-impl fmt::Display for CodexError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CodexError::Invalid(message) => write!(f, "{message}"),
-            CodexError::Db(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for CodexError {}
 
 /// A species' codex parameters from the game-data catalogue.
 struct Species {
