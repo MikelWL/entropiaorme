@@ -396,6 +396,7 @@ impl HuntTracker {
                 Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_dt).await?;
                 Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_dt).await?;
                 write_session_summary(&mut tx, &session_id).await?;
+                crate::daily_rollup::refresh_session_days(&mut tx, &session_id).await?;
                 tx.commit().await?;
             }
             Ok(())
@@ -935,6 +936,7 @@ impl HuntTracker {
             Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_time).await?;
             Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_time).await?;
             write_session_summary(&mut tx, &session_id).await?;
+            crate::daily_rollup::refresh_session_days(&mut tx, &session_id).await?;
             tx.commit().await?;
             Ok::<(), DbError>(())
         })?;
@@ -2008,18 +2010,23 @@ impl HuntTracker {
             return Ok(());
         }
         let margin = round_half_even(shrapnel_ped * 0.01, 4);
+        let date = naive_isoformat(end_time);
         sqlx::query(
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
-        .bind(naive_isoformat(end_time))
+        .bind(&date)
         .bind("markup")
         .bind("Shrapnel Conversion")
         .bind(margin)
         .bind("convert")
         .execute(&mut *conn)
         .await?;
+        // A live stop dates this "now" (past the rollup watermark), but
+        // orphan recovery backdates it to the crashed session's end, so
+        // the entry's day must reland with the write.
+        crate::daily_rollup::refresh_days(&mut *conn, [date]).await?;
         Ok(())
     }
 
@@ -2044,18 +2051,22 @@ impl HuntTracker {
         if rebate <= 0.0 {
             return Ok(());
         }
+        let date = naive_isoformat(end_time);
         sqlx::query(
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
-        .bind(naive_isoformat(end_time))
+        .bind(&date)
         .bind("markup")
         .bind("Enhancer Shrapnel Rebate")
         .bind(round_half_even(rebate, 4))
         .bind("enhancer")
         .execute(&mut *conn)
         .await?;
+        // Same watermark reasoning as the shrapnel-conversion entry:
+        // orphan recovery can backdate this day.
+        crate::daily_rollup::refresh_days(&mut *conn, [date]).await?;
         Ok(())
     }
 }
@@ -2609,6 +2620,157 @@ mod tests {
             ),
             1
         );
+    }
+
+    #[test]
+    fn stopping_a_session_relands_its_days_rollups() {
+        let rig = rig();
+        let tracker = rig.tracker(Providers {
+            equipment_cost_lookup: Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 }),
+            ..Providers::default()
+        });
+        let session = tracker.start_session().unwrap();
+        rig.bus
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: "Rifle".into(),
+                source: None,
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 30.0,
+                timestamp: "2026-01-01T00:00:01".into(),
+            }));
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some("2026-01-01T00:00:02".into()),
+            items: vec![LootItem {
+                item_name: "Animal Hide".into(),
+                quantity: 1,
+                value_ped: 4.5,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 4.5,
+        }));
+        // A dangling shot after the kill: its cost persists only at stop.
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 7.5,
+                timestamp: "2026-01-01T00:00:03".into(),
+            }));
+
+        // Two days later the session's day is behind the heal watermark,
+        // rolled up WITHOUT the still-unpersisted dangling cost.
+        rig.clock.advance(2.0 * 86_400.0).unwrap();
+        let now = naive_to_epoch(rig.clock.now());
+        rig.runtime.block_on(async {
+            crate::daily_rollup::heal_rollups(&rig.pool, now)
+                .await
+                .unwrap();
+        });
+        let start_day =
+            crate::daily_rollup::epoch_day(naive_to_epoch(naive("2026-01-01T00:00:00")));
+        let pre_stop: Option<f64> = rig.runtime.block_on(async {
+            sqlx::query_scalar("SELECT dangling_cost FROM daily_rollups WHERE day = ?")
+                .bind(&start_day)
+                .fetch_one(&rig.pool)
+                .await
+                .unwrap()
+        });
+        assert_eq!(pre_stop, Some(0.0), "pre-stop: the column default");
+
+        // The stop transaction persists the dangling cost and relands
+        // the session's days in the same commit.
+        let stopped = tracker.stop_session().unwrap().unwrap();
+        assert_eq!(stopped.id, session.id);
+        let post_stop: Option<f64> = rig.runtime.block_on(async {
+            sqlx::query_scalar("SELECT dangling_cost FROM daily_rollups WHERE day = ?")
+                .bind(&start_day)
+                .fetch_one(&rig.pool)
+                .await
+                .unwrap()
+        });
+        assert_eq!(post_stop, Some(0.05), "the stop hook relanded the day");
+        // The stop day itself (today) stays raw.
+        let today = crate::daily_rollup::epoch_day(now);
+        assert_eq!(
+            rig.scalar_i64(
+                "SELECT COUNT(*) FROM daily_rollups WHERE day >= ?",
+                &[&today],
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
+        let rig = rig();
+        let start_epoch = naive_to_epoch(naive("2025-12-30T10:00:00"));
+        let kill_epoch = naive_to_epoch(naive("2025-12-30T11:00:00"));
+        rig.runtime.block_on(async {
+            sqlx::query(
+                "INSERT INTO tracking_sessions (id, started_at, is_active, mob_tracking_mode) \
+                 VALUES ('orphan', ?, 1, 'mob')",
+            )
+            .bind(start_epoch)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
+                 timestamp, shots_fired, damage_dealt, damage_taken, critical_hits, \
+                 cost_ped, enhancer_cost, loot_total_ped, is_global, is_hof) \
+                 VALUES ('k1', 'orphan', 'Atrox', '', '', ?, 3, 30.0, 0.0, 0, \
+                 0.15, 0.0, 80.0, 0, 0)",
+            )
+            .bind(kill_epoch)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+        });
+        rig.execute(
+            "INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, \
+             is_enhancer_shrapnel) VALUES ('k1', 'Shrapnel', 500, 50.0, 0)",
+        );
+        rig.execute(
+            "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
+             critical_hits, cost_per_shot) VALUES ('k1', 'Rifle', 3, 30.0, 0, 0.05)",
+        );
+
+        // Heal first (clock: 2026-01-01), so the orphan's day sits at or
+        // below the watermark when recovery closes it.
+        let now = naive_to_epoch(rig.clock.now());
+        rig.runtime.block_on(async {
+            crate::daily_rollup::heal_rollups(&rig.pool, now)
+                .await
+                .unwrap();
+        });
+
+        let _tracker = rig.tracker(Providers::default());
+
+        // Recovery relanded the kill day's families.
+        let kill_day = crate::daily_rollup::epoch_day(kill_epoch);
+        let loot: Option<f64> = rig.runtime.block_on(async {
+            sqlx::query_scalar("SELECT loot_tt FROM daily_rollups WHERE day = ?")
+                .bind(&kill_day)
+                .fetch_one(&rig.pool)
+                .await
+                .unwrap()
+        });
+        assert_eq!(loot, Some(80.0));
+
+        // The backdated shrapnel-conversion ledger entry (a datetime
+        // key at the crashed session's end) rolled up eagerly too.
+        let ledger_key = naive_isoformat(epoch_to_naive(kill_epoch));
+        let (kind, amount): (String, f64) = rig.runtime.block_on(async {
+            sqlx::query_as(
+                "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ? AND tag = 'convert'",
+            )
+            .bind(&ledger_key)
+            .fetch_one(&rig.pool)
+            .await
+            .unwrap()
+        });
+        assert_eq!((kind.as_str(), amount), ("markup", 0.5));
     }
 
     #[test]

@@ -776,6 +776,12 @@ impl From<sqlx::Error> for EditError {
     }
 }
 
+impl From<DbError> for EditError {
+    fn from(_: DbError) -> Self {
+        EditError::Internal
+    }
+}
+
 impl EditError {
     fn into_response(self) -> Response<Body> {
         match self {
@@ -1086,6 +1092,7 @@ async fn bulk_flip_loot_item(
         .bind(session_id)
         .execute(&mut *tx)
         .await?;
+    eo_services::daily_rollup::refresh_session_days(&mut tx, session_id).await?;
     tx.commit().await?;
 
     build_loot_item_edit_response(
@@ -1107,23 +1114,33 @@ async fn set_armour_cost_impl(
     session_id: &str,
     cost: f64,
 ) -> Result<Value, EditError> {
-    let row = sqlx::query("SELECT id FROM tracking_sessions WHERE id = ?")
+    let row = sqlx::query("SELECT started_at FROM tracking_sessions WHERE id = ?")
         .bind(session_id)
         .fetch_optional(pool)
         .await?;
-    if row.is_none() {
+    let Some(row) = row else {
         return Err(EditError::Http(
             StatusCode::NOT_FOUND,
             "Session not found".to_string(),
         ));
-    }
+    };
+    let started_at: f64 = row.try_get(0)?;
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "UPDATE tracking_sessions SET armour_cost = COALESCE(armour_cost, 0) + ? WHERE id = ?",
     )
     .bind(cost)
     .bind(session_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    // The armour family buckets on the session's start day; a backdated
+    // edit must reland that day's rollup with the write.
+    eo_services::daily_rollup::refresh_days(
+        &mut tx,
+        [eo_services::daily_rollup::epoch_day(started_at)],
+    )
+    .await?;
+    tx.commit().await?;
     Ok(json!({
         "sessionId": session_id,
         "armourCost": round(cost, 2),
@@ -1950,5 +1967,53 @@ mod tests {
             StatusCode::NOT_FOUND,
             "Session not found",
         );
+    }
+
+    /// The seed's sessions sit on 1970-01-01; heal two days later so
+    /// their day is behind the rollup watermark and the edit hooks are
+    /// observable.
+    async fn heal_past_the_seed(pool: &SqlitePool) {
+        eo_services::daily_rollup::heal_rollups(pool, 1000.0 + 2.0 * 86_400.0)
+            .await
+            .unwrap();
+    }
+
+    async fn rollup_family(pool: &SqlitePool, column: &str) -> Option<f64> {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT {column} FROM daily_rollups WHERE day = '1970-01-01'"
+        )))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn armour_cost_edit_relands_the_sessions_day_rollup() {
+        let pool = memory_pool().await;
+        seed_edit(&pool).await;
+        heal_past_the_seed(&pool).await;
+        assert_eq!(rollup_family(&pool, "armour_cost").await, Some(5.0));
+
+        set_armour_cost_impl(&pool, "ended", 2.5).await.unwrap();
+        assert_eq!(
+            rollup_family(&pool, "armour_cost").await,
+            Some(7.5),
+            "the backdated edit relanded the day"
+        );
+    }
+
+    #[tokio::test]
+    async fn loot_item_edit_relands_the_sessions_day_rollup() {
+        let pool = memory_pool().await;
+        seed_edit(&pool).await;
+        heal_past_the_seed(&pool).await;
+        assert_eq!(rollup_family(&pool, "loot_tt").await, Some(35.0));
+
+        // Deactivating both Animal Hide stacks subtracts 4.5 from the
+        // two kills' loot inside the edit transaction.
+        bulk_flip_loot_item(&pool, "ended", "Animal Hide", "deactivated")
+            .await
+            .unwrap();
+        assert_eq!(rollup_family(&pool, "loot_tt").await, Some(30.5));
     }
 }
