@@ -796,12 +796,14 @@ mod tests {
 
         // Seed then delete most rows, leaving free pages the compaction packs.
         for i in 0..500 {
-            sqlx::query("INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)")
-                .bind(format!("s-{i}"))
-                .bind(i as f64)
-                .execute(db.write())
-                .await
-                .unwrap();
+            sqlx::query(
+                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)",
+            )
+            .bind(format!("s-{i}"))
+            .bind(i as f64)
+            .execute(db.write())
+            .await
+            .unwrap();
         }
         sqlx::query("DELETE FROM tracking_sessions WHERE id != 's-0'")
             .execute(db.write())
@@ -836,10 +838,10 @@ mod tests {
     #[tokio::test]
     async fn quick_check_reports_ok_on_a_healthy_database() {
         let dir = tempfile::tempdir().unwrap();
-        let db = Db::open(&dir.path().join("entropia_orme.db")).await.unwrap();
-        let outcome = db
-            .quick_check_budgeted(Duration::from_secs(30))
-            .await;
+        let db = Db::open(&dir.path().join("entropia_orme.db"))
+            .await
+            .unwrap();
+        let outcome = db.quick_check_budgeted(Duration::from_secs(30)).await;
         assert!(
             matches!(outcome, QuickCheckOutcome::Ok),
             "a freshly migrated database is healthy: {outcome:?}"
@@ -849,13 +851,18 @@ mod tests {
     #[tokio::test]
     async fn quick_check_honours_its_budget_and_returns_without_blocking() {
         let dir = tempfile::tempdir().unwrap();
-        let db = Db::open(&dir.path().join("entropia_orme.db")).await.unwrap();
+        let db = Db::open(&dir.path().join("entropia_orme.db"))
+            .await
+            .unwrap();
         // A vanishing budget forces the timeout arm on all but the fastest
         // machines; either way the call returns promptly and never hangs,
         // which is the startup guarantee under test.
         let outcome = db.quick_check_budgeted(Duration::from_nanos(1)).await;
         assert!(
-            matches!(outcome, QuickCheckOutcome::OverBudget | QuickCheckOutcome::Ok),
+            matches!(
+                outcome,
+                QuickCheckOutcome::OverBudget | QuickCheckOutcome::Ok
+            ),
             "a starved budget yields OverBudget (or Ok if it beat the clock): {outcome:?}"
         );
     }

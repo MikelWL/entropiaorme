@@ -299,7 +299,9 @@ async fn rollup_family_sums_multi(
         "SELECT {} FROM daily_rollups WHERE {where_clause}",
         cols.join(", ")
     );
-    let row = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_one(pool).await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await?;
 
     for (slot, (out_index, _, _)) in active.iter().enumerate() {
         let base = slot * 9;
@@ -697,7 +699,8 @@ async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError
         .collect();
     let rollup_sums = rollup_family_sums_multi(pool, &windows).await?;
     let mut metrics = Vec::with_capacity(window_bounds.len());
-    for ((start, end), (window, sums)) in window_bounds.iter().zip(windows.iter().zip(rollup_sums)) {
+    for ((start, end), (window, sums)) in window_bounds.iter().zip(windows.iter().zip(rollup_sums))
+    {
         metrics.push(assemble_metrics(pool, window, sums, *start, *end, &watermark).await?);
     }
     let mut metrics = metrics.into_iter();
@@ -1462,14 +1465,14 @@ impl HydrationState {
     /// cursor the first page is served; `limit` bounds the page (default
     /// [`LEDGER_PAGE_DEFAULT`], capped at [`LEDGER_PAGE_MAX`]).
     pub async fn list_ledger(&self, cursor: Option<&str>, limit: Option<i64>) -> Response<Body> {
-        let page = limit.unwrap_or(LEDGER_PAGE_DEFAULT).clamp(1, LEDGER_PAGE_MAX);
+        let page = limit
+            .unwrap_or(LEDGER_PAGE_DEFAULT)
+            .clamp(1, LEDGER_PAGE_MAX);
         let seek = match cursor {
             None => None,
             Some(token) => match decode_ledger_cursor(token) {
                 Some(key) => Some(key),
-                None => {
-                    return error_response(StatusCode::BAD_REQUEST, &detail("Invalid cursor"))
-                }
+                None => return error_response(StatusCode::BAD_REQUEST, &detail("Invalid cursor")),
             },
         };
 
@@ -1499,9 +1502,10 @@ impl HydrationState {
             &rows[..]
         };
         let items: Vec<Value> = kept.iter().map(ledger_item).collect();
-        let next_cursor = has_more.then(|| kept.last()).flatten().map(|row| {
-            encode_ledger_cursor(&row.get::<String, _>(1), &row.get::<String, _>(0))
-        });
+        let next_cursor = has_more
+            .then(|| kept.last())
+            .flatten()
+            .map(|row| encode_ledger_cursor(&row.get::<String, _>(1), &row.get::<String, _>(0)));
         ledger_page_response(&Value::Array(items), next_cursor.as_deref())
     }
 
@@ -2527,7 +2531,13 @@ mod tests {
         let state = write_state().await;
         for day in ["01", "02", "03", "04", "05"] {
             state
-                .create_ledger_entry(&format!("2026-05-{day}"), "expense", &format!("e{day}"), 1.0, "t")
+                .create_ledger_entry(
+                    &format!("2026-05-{day}"),
+                    "expense",
+                    &format!("e{day}"),
+                    1.0,
+                    "t",
+                )
                 .await;
         }
 

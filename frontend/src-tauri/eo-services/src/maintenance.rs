@@ -205,8 +205,14 @@ mod tests {
         );
         // All three projections are covered and non-trivial.
         assert_eq!(report.tables.len(), 3);
-        assert!(report.tables.iter().any(|t| t.table == "session_summaries" && t.row_count == 1));
-        assert!(report.tables.iter().any(|t| t.table == "daily_rollups" && t.row_count > 0));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "session_summaries" && t.row_count == 1));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "daily_rollups" && t.row_count > 0));
         assert!(report
             .tables
             .iter()
