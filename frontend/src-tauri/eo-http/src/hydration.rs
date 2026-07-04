@@ -1,15 +1,18 @@
-//! Natively-served hydration handlers for the quests read surface,
-//! byte-faithful to the backend's responses: the router-layer
-//! camelCase formatting (ids as strings, rounded analytics columns,
-//! or-empty text fields), the body serialisation form the backend's
-//! HTTP layer emits, and the strong-ETag conditional-GET semantics of
-//! its middleware: a SHA-256 ETag over
-//! the body, `Cache-Control: no-cache`, and `304 Not Modified` with an
-//! empty body when `If-None-Match` already names the representation.
+//! The in-process HTTP layer's shared response machinery and the
+//! tracking-session quest-link handlers, byte-faithful to the backend's
+//! responses: the body serialisation form the backend's HTTP layer
+//! emits, the strong-ETag conditional-GET semantics of its middleware (a
+//! SHA-256 ETag over the body, `Cache-Control: no-cache`, and `304 Not
+//! Modified` with an empty body when `If-None-Match` already names the
+//! representation), the unhandled-exception envelope, and the quest-link
+//! suggestion / decision formatters (ids as strings).
 //!
-//! The handlers were each proven against the Python reference over a
-//! shared database before its route registered natively (one line per
-//! route in `native_routes`).
+//! Route families migrate off this surface onto typed IPC commands
+//! family by family (ADR-0019); the quests + playlists reads and writes
+//! moved to `eo-api`, leaving the shared helpers here plus the two
+//! `/api/tracking/session/{id}/quest-link*` handlers a later family
+//! carries. The handlers were each proven against the Python reference
+//! over a shared database before its route registered natively.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,7 +24,7 @@ use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::quests::{QuestError, QuestService};
 use eo_wire::normalizer::to_wire_json;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
@@ -165,142 +168,6 @@ pub(crate) fn internal_error() -> Response<Body> {
 
 // ── Router-layer formatters ────────────
 
-/// The quest wire shape, mirroring `_format_quest` key for key.
-fn format_quest(quest: &Value) -> Value {
-    let string_id = |value: &Value| json!(python_str_of(value));
-    let mut out = Map::new();
-    out.insert("id".into(), string_id(&quest["id"]));
-    out.insert("name".into(), quest["name"].clone());
-    out.insert("category".into(), quest["category"].clone());
-    out.insert("targetMobs".into(), quest["mobs"].clone());
-    out.insert("planet".into(), quest["planet"].clone());
-    out.insert("waypoint".into(), quest["waypoint"].clone());
-    out.insert(
-        "cooldownDurationHours".into(),
-        quest["cooldown_hours"].clone(),
-    );
-    out.insert(
-        "cooldownExpiresAt".into(),
-        quest["cooldown_expires_at"].clone(),
-    );
-    out.insert("reward".into(), quest["reward_ped"].clone());
-    out.insert(
-        "rewardIsSkill".into(),
-        json!(quest["reward_is_skill"].as_i64().unwrap_or(0) != 0),
-    );
-    out.insert(
-        "expectedRewardMarkupPercent".into(),
-        quest["expected_reward_markup_percent"].clone(),
-    );
-    out.insert(
-        "rewardDescription".into(),
-        or_empty(&quest["reward_description"]),
-    );
-    out.insert("notes".into(), or_empty(&quest["notes"]));
-    out.insert("chainName".into(), quest["chain_name"].clone());
-    out.insert("chainPosition".into(), quest["chain_position"].clone());
-    out.insert("chainTotal".into(), quest["chain_total"].clone());
-    out.insert(
-        "playlistIds".into(),
-        json!(quest["playlist_ids"]
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-            .iter()
-            .map(|id| json!(python_str_of(id)))
-            .collect::<Vec<_>>()),
-    );
-    out.insert("startedAt".into(), quest["started_at"].clone());
-    Value::Object(out)
-}
-
-/// The playlist wire shape, mirroring `_format_playlist`.
-fn format_playlist(playlist: &Value) -> Value {
-    let string_ids = |value: &Value| {
-        json!(value
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-            .iter()
-            .map(|id| json!(python_str_of(id)))
-            .collect::<Vec<_>>())
-    };
-    let items = playlist["items"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-        .iter()
-        .map(|item| {
-            json!({
-                "questId": python_str_of(&item["quest_id"]),
-                "description": item["description"],
-                "groupType": item.get("group_type").cloned().unwrap_or_else(|| json!("immediate")),
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "id": python_str_of(&playlist["id"]),
-        "name": playlist["name"],
-        "planet": playlist["planet"],
-        "estimatedMinutes": playlist["estimated_minutes"],
-        "questIds": string_ids(&playlist["quest_ids"]),
-        "immediateQuestIds": string_ids(&playlist["immediate_quest_ids"]),
-        "longHorizonQuestIds": string_ids(&playlist["long_horizon_quest_ids"]),
-        "items": items,
-    })
-}
-
-/// The per-quest analytics wire shape, mirroring
-/// `_format_quest_analytics` (rounded columns included).
-fn format_quest_analytics(row: &Value) -> Value {
-    json!({
-        "questId": python_str_of(&row["quest_id"]),
-        "questName": row["quest_name"],
-        "planet": row["planet"],
-        "category": row["category"],
-        "rewardPed": float_field(rounded(&row["reward_ped"], 2)),
-        "rewardIsSkill": row["reward_is_skill"],
-        "expectedRewardMarkupPercent": row["expected_reward_markup_percent"],
-        "totalExpectedRewardPed": float_field(rounded(&row["total_expected_reward_ped"], 2)),
-        "linkedSessions": row["linked_sessions"],
-        "totalDurationSec": float_field(rounded(&row["total_duration"], 1)),
-        "totalWeaponCost": float_field(rounded(&row["weapon_cost"], 4)),
-        "totalHealCost": float_field(rounded(&row["heal_cost"], 4)),
-        "totalEnhancerCost": float_field(rounded(&row["enhancer_cost"], 4)),
-        "totalArmourCost": float_field(rounded(&row["armour_cost"], 4)),
-        "totalLootTt": float_field(rounded(&row["loot_tt"], 4)),
-        "totalPes": float_field(rounded(&row["skill_tt"], 4)),
-    })
-}
-
-/// The per-playlist analytics wire shape, mirroring
-/// `_format_playlist_analytics`.
-fn format_playlist_analytics(row: &Value) -> Value {
-    json!({
-        "playlistId": python_str_of(&row["playlist_id"]),
-        "playlistName": row["playlist_name"],
-        "questCount": row["quest_count"],
-        "longHorizonQuestCount": row["long_horizon_quest_count"],
-        "matchedSessions": row["matched_sessions"],
-        "totalRewardPed": float_field(rounded(&row["total_reward_ped"], 2)),
-        "totalImmediateRewardPed": float_field(rounded(&row["total_immediate_reward_ped"], 2)),
-        "totalBonusRewardPed": float_field(rounded(&row["total_bonus_reward_ped"], 2)),
-        "totalPesReward": float_field(rounded(&row["total_skill_reward_ped"], 2)),
-        "totalImmediatePesReward": float_field(rounded(&row["total_immediate_skill_reward_ped"], 2)),
-        "totalBonusPesReward": float_field(rounded(&row["total_bonus_skill_reward_ped"], 2)),
-        "totalExpectedRewardPed": float_field(rounded(&row["total_expected_reward_ped"], 2)),
-        "totalExpectedImmediateRewardPed": float_field(rounded(&row["total_expected_immediate_reward_ped"], 2)),
-        "totalExpectedBonusRewardPed": float_field(rounded(&row["total_expected_bonus_reward_ped"], 2)),
-        "totalDurationSec": float_field(rounded(&row["total_duration"], 1)),
-        "totalWeaponCost": float_field(rounded(&row["weapon_cost"], 4)),
-        "totalHealCost": float_field(rounded(&row["heal_cost"], 4)),
-        "totalEnhancerCost": float_field(rounded(&row["enhancer_cost"], 4)),
-        "totalArmourCost": float_field(rounded(&row["armour_cost"], 4)),
-        "totalLootTt": float_field(rounded(&row["loot_tt"], 4)),
-        "totalPes": float_field(rounded(&row["skill_tt"], 4)),
-    })
-}
-
 /// `str(value)` as the formatters apply it to ids (integers render
 /// identically in both languages; strings pass through).
 pub(crate) fn python_str_of(value: &Value) -> String {
@@ -308,36 +175,6 @@ pub(crate) fn python_str_of(value: &Value) -> String {
         Value::String(text) => text.clone(),
         Value::Number(number) => number.to_string(),
         other => other.to_string(),
-    }
-}
-
-/// `value or ""` over nullable text columns.
-fn or_empty(value: &Value) -> Value {
-    match value.as_str() {
-        Some(text) if !text.is_empty() => value.clone(),
-        _ => json!(""),
-    }
-}
-
-/// A model-declared float field: the response models coerce an
-/// integer value to its float form at serialisation, so an
-/// engine-typed integer zero leaves the wire as `0.0`.
-fn float_field(value: Value) -> Value {
-    match value.as_i64() {
-        Some(integer) => json!(integer as f64),
-        None => value,
-    }
-}
-
-/// `round(value, places)` over the engine-typed analytics numbers:
-/// Python's round keeps an int an int and applies banker's rounding
-/// to floats.
-fn rounded(value: &Value, places: usize) -> Value {
-    match value.as_f64() {
-        Some(number) if value.is_f64() => {
-            json!(eo_wire::normalizer::round_half_even(number, places))
-        }
-        _ => value.clone(),
     }
 }
 
@@ -367,163 +204,11 @@ fn format_quest_link_suggestion(session_id: &str, suggestion: &Value) -> Value {
     })
 }
 
-// ── The nine hydration handlers ─────────────────────────────────────
-
-impl HydrationState {
-    /// GET /api/quests
-    pub async fn list_quests(&self, if_none_match: Option<&str>) -> Response<Body> {
-        match self.quests.get_quests(true).await {
-            Ok(quests) => json_response(
-                &json!(quests.iter().map(format_quest).collect::<Vec<_>>()),
-                if_none_match,
-            ),
-            Err(_) => internal_error(),
-        }
-    }
-
-    /// GET /api/quests/mobs
-    pub async fn list_mob_names(&self, if_none_match: Option<&str>) -> Response<Body> {
-        match self.quests.get_all_mob_names().await {
-            Ok(names) => json_response(&json!(names), if_none_match),
-            Err(_) => internal_error(),
-        }
-    }
-
-    /// GET /api/quests/analytics
-    pub async fn quest_analytics(&self, if_none_match: Option<&str>) -> Response<Body> {
-        match self.quests.get_quest_analytics().await {
-            Ok(rows) => json_response(
-                &json!(rows.iter().map(format_quest_analytics).collect::<Vec<_>>()),
-                if_none_match,
-            ),
-            Err(_) => internal_error(),
-        }
-    }
-
-    /// GET /api/quests/playlists
-    pub async fn list_playlists(&self, if_none_match: Option<&str>) -> Response<Body> {
-        match self.quests.get_playlists(true).await {
-            Ok(playlists) => json_response(
-                &json!(playlists.iter().map(format_playlist).collect::<Vec<_>>()),
-                if_none_match,
-            ),
-            Err(_) => internal_error(),
-        }
-    }
-
-    /// GET /api/quests/playlists/analytics
-    pub async fn playlist_analytics(&self, if_none_match: Option<&str>) -> Response<Body> {
-        match self.quests.get_all_playlist_analytics().await {
-            Ok(rows) => json_response(
-                &json!(rows
-                    .iter()
-                    .map(format_playlist_analytics)
-                    .collect::<Vec<_>>()),
-                if_none_match,
-            ),
-            Err(_) => internal_error(),
-        }
-    }
-}
-
 /// The write surface: each method mirrors its router handler (the
 /// service call, the 404 mapping, the formatter), replying without
 /// conditional-GET headers (the backend's middleware covers 2xx GETs
 /// only).
 impl HydrationState {
-    /// GET /api/quests/{quest_id} (a read: the conditional-GET
-    /// contract applies).
-    pub async fn get_quest_route(
-        &self,
-        quest_id: i64,
-        if_none_match: Option<&str>,
-    ) -> Response<Body> {
-        match self.quests.get_quest(quest_id).await {
-            Ok(Some(quest)) => json_response(&format_quest(&quest), if_none_match),
-            Ok(None) => quest_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// POST /api/quests
-    pub async fn create_quest(&self, data: &Value) -> Response<Body> {
-        match self.quests.create_quest(data).await {
-            Ok(created) => plain_json_response(&format_quest(&created)),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// PUT /api/quests/{quest_id}
-    pub async fn update_quest(&self, quest_id: i64, data: &Value) -> Response<Body> {
-        match self.quests.update_quest(quest_id, data).await {
-            Ok(Some(updated)) => plain_json_response(&format_quest(&updated)),
-            Ok(None) => quest_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// DELETE /api/quests/{quest_id}
-    pub async fn delete_quest(&self, quest_id: i64) -> Response<Body> {
-        match self.quests.delete_quest(quest_id).await {
-            Ok(true) => plain_json_response(&json!({"ok": true})),
-            Ok(false) => quest_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// POST /api/quests/{quest_id}/start
-    pub async fn start_quest(&self, quest_id: i64) -> Response<Body> {
-        match self.quests.start_quest(quest_id).await {
-            Ok(Some(quest)) => plain_json_response(&format_quest(&quest)),
-            Ok(None) => quest_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// POST /api/quests/{quest_id}/complete
-    pub async fn complete_quest(&self, quest_id: i64) -> Response<Body> {
-        match self.quests.complete_quest(quest_id).await {
-            Ok(Some(quest)) => plain_json_response(&format_quest(&quest)),
-            Ok(None) => quest_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// POST /api/quests/{quest_id}/cancel
-    pub async fn cancel_quest(&self, quest_id: i64, undo_reward: bool) -> Response<Body> {
-        match self.quests.cancel_quest(quest_id, undo_reward).await {
-            Ok(Some(quest)) => plain_json_response(&format_quest(&quest)),
-            Ok(None) => quest_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// POST /api/quests/playlists
-    pub async fn create_playlist(&self, data: &Value) -> Response<Body> {
-        match self.quests.create_playlist(data).await {
-            Ok(created) => plain_json_response(&format_playlist(&created)),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// PUT /api/quests/playlists/{playlist_id}
-    pub async fn update_playlist(&self, playlist_id: i64, data: &Value) -> Response<Body> {
-        match self.quests.update_playlist(playlist_id, data).await {
-            Ok(Some(updated)) => plain_json_response(&format_playlist(&updated)),
-            Ok(None) => playlist_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// DELETE /api/quests/playlists/{playlist_id}
-    pub async fn delete_playlist(&self, playlist_id: i64) -> Response<Body> {
-        match self.quests.delete_playlist(playlist_id).await {
-            Ok(true) => plain_json_response(&json!({"ok": true})),
-            Ok(false) => playlist_not_found(),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
     /// GET /api/tracking/session/{session_id}/quest-link-suggestion (a
     /// read: the conditional-GET contract applies). 404 if the session
     /// is absent, checked before the quest service runs.
@@ -623,14 +308,6 @@ pub(crate) fn plain_json_response(payload: &Value) -> Response<Body> {
         .expect("write response builds")
 }
 
-fn quest_not_found() -> Response<Body> {
-    error_response(StatusCode::NOT_FOUND, &detail("Quest not found"))
-}
-
-fn playlist_not_found() -> Response<Body> {
-    error_response(StatusCode::NOT_FOUND, &detail("Playlist not found"))
-}
-
 fn session_not_found() -> Response<Body> {
     error_response(StatusCode::NOT_FOUND, &detail("Session not found"))
 }
@@ -650,7 +327,6 @@ pub fn quest_error_response(_error: QuestError) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eo_services::clock::MockClock;
     use http_body_util::BodyExt;
 
     #[test]
@@ -679,15 +355,6 @@ mod tests {
 
     #[test]
     fn scalar_helpers_match_the_router_layer() {
-        assert_eq!(or_empty(&json!(null)), json!(""));
-        assert_eq!(or_empty(&json!("")), json!(""));
-        assert_eq!(or_empty(&json!("x")), json!("x"));
-        assert_eq!(rounded(&json!(5), 2), json!(5));
-        assert_eq!(rounded(&json!(1.2345), 2), json!(1.23));
-        assert_eq!(rounded(&json!(2.675), 2), json!(2.67));
-        assert_eq!(float_field(json!(0)), json!(0.0));
-        assert_eq!(float_field(json!(1.5)), json!(1.5));
-        assert_eq!(float_field(json!(null)), json!(null));
         assert_eq!(python_str_of(&json!("s")), "s");
         assert_eq!(python_str_of(&json!(42)), "42");
         assert_eq!(detail("gone"), json!({"detail": "gone"}));
@@ -746,139 +413,5 @@ mod tests {
             parts(quest_error_response(QuestError::Invalid("any".to_string()))).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body, b"Internal Server Error");
-    }
-
-    #[test]
-    fn the_formatters_shape_the_router_wire() {
-        let quest = json!({
-            "id": 7, "name": "Iron", "category": null, "mobs": ["Atrox"],
-            "planet": "Foma", "waypoint": null, "cooldown_hours": 24.0,
-            "cooldown_expires_at": null, "reward_ped": 2.5, "reward_is_skill": 1,
-            "expected_reward_markup_percent": null, "reward_description": null,
-            "notes": "", "chain_name": null, "chain_position": null,
-            "chain_total": null, "playlist_ids": [3], "started_at": null,
-        });
-        assert_eq!(
-            format_quest(&quest),
-            json!({
-                "id": "7", "name": "Iron", "category": null, "targetMobs": ["Atrox"],
-                "planet": "Foma", "waypoint": null, "cooldownDurationHours": 24.0,
-                "cooldownExpiresAt": null, "reward": 2.5, "rewardIsSkill": true,
-                "expectedRewardMarkupPercent": null, "rewardDescription": "",
-                "notes": "", "chainName": null, "chainPosition": null,
-                "chainTotal": null, "playlistIds": ["3"], "startedAt": null,
-            })
-        );
-
-        let playlist = json!({
-            "id": 3, "name": "Run", "planet": "Calypso", "estimated_minutes": 30,
-            "quest_ids": [7], "immediate_quest_ids": [7], "long_horizon_quest_ids": [],
-            "items": [{"quest_id": 7, "description": null, "group_type": "immediate"}],
-        });
-        assert_eq!(
-            format_playlist(&playlist),
-            json!({
-                "id": "3", "name": "Run", "planet": "Calypso", "estimatedMinutes": 30,
-                "questIds": ["7"], "immediateQuestIds": ["7"], "longHorizonQuestIds": [],
-                "items": [{"questId": "7", "description": null, "groupType": "immediate"}],
-            })
-        );
-
-        let row = json!({
-            "quest_id": 7, "quest_name": "Iron", "planet": "Foma", "category": null,
-            "reward_ped": 2.5, "reward_is_skill": false,
-            "expected_reward_markup_percent": 150.0,
-            "total_expected_reward_ped": 3.75, "linked_sessions": 1,
-            "total_duration": 30.5, "weapon_cost": 0, "heal_cost": 0,
-            "enhancer_cost": 0.1, "armour_cost": 0.0, "loot_tt": 0, "skill_tt": 0.2,
-        });
-        assert_eq!(
-            format_quest_analytics(&row),
-            json!({
-                "questId": "7", "questName": "Iron", "planet": "Foma", "category": null,
-                "rewardPed": 2.5, "rewardIsSkill": false,
-                "expectedRewardMarkupPercent": 150.0, "totalExpectedRewardPed": 3.75,
-                "linkedSessions": 1, "totalDurationSec": 30.5, "totalWeaponCost": 0.0,
-                "totalHealCost": 0.0, "totalEnhancerCost": 0.1, "totalArmourCost": 0.0,
-                "totalLootTt": 0.0, "totalPes": 0.2,
-            })
-        );
-
-        let row = json!({
-            "playlist_id": 3, "playlist_name": "Run", "quest_count": 1,
-            "long_horizon_quest_count": 0, "matched_sessions": 0,
-            "total_reward_ped": 0, "total_immediate_reward_ped": 0,
-            "total_bonus_reward_ped": 0, "total_skill_reward_ped": 0,
-            "total_immediate_skill_reward_ped": 0, "total_bonus_skill_reward_ped": 0,
-            "total_expected_reward_ped": 0, "total_expected_immediate_reward_ped": 0,
-            "total_expected_bonus_reward_ped": 0, "total_duration": 0,
-            "weapon_cost": 0, "heal_cost": 0, "enhancer_cost": 0, "armour_cost": 0,
-            "loot_tt": 0, "skill_tt": 0,
-        });
-        assert_eq!(
-            format_playlist_analytics(&row),
-            json!({
-                "playlistId": "3", "playlistName": "Run", "questCount": 1,
-                "longHorizonQuestCount": 0, "matchedSessions": 0,
-                "totalRewardPed": 0.0, "totalImmediateRewardPed": 0.0,
-                "totalBonusRewardPed": 0.0, "totalPesReward": 0.0,
-                "totalImmediatePesReward": 0.0, "totalBonusPesReward": 0.0,
-                "totalExpectedRewardPed": 0.0, "totalExpectedImmediateRewardPed": 0.0,
-                "totalExpectedBonusRewardPed": 0.0, "totalDurationSec": 0.0,
-                "totalWeaponCost": 0.0, "totalHealCost": 0.0, "totalEnhancerCost": 0.0,
-                "totalArmourCost": 0.0, "totalLootTt": 0.0, "totalPes": 0.0,
-            })
-        );
-    }
-
-    async fn state(dir: &std::path::Path) -> HydrationState {
-        let snapshot = dir.join("snapshot");
-        std::fs::create_dir_all(&snapshot).unwrap();
-        std::fs::write(snapshot.join("mobs.json"), "[]").unwrap();
-        std::fs::write(snapshot.join("professions.json"), "[]").unwrap();
-        std::fs::write(snapshot.join("skills.json"), "[]").unwrap();
-        let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
-        HydrationState::new(
-            db,
-            Arc::new(GameDataStore::new(&snapshot).unwrap()),
-            Arc::new(MockClock::new(None, 0.0)),
-            dir.to_path_buf(),
-        )
-    }
-
-    #[tokio::test]
-    async fn each_handler_answers_its_route() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = state(dir.path()).await;
-        state
-            .quests
-            .create_quest(&json!({"name": "Iron", "mobs": ["Atrox"]}))
-            .await
-            .unwrap();
-        state
-            .quests
-            .create_playlist(&json!({"name": "Run", "quest_ids": [1]}))
-            .await
-            .unwrap();
-
-        for (label, response, marker) in [
-            ("quests", state.list_quests(None).await, "\"Iron\""),
-            ("mobs", state.list_mob_names(None).await, "\"Atrox\""),
-            ("quest analytics", state.quest_analytics(None).await, "[]"),
-            ("playlists", state.list_playlists(None).await, "\"Run\""),
-            (
-                "playlist analytics",
-                state.playlist_analytics(None).await,
-                "\"Run\"",
-            ),
-        ] {
-            let (status, headers, body) = parts(response).await;
-            assert_eq!(status, StatusCode::OK, "{label}");
-            assert!(headers.contains_key("etag"), "{label}: etag present");
-            assert!(
-                String::from_utf8_lossy(&body).contains(marker),
-                "{label}: body carries {marker}"
-            );
-        }
     }
 }

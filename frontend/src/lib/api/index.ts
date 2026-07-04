@@ -792,83 +792,66 @@ import type {
 	QuestUpdateData,
 } from '$lib/types/quests';
 
+// Served over typed IPC commands (`commands.gen.ts`); the wrappers keep
+// their string-id signatures and hand-written return types, narrowing the
+// generated shapes with `as` (the `unwrap<T>` doctrine's typed-IPC form).
 export async function getQuests(): Promise<Quest[]> {
-	return unwrap(client.GET('/api/quests'));
+	return (await commands.questsList()) as Quest[];
 }
 
 export async function getQuest(id: string): Promise<Quest> {
-	return unwrap(
-		client.GET('/api/quests/{quest_id}', { params: { path: { quest_id: Number(id) } } }),
-	);
+	return (await commands.questGet(Number(id))) as Quest;
 }
 
 export async function createQuest(data: QuestCreateData): Promise<Quest> {
-	return unwrap(client.POST('/api/quests', { body: data }));
+	return (await commands.questCreate(data as commands.QuestInput)) as Quest;
 }
 
 export async function updateQuest(id: string, data: QuestUpdateData): Promise<Quest> {
-	return unwrap(
-		client.PUT('/api/quests/{quest_id}', {
-			params: { path: { quest_id: Number(id) } },
-			body: data,
-		}),
-	);
+	return (await commands.questUpdate(Number(id), data as commands.QuestInput)) as Quest;
 }
 
 export async function deleteQuest(id: string): Promise<void> {
-	await client.DELETE('/api/quests/{quest_id}', { params: { path: { quest_id: Number(id) } } });
+	await commands.questDelete(Number(id));
 }
 
 export async function startQuest(id: string): Promise<Quest> {
-	return unwrap(
-		client.POST('/api/quests/{quest_id}/start', { params: { path: { quest_id: Number(id) } } }),
-	);
+	return (await commands.questStart(Number(id))) as Quest;
 }
 
 export async function completeQuest(id: string): Promise<Quest> {
-	return unwrap(
-		client.POST('/api/quests/{quest_id}/complete', { params: { path: { quest_id: Number(id) } } }),
-	);
+	return (await commands.questComplete(Number(id))) as Quest;
 }
 
 export async function cancelQuest(id: string, undoReward = false): Promise<Quest> {
-	return unwrap(
-		client.POST('/api/quests/{quest_id}/cancel', {
-			params: { path: { quest_id: Number(id) } },
-			body: { undo_reward: undoReward },
-		}),
-	);
+	return (await commands.questCancel(Number(id), undoReward)) as Quest;
 }
 
 export async function getQuestAnalytics(): Promise<QuestAnalyticsRow[]> {
-	return unwrap(client.GET('/api/quests/analytics'));
+	return (await commands.questsAnalytics()) as QuestAnalyticsRow[];
 }
 
 export async function getPlaylistAnalytics(): Promise<PlaylistAnalyticsRow[]> {
-	return unwrap(client.GET('/api/quests/playlists/analytics'));
+	return (await commands.playlistsAnalytics()) as PlaylistAnalyticsRow[];
 }
 
 export async function getPlaylists(): Promise<QuestPlaylist[]> {
-	return unwrap(client.GET('/api/quests/playlists'));
+	return (await commands.playlistsList()) as QuestPlaylist[];
 }
 
 export async function createPlaylist(data: PlaylistCreateData): Promise<QuestPlaylist> {
-	return unwrap(client.POST('/api/quests/playlists', { body: data }));
+	return (await commands.playlistCreate(data as commands.PlaylistInput)) as QuestPlaylist;
 }
 
 export async function updatePlaylist(id: string, data: PlaylistUpdateData): Promise<QuestPlaylist> {
-	return unwrap(
-		client.PUT('/api/quests/playlists/{playlist_id}', {
-			params: { path: { playlist_id: Number(id) } },
-			body: data,
-		}),
-	);
+	return (await commands.playlistUpdate(
+		Number(id),
+		data as commands.PlaylistInput,
+	)) as QuestPlaylist;
 }
 
 export async function deletePlaylist(id: string): Promise<void> {
-	await client.DELETE('/api/quests/playlists/{playlist_id}', {
-		params: { path: { playlist_id: Number(id) } },
-	});
+	await commands.playlistDelete(Number(id));
 }
 
 // --- Settings ---

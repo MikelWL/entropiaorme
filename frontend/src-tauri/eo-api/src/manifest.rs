@@ -25,6 +25,9 @@ use crate::codex::{
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use crate::quests::{
+    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
+};
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::ApiError;
 
@@ -286,6 +289,129 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(String)),
             }],
             returns: Some(schema(schema_for!(CodexMetaClaimResult))),
+        },
+        CommandSpec {
+            name: "quests_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<Quest>))),
+        },
+        CommandSpec {
+            name: "quest_get",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quest_create",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(QuestInput)),
+            }],
+            returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quest_update",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "input",
+                    schema: schema(schema_for!(QuestInput)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quest_delete",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "quest_start",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quest_complete",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quest_cancel",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "undo_reward",
+                    schema: schema(schema_for!(bool)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quests_mobs",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<String>))),
+        },
+        CommandSpec {
+            name: "quests_analytics",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<QuestAnalyticsRow>))),
+        },
+        CommandSpec {
+            name: "playlists_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<QuestPlaylist>))),
+        },
+        CommandSpec {
+            name: "playlist_create",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(PlaylistInput)),
+            }],
+            returns: Some(schema(schema_for!(QuestPlaylist))),
+        },
+        CommandSpec {
+            name: "playlist_update",
+            args: vec![
+                ArgSpec {
+                    name: "playlist_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "input",
+                    schema: schema(schema_for!(PlaylistInput)),
+                },
+            ],
+            returns: Some(schema(schema_for!(QuestPlaylist))),
+        },
+        CommandSpec {
+            name: "playlist_delete",
+            args: vec![ArgSpec {
+                name: "playlist_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "playlists_analytics",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<PlaylistAnalyticsRow>))),
         },
     ]
 }

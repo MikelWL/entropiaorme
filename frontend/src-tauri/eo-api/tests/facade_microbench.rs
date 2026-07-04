@@ -163,10 +163,20 @@ fn facade_microbench() {
         // micro-benchmark captured before the family moved (same empty
         // game-data + fresh-DB state: the six attributes read uncalibrated).
         bench!("codex_meta_attributes", api.codex_meta_attributes());
+
+        // The quests + playlists reads, the after-leg of the HTTP dispatch
+        // measurement (`GET_quests*`) the router micro-benchmark captured
+        // before the family moved (same empty game-data + fresh-DB state:
+        // no quests or playlists, so each read answers its empty collection).
+        bench!("quests_list", api.quests_list());
+        bench!("quests_mobs", api.quests_mobs());
+        bench!("quests_analytics", api.quests_analytics());
+        bench!("playlists_list", api.playlists_list());
+        bench!("playlists_analytics", api.playlists_analytics());
     });
 
     println!(
-        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex over typed commands)"
+        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex + quests over typed commands)"
     );
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \

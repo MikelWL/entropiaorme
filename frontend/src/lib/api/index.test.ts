@@ -239,71 +239,6 @@ describe('plain delegating wrappers map to the expected verb, path, and shape', 
 			'/api/analytics/inventory/{item_id}/sell',
 			{ params: { path: { item_id: 'i1' } }, body: { sale_price: 15 } },
 		],
-		['getQuests', () => api.getQuests(), 'GET', '/api/quests'],
-		[
-			'getQuest coerces the string id to a number',
-			() => api.getQuest('5'),
-			'GET',
-			'/api/quests/{quest_id}',
-			{ params: { path: { quest_id: 5 } } },
-		],
-		[
-			'createQuest',
-			() => api.createQuest({ name: 'Iron' } as never),
-			'POST',
-			'/api/quests',
-			{ body: { name: 'Iron' } },
-		],
-		[
-			'updateQuest',
-			() => api.updateQuest('5', { name: 'Iron II' } as never),
-			'PUT',
-			'/api/quests/{quest_id}',
-			{ params: { path: { quest_id: 5 } }, body: { name: 'Iron II' } },
-		],
-		[
-			'startQuest',
-			() => api.startQuest('5'),
-			'POST',
-			'/api/quests/{quest_id}/start',
-			{ params: { path: { quest_id: 5 } } },
-		],
-		[
-			'completeQuest',
-			() => api.completeQuest('5'),
-			'POST',
-			'/api/quests/{quest_id}/complete',
-			{ params: { path: { quest_id: 5 } } },
-		],
-		[
-			'cancelQuest defaults undo_reward to false',
-			() => api.cancelQuest('5'),
-			'POST',
-			'/api/quests/{quest_id}/cancel',
-			{ params: { path: { quest_id: 5 } }, body: { undo_reward: false } },
-		],
-		['getQuestAnalytics', () => api.getQuestAnalytics(), 'GET', '/api/quests/analytics'],
-		[
-			'getPlaylistAnalytics',
-			() => api.getPlaylistAnalytics(),
-			'GET',
-			'/api/quests/playlists/analytics',
-		],
-		['getPlaylists', () => api.getPlaylists(), 'GET', '/api/quests/playlists'],
-		[
-			'createPlaylist',
-			() => api.createPlaylist({ name: 'dailies' } as never),
-			'POST',
-			'/api/quests/playlists',
-			{ body: { name: 'dailies' } },
-		],
-		[
-			'updatePlaylist',
-			() => api.updatePlaylist('9', { name: 'weeklies' } as never),
-			'PUT',
-			'/api/quests/playlists/{playlist_id}',
-			{ params: { path: { playlist_id: 9 } }, body: { name: 'weeklies' } },
-		],
 	];
 
 	it.each(rows)('%s', async (_name, call, verb, path, options) => {
@@ -348,20 +283,6 @@ describe('void-returning wrappers delegate without unwrapping', () => {
 			'DELETE',
 			'/api/analytics/inventory/{item_id}',
 			{ params: { path: { item_id: 'i1' } } },
-		],
-		[
-			'deleteQuest',
-			() => api.deleteQuest('5'),
-			'DELETE',
-			'/api/quests/{quest_id}',
-			{ params: { path: { quest_id: 5 } } },
-		],
-		[
-			'deletePlaylist',
-			() => api.deletePlaylist('9'),
-			'DELETE',
-			'/api/quests/playlists/{playlist_id}',
-			{ params: { path: { playlist_id: 9 } } },
 		],
 	];
 
@@ -636,6 +557,69 @@ describe('codex wrappers dispatch typed commands', () => {
 			status: 404,
 			message: "Species 'No Such' not found",
 		});
+	});
+});
+
+describe('quests wrappers dispatch typed commands', () => {
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>][] = [
+		['getQuests', () => api.getQuests(), 'quests_list', {}],
+		['getQuest coerces the string id', () => api.getQuest('5'), 'quest_get', { quest_id: 5 }],
+		[
+			'createQuest',
+			() => api.createQuest({ name: 'Iron' } as never),
+			'quest_create',
+			{ input: { name: 'Iron' } },
+		],
+		[
+			'updateQuest',
+			() => api.updateQuest('5', { name: 'Iron II' } as never),
+			'quest_update',
+			{ quest_id: 5, input: { name: 'Iron II' } },
+		],
+		['startQuest', () => api.startQuest('5'), 'quest_start', { quest_id: 5 }],
+		['completeQuest', () => api.completeQuest('5'), 'quest_complete', { quest_id: 5 }],
+		[
+			'cancelQuest defaults undo_reward to false',
+			() => api.cancelQuest('5'),
+			'quest_cancel',
+			{ quest_id: 5, undo_reward: false },
+		],
+		[
+			'cancelQuest passes an explicit undo_reward',
+			() => api.cancelQuest('5', true),
+			'quest_cancel',
+			{ quest_id: 5, undo_reward: true },
+		],
+		['getQuestAnalytics', () => api.getQuestAnalytics(), 'quests_analytics', {}],
+		['getPlaylistAnalytics', () => api.getPlaylistAnalytics(), 'playlists_analytics', {}],
+		['getPlaylists', () => api.getPlaylists(), 'playlists_list', {}],
+		[
+			'createPlaylist',
+			() => api.createPlaylist({ name: 'dailies' } as never),
+			'playlist_create',
+			{ input: { name: 'dailies' } },
+		],
+		[
+			'updatePlaylist',
+			() => api.updatePlaylist('9', { name: 'weeklies' } as never),
+			'playlist_update',
+			{ playlist_id: 9, input: { name: 'weeklies' } },
+		],
+	];
+	it.each(rows)('%s', async (_name, call, command, args) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
+	});
+
+	it('deleteQuest invokes the void typed command and resolves void', async () => {
+		await expect(api.deleteQuest('5')).resolves.toBeUndefined();
+		expect(tauriInvoke).toHaveBeenCalledWith('quest_delete', { quest_id: 5 });
+	});
+
+	it('deletePlaylist invokes the void typed command and resolves void', async () => {
+		await expect(api.deletePlaylist('9')).resolves.toBeUndefined();
+		expect(tauriInvoke).toHaveBeenCalledWith('playlist_delete', { playlist_id: 9 });
 	});
 });
 

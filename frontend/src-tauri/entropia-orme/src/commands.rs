@@ -24,6 +24,9 @@ use eo_api::codex::{
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use eo_api::quests::{
+    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
+};
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::ApiError;
 
@@ -245,6 +248,98 @@ pub async fn codex_meta_claim(
     facade(&app)?.codex_meta_claim(&attribute_name).await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quests_list(app: tauri::AppHandle) -> Result<Vec<Quest>, ApiError> {
+    facade(&app)?.quests_list().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_get(app: tauri::AppHandle, quest_id: i64) -> Result<Quest, ApiError> {
+    facade(&app)?.quest_get(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_create(app: tauri::AppHandle, input: QuestInput) -> Result<Quest, ApiError> {
+    facade(&app)?.quest_create(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_update(
+    app: tauri::AppHandle,
+    quest_id: i64,
+    input: QuestInput,
+) -> Result<Quest, ApiError> {
+    facade(&app)?.quest_update(quest_id, input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_delete(app: tauri::AppHandle, quest_id: i64) -> Result<(), ApiError> {
+    facade(&app)?.quest_delete(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_start(app: tauri::AppHandle, quest_id: i64) -> Result<Quest, ApiError> {
+    facade(&app)?.quest_start(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_complete(app: tauri::AppHandle, quest_id: i64) -> Result<Quest, ApiError> {
+    facade(&app)?.quest_complete(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_cancel(
+    app: tauri::AppHandle,
+    quest_id: i64,
+    undo_reward: bool,
+) -> Result<Quest, ApiError> {
+    facade(&app)?.quest_cancel(quest_id, undo_reward).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quests_mobs(app: tauri::AppHandle) -> Result<Vec<String>, ApiError> {
+    facade(&app)?.quests_mobs().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quests_analytics(app: tauri::AppHandle) -> Result<Vec<QuestAnalyticsRow>, ApiError> {
+    facade(&app)?.quests_analytics().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn playlists_list(app: tauri::AppHandle) -> Result<Vec<QuestPlaylist>, ApiError> {
+    facade(&app)?.playlists_list().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn playlist_create(
+    app: tauri::AppHandle,
+    input: PlaylistInput,
+) -> Result<QuestPlaylist, ApiError> {
+    facade(&app)?.playlist_create(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn playlist_update(
+    app: tauri::AppHandle,
+    playlist_id: i64,
+    input: PlaylistInput,
+) -> Result<QuestPlaylist, ApiError> {
+    facade(&app)?.playlist_update(playlist_id, input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn playlist_delete(app: tauri::AppHandle, playlist_id: i64) -> Result<(), ApiError> {
+    facade(&app)?.playlist_delete(playlist_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn playlists_analytics(
+    app: tauri::AppHandle,
+) -> Result<Vec<PlaylistAnalyticsRow>, ApiError> {
+    facade(&app)?.playlists_analytics().await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -280,6 +375,21 @@ mod tests {
         "codex_claim",
         "codex_unclaim",
         "codex_meta_claim",
+        "quests_list",
+        "quest_get",
+        "quest_create",
+        "quest_update",
+        "quest_delete",
+        "quest_start",
+        "quest_complete",
+        "quest_cancel",
+        "quests_mobs",
+        "quests_analytics",
+        "playlists_list",
+        "playlist_create",
+        "playlist_update",
+        "playlist_delete",
+        "playlists_analytics",
     ];
 
     #[test]
