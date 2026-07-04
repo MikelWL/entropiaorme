@@ -88,7 +88,12 @@ async fn seeded_api(dir: &Path) -> Api {
         ),
         0.0,
     ));
-    Api::new(db, Arc::new(GameDataStore::new(&snapshot).unwrap()), clock, data_dir)
+    Api::new(
+        db,
+        Arc::new(GameDataStore::new(&snapshot).unwrap()),
+        clock,
+        data_dir,
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -156,15 +161,30 @@ async fn the_facade_shapes_the_seeded_state() {
     // The profession optimizer composes the calc service with the
     // projections; the declared-then-extra order is the wire order, and
     // nextLevel renders as a float.
-    let optimizer = api.character_profession_optimizer("Marksman").await.unwrap();
+    let optimizer = api
+        .character_profession_optimizer("Marksman")
+        .await
+        .unwrap();
     assert_eq!(optimizer.profession.as_deref(), Some("Marksman"));
     assert!(optimizer.next_level.is_some());
     assert!(optimizer.error.is_none());
     let serialised = serde_json::to_value(&optimizer).unwrap();
-    let keys: Vec<&str> = serialised.as_object().unwrap().keys().map(String::as_str).collect();
+    let keys: Vec<&str> = serialised
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
     assert_eq!(
         keys,
-        ["skills", "attributes", "profession", "currentLevel", "nextLevel", "gap"]
+        [
+            "skills",
+            "attributes",
+            "profession",
+            "currentLevel",
+            "nextLevel",
+            "gap"
+        ]
     );
 
     // Both path-optimizer modes carry their mode inputs (the other input
@@ -177,7 +197,11 @@ async fn the_facade_shapes_the_seeded_state() {
     assert_eq!(target.input_target_level, Some(7.0));
     assert_eq!(target.input_ped_budget, None);
     let target_bytes = serde_json::to_value(&target).unwrap();
-    assert_eq!(target_bytes["inputPedBudget"], Value::Null, "the unused mode echoes null");
+    assert_eq!(
+        target_bytes["inputPedBudget"],
+        Value::Null,
+        "the unused mode echoes null"
+    );
     let budget = api
         .character_path_optimizer("Marksman", None, Some(25.0))
         .await
@@ -202,7 +226,10 @@ async fn the_computed_reads_serialise_byte_for_byte_like_the_http_route() {
     let dir = tempfile::tempdir().unwrap();
     let api = seeded_api(dir.path()).await;
 
-    let optimizer = api.character_profession_optimizer("Marksman").await.unwrap();
+    let optimizer = api
+        .character_profession_optimizer("Marksman")
+        .await
+        .unwrap();
     assert_eq!(
         serde_json::to_string(&optimizer).unwrap(),
         "{\"skills\":[{\"name\":\"Rifle\",\"weight\":40.0,\"currentLevel\":1250.0,\"levelsNeeded\":50.0,\
@@ -244,7 +271,12 @@ async fn the_optimizers_report_a_missing_profession() {
     );
     assert!(missing.skills.is_empty());
     let bytes = serde_json::to_value(&missing).unwrap();
-    let keys: Vec<&str> = bytes.as_object().unwrap().keys().map(String::as_str).collect();
+    let keys: Vec<&str> = bytes
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
     assert_eq!(keys, ["skills", "attributes", "error"]);
 
     // The path optimizer's not-found converges on the full error shape
@@ -254,7 +286,10 @@ async fn the_optimizers_report_a_missing_profession() {
         .character_path_optimizer("Nope", Some(7.0), None)
         .await
         .unwrap();
-    assert_eq!(missing.error.as_deref(), Some("Profession 'Nope' not found"));
+    assert_eq!(
+        missing.error.as_deref(),
+        Some("Profession 'Nope' not found")
+    );
     assert_eq!(missing.mode, "target");
     assert_eq!(missing.input_target_level, Some(7.0));
     assert_eq!(missing.current_level, 0.0);

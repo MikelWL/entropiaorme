@@ -80,9 +80,7 @@ pub async fn equipment_detail(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn character_calibration(
-    app: tauri::AppHandle,
-) -> Result<CalibrationStatus, ApiError> {
+pub async fn character_calibration(app: tauri::AppHandle) -> Result<CalibrationStatus, ApiError> {
     facade(&app)?.character_calibration().await
 }
 
@@ -123,7 +121,9 @@ pub async fn character_profession_optimizer(
     app: tauri::AppHandle,
     profession: String,
 ) -> Result<ProfessionOptimizerResult, ApiError> {
-    facade(&app)?.character_profession_optimizer(&profession).await
+    facade(&app)?
+        .character_profession_optimizer(&profession)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -139,9 +139,7 @@ pub async fn character_path_optimizer(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn character_hp_optimizer(
-    app: tauri::AppHandle,
-) -> Result<HpOptimizerResult, ApiError> {
+pub async fn character_hp_optimizer(app: tauri::AppHandle) -> Result<HpOptimizerResult, ApiError> {
     facade(&app)?.character_hp_optimizer().await
 }
 

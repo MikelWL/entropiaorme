@@ -534,7 +534,9 @@ impl Api {
             return Err(ApiError::bad_request("target_level must be positive"));
         }
         if query.markup_uplift < 0.0 {
-            return Err(ApiError::bad_request("markup_uplift must be zero or positive"));
+            return Err(ApiError::bad_request(
+                "markup_uplift must be zero or positive",
+            ));
         }
         let slice_type = query.slice_type.as_str();
         if query.slice_type != ProspectSliceType::Global
@@ -676,8 +678,9 @@ impl Api {
             .map_err(ApiError::internal("path optimizer skill calibrations"))?;
         // The mode contract is validated above; a service-level rejection
         // here is unreachable.
-        let mut result = profession_path_optimizer(&skill_levels, &prof_entity, target_level, ped_budget)
-            .map_err(|_| ApiError::Internal)?;
+        let mut result =
+            profession_path_optimizer(&skill_levels, &prof_entity, target_level, ped_budget)
+                .map_err(|_| ApiError::Internal)?;
         if let Some(map) = result.as_object_mut() {
             map.insert("profession".into(), json!(profession));
         }
@@ -839,7 +842,8 @@ fn prospect_sample(sessions: &[&Value]) -> Map<String, Value> {
                     .get(name)
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0);
-                regular_skill_ped.insert(name.clone(), json!(current + ped.as_f64().unwrap_or(0.0)));
+                regular_skill_ped
+                    .insert(name.clone(), json!(current + ped.as_f64().unwrap_or(0.0)));
             }
         }
         if let Some(map) = session.get("attributeLevels").and_then(Value::as_object) {
