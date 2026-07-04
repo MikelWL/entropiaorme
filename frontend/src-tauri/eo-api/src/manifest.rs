@@ -18,6 +18,10 @@ use crate::character::{
     PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
     SkillLevel,
 };
+use crate::codex::{
+    CodexCalibrateResult, CodexClaimResult, CodexMetaAttribute, CodexMetaClaimResult,
+    CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
+};
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -194,6 +198,94 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(SettingsPatch)),
             }],
             returns: Some(schema(schema_for!(AppSettings))),
+        },
+        CommandSpec {
+            name: "codex_species",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<CodexSpecies>))),
+        },
+        CommandSpec {
+            name: "codex_species_ranks",
+            args: vec![ArgSpec {
+                name: "species_name",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(CodexSpeciesRanks))),
+        },
+        CommandSpec {
+            name: "codex_recommend",
+            args: vec![
+                ArgSpec {
+                    name: "species_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "rank",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "profession",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "target",
+                    schema: schema(schema_for!(CodexRecommendTarget)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<CodexSkillOption>))),
+        },
+        CommandSpec {
+            name: "codex_meta_attributes",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<CodexMetaAttribute>))),
+        },
+        CommandSpec {
+            name: "codex_calibrate",
+            args: vec![
+                ArgSpec {
+                    name: "species_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "rank",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(CodexCalibrateResult))),
+        },
+        CommandSpec {
+            name: "codex_claim",
+            args: vec![
+                ArgSpec {
+                    name: "species_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "rank",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "skill_name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(CodexClaimResult))),
+        },
+        CommandSpec {
+            name: "codex_unclaim",
+            args: vec![ArgSpec {
+                name: "species_name",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(CodexClaimResult))),
+        },
+        CommandSpec {
+            name: "codex_meta_claim",
+            args: vec![ArgSpec {
+                name: "attribute_name",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(CodexMetaClaimResult))),
         },
     ]
 }

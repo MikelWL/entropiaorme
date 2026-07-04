@@ -1,5 +1,5 @@
-//! Natively-served hydration handlers for the quests and codex read
-//! surface, byte-faithful to the backend's responses: the router-layer
+//! Natively-served hydration handlers for the quests read surface,
+//! byte-faithful to the backend's responses: the router-layer
 //! camelCase formatting (ids as strings, rounded analytics columns,
 //! or-empty text fields), the body serialisation form the backend's
 //! HTTP layer emits, and the strong-ETag conditional-GET semantics of
@@ -17,12 +17,9 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{header, Response, StatusCode};
 use eo_services::clock::Clock;
-use eo_services::codex::{CodexError, CodexService};
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::quests::{QuestError, QuestService};
-use eo_services::skill_tracker::{SkillTracker, SUPPRESS_TIMEOUT_SECONDS};
-use eo_services::tracker::HuntTracker;
 use eo_wire::normalizer::to_wire_json;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -31,7 +28,6 @@ use sqlx::SqlitePool;
 /// The services the hydration handlers read through.
 pub struct HydrationState {
     quests: QuestService,
-    codex: CodexService,
     pub(crate) db: Db,
     pub(crate) game_data: Arc<GameDataStore>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -50,7 +46,6 @@ impl HydrationState {
     ) -> Self {
         Self {
             quests: QuestService::new(db.clone(), clock.clone()),
-            codex: CodexService::new(db.clone(), game_data.clone(), clock.clone()),
             db,
             game_data,
             clock,
@@ -429,84 +424,6 @@ impl HydrationState {
             Err(_) => internal_error(),
         }
     }
-
-    /// GET /api/codex/species
-    pub async fn codex_species(&self, if_none_match: Option<&str>) -> Response<Body> {
-        match self.codex.get_all_species().await {
-            Ok(species) => json_response(&json!(species), if_none_match),
-            Err(_) => internal_error(),
-        }
-    }
-
-    /// GET /api/codex/species/{name}/ranks
-    pub async fn codex_species_ranks(
-        &self,
-        name: &str,
-        if_none_match: Option<&str>,
-    ) -> Response<Body> {
-        match self.codex.get_species_ranks(name).await {
-            Ok(Some(ranks)) => json_response(&ranks, if_none_match),
-            Ok(None) => error_response(
-                StatusCode::NOT_FOUND,
-                &detail(&format!("Species '{name}' not found")),
-            ),
-            Err(_) => internal_error(),
-        }
-    }
-
-    /// GET /api/codex/recommend
-    pub async fn codex_recommend(
-        &self,
-        species_name: &str,
-        rank: i64,
-        profession: Option<&str>,
-        target: &str,
-        if_none_match: Option<&str>,
-    ) -> Response<Body> {
-        // The route model constrains the rank to the codex table's
-        // domain and rejects everything else before the service runs.
-        if !(1..=25).contains(&rank) {
-            let bound = if rank < 1 {
-                json!({
-                    "type": "greater_than_equal",
-                    "loc": ["query", "rank"],
-                    "msg": "Input should be greater than or equal to 1",
-                    "input": rank.to_string(),
-                    "ctx": {"ge": 1},
-                })
-            } else {
-                json!({
-                    "type": "less_than_equal",
-                    "loc": ["query", "rank"],
-                    "msg": "Input should be less than or equal to 25",
-                    "input": rank.to_string(),
-                    "ctx": {"le": 25},
-                })
-            };
-            return error_response(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                &json!({"detail": [bound]}),
-            );
-        }
-        match self
-            .codex
-            .get_skill_options(species_name, rank, profession, target)
-            .await
-        {
-            Ok(options) => json_response(&json!(options), if_none_match),
-            Err(CodexError::Invalid(_)) | Err(CodexError::Db(_) | CodexError::Rollup(_)) => {
-                internal_error()
-            }
-        }
-    }
-
-    /// GET /api/codex/meta/attributes
-    pub async fn codex_meta_attributes(&self, if_none_match: Option<&str>) -> Response<Body> {
-        match self.codex.get_meta_attributes().await {
-            Ok(attributes) => json_response(&json!(attributes), if_none_match),
-            Err(_) => internal_error(),
-        }
-    }
 }
 
 /// The write surface: each method mirrors its router handler (the
@@ -692,91 +609,6 @@ impl HydrationState {
             .fetch_optional(self.read())
             .await?;
         Ok(row.is_some())
-    }
-
-    /// The codex routers' ValueError mapping: a 400 with the message
-    /// as the detail (adapters reproduce service-adjacent failures the
-    /// reference raises as ValueError through this).
-    pub fn codex_value_error(&self, message: &str) -> Response<Body> {
-        error_response(StatusCode::BAD_REQUEST, &detail(message))
-    }
-
-    /// POST /api/codex/calibrate (the codex router maps its service's
-    /// invalid-input errors to a 400 with the message as the detail).
-    pub async fn codex_calibrate(&self, species_name: &str, rank: i64) -> Response<Body> {
-        match self.codex.calibrate(species_name, rank).await {
-            Ok(result) => plain_json_response(&result),
-            Err(CodexError::Invalid(message)) => {
-                error_response(StatusCode::BAD_REQUEST, &detail(&message))
-            }
-            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
-        }
-    }
-
-    /// POST /api/codex/unclaim: revert a species' most recent rank
-    /// claim. Mirrors `unclaim_rank`: a "nothing to unclaim" condition
-    /// maps to a 400 with the message; on success the reverted claim is
-    /// returned. No session suppression: unclaim removes a calibration
-    /// rather than producing a skill gain.
-    pub async fn codex_unclaim(&self, species_name: &str) -> Response<Body> {
-        match self.codex.unclaim_rank(species_name).await {
-            Ok(result) => plain_json_response(&result),
-            Err(CodexError::Invalid(message)) => {
-                error_response(StatusCode::BAD_REQUEST, &detail(&message))
-            }
-            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
-        }
-    }
-
-    /// POST /api/codex/claim: claim a codex rank reward. Mirrors
-    /// `claim_rank`: the service's invalid-input errors map to a 400 with
-    /// the message; on success, an active session suppresses the upcoming
-    /// skill gain from dedup (`suppress_next`), exactly as the reference
-    /// does and only after the claim succeeds.
-    pub async fn codex_claim(
-        &self,
-        tracker: &Arc<HuntTracker>,
-        skill_tracker: &Arc<SkillTracker>,
-        species_name: &str,
-        rank: i64,
-        skill_name: &str,
-    ) -> Response<Body> {
-        match self.codex.claim_rank(species_name, rank, skill_name).await {
-            Ok(result) => {
-                if tracker.is_tracking() {
-                    skill_tracker.suppress_next(skill_name, SUPPRESS_TIMEOUT_SECONDS);
-                }
-                plain_json_response(&result)
-            }
-            Err(CodexError::Invalid(message)) => {
-                error_response(StatusCode::BAD_REQUEST, &detail(&message))
-            }
-            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
-        }
-    }
-
-    /// POST /api/codex/meta/claim: claim a meta codex reward (1 PED into an
-    /// attribute). Mirrors `meta_claim`: invalid input maps to a 400; on
-    /// success, an active session suppresses the upcoming attribute skill
-    /// gain (`suppress_next`).
-    pub async fn codex_meta_claim(
-        &self,
-        tracker: &Arc<HuntTracker>,
-        skill_tracker: &Arc<SkillTracker>,
-        attribute_name: &str,
-    ) -> Response<Body> {
-        match self.codex.meta_claim(attribute_name).await {
-            Ok(result) => {
-                if tracker.is_tracking() {
-                    skill_tracker.suppress_next(attribute_name, SUPPRESS_TIMEOUT_SECONDS);
-                }
-                plain_json_response(&result)
-            }
-            Err(CodexError::Invalid(message)) => {
-                error_response(StatusCode::BAD_REQUEST, &detail(&message))
-            }
-            Err(CodexError::Db(_) | CodexError::Rollup(_)) => internal_error(),
-        }
     }
 }
 
@@ -1002,14 +834,7 @@ mod tests {
     async fn state(dir: &std::path::Path) -> HydrationState {
         let snapshot = dir.join("snapshot");
         std::fs::create_dir_all(&snapshot).unwrap();
-        std::fs::write(
-            snapshot.join("mobs.json"),
-            serde_json::to_string(&json!([
-                {"name": "M", "species": {"name": "Boar", "codex_base_cost": 37.5, "codex_type": "Mob"}},
-            ]))
-            .unwrap(),
-        )
-        .unwrap();
+        std::fs::write(snapshot.join("mobs.json"), "[]").unwrap();
         std::fs::write(snapshot.join("professions.json"), "[]").unwrap();
         std::fs::write(snapshot.join("skills.json"), "[]").unwrap();
         let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
@@ -1046,24 +871,6 @@ mod tests {
                 state.playlist_analytics(None).await,
                 "\"Run\"",
             ),
-            ("species", state.codex_species(None).await, "\"Boar\""),
-            (
-                "ranks",
-                state.codex_species_ranks("Boar", None).await,
-                "\"speciesName\"",
-            ),
-            (
-                "recommend",
-                state
-                    .codex_recommend("Boar", 4, None, "profession", None)
-                    .await,
-                "[",
-            ),
-            (
-                "meta attributes",
-                state.codex_meta_attributes(None).await,
-                "\"Agility\"",
-            ),
         ] {
             let (status, headers, body) = parts(response).await;
             assert_eq!(status, StatusCode::OK, "{label}");
@@ -1072,21 +879,6 @@ mod tests {
                 String::from_utf8_lossy(&body).contains(marker),
                 "{label}: body carries {marker}"
             );
-        }
-
-        let (status, _, body) = parts(state.codex_species_ranks("Nessie", None).await).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body, b"{\"detail\":\"Species 'Nessie' not found\"}");
-
-        for (rank, fragment) in [(0i64, "greater_than_equal"), (26, "less_than_equal")] {
-            let (status, _, body) = parts(
-                state
-                    .codex_recommend("Boar", rank, None, "profession", None)
-                    .await,
-            )
-            .await;
-            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-            assert!(String::from_utf8_lossy(&body).contains(fragment));
         }
     }
 }

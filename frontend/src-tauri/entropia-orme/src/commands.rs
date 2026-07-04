@@ -17,6 +17,10 @@ use eo_api::character::{
     PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
     SkillLevel,
 };
+use eo_api::codex::{
+    CodexCalibrateResult, CodexClaimResult, CodexMetaAttribute, CodexMetaClaimResult,
+    CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
+};
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -171,6 +175,76 @@ pub async fn settings_update(
     facade(&app)?.settings_update(patch).await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_species(app: tauri::AppHandle) -> Result<Vec<CodexSpecies>, ApiError> {
+    facade(&app)?.codex_species().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_species_ranks(
+    app: tauri::AppHandle,
+    species_name: String,
+) -> Result<CodexSpeciesRanks, ApiError> {
+    facade(&app)?.codex_species_ranks(&species_name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_recommend(
+    app: tauri::AppHandle,
+    species_name: String,
+    rank: i64,
+    profession: Option<String>,
+    target: CodexRecommendTarget,
+) -> Result<Vec<CodexSkillOption>, ApiError> {
+    facade(&app)?
+        .codex_recommend(&species_name, rank, profession.as_deref(), target)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_meta_attributes(
+    app: tauri::AppHandle,
+) -> Result<Vec<CodexMetaAttribute>, ApiError> {
+    facade(&app)?.codex_meta_attributes().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_calibrate(
+    app: tauri::AppHandle,
+    species_name: String,
+    rank: i64,
+) -> Result<CodexCalibrateResult, ApiError> {
+    facade(&app)?.codex_calibrate(&species_name, rank).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_claim(
+    app: tauri::AppHandle,
+    species_name: String,
+    rank: i64,
+    skill_name: String,
+) -> Result<CodexClaimResult, ApiError> {
+    facade(&app)?
+        .codex_claim(&species_name, rank, &skill_name)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_unclaim(
+    app: tauri::AppHandle,
+    species_name: String,
+) -> Result<CodexClaimResult, ApiError> {
+    facade(&app)?.codex_unclaim(&species_name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_meta_claim(
+    app: tauri::AppHandle,
+    attribute_name: String,
+) -> Result<CodexMetaClaimResult, ApiError> {
+    facade(&app)?.codex_meta_claim(&attribute_name).await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -198,6 +272,14 @@ mod tests {
         "settings_overlay_position",
         "settings_set_overlay_position",
         "settings_update",
+        "codex_species",
+        "codex_species_ranks",
+        "codex_recommend",
+        "codex_meta_attributes",
+        "codex_calibrate",
+        "codex_claim",
+        "codex_unclaim",
+        "codex_meta_claim",
     ];
 
     #[test]

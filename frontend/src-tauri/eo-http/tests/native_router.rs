@@ -150,19 +150,6 @@ async fn every_registered_route_serves_natively_over_the_composed_state() {
         ("/api/quests/analytics", "[]"),
         ("/api/quests/playlists", "[]"),
         ("/api/quests/playlists/analytics", "[]"),
-        ("/api/codex/species", "[]"),
-        // The attribute set is fixed; levels hydrate from the (empty)
-        // calibration tables.
-        (
-            "/api/codex/meta/attributes",
-            "[{\"name\":\"Agility\",\"currentLevel\":null},\
-             {\"name\":\"Health\",\"currentLevel\":null},\
-             {\"name\":\"Intelligence\",\"currentLevel\":null},\
-             {\"name\":\"Psyche\",\"currentLevel\":null},\
-             {\"name\":\"Stamina\",\"currentLevel\":null},\
-             {\"name\":\"Strength\",\"currentLevel\":null}]",
-        ),
-        ("/api/codex/recommend?species_name=X&rank=4", "[]"),
         // The tracking session reads (ETag-scoped; empty db -> []).
         ("/api/tracking/sessions", "[]"),
         ("/api/tracking/tag-suggestions?q=a", "[]"),
@@ -214,13 +201,6 @@ async fn every_registered_route_serves_natively_over_the_composed_state() {
             "{path}"
         );
     }
-    // The path-parameter route: decoded lookup misses on the empty
-    // catalogue with the handler's message, errors carry no ETag.
-    let (status, headers, body) = get(&state, "/api/codex/species/No%20Such/ranks").await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-    assert_eq!(body, b"{\"detail\":\"Species 'No Such' not found\"}");
-    assert!(!headers.contains_key(http::header::ETAG));
-
     // A missing tracking session: the handler's 404, no ETag.
     let (status, headers, body) = get(&state, "/api/tracking/session/no-such").await;
     assert_eq!(status, http::StatusCode::NOT_FOUND);
@@ -461,36 +441,6 @@ async fn the_browser_surface_is_answered_at_the_substrate() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_router_validates_through_the_extraction_layer() {
-    let (state, _dir) = serve_substrate().await;
-    // Declaration-order multi-error.
-    let (status, _, body) = get(&state, "/api/codex/recommend?rank=abc&target=xx").await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        detail_types(&body),
-        ["missing", "int_parsing", "literal_error"]
-    );
-    // Bounds re-render the raw text.
-    let (status, _, body) = get(&state, "/api/codex/recommend?species_name=X&rank=-0").await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    let parsed: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(parsed["detail"][0]["type"], "greater_than_equal");
-    assert_eq!(parsed["detail"][0]["input"], "-0");
-    // Duplicate parameter: the last occurrence validates.
-    let (status, _, body) = get(
-        &state,
-        "/api/codex/recommend?species_name=X&rank=3&rank=abc",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["int_parsing"]);
-    // A decoded slash inside the path parameter de-matches the route.
-    let (status, _, body) = get(&state, "/api/codex/species/A%2FB/ranks").await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-    assert_eq!(body, b"{\"detail\":\"Not Found\"}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_framework_404s_unmatched_paths_and_405s_unported_methods() {
     let (state, _dir) = serve_substrate().await;
     // An encoded slash stays one raw segment, so it does not decode into the
@@ -639,34 +589,6 @@ async fn the_write_surface_serves_natively_over_the_composed_state() {
     let (status, _, body) = send_json(&state, "DELETE", "/api/quests/playlists/1", "").await;
     assert_eq!(status, http::StatusCode::OK);
     assert_eq!(body, b"{\"ok\":true}");
-
-    // Calibrate: the write, the bound, and the beyond-range rank.
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/codex/calibrate",
-        r#"{"species_name": "Sp", "rank": 7}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, b"{\"speciesName\":\"Sp\",\"rank\":7}");
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/codex/calibrate",
-        r#"{"species_name": "Sp", "rank": 26}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(body, b"{\"detail\":\"Rank must be 0-25\"}");
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/codex/calibrate",
-        r#"{"species_name": "Sp", "rank": 999999999999999999999999}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
 
     // Not-found legs and the delete reply.
     for (method, path, body) in [
@@ -1006,33 +928,6 @@ async fn validation_envelopes_aggregate_and_defer_the_backend_way() {
         let (status, _, _) = send_json(&state, "PUT", "/api/quests/playlists/1", body).await;
         assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     }
-
-    // The calibrate codec message splits singular/plural on the
-    // surrogate RUN length, with the exact position arithmetic.
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/codex/calibrate",
-        "{\"species_name\": \"ab\\ud800cd\", \"rank\": 3}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body,
-        b"{\"detail\":\"'utf-8' codec can't encode character '\\\\ud800' in position 2: surrogates not allowed\"}"
-    );
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/codex/calibrate",
-        "{\"species_name\": \"ab\\ud800\\ud801cd\", \"rank\": 3}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body,
-        b"{\"detail\":\"'utf-8' codec can't encode characters in position 2-3: surrogates not allowed\"}"
-    );
 }
 
 // ── Tracking session-edit write adapters, end-to-end and hermetic ──────
@@ -1501,7 +1396,6 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
     use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
     use eo_services::skill_panel::BgrImage;
     use eo_services::skill_scan_manual::{ScanProviders, SkillScanManual};
-    use eo_services::skill_tracker::SkillTracker;
     use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
     use eo_services::tracker::{naive_to_epoch, HuntTracker, Providers};
 
@@ -1535,15 +1429,9 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
         Providers::default(),
     )
     .expect("tracker builds over the fresh pool");
-    // The skill tracker (codex suppress-next) and the settings writer (the
-    // config-write routes) share the same pool, clock, and data dir, exactly
-    // as composition wires them, so the write routes serve natively here.
-    let skill_tracker = SkillTracker::new(
-        &bus,
-        eo_services::db::Db::from_pool(db.write().clone()),
-        tokio::runtime::Handle::current(),
-        clock.clone(),
-    );
+    // The settings writer (the config-write routes) shares the same pool,
+    // clock, and data dir, exactly as composition wires it, so the write
+    // routes serve natively here.
     let config_service = Arc::new(Mutex::new(
         ConfigService::new(dir.path()).expect("config service opens"),
     ));
@@ -1622,7 +1510,6 @@ async fn serve_producer_substrate(config_json: &str) -> (Arc<AppState>, tempfile
         AppState::new(0)
             .with_hydration(hydration)
             .with_tracker(tracker)
-            .with_skill_tracker(skill_tracker)
             .with_config_service(config_service)
             .with_skill_scan(skill_scan)
             .with_repair_ocr(repair_ocr)
@@ -1879,41 +1766,6 @@ async fn config_write_routes_serve_natively_idle_mob_mode() {
     let (status, _, body) = send_json(&state, "POST", "/api/tracking/release-mob", "").await;
     assert_eq!(status, http::StatusCode::OK);
     assert_eq!(body_json(&body), json!({ "released": Value::Null }));
-
-    // codex claim/meta over a catalogue with no codex data: the service's
-    // not-found ValueError is the 400 (exercises the suppress-next handlers
-    // and their skill-tracker dependency; idle, so no suppression fires).
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/codex/claim",
-        r#"{"species_name": "Notaspecies", "rank": 1, "skill_name": "Anatomy"}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    // unclaim over a species with no claimed rank: the service's
-    // nothing-to-unclaim ValueError is the 400 (exercises the route's
-    // registration and error mapping).
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/codex/unclaim",
-        r#"{"species_name": "Notaspecies"}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body_json(&body)["detail"],
-        "No claimed rank to unclaim for 'Notaspecies'"
-    );
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/codex/meta/claim",
-        r#"{"attribute_name": "Notanattribute"}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

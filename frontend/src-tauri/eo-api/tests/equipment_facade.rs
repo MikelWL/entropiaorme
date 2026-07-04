@@ -45,18 +45,18 @@ async fn api_over(dir: &Path) -> (Api, Db) {
         .expect("migrated database");
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("snapshot store"));
     let clock = Arc::new(eo_services::clock::RealClock::new());
-    let (config_service, tracker, hotbar, watcher) =
-        common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
     (
         Api::new(
             db.clone(),
             game_data,
             clock,
             data_dir,
-            config_service,
-            tracker,
-            hotbar,
-            watcher,
+            handles.config_service,
+            handles.tracker,
+            handles.hotbar,
+            handles.watcher,
+            handles.skill_tracker,
         ),
         db,
     )

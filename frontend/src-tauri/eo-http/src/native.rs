@@ -24,8 +24,8 @@ use crate::body::{
     BodyObject, Loc,
 };
 use crate::extract::{
-    decode_path_segment, literal_or_default, opt_query_int, parse_int_lax, query_int_or_default,
-    require_bounded_int, require_query_bool, require_str, LaxInt, QueryString, Validation,
+    decode_path_segment, opt_query_int, parse_int_lax, query_int_or_default, require_query_bool,
+    LaxInt, QueryString, Validation,
 };
 use crate::hydration::internal_error;
 use crate::pyjson::PyValue;
@@ -68,62 +68,6 @@ simple_get!(quests_mobs, list_mob_names);
 simple_get!(quests_analytics, quest_analytics);
 simple_get!(playlists_list, list_playlists);
 simple_get!(playlists_analytics, playlist_analytics);
-simple_get!(codex_species, codex_species);
-simple_get!(codex_meta_attributes, codex_meta_attributes);
-
-/// GET /api/codex/species/{name}/ranks: the one path-parameter route of
-/// this surface. The raw segment percent-decodes before the lookup; a
-/// decoded slash reproduces the backend's route-level 404.
-async fn codex_species_ranks(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let Some(hydration) = state.hydration() else {
-        return service_unavailable();
-    };
-    let path = req.uri().path();
-    let raw_name = path
-        .strip_prefix("/api/codex/species/")
-        .and_then(|rest| rest.strip_suffix("/ranks"))
-        .unwrap_or_default();
-    let name = decode_path_segment(raw_name);
-    if name.contains('/') {
-        return router_not_found();
-    }
-    let inm = if_none_match(&req);
-    hydration.codex_species_ranks(&name, inm.as_deref()).await
-}
-
-/// GET /api/codex/recommend: the constrained-parameter route. The
-/// extraction layer validates in route-signature order (species_name,
-/// rank, profession, target) and answers violations with the backend's
-/// 422 envelope.
-async fn codex_recommend(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let Some(hydration) = state.hydration() else {
-        return service_unavailable();
-    };
-    let query = QueryString::parse(req.uri().query());
-    let mut validation = Validation::new();
-    let species = require_str(&mut validation, &query, "species_name");
-    let rank = require_bounded_int(&mut validation, &query, "rank", 1, 25);
-    let profession = query.last("profession");
-    let target = literal_or_default(
-        &mut validation,
-        &query,
-        "target",
-        &["profession", "hp"],
-        "profession",
-    );
-    if !validation.is_ok() {
-        return validation.into_response();
-    }
-    let (species, rank, target) = (
-        species.expect("validated"),
-        rank.expect("validated"),
-        target.expect("validated"),
-    );
-    let inm = if_none_match(&req);
-    hydration
-        .codex_recommend(species, rank, profession, target, inm.as_deref())
-        .await
-}
 
 /// Split a request into its content type and collected body bytes.
 ///
@@ -838,176 +782,6 @@ async fn playlist_delete(state: Arc<AppState>, req: Request) -> Response<Body> {
     }
 }
 
-/// POST /api/codex/calibrate
-async fn codex_calibrate(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let Some(hydration) = state.hydration() else {
-        return service_unavailable();
-    };
-    let (content_type, bytes) = match body_parts(req).await {
-        Ok(parts) => parts,
-        Err(reply) => return *reply,
-    };
-    let mut v = Validation::new();
-    let Some(object) = body::read_object(content_type.as_deref(), &bytes, &mut v) else {
-        return v.into_response();
-    };
-    let species = body::required_str(&mut v, &object, "species_name");
-    let rank = body::required_int_at(
-        &mut v,
-        object.pairs(),
-        object.echo(),
-        "rank",
-        &[Loc::Field("rank")],
-    );
-    // Validation issues answer first (their 422s, or the render 500
-    // when the envelope cannot serialise), as the backend orders it.
-    if !v.is_ok() {
-        return v.into_response();
-    }
-    let species = species.expect("validated");
-    let rank = match rank.expect("validated") {
-        BodyInt::Value(value) => value,
-        // A beyond-i64 rank violates the service's 0-25 domain in the
-        // backend before any storage is reached; any out-of-domain
-        // value yields the same bound reply.
-        BodyInt::Overflow => 26,
-    };
-    // The backend's service checks the rank domain BEFORE the species
-    // string reaches an encoder, so the bound message wins over the
-    // surrogate failure.
-    if !(0..=25).contains(&rank) {
-        return hydration.codex_value_error("Rank must be 0-25");
-    }
-    // A surrogate-tainted species then reaches the encode step, whose
-    // failure is a ValueError the backend's router maps to a 400 with
-    // the codec message (singular for one surrogate, a position range
-    // for a consecutive run).
-    if let Some(PyValue::TaintedStr {
-        code,
-        position,
-        run,
-        ..
-    }) = object.get("species_name")
-    {
-        let detail = if *run > 1 {
-            format!(
-                "'utf-8' codec can't encode characters in position {}-{}: surrogates not allowed",
-                position,
-                position + run - 1
-            )
-        } else {
-            format!(
-                "'utf-8' codec can't encode character '\\u{code:04x}' in position {position}: \
-                 surrogates not allowed"
-            )
-        };
-        return hydration.codex_value_error(&detail);
-    }
-    hydration.codex_calibrate(&species, rank).await
-}
-
-/// POST /api/codex/claim: `{species_name, rank, skill_name}`. The service's
-/// invalid-input errors map to a 400; on success a live session suppresses
-/// the claimed skill's next gain. Mirrors `claim_rank`.
-async fn codex_claim(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let (Some(hydration), Some(tracker), Some(skill_tracker)) =
-        (state.hydration(), state.tracker(), state.skill_tracker())
-    else {
-        return service_unavailable();
-    };
-    let (content_type, bytes) = match body_parts(req).await {
-        Ok(parts) => parts,
-        Err(reply) => return *reply,
-    };
-    let mut v = Validation::new();
-    let Some(object) = body::read_object(content_type.as_deref(), &bytes, &mut v) else {
-        return v.into_response();
-    };
-    let species = body::required_str(&mut v, &object, "species_name");
-    let rank = body::required_int_at(
-        &mut v,
-        object.pairs(),
-        object.echo(),
-        "rank",
-        &[Loc::Field("rank")],
-    );
-    let skill = body::required_str(&mut v, &object, "skill_name");
-    if !v.is_ok() {
-        return v.into_response();
-    }
-    // A surrogate-tainted string reaches the codex service before any gate
-    // and crashes its lookup unhandled (the reference's 500), unlike the
-    // calibrate path whose encode raises a ValueError -> 400. Mirror the 500.
-    if v.binding_taint() {
-        return internal_error();
-    }
-    let rank = body_int_or_max(rank.expect("validated"));
-    hydration
-        .codex_claim(
-            &tracker,
-            &skill_tracker,
-            &species.expect("validated"),
-            rank,
-            &skill.expect("validated"),
-        )
-        .await
-}
-
-/// POST /api/codex/unclaim: `{species_name}`. Reverts the species' most
-/// recent rank claim. Mirrors `unclaim_rank`: a "nothing to unclaim"
-/// condition maps to a 400; a surrogate-tainted species reaches the lookup
-/// before any gate and surfaces a 500, as the claim path does.
-async fn codex_unclaim(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let Some(hydration) = state.hydration() else {
-        return service_unavailable();
-    };
-    let (content_type, bytes) = match body_parts(req).await {
-        Ok(parts) => parts,
-        Err(reply) => return *reply,
-    };
-    let mut v = Validation::new();
-    let Some(object) = body::read_object(content_type.as_deref(), &bytes, &mut v) else {
-        return v.into_response();
-    };
-    let species = body::required_str(&mut v, &object, "species_name");
-    if !v.is_ok() {
-        return v.into_response();
-    }
-    if v.binding_taint() {
-        return internal_error();
-    }
-    hydration.codex_unclaim(&species.expect("validated")).await
-}
-
-/// POST /api/codex/meta/claim: `{attribute_name}`. Mirrors `meta_claim`.
-async fn codex_meta_claim(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let (Some(hydration), Some(tracker), Some(skill_tracker)) =
-        (state.hydration(), state.tracker(), state.skill_tracker())
-    else {
-        return service_unavailable();
-    };
-    let (content_type, bytes) = match body_parts(req).await {
-        Ok(parts) => parts,
-        Err(reply) => return *reply,
-    };
-    let mut v = Validation::new();
-    let Some(object) = body::read_object(content_type.as_deref(), &bytes, &mut v) else {
-        return v.into_response();
-    };
-    let attribute = body::required_str(&mut v, &object, "attribute_name");
-    if !v.is_ok() {
-        return v.into_response();
-    }
-    // The surrogate reaches the meta-claim lookup unhandled (the reference's
-    // 500), mirrored here.
-    if v.binding_taint() {
-        return internal_error();
-    }
-    hydration
-        .codex_meta_claim(&tracker, &skill_tracker, &attribute.expect("validated"))
-        .await
-}
-
 // ── Manual scan adapters (scan_manual.py) ──────────────────────────────
 //
 // The skill-scan state machine and the one-shot repair-cost read serve over
@@ -1166,16 +940,6 @@ async fn scan_spacebar_capture(state: Arc<AppState>, req: Request) -> Response<B
         return validation.into_response();
     }
     crate::scan_routes::spacebar_capture(&listener, enabled.expect("validated"))
-}
-
-/// A parsed body int, with a beyond-`i64` value clamped to the max (an
-/// absurd value the reference would store as an unbounded Python int;
-/// realistic values fit `i64`, so the clamp is never reached in practice).
-fn body_int_or_max(value: BodyInt) -> i64 {
-    match value {
-        BodyInt::Value(parsed) => parsed,
-        BodyInt::Overflow => i64::MAX,
-    }
 }
 
 // ── Analytics adapters ──────────────────────────────────────────────
@@ -2006,50 +1770,6 @@ pub(crate) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
                 MethodFilter::POST,
                 "/api/quests/{quest_id}/cancel",
                 quest_cancel,
-            ),
-        )
-        .route(
-            "/api/codex/species",
-            arm_routed(MethodFilter::GET, "/api/codex/species", codex_species),
-        )
-        .route(
-            "/api/codex/species/{name}/ranks",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/codex/species/{name}/ranks",
-                codex_species_ranks,
-            ),
-        )
-        .route(
-            "/api/codex/recommend",
-            arm_routed(MethodFilter::GET, "/api/codex/recommend", codex_recommend),
-        )
-        .route(
-            "/api/codex/calibrate",
-            arm_routed(MethodFilter::POST, "/api/codex/calibrate", codex_calibrate),
-        )
-        .route(
-            "/api/codex/claim",
-            arm_routed(MethodFilter::POST, "/api/codex/claim", codex_claim),
-        )
-        .route(
-            "/api/codex/unclaim",
-            arm_routed(MethodFilter::POST, "/api/codex/unclaim", codex_unclaim),
-        )
-        .route(
-            "/api/codex/meta/claim",
-            arm_routed(
-                MethodFilter::POST,
-                "/api/codex/meta/claim",
-                codex_meta_claim,
-            ),
-        )
-        .route(
-            "/api/codex/meta/attributes",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/codex/meta/attributes",
-                codex_meta_attributes,
             ),
         )
         .route(

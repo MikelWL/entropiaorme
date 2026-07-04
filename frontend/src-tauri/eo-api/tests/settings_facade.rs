@@ -32,17 +32,17 @@ async fn settings_api(dir: &Path) -> Api {
         .expect("migrated database");
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
-    let (config_service, tracker, hotbar, watcher) =
-        common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
     Api::new(
         db,
         game_data,
         clock,
         data_dir,
-        config_service,
-        tracker,
-        hotbar,
-        watcher,
+        handles.config_service,
+        handles.tracker,
+        handles.hotbar,
+        handles.watcher,
+        handles.skill_tracker,
     )
 }
 
