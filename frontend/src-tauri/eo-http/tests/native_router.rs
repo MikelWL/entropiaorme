@@ -429,8 +429,10 @@ async fn the_browser_surface_is_answered_at_the_substrate() {
     assert_eq!(status, http::StatusCode::FORBIDDEN);
     assert_eq!(body, b"{\"detail\":\"Invalid Origin header\"}");
     // Mutating methods require an allowed origin, enforced before any
-    // upstream forward (a forwarded request would 502, not 403).
-    let (status, _, body) = request(&state, "POST", "/api/tracking/sessions", &[]).await;
+    // upstream forward (a forwarded request would 502, not 403). Target a
+    // real POST route so this proves a valid mutating route is guarded
+    // before dispatch, not merely an unmatched-method path.
+    let (status, _, body) = request(&state, "POST", "/api/tracking/start", &[]).await;
     assert_eq!(status, http::StatusCode::FORBIDDEN);
     assert_eq!(body, b"{\"detail\":\"Origin header required\"}");
 }
