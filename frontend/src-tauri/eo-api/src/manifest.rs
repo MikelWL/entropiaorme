@@ -13,6 +13,11 @@
 use schemars::schema_for;
 use serde_json::Value;
 
+use crate::analytics::{
+    AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
+    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage, LedgerPreset,
+    LedgerPresetInput,
+};
 use crate::character::{
     CalibrationStatus, CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult,
     PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
@@ -412,6 +417,119 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "playlists_analytics",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Vec<PlaylistAnalyticsRow>))),
+        },
+        CommandSpec {
+            name: "analytics_overview",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsOverview))),
+        },
+        CommandSpec {
+            name: "analytics_activity",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AnalyticsActivity))),
+        },
+        CommandSpec {
+            name: "ledger_list",
+            args: vec![
+                ArgSpec {
+                    name: "cursor",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "limit",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(LedgerPage))),
+        },
+        CommandSpec {
+            name: "ledger_create",
+            args: vec![ArgSpec {
+                name: "entry",
+                schema: schema(schema_for!(LedgerEntryInput)),
+            }],
+            returns: Some(schema(schema_for!(LedgerItem))),
+        },
+        CommandSpec {
+            name: "ledger_delete",
+            args: vec![ArgSpec {
+                name: "entry_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "ledger_presets_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<LedgerPreset>))),
+        },
+        CommandSpec {
+            name: "ledger_preset_create",
+            args: vec![ArgSpec {
+                name: "preset",
+                schema: schema(schema_for!(LedgerPresetInput)),
+            }],
+            returns: Some(schema(schema_for!(LedgerPreset))),
+        },
+        CommandSpec {
+            name: "ledger_preset_delete",
+            args: vec![ArgSpec {
+                name: "preset_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "inventory_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<InventoryItem>))),
+        },
+        CommandSpec {
+            name: "inventory_create",
+            args: vec![ArgSpec {
+                name: "item",
+                schema: schema(schema_for!(InventoryItemInput)),
+            }],
+            returns: Some(schema(schema_for!(InventoryItem))),
+        },
+        CommandSpec {
+            name: "inventory_update",
+            args: vec![
+                ArgSpec {
+                    name: "item_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "patch",
+                    schema: schema(schema_for!(InventoryPatch)),
+                },
+            ],
+            returns: Some(schema(schema_for!(InventoryItem))),
+        },
+        CommandSpec {
+            name: "inventory_delete",
+            args: vec![ArgSpec {
+                name: "item_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "inventory_sell",
+            args: vec![
+                ArgSpec {
+                    name: "item_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "sale",
+                    schema: schema(schema_for!(InventorySellInput)),
+                },
+            ],
+            returns: Some(schema(schema_for!(InventorySellResult))),
         },
     ]
 }

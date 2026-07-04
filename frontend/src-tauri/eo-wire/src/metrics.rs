@@ -128,26 +128,17 @@ impl Default for LatencyHistogram {
 /// elapsed time here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Handler {
-    AnalyticsOverview,
-    AnalyticsActivity,
     SessionList,
     SessionDetail,
 }
 
 impl Handler {
     /// Every handler, in the order their histograms are stored and reported.
-    pub const ALL: [Handler; 4] = [
-        Handler::AnalyticsOverview,
-        Handler::AnalyticsActivity,
-        Handler::SessionList,
-        Handler::SessionDetail,
-    ];
+    pub const ALL: [Handler; 2] = [Handler::SessionList, Handler::SessionDetail];
 
     /// The stable snake_case key this handler reports under in the snapshot.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Handler::AnalyticsOverview => "analytics_overview",
-            Handler::AnalyticsActivity => "analytics_activity",
             Handler::SessionList => "session_list",
             Handler::SessionDetail => "session_detail",
         }
@@ -314,14 +305,12 @@ mod tests {
     #[test]
     fn per_handler_latency_records_against_the_named_handler_only() {
         let m = Metrics::new();
-        m.record_handler_latency(Handler::AnalyticsActivity, Duration::from_millis(5));
-        m.record_handler_latency(Handler::AnalyticsActivity, Duration::from_millis(7));
-        m.record_handler_latency(Handler::SessionList, Duration::from_millis(2));
+        m.record_handler_latency(Handler::SessionList, Duration::from_millis(5));
+        m.record_handler_latency(Handler::SessionList, Duration::from_millis(7));
+        m.record_handler_latency(Handler::SessionDetail, Duration::from_millis(2));
         let snap = m.snapshot();
-        assert_eq!(snap.handler_latency["analytics_activity"].count, 2);
-        assert_eq!(snap.handler_latency["session_list"].count, 1);
-        assert_eq!(snap.handler_latency["analytics_overview"].count, 0);
-        assert_eq!(snap.handler_latency["session_detail"].count, 0);
+        assert_eq!(snap.handler_latency["session_list"].count, 2);
+        assert_eq!(snap.handler_latency["session_detail"].count, 1);
         // Recording a handler does not touch the aggregate request counter.
         assert_eq!(snap.http_requests, 0);
     }

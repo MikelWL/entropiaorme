@@ -19,6 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use eo_services::analytics::AnalyticsService;
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::Clock;
 use eo_services::codex::CodexService;
@@ -30,6 +31,7 @@ use eo_services::quests::QuestService;
 use eo_services::skill_tracker::SkillTracker;
 use eo_services::tracker::HuntTracker;
 
+pub mod analytics;
 pub mod character;
 pub mod codex;
 pub mod equipment;
@@ -72,6 +74,9 @@ pub struct Api {
     /// instance (unsubscribed); the bus-driven auto-start service is a
     /// separate producer concern.
     quests: QuestService,
+    /// The analytics service (Overview / Activity aggregates, ledger,
+    /// presets, inventory), built over the facade's shared db and clock.
+    analytics: AnalyticsService,
 }
 
 impl Api {
@@ -89,6 +94,7 @@ impl Api {
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let quests = quests::build_quests_service(db.clone(), clock.clone());
+        let analytics = AnalyticsService::new(db.clone(), clock.clone());
         Self {
             db,
             game_data,
@@ -101,6 +107,7 @@ impl Api {
             skill_tracker,
             codex,
             quests,
+            analytics,
         }
     }
 

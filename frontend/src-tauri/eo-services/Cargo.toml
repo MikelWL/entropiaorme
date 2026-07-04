@@ -27,6 +27,8 @@ image = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 rapidfuzz = "0.5"
+# The analytics ledger's opaque keyset cursor (base64url of the seek key).
+base64 = { workspace = true }
 # Observe-only instrumentation at the event-bus, OCR, and database seams
 # (structured events for the logs; the metrics registry is in eo-wire).
 tracing = { workspace = true }

@@ -548,8 +548,6 @@ where
 fn classify_read_handler(path: &str) -> Option<eo_wire::metrics::Handler> {
     use eo_wire::metrics::Handler;
     match path {
-        "/api/analytics/overview" => Some(Handler::AnalyticsOverview),
-        "/api/analytics/activity" => Some(Handler::AnalyticsActivity),
         "/api/tracking/sessions" => Some(Handler::SessionList),
         _ if path.starts_with("/api/tracking/session/") => Some(Handler::SessionDetail),
         _ => None,
