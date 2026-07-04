@@ -32,6 +32,10 @@ use eo_api::equipment::{
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
 };
+use eo_api::scan::{
+    AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
+    UndoResult,
+};
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::ApiError;
 
@@ -41,7 +45,7 @@ pub struct ApiFacade(pub Arc<eo_api::Api>);
 
 /// The composed facade, or the typed not-ready error during the startup
 /// window (and permanently if composition declined).
-fn facade(app: &tauri::AppHandle) -> Result<Arc<eo_api::Api>, ApiError> {
+pub(crate) fn facade(app: &tauri::AppHandle) -> Result<Arc<eo_api::Api>, ApiError> {
     use tauri::Manager as _;
     app.try_state::<ApiFacade>()
         .map(|state| state.0.clone())
@@ -491,6 +495,62 @@ pub async fn inventory_sell(
     facade(&app)?.inventory_sell(item_id, sale).await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_status(app: tauri::AppHandle) -> Result<ScanStatus, ApiError> {
+    facade(&app)?.scan_status()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_start(
+    app: tauri::AppHandle,
+    page_count: Option<i64>,
+) -> Result<ScanStatus, ApiError> {
+    facade(&app)?.scan_start(page_count)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_capture(app: tauri::AppHandle) -> Result<CaptureResult, ApiError> {
+    facade(&app)?.scan_capture()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_cancel(app: tauri::AppHandle) -> Result<ScanStatus, ApiError> {
+    facade(&app)?.scan_cancel()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_undo(app: tauri::AppHandle) -> Result<UndoResult, ApiError> {
+    facade(&app)?.scan_undo()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_process(app: tauri::AppHandle) -> Result<ScanStatus, ApiError> {
+    facade(&app)?.scan_process()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_accept(app: tauri::AppHandle) -> Result<AcceptResult, ApiError> {
+    facade(&app)?.scan_accept()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_reject(app: tauri::AppHandle) -> Result<RejectResult, ApiError> {
+    facade(&app)?.scan_reject()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_pending(app: tauri::AppHandle) -> Result<Option<SkillScanPending>, ApiError> {
+    facade(&app)?.scan_pending()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_spacebar_capture(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<SpacebarResult, ApiError> {
+    facade(&app)?.scan_set_spacebar_capture(enabled)
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -554,6 +614,16 @@ mod tests {
         "inventory_update",
         "inventory_delete",
         "inventory_sell",
+        "scan_status",
+        "scan_start",
+        "scan_capture",
+        "scan_cancel",
+        "scan_undo",
+        "scan_process",
+        "scan_accept",
+        "scan_reject",
+        "scan_pending",
+        "scan_spacebar_capture",
     ];
 
     #[test]

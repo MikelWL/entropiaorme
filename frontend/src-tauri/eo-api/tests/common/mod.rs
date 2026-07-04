@@ -17,17 +17,29 @@ use eo_services::config_service::ConfigService;
 use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::hotbar_listener::HotbarListener;
+use eo_services::skill_scan_manual::{ScanProviders, SkillScanManual};
 use eo_services::skill_tracker::SkillTracker;
+use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
 use eo_services::tracker::{HuntTracker, Providers};
 
-/// The five write-family producer handles a facade under test takes by
-/// value.
+/// The write-family producer handles a facade under test takes by value,
+/// plus the manual-scan state machine and its spacebar listener (inert:
+/// default providers report no engine and no game window, so the scan
+/// answers its resting status the way the app does before any scan).
 pub struct ProducerHandles {
     pub config_service: Arc<Mutex<ConfigService>>,
     pub tracker: Arc<HuntTracker>,
     pub hotbar: Arc<HotbarListener>,
     pub watcher: Arc<ChatlogWatcher>,
     pub skill_tracker: Arc<SkillTracker>,
+    // The scan family's own facade test builds a scan over controllable
+    // providers instead of these inert defaults, so it alone leaves the
+    // two fields unread; every other facade test binary passes them to
+    // `Api::new`.
+    #[allow(dead_code)]
+    pub skill_scan: Arc<SkillScanManual>,
+    #[allow(dead_code)]
+    pub spacebar: Arc<SpacebarCaptureListener>,
 }
 
 /// Build the write-family producer handles for a facade under test.
@@ -64,11 +76,21 @@ pub fn producer_handles(
         handle,
         Arc::new(RealClock::new()),
     );
+    let skill_scan = SkillScanManual::new(
+        ScanProviders::default(),
+        Arc::new(RealClock::new()),
+        None,
+        None,
+        0,
+    );
+    let spacebar = SpacebarCaptureListener::new(skill_scan.clone(), None);
     ProducerHandles {
         config_service,
         tracker,
         hotbar,
         watcher,
         skill_tracker,
+        skill_scan,
+        spacebar,
     }
 }

@@ -42,10 +42,7 @@ pub struct AppState {
     hydration: RwLock<Option<Arc<crate::hydration::HydrationState>>>,
     tracker: RwLock<Option<Arc<eo_services::tracker::HuntTracker>>>,
     config_service: RwLock<Option<Arc<Mutex<eo_services::config_service::ConfigService>>>>,
-    skill_scan: RwLock<Option<Arc<eo_services::skill_scan_manual::SkillScanManual>>>,
     repair_ocr: RwLock<Option<Arc<eo_services::repair_ocr::RepairOcrService>>>,
-    spacebar_listener:
-        RwLock<Option<Arc<eo_services::spacebar_capture_listener::SpacebarCaptureListener>>>,
     hotbar_listener: RwLock<Option<Arc<eo_services::hotbar_listener::HotbarListener>>>,
     cors: Option<cors::CorsConfig>,
     // The resolved data directory, for the hidden dev-tools routes (the
@@ -72,9 +69,7 @@ pub struct NativeServices {
     pub hydration: Arc<crate::hydration::HydrationState>,
     pub tracker: Arc<eo_services::tracker::HuntTracker>,
     pub config_service: Arc<Mutex<eo_services::config_service::ConfigService>>,
-    pub skill_scan: Arc<eo_services::skill_scan_manual::SkillScanManual>,
     pub repair_ocr: Arc<eo_services::repair_ocr::RepairOcrService>,
-    pub spacebar_listener: Arc<eo_services::spacebar_capture_listener::SpacebarCaptureListener>,
     pub hotbar_listener: Arc<eo_services::hotbar_listener::HotbarListener>,
 }
 
@@ -93,9 +88,7 @@ impl AppState {
             hydration: RwLock::new(None),
             tracker: RwLock::new(None),
             config_service: RwLock::new(None),
-            skill_scan: RwLock::new(None),
             repair_ocr: RwLock::new(None),
-            spacebar_listener: RwLock::new(None),
             hotbar_listener: RwLock::new(None),
             cors: None,
             data_dir: None,
@@ -247,28 +240,6 @@ impl AppState {
             .clone()
     }
 
-    /// Attach the composed manual skill-scan service (the OCR scan
-    /// state machine). Without it (a substrate built before composition,
-    /// composition declined, or the OCR runtime absent off Windows) the
-    /// scan routes answer the 503 service-unavailable floor.
-    pub fn with_skill_scan(
-        mut self,
-        skill_scan: Arc<eo_services::skill_scan_manual::SkillScanManual>,
-    ) -> Self {
-        self.skill_scan = RwLock::new(Some(skill_scan));
-        self
-    }
-
-    /// The composed manual skill-scan service, when present.
-    pub(crate) fn skill_scan(
-        &self,
-    ) -> Option<Arc<eo_services::skill_scan_manual::SkillScanManual>> {
-        self.skill_scan
-            .read()
-            .expect("skill scan service lock")
-            .clone()
-    }
-
     /// Attach the composed repair-OCR service. Without it the repair-scan
     /// route answers the 503 service-unavailable floor.
     pub fn with_repair_ocr(
@@ -284,26 +255,6 @@ impl AppState {
         self.repair_ocr
             .read()
             .expect("repair ocr service lock")
-            .clone()
-    }
-
-    /// Attach the composed spacebar-capture listener. Without it the
-    /// spacebar-capture toggle route answers the 503 service-unavailable floor.
-    pub fn with_spacebar_listener(
-        mut self,
-        spacebar_listener: Arc<eo_services::spacebar_capture_listener::SpacebarCaptureListener>,
-    ) -> Self {
-        self.spacebar_listener = RwLock::new(Some(spacebar_listener));
-        self
-    }
-
-    /// The composed spacebar-capture listener, when present.
-    pub(crate) fn spacebar_listener(
-        &self,
-    ) -> Option<Arc<eo_services::spacebar_capture_listener::SpacebarCaptureListener>> {
-        self.spacebar_listener
-            .read()
-            .expect("spacebar listener service lock")
             .clone()
     }
 
@@ -338,12 +289,7 @@ impl AppState {
         *self.hydration.write().expect("hydration service lock") = Some(services.hydration);
         *self.tracker.write().expect("tracker service lock") = Some(services.tracker);
         *self.config_service.write().expect("config service lock") = Some(services.config_service);
-        *self.skill_scan.write().expect("skill scan service lock") = Some(services.skill_scan);
         *self.repair_ocr.write().expect("repair ocr service lock") = Some(services.repair_ocr);
-        *self
-            .spacebar_listener
-            .write()
-            .expect("spacebar listener service lock") = Some(services.spacebar_listener);
         *self
             .hotbar_listener
             .write()

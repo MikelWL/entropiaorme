@@ -15,7 +15,7 @@ export { ApiError, manualSkillScanCapturePng, request } from './client';
 
 import { guideState } from '$lib/guide/state.svelte';
 import type { NotableEventCategory, NotableEventType } from '$lib/types/common';
-import { ApiError, client, unwrap } from './client';
+import { client, unwrap } from './client';
 
 /*
  * Guide-mode route swap for analytics-flavoured endpoints.
@@ -122,6 +122,11 @@ export async function getCharacterProspect(params: {
 }
 
 // --- Manual scan flow (public, user-driven page-by-page capture) ---
+// Served over typed IPC commands (`commands.gen.ts`); the wrappers keep
+// their hand-written return types (the authoritative frontend contract),
+// narrowing the generated types with `as`. A logical refusal rides the
+// returned status' `error` field (the scanner never throws for one), so
+// every caller reads `.error` first and the status fields defensively.
 
 export type ScanPhase = 'idle' | 'capturing' | 'processing' | 'awaiting_review';
 
@@ -145,35 +150,34 @@ export interface SkillScanPending {
 }
 
 export async function getManualSkillScanStatus(): Promise<ScanManualStatus> {
-	return unwrap(client.GET('/api/scan/skills/status'));
+	return (await commands.scanStatus()) as ScanManualStatus;
 }
 
-export async function startManualSkillScan(
-	pageCount?: number,
-): Promise<ScanManualStatus & { error?: string }> {
-	return unwrap(
-		client.POST('/api/scan/skills/start', { params: { query: { page_count: pageCount } } }),
-	);
+export async function startManualSkillScan(pageCount?: number): Promise<ScanManualStatus> {
+	return (await commands.scanStart(pageCount ?? null)) as ScanManualStatus;
 }
 
 export async function captureManualSkillPage(): Promise<
-	ScanManualStatus & { page?: number; captured?: boolean; error?: string }
+	ScanManualStatus & { page?: number; captured?: boolean }
 > {
-	return unwrap(client.POST('/api/scan/skills/capture'));
+	return (await commands.scanCapture()) as ScanManualStatus & {
+		page?: number;
+		captured?: boolean;
+	};
 }
 
-export async function cancelManualSkillScan(): Promise<ScanManualStatus & { error?: string }> {
-	return unwrap(client.POST('/api/scan/skills/cancel'));
+export async function cancelManualSkillScan(): Promise<ScanManualStatus> {
+	return (await commands.scanCancel()) as ScanManualStatus;
 }
 
 export async function undoManualSkillCapture(): Promise<
-	ScanManualStatus & { undone_page?: number; error?: string }
+	ScanManualStatus & { undone_page?: number }
 > {
-	return unwrap(client.POST('/api/scan/skills/undo'));
+	return (await commands.scanUndo()) as ScanManualStatus & { undone_page?: number };
 }
 
-export async function processManualSkillScan(): Promise<ScanManualStatus & { error?: string }> {
-	return unwrap(client.POST('/api/scan/skills/process'));
+export async function processManualSkillScan(): Promise<ScanManualStatus> {
+	return (await commands.scanProcess()) as ScanManualStatus;
 }
 
 export async function acceptManualSkillScan(): Promise<{
@@ -181,26 +185,25 @@ export async function acceptManualSkillScan(): Promise<{
 	skills_persisted?: number;
 	error?: string;
 }> {
-	return unwrap(client.POST('/api/scan/skills/accept'));
+	return (await commands.scanAccept()) as {
+		ok?: boolean;
+		skills_persisted?: number;
+		error?: string;
+	};
 }
 
 export async function rejectManualSkillScan(): Promise<{ ok?: boolean; error?: string }> {
-	return unwrap(client.POST('/api/scan/skills/reject'));
+	return (await commands.scanReject()) as { ok?: boolean; error?: string };
 }
 
 export async function getManualSkillScanPending(): Promise<SkillScanPending | null> {
-	try {
-		return await unwrap<SkillScanPending>(client.GET('/api/scan/skills/pending'));
-	} catch (err) {
-		if (err instanceof ApiError && err.status === 404) return null;
-		throw err;
-	}
+	return (await commands.scanPending()) as SkillScanPending | null;
 }
 
 export async function setSpacebarCapture(
 	enabled: boolean,
 ): Promise<{ ok?: boolean; enabled?: boolean; error?: string }> {
-	return unwrap(client.POST('/api/scan/spacebar-capture', { params: { query: { enabled } } }));
+	return commands.scanSpacebarCapture(enabled);
 }
 
 // --- Codex ---

@@ -33,6 +33,10 @@ use crate::equipment::{
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
 };
+use crate::scan::{
+    AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
+    UndoResult,
+};
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::ApiError;
 
@@ -530,6 +534,62 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(InventorySellResult))),
+        },
+        CommandSpec {
+            name: "scan_status",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(ScanStatus))),
+        },
+        CommandSpec {
+            name: "scan_start",
+            args: vec![ArgSpec {
+                name: "page_count",
+                schema: schema(schema_for!(Option<i64>)),
+            }],
+            returns: Some(schema(schema_for!(ScanStatus))),
+        },
+        CommandSpec {
+            name: "scan_capture",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CaptureResult))),
+        },
+        CommandSpec {
+            name: "scan_cancel",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(ScanStatus))),
+        },
+        CommandSpec {
+            name: "scan_undo",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(UndoResult))),
+        },
+        CommandSpec {
+            name: "scan_process",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(ScanStatus))),
+        },
+        CommandSpec {
+            name: "scan_accept",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AcceptResult))),
+        },
+        CommandSpec {
+            name: "scan_reject",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(RejectResult))),
+        },
+        CommandSpec {
+            name: "scan_pending",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Option<SkillScanPending>))),
+        },
+        CommandSpec {
+            name: "scan_spacebar_capture",
+            args: vec![ArgSpec {
+                name: "enabled",
+                schema: schema(schema_for!(bool)),
+            }],
+            returns: Some(schema(schema_for!(SpacebarResult))),
         },
     ]
 }

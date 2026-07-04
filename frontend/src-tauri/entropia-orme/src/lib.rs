@@ -124,29 +124,18 @@ async fn api_request(app: tauri::AppHandle, request: ApiRequest) -> Result<ApiRe
     }
 }
 
-/// GET the manual-scan capture preview PNG for `page`, base64-encoded for an
-/// `<img>` `data:` URL. The route returns raw image bytes and is excluded from
-/// the JSON IPC envelope (`api_request` carries text bodies), so it rides its
-/// own command, dispatched through the same in-process router (no socket).
+/// The manual-scan capture preview PNG for `page`, base64-encoded for an
+/// `<img>` `data:` URL. The facade returns raw image bytes, which cannot ride
+/// the typed-DTO command surface (the bindings are JSON), so this stays a
+/// bespoke command outside the manifest, base64-encoding the bytes here.
 #[tauri::command]
 async fn capture_png(app: tauri::AppHandle, page: u32) -> Result<String, String> {
     use base64::Engine as _;
-    let state = app
-        .try_state::<ApiSubstrate>()
-        .ok_or("backend substrate not ready")?
-        .0
-        .clone();
-    let path = format!("/api/scan/skills/capture/{page}");
-    let response = eo_http::dispatch_in_process(state, "GET", &path, &[], Vec::new())
-        .await
+    let facade = commands::facade(&app).map_err(|error| error.to_string())?;
+    let bytes = facade
+        .scan_capture_png(i64::from(page))
         .map_err(|error| error.to_string())?;
-    if response.status != 200 {
-        return Err(format!(
-            "capture preview unavailable (status {})",
-            response.status
-        ));
-    }
-    Ok(base64::engine::general_purpose::STANDARD.encode(&response.body))
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 // Holds the substrate's live producer spine so the Tauri exit seam can
@@ -284,6 +273,16 @@ pub fn run() {
             commands::inventory_update,
             commands::inventory_delete,
             commands::inventory_sell,
+            commands::scan_status,
+            commands::scan_start,
+            commands::scan_capture,
+            commands::scan_cancel,
+            commands::scan_undo,
+            commands::scan_process,
+            commands::scan_accept,
+            commands::scan_reject,
+            commands::scan_pending,
+            commands::scan_spacebar_capture,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -472,9 +471,7 @@ fn install_native_services(
         hydration: composed.hydration,
         tracker: composed.producers.tracker_handle(),
         config_service: composed.producers.config_service_handle(),
-        skill_scan: composed.skill_scan.clone(),
         repair_ocr: composed.repair_ocr,
-        spacebar_listener: composed.spacebar_listener.clone(),
         hotbar_listener: composed.producers.hotbar_handle(),
     });
     // Forward the producer spine's domain events onto the Tauri event bus, the
