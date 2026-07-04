@@ -13,6 +13,11 @@
 use schemars::schema_for;
 use serde_json::Value;
 
+use crate::character::{
+    CalibrationStatus, CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult,
+    PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
+    SkillLevel,
+};
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -92,6 +97,70 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(i64)),
             }],
             returns: Some(schema(schema_for!(EquipmentDetail))),
+        },
+        CommandSpec {
+            name: "character_calibration",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CalibrationStatus))),
+        },
+        CommandSpec {
+            name: "character_stats",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(ComputedCharacterStats))),
+        },
+        CommandSpec {
+            name: "character_skills",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<SkillLevel>))),
+        },
+        CommandSpec {
+            name: "character_professions",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<ProfessionLevel>))),
+        },
+        CommandSpec {
+            name: "character_prospect_options",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CharacterProspectOptions))),
+        },
+        CommandSpec {
+            name: "character_prospect",
+            args: vec![ArgSpec {
+                name: "query",
+                schema: schema(schema_for!(ProspectQuery)),
+            }],
+            returns: Some(schema(schema_for!(ProspectResult))),
+        },
+        CommandSpec {
+            name: "character_profession_optimizer",
+            args: vec![ArgSpec {
+                name: "profession",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(ProfessionOptimizerResult))),
+        },
+        CommandSpec {
+            name: "character_path_optimizer",
+            args: vec![
+                ArgSpec {
+                    name: "profession",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "target_level",
+                    schema: schema(schema_for!(Option<f64>)),
+                },
+                ArgSpec {
+                    name: "ped_budget",
+                    schema: schema(schema_for!(Option<f64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(PathOptimizerResult))),
+        },
+        CommandSpec {
+            name: "character_hp_optimizer",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(HpOptimizerResult))),
         },
     ]
 }
