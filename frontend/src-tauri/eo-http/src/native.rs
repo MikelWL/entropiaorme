@@ -23,13 +23,11 @@ use crate::body::{
     list_of_str_or_default, opt_f64, opt_int, opt_list_of_str, opt_str, str_or_default, BodyInt,
     BodyObject, Loc,
 };
-use crate::character_routes::ProspectQuery;
 use crate::extract::{
-    decode_path_segment, float_or_default, literal_or_default, opt_float, opt_query_int,
-    parse_int_lax, query_int_or_default, require_bounded_int, require_float, require_query_bool,
-    require_str, LaxInt, QueryString, Validation,
+    decode_path_segment, literal_or_default, opt_query_int, parse_int_lax, query_int_or_default,
+    require_bounded_int, require_query_bool, require_str, LaxInt, QueryString, Validation,
 };
-use crate::hydration::{detail, error_response, internal_error};
+use crate::hydration::internal_error;
 use crate::pyjson::PyValue;
 use crate::{arm_routed, service_unavailable, AppState, ArmRoutes};
 
@@ -1353,16 +1351,6 @@ async fn settings_reset(state: Arc<AppState>, _req: Request) -> Response<Body> {
         .await
 }
 
-// ── Character adapters ──────────────────────────────────────────────
-
-simple_get!(character_calibration, character_calibration);
-simple_get!(character_stats, character_stats);
-simple_get!(character_skills, character_skills);
-simple_get!(character_professions, character_professions);
-simple_get!(character_prospect_options, character_prospect_options);
-simple_get!(character_hp_optimizer, character_hp_optimizer);
-simple_get!(character_codex, character_codex);
-
 // ── Analytics adapters ──────────────────────────────────────────────
 
 simple_get!(analytics_activity, analytics_activity);
@@ -2119,113 +2107,6 @@ async fn inventory_sell(state: Arc<AppState>, req: Request) -> Response<Body> {
         .await
 }
 
-/// GET /api/character/prospect: the query family validates in
-/// signature order (the envelope), then the handler's own 422 details
-/// in code order.
-async fn character_prospect(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let Some(hydration) = state.hydration() else {
-        return service_unavailable();
-    };
-    let query = QueryString::parse(req.uri().query());
-    let mut validation = Validation::new();
-    let profession = require_str(&mut validation, &query, "profession");
-    let target_level = require_float(&mut validation, &query, "target_level");
-    let slice_type = query.last("slice_type").unwrap_or("global");
-    let slice_value = query.last("slice_value");
-    let markup_uplift = float_or_default(&mut validation, &query, "markup_uplift", 0.0);
-    if !validation.is_ok() {
-        return validation.into_response();
-    }
-    let (profession, target_level, markup_uplift) = (
-        profession.expect("validated"),
-        target_level.expect("validated"),
-        markup_uplift.expect("validated"),
-    );
-    if target_level <= 0.0 {
-        return error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            &detail("target_level must be positive"),
-        );
-    }
-    if markup_uplift < 0.0 {
-        return error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            &detail("markup_uplift must be zero or positive"),
-        );
-    }
-    if !["global", "tag", "mob", "weapon"].contains(&slice_type) {
-        return error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            &detail("slice_type must be global, tag, mob, or weapon"),
-        );
-    }
-    if slice_type != "global" && slice_value.is_none_or(|v| v.is_empty()) {
-        return error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            &detail("slice_value is required for non-global slices"),
-        );
-    }
-    let prospect_query = ProspectQuery {
-        profession: profession.to_string(),
-        target_level,
-        slice_type: slice_type.to_string(),
-        slice_value: slice_value.map(str::to_string),
-        markup_uplift,
-    };
-    let inm = if_none_match(&req);
-    hydration
-        .character_prospect(&prospect_query, inm.as_deref())
-        .await
-}
-
-/// GET /api/character/profession-optimizer.
-async fn character_profession_optimizer(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let Some(hydration) = state.hydration() else {
-        return service_unavailable();
-    };
-    let query = QueryString::parse(req.uri().query());
-    let mut validation = Validation::new();
-    let profession = require_str(&mut validation, &query, "profession");
-    if !validation.is_ok() {
-        return validation.into_response();
-    }
-    let inm = if_none_match(&req);
-    hydration
-        .character_profession_optimizer(profession.expect("validated"), inm.as_deref())
-        .await
-}
-
-/// GET /api/character/profession-path-optimizer: exactly one of
-/// target_level / ped_budget after the envelope validation.
-async fn character_path_optimizer(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let Some(hydration) = state.hydration() else {
-        return service_unavailable();
-    };
-    let query = QueryString::parse(req.uri().query());
-    let mut validation = Validation::new();
-    let profession = require_str(&mut validation, &query, "profession");
-    let target_level = opt_float(&mut validation, &query, "target_level");
-    let ped_budget = opt_float(&mut validation, &query, "ped_budget");
-    if !validation.is_ok() {
-        return validation.into_response();
-    }
-    let (profession, target_level, ped_budget) = (
-        profession.expect("validated"),
-        target_level.expect("validated"),
-        ped_budget.expect("validated"),
-    );
-    if target_level.is_none() == ped_budget.is_none() {
-        return error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            &detail("Exactly one of target_level or ped_budget must be provided"),
-        );
-    }
-    let inm = if_none_match(&req);
-    hydration
-        .character_path_optimizer(profession, target_level, ped_budget, inm.as_deref())
-        .await
-}
-
 /// Register the natively-served quests/codex hydration GETs; one
 /// `arm_routed` line per route. Every route is served in-process; there is
 /// no runtime override left to consult.
@@ -2711,73 +2592,5 @@ pub(crate) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
                 .on(MethodFilter::GET, overlay_position_get)
                 .on(MethodFilter::PUT, overlay_position_set)
                 .into_method_router(),
-        )
-        .route(
-            "/api/character/calibration",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/character/calibration",
-                character_calibration,
-            ),
-        )
-        .route(
-            "/api/character/stats",
-            arm_routed(MethodFilter::GET, "/api/character/stats", character_stats),
-        )
-        .route(
-            "/api/character/skills",
-            arm_routed(MethodFilter::GET, "/api/character/skills", character_skills),
-        )
-        .route(
-            "/api/character/professions",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/character/professions",
-                character_professions,
-            ),
-        )
-        .route(
-            "/api/character/prospect-options",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/character/prospect-options",
-                character_prospect_options,
-            ),
-        )
-        .route(
-            "/api/character/prospect",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/character/prospect",
-                character_prospect,
-            ),
-        )
-        .route(
-            "/api/character/profession-optimizer",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/character/profession-optimizer",
-                character_profession_optimizer,
-            ),
-        )
-        .route(
-            "/api/character/profession-path-optimizer",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/character/profession-path-optimizer",
-                character_path_optimizer,
-            ),
-        )
-        .route(
-            "/api/character/hp-optimizer",
-            arm_routed(
-                MethodFilter::GET,
-                "/api/character/hp-optimizer",
-                character_hp_optimizer,
-            ),
-        )
-        .route(
-            "/api/character/codex",
-            arm_routed(MethodFilter::GET, "/api/character/codex", character_codex),
         )
 }

@@ -10,7 +10,6 @@
 
 pub mod analytics_routes;
 pub mod body;
-pub mod character_routes;
 pub mod cors;
 pub mod demo;
 pub mod dev_routes;
