@@ -396,6 +396,66 @@ export interface PathOptimizerResult {
 }
 
 /**
+ * Per-playlist analytics in the wire shape
+ * (`_format_playlist_analytics`).
+ */
+export interface PlaylistAnalyticsRow {
+	playlistId: string;
+	playlistName: string;
+	questCount: number;
+	longHorizonQuestCount: number;
+	matchedSessions: number;
+	totalRewardPed: number;
+	totalImmediateRewardPed: number;
+	totalBonusRewardPed: number;
+	totalPesReward: number;
+	totalImmediatePesReward: number;
+	totalBonusPesReward: number;
+	totalExpectedRewardPed: number;
+	totalExpectedImmediateRewardPed: number;
+	totalExpectedBonusRewardPed: number;
+	totalDurationSec: number;
+	totalWeaponCost: number;
+	totalHealCost: number;
+	totalEnhancerCost: number;
+	totalArmourCost: number;
+	totalLootTt: number;
+	totalPes: number;
+}
+
+/**
+ * A playlist create or update payload, in the frontend's snake_case
+ * casing. The sole client sends `name` / `planet` / `estimated_minutes`
+ * / `items` for both operations (never `quest_ids`); the service derives
+ * membership from `items` whenever it is present, so the facade sends
+ * exactly those keys and omits the vestigial `quest_ids`.
+ */
+export interface PlaylistInput {
+	name: string;
+	planet?: string;
+	estimated_minutes?: number;
+	items?: PlaylistItemInput[];
+}
+
+/**
+ * One classified slot in a playlist's wire shape.
+ */
+export interface PlaylistItem {
+	questId: string;
+	description?: string | null;
+	groupType: string;
+}
+
+/**
+ * One classified quest slot in a playlist create/update.
+ */
+export interface PlaylistItemInput {
+	quest_id: number;
+	description?: string | null;
+	group_type?: string;
+}
+
+/**
  * One profession row.
  */
 export interface ProfessionLevel {
@@ -512,6 +572,99 @@ export interface ProspectSample {
  * is unrepresentable rather than validated.
  */
 export type ProspectSliceType = 'global' | 'tag' | 'mob' | 'weapon';
+
+/**
+ * A quest in the wire shape (`_format_quest` key for key). Ids are
+ * stringified; `rewardDescription` / `notes` collapse null-or-empty to
+ * `""`; `rewardIsSkill` is the boolean of the stored int flag.
+ */
+export interface Quest {
+	id: string;
+	name: string;
+	category?: string | null;
+	targetMobs: string[];
+	planet: string;
+	waypoint?: string | null;
+	cooldownDurationHours?: number | null;
+	cooldownExpiresAt?: string | null;
+	reward?: number | null;
+	rewardIsSkill: boolean;
+	expectedRewardMarkupPercent?: number | null;
+	rewardDescription: string;
+	notes: string;
+	chainName?: string | null;
+	chainPosition?: number | null;
+	chainTotal?: number | null;
+	playlistIds: string[];
+	/** A fractional epoch-seconds timestamp (the tracker's clock is sub-second), null while the quest is not in progress. */
+	startedAt?: number | null;
+}
+
+/**
+ * Per-quest analytics in the wire shape (`_format_quest_analytics`).
+ * The reward and cost columns are model-float coerced and rounded; the
+ * session count is an integer; the markup passes through raw.
+ */
+export interface QuestAnalyticsRow {
+	questId: string;
+	questName: string;
+	planet: string;
+	category?: string | null;
+	rewardPed: number;
+	rewardIsSkill: boolean;
+	expectedRewardMarkupPercent?: number | null;
+	totalExpectedRewardPed: number;
+	linkedSessions: number;
+	totalDurationSec: number;
+	totalWeaponCost: number;
+	totalHealCost: number;
+	totalEnhancerCost: number;
+	totalArmourCost: number;
+	totalLootTt: number;
+	totalPes: number;
+}
+
+/**
+ * A quest create or update payload. One DTO serves both operations, in
+ * the frontend's snake_case field casing: the sole client sends the
+ * full field set for both create and update (nulls explicit), so every
+ * field is serialised to the service `Value` (present-null clears a
+ * column on update, exactly as the exclude-unset contract did for the
+ * only payload the client ever produced). `update_quest` ignores the
+ * `mobs` key by design, so a full payload is behaviour-identical to the
+ * HTTP path either way.
+ */
+export interface QuestInput {
+	name: string;
+	planet?: string;
+	category?: string | null;
+	waypoint?: string | null;
+	cooldown_hours?: number | null;
+	reward_ped?: number | null;
+	reward_is_skill?: boolean;
+	expected_reward_markup_percent?: number | null;
+	reward_description?: string | null;
+	notes?: string | null;
+	chain_name?: string | null;
+	chain_position?: number | null;
+	chain_total?: number | null;
+	mobs?: string[];
+}
+
+/**
+ * A playlist in the wire shape (`_format_playlist`). Membership arrives
+ * pre-classified from the service; ids are stringified.
+ */
+export interface QuestPlaylist {
+	id: string;
+	name: string;
+	planet: string;
+	estimatedMinutes: number;
+	questIds: string[];
+	immediateQuestIds: string[];
+	longHorizonQuestIds: string[];
+	items: PlaylistItem[];
+}
 
 /**
  * A catalogue vocabulary the search accepts; each maps to one snapshot
@@ -713,4 +866,64 @@ export async function codexUnclaim(speciesName: string): Promise<CodexClaimResul
 
 export async function codexMetaClaim(attributeName: string): Promise<CodexMetaClaimResult> {
 	return invokeCommand('codex_meta_claim', { attribute_name: attributeName });
+}
+
+export async function questsList(): Promise<Quest[]> {
+	return invokeCommand('quests_list', {});
+}
+
+export async function questGet(questId: number): Promise<Quest> {
+	return invokeCommand('quest_get', { quest_id: questId });
+}
+
+export async function questCreate(input: QuestInput): Promise<Quest> {
+	return invokeCommand('quest_create', { input });
+}
+
+export async function questUpdate(questId: number, input: QuestInput): Promise<Quest> {
+	return invokeCommand('quest_update', { quest_id: questId, input });
+}
+
+export async function questDelete(questId: number): Promise<void> {
+	return invokeCommand('quest_delete', { quest_id: questId });
+}
+
+export async function questStart(questId: number): Promise<Quest> {
+	return invokeCommand('quest_start', { quest_id: questId });
+}
+
+export async function questComplete(questId: number): Promise<Quest> {
+	return invokeCommand('quest_complete', { quest_id: questId });
+}
+
+export async function questCancel(questId: number, undoReward: boolean): Promise<Quest> {
+	return invokeCommand('quest_cancel', { quest_id: questId, undo_reward: undoReward });
+}
+
+export async function questsMobs(): Promise<string[]> {
+	return invokeCommand('quests_mobs', {});
+}
+
+export async function questsAnalytics(): Promise<QuestAnalyticsRow[]> {
+	return invokeCommand('quests_analytics', {});
+}
+
+export async function playlistsList(): Promise<QuestPlaylist[]> {
+	return invokeCommand('playlists_list', {});
+}
+
+export async function playlistCreate(input: PlaylistInput): Promise<QuestPlaylist> {
+	return invokeCommand('playlist_create', { input });
+}
+
+export async function playlistUpdate(playlistId: number, input: PlaylistInput): Promise<QuestPlaylist> {
+	return invokeCommand('playlist_update', { playlist_id: playlistId, input });
+}
+
+export async function playlistDelete(playlistId: number): Promise<void> {
+	return invokeCommand('playlist_delete', { playlist_id: playlistId });
+}
+
+export async function playlistsAnalytics(): Promise<PlaylistAnalyticsRow[]> {
+	return invokeCommand('playlists_analytics', {});
 }

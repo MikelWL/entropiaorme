@@ -145,11 +145,6 @@ async fn every_registered_route_serves_natively_over_the_composed_state() {
     // List routes over a fresh database: empty collections, served
     // natively (a proxy fallback would 502 against the dead upstream).
     for (path, expected_body) in [
-        ("/api/quests", "[]"),
-        ("/api/quests/mobs", "[]"),
-        ("/api/quests/analytics", "[]"),
-        ("/api/quests/playlists", "[]"),
-        ("/api/quests/playlists/analytics", "[]"),
         // The tracking session reads (ETag-scoped; empty db -> []).
         ("/api/tracking/sessions", "[]"),
         ("/api/tracking/tag-suggestions?q=a", "[]"),
@@ -209,7 +204,7 @@ async fn every_registered_route_serves_natively_over_the_composed_state() {
 
     // The conditional-GET leg: the current validator earns a 304 with
     // an empty body; a stale one re-serves the representation.
-    let (_, headers, _) = get(&state, "/api/quests").await;
+    let (_, headers, _) = get(&state, "/api/tracking/sessions").await;
     let etag = headers
         .get(http::header::ETAG)
         .expect("etag present")
@@ -219,7 +214,7 @@ async fn every_registered_route_serves_natively_over_the_composed_state() {
     let (status, headers, body) = request(
         &state,
         "GET",
-        "/api/quests",
+        "/api/tracking/sessions",
         &[("if-none-match", etag.as_str())],
     )
     .await;
@@ -232,7 +227,7 @@ async fn every_registered_route_serves_natively_over_the_composed_state() {
     let (status, _, _) = request(
         &state,
         "GET",
-        "/api/quests",
+        "/api/tracking/sessions",
         &[("if-none-match", "\"stale\"")],
     )
     .await;
@@ -379,7 +374,7 @@ async fn the_browser_surface_is_answered_at_the_substrate() {
     let (status, headers, body) = request(
         &state,
         "OPTIONS",
-        "/api/quests",
+        "/api/tracking/sessions",
         &[
             ("origin", "tauri://localhost"),
             ("access-control-request-method", "GET"),
@@ -398,7 +393,7 @@ async fn the_browser_surface_is_answered_at_the_substrate() {
     let (status, _, body) = request(
         &state,
         "OPTIONS",
-        "/api/quests",
+        "/api/tracking/sessions",
         &[
             ("origin", "http://evil.example"),
             ("access-control-request-method", "GET"),
@@ -411,7 +406,7 @@ async fn the_browser_surface_is_answered_at_the_substrate() {
     let (status, headers, _) = request(
         &state,
         "GET",
-        "/api/quests",
+        "/api/tracking/sessions",
         &[("origin", "tauri://localhost")],
     )
     .await;
@@ -427,15 +422,17 @@ async fn the_browser_surface_is_answered_at_the_substrate() {
     let (status, _, body) = request(
         &state,
         "GET",
-        "/api/quests",
+        "/api/tracking/sessions",
         &[("origin", "http://evil.example")],
     )
     .await;
     assert_eq!(status, http::StatusCode::FORBIDDEN);
     assert_eq!(body, b"{\"detail\":\"Invalid Origin header\"}");
     // Mutating methods require an allowed origin, enforced before any
-    // upstream forward (a forwarded request would 502, not 403).
-    let (status, _, body) = request(&state, "POST", "/api/quests", &[]).await;
+    // upstream forward (a forwarded request would 502, not 403). Target a
+    // real POST route so this proves a valid mutating route is guarded
+    // before dispatch, not merely an unmatched-method path.
+    let (status, _, body) = request(&state, "POST", "/api/tracking/start", &[]).await;
     assert_eq!(status, http::StatusCode::FORBIDDEN);
     assert_eq!(body, b"{\"detail\":\"Origin header required\"}");
 }
@@ -444,9 +441,9 @@ async fn the_browser_surface_is_answered_at_the_substrate() {
 async fn the_framework_404s_unmatched_paths_and_405s_unported_methods() {
     let (state, _dir) = serve_substrate().await;
     // An encoded slash stays one raw segment, so it does not decode into the
-    // registered `/api/quests/mobs` path: the framework 404 (nothing forwards
-    // it upstream now).
-    let (status, _, body) = get(&state, "/api/quests%2Fmobs").await;
+    // registered `/api/tracking/sessions` path: the framework 404 (nothing
+    // forwards it upstream now).
+    let (status, _, body) = get(&state, "/api/tracking%2Fsessions").await;
     assert_eq!(status, http::StatusCode::NOT_FOUND);
     assert_eq!(body, b"{\"detail\":\"Not Found\"}");
     // An unmatched path under /api is likewise the framework 404.
@@ -455,479 +452,12 @@ async fn the_framework_404s_unmatched_paths_and_405s_unported_methods() {
     // HEAD on a GET route is the framework 405: the backend hard-405s HEAD on
     // its GET routes, and the native router does not auto-serve HEAD from the
     // GET handler (it carries an explicit 405 method fallback).
-    let (status, _, _) = request(&state, "HEAD", "/api/quests", &[]).await;
+    let (status, _, _) = request(&state, "HEAD", "/api/tracking/sessions", &[]).await;
     assert_eq!(status, http::StatusCode::METHOD_NOT_ALLOWED);
     // A present-but-empty Host passes the guard (the backend's falsy check
     // skips it), so the route serves natively.
-    let (status, _, _) = request(&state, "GET", "/api/quests", &[("host", "")]).await;
+    let (status, _, _) = request(&state, "GET", "/api/tracking/sessions", &[("host", "")]).await;
     assert_eq!(status, http::StatusCode::OK);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_write_surface_serves_natively_over_the_composed_state() {
-    let (state, _dir) = serve_substrate().await;
-
-    // Create: minimal, then lax-coerced fields; ids are deterministic
-    // over the fresh database.
-    let (status, headers, body) =
-        send_json(&state, "POST", "/api/quests", r#"{"name": "Alpha"}"#).await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert!(
-        !headers.contains_key(http::header::ETAG),
-        "write replies carry no conditional-GET headers"
-    );
-    let created: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(created["id"], "1");
-    assert_eq!(created["planet"], "Calypso");
-    assert_eq!(created["rewardIsSkill"], false);
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/quests",
-        r#"{"name": "Beta", "reward_ped": "1_0.5", "reward_is_skill": "yes", "chain_position": 2.0, "mobs": ["Atrox"]}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let created: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(created["reward"], 10.5);
-    assert_eq!(created["rewardIsSkill"], true);
-    assert_eq!(created["chainPosition"], 2);
-    assert_eq!(created["targetMobs"], serde_json::json!(["Atrox"]));
-
-    // The single-quest read serves with the conditional-GET contract.
-    let (status, headers, _) = get(&state, "/api/quests/1").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert!(headers.contains_key(http::header::ETAG));
-
-    // Update: exclude-unset (only sent fields move), declaration-order
-    // multi-error, and present-null clears.
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/quests/1",
-        r#"{"notes": "updated", "reward_ped": null}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let updated: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(updated["notes"], "updated");
-    assert_eq!(updated["reward"], Value::Null);
-    assert_eq!(updated["name"], "Alpha", "unsent fields keep their values");
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/quests/1",
-        r#"{"reward_description": 5, "cooldown_hours": "x"}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    let kinds = detail_types(&body);
-    assert_eq!(
-        kinds,
-        ["float_parsing", "string_type"],
-        "issues list in model declaration order (cooldown_hours before reward_description)"
-    );
-
-    // Lifecycle on a zero-cooldown quest.
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/quests",
-        r#"{"name": "Cycle", "cooldown_hours": 0}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let (status, _, body) = send_json(&state, "POST", "/api/quests/3/start", "").await;
-    assert_eq!(status, http::StatusCode::OK);
-    let started: Value = serde_json::from_slice(&body).unwrap();
-    assert_ne!(started["startedAt"], Value::Null);
-    let (status, _, body) = send_json(&state, "POST", "/api/quests/3/complete", "").await;
-    assert_eq!(status, http::StatusCode::OK);
-    let completed: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(completed["cooldownExpiresAt"], Value::Null);
-    let (status, _, _) = send_json(&state, "POST", "/api/quests/3/start", "").await;
-    assert_eq!(status, http::StatusCode::OK);
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/quests/3/cancel",
-        r#"{"undo_reward": false}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let cancelled: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(cancelled["startedAt"], Value::Null);
-    // Cancel tolerates a top-level null body (no-body semantics).
-    let (status, _, _) = send_json(&state, "POST", "/api/quests/3/cancel", "null").await;
-    assert_eq!(status, http::StatusCode::OK);
-
-    // Playlists: create with nested items, update, delete.
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/quests/playlists",
-        r#"{"name": "Run", "estimated_minutes": "45", "quest_ids": [1, "2"], "items": [{"quest_id": 3, "group_type": "long_horizon"}]}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let playlist: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(playlist["estimatedMinutes"], 45);
-    // Provided items supersede the plain id list: the playlist's quest
-    // set derives from them (the committed golden pins the same shape).
-    assert_eq!(playlist["questIds"], serde_json::json!(["3"]));
-    assert_eq!(playlist["items"][0]["groupType"], "long_horizon");
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/quests/playlists/1",
-        r#"{"name": "Run 2"}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let renamed: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(renamed["name"], "Run 2");
-    let (status, _, body) = send_json(&state, "DELETE", "/api/quests/playlists/1", "").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, b"{\"ok\":true}");
-
-    // Not-found legs and the delete reply.
-    for (method, path, body) in [
-        ("PUT", "/api/quests/424242", r#"{"name": "Z"}"#),
-        ("DELETE", "/api/quests/424242", ""),
-        ("POST", "/api/quests/424242/start", ""),
-        ("PUT", "/api/quests/playlists/424242", r#"{"name": "Z"}"#),
-        ("DELETE", "/api/quests/playlists/424242", ""),
-    ] {
-        let (status, _, reply) = send_json(&state, method, path, body).await;
-        assert_eq!(status, http::StatusCode::NOT_FOUND, "{method} {path}");
-        assert!(
-            reply == b"{\"detail\":\"Quest not found\"}"
-                || reply == b"{\"detail\":\"Playlist not found\"}",
-            "{method} {path}"
-        );
-    }
-    let (status, _, body) = send_json(&state, "DELETE", "/api/quests/2", "").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, b"{\"ok\":true}");
-
-    // Path-parameter legs on the write routes.
-    let (status, _, body) = send_json(&state, "PUT", "/api/quests/abc", r#"{"name": "Z"}"#).await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["int_parsing"]);
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/quests/999999999999999999999999/start",
-        "",
-    )
-    .await;
-    // A beyond-i64 path id can never name a stored quest, so it is a
-    // clean 404 (a missing resource), like the decoded-slash case below.
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-    assert_eq!(body, b"{\"detail\":\"Not Found\"}");
-    let (status, _, body) = send_json(&state, "POST", "/api/quests/A%2FB/start", "").await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-    assert_eq!(body, b"{\"detail\":\"Not Found\"}");
-}
-
-/// A5: an integer path id beyond i64 names no stored row, so every
-/// int-id route answers a clean 404 (a missing resource) rather than
-/// the old unhandled-overflow 500. The body-carrying routes resolve
-/// the 404 only after the body validates clean (a deferred 404).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn out_of_range_path_id_is_not_found() {
-    let (state, _dir) = serve_substrate().await;
-    let big = "99999999999999999999999999"; // > i64::MAX
-
-    // No-body int-id routes (via `path_id`): every method answers the
-    // framework 404, like the decoded-slash case.
-    let no_body: [(&str, String); 4] = [
-        ("DELETE", format!("/api/quests/{big}")),
-        ("POST", format!("/api/quests/{big}/start")),
-        ("POST", format!("/api/quests/{big}/complete")),
-        ("DELETE", format!("/api/quests/playlists/{big}")),
-    ];
-    for (method, path) in &no_body {
-        let (status, _, body) = send_json(&state, method, path, "").await;
-        assert_eq!(status, http::StatusCode::NOT_FOUND, "{method} {path}");
-        assert_eq!(body, b"{\"detail\":\"Not Found\"}", "{method} {path}");
-    }
-
-    // Body-carrying int-id routes (via `path_param`): an overflow id on
-    // an otherwise-clean body resolves to the deferred 404.
-    let clean_body: [(&str, String, &str); 3] = [
-        ("PUT", format!("/api/quests/{big}"), "{\"name\": \"X\"}"),
-        ("POST", format!("/api/quests/{big}/cancel"), ""),
-        (
-            "PUT",
-            format!("/api/quests/playlists/{big}"),
-            "{\"name\": \"X\"}",
-        ),
-    ];
-    for (method, path, body) in &clean_body {
-        let (status, _, _) = send_json(&state, method, path, body).await;
-        assert_eq!(status, http::StatusCode::NOT_FOUND, "{method} {path}");
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn body_failures_answer_the_backend_reply_classes() {
-    let (state, _dir) = serve_substrate().await;
-
-    // Missing and null bodies on a required-body route.
-    for body in ["", "null"] {
-        let (status, _, reply) = send_json(&state, "POST", "/api/quests", body).await;
-        assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY, "{body:?}");
-        let parsed: Value = serde_json::from_slice(&reply).unwrap();
-        assert_eq!(parsed["detail"][0]["type"], "missing");
-        assert_eq!(parsed["detail"][0]["loc"], serde_json::json!(["body"]));
-    }
-
-    // Malformed JSON carries the scanner's message and position.
-    let (status, _, reply) = send_json(&state, "POST", "/api/quests", r#"{"name": "Q", }"#).await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    let parsed: Value = serde_json::from_slice(&reply).unwrap();
-    assert_eq!(parsed["detail"][0]["type"], "json_invalid");
-    assert_eq!(parsed["detail"][0]["loc"], serde_json::json!(["body", 12]));
-
-    // The bool taxonomy split.
-    for (value, kind) in [
-        ("null", "bool_type"),
-        ("1.5", "bool_type"),
-        ("[1]", "bool_type"),
-        ("999999999999999999999999", "bool_type"),
-        ("2.0", "bool_parsing"),
-        ("2", "bool_parsing"),
-        ("\"zz\"", "bool_parsing"),
-    ] {
-        let body = format!(r#"{{"name": "B", "reward_is_skill": {value}}}"#);
-        let (status, _, reply) = send_json(&state, "POST", "/api/quests", &body).await;
-        assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY, "{value}");
-        let parsed: Value = serde_json::from_slice(&reply).unwrap();
-        assert_eq!(parsed["detail"][0]["type"], kind, "{value}");
-    }
-
-    // Beyond-range floats into int fields answer the size 422 with
-    // both exact bounds excluded; digit strings stay the storage 500.
-    for value in ["1e30", "9223372036854775808.0", "-9223372036854775808.0"] {
-        let body = format!(r#"{{"name": "I", "chain_position": {value}}}"#);
-        let (status, _, reply) = send_json(&state, "POST", "/api/quests", &body).await;
-        assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY, "{value}");
-        let parsed: Value = serde_json::from_slice(&reply).unwrap();
-        assert_eq!(parsed["detail"][0]["type"], "int_parsing_size", "{value}");
-    }
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/quests",
-        r#"{"name": "I", "chain_position": 999999999999999999999999}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(body, b"Internal Server Error");
-
-    // Unrenderable echoes answer the plain-text 500: non-finite
-    // values, lone surrogates, and over-deep echoed bodies.
-    for body in [r#"{"name": Infinity}"#, "{\"planet\": \"\\ud800\"}"] {
-        let (status, _, reply) = send_json(&state, "POST", "/api/quests", body).await;
-        assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-        assert_eq!(reply, b"Internal Server Error");
-    }
-    let deep = format!(r#"{{"name": {}{}}}"#, "[".repeat(990), "]".repeat(990));
-    let (status, _, _) = send_json(&state, "POST", "/api/quests", &deep).await;
-    assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR);
-    let shallow = format!(r#"{{"name": {}{}}}"#, "[".repeat(100), "]".repeat(100));
-    let (status, _, reply) = send_json(&state, "POST", "/api/quests", &shallow).await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&reply), ["string_type"]);
-
-    // Beyond the parse cap: the generic body-parse 400.
-    let too_deep = "[".repeat(50_000) + &"]".repeat(50_000);
-    let (status, _, reply) = send_json(&state, "POST", "/api/quests", &too_deep).await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        reply,
-        b"{\"detail\":\"There was an error parsing the body\"}"
-    );
-
-    // The content-type gate: a foreign maintype with a +json suffix is
-    // not JSON (raw-string echo), application subtypes match
-    // case-insensitively.
-    let (status, _, reply) = send(
-        &state,
-        "POST",
-        "/api/quests",
-        &[
-            ("origin", "tauri://localhost"),
-            ("content-type", "text/whatever+json"),
-        ],
-        Some(br#"{"name": "TW"}"#.to_vec()),
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    let parsed: Value = serde_json::from_slice(&reply).unwrap();
-    assert_eq!(parsed["detail"][0]["type"], "model_attributes_type");
-    let (status, _, _) = send(
-        &state,
-        "POST",
-        "/api/quests",
-        &[
-            ("origin", "tauri://localhost"),
-            ("content-type", "Application/JSON"),
-        ],
-        Some(br#"{"name": "CASEY"}"#.to_vec()),
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-
-    // Encoding detection: UTF-16 bodies parse; invalid UTF-8 answers
-    // the generic 400.
-    let utf16: Vec<u8> = r#"{"name": "U16"}"#.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let (status, _, _) = send(
-        &state,
-        "POST",
-        "/api/quests",
-        &[
-            ("origin", "tauri://localhost"),
-            ("content-type", "application/json"),
-        ],
-        Some(utf16),
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let bad = [br#"{"name": ""#.to_vec(), vec![0xFF], br#""}"#.to_vec()].concat();
-    let (status, _, reply) = send(
-        &state,
-        "POST",
-        "/api/quests",
-        &[
-            ("origin", "tauri://localhost"),
-            ("content-type", "application/json"),
-        ],
-        Some(bad),
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        reply,
-        b"{\"detail\":\"There was an error parsing the body\"}"
-    );
-}
-
-/// Path and body validation aggregate into one envelope (path issue
-/// first); decode failures stand alone; deferred 500s (beyond-i64
-/// integers, consumed surrogate taints) fire only on otherwise-clean
-/// requests, each at its consumption point.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn validation_envelopes_aggregate_and_defer_the_backend_way() {
-    let (state, _dir) = serve_substrate().await;
-
-    // Path + body field issues, one envelope, path first.
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/quests/abc",
-        "{\"cooldown_hours\": \"x\", \"chain_position\": 1.5}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        detail_types(&body),
-        ["int_parsing", "float_parsing", "int_from_float"]
-    );
-    // A non-object cancel body aggregates with the path issue.
-    let (status, _, body) = send_json(&state, "POST", "/api/quests/abc/cancel", "5").await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        detail_types(&body),
-        ["int_parsing", "model_attributes_type"]
-    );
-    // A decode failure stands alone, dropping the path issue.
-    let (status, _, body) = send_json(&state, "PUT", "/api/quests/abc", "{bad").await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["json_invalid"]);
-    // A missing body aggregates as the missing-["body"] issue.
-    let (status, _, body) = send(
-        &state,
-        "PUT",
-        "/api/quests/playlists/abc",
-        &[("origin", "tauri://localhost")],
-        None,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["int_parsing", "missing"]);
-
-    // A beyond-i64 path id carries no validation issue, so a bad body
-    // still renders its 422 envelope first (aggregation preserved)...
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/quests/99999999999999999999999999",
-        "{\"cooldown_hours\": \"x\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["float_parsing"]);
-    // ...and on an otherwise-clean request it resolves to a clean 404
-    // (the id can never name a stored row), a deferred 404.
-    let (status, _, _) = send_json(
-        &state,
-        "PUT",
-        "/api/quests/99999999999999999999999999",
-        "{\"name\": \"X\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-
-    // Beyond-i64 BODY integers answer the deferred 500 across the
-    // dump builders (quest update field, playlist quest_ids, playlist
-    // item ids), only after validation passes.
-    let (status, _, _) = send_json(&state, "POST", "/api/quests", "{\"name\": \"Q\"}").await;
-    assert_eq!(status, http::StatusCode::OK);
-    for (method, path, body) in [
-        (
-            "PUT",
-            "/api/quests/1",
-            "{\"chain_position\": 99999999999999999999999999}",
-        ),
-        (
-            "POST",
-            "/api/quests/playlists",
-            "{\"name\": \"P\", \"quest_ids\": [99999999999999999999999999]}",
-        ),
-        (
-            "POST",
-            "/api/quests/playlists",
-            "{\"name\": \"P\", \"items\": [{\"quest_id\": 99999999999999999999999999}]}",
-        ),
-    ] {
-        let (status, _, reply) = send_json(&state, method, path, body).await;
-        assert_eq!(
-            status,
-            http::StatusCode::INTERNAL_SERVER_ERROR,
-            "{method} {path}: {}",
-            String::from_utf8_lossy(&reply)
-        );
-    }
-    // A playlist update whose only set field overflows must not slip
-    // through as a no-op update.
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/quests/playlists",
-        "{\"name\": \"Pl\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    for body in [
-        "{\"estimated_minutes\": 99999999999999999999999999}",
-        "{\"quest_ids\": [99999999999999999999999999]}",
-        "{\"items\": [{\"quest_id\": 99999999999999999999999999}]}",
-    ] {
-        let (status, _, _) = send_json(&state, "PUT", "/api/quests/playlists/1", body).await;
-        assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-    }
 }
 
 // ── Tracking session-edit write adapters, end-to-end and hermetic ──────

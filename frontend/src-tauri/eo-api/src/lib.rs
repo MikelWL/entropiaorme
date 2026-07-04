@@ -26,6 +26,7 @@ use eo_services::config_service::ConfigService;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
+use eo_services::quests::QuestService;
 use eo_services::skill_tracker::SkillTracker;
 use eo_services::tracker::HuntTracker;
 
@@ -34,6 +35,7 @@ pub mod codex;
 pub mod equipment;
 mod error;
 pub mod manifest;
+pub mod quests;
 pub mod settings;
 
 pub use error::ApiError;
@@ -65,6 +67,11 @@ pub struct Api {
     /// The codex service (species / ranks / recommendations / claims),
     /// built over the facade's shared db, catalogue, and clock.
     codex: CodexService,
+    /// The quest service (quest + playlist CRUD, lifecycle, analytics),
+    /// built over the facade's shared db and clock. This is the CRUD
+    /// instance (unsubscribed); the bus-driven auto-start service is a
+    /// separate producer concern.
+    quests: QuestService,
 }
 
 impl Api {
@@ -81,6 +88,7 @@ impl Api {
         skill_tracker: Arc<SkillTracker>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
+        let quests = quests::build_quests_service(db.clone(), clock.clone());
         Self {
             db,
             game_data,
@@ -92,6 +100,7 @@ impl Api {
             watcher,
             skill_tracker,
             codex,
+            quests,
         }
     }
 

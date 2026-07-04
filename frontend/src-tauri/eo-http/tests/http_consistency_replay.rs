@@ -9,13 +9,19 @@
 //! bus -> tracker -> database pipeline, stops the session (the "midpoint"
 //! name notwithstanding, the goldens capture the end-of-scenario, idle
 //! hydration shape), then drives the read + producer surface in-memory
-//! through `build_router(state).oneshot` and fingerprints nine endpoints
+//! through `build_router(state).oneshot` and fingerprints five endpoints
 //! through the same `eo_wire::http_fingerprint` emitter the goldens were
-//! banked with. The tenth, `GET_codex_meta_attributes`, retired from the
-//! live replay when the codex family moved to the typed-command facade
-//! (there is no live codex HTTP route to replay); its frozen Python-era
-//! fingerprint evidence stays in `eo-wire/tests/emitters_proof.rs`, and
-//! its live facade contract is pinned in `eo-api/tests/codex_facade.rs`.
+//! banked with. Endpoints retire from this live replay as their families
+//! move to the typed-command facade (there is no live HTTP route left to
+//! replay); their frozen Python-era fingerprint evidence stays in
+//! `eo-wire/tests/emitters_proof.rs` and their live facade contracts are
+//! pinned in the `eo-api/tests/*_facade.rs` suites. `GET_codex_meta_attributes`
+//! retired with codex, and the four `GET_quests*` reads retired with the
+//! quests + playlists family. The quests reads sat mid-order (positions
+//! 5-8, before `GET_scan_skills_status`), yet dropping them left every
+//! surviving fingerprint byte-unchanged: the shared `Normalizer`'s symbol
+//! table tracks only UUIDs and timestamps, `GET_scan_skills_status`
+//! carries neither, and the tracking reads precede the removed span.
 //!
 //! The goldens are frozen evidence: this test only READS and ASSERTS
 //! them. It does not regenerate or modify any golden file.
@@ -190,12 +196,12 @@ fn headers_as_map(headers: &http::HeaderMap) -> Map<String, Value> {
     map
 }
 
-/// The curated nine live endpoints, in the fixed capture order the shared
+/// The curated five live endpoints, in the fixed capture order the shared
 /// symbol table depends on, with the live session id substituted into the
 /// two session-scoped paths. The `endpoint_id` is the golden file stem.
-/// (`GET_codex_meta_attributes`, the former tenth and last in the order,
-/// retired to the typed-command facade; dropping the last endpoint leaves
-/// the nine preceding fingerprints byte-unchanged.)
+/// (`GET_codex_meta_attributes` and the four `GET_quests*` reads retired
+/// to the typed-command facade; see the module note on why removing the
+/// mid-order quests span left the surviving fingerprints byte-unchanged.)
 fn endpoint_table(session_id: &str) -> Vec<(&'static str, String)> {
     vec![
         (
@@ -214,10 +220,6 @@ fn endpoint_table(session_id: &str) -> Vec<(&'static str, String)> {
             "GET_tracking_session_quest_link_suggestion",
             format!("/api/tracking/session/{session_id}/quest-link-suggestion"),
         ),
-        ("GET_quests", "/api/quests".to_string()),
-        ("GET_quests_mobs", "/api/quests/mobs".to_string()),
-        ("GET_quests_analytics", "/api/quests/analytics".to_string()),
-        ("GET_quests_playlists", "/api/quests/playlists".to_string()),
         (
             "GET_scan_skills_status",
             "/api/scan/skills/status".to_string(),
@@ -343,7 +345,7 @@ async fn assert_consistency_goldens(scenario_name: &str) {
             .with_data_dir(dev_data_dir.path().to_path_buf()),
     );
 
-    // Capture the nine live endpoints in the fixed order under one shared
+    // Capture the five live endpoints in the fixed order under one shared
     // Normalizer, fingerprinting each through the same emitter the goldens
     // were banked with, and asserting byte-equality.
     let endpoints = endpoint_table(&session_id);
@@ -382,18 +384,20 @@ async fn assert_consistency_goldens(scenario_name: &str) {
 }
 
 /// Guard the capture cardinality: the shared symbol table grows in
-/// encounter order, so the live-replay set must stay at exactly nine
-/// endpoints in the fixed order. The tenth, `GET_codex_meta_attributes`,
-/// was the last in the order and retired from the live replay when the
-/// codex family moved to the typed-command facade (its live contract is
-/// pinned in `eo-api/tests/codex_facade.rs`); the frozen Python-era
-/// fingerprint evidence for all ten stays in `eo-wire/tests/emitters_proof.rs`.
+/// encounter order, so the live-replay set must stay at exactly five
+/// endpoints in the fixed order. `GET_codex_meta_attributes` (codex) and
+/// the four `GET_quests*` reads (quests + playlists) retired from the
+/// live replay as their families moved to the typed-command facade (their
+/// live contracts are pinned in `eo-api/tests/codex_facade.rs` and
+/// `eo-api/tests/quests_facade.rs`); the frozen Python-era fingerprint
+/// evidence for the full curated ten stays in
+/// `eo-wire/tests/emitters_proof.rs`.
 #[test]
-fn the_endpoint_set_is_the_fixed_nine() {
+fn the_endpoint_set_is_the_fixed_five() {
     assert_eq!(
         endpoint_table("session-id").len(),
-        9,
-        "the shared symbol table depends on capturing exactly the curated nine live endpoints"
+        5,
+        "the shared symbol table depends on capturing exactly the curated five live endpoints"
     );
 }
 
