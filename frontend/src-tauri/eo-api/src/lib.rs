@@ -28,7 +28,9 @@ use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
 use eo_services::quests::QuestService;
+use eo_services::skill_scan_manual::SkillScanManual;
 use eo_services::skill_tracker::SkillTracker;
+use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
 use eo_services::tracker::HuntTracker;
 
 pub mod analytics;
@@ -38,6 +40,7 @@ pub mod equipment;
 mod error;
 pub mod manifest;
 pub mod quests;
+pub mod scan;
 pub mod settings;
 
 pub use error::ApiError;
@@ -66,6 +69,12 @@ pub struct Api {
     /// The skill tracker: a codex claim suppresses the claimed skill's
     /// next gain on it while a session is live.
     skill_tracker: Arc<SkillTracker>,
+    /// The manual skill-scan state machine: the scan family's verbs drive
+    /// it and read its status.
+    skill_scan: Arc<SkillScanManual>,
+    /// The hands-free spacebar-capture listener: the scan family's toggle
+    /// flips its enabled gate.
+    spacebar: Arc<SpacebarCaptureListener>,
     /// The codex service (species / ranks / recommendations / claims),
     /// built over the facade's shared db, catalogue, and clock.
     codex: CodexService,
@@ -91,6 +100,8 @@ impl Api {
         hotbar: Arc<HotbarListener>,
         watcher: Arc<ChatlogWatcher>,
         skill_tracker: Arc<SkillTracker>,
+        skill_scan: Arc<SkillScanManual>,
+        spacebar: Arc<SpacebarCaptureListener>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let quests = quests::build_quests_service(db.clone(), clock.clone());
@@ -105,6 +116,8 @@ impl Api {
             hotbar,
             watcher,
             skill_tracker,
+            skill_scan,
+            spacebar,
             codex,
             quests,
             analytics,

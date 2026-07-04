@@ -74,6 +74,8 @@ fn facade_microbench() {
         handles.hotbar,
         handles.watcher,
         handles.skill_tracker,
+        handles.skill_scan,
+        handles.spacebar,
     );
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();
@@ -185,10 +187,35 @@ fn facade_microbench() {
         bench!("ledger_list", api.ledger_list(None, None));
         bench!("ledger_presets_list", api.ledger_presets_list());
         bench!("inventory_list", api.inventory_list());
+
+        // The manual-scan status read, the after-leg of the HTTP dispatch
+        // measurement (`GET_scan_skills_status`) the router micro-benchmark
+        // captured before the family moved. The facade method is synchronous
+        // (the scan state machine locks an in-memory mutex, no await), so it
+        // is benched directly rather than through the async `bench!` macro,
+        // over the same resting default-provider scan (engine unavailable, no
+        // window, idle status) the before-leg measured.
+        for _ in 0..WARMUPS {
+            api.scan_status().expect("scan status warm-up");
+        }
+        let mut timings = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let started = Instant::now();
+            api.scan_status().expect("scan status");
+            timings.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        timings.sort_by(|a, b| a.partial_cmp(b).expect("finite timings"));
+        rows.push((
+            "scan_status",
+            median(&timings),
+            p95(&timings),
+            timings[0],
+            timings[timings.len() - 1],
+        ));
     });
 
     println!(
-        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex + quests + analytics over typed commands)"
+        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex + quests + analytics + scan over typed commands)"
     );
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \

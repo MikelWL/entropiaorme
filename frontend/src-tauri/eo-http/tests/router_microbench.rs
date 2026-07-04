@@ -39,7 +39,6 @@ use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
-use eo_services::skill_scan_manual::{ScanProviders, SkillScanManual};
 use eo_services::tracker::{HuntTracker, Providers};
 use serde_json::Value;
 
@@ -221,16 +220,6 @@ fn in_process_router_microbench() {
         Arc::new(RealClock::new()),
         dir.path().to_path_buf(),
     ));
-    // A resting scan service (default providers report no engine / no window),
-    // so `scan/skills/status` answers its idle 200 the way it does in the app
-    // before any scan, rather than the unavailable floor.
-    let scan = SkillScanManual::new(
-        ScanProviders::default(),
-        Arc::new(RealClock::new()),
-        None,
-        None,
-        0,
-    );
     // An inert hotbar listener (no keystroke source) so `tracking/snapshot`,
     // which reads the composed tracker + hotbar, answers its real 200 the way
     // the app does with the hook library absent.
@@ -239,8 +228,7 @@ fn in_process_router_microbench() {
         AppState::new(0)
             .with_hydration(hydration)
             .with_tracker(tracker)
-            .with_hotbar_listener(hotbar)
-            .with_skill_scan(scan),
+            .with_hotbar_listener(hotbar),
     );
 
     // The replayed session's id, for the two session-scoped endpoints.
@@ -261,12 +249,12 @@ fn in_process_router_microbench() {
 
     // The baseline's endpoint set and order: health first, then the curated
     // hydration GET surface, with the session-scoped templates filled. (The
-    // equipment and quests reads measured here before their migration now
-    // live on the typed facade; their matched after-leg is eo-api's
+    // equipment, quests, and scan reads measured here before their migration
+    // now live on the typed facade; their matched after-leg is eo-api's
     // micro-benchmark.)
     let detail = format!("/api/tracking/session/{session_id}");
     let suggestion = format!("/api/tracking/session/{session_id}/quest-link-suggestion");
-    let endpoints: [(&str, &str); 6] = [
+    let endpoints: [(&str, &str); 5] = [
         ("GET_health", "/api/health"),
         ("GET_tracking_snapshot", "/api/tracking/snapshot"),
         ("GET_tracking_sessions", "/api/tracking/sessions"),
@@ -275,7 +263,6 @@ fn in_process_router_microbench() {
             "GET_tracking_session_quest_link_suggestion",
             suggestion.as_str(),
         ),
-        ("GET_scan_skills_status", "/api/scan/skills/status"),
     ];
 
     let rows: Vec<(String, f64, f64, f64, f64)> = runtime.block_on(async {

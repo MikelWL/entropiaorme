@@ -34,6 +34,17 @@ export interface AbsorberComponent {
 }
 
 /**
+ * The accept verb's result: `{ok, skills_persisted}` on success, the
+ * lone `error` on a refusal (each key skipped when absent, preserving
+ * the HTTP polymorphic body exactly).
+ */
+export interface AcceptResult {
+	ok?: boolean | null;
+	skills_persisted?: number | null;
+	error?: string | null;
+}
+
+/**
  * The Activity aggregate: the three comparison tables.
  */
 export interface AnalyticsActivity {
@@ -84,6 +95,28 @@ export interface CalibrationStatus {
 	calibrated: boolean;
 	lastCalibration?: string | null;
 	stale: boolean;
+}
+
+/**
+ * A capture verb's result: the status the grab settled on, plus the
+ * 1-indexed page and whether the frame was captured. On a refusal the
+ * page/captured extras are absent (the status carries the error).
+ */
+export interface CaptureResult {
+	active: boolean;
+	processing: boolean;
+	captured_pages: number;
+	expected_pages: number;
+	last_scan_time?: number | null;
+	skills_count: number;
+	configured: boolean;
+	game_window_present: boolean;
+	phase: ScanPhase;
+	processing_progress: ScanProgress;
+	has_pending_result: boolean;
+	error?: string | null;
+	page?: number | null;
+	captured?: boolean | null;
 }
 
 /**
@@ -847,6 +880,15 @@ export interface QuestPlaylist {
 }
 
 /**
+ * The reject verb's result: `{ok: true}` on success, the lone `error`
+ * on a refusal.
+ */
+export interface RejectResult {
+	ok?: boolean | null;
+	error?: string | null;
+}
+
+/**
  * The liquid + progression returns breakdown.
  */
 export interface ReturnsBreakdown {
@@ -855,6 +897,39 @@ export interface ReturnsBreakdown {
 	codexPes: number;
 	questPes: number;
 	ledger: Record<string, number>;
+}
+
+/**
+ * The settled scan phase, in the wire vocabulary the overlay switches on.
+ */
+export type ScanPhase = 'idle' | 'capturing' | 'processing' | 'awaiting_review';
+
+/**
+ * The per-page OCR progress counter.
+ */
+export interface ScanProgress {
+	done: number;
+	total: number;
+}
+
+/**
+ * The full manual-scan status, in the response-model field order the
+ * HTTP layer emitted. `error` carries a logical refusal's message (null
+ * on success); every other field is always present.
+ */
+export interface ScanStatus {
+	active: boolean;
+	processing: boolean;
+	captured_pages: number;
+	expected_pages: number;
+	last_scan_time?: number | null;
+	skills_count: number;
+	configured: boolean;
+	game_window_present: boolean;
+	phase: ScanPhase;
+	processing_progress: ScanProgress;
+	has_pending_result: boolean;
+	error?: string | null;
 }
 
 /**
@@ -900,6 +975,22 @@ export interface SkillLevel {
 	rankName: string;
 	ttValue: number;
 	isAttribute: boolean;
+}
+
+/**
+ * The held OCR result awaiting review: canonical skill name to level.
+ */
+export interface SkillScanPending {
+	skills: Record<string, number>;
+}
+
+/**
+ * The spacebar-capture toggle acknowledgement: the resulting enabled
+ * state after the flip.
+ */
+export interface SpacebarResult {
+	ok: boolean;
+	enabled: boolean;
 }
 
 /**
@@ -975,6 +1066,26 @@ export interface TrifectaSettings {
 	presets: TrifectaPresetView[];
 	ready: boolean;
 	message?: string | null;
+}
+
+/**
+ * The undo verb's result: the status after the pop, plus the popped
+ * page number. Absent on a refusal (the status carries the error).
+ */
+export interface UndoResult {
+	active: boolean;
+	processing: boolean;
+	captured_pages: number;
+	expected_pages: number;
+	last_scan_time?: number | null;
+	skills_count: number;
+	configured: boolean;
+	game_window_present: boolean;
+	phase: ScanPhase;
+	processing_progress: ScanProgress;
+	has_pending_result: boolean;
+	error?: string | null;
+	undone_page?: number | null;
 }
 
 /**
@@ -1208,4 +1319,44 @@ export async function inventoryDelete(itemId: string): Promise<void> {
 
 export async function inventorySell(itemId: string, sale: InventorySellInput): Promise<InventorySellResult> {
 	return invokeCommand('inventory_sell', { item_id: itemId, sale });
+}
+
+export async function scanStatus(): Promise<ScanStatus> {
+	return invokeCommand('scan_status', {});
+}
+
+export async function scanStart(pageCount: number | null): Promise<ScanStatus> {
+	return invokeCommand('scan_start', { page_count: pageCount });
+}
+
+export async function scanCapture(): Promise<CaptureResult> {
+	return invokeCommand('scan_capture', {});
+}
+
+export async function scanCancel(): Promise<ScanStatus> {
+	return invokeCommand('scan_cancel', {});
+}
+
+export async function scanUndo(): Promise<UndoResult> {
+	return invokeCommand('scan_undo', {});
+}
+
+export async function scanProcess(): Promise<ScanStatus> {
+	return invokeCommand('scan_process', {});
+}
+
+export async function scanAccept(): Promise<AcceptResult> {
+	return invokeCommand('scan_accept', {});
+}
+
+export async function scanReject(): Promise<RejectResult> {
+	return invokeCommand('scan_reject', {});
+}
+
+export async function scanPending(): Promise<SkillScanPending | null> {
+	return invokeCommand('scan_pending', {});
+}
+
+export async function scanSpacebarCapture(enabled: boolean): Promise<SpacebarResult> {
+	return invokeCommand('scan_spacebar_capture', { enabled });
 }

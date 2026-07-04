@@ -664,10 +664,11 @@ async fn compose_with(
 
     // The typed-command facade shares the read surface's handles plus the
     // producers the migrated write families signal (the config writer, the
-    // hunt tracker, the hotbar gate, the chat-log watcher, and the skill
-    // tracker a codex claim suppresses on); families migrate onto it from
-    // the in-process HTTP router one by one, and both serve over the same
-    // handles during the migration.
+    // hunt tracker, the hotbar gate, the chat-log watcher, the skill
+    // tracker a codex claim suppresses on, and the manual-scan state
+    // machine + spacebar listener the scan family drives); families migrate
+    // onto it from the in-process HTTP router one by one, and both serve
+    // over the same handles during the migration.
     let api = Arc::new(eo_api::Api::new(
         db.clone(),
         game_data.clone(),
@@ -678,6 +679,8 @@ async fn compose_with(
         producers.hotbar_handle(),
         producers.watcher_handle(),
         producers.skill_tracker_handle(),
+        skill_scan.clone(),
+        spacebar_listener.clone(),
     ));
     let hydration = Arc::new(HydrationState::new(db, game_data, clock, data_dir));
     Composition::Ready(Composed {

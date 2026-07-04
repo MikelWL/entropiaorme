@@ -92,42 +92,6 @@ const verbMock: Record<Verb, ReturnType<typeof vi.fn>> = {
 
 describe('plain delegating wrappers map to the expected verb, path, and shape', () => {
 	const rows: [string, () => Promise<unknown>, Verb, string, unknown?][] = [
-		[
-			'getManualSkillScanStatus',
-			() => api.getManualSkillScanStatus(),
-			'GET',
-			'/api/scan/skills/status',
-		],
-		[
-			'startManualSkillScan',
-			() => api.startManualSkillScan(5),
-			'POST',
-			'/api/scan/skills/start',
-			{ params: { query: { page_count: 5 } } },
-		],
-		[
-			'captureManualSkillPage',
-			() => api.captureManualSkillPage(),
-			'POST',
-			'/api/scan/skills/capture',
-		],
-		['cancelManualSkillScan', () => api.cancelManualSkillScan(), 'POST', '/api/scan/skills/cancel'],
-		['undoManualSkillCapture', () => api.undoManualSkillCapture(), 'POST', '/api/scan/skills/undo'],
-		[
-			'processManualSkillScan',
-			() => api.processManualSkillScan(),
-			'POST',
-			'/api/scan/skills/process',
-		],
-		['acceptManualSkillScan', () => api.acceptManualSkillScan(), 'POST', '/api/scan/skills/accept'],
-		['rejectManualSkillScan', () => api.rejectManualSkillScan(), 'POST', '/api/scan/skills/reject'],
-		[
-			'setSpacebarCapture',
-			() => api.setSpacebarCapture(true),
-			'POST',
-			'/api/scan/spacebar-capture',
-			{ params: { query: { enabled: true } } },
-		],
 		['startTracking', () => api.startTracking(), 'POST', '/api/tracking/start'],
 		['stopTracking', () => api.stopTracking(), 'POST', '/api/tracking/stop'],
 		[
@@ -626,27 +590,49 @@ describe('suggestion lookups', () => {
 	});
 });
 
-describe('getManualSkillScanPending', () => {
-	it('returns the pending payload when present', async () => {
-		clientGet.mockResolvedValue({ data: { skills: { Anatomy: 12 } } });
-		await expect(api.getManualSkillScanPending()).resolves.toEqual({
-			skills: { Anatomy: 12 },
-		});
+describe('manual-scan wrappers dispatch typed commands', () => {
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>][] = [
+		['getManualSkillScanStatus', () => api.getManualSkillScanStatus(), 'scan_status', {}],
+		[
+			'startManualSkillScan passes the page count',
+			() => api.startManualSkillScan(5),
+			'scan_start',
+			{ page_count: 5 },
+		],
+		[
+			'startManualSkillScan defaults the page count to null',
+			() => api.startManualSkillScan(),
+			'scan_start',
+			{ page_count: null },
+		],
+		['captureManualSkillPage', () => api.captureManualSkillPage(), 'scan_capture', {}],
+		['cancelManualSkillScan', () => api.cancelManualSkillScan(), 'scan_cancel', {}],
+		['undoManualSkillCapture', () => api.undoManualSkillCapture(), 'scan_undo', {}],
+		['processManualSkillScan', () => api.processManualSkillScan(), 'scan_process', {}],
+		['acceptManualSkillScan', () => api.acceptManualSkillScan(), 'scan_accept', {}],
+		['rejectManualSkillScan', () => api.rejectManualSkillScan(), 'scan_reject', {}],
+		['getManualSkillScanPending', () => api.getManualSkillScanPending(), 'scan_pending', {}],
+		[
+			'setSpacebarCapture passes the enabled flag',
+			() => api.setSpacebarCapture(true),
+			'scan_spacebar_capture',
+			{ enabled: true },
+		],
+	];
+	it.each(rows)('%s', async (_name, call, command, args) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
 	});
 
-	it('maps a 404 to null (no pending result is an expected state)', async () => {
-		clientGet.mockRejectedValue(new FakeApiError(404, 'no pending scan'));
+	it('returns the held pending payload when present', async () => {
+		tauriInvoke.mockResolvedValue({ skills: { Anatomy: 12 } });
+		await expect(api.getManualSkillScanPending()).resolves.toEqual({ skills: { Anatomy: 12 } });
+	});
+
+	it('maps an absent pending result to null (the command returns null directly)', async () => {
+		tauriInvoke.mockResolvedValue(null);
 		await expect(api.getManualSkillScanPending()).resolves.toBeNull();
-	});
-
-	it('rethrows any other ApiError status', async () => {
-		clientGet.mockRejectedValue(new FakeApiError(500, 'broken'));
-		await expect(api.getManualSkillScanPending()).rejects.toMatchObject({ status: 500 });
-	});
-
-	it('rethrows non-ApiError failures', async () => {
-		clientGet.mockRejectedValue(new TypeError('network down'));
-		await expect(api.getManualSkillScanPending()).rejects.toBeInstanceOf(TypeError);
 	});
 });
 

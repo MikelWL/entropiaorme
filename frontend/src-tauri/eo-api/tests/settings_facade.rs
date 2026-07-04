@@ -43,6 +43,8 @@ async fn settings_api(dir: &Path) -> Api {
         handles.hotbar,
         handles.watcher,
         handles.skill_tracker,
+        handles.skill_scan,
+        handles.spacebar,
     )
 }
 

@@ -9,19 +9,19 @@
 //! bus -> tracker -> database pipeline, stops the session (the "midpoint"
 //! name notwithstanding, the goldens capture the end-of-scenario, idle
 //! hydration shape), then drives the read + producer surface in-memory
-//! through `build_router(state).oneshot` and fingerprints five endpoints
+//! through `build_router(state).oneshot` and fingerprints four endpoints
 //! through the same `eo_wire::http_fingerprint` emitter the goldens were
 //! banked with. Endpoints retire from this live replay as their families
 //! move to the typed-command facade (there is no live HTTP route left to
 //! replay); their frozen Python-era fingerprint evidence stays in
 //! `eo-wire/tests/emitters_proof.rs` and their live facade contracts are
 //! pinned in the `eo-api/tests/*_facade.rs` suites. `GET_codex_meta_attributes`
-//! retired with codex, and the four `GET_quests*` reads retired with the
-//! quests + playlists family. The quests reads sat mid-order (positions
-//! 5-8, before `GET_scan_skills_status`), yet dropping them left every
-//! surviving fingerprint byte-unchanged: the shared `Normalizer`'s symbol
-//! table tracks only UUIDs and timestamps, `GET_scan_skills_status`
-//! carries neither, and the tracking reads precede the removed span.
+//! retired with codex, the four `GET_quests*` reads with the quests +
+//! playlists family, and `GET_scan_skills_status` with the manual scan
+//! family. `GET_scan_skills_status` was the last endpoint in the fixed
+//! order and carried no UUID/timestamp symbols, so dropping it left every
+//! surviving fingerprint (the four tracking reads that precede it)
+//! byte-unchanged.
 //!
 //! The goldens are frozen evidence: this test only READS and ASSERTS
 //! them. It does not regenerate or modify any golden file.
@@ -52,7 +52,6 @@ use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
-use eo_services::skill_scan_manual::{ScanProviders, SkillScanManual};
 use eo_services::tracker::{HuntTracker, Providers};
 use eo_wire::http_fingerprint::{self, RawResponse};
 use eo_wire::normalizer::Normalizer;
@@ -220,10 +219,6 @@ fn endpoint_table(session_id: &str) -> Vec<(&'static str, String)> {
             "GET_tracking_session_quest_link_suggestion",
             format!("/api/tracking/session/{session_id}/quest-link-suggestion"),
         ),
-        (
-            "GET_scan_skills_status",
-            "/api/scan/skills/status".to_string(),
-        ),
     ]
 }
 
@@ -306,9 +301,8 @@ async fn assert_consistency_goldens(scenario_name: &str) {
         .get("id");
 
     // The read + producer substrate over the SAME pool and the SAME live
-    // tracker: an empty game-data store, a manual skill-scan whose engine
-    // reports available (status configured:true), and a hotbar listener
-    // composed but never started (is_running()==false).
+    // tracker: an empty game-data store and a hotbar listener composed but
+    // never started (is_running()==false).
     let hydration_dir = tempfile::tempdir().expect("hydration data dir");
     let game_data_dir = tempfile::tempdir().expect("game data dir");
     let dev_data_dir = tempfile::tempdir().expect("dev data dir");
@@ -319,16 +313,6 @@ async fn assert_consistency_goldens(scenario_name: &str) {
         clock.clone(),
         hydration_dir.path().to_path_buf(),
     ));
-    let scan = SkillScanManual::new(
-        ScanProviders {
-            engine_available: Arc::new(|| true),
-            ..ScanProviders::default()
-        },
-        clock.clone(),
-        None,
-        None,
-        0,
-    );
     let hotbar = HotbarListener::new(bus.clone(), None, None);
     assert!(
         !hotbar.is_running(),
@@ -339,13 +323,12 @@ async fn assert_consistency_goldens(scenario_name: &str) {
         AppState::new(0)
             .with_hydration(hydration)
             .with_tracker(tracker.clone())
-            .with_skill_scan(scan)
             .with_hotbar_listener(hotbar)
             .with_cors(CorsConfig::new(5173, None))
             .with_data_dir(dev_data_dir.path().to_path_buf()),
     );
 
-    // Capture the five live endpoints in the fixed order under one shared
+    // Capture the four live endpoints in the fixed order under one shared
     // Normalizer, fingerprinting each through the same emitter the goldens
     // were banked with, and asserting byte-equality.
     let endpoints = endpoint_table(&session_id);
@@ -384,20 +367,21 @@ async fn assert_consistency_goldens(scenario_name: &str) {
 }
 
 /// Guard the capture cardinality: the shared symbol table grows in
-/// encounter order, so the live-replay set must stay at exactly five
-/// endpoints in the fixed order. `GET_codex_meta_attributes` (codex) and
-/// the four `GET_quests*` reads (quests + playlists) retired from the
-/// live replay as their families moved to the typed-command facade (their
-/// live contracts are pinned in `eo-api/tests/codex_facade.rs` and
-/// `eo-api/tests/quests_facade.rs`); the frozen Python-era fingerprint
+/// encounter order, so the live-replay set must stay at exactly four
+/// endpoints in the fixed order. `GET_codex_meta_attributes` (codex), the
+/// four `GET_quests*` reads (quests + playlists), and `GET_scan_skills_status`
+/// (the manual scan family) retired from the live replay as their families
+/// moved to the typed-command facade (their live contracts are pinned in
+/// `eo-api/tests/codex_facade.rs`, `eo-api/tests/quests_facade.rs`, and
+/// `eo-api/tests/scan_facade.rs`); the frozen Python-era fingerprint
 /// evidence for the full curated ten stays in
 /// `eo-wire/tests/emitters_proof.rs`.
 #[test]
-fn the_endpoint_set_is_the_fixed_five() {
+fn the_endpoint_set_is_the_fixed_four() {
     assert_eq!(
         endpoint_table("session-id").len(),
-        5,
-        "the shared symbol table depends on capturing exactly the curated five live endpoints"
+        4,
+        "the shared symbol table depends on capturing exactly the curated four live endpoints"
     );
 }
 
