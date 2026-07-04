@@ -1,5 +1,5 @@
 //! In-process router micro-benchmark: the post-collapse dispatch latency over
-//! the eleven hydration endpoints the performance baseline pins, against a
+//! the hydration endpoints the performance baseline pins, against a
 //! freshly replayed `basic_hunt_10_events` state.
 //!
 //! This is the transport-stripped measurement of the path the `api_request`
@@ -265,7 +265,7 @@ fn in_process_router_microbench() {
     // typed facade; their matched after-leg is eo-api's micro-benchmark.)
     let detail = format!("/api/tracking/session/{session_id}");
     let suggestion = format!("/api/tracking/session/{session_id}/quest-link-suggestion");
-    let endpoints: [(&str, &str); 11] = [
+    let endpoints: [(&str, &str); 10] = [
         ("GET_health", "/api/health"),
         ("GET_tracking_snapshot", "/api/tracking/snapshot"),
         ("GET_tracking_sessions", "/api/tracking/sessions"),
@@ -279,7 +279,6 @@ fn in_process_router_microbench() {
         ("GET_quests_analytics", "/api/quests/analytics"),
         ("GET_quests_playlists", "/api/quests/playlists"),
         ("GET_scan_skills_status", "/api/scan/skills/status"),
-        ("GET_codex_meta_attributes", "/api/codex/meta/attributes"),
     ];
 
     let rows: Vec<(String, f64, f64, f64, f64)> = runtime.block_on(async {

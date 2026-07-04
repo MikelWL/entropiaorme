@@ -204,13 +204,16 @@ export async function setSpacebarCapture(
 }
 
 // --- Codex ---
+// Served over typed IPC commands (`commands.gen.ts`); the wrappers keep
+// their hand-written return types (the authoritative frontend contract),
+// narrowing the generated types with `as`.
 
 export async function getCodexSpecies(): Promise<CodexSpecies[]> {
-	return unwrap(client.GET('/api/codex/species'));
+	return (await commands.codexSpecies()) as CodexSpecies[];
 }
 
 export async function getCodexSpeciesRanks(name: string): Promise<CodexRankBreakdown> {
-	return unwrap(client.GET('/api/codex/species/{name}/ranks', { params: { path: { name } } }));
+	return (await commands.codexSpeciesRanks(name)) as CodexRankBreakdown;
 }
 
 export async function claimCodexRank(
@@ -218,22 +221,21 @@ export async function claimCodexRank(
 	rank: number,
 	skillName: string,
 ): Promise<CodexClaimResult> {
-	return unwrap(
-		client.POST('/api/codex/claim', {
-			body: { species_name: speciesName, rank, skill_name: skillName },
-		}),
-	);
+	return (await commands.codexClaim(speciesName, rank, skillName)) as CodexClaimResult;
 }
 
 export async function unclaimCodexRank(speciesName: string): Promise<CodexClaimResult> {
-	return unwrap(client.POST('/api/codex/unclaim', { body: { species_name: speciesName } }));
+	return (await commands.codexUnclaim(speciesName)) as CodexClaimResult;
 }
 
 export async function calibrateCodex(
 	speciesName: string,
 	rank: number,
 ): Promise<{ speciesName: string; rank: number }> {
-	return unwrap(client.POST('/api/codex/calibrate', { body: { species_name: speciesName, rank } }));
+	return (await commands.codexCalibrate(speciesName, rank)) as {
+		speciesName: string;
+		rank: number;
+	};
 }
 
 export async function getCodexRecommendation(
@@ -241,28 +243,22 @@ export async function getCodexRecommendation(
 	rank: number,
 	options?: { target?: 'profession' | 'hp'; profession?: string },
 ): Promise<CodexSkillOption[]> {
-	return unwrap(
-		client.GET('/api/codex/recommend', {
-			params: {
-				query: {
-					species_name: speciesName,
-					rank,
-					target: options?.target,
-					profession: options?.profession,
-				},
-			},
-		}),
-	);
+	return (await commands.codexRecommend(
+		speciesName,
+		rank,
+		options?.profession ?? null,
+		options?.target ?? 'profession',
+	)) as CodexSkillOption[];
 }
 
 // --- Codex Meta ---
 
 export async function getCodexMetaAttributes(): Promise<CodexMetaAttribute[]> {
-	return unwrap(client.GET('/api/codex/meta/attributes'));
+	return (await commands.codexMetaAttributes()) as CodexMetaAttribute[];
 }
 
 export async function claimCodexMeta(attributeName: string): Promise<CodexMetaClaimResult> {
-	return unwrap(client.POST('/api/codex/meta/claim', { body: { attribute_name: attributeName } }));
+	return (await commands.codexMetaClaim(attributeName)) as CodexMetaClaimResult;
 }
 
 // --- Equipment ---

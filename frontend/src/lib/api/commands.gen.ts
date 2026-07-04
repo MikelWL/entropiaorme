@@ -73,6 +73,113 @@ export interface CharacterProspectOptions {
 }
 
 /**
+ * The record a manual rank calibration returns.
+ */
+export interface CodexCalibrateResult {
+	speciesName: string;
+	rank: number;
+}
+
+/**
+ * The record a rank claim (or its reversal) returns.
+ */
+export interface CodexClaimResult {
+	speciesName: string;
+	rank: number;
+	skillName: string;
+	pedValue: number;
+}
+
+/**
+ * One meta attribute with its current calibrated level.
+ */
+export interface CodexMetaAttribute {
+	name: string;
+	currentLevel?: number | null;
+}
+
+/**
+ * The record a meta claim returns.
+ */
+export interface CodexMetaClaimResult {
+	attributeName: string;
+	pedValue: number;
+}
+
+/**
+ * One rank in a species' breakdown: the derived cost / reward / category
+ * fields, plus the player's claim state for that rank. Field order is
+ * the wire order (the breakdown's own fields, then the claim overlay).
+ */
+export interface CodexRank {
+	rank: number;
+	category: string;
+	cost: number;
+	rewardPed: number;
+	cat4Bonus: boolean;
+	cat4RewardPed?: number | null;
+	skills: string[];
+	cat4Skills: string[];
+	claimed: boolean;
+	claimedSkill?: string | null;
+	claimedPed?: number | null;
+	isNext: boolean;
+}
+
+/**
+ * What a codex recommendation ranks by. A closed vocabulary: the
+ * bindings expose only these two, so the HTTP route's out-of-vocabulary
+ * 422 (it defaulted an unknown `target` to `profession`) is
+ * unrepresentable rather than validated.
+ */
+export type CodexRecommendTarget = 'profession' | 'hp';
+
+/**
+ * One skill option in a rank recommendation: the reward it grants, the
+ * levels that buys at the current point on the curve, and the profession
+ * / HP contribution used to rank the list.
+ */
+export interface CodexSkillOption {
+	skillName: string;
+	category: string;
+	rewardPed: number;
+	currentLevel?: number | null;
+	levelsGained: number;
+	professionWeight: number;
+	profContribution: number;
+	hpIncrease?: number | null;
+	hpGain: number;
+	recommendRank?: number | null;
+}
+
+/**
+ * One species in the codex listing: its base cost, the player's current
+ * rank, and the next rank's derived category and cost (all `null` once
+ * rank 25 is reached).
+ */
+export interface CodexSpecies {
+	name: string;
+	baseCost: number;
+	codexType?: string | null;
+	currentRank: number;
+	nextRank?: number | null;
+	nextCategory?: string | null;
+	nextCost?: number | null;
+}
+
+/**
+ * A species' full 25-rank breakdown, cross-referenced with the player's
+ * claims and current rank.
+ */
+export interface CodexSpeciesRanks {
+	speciesName: string;
+	baseCost: number;
+	codexType?: string | null;
+	currentRank: number;
+	ranks: CodexRank[];
+}
+
+/**
  * GET stats: current HP and the top five professions.
  */
 export interface ComputedCharacterStats {
@@ -574,4 +681,36 @@ export async function settingsSetOverlayPosition(x: number, y: number): Promise<
 
 export async function settingsUpdate(patch: SettingsPatch): Promise<AppSettings> {
 	return invokeCommand('settings_update', { patch });
+}
+
+export async function codexSpecies(): Promise<CodexSpecies[]> {
+	return invokeCommand('codex_species', {});
+}
+
+export async function codexSpeciesRanks(speciesName: string): Promise<CodexSpeciesRanks> {
+	return invokeCommand('codex_species_ranks', { species_name: speciesName });
+}
+
+export async function codexRecommend(speciesName: string, rank: number, profession: string | null, target: CodexRecommendTarget): Promise<CodexSkillOption[]> {
+	return invokeCommand('codex_recommend', { species_name: speciesName, rank, profession, target });
+}
+
+export async function codexMetaAttributes(): Promise<CodexMetaAttribute[]> {
+	return invokeCommand('codex_meta_attributes', {});
+}
+
+export async function codexCalibrate(speciesName: string, rank: number): Promise<CodexCalibrateResult> {
+	return invokeCommand('codex_calibrate', { species_name: speciesName, rank });
+}
+
+export async function codexClaim(speciesName: string, rank: number, skillName: string): Promise<CodexClaimResult> {
+	return invokeCommand('codex_claim', { species_name: speciesName, rank, skill_name: skillName });
+}
+
+export async function codexUnclaim(speciesName: string): Promise<CodexClaimResult> {
+	return invokeCommand('codex_unclaim', { species_name: speciesName });
+}
+
+export async function codexMetaClaim(attributeName: string): Promise<CodexMetaClaimResult> {
+	return invokeCommand('codex_meta_claim', { attribute_name: attributeName });
 }

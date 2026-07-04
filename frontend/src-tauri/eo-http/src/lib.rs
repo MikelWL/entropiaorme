@@ -42,7 +42,6 @@ pub struct AppState {
     hydration: RwLock<Option<Arc<crate::hydration::HydrationState>>>,
     tracker: RwLock<Option<Arc<eo_services::tracker::HuntTracker>>>,
     config_service: RwLock<Option<Arc<Mutex<eo_services::config_service::ConfigService>>>>,
-    skill_tracker: RwLock<Option<Arc<eo_services::skill_tracker::SkillTracker>>>,
     skill_scan: RwLock<Option<Arc<eo_services::skill_scan_manual::SkillScanManual>>>,
     repair_ocr: RwLock<Option<Arc<eo_services::repair_ocr::RepairOcrService>>>,
     spacebar_listener:
@@ -73,7 +72,6 @@ pub struct NativeServices {
     pub hydration: Arc<crate::hydration::HydrationState>,
     pub tracker: Arc<eo_services::tracker::HuntTracker>,
     pub config_service: Arc<Mutex<eo_services::config_service::ConfigService>>,
-    pub skill_tracker: Arc<eo_services::skill_tracker::SkillTracker>,
     pub skill_scan: Arc<eo_services::skill_scan_manual::SkillScanManual>,
     pub repair_ocr: Arc<eo_services::repair_ocr::RepairOcrService>,
     pub spacebar_listener: Arc<eo_services::spacebar_capture_listener::SpacebarCaptureListener>,
@@ -95,7 +93,6 @@ impl AppState {
             hydration: RwLock::new(None),
             tracker: RwLock::new(None),
             config_service: RwLock::new(None),
-            skill_tracker: RwLock::new(None),
             skill_scan: RwLock::new(None),
             repair_ocr: RwLock::new(None),
             spacebar_listener: RwLock::new(None),
@@ -250,25 +247,6 @@ impl AppState {
             .clone()
     }
 
-    /// Attach the live producer-spine skill tracker (the same
-    /// `Arc<SkillTracker>` held by the producer spine). Without it the codex
-    /// claim routes that arm `suppress_next` answer the 503 service-unavailable floor.
-    pub fn with_skill_tracker(
-        mut self,
-        skill_tracker: Arc<eo_services::skill_tracker::SkillTracker>,
-    ) -> Self {
-        self.skill_tracker = RwLock::new(Some(skill_tracker));
-        self
-    }
-
-    /// The live producer-spine skill tracker, when composed.
-    pub(crate) fn skill_tracker(&self) -> Option<Arc<eo_services::skill_tracker::SkillTracker>> {
-        self.skill_tracker
-            .read()
-            .expect("skill tracker service lock")
-            .clone()
-    }
-
     /// Attach the composed manual skill-scan service (the OCR scan
     /// state machine). Without it (a substrate built before composition,
     /// composition declined, or the OCR runtime absent off Windows) the
@@ -360,10 +338,6 @@ impl AppState {
         *self.hydration.write().expect("hydration service lock") = Some(services.hydration);
         *self.tracker.write().expect("tracker service lock") = Some(services.tracker);
         *self.config_service.write().expect("config service lock") = Some(services.config_service);
-        *self
-            .skill_tracker
-            .write()
-            .expect("skill tracker service lock") = Some(services.skill_tracker);
         *self.skill_scan.write().expect("skill scan service lock") = Some(services.skill_scan);
         *self.repair_ocr.write().expect("repair ocr service lock") = Some(services.repair_ocr);
         *self

@@ -63,17 +63,17 @@ fn facade_microbench() {
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
     let clock = Arc::new(eo_services::clock::RealClock::new());
-    let (config_service, tracker, hotbar, watcher) =
-        common::producer_handles(&db, &data_dir, runtime.handle().clone());
+    let handles = common::producer_handles(&db, &data_dir, runtime.handle().clone());
     let api = Api::new(
         db,
         game_data,
         clock,
         data_dir,
-        config_service,
-        tracker,
-        hotbar,
-        watcher,
+        handles.config_service,
+        handles.tracker,
+        handles.hotbar,
+        handles.watcher,
+        handles.skill_tracker,
     );
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();
@@ -157,10 +157,16 @@ fn facade_microbench() {
         // family moved (same default-config, fresh-DB state).
         bench!("settings_get", api.settings());
         bench!("settings_overlay_position", api.settings_overlay_position());
+
+        // The codex meta-attributes read, the after-leg of the HTTP
+        // dispatch measurement (`GET_codex_meta_attributes`) the router
+        // micro-benchmark captured before the family moved (same empty
+        // game-data + fresh-DB state: the six attributes read uncalibrated).
+        bench!("codex_meta_attributes", api.codex_meta_attributes());
     });
 
     println!(
-        "\ntyped-facade micro-bench (AFTER: equipment + character + settings over typed commands)"
+        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex over typed commands)"
     );
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \

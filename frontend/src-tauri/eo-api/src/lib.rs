@@ -21,13 +21,16 @@ use std::sync::{Arc, Mutex};
 
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::Clock;
+use eo_services::codex::CodexService;
 use eo_services::config_service::ConfigService;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
+use eo_services::skill_tracker::SkillTracker;
 use eo_services::tracker::HuntTracker;
 
 pub mod character;
+pub mod codex;
 pub mod equipment;
 mod error;
 pub mod manifest;
@@ -49,12 +52,19 @@ pub struct Api {
     /// save through it, so there is no second writer to lose updates.
     config_service: Arc<Mutex<ConfigService>>,
     /// The live hunt tracker: a settings write re-signals it so an
-    /// in-flight session re-reads its config.
+    /// in-flight session re-reads its config, and a codex claim checks it
+    /// before suppressing the claimed skill's next gain.
     tracker: Arc<HuntTracker>,
     /// The hotbar listener: a `hotbar_hooks_enabled` change flips its gate.
     hotbar: Arc<HotbarListener>,
     /// The chat-log watcher: a `chatlog_path` change restarts its tail.
     watcher: Arc<ChatlogWatcher>,
+    /// The skill tracker: a codex claim suppresses the claimed skill's
+    /// next gain on it while a session is live.
+    skill_tracker: Arc<SkillTracker>,
+    /// The codex service (species / ranks / recommendations / claims),
+    /// built over the facade's shared db, catalogue, and clock.
+    codex: CodexService,
 }
 
 impl Api {
@@ -68,7 +78,9 @@ impl Api {
         tracker: Arc<HuntTracker>,
         hotbar: Arc<HotbarListener>,
         watcher: Arc<ChatlogWatcher>,
+        skill_tracker: Arc<SkillTracker>,
     ) -> Self {
+        let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         Self {
             db,
             game_data,
@@ -78,6 +90,8 @@ impl Api {
             tracker,
             hotbar,
             watcher,
+            skill_tracker,
+            codex,
         }
     }
 

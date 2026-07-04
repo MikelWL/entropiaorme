@@ -128,59 +128,6 @@ describe('plain delegating wrappers map to the expected verb, path, and shape', 
 			'/api/scan/spacebar-capture',
 			{ params: { query: { enabled: true } } },
 		],
-		['getCodexSpecies', () => api.getCodexSpecies(), 'GET', '/api/codex/species'],
-		[
-			'getCodexSpeciesRanks',
-			() => api.getCodexSpeciesRanks('Atrox'),
-			'GET',
-			'/api/codex/species/{name}/ranks',
-			{ params: { path: { name: 'Atrox' } } },
-		],
-		[
-			'claimCodexRank',
-			() => api.claimCodexRank('Atrox', 3, 'Laser Sniper'),
-			'POST',
-			'/api/codex/claim',
-			{ body: { species_name: 'Atrox', rank: 3, skill_name: 'Laser Sniper' } },
-		],
-		[
-			'unclaimCodexRank',
-			() => api.unclaimCodexRank('Atrox'),
-			'POST',
-			'/api/codex/unclaim',
-			{ body: { species_name: 'Atrox' } },
-		],
-		[
-			'calibrateCodex',
-			() => api.calibrateCodex('Atrox', 3),
-			'POST',
-			'/api/codex/calibrate',
-			{ body: { species_name: 'Atrox', rank: 3 } },
-		],
-		[
-			'getCodexRecommendation',
-			() => api.getCodexRecommendation('Atrox', 3, { target: 'hp' }),
-			'GET',
-			'/api/codex/recommend',
-			{
-				params: {
-					query: { species_name: 'Atrox', rank: 3, target: 'hp', profession: undefined },
-				},
-			},
-		],
-		[
-			'getCodexMetaAttributes',
-			() => api.getCodexMetaAttributes(),
-			'GET',
-			'/api/codex/meta/attributes',
-		],
-		[
-			'claimCodexMeta',
-			() => api.claimCodexMeta('Strength'),
-			'POST',
-			'/api/codex/meta/claim',
-			{ body: { attribute_name: 'Strength' } },
-		],
 		['startTracking', () => api.startTracking(), 'POST', '/api/tracking/start'],
 		['stopTracking', () => api.stopTracking(), 'POST', '/api/tracking/stop'],
 		[
@@ -625,6 +572,70 @@ describe('settings wrappers dispatch typed commands', () => {
 		const failure = api.updateSettings({});
 		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
 		await expect(failure).rejects.toMatchObject({ status: 400, message: 'No fields to update' });
+	});
+});
+
+describe('codex wrappers dispatch typed commands', () => {
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>][] = [
+		['getCodexSpecies', () => api.getCodexSpecies(), 'codex_species', {}],
+		[
+			'getCodexSpeciesRanks',
+			() => api.getCodexSpeciesRanks('Atrox'),
+			'codex_species_ranks',
+			{ species_name: 'Atrox' },
+		],
+		[
+			'claimCodexRank',
+			() => api.claimCodexRank('Atrox', 3, 'Laser Sniper'),
+			'codex_claim',
+			{ species_name: 'Atrox', rank: 3, skill_name: 'Laser Sniper' },
+		],
+		[
+			'unclaimCodexRank',
+			() => api.unclaimCodexRank('Atrox'),
+			'codex_unclaim',
+			{ species_name: 'Atrox' },
+		],
+		[
+			'calibrateCodex',
+			() => api.calibrateCodex('Atrox', 3),
+			'codex_calibrate',
+			{ species_name: 'Atrox', rank: 3 },
+		],
+		[
+			'getCodexRecommendation passes an explicit target and profession',
+			() => api.getCodexRecommendation('Atrox', 3, { target: 'hp', profession: 'Sniper (Hit)' }),
+			'codex_recommend',
+			{ species_name: 'Atrox', rank: 3, profession: 'Sniper (Hit)', target: 'hp' },
+		],
+		[
+			'getCodexRecommendation defaults to the profession target and a null profession',
+			() => api.getCodexRecommendation('Atrox', 3),
+			'codex_recommend',
+			{ species_name: 'Atrox', rank: 3, profession: null, target: 'profession' },
+		],
+		['getCodexMetaAttributes', () => api.getCodexMetaAttributes(), 'codex_meta_attributes', {}],
+		[
+			'claimCodexMeta',
+			() => api.claimCodexMeta('Strength'),
+			'codex_meta_claim',
+			{ attribute_name: 'Strength' },
+		],
+	];
+	it.each(rows)('%s', async (_name, call, command, args) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
+	});
+
+	it('maps the not-found rank lookup onto the thrown ApiError contract', async () => {
+		tauriInvoke.mockRejectedValue({ kind: 'notFound', message: "Species 'No Such' not found" });
+		const failure = api.getCodexSpeciesRanks('No Such');
+		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
+		await expect(failure).rejects.toMatchObject({
+			status: 404,
+			message: "Species 'No Such' not found",
+		});
 	});
 });
 

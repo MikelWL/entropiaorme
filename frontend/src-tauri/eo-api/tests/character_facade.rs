@@ -90,17 +90,17 @@ async fn seeded_api(dir: &Path) -> Api {
         ),
         0.0,
     ));
-    let (config_service, tracker, hotbar, watcher) =
-        common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
     Api::new(
         db,
         Arc::new(GameDataStore::new(&snapshot).unwrap()),
         clock,
         data_dir,
-        config_service,
-        tracker,
-        hotbar,
-        watcher,
+        handles.config_service,
+        handles.tracker,
+        handles.hotbar,
+        handles.watcher,
+        handles.skill_tracker,
     )
 }
 
