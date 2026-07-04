@@ -265,7 +265,7 @@ fn in_process_router_microbench() {
     // typed facade; their matched after-leg is eo-api's micro-benchmark.)
     let detail = format!("/api/tracking/session/{session_id}");
     let suggestion = format!("/api/tracking/session/{session_id}/quest-link-suggestion");
-    let endpoints: [(&str, &str); 13] = [
+    let endpoints: [(&str, &str); 11] = [
         ("GET_health", "/api/health"),
         ("GET_tracking_snapshot", "/api/tracking/snapshot"),
         ("GET_tracking_sessions", "/api/tracking/sessions"),
@@ -280,12 +280,6 @@ fn in_process_router_microbench() {
         ("GET_quests_playlists", "/api/quests/playlists"),
         ("GET_scan_skills_status", "/api/scan/skills/status"),
         ("GET_codex_meta_attributes", "/api/codex/meta/attributes"),
-        // The settings before-leg: the assembly read (default config over
-        // the fresh data dir) and the overlay-position read, measured over
-        // the HTTP dispatch stack before the family moves to typed commands;
-        // their matched after-leg is eo-api's micro-benchmark.
-        ("GET_settings", "/api/settings"),
-        ("GET_settings_overlay_position", "/api/settings/overlay-position"),
     ];
 
     let rows: Vec<(String, f64, f64, f64, f64)> = runtime.block_on(async {

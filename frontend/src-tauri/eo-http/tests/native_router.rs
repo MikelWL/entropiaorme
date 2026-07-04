@@ -892,68 +892,6 @@ async fn body_failures_answer_the_backend_reply_classes() {
     );
 }
 
-/// The settings surface serves natively over the composed state: the
-/// settings assembly reads (defaults, the live db path, the version
-/// stamp) and the overlay-position write's defensive floor. (The
-/// character family moved to the typed facade, the equipment family
-/// before it.)
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_settings_surface_serves_natively() {
-    let (state, _dir) = serve_substrate().await;
-
-    // Settings assembly over the fresh data dir: defaults, the live
-    // db path, and the workspace version stamp.
-    let (status, headers, body) = get(&state, "/api/settings").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert!(
-        !headers.contains_key(http::header::ETAG),
-        "the ETag middleware scopes to other prefixes; settings reads are plain"
-    );
-    let settings: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(settings["mobTrackingMode"], "mob");
-    assert_eq!(
-        settings["lootFilterBlacklist"],
-        serde_json::json!(["Universal Ammo"])
-    );
-    assert_eq!(settings["trifecta"]["activePresetId"], "default");
-    assert_eq!(settings["trifecta"]["presets"][0]["ready"], false);
-    assert_eq!(
-        settings["trifecta"]["message"],
-        "Trifecta attribution requires a configured small weapon, big weapon, and healing tool"
-    );
-    assert_eq!(settings["appVersion"], env!("CARGO_PKG_VERSION"));
-    assert!(settings["dbPath"]
-        .as_str()
-        .unwrap()
-        .ends_with("entropia_orme.db"));
-    let hotbar_keys: Vec<&str> = settings["hotbar"]
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(
-        hotbar_keys,
-        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
-    );
-
-    let (status, _, body) = get(&state, "/api/settings/overlay-position").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, b"{\"x\":null,\"y\":null}");
-
-    // The overlay-position write needs the composed config service, which the
-    // read-only harness does not compose, so it hits the defensive 503 floor
-    // here (the producer harness exercises the native success path).
-    let (status, _, _) = send_json(
-        &state,
-        "PUT",
-        "/api/settings/overlay-position",
-        "{\"x\":1,\"y\":2}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::SERVICE_UNAVAILABLE);
-}
-
 /// Path and body validation aggregate into one envelope (path issue
 /// first); decode failures stand alone; deferred 500s (beyond-i64
 /// integers, consumed surrogate taints) fire only on otherwise-clean
@@ -1891,31 +1829,6 @@ async fn config_write_routes_serve_natively_idle_mob_mode() {
     // their responses + the settings.json they persist; the dead proxy
     // (port 9) means any handler that fell back would 502 instead.
     let (state, dir) = serve_producer_substrate("{}").await;
-
-    // overlay-position: plain 200 {"ok": true}, exact coordinates persisted.
-    let (status, headers, body) = send_json(
-        &state,
-        "PUT",
-        "/api/settings/overlay-position",
-        r#"{"x": 7, "y": 9}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert!(!headers.contains_key(http::header::ETAG));
-    assert_eq!(body_json(&body), json!({"ok": true}));
-    let cfg = read_settings(dir.path());
-    assert_eq!(cfg["overlay_x"], 7);
-    assert_eq!(cfg["overlay_y"], 9);
-
-    // An unparseable coordinate is the 422 int_parsing envelope.
-    let (status, _, _) = send_json(
-        &state,
-        "PUT",
-        "/api/settings/overlay-position",
-        r#"{"x": "nope", "y": 0}"#,
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
 
     // manual-mob-lock: a catalogue match locks; the selection persists.
     let (status, _, body) = send_json(
