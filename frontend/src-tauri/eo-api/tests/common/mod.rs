@@ -47,6 +47,10 @@ pub fn producer_handles(
     )
     .expect("tracker");
     let hotbar = HotbarListener::new(bus.clone(), None, None);
-    let watcher = Arc::new(ChatlogWatcher::new(bus.clone(), data_dir.join("chat.log"), None));
+    let watcher = Arc::new(ChatlogWatcher::new(
+        bus.clone(),
+        data_dir.join("chat.log"),
+        None,
+    ));
     (config_service, tracker, hotbar, watcher)
 }

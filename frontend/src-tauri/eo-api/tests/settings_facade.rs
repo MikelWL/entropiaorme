@@ -93,12 +93,21 @@ async fn the_settings_assembly_shapes_the_default_config() {
     );
     assert_eq!(
         keys(&body["trifecta"]),
-        ["activePresetId", "activePresetName", "presets", "ready", "message"]
+        [
+            "activePresetId",
+            "activePresetName",
+            "presets",
+            "ready",
+            "message"
+        ]
     );
 
     // The default values (mirrors the HTTP-era assembly test).
     assert_eq!(body["mobTrackingMode"], "mob");
-    assert_eq!(body["lootFilterBlacklist"], serde_json::json!(["Universal Ammo"]));
+    assert_eq!(
+        body["lootFilterBlacklist"],
+        serde_json::json!(["Universal Ammo"])
+    );
     assert_eq!(body["trifecta"]["activePresetId"], "default");
     assert_eq!(body["trifecta"]["presets"][0]["ready"], false);
     assert_eq!(
@@ -106,7 +115,10 @@ async fn the_settings_assembly_shapes_the_default_config() {
         "Trifecta attribution requires a configured small weapon, big weapon, and healing tool"
     );
     assert_eq!(body["appVersion"], env!("CARGO_PKG_VERSION"));
-    assert!(body["dbPath"].as_str().unwrap().ends_with("entropia_orme.db"));
+    assert!(body["dbPath"]
+        .as_str()
+        .unwrap()
+        .ends_with("entropia_orme.db"));
     // The hotbar carries through in stored slot order (1..9 then 0), not
     // sorted: the order the byte-faithful response depends on.
     assert_eq!(
@@ -172,7 +184,9 @@ async fn the_update_validation_ladder_refuses_the_backend_way() {
 
     // An empty patch is nothing to update.
     assert_eq!(
-        api.settings_update(SettingsPatch::default()).await.unwrap_err(),
+        api.settings_update(SettingsPatch::default())
+            .await
+            .unwrap_err(),
         ApiError::bad_request("No fields to update")
     );
 

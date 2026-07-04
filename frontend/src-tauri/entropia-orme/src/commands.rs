@@ -150,9 +150,7 @@ pub async fn settings_get(app: tauri::AppHandle) -> Result<AppSettings, ApiError
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn settings_overlay_position(
-    app: tauri::AppHandle,
-) -> Result<OverlayPosition, ApiError> {
+pub async fn settings_overlay_position(app: tauri::AppHandle) -> Result<OverlayPosition, ApiError> {
     facade(&app)?.settings_overlay_position().await
 }
 

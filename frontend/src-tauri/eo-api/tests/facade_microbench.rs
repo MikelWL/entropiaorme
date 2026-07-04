@@ -151,9 +151,17 @@ fn facade_microbench() {
             api.character_prospect_options()
         );
         bench!("character_hp_optimizer", api.character_hp_optimizer());
+
+        // The settings reads, the after-leg of the HTTP dispatch
+        // measurement the router micro-benchmark captured before the
+        // family moved (same default-config, fresh-DB state).
+        bench!("settings_get", api.settings());
+        bench!("settings_overlay_position", api.settings_overlay_position());
     });
 
-    println!("\ntyped-facade micro-bench (AFTER: equipment + character over typed commands)");
+    println!(
+        "\ntyped-facade micro-bench (AFTER: equipment + character + settings over typed commands)"
+    );
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \
          (matching the HTTP leg's state); facade call only, no dispatch stack.\n"
