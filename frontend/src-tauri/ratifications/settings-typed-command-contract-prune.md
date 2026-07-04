@@ -95,7 +95,7 @@ surface covered by its own typed tests.
 
 ## Verdict
 
-```
+```text
 ORACLE-RATIFICATION
 range: ec095cf..HEAD
 goldens: frontend/src-tauri/contracts/openapi.snapshot.json, frontend/src/lib/api/schema.d.ts
