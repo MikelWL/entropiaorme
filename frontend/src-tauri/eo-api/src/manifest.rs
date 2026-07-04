@@ -15,8 +15,8 @@ use serde_json::Value;
 
 use crate::analytics::{
     AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage, LedgerPreset,
-    LedgerPresetInput,
+    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
+    LedgerPreset, LedgerPresetInput,
 };
 use crate::character::{
     CalibrationStatus, CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult,

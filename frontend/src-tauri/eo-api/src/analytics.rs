@@ -488,7 +488,10 @@ impl Api {
 
 /// Bridge one service value into its DTO; a shape mismatch is an internal
 /// error (the service value is the DTO's own wire contract).
-fn shape<T: serde::de::DeserializeOwned>(value: Value, context: &'static str) -> Result<T, ApiError> {
+fn shape<T: serde::de::DeserializeOwned>(
+    value: Value,
+    context: &'static str,
+) -> Result<T, ApiError> {
     serde_json::from_value(value).map_err(ApiError::internal(context))
 }
 

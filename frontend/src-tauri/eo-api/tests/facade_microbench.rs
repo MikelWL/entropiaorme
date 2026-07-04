@@ -173,10 +173,22 @@ fn facade_microbench() {
         bench!("quests_analytics", api.quests_analytics());
         bench!("playlists_list", api.playlists_list());
         bench!("playlists_analytics", api.playlists_analytics());
+
+        // The analytics reads, the after-leg of the HTTP dispatch
+        // measurement (`GET_analytics_*`) the router micro-benchmark
+        // captured before the family moved (same fresh-DB state: an empty
+        // ledger / inventory and the Overview / Activity aggregates over no
+        // sessions). The Overview brings the daily rollups current before
+        // aggregating, so it stays the family's costliest read even empty.
+        bench!("analytics_overview", api.analytics_overview("all"));
+        bench!("analytics_activity", api.analytics_activity());
+        bench!("ledger_list", api.ledger_list(None, None));
+        bench!("ledger_presets_list", api.ledger_presets_list());
+        bench!("inventory_list", api.inventory_list());
     });
 
     println!(
-        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex + quests over typed commands)"
+        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex + quests + analytics over typed commands)"
     );
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \

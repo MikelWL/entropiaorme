@@ -15,7 +15,9 @@ use axum::http::{HeaderValue, Response, StatusCode};
 use eo_services::analytics::AnalyticsError;
 use serde_json::Value;
 
-use crate::hydration::{detail, error_response, internal_error, plain_json_response, HydrationState};
+use crate::hydration::{
+    detail, error_response, internal_error, plain_json_response, HydrationState,
+};
 
 impl HydrationState {
     /// GET analytics/overview?period=...
