@@ -1168,187 +1168,14 @@ async fn scan_spacebar_capture(state: Arc<AppState>, req: Request) -> Response<B
     crate::scan_routes::spacebar_capture(&listener, enabled.expect("validated"))
 }
 
-// ── Settings adapters ───────────────────────────────────────────────
-//
-// The whole settings surface serves natively: the reads, the
-// overlay-position write, and the monolithic PATCH and the reset. The
-// write adapters parse the body here and delegate
-// to the producer-spine handlers (`HydrationState::settings_update` /
-// `settings_reset` in `producer_routes`), which write through the single
-// native `ConfigService` and signal the live producers (watcher, hotbar
-// gate, tracker reload). With the sidecar gone there is no second writer.
-
-simple_get!(settings_get, settings);
-simple_get!(overlay_position_get, overlay_position);
-
-/// PUT /api/settings/overlay-position: `{x, y}` ints. An unparseable
-/// coordinate is the backend's 422 int_parsing.
-async fn overlay_position_set(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let (Some(hydration), Some(config)) = (state.hydration(), state.config_service()) else {
-        return service_unavailable();
-    };
-    let (content_type, bytes) = match body_parts(req).await {
-        Ok(parts) => parts,
-        Err(reply) => return *reply,
-    };
-    let mut v = Validation::new();
-    let Some(object) = body::read_object(content_type.as_deref(), &bytes, &mut v) else {
-        return v.into_response();
-    };
-    let x = body::required_int_at(
-        &mut v,
-        object.pairs(),
-        object.echo(),
-        "x",
-        &[Loc::Field("x")],
-    );
-    let y = body::required_int_at(
-        &mut v,
-        object.pairs(),
-        object.echo(),
-        "y",
-        &[Loc::Field("y")],
-    );
-    if !v.is_ok() {
-        return v.into_response();
-    }
-    let x = body_int_or_max(x.expect("validated"));
-    let y = body_int_or_max(y.expect("validated"));
-    hydration.overlay_position_set(&config, x, y).await
-}
-
 /// A parsed body int, with a beyond-`i64` value clamped to the max (an
-/// absurd coordinate the reference would store as an unbounded Python int;
+/// absurd value the reference would store as an unbounded Python int;
 /// realistic values fit `i64`, so the clamp is never reached in practice).
 fn body_int_or_max(value: BodyInt) -> i64 {
     match value {
         BodyInt::Value(parsed) => parsed,
         BodyInt::Overflow => i64::MAX,
     }
-}
-
-/// `SettingsPatch.model_dump(exclude_unset=True)`: only the fields present in
-/// the body land in the map, validated in MODEL DECLARATION ORDER (the 422
-/// envelope lists issues in that order). The typed scalars and
-/// `loot_filter_blacklist` validate to the backend's 422 on a type mismatch;
-/// `hotbar` (`dict[str, int | None]`) and `trifecta_presets` (`list[dict]`)
-/// carry their raw value through to the `ConfigService` writer, which
-/// re-normalises them (a structurally-malformed container is coerced there
-/// rather than 422'd: the one fidelity gap vs the pydantic model, unreachable
-/// from the typed frontend; a value `serde_json` cannot represent is the
-/// reference's unrenderable-input 500).
-fn settings_patch_dump(v: &mut Validation, object: &BodyObject) -> Built<Value> {
-    enum Kind {
-        Str,
-        Bool,
-        StrList,
-        Raw,
-    }
-    const FIELDS: [(&str, Kind); 12] = [
-        ("chatlog_path", Kind::Str),
-        ("player_name", Kind::Str),
-        ("hotbar_hooks_enabled", Kind::Bool),
-        ("repair_ocr_enabled", Kind::Bool),
-        ("end_of_session_armour_reminder_enabled", Kind::Bool),
-        ("developer_mode_enabled", Kind::Bool),
-        ("mob_tracking_mode", Kind::Str),
-        ("mob_tracking_tag", Kind::Str),
-        ("hotbar", Kind::Raw),
-        ("active_trifecta_preset_id", Kind::Str),
-        ("trifecta_presets", Kind::Raw),
-        ("loot_filter_blacklist", Kind::StrList),
-    ];
-    let mut dump = Map::new();
-    let mut unrenderable = false;
-    for (field, kind) in FIELDS {
-        let Some(present) = object.get(field) else {
-            continue;
-        };
-        match kind {
-            Kind::Str => {
-                if let Some(value) = opt_str(v, object, field) {
-                    dump.insert(field.to_string(), str_value(value));
-                }
-            }
-            Kind::Bool => {
-                if let Some(value) = body::opt_bool(v, object, field) {
-                    dump.insert(
-                        field.to_string(),
-                        value.map(Value::Bool).unwrap_or(Value::Null),
-                    );
-                }
-            }
-            Kind::StrList => {
-                if let Some(value) = opt_list_of_str(v, object, field) {
-                    dump.insert(
-                        field.to_string(),
-                        value.map(|items| json!(items)).unwrap_or(Value::Null),
-                    );
-                }
-            }
-            Kind::Raw => match present.to_serde_value() {
-                Some(value) => {
-                    dump.insert(field.to_string(), value);
-                }
-                None => unrenderable = true,
-            },
-        }
-    }
-    if !v.is_ok() {
-        return Built::Invalid;
-    }
-    if v.binding_taint() || unrenderable {
-        return Built::Deferred500;
-    }
-    Built::Value(Value::Object(dump))
-}
-
-/// PATCH /api/settings: parse the SettingsPatch body, then delegate the write
-/// + producer-signalling to the producer-spine handler.
-async fn settings_update(state: Arc<AppState>, req: Request) -> Response<Body> {
-    let (Some(hydration), Some(config), Some(tracker), Some(hotbar), Some(watcher)) = (
-        state.hydration(),
-        state.config_service(),
-        state.tracker(),
-        state.hotbar_listener(),
-        state.chatlog_watcher(),
-    ) else {
-        return service_unavailable();
-    };
-    let (content_type, bytes) = match body_parts(req).await {
-        Ok(parts) => parts,
-        Err(reply) => return *reply,
-    };
-    let mut v = Validation::new();
-    let Some(object) = body::read_object(content_type.as_deref(), &bytes, &mut v) else {
-        return v.into_response();
-    };
-    match settings_patch_dump(&mut v, &object) {
-        Built::Invalid => v.into_response(),
-        Built::Deferred500 => internal_server_error(),
-        Built::Value(Value::Object(dump)) => {
-            hydration
-                .settings_update(&config, &tracker, &hotbar, &watcher, dump)
-                .await
-        }
-        Built::Value(_) => internal_server_error(),
-    }
-}
-
-/// POST /api/settings/reset: restore defaults and re-signal every producer.
-async fn settings_reset(state: Arc<AppState>, _req: Request) -> Response<Body> {
-    let (Some(hydration), Some(config), Some(tracker), Some(hotbar), Some(watcher)) = (
-        state.hydration(),
-        state.config_service(),
-        state.tracker(),
-        state.hotbar_listener(),
-        state.chatlog_watcher(),
-    ) else {
-        return service_unavailable();
-    };
-    hydration
-        .settings_reset(&config, &tracker, &hotbar, &watcher)
-        .await
 }
 
 // ── Analytics adapters ──────────────────────────────────────────────
@@ -2573,24 +2400,6 @@ pub(crate) fn register(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
             ArmRoutes::at("/api/analytics/inventory/{item_id}")
                 .on(MethodFilter::PATCH, inventory_patch)
                 .on(MethodFilter::DELETE, inventory_delete)
-                .into_method_router(),
-        )
-        .route(
-            "/api/settings",
-            ArmRoutes::at("/api/settings")
-                .on(MethodFilter::GET, settings_get)
-                .on(MethodFilter::PATCH, settings_update)
-                .into_method_router(),
-        )
-        .route(
-            "/api/settings/reset",
-            arm_routed(MethodFilter::POST, "/api/settings/reset", settings_reset),
-        )
-        .route(
-            "/api/settings/overlay-position",
-            ArmRoutes::at("/api/settings/overlay-position")
-                .on(MethodFilter::GET, overlay_position_get)
-                .on(MethodFilter::PUT, overlay_position_set)
                 .into_method_router(),
         )
 }

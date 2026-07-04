@@ -21,6 +21,7 @@ use crate::character::{
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::ApiError;
 
 /// One argument of a typed command.
@@ -161,6 +162,38 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "character_hp_optimizer",
             args: Vec::new(),
             returns: Some(schema(schema_for!(HpOptimizerResult))),
+        },
+        CommandSpec {
+            name: "settings_get",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AppSettings))),
+        },
+        CommandSpec {
+            name: "settings_overlay_position",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(OverlayPosition))),
+        },
+        CommandSpec {
+            name: "settings_set_overlay_position",
+            args: vec![
+                ArgSpec {
+                    name: "x",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "y",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: None,
+        },
+        CommandSpec {
+            name: "settings_update",
+            args: vec![ArgSpec {
+                name: "patch",
+                schema: schema(schema_for!(SettingsPatch)),
+            }],
+            returns: Some(schema(schema_for!(AppSettings))),
         },
     ]
 }

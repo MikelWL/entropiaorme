@@ -919,68 +919,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Settings
-         * @description Return full settings including live cache stats.
-         */
-        get: operations["get_settings_api_settings_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Settings
-         * @description Partial update — only provided fields are written.
-         */
-        patch: operations["update_settings_api_settings_patch"];
-        trace?: never;
-    };
-    "/api/settings/overlay-position": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Overlay Position */
-        get: operations["get_overlay_position_api_settings_overlay_position_get"];
-        /** Set Overlay Position */
-        put: operations["set_overlay_position_api_settings_overlay_position_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reset Settings
-         * @description Reset all settings to defaults.
-         */
-        post: operations["reset_settings_api_settings_reset_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/tracking/manual-mob-lock": {
         parameters: {
             query?: never;
@@ -1410,38 +1348,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /**
-         * AppSettings
-         * @description The full application settings response.
-         */
-        AppSettings: {
-            /** Appversion */
-            appVersion: string;
-            /** Dbpath */
-            dbPath: string;
-            /** Developermodeenabled */
-            developerModeEnabled: boolean;
-            /** Endofsessionarmourreminderenabled */
-            endOfSessionArmourReminderEnabled: boolean;
-            gameConnection: components["schemas"]["GameConnection"];
-            /** Hotbar */
-            hotbar: {
-                [key: string]: number | null;
-            };
-            /** Hotbarhooksenabled */
-            hotbarHooksEnabled: boolean;
-            /** Lootfilterblacklist */
-            lootFilterBlacklist: string[];
-            /** Mobtrackingmode */
-            mobTrackingMode: string;
-            /** Mobtrackingtag */
-            mobTrackingTag: string;
-            /** Repairocrenabled */
-            repairOcrEnabled: boolean;
-            trifecta: components["schemas"]["TrifectaSettings"];
-        } & {
-            [key: string]: unknown;
-        };
         /** ArmourCostBody */
         ArmourCostBody: {
             /** Cost */
@@ -1634,20 +1540,6 @@ export interface components {
         DeletedStatus: {
             /** Status */
             status: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * GameConnection
-         * @description The chat.log connection block of the settings response.
-         */
-        GameConnection: {
-            /** Chatlogpath */
-            chatLogPath: string;
-            /** Chatlogvalid */
-            chatLogValid: boolean;
-            /** Playername */
-            playerName: string;
         } & {
             [key: string]: unknown;
         };
@@ -1994,25 +1886,6 @@ export interface components {
             ok: boolean;
         } & {
             [key: string]: unknown;
-        };
-        /**
-         * OverlayPosition
-         * @description The persisted overlay window position (null until first placed).
-         */
-        OverlayPosition: {
-            /** X */
-            x?: number | null;
-            /** Y */
-            y?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** OverlayPositionPatch */
-        OverlayPositionPatch: {
-            /** X */
-            x: number;
-            /** Y */
-            y: number;
         };
         /**
          * PlaylistAnalyticsRow
@@ -2693,37 +2566,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** SettingsPatch */
-        SettingsPatch: {
-            /** Active Trifecta Preset Id */
-            active_trifecta_preset_id?: string | null;
-            /** Chatlog Path */
-            chatlog_path?: string | null;
-            /** Developer Mode Enabled */
-            developer_mode_enabled?: boolean | null;
-            /** End Of Session Armour Reminder Enabled */
-            end_of_session_armour_reminder_enabled?: boolean | null;
-            /** Hotbar */
-            hotbar?: {
-                [key: string]: number | null;
-            } | null;
-            /** Hotbar Hooks Enabled */
-            hotbar_hooks_enabled?: boolean | null;
-            /** Loot Filter Blacklist */
-            loot_filter_blacklist?: string[] | null;
-            /** Mob Tracking Mode */
-            mob_tracking_mode?: string | null;
-            /** Mob Tracking Tag */
-            mob_tracking_tag?: string | null;
-            /** Player Name */
-            player_name?: string | null;
-            /** Repair Ocr Enabled */
-            repair_ocr_enabled?: boolean | null;
-            /** Trifecta Presets */
-            trifecta_presets?: {
-                [key: string]: unknown;
-            }[] | null;
-        };
         /**
          * SkillScanPending
          * @description The held OCR result awaiting review: skill name to calibrated level.
@@ -2991,46 +2833,6 @@ export interface components {
             session_id: string;
             /** Started At */
             started_at: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * TrifectaPreset
-         * @description One trifecta loadout preset with its readiness state.
-         */
-        TrifectaPreset: {
-            /** Bigweaponid */
-            bigWeaponId?: number | null;
-            /** Healid */
-            healId?: number | null;
-            /** Id */
-            id: string;
-            /** Message */
-            message?: string | null;
-            /** Name */
-            name: string;
-            /** Ready */
-            ready: boolean;
-            /** Smallweaponid */
-            smallWeaponId?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * TrifectaSettings
-         * @description The trifecta block of the settings response.
-         */
-        TrifectaSettings: {
-            /** Activepresetid */
-            activePresetId?: string | null;
-            /** Activepresetname */
-            activePresetName?: string | null;
-            /** Message */
-            message?: string | null;
-            /** Presets */
-            presets: components["schemas"]["TrifectaPreset"][];
-            /** Ready */
-            ready: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -4553,132 +4355,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_settings_api_settings_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppSettings"];
-                };
-            };
-        };
-    };
-    update_settings_api_settings_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SettingsPatch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppSettings"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_overlay_position_api_settings_overlay_position_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OverlayPosition"];
-                };
-            };
-        };
-    };
-    set_overlay_position_api_settings_overlay_position_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OverlayPositionPatch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OkResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reset_settings_api_settings_reset_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppSettings"];
                 };
             };
         };

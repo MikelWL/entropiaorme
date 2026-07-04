@@ -244,6 +244,10 @@ pub fn run() {
             commands::character_profession_optimizer,
             commands::character_path_optimizer,
             commands::character_hp_optimizer,
+            commands::settings_get,
+            commands::settings_overlay_position,
+            commands::settings_set_overlay_position,
+            commands::settings_update,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -426,12 +430,11 @@ fn install_native_services(
     let composed_api = composed.api.clone();
     // The producer-spine handles are cloned out of the spine here, BEFORE it
     // moves into the Tauri-managed holder below, so the HTTP routes serve over
-    // the same handles the exit-seam teardown stops, and the settings-write
-    // route restarts the same `Arc<ChatlogWatcher>` the spine tails on.
+    // the same handles the exit-seam teardown stops. The chat-log watcher the
+    // settings write restarts now lives on the typed-command facade instead.
     state.install_native(eo_http::NativeServices {
         hydration: composed.hydration,
         tracker: composed.producers.tracker_handle(),
-        chatlog_watcher: composed.producers.watcher_handle(),
         config_service: composed.producers.config_service_handle(),
         skill_tracker: composed.producers.skill_tracker_handle(),
         skill_scan: composed.skill_scan.clone(),

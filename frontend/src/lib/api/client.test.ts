@@ -70,32 +70,32 @@ describe('generated client over the IPC transport', () => {
 	it('routes the call through the api_request command with method, path, and Content-Type', async () => {
 		const { client } = await loadModule();
 		invokeMock.mockResolvedValue(wire('{}'));
-		await client.GET('/api/settings');
+		await client.GET('/api/tracking/snapshot');
 
 		expect(invokeMock).toHaveBeenCalledTimes(1);
 		const [command, args] = invokeMock.mock.calls[0];
 		expect(command).toBe('api_request');
 		expect(args.request.method).toBe('GET');
-		expect(args.request.path).toBe('/api/settings');
+		expect(args.request.path).toBe('/api/tracking/snapshot');
 		expect(args.request.headers).toContainEqual(['content-type', 'application/json']);
 	});
 
 	it('prefers the FastAPI detail string on a non-2xx JSON body', async () => {
 		const { client } = await loadModule();
 		invokeMock.mockResolvedValue(
-			wire(JSON.stringify({ detail: 'Settings unavailable' }), { status: 404 }),
+			wire(JSON.stringify({ detail: 'Snapshot unavailable' }), { status: 404 }),
 		);
-		await expect(client.GET('/api/settings')).rejects.toMatchObject({
+		await expect(client.GET('/api/tracking/snapshot')).rejects.toMatchObject({
 			name: 'ApiError',
 			status: 404,
-			message: 'Settings unavailable',
+			message: 'Snapshot unavailable',
 		});
 	});
 
 	it('falls back to the raw body when detail is not a string', async () => {
 		const { client } = await loadModule();
 		invokeMock.mockResolvedValue(wire(JSON.stringify({ detail: 42 }), { status: 500 }));
-		await expect(client.GET('/api/settings')).rejects.toMatchObject({
+		await expect(client.GET('/api/tracking/snapshot')).rejects.toMatchObject({
 			status: 500,
 			message: '{"detail":42}',
 		});
@@ -104,7 +104,7 @@ describe('generated client over the IPC transport', () => {
 	it('falls back to the raw body when detail is blank', async () => {
 		const { client } = await loadModule();
 		invokeMock.mockResolvedValue(wire(JSON.stringify({ detail: '   ' }), { status: 400 }));
-		await expect(client.GET('/api/settings')).rejects.toMatchObject({
+		await expect(client.GET('/api/tracking/snapshot')).rejects.toMatchObject({
 			status: 400,
 			message: '{"detail":"   "}',
 		});
@@ -113,7 +113,7 @@ describe('generated client over the IPC transport', () => {
 	it('uses a plain-text error body as the message', async () => {
 		const { client } = await loadModule();
 		invokeMock.mockResolvedValue(wire('upstream down', { status: 503 }));
-		await expect(client.GET('/api/settings')).rejects.toMatchObject({
+		await expect(client.GET('/api/tracking/snapshot')).rejects.toMatchObject({
 			status: 503,
 			message: 'upstream down',
 		});
@@ -122,7 +122,7 @@ describe('generated client over the IPC transport', () => {
 	it('falls back to statusText on an empty error body', async () => {
 		const { client } = await loadModule();
 		invokeMock.mockResolvedValue(wire('', { status: 502, statusText: 'Bad Gateway' }));
-		await expect(client.GET('/api/settings')).rejects.toMatchObject({
+		await expect(client.GET('/api/tracking/snapshot')).rejects.toMatchObject({
 			status: 502,
 			message: 'Bad Gateway',
 		});
@@ -131,7 +131,7 @@ describe('generated client over the IPC transport', () => {
 	it('passes a 2xx response through untouched', async () => {
 		const { client } = await loadModule();
 		invokeMock.mockResolvedValue(wire(JSON.stringify({ player_name: 'Mikel' })));
-		const { data } = await client.GET('/api/settings');
+		const { data } = await client.GET('/api/tracking/snapshot');
 		expect(data).toEqual({ player_name: 'Mikel' });
 	});
 });
@@ -140,14 +140,14 @@ describe('unwrap', () => {
 	it('resolves to the payload as the declared type', async () => {
 		const { client, unwrap } = await loadModule();
 		invokeMock.mockResolvedValue(wire(JSON.stringify({ player_name: 'Mikel' })));
-		const settings = await unwrap<{ player_name: string }>(client.GET('/api/settings'));
+		const settings = await unwrap<{ player_name: string }>(client.GET('/api/tracking/snapshot'));
 		expect(settings).toEqual({ player_name: 'Mikel' });
 	});
 
 	it('propagates the middleware ApiError', async () => {
 		const { ApiError, client, unwrap } = await loadModule();
 		invokeMock.mockResolvedValue(wire(JSON.stringify({ detail: 'nope' }), { status: 403 }));
-		await expect(unwrap(client.GET('/api/settings'))).rejects.toBeInstanceOf(ApiError);
+		await expect(unwrap(client.GET('/api/tracking/snapshot'))).rejects.toBeInstanceOf(ApiError);
 	});
 });
 

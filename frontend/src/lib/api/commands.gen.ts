@@ -34,6 +34,27 @@ export interface AbsorberComponent {
 }
 
 /**
+ * The full assembled settings response. Field order is the wire order
+ * the frontend contract expects (and the HTTP body carried).
+ */
+export interface AppSettings {
+	gameConnection: GameConnection;
+	hotbarHooksEnabled: boolean;
+	repairOcrEnabled: boolean;
+	endOfSessionArmourReminderEnabled: boolean;
+	developerModeEnabled: boolean;
+	mobTrackingMode: string;
+	mobTrackingTag: string;
+	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
+	hotbar: {
+	};
+	trifecta: TrifectaSettings;
+	lootFilterBlacklist: string[];
+	dbPath: string;
+	appVersion: string;
+}
+
+/**
  * GET calibration: whether skills are calibrated and how fresh.
  */
 export interface CalibrationStatus {
@@ -158,6 +179,16 @@ export interface ExcludedSkill {
 }
 
 /**
+ * The game-connection block: the configured chat-log path, whether it
+ * currently resolves to a file, and the player name.
+ */
+export interface GameConnection {
+	chatLogPath: string;
+	chatLogValid: boolean;
+	playerName: string;
+}
+
+/**
  * One attribute row of the HP optimizer.
  */
 export interface HpOptimizerAttribute {
@@ -212,6 +243,15 @@ export interface OptimizerSkill {
 	pedToNextLevel: number;
 	codexCategory?: string | null;
 	codexDivisor?: number | null;
+}
+
+/**
+ * GET overlay-position: the persisted overlay window coordinates (null
+ * until first placed).
+ */
+export interface OverlayPosition {
+	x?: number | null;
+	y?: number | null;
 }
 
 /**
@@ -375,6 +415,30 @@ export type ProspectSliceType = 'global' | 'tag' | 'mob' | 'weapon';
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable';
 
 /**
+ * The partial settings update: every field optional, only the present
+ * ones applied (the `exclude_unset` semantics the pydantic model had).
+ * `active_trifecta_preset_id` is a double option so an explicit `null`
+ * (clear the active preset) stays distinct from an absent field (leave
+ * it untouched); every other field is nullless, so a plain `Option`
+ * carries the present/absent distinction.
+ */
+export interface SettingsPatch {
+	chatlog_path?: string | null;
+	player_name?: string | null;
+	hotbar_hooks_enabled?: boolean | null;
+	repair_ocr_enabled?: boolean | null;
+	end_of_session_armour_reminder_enabled?: boolean | null;
+	developer_mode_enabled?: boolean | null;
+	mob_tracking_mode?: string | null;
+	mob_tracking_tag?: string | null;
+	hotbar?: {
+	} | null;
+	active_trifecta_preset_id?: string | null;
+	trifecta_presets?: TrifectaPresetInput[] | null;
+	loot_filter_blacklist?: string[] | null;
+}
+
+/**
  * One calibrated skill row.
  */
 export interface SkillLevel {
@@ -396,6 +460,44 @@ export interface StatProfession {
 	name: string;
 	level: number;
 	category: string;
+}
+
+/**
+ * One trifecta preset in a settings update. Field names stay in the
+ * stored snake_case the config writer re-normalises.
+ */
+export interface TrifectaPresetInput {
+	id: string;
+	name: string;
+	small_weapon_id?: number | null;
+	big_weapon_id?: number | null;
+	heal_id?: number | null;
+}
+
+/**
+ * One trifecta preset in the settings view: the stored equipment ids
+ * plus the live readiness validation against the library.
+ */
+export interface TrifectaPresetView {
+	id: string;
+	name: string;
+	smallWeaponId?: number | null;
+	bigWeaponId?: number | null;
+	healId?: number | null;
+	ready: boolean;
+	message?: string | null;
+}
+
+/**
+ * The trifecta block: every preset validated, with the active preset's
+ * readiness lifted to the top level.
+ */
+export interface TrifectaSettings {
+	activePresetId?: string | null;
+	activePresetName?: string | null;
+	presets: TrifectaPresetView[];
+	ready: boolean;
+	message?: string | null;
 }
 
 export async function equipmentSearch(q: string, kind: SearchKind): Promise<EquipmentSearchHit[]> {
@@ -456,4 +558,20 @@ export async function characterPathOptimizer(profession: string, targetLevel: nu
 
 export async function characterHpOptimizer(): Promise<HpOptimizerResult> {
 	return invokeCommand('character_hp_optimizer', {});
+}
+
+export async function settingsGet(): Promise<AppSettings> {
+	return invokeCommand('settings_get', {});
+}
+
+export async function settingsOverlayPosition(): Promise<OverlayPosition> {
+	return invokeCommand('settings_overlay_position', {});
+}
+
+export async function settingsSetOverlayPosition(x: number, y: number): Promise<void> {
+	return invokeCommand('settings_set_overlay_position', { x, y });
+}
+
+export async function settingsUpdate(patch: SettingsPatch): Promise<AppSettings> {
+	return invokeCommand('settings_update', { patch });
 }

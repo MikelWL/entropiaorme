@@ -357,15 +357,6 @@ describe('plain delegating wrappers map to the expected verb, path, and shape', 
 			'/api/quests/playlists/{playlist_id}',
 			{ params: { path: { playlist_id: 9 } }, body: { name: 'weeklies' } },
 		],
-		['getSettings', () => api.getSettings(), 'GET', '/api/settings'],
-		[
-			'updateSettings',
-			() => api.updateSettings({ player_name: 'Mikel' }),
-			'PATCH',
-			'/api/settings',
-			{ body: { player_name: 'Mikel' } },
-		],
-		['getOverlayPosition', () => api.getOverlayPosition(), 'GET', '/api/settings/overlay-position'],
 	];
 
 	it.each(rows)('%s', async (_name, call, verb, path, options) => {
@@ -424,13 +415,6 @@ describe('void-returning wrappers delegate without unwrapping', () => {
 			'DELETE',
 			'/api/quests/playlists/{playlist_id}',
 			{ params: { path: { playlist_id: 9 } } },
-		],
-		[
-			'saveOverlayPosition',
-			() => api.saveOverlayPosition(120, 48),
-			'PUT',
-			'/api/settings/overlay-position',
-			{ body: { x: 120, y: 48 } },
 		],
 	];
 
@@ -610,6 +594,37 @@ describe('equipment wrappers dispatch typed commands', () => {
 			status: 500,
 			message: 'command equipment_detail not found',
 		});
+	});
+});
+
+describe('settings wrappers dispatch typed commands', () => {
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>][] = [
+		['getSettings', () => api.getSettings(), 'settings_get', {}],
+		[
+			'updateSettings passes the partial patch through',
+			() => api.updateSettings({ player_name: 'Mikel' }),
+			'settings_update',
+			{ patch: { player_name: 'Mikel' } },
+		],
+		['getOverlayPosition', () => api.getOverlayPosition(), 'settings_overlay_position', {}],
+	];
+	it.each(rows)('%s', async (_name, call, command, args) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
+	});
+
+	it('saveOverlayPosition invokes the typed command with x and y and resolves void', async () => {
+		tauriInvoke.mockResolvedValue(undefined);
+		await expect(api.saveOverlayPosition(120, 48)).resolves.toBeUndefined();
+		expect(tauriInvoke).toHaveBeenCalledWith('settings_set_overlay_position', { x: 120, y: 48 });
+	});
+
+	it('maps a typed error payload onto the thrown ApiError contract', async () => {
+		tauriInvoke.mockRejectedValue({ kind: 'badRequest', message: 'No fields to update' });
+		const failure = api.updateSettings({});
+		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
+		await expect(failure).rejects.toMatchObject({ status: 400, message: 'No fields to update' });
 	});
 });
 

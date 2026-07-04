@@ -16,6 +16,8 @@ use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use serde_json::{json, Value};
 
+mod common;
+
 fn write_fixture(dir: &Path, name: &str, value: &Value) {
     std::fs::write(dir.join(name), serde_json::to_string(value).unwrap()).unwrap();
 }
@@ -88,11 +90,17 @@ async fn seeded_api(dir: &Path) -> Api {
         ),
         0.0,
     ));
+    let (config_service, tracker, hotbar, watcher) =
+        common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
     Api::new(
         db,
         Arc::new(GameDataStore::new(&snapshot).unwrap()),
         clock,
         data_dir,
+        config_service,
+        tracker,
+        hotbar,
+        watcher,
     )
 }
 

@@ -15,6 +15,8 @@ use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use sqlx::Row;
 
+mod common;
+
 /// A minimal catalogue snapshot: one weapon (a limited one, so the
 /// `(L)` flag pins), one stimulant.
 fn write_snapshot(dir: &Path) {
@@ -43,7 +45,21 @@ async fn api_over(dir: &Path) -> (Api, Db) {
         .expect("migrated database");
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("snapshot store"));
     let clock = Arc::new(eo_services::clock::RealClock::new());
-    (Api::new(db.clone(), game_data, clock, data_dir), db)
+    let (config_service, tracker, hotbar, watcher) =
+        common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    (
+        Api::new(
+            db.clone(),
+            game_data,
+            clock,
+            data_dir,
+            config_service,
+            tracker,
+            hotbar,
+            watcher,
+        ),
+        db,
+    )
 }
 
 fn consumable(name: &str) -> EquipmentRequest {

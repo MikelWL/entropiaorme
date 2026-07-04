@@ -25,6 +25,8 @@ use eo_api::Api;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 
+mod common;
+
 const WARMUPS: usize = 3;
 const SAMPLES: usize = 30;
 
@@ -61,7 +63,18 @@ fn facade_microbench() {
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
     let clock = Arc::new(eo_services::clock::RealClock::new());
-    let api = Api::new(db, game_data, clock, data_dir);
+    let (config_service, tracker, hotbar, watcher) =
+        common::producer_handles(&db, &data_dir, runtime.handle().clone());
+    let api = Api::new(
+        db,
+        game_data,
+        clock,
+        data_dir,
+        config_service,
+        tracker,
+        hotbar,
+        watcher,
+    );
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();
     runtime.block_on(async {
@@ -138,9 +151,17 @@ fn facade_microbench() {
             api.character_prospect_options()
         );
         bench!("character_hp_optimizer", api.character_hp_optimizer());
+
+        // The settings reads, the after-leg of the HTTP dispatch
+        // measurement the router micro-benchmark captured before the
+        // family moved (same default-config, fresh-DB state).
+        bench!("settings_get", api.settings());
+        bench!("settings_overlay_position", api.settings_overlay_position());
     });
 
-    println!("\ntyped-facade micro-bench (AFTER: equipment + character over typed commands)");
+    println!(
+        "\ntyped-facade micro-bench (AFTER: equipment + character + settings over typed commands)"
+    );
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \
          (matching the HTTP leg's state); facade call only, no dispatch stack.\n"

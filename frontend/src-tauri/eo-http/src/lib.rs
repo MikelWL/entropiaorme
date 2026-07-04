@@ -19,7 +19,6 @@ pub mod native;
 pub mod producer_routes;
 pub mod pyjson;
 pub mod scan_routes;
-pub mod settings_routes;
 pub mod tracking_routes;
 
 use std::future::Future;
@@ -42,7 +41,6 @@ pub struct AppState {
     allowed_hosts: [String; 2],
     hydration: RwLock<Option<Arc<crate::hydration::HydrationState>>>,
     tracker: RwLock<Option<Arc<eo_services::tracker::HuntTracker>>>,
-    chatlog_watcher: RwLock<Option<Arc<eo_services::chatlog_watcher::ChatlogWatcher>>>,
     config_service: RwLock<Option<Arc<Mutex<eo_services::config_service::ConfigService>>>>,
     skill_tracker: RwLock<Option<Arc<eo_services::skill_tracker::SkillTracker>>>,
     skill_scan: RwLock<Option<Arc<eo_services::skill_scan_manual::SkillScanManual>>>,
@@ -74,7 +72,6 @@ pub struct AppState {
 pub struct NativeServices {
     pub hydration: Arc<crate::hydration::HydrationState>,
     pub tracker: Arc<eo_services::tracker::HuntTracker>,
-    pub chatlog_watcher: Arc<eo_services::chatlog_watcher::ChatlogWatcher>,
     pub config_service: Arc<Mutex<eo_services::config_service::ConfigService>>,
     pub skill_tracker: Arc<eo_services::skill_tracker::SkillTracker>,
     pub skill_scan: Arc<eo_services::skill_scan_manual::SkillScanManual>,
@@ -97,7 +94,6 @@ impl AppState {
             ],
             hydration: RwLock::new(None),
             tracker: RwLock::new(None),
-            chatlog_watcher: RwLock::new(None),
             config_service: RwLock::new(None),
             skill_tracker: RwLock::new(None),
             skill_scan: RwLock::new(None),
@@ -229,28 +225,6 @@ impl AppState {
     /// The live producer-spine tracker, when composed.
     pub(crate) fn tracker(&self) -> Option<Arc<eo_services::tracker::HuntTracker>> {
         self.tracker.read().expect("tracker service lock").clone()
-    }
-
-    /// Attach the live producer-spine chat-log watcher (the same
-    /// `Arc<ChatlogWatcher>` the producer spine holds). The settings-write
-    /// route restarts it when the watched `chatlog_path` changes (the watcher
-    /// captured its path at composition and does not re-read config live).
-    pub fn with_chatlog_watcher(
-        mut self,
-        chatlog_watcher: Arc<eo_services::chatlog_watcher::ChatlogWatcher>,
-    ) -> Self {
-        self.chatlog_watcher = RwLock::new(Some(chatlog_watcher));
-        self
-    }
-
-    /// The live producer-spine chat-log watcher, when composed.
-    pub(crate) fn chatlog_watcher(
-        &self,
-    ) -> Option<Arc<eo_services::chatlog_watcher::ChatlogWatcher>> {
-        self.chatlog_watcher
-            .read()
-            .expect("chatlog watcher service lock")
-            .clone()
     }
 
     /// Attach the settings writer (the same `Arc<Mutex<ConfigService>>` the
@@ -385,10 +359,6 @@ impl AppState {
     pub fn install_native(&self, services: NativeServices) {
         *self.hydration.write().expect("hydration service lock") = Some(services.hydration);
         *self.tracker.write().expect("tracker service lock") = Some(services.tracker);
-        *self
-            .chatlog_watcher
-            .write()
-            .expect("chatlog watcher service lock") = Some(services.chatlog_watcher);
         *self.config_service.write().expect("config service lock") = Some(services.config_service);
         *self
             .skill_tracker
