@@ -19,9 +19,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use eo_services::clock::Clock;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 
+pub mod character;
 pub mod equipment;
 mod error;
 pub mod manifest;
@@ -32,16 +34,25 @@ pub use error::ApiError;
 pub struct Api {
     db: Db,
     game_data: Arc<GameDataStore>,
+    /// The injectable wall clock: the calibration-staleness read compares
+    /// the latest scan against it.
+    clock: Arc<dyn Clock>,
     /// The resolved data directory: configuration read-through
     /// (`settings.json`) for the operations that consult it.
     data_dir: PathBuf,
 }
 
 impl Api {
-    pub fn new(db: Db, game_data: Arc<GameDataStore>, data_dir: PathBuf) -> Self {
+    pub fn new(
+        db: Db,
+        game_data: Arc<GameDataStore>,
+        clock: Arc<dyn Clock>,
+        data_dir: PathBuf,
+    ) -> Self {
         Self {
             db,
             game_data,
+            clock,
             data_dir,
         }
     }

@@ -668,6 +668,7 @@ async fn compose_with(
     let api = Arc::new(eo_api::Api::new(
         db.clone(),
         game_data.clone(),
+        clock.clone(),
         data_dir.clone(),
     ));
     let hydration = Arc::new(HydrationState::new(db, game_data, clock, data_dir));

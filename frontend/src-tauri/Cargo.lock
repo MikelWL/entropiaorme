@@ -1113,6 +1113,7 @@ dependencies = [
 name = "eo-api"
 version = "0.2.1"
 dependencies = [
+ "chrono",
  "eo-services",
  "eo-wire",
  "schemars 1.2.1",

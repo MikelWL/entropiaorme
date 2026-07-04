@@ -92,29 +92,6 @@ const verbMock: Record<Verb, ReturnType<typeof vi.fn>> = {
 
 describe('plain delegating wrappers map to the expected verb, path, and shape', () => {
 	const rows: [string, () => Promise<unknown>, Verb, string, unknown?][] = [
-		['getCalibrationStatus', () => api.getCalibrationStatus(), 'GET', '/api/character/calibration'],
-		['getCharacterStats', () => api.getCharacterStats(), 'GET', '/api/character/stats'],
-		['getCharacterSkills', () => api.getCharacterSkills(), 'GET', '/api/character/skills'],
-		[
-			'getCharacterProfessions',
-			() => api.getCharacterProfessions(),
-			'GET',
-			'/api/character/professions',
-		],
-		[
-			'getProfessionOptimizer',
-			() => api.getProfessionOptimizer('Sniper (Hit)'),
-			'GET',
-			'/api/character/profession-optimizer',
-			{ params: { query: { profession: 'Sniper (Hit)' } } },
-		],
-		['getHpOptimizer', () => api.getHpOptimizer(), 'GET', '/api/character/hp-optimizer'],
-		[
-			'getCharacterProspectOptions',
-			() => api.getCharacterProspectOptions(),
-			'GET',
-			'/api/character/prospect-options',
-		],
 		[
 			'getManualSkillScanStatus',
 			() => api.getManualSkillScanStatus(),
@@ -682,99 +659,128 @@ describe('getManualSkillScanPending', () => {
 	});
 });
 
-describe('getProfessionPathOptimizer', () => {
-	it('maps a targetLevel goal onto the target_level query', async () => {
-		await api.getProfessionPathOptimizer('Sniper (Hit)', { targetLevel: 40 });
-		expect(clientGet).toHaveBeenCalledWith('/api/character/profession-path-optimizer', {
-			params: { query: { profession: 'Sniper (Hit)', target_level: 40 } },
-		});
+describe('character wrappers dispatch typed commands', () => {
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>][] = [
+		['getCalibrationStatus', () => api.getCalibrationStatus(), 'character_calibration', {}],
+		['getCharacterStats', () => api.getCharacterStats(), 'character_stats', {}],
+		['getCharacterSkills', () => api.getCharacterSkills(), 'character_skills', {}],
+		['getCharacterProfessions', () => api.getCharacterProfessions(), 'character_professions', {}],
+		[
+			'getProfessionOptimizer',
+			() => api.getProfessionOptimizer('Sniper (Hit)'),
+			'character_profession_optimizer',
+			{ profession: 'Sniper (Hit)' },
+		],
+		['getHpOptimizer', () => api.getHpOptimizer(), 'character_hp_optimizer', {}],
+		[
+			'getCharacterProspectOptions',
+			() => api.getCharacterProspectOptions(),
+			'character_prospect_options',
+			{},
+		],
+	];
+	it.each(rows)('%s', async (_name, call, command, args) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
 	});
 
-	it('maps a pedBudget goal onto the ped_budget query', async () => {
-		await api.getProfessionPathOptimizer('Sniper (Hit)', { pedBudget: 250 });
-		expect(clientGet).toHaveBeenCalledWith('/api/character/profession-path-optimizer', {
-			params: { query: { profession: 'Sniper (Hit)', ped_budget: 250 } },
+	it('maps a typed error payload onto the thrown ApiError contract', async () => {
+		tauriInvoke.mockRejectedValue({ kind: 'internal' });
+		await expect(api.getCharacterStats()).rejects.toMatchObject({
+			status: 500,
+			message: 'Internal Server Error',
 		});
 	});
 });
 
-describe('getCharacterProspect', () => {
-	it('omits slice_value for the global slice even when one is supplied', async () => {
+describe('getProfessionPathOptimizer dispatches the typed command', () => {
+	it('maps a targetLevel goal onto the target_level argument, ped_budget null', async () => {
+		await api.getProfessionPathOptimizer('Sniper (Hit)', { targetLevel: 40 });
+		expect(tauriInvoke).toHaveBeenCalledWith('character_path_optimizer', {
+			profession: 'Sniper (Hit)',
+			target_level: 40,
+			ped_budget: null,
+		});
+	});
+
+	it('maps a pedBudget goal onto the ped_budget argument, target_level null', async () => {
+		await api.getProfessionPathOptimizer('Sniper (Hit)', { pedBudget: 250 });
+		expect(tauriInvoke).toHaveBeenCalledWith('character_path_optimizer', {
+			profession: 'Sniper (Hit)',
+			target_level: null,
+			ped_budget: 250,
+		});
+	});
+});
+
+describe('getCharacterProspect dispatches the typed command', () => {
+	it('omits sliceValue for the global slice even when one is supplied', async () => {
 		await api.getCharacterProspect({
 			profession: 'Sniper (Hit)',
 			targetLevel: 40,
 			sliceType: 'global',
 			sliceValue: 'ignored',
 		});
-		expect(clientGet).toHaveBeenCalledWith('/api/character/prospect', {
-			params: {
-				query: { profession: 'Sniper (Hit)', target_level: 40, slice_type: 'global' },
-			},
+		expect(tauriInvoke).toHaveBeenCalledWith('character_prospect', {
+			query: { profession: 'Sniper (Hit)', targetLevel: 40, sliceType: 'global' },
 		});
 	});
 
-	it('omits slice_value when it is absent on a non-global slice', async () => {
+	it('omits sliceValue when it is absent on a non-global slice', async () => {
 		await api.getCharacterProspect({
 			profession: 'Sniper (Hit)',
 			targetLevel: 40,
 			sliceType: 'mob',
 			sliceValue: null,
 		});
-		expect(clientGet).toHaveBeenCalledWith('/api/character/prospect', {
-			params: {
-				query: { profession: 'Sniper (Hit)', target_level: 40, slice_type: 'mob' },
-			},
+		expect(tauriInvoke).toHaveBeenCalledWith('character_prospect', {
+			query: { profession: 'Sniper (Hit)', targetLevel: 40, sliceType: 'mob' },
 		});
 	});
 
-	it('passes slice_value for a non-global slice', async () => {
+	it('passes sliceValue for a non-global slice', async () => {
 		await api.getCharacterProspect({
 			profession: 'Sniper (Hit)',
 			targetLevel: 40,
 			sliceType: 'mob',
 			sliceValue: 'Atrox',
 		});
-		expect(clientGet).toHaveBeenCalledWith('/api/character/prospect', {
-			params: {
-				query: {
-					profession: 'Sniper (Hit)',
-					target_level: 40,
-					slice_type: 'mob',
-					slice_value: 'Atrox',
-				},
+		expect(tauriInvoke).toHaveBeenCalledWith('character_prospect', {
+			query: {
+				profession: 'Sniper (Hit)',
+				targetLevel: 40,
+				sliceType: 'mob',
+				sliceValue: 'Atrox',
 			},
 		});
 	});
 
-	it('includes markup_uplift only when strictly positive', async () => {
+	it('includes markupUplift only when strictly positive', async () => {
 		await api.getCharacterProspect({
 			profession: 'Sniper (Hit)',
 			targetLevel: 40,
 			sliceType: 'global',
 			markupUplift: 0,
 		});
-		expect(clientGet.mock.calls[0][1]).toEqual({
-			params: {
-				query: { profession: 'Sniper (Hit)', target_level: 40, slice_type: 'global' },
-			},
+		expect(tauriInvoke.mock.calls[0][1]).toEqual({
+			query: { profession: 'Sniper (Hit)', targetLevel: 40, sliceType: 'global' },
 		});
 
-		clientGet.mockClear();
-		clientGet.mockResolvedValue(GET_RESULT);
+		tauriInvoke.mockClear();
+		tauriInvoke.mockResolvedValue(DATA);
 		await api.getCharacterProspect({
 			profession: 'Sniper (Hit)',
 			targetLevel: 40,
 			sliceType: 'global',
 			markupUplift: 1.05,
 		});
-		expect(clientGet.mock.calls[0][1]).toEqual({
-			params: {
-				query: {
-					profession: 'Sniper (Hit)',
-					target_level: 40,
-					slice_type: 'global',
-					markup_uplift: 1.05,
-				},
+		expect(tauriInvoke.mock.calls[0][1]).toEqual({
+			query: {
+				profession: 'Sniper (Hit)',
+				targetLevel: 40,
+				sliceType: 'global',
+				markupUplift: 1.05,
 			},
 		});
 	});

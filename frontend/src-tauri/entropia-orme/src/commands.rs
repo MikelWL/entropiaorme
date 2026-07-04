@@ -12,6 +12,11 @@
 
 use std::sync::Arc;
 
+use eo_api::character::{
+    CalibrationStatus, CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult,
+    PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
+    SkillLevel,
+};
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -74,6 +79,70 @@ pub async fn equipment_detail(
     facade(&app)?.equipment_detail(item_id).await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_calibration(app: tauri::AppHandle) -> Result<CalibrationStatus, ApiError> {
+    facade(&app)?.character_calibration().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_stats(app: tauri::AppHandle) -> Result<ComputedCharacterStats, ApiError> {
+    facade(&app)?.character_stats().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_skills(app: tauri::AppHandle) -> Result<Vec<SkillLevel>, ApiError> {
+    facade(&app)?.character_skills().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_professions(
+    app: tauri::AppHandle,
+) -> Result<Vec<ProfessionLevel>, ApiError> {
+    facade(&app)?.character_professions().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_prospect_options(
+    app: tauri::AppHandle,
+) -> Result<CharacterProspectOptions, ApiError> {
+    facade(&app)?.character_prospect_options().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_prospect(
+    app: tauri::AppHandle,
+    query: ProspectQuery,
+) -> Result<ProspectResult, ApiError> {
+    facade(&app)?.character_prospect(&query).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_profession_optimizer(
+    app: tauri::AppHandle,
+    profession: String,
+) -> Result<ProfessionOptimizerResult, ApiError> {
+    facade(&app)?
+        .character_profession_optimizer(&profession)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_path_optimizer(
+    app: tauri::AppHandle,
+    profession: String,
+    target_level: Option<f64>,
+    ped_budget: Option<f64>,
+) -> Result<PathOptimizerResult, ApiError> {
+    facade(&app)?
+        .character_path_optimizer(&profession, target_level, ped_budget)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_hp_optimizer(app: tauri::AppHandle) -> Result<HpOptimizerResult, ApiError> {
+    facade(&app)?.character_hp_optimizer().await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -88,6 +157,15 @@ mod tests {
         "equipment_update",
         "equipment_delete",
         "equipment_detail",
+        "character_calibration",
+        "character_stats",
+        "character_skills",
+        "character_professions",
+        "character_prospect_options",
+        "character_prospect",
+        "character_profession_optimizer",
+        "character_path_optimizer",
+        "character_hp_optimizer",
     ];
 
     #[test]

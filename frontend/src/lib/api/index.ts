@@ -48,48 +48,56 @@ import type {
 	ProspectResult,
 	SkillLevel,
 } from '$lib/types/analytics';
+import type { ProspectQuery } from './commands.gen';
+import * as commands from './commands.gen';
+
+// The character family is served over typed IPC commands
+// (`commands.gen.ts`, generated from the Rust DTOs): the wrappers keep
+// their signatures, with the hand-written `$lib/types/analytics`
+// interfaces still the declared contract they narrow onto, exactly as
+// `unwrap<T>` asserted before.
 
 export async function getCalibrationStatus(): Promise<CalibrationStatus> {
-	return unwrap(client.GET('/api/character/calibration'));
+	return (await commands.characterCalibration()) as CalibrationStatus;
 }
 
 export async function getCharacterStats(): Promise<ComputedCharacterStats> {
-	return unwrap(client.GET('/api/character/stats'));
+	return (await commands.characterStats()) as ComputedCharacterStats;
 }
 
 export async function getCharacterSkills(): Promise<SkillLevel[]> {
-	return unwrap(client.GET('/api/character/skills'));
+	return (await commands.characterSkills()) as SkillLevel[];
 }
 
 export async function getCharacterProfessions(): Promise<ProfessionLevel[]> {
-	return unwrap(client.GET('/api/character/professions'));
+	return (await commands.characterProfessions()) as ProfessionLevel[];
 }
 
 export async function getProfessionOptimizer(
 	profession: string,
 ): Promise<ProfessionOptimizerResult> {
-	return unwrap(
-		client.GET('/api/character/profession-optimizer', { params: { query: { profession } } }),
-	);
+	return (await commands.characterProfessionOptimizer(profession)) as ProfessionOptimizerResult;
 }
 
 export async function getProfessionPathOptimizer(
 	profession: string,
 	params: { targetLevel: number } | { pedBudget: number },
 ): Promise<PathOptimizerResult> {
-	const query =
-		'targetLevel' in params
-			? { profession, target_level: params.targetLevel }
-			: { profession, ped_budget: params.pedBudget };
-	return unwrap(client.GET('/api/character/profession-path-optimizer', { params: { query } }));
+	const targetLevel = 'targetLevel' in params ? params.targetLevel : null;
+	const pedBudget = 'pedBudget' in params ? params.pedBudget : null;
+	return (await commands.characterPathOptimizer(
+		profession,
+		targetLevel,
+		pedBudget,
+	)) as PathOptimizerResult;
 }
 
 export async function getHpOptimizer(): Promise<HpOptimizerResult> {
-	return unwrap(client.GET('/api/character/hp-optimizer'));
+	return (await commands.characterHpOptimizer()) as HpOptimizerResult;
 }
 
 export async function getCharacterProspectOptions(): Promise<CharacterProspectOptions> {
-	return unwrap(client.GET('/api/character/prospect-options'));
+	return (await commands.characterProspectOptions()) as CharacterProspectOptions;
 }
 
 export async function getCharacterProspect(params: {
@@ -99,24 +107,18 @@ export async function getCharacterProspect(params: {
 	sliceValue?: string | null;
 	markupUplift?: number;
 }): Promise<ProspectResult> {
-	const query: {
-		profession: string;
-		target_level: number;
-		slice_type: string;
-		slice_value?: string;
-		markup_uplift?: number;
-	} = {
+	const query: ProspectQuery = {
 		profession: params.profession,
-		target_level: params.targetLevel,
-		slice_type: params.sliceType,
+		targetLevel: params.targetLevel,
+		sliceType: params.sliceType,
 	};
 	if (params.sliceType !== 'global' && params.sliceValue) {
-		query.slice_value = params.sliceValue;
+		query.sliceValue = params.sliceValue;
 	}
 	if ((params.markupUplift ?? 0) > 0) {
-		query.markup_uplift = params.markupUplift;
+		query.markupUplift = params.markupUplift;
 	}
-	return unwrap(client.GET('/api/character/prospect', { params: { query } }));
+	return (await commands.characterProspect(query)) as ProspectResult;
 }
 
 // --- Manual scan flow (public, user-driven page-by-page capture) ---
@@ -271,7 +273,6 @@ export async function claimCodexMeta(attributeName: string): Promise<CodexMetaCl
 
 import type { Equipment, EquipmentDetail } from '$lib/types/equipment';
 import type { EquipmentRequest, EquipmentSearchHit, SearchKind } from './commands.gen';
-import * as commands from './commands.gen';
 
 /** Search result from the equipment catalogue search command. The two
  * optional fields are not part of the wire shape: the equipment page

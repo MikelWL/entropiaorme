@@ -34,6 +34,32 @@ export interface AbsorberComponent {
 }
 
 /**
+ * GET calibration: whether skills are calibrated and how fresh.
+ */
+export interface CalibrationStatus {
+	calibrated: boolean;
+	lastCalibration?: string | null;
+	stale: boolean;
+}
+
+/**
+ * GET prospect-options: the grouped slice options, one list per axis.
+ */
+export interface CharacterProspectOptions {
+	tags: ProspectOption[];
+	mobs: ProspectOption[];
+	weapons: ProspectOption[];
+}
+
+/**
+ * GET stats: current HP and the top five professions.
+ */
+export interface ComputedCharacterStats {
+	hp: number;
+	topProfessions: StatProfession[];
+}
+
+/**
  * One line of a cost breakdown.
  */
 export interface CostBreakdownLine {
@@ -123,12 +149,254 @@ export interface EquipmentSummary {
 }
 
 /**
+ * A skill the path optimizer left out, with the reason.
+ */
+export interface ExcludedSkill {
+	name: string;
+	weight: number;
+	reason: string;
+}
+
+/**
+ * One attribute row of the HP optimizer.
+ */
+export interface HpOptimizerAttribute {
+	name: string;
+	hpIncrease: number;
+	currentLevel: number;
+	levelsPerHp: number;
+}
+
+/**
+ * GET hp-optimizer: the HP-per-PED breakdown across contributing
+ * skills and attributes.
+ */
+export interface HpOptimizerResult {
+	currentHp: number;
+	skills: HpOptimizerSkill[];
+	attributes: HpOptimizerAttribute[];
+}
+
+/**
+ * One skill row of the HP optimizer.
+ */
+export interface HpOptimizerSkill {
+	name: string;
+	hpIncrease: number;
+	currentLevel: number;
+	levelsPerHp: number;
+	pedPerHp: number;
+	hpPerPed: number;
+	codexCategory?: string | null;
+	codexDivisor?: number | null;
+}
+
+/**
+ * One attribute row of the profession / path optimizer.
+ */
+export interface OptimizerAttribute {
+	name: string;
+	weight: number;
+	currentLevel: number;
+	contributionFactor: number;
+}
+
+/**
+ * One skill row of the profession optimizer.
+ */
+export interface OptimizerSkill {
+	name: string;
+	weight: number;
+	currentLevel: number;
+	levelsNeeded: number;
+	pedToNextLevel: number;
+	codexCategory?: string | null;
+	codexDivisor?: number | null;
+}
+
+/**
+ * One allocation of the path optimizer.
+ */
+export interface PathAllocation {
+	name: string;
+	weight: number;
+	currentLevel: number;
+	levelsToGain: number;
+	pedCost: number;
+	newLevel: number;
+	codexCategory?: string | null;
+	codexDivisor?: number | null;
+}
+
+/**
+ * GET profession-path-optimizer: the greedy allocation for a target
+ * level or a PED budget. `inputTargetLevel` / `inputPedBudget` echo the
+ * mode (exactly one is non-null); `error` marks a missing profession.
+ */
+export interface PathOptimizerResult {
+	allocations: PathAllocation[];
+	attributes: OptimizerAttribute[];
+	profession: string;
+	mode: string;
+	inputTargetLevel?: number | null;
+	inputPedBudget?: number | null;
+	currentLevel: number;
+	endLevel: number;
+	professionLevelsGained: number;
+	totalPed: number;
+	excluded: ExcludedSkill[];
+	error?: string | null;
+}
+
+/**
+ * One profession row.
+ */
+export interface ProfessionLevel {
+	name: string;
+	level: number;
+	anchorLevel?: number | null;
+	gainSinceAnchor?: number | null;
+	category: string;
+}
+
+/**
+ * GET profession-optimizer: the cheapest-skill breakdown to the next
+ * profession level. On a missing profession the declared tail fields
+ * stay unset and only `error` accompanies the empty lists.
+ */
+export interface ProfessionOptimizerResult {
+	skills: OptimizerSkill[];
+	attributes: OptimizerAttribute[];
+	profession?: string | null;
+	currentLevel?: number | null;
+	nextLevel?: number | null;
+	gap?: number | null;
+	error?: string | null;
+}
+
+/**
+ * One grouped Prospect slice option.
+ */
+export interface ProspectOption {
+	value: string;
+	label: string;
+	sessions: number;
+	kills: number;
+	hours: number;
+	cycledPed: number;
+}
+
+/**
+ * The Prospect forecast query. `sliceValue` is required for every slice
+ * but `global`; `markupUplift` defaults to zero.
+ */
+export interface ProspectQuery {
+	profession: string;
+	targetLevel: number;
+	sliceType: ProspectSliceType;
+	sliceValue?: string | null;
+	markupUplift?: number;
+}
+
+/**
+ * GET prospect: the forecast. `error` is present only on the soft-error
+ * paths (the frontend renders it inline rather than throwing); every
+ * other field is always present, so the declared order below is the
+ * wire order.
+ */
+export interface ProspectResult {
+	error?: string | null;
+	rows: ProspectRow[];
+	warnings: string[];
+	profession: string;
+	sliceType: string;
+	sliceValue?: string | null;
+	markupUplift: number;
+	currentLevel: number;
+	targetLevel: number;
+	projectedCycledPed: number;
+	projectedHours: number;
+	expectedLootTt: number;
+	expectedNetTtBurn: number;
+	speculativeLootTt?: number | null;
+	speculativeNetTtBurn?: number | null;
+	sample: ProspectSample;
+}
+
+/**
+ * One skill/attribute row of a Prospect forecast.
+ */
+export interface ProspectRow {
+	name: string;
+	isAttribute: boolean;
+	weight: number;
+	currentLevel: number;
+	observedShare: number;
+	observedRate: number;
+	projectedGain: number;
+	projectedEndLevel: number;
+	professionContribution: number;
+	relevant: boolean;
+}
+
+/**
+ * The observed sample a Prospect forecast projects from. The internal
+ * `skillShares` / `attributeRates` maps are computed but not surfaced
+ * (no consumer reads them; dropped with the migration).
+ */
+export interface ProspectSample {
+	sessions: number;
+	kills: number;
+	hours: number;
+	cycledPed: number;
+	lootTt: number;
+	pes: number;
+	attributeLevels: number;
+	cycledPerHour: number;
+	lootPerHour: number;
+	returnRate: number;
+	pesPerPed: number;
+	lootTtPerPed: number;
+}
+
+/**
+ * The slice a Prospect forecast aggregates over. A closed vocabulary:
+ * the bindings expose only these four, so the old out-of-vocabulary 422
+ * is unrepresentable rather than validated.
+ */
+export type ProspectSliceType = 'global' | 'tag' | 'mob' | 'weapon';
+
+/**
  * A catalogue vocabulary the search accepts; each maps to one snapshot
  * endpoint. An out-of-vocabulary value cannot be constructed (the
  * bindings expose the closed union), so the old unknown-type reply
  * class is unrepresentable rather than handled.
  */
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable';
+
+/**
+ * One calibrated skill row.
+ */
+export interface SkillLevel {
+	name: string;
+	category: string;
+	level: number;
+	anchorLevel?: number | null;
+	gainSinceAnchor?: number | null;
+	rankName: string;
+	ttValue: number;
+	isAttribute: boolean;
+}
+
+/**
+ * One of the top professions on the stats card: the trimmed shape the
+ * card renders (name, level, category), not the full profession row.
+ */
+export interface StatProfession {
+	name: string;
+	level: number;
+	category: string;
+}
 
 export async function equipmentSearch(q: string, kind: SearchKind): Promise<EquipmentSearchHit[]> {
 	return invokeCommand('equipment_search', { q, kind });
@@ -152,4 +420,40 @@ export async function equipmentDelete(itemId: number): Promise<void> {
 
 export async function equipmentDetail(itemId: number): Promise<EquipmentDetail> {
 	return invokeCommand('equipment_detail', { item_id: itemId });
+}
+
+export async function characterCalibration(): Promise<CalibrationStatus> {
+	return invokeCommand('character_calibration', {});
+}
+
+export async function characterStats(): Promise<ComputedCharacterStats> {
+	return invokeCommand('character_stats', {});
+}
+
+export async function characterSkills(): Promise<SkillLevel[]> {
+	return invokeCommand('character_skills', {});
+}
+
+export async function characterProfessions(): Promise<ProfessionLevel[]> {
+	return invokeCommand('character_professions', {});
+}
+
+export async function characterProspectOptions(): Promise<CharacterProspectOptions> {
+	return invokeCommand('character_prospect_options', {});
+}
+
+export async function characterProspect(query: ProspectQuery): Promise<ProspectResult> {
+	return invokeCommand('character_prospect', { query });
+}
+
+export async function characterProfessionOptimizer(profession: string): Promise<ProfessionOptimizerResult> {
+	return invokeCommand('character_profession_optimizer', { profession });
+}
+
+export async function characterPathOptimizer(profession: string, targetLevel: number | null, pedBudget: number | null): Promise<PathOptimizerResult> {
+	return invokeCommand('character_path_optimizer', { profession, target_level: targetLevel, ped_budget: pedBudget });
+}
+
+export async function characterHpOptimizer(): Promise<HpOptimizerResult> {
+	return invokeCommand('character_hp_optimizer', {});
 }

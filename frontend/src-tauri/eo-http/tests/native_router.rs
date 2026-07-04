@@ -892,13 +892,13 @@ async fn body_failures_answer_the_backend_reply_classes() {
     );
 }
 
-/// The settings/character surface serves natively over the
-/// composed state: the settings reads, the character family over an
-/// empty calibration table, and the equipment routes (a consumable
-/// write needs no catalogue, so the full write path proves itself
-/// against the temp database).
+/// The settings surface serves natively over the composed state: the
+/// settings assembly reads (defaults, the live db path, the version
+/// stamp) and the overlay-position write's defensive floor. (The
+/// character family moved to the typed facade, the equipment family
+/// before it.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_settings_and_character_surface_serves_natively() {
+async fn the_settings_surface_serves_natively() {
     let (state, _dir) = serve_substrate().await;
 
     // Settings assembly over the fresh data dir: defaults, the live
@@ -940,103 +940,6 @@ async fn the_settings_and_character_surface_serves_natively() {
     let (status, _, body) = get(&state, "/api/settings/overlay-position").await;
     assert_eq!(status, http::StatusCode::OK);
     assert_eq!(body, b"{\"x\":null,\"y\":null}");
-
-    // Character family over an empty calibration table (the skills
-    // catalogue is empty in this harness, so with no Health skill both the
-    // Stats HP and the Optimiser's current HP read 0: they share one source).
-    for (path, expected) in [
-        (
-            "/api/character/calibration",
-            "{\"calibrated\":false,\"lastCalibration\":null,\"stale\":true}",
-        ),
-        ("/api/character/stats", "{\"hp\":0,\"topProfessions\":[]}"),
-        ("/api/character/skills", "[]"),
-        ("/api/character/professions", "[]"),
-        (
-            "/api/character/prospect-options",
-            "{\"tags\":[],\"mobs\":[],\"weapons\":[]}",
-        ),
-        ("/api/character/codex", "[]"),
-        (
-            "/api/character/hp-optimizer",
-            "{\"currentHp\":0.0,\"skills\":[],\"attributes\":[]}",
-        ),
-    ] {
-        let (status, _, body) = get(&state, path).await;
-        assert_eq!(status, http::StatusCode::OK, "{path}");
-        assert_eq!(body, expected.as_bytes(), "{path}");
-    }
-
-    // The prospect family's validation ladder: the envelope first (in
-    // signature order), then the handler's own 422 details.
-    let (status, _, body) = get(&state, "/api/character/prospect").await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["missing", "missing"]);
-    let (status, _, body) = get(
-        &state,
-        "/api/character/prospect?profession=X&target_level=0",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body, b"{\"detail\":\"target_level must be positive\"}");
-    let (status, _, body) = get(
-        &state,
-        "/api/character/prospect?profession=X&target_level=5&slice_type=banana",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        body,
-        b"{\"detail\":\"slice_type must be global, tag, mob, or weapon\"}"
-    );
-    let (status, _, body) = get(
-        &state,
-        "/api/character/prospect?profession=X&target_level=5&slice_type=mob",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        body,
-        b"{\"detail\":\"slice_value is required for non-global slices\"}"
-    );
-    // An unknown profession answers the error SHAPE (model order puts
-    // error/rows/warnings first), not a 404.
-    let (status, _, body) = get(
-        &state,
-        "/api/character/prospect?profession=X&target_level=5",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(
-        body,
-        b"{\"error\":\"Profession 'X' not found\",\"rows\":[],\"warnings\":[]}"
-    );
-    let (status, _, body) = get(&state, "/api/character/profession-optimizer?profession=X").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(
-        body,
-        b"{\"skills\":[],\"attributes\":[],\"error\":\"Profession 'X' not found\"}"
-    );
-    let (status, _, body) = get(&state, "/api/character/profession-optimizer").await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["missing"]);
-    let (status, _, body) = get(
-        &state,
-        "/api/character/profession-path-optimizer?profession=X&target_level=5&ped_budget=1",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        body,
-        b"{\"detail\":\"Exactly one of target_level or ped_budget must be provided\"}"
-    );
-    let (status, _, body) = get(
-        &state,
-        "/api/character/profession-path-optimizer?profession=X&target_level=abc",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["float_parsing"]);
 
     // The overlay-position write needs the composed config service, which the
     // read-only harness does not compose, so it hits the defensive 503 floor
@@ -1192,20 +1095,6 @@ async fn validation_envelopes_aggregate_and_defer_the_backend_way() {
         body,
         b"{\"detail\":\"'utf-8' codec can't encode characters in position 2-3: surrogates not allowed\"}"
     );
-
-    // The prospect markup gate sits strictly below zero.
-    let (status, _, _) = get(
-        &state,
-        "/api/character/prospect?profession=X&target_level=5&markup_uplift=-0.1",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    let (status, _, _) = get(
-        &state,
-        "/api/character/prospect?profession=X&target_level=5&markup_uplift=0",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
 }
 
 // ── Tracking session-edit write adapters, end-to-end and hermetic ──────

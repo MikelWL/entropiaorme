@@ -60,7 +60,8 @@ fn facade_microbench() {
         .expect("migrated database");
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
-    let api = Api::new(db, game_data, data_dir);
+    let clock = Arc::new(eo_services::clock::RealClock::new());
+    let api = Api::new(db, game_data, clock, data_dir);
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();
     runtime.block_on(async {
@@ -103,9 +104,43 @@ fn facade_microbench() {
             timings[0],
             timings[timings.len() - 1],
         ));
+
+        // The character family's no-parameter reads, the after-leg of the
+        // HTTP dispatch measurement the router micro-benchmark captured
+        // before the family moved (same empty game-data + fresh-DB state).
+        macro_rules! bench {
+            ($label:literal, $call:expr) => {{
+                for _ in 0..WARMUPS {
+                    $call.await.expect($label);
+                }
+                let mut timings = Vec::with_capacity(SAMPLES);
+                for _ in 0..SAMPLES {
+                    let started = Instant::now();
+                    $call.await.expect($label);
+                    timings.push(started.elapsed().as_secs_f64() * 1000.0);
+                }
+                timings.sort_by(|a, b| a.partial_cmp(b).expect("finite timings"));
+                rows.push((
+                    $label,
+                    median(&timings),
+                    p95(&timings),
+                    timings[0],
+                    timings[timings.len() - 1],
+                ));
+            }};
+        }
+        bench!("character_calibration", api.character_calibration());
+        bench!("character_stats", api.character_stats());
+        bench!("character_skills", api.character_skills());
+        bench!("character_professions", api.character_professions());
+        bench!(
+            "character_prospect_options",
+            api.character_prospect_options()
+        );
+        bench!("character_hp_optimizer", api.character_hp_optimizer());
     });
 
-    println!("\ntyped-facade micro-bench (AFTER: equipment over typed commands)");
+    println!("\ntyped-facade micro-bench (AFTER: equipment + character over typed commands)");
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \
          (matching the HTTP leg's state); facade call only, no dispatch stack.\n"
