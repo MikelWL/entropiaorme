@@ -153,37 +153,31 @@ export async function getManualSkillScanStatus(): Promise<ScanManualStatus> {
 	return (await commands.scanStatus()) as ScanManualStatus;
 }
 
-export async function startManualSkillScan(
-	pageCount?: number,
-): Promise<ScanManualStatus & { error?: string }> {
-	return (await commands.scanStart(pageCount ?? null)) as ScanManualStatus & { error?: string };
+export async function startManualSkillScan(pageCount?: number): Promise<ScanManualStatus> {
+	return (await commands.scanStart(pageCount ?? null)) as ScanManualStatus;
 }
 
 export async function captureManualSkillPage(): Promise<
-	ScanManualStatus & { page?: number; captured?: boolean; error?: string }
+	ScanManualStatus & { page?: number; captured?: boolean }
 > {
 	return (await commands.scanCapture()) as ScanManualStatus & {
 		page?: number;
 		captured?: boolean;
-		error?: string;
 	};
 }
 
-export async function cancelManualSkillScan(): Promise<ScanManualStatus & { error?: string }> {
-	return (await commands.scanCancel()) as ScanManualStatus & { error?: string };
+export async function cancelManualSkillScan(): Promise<ScanManualStatus> {
+	return (await commands.scanCancel()) as ScanManualStatus;
 }
 
 export async function undoManualSkillCapture(): Promise<
-	ScanManualStatus & { undone_page?: number; error?: string }
+	ScanManualStatus & { undone_page?: number }
 > {
-	return (await commands.scanUndo()) as ScanManualStatus & {
-		undone_page?: number;
-		error?: string;
-	};
+	return (await commands.scanUndo()) as ScanManualStatus & { undone_page?: number };
 }
 
-export async function processManualSkillScan(): Promise<ScanManualStatus & { error?: string }> {
-	return (await commands.scanProcess()) as ScanManualStatus & { error?: string };
+export async function processManualSkillScan(): Promise<ScanManualStatus> {
+	return (await commands.scanProcess()) as ScanManualStatus;
 }
 
 export async function acceptManualSkillScan(): Promise<{
