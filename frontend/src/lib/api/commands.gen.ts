@@ -70,8 +70,7 @@ export interface AppSettings {
 	mobTrackingMode: string;
 	mobTrackingTag: string;
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
-	hotbar: {
-	};
+	hotbar: Record<string, unknown>;
 	trifecta: TrifectaSettings;
 	lootFilterBlacklist: string[];
 	dbPath: string;
@@ -480,8 +479,7 @@ export interface LedgerPresetInput {
 export interface LossesBreakdown {
 	trackingCost: number;
 	cycledBreakdown: CycledBreakdown;
-	ledger: {
-	};
+	ledger: Record<string, number>;
 }
 
 /**
@@ -506,11 +504,9 @@ export interface MonthlyEntry {
 	pes: number;
 	codexPes: number;
 	questPes: number;
-	ledgerGains: {
-	};
+	ledgerGains: Record<string, number>;
 	trackingCost: number;
-	ledgerLosses: {
-	};
+	ledgerLosses: Record<string, number>;
 }
 
 /**
@@ -858,8 +854,7 @@ export interface ReturnsBreakdown {
 	pes: number;
 	codexPes: number;
 	questPes: number;
-	ledger: {
-	};
+	ledger: Record<string, number>;
 }
 
 /**
@@ -887,8 +882,7 @@ export interface SettingsPatch {
 	developer_mode_enabled?: boolean | null;
 	mob_tracking_mode?: string | null;
 	mob_tracking_tag?: string | null;
-	hotbar?: {
-	} | null;
+	hotbar?: Record<string, unknown> | null;
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;
 	loot_filter_blacklist?: string[] | null;
@@ -940,11 +934,9 @@ export interface TimelineDay {
 	pes: number;
 	codexPes: number;
 	questPes: number;
-	ledgerGains: {
-	};
+	ledgerGains: Record<string, number>;
 	trackingCost: number;
-	ledgerLosses: {
-	};
+	ledgerLosses: Record<string, number>;
 }
 
 /**
