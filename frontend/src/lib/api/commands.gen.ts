@@ -34,6 +34,30 @@ export interface AbsorberComponent {
 }
 
 /**
+ * The Activity aggregate: the three comparison tables.
+ */
+export interface AnalyticsActivity {
+	mobComparisons: MobComparison[];
+	tagComparisons: TagComparison[];
+	weaponComparisons: WeaponComparison[];
+}
+
+/**
+ * The Overview aggregate: the total return rate and trend, the returns /
+ * losses breakdowns, the totals, and the day / month timelines.
+ */
+export interface AnalyticsOverview {
+	totalReturnRate: number;
+	trend: string;
+	returnsBreakdown: ReturnsBreakdown;
+	lossesBreakdown: LossesBreakdown;
+	totalGains: number;
+	totalLosses: number;
+	timeline: TimelineDay[];
+	monthlyBreakdown: MonthlyEntry[];
+}
+
+/**
  * The full assembled settings response. Field order is the wire order
  * the frontend contract expects (and the HTTP body carried).
  */
@@ -46,8 +70,7 @@ export interface AppSettings {
 	mobTrackingMode: string;
 	mobTrackingTag: string;
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
-	hotbar: {
-	};
+	hotbar: Record<string, unknown>;
 	trifecta: TrifectaSettings;
 	lootFilterBlacklist: string[];
 	dbPath: string;
@@ -198,6 +221,17 @@ export interface CostBreakdownLine {
 }
 
 /**
+ * The per-family cycled-cost split.
+ */
+export interface CycledBreakdown {
+	weapon: number;
+	healing: number;
+	enhancer: number;
+	armour: number;
+	dangling: number;
+}
+
+/**
  * One configured component of a stored weapon setup.
  */
 export interface EquipmentComponent {
@@ -327,6 +361,152 @@ export interface HpOptimizerSkill {
 	hpPerPed: number;
 	codexCategory?: string | null;
 	codexDivisor?: number | null;
+}
+
+/**
+ * One inventory item.
+ */
+export interface InventoryItem {
+	id: string;
+	name: string;
+	ttValue: number;
+	markupPaid: number;
+	notes?: string | null;
+	acquiredAt: string;
+}
+
+/**
+ * An inventory-item create payload (snake_case, matching the frontend
+ * request shape). `notes` / `acquired_at` are optional; an empty / absent
+ * `acquired_at` defaults to today's UTC date.
+ */
+export interface InventoryItemInput {
+	name: string;
+	tt_value: number;
+	markup_paid: number;
+	notes?: string | null;
+	acquired_at?: string | null;
+}
+
+/**
+ * An inventory-item patch: only present (`Some`) fields update.
+ */
+export interface InventoryPatch {
+	name?: string | null;
+	tt_value?: number | null;
+	markup_paid?: number | null;
+	notes?: string | null;
+}
+
+/**
+ * An inventory-sale payload.
+ */
+export interface InventorySellInput {
+	sale_price: number;
+	description?: string | null;
+	sold_at?: string | null;
+}
+
+/**
+ * The result of selling an inventory item: the emitted ledger entry
+ * (`null` for a zero-delta sale) and the sold item.
+ */
+export interface InventorySellResult {
+	ledgerEntry?: LedgerItem | null;
+	soldItem: InventoryItem;
+}
+
+/**
+ * A ledger-entry create payload.
+ */
+export interface LedgerEntryInput {
+	date: string;
+	type: string;
+	description: string;
+	amount: number;
+	tag: string;
+}
+
+/**
+ * One ledger entry.
+ */
+export interface LedgerItem {
+	id: string;
+	date: string;
+	type: string;
+	description: string;
+	amount: number;
+	tag: string;
+}
+
+/**
+ * A page of ledger entries plus the opaque cursor for the next page
+ * (`null` on the last page): the keyset `X-Next-Cursor` header folded
+ * into the typed return, since a command answers one structured payload.
+ */
+export interface LedgerPage {
+	entries: LedgerItem[];
+	nextCursor?: string | null;
+}
+
+/**
+ * One ledger preset (a reusable ledger-entry template).
+ */
+export interface LedgerPreset {
+	id: string;
+	name: string;
+	type: string;
+	description: string;
+	amount: number;
+	tag: string;
+}
+
+/**
+ * A ledger-preset create payload.
+ */
+export interface LedgerPresetInput {
+	name: string;
+	type: string;
+	description: string;
+	amount: number;
+	tag: string;
+}
+
+/**
+ * The losses breakdown: tracking cost, its cycled split, and the ledger
+ * expenses.
+ */
+export interface LossesBreakdown {
+	trackingCost: number;
+	cycledBreakdown: CycledBreakdown;
+	ledger: Record<string, number>;
+}
+
+/**
+ * One row of the per-mob activity comparison.
+ */
+export interface MobComparison {
+	mobName: string;
+	sessions: number;
+	kills: number;
+	hours: number;
+	cycled: number;
+	pesPer100Ped: number;
+	lootRate: number;
+}
+
+/**
+ * One month of the Overview monthly breakdown.
+ */
+export interface MonthlyEntry {
+	month: string;
+	lootTt: number;
+	pes: number;
+	codexPes: number;
+	questPes: number;
+	ledgerGains: Record<string, number>;
+	trackingCost: number;
+	ledgerLosses: Record<string, number>;
 }
 
 /**
@@ -667,6 +847,17 @@ export interface QuestPlaylist {
 }
 
 /**
+ * The liquid + progression returns breakdown.
+ */
+export interface ReturnsBreakdown {
+	lootTt: number;
+	pes: number;
+	codexPes: number;
+	questPes: number;
+	ledger: Record<string, number>;
+}
+
+/**
  * A catalogue vocabulary the search accepts; each maps to one snapshot
  * endpoint. An out-of-vocabulary value cannot be constructed (the
  * bindings expose the closed union), so the old unknown-type reply
@@ -691,8 +882,7 @@ export interface SettingsPatch {
 	developer_mode_enabled?: boolean | null;
 	mob_tracking_mode?: string | null;
 	mob_tracking_tag?: string | null;
-	hotbar?: {
-	} | null;
+	hotbar?: Record<string, unknown> | null;
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;
 	loot_filter_blacklist?: string[] | null;
@@ -720,6 +910,33 @@ export interface StatProfession {
 	name: string;
 	level: number;
 	category: string;
+}
+
+/**
+ * One row of the per-tag activity comparison.
+ */
+export interface TagComparison {
+	tagName: string;
+	sessions: number;
+	kills: number;
+	hours: number;
+	cycled: number;
+	pesPer100Ped: number;
+	lootRate: number;
+}
+
+/**
+ * One day of the Overview timeline.
+ */
+export interface TimelineDay {
+	date: string;
+	lootTt: number;
+	pes: number;
+	codexPes: number;
+	questPes: number;
+	ledgerGains: Record<string, number>;
+	trackingCost: number;
+	ledgerLosses: Record<string, number>;
 }
 
 /**
@@ -758,6 +975,19 @@ export interface TrifectaSettings {
 	presets: TrifectaPresetView[];
 	ready: boolean;
 	message?: string | null;
+}
+
+/**
+ * One row of the per-weapon activity comparison.
+ */
+export interface WeaponComparison {
+	weaponName: string;
+	sessions: number;
+	kills: number;
+	hours: number;
+	cycled: number;
+	pesPer100Ped: number;
+	lootRate: number;
 }
 
 export async function equipmentSearch(q: string, kind: SearchKind): Promise<EquipmentSearchHit[]> {
@@ -926,4 +1156,56 @@ export async function playlistDelete(playlistId: number): Promise<void> {
 
 export async function playlistsAnalytics(): Promise<PlaylistAnalyticsRow[]> {
 	return invokeCommand('playlists_analytics', {});
+}
+
+export async function analyticsOverview(period: string): Promise<AnalyticsOverview> {
+	return invokeCommand('analytics_overview', { period });
+}
+
+export async function analyticsActivity(): Promise<AnalyticsActivity> {
+	return invokeCommand('analytics_activity', {});
+}
+
+export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {
+	return invokeCommand('ledger_list', { cursor, limit });
+}
+
+export async function ledgerCreate(entry: LedgerEntryInput): Promise<LedgerItem> {
+	return invokeCommand('ledger_create', { entry });
+}
+
+export async function ledgerDelete(entryId: string): Promise<void> {
+	return invokeCommand('ledger_delete', { entry_id: entryId });
+}
+
+export async function ledgerPresetsList(): Promise<LedgerPreset[]> {
+	return invokeCommand('ledger_presets_list', {});
+}
+
+export async function ledgerPresetCreate(preset: LedgerPresetInput): Promise<LedgerPreset> {
+	return invokeCommand('ledger_preset_create', { preset });
+}
+
+export async function ledgerPresetDelete(presetId: string): Promise<void> {
+	return invokeCommand('ledger_preset_delete', { preset_id: presetId });
+}
+
+export async function inventoryList(): Promise<InventoryItem[]> {
+	return invokeCommand('inventory_list', {});
+}
+
+export async function inventoryCreate(item: InventoryItemInput): Promise<InventoryItem> {
+	return invokeCommand('inventory_create', { item });
+}
+
+export async function inventoryUpdate(itemId: string, patch: InventoryPatch): Promise<InventoryItem> {
+	return invokeCommand('inventory_update', { item_id: itemId, patch });
+}
+
+export async function inventoryDelete(itemId: string): Promise<void> {
+	return invokeCommand('inventory_delete', { item_id: itemId });
+}
+
+export async function inventorySell(itemId: string, sale: InventorySellInput): Promise<InventorySellResult> {
+	return invokeCommand('inventory_sell', { item_id: itemId, sale });
 }

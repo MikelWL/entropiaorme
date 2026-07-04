@@ -61,6 +61,23 @@ fn routes() -> &'static [(&'static str, Value)] {
     })
 }
 
+/// The analytics fixture value under `key` (`overview` / `activity` /
+/// `ledger` / `presets` / `inventory`), for the typed analytics read
+/// commands. The live analytics surface no longer flows through
+/// `api_request` (it migrated to typed IPC commands), so the e2e build
+/// serves the same committed fixture through those commands, keeping the
+/// visual baselines stable. Built once and cached.
+pub fn analytics_fixture(key: &str) -> Value {
+    static ANALYTICS: OnceLock<Value> = OnceLock::new();
+    ANALYTICS
+        .get_or_init(|| {
+            serde_json::from_str(ANALYTICS_FIXTURE).expect("e2e analytics fixture is valid JSON")
+        })
+        .get(key)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn json_response(body: String) -> ApiResponse {
     ApiResponse {
         status: 200,
@@ -110,5 +127,25 @@ mod tests {
         let response = serve("GET", "/api/something/unmodelled");
         assert_eq!(response.status, 200);
         assert_eq!(response.body, "[]");
+    }
+
+    /// The analytics fixture the typed read commands serve deserialises into
+    /// each command's DTO: a fixture / DTO drift fails here rather than as a
+    /// blank analytics surface in the visual run.
+    #[test]
+    fn the_analytics_fixture_deserialises_into_the_typed_dtos() {
+        use eo_api::analytics::{
+            AnalyticsActivity, AnalyticsOverview, InventoryItem, LedgerItem, LedgerPreset,
+        };
+        serde_json::from_value::<AnalyticsOverview>(super::analytics_fixture("overview"))
+            .expect("overview fixture matches AnalyticsOverview");
+        serde_json::from_value::<AnalyticsActivity>(super::analytics_fixture("activity"))
+            .expect("activity fixture matches AnalyticsActivity");
+        serde_json::from_value::<Vec<LedgerItem>>(super::analytics_fixture("ledger"))
+            .expect("ledger fixture matches Vec<LedgerItem>");
+        serde_json::from_value::<Vec<LedgerPreset>>(super::analytics_fixture("presets"))
+            .expect("presets fixture matches Vec<LedgerPreset>");
+        serde_json::from_value::<Vec<InventoryItem>>(super::analytics_fixture("inventory"))
+            .expect("inventory fixture matches Vec<InventoryItem>");
     }
 }

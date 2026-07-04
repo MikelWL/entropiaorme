@@ -269,7 +269,23 @@ fn scalar_or_composite(
                 Ok(format!("{inner}[]"))
             }
         }
-        "object" => object_body(schema, defs, 1),
+        "object" => {
+            // A map type (schemars renders `BTreeMap`/`HashMap` as an object
+            // with `additionalProperties` and no `properties`) reads as
+            // `Record<string, V>`, preserving the value type rather than
+            // collapsing to `{}`. An object carrying its own `properties`
+            // keeps its inline shape.
+            if schema.get("properties").is_none() {
+                match schema.get("additionalProperties") {
+                    Some(Value::Bool(true)) => return Ok("Record<string, unknown>".to_string()),
+                    Some(value) if value.as_bool() != Some(false) => {
+                        return Ok(format!("Record<string, {}>", type_of(value, defs)?));
+                    }
+                    _ => {}
+                }
+            }
+            object_body(schema, defs, 1)
+        }
         other => Err(format!("gen-ts: unsupported type {other:?}")),
     }
 }
@@ -373,6 +389,33 @@ mod tests {
         assert_eq!(camel("equipment_library"), "equipmentLibrary");
         assert_eq!(camel("q"), "q");
         assert_eq!(camel("item_id"), "itemId");
+    }
+
+    #[test]
+    fn map_typed_fields_emit_a_record_type() {
+        // A `BTreeMap<String, f64>` field (object schema with
+        // `additionalProperties`, no `properties`) reads as
+        // `Record<string, number>`, not `{}`.
+        let schema = serde_json::json!({
+            "type": "object",
+            "additionalProperties": { "type": "number" },
+        });
+        let mut defs = Vec::new();
+        assert_eq!(
+            type_of(&schema, &mut defs).unwrap(),
+            "Record<string, number>"
+        );
+
+        // The analytics DTOs' ledger maps carry through to the emitted file.
+        let generated = generate().expect("bindings generate");
+        assert!(
+            generated.contains("ledger: Record<string, number>"),
+            "the ledger map field should emit a Record type"
+        );
+        assert!(
+            generated.contains("ledgerGains: Record<string, number>"),
+            "the timeline ledgerGains map field should emit a Record type"
+        );
     }
 
     #[test]

@@ -67,6 +67,13 @@ impl HydrationState {
     pub(crate) fn write(&self) -> &SqlitePool {
         self.db.write()
     }
+
+    /// The analytics domain service over this state's database and clock,
+    /// for the demo namespace's read adapters (the live surface reads it
+    /// through the typed facade instead).
+    pub(crate) fn analytics(&self) -> eo_services::analytics::AnalyticsService {
+        eo_services::analytics::AnalyticsService::new(self.db.clone(), self.clock.clone())
+    }
 }
 
 /// The strong ETag value (quoted SHA-256 hex) for a body, exactly as

@@ -1,0 +1,522 @@
+//! The analytics family: the Overview and Activity aggregates, the ledger
+//! (keyset-paginated list + create/delete), the ledger presets, and the
+//! inventory ledger (list / create / patch / delete / sell).
+//!
+//! The computation lives in [`eo_services::analytics::AnalyticsService`]
+//! (shared with the guide-mode demo surface); this facade is the typed
+//! boundary over it. The service speaks `serde_json::Value` in the wire
+//! shape the HTTP layer answered, so each read bridges the value into a
+//! declared DTO with `serde_json::from_value` (the character-family
+//! pattern), and each write marshals its typed arguments into the service
+//! call and shapes the returned value the same way.
+//!
+//! One contract movement rides this migration, ratified under ADR-0019:
+//! the Overview's numeric fields are typed `f64`, so the pydantic-era
+//! `Any`-passthrough integers (the empty-window `cycledBreakdown` zeros
+//! and any all-integer bucket) render as JSON floats (`0` -> `0.0`).
+//! Numerically identical, and the values are floats over any non-empty
+//! window (so the demo surface and every populated read are byte-stable);
+//! only the all-empty case shifts.
+//!
+//! The ledger list folds the transport's `X-Next-Cursor` header into the
+//! return DTO ([`LedgerPage`]): a typed command answers one structured
+//! payload, so the cursor travels in the body, not a header. The delete
+//! operations return no body (the transport's `{"status":"deleted"}`
+//! acknowledgement retires with no consumer).
+
+use std::collections::BTreeMap;
+
+use eo_services::analytics::AnalyticsError;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::{Api, ApiError};
+
+// ── Overview response DTOs ──────────────────────────────────────────
+
+/// The liquid + progression returns breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReturnsBreakdown {
+    pub loot_tt: f64,
+    pub pes: f64,
+    pub codex_pes: f64,
+    pub quest_pes: f64,
+    pub ledger: BTreeMap<String, f64>,
+}
+
+/// The per-family cycled-cost split.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CycledBreakdown {
+    pub weapon: f64,
+    pub healing: f64,
+    pub enhancer: f64,
+    pub armour: f64,
+    pub dangling: f64,
+}
+
+/// The losses breakdown: tracking cost, its cycled split, and the ledger
+/// expenses.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LossesBreakdown {
+    pub tracking_cost: f64,
+    pub cycled_breakdown: CycledBreakdown,
+    pub ledger: BTreeMap<String, f64>,
+}
+
+/// One day of the Overview timeline.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineDay {
+    pub date: String,
+    pub loot_tt: f64,
+    pub pes: f64,
+    pub codex_pes: f64,
+    pub quest_pes: f64,
+    pub ledger_gains: BTreeMap<String, f64>,
+    pub tracking_cost: f64,
+    pub ledger_losses: BTreeMap<String, f64>,
+}
+
+/// One month of the Overview monthly breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthlyEntry {
+    pub month: String,
+    pub loot_tt: f64,
+    pub pes: f64,
+    pub codex_pes: f64,
+    pub quest_pes: f64,
+    pub ledger_gains: BTreeMap<String, f64>,
+    pub tracking_cost: f64,
+    pub ledger_losses: BTreeMap<String, f64>,
+}
+
+/// The Overview aggregate: the total return rate and trend, the returns /
+/// losses breakdowns, the totals, and the day / month timelines.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsOverview {
+    pub total_return_rate: f64,
+    pub trend: String,
+    pub returns_breakdown: ReturnsBreakdown,
+    pub losses_breakdown: LossesBreakdown,
+    pub total_gains: f64,
+    pub total_losses: f64,
+    pub timeline: Vec<TimelineDay>,
+    pub monthly_breakdown: Vec<MonthlyEntry>,
+}
+
+// ── Activity response DTOs ──────────────────────────────────────────
+
+/// One row of the per-mob activity comparison.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MobComparison {
+    pub mob_name: String,
+    pub sessions: i64,
+    pub kills: i64,
+    pub hours: f64,
+    pub cycled: f64,
+    pub pes_per100_ped: f64,
+    pub loot_rate: f64,
+}
+
+/// One row of the per-tag activity comparison.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TagComparison {
+    pub tag_name: String,
+    pub sessions: i64,
+    pub kills: i64,
+    pub hours: f64,
+    pub cycled: f64,
+    pub pes_per100_ped: f64,
+    pub loot_rate: f64,
+}
+
+/// One row of the per-weapon activity comparison.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WeaponComparison {
+    pub weapon_name: String,
+    pub sessions: i64,
+    pub kills: i64,
+    pub hours: f64,
+    pub cycled: f64,
+    pub pes_per100_ped: f64,
+    pub loot_rate: f64,
+}
+
+/// The Activity aggregate: the three comparison tables.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsActivity {
+    pub mob_comparisons: Vec<MobComparison>,
+    pub tag_comparisons: Vec<TagComparison>,
+    pub weapon_comparisons: Vec<WeaponComparison>,
+}
+
+// ── Ledger / preset / inventory DTOs ────────────────────────────────
+
+/// One ledger entry.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LedgerItem {
+    pub id: String,
+    pub date: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub description: String,
+    pub amount: f64,
+    pub tag: String,
+}
+
+/// A page of ledger entries plus the opaque cursor for the next page
+/// (`null` on the last page): the keyset `X-Next-Cursor` header folded
+/// into the typed return, since a command answers one structured payload.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerPage {
+    pub entries: Vec<LedgerItem>,
+    pub next_cursor: Option<String>,
+}
+
+/// One ledger preset (a reusable ledger-entry template).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LedgerPreset {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub description: String,
+    pub amount: f64,
+    pub tag: String,
+}
+
+/// One inventory item.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryItem {
+    pub id: String,
+    pub name: String,
+    pub tt_value: f64,
+    pub markup_paid: f64,
+    pub notes: Option<String>,
+    pub acquired_at: String,
+}
+
+/// The result of selling an inventory item: the emitted ledger entry
+/// (`null` for a zero-delta sale) and the sold item.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InventorySellResult {
+    pub ledger_entry: Option<LedgerItem>,
+    pub sold_item: InventoryItem,
+}
+
+// ── Request DTOs ────────────────────────────────────────────────────
+
+/// A ledger-entry create payload.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct LedgerEntryInput {
+    pub date: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub description: String,
+    pub amount: f64,
+    pub tag: String,
+}
+
+/// A ledger-preset create payload.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct LedgerPresetInput {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub description: String,
+    pub amount: f64,
+    pub tag: String,
+}
+
+/// An inventory-item create payload (snake_case, matching the frontend
+/// request shape). `notes` / `acquired_at` are optional; an empty / absent
+/// `acquired_at` defaults to today's UTC date.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InventoryItemInput {
+    pub name: String,
+    pub tt_value: f64,
+    pub markup_paid: f64,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub acquired_at: Option<String>,
+}
+
+/// An inventory-item patch: only present (`Some`) fields update.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InventoryPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub tt_value: Option<f64>,
+    #[serde(default)]
+    pub markup_paid: Option<f64>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+/// An inventory-sale payload.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InventorySellInput {
+    pub sale_price: f64,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub sold_at: Option<String>,
+}
+
+// ── Facade methods ──────────────────────────────────────────────────
+
+impl Api {
+    /// The Overview aggregate for a named period (`30d` / `90d` / `1y`, or
+    /// all-time for any other value).
+    pub async fn analytics_overview(&self, period: &str) -> Result<AnalyticsOverview, ApiError> {
+        let value = self
+            .analytics
+            .overview(period)
+            .await
+            .map_err(analytics_error("analytics overview"))?;
+        shape(value, "analytics overview shaping")
+    }
+
+    /// The Activity aggregate: the per-mob / per-tag / per-weapon tables.
+    pub async fn analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
+        let value = self
+            .analytics
+            .activity()
+            .await
+            .map_err(analytics_error("analytics activity"))?;
+        shape(value, "analytics activity shaping")
+    }
+
+    /// One keyset page of ledger entries (newest first) plus the cursor for
+    /// the next page. A malformed cursor is a bad-request.
+    pub async fn ledger_list(
+        &self,
+        cursor: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<LedgerPage, ApiError> {
+        let page = self
+            .analytics
+            .list_ledger(cursor.as_deref(), limit)
+            .await
+            .map_err(analytics_error("ledger list"))?;
+        let entries = page
+            .entries
+            .into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<Vec<LedgerItem>, _>>()
+            .map_err(ApiError::internal("ledger list shaping"))?;
+        Ok(LedgerPage {
+            entries,
+            next_cursor: page.next_cursor,
+        })
+    }
+
+    /// Create a ledger entry (relanding its day's rollup).
+    pub async fn ledger_create(&self, entry: LedgerEntryInput) -> Result<LedgerItem, ApiError> {
+        let value = self
+            .analytics
+            .create_ledger_entry(
+                &entry.date,
+                &entry.kind,
+                &entry.description,
+                entry.amount,
+                &entry.tag,
+            )
+            .await
+            .map_err(analytics_error("ledger create"))?;
+        shape(value, "ledger create shaping")
+    }
+
+    /// Delete a ledger entry; a missing entry is a not-found.
+    pub async fn ledger_delete(&self, entry_id: String) -> Result<(), ApiError> {
+        match self
+            .analytics
+            .delete_ledger_entry(&entry_id)
+            .await
+            .map_err(analytics_error("ledger delete"))?
+        {
+            true => Ok(()),
+            false => Err(ApiError::not_found("Entry not found")),
+        }
+    }
+
+    /// The ledger presets.
+    pub async fn ledger_presets_list(&self) -> Result<Vec<LedgerPreset>, ApiError> {
+        let rows = self
+            .analytics
+            .list_ledger_presets()
+            .await
+            .map_err(analytics_error("ledger presets list"))?;
+        shape_each(rows, "ledger presets shaping")
+    }
+
+    /// Create a ledger preset; an invalid type is a bad-request.
+    pub async fn ledger_preset_create(
+        &self,
+        preset: LedgerPresetInput,
+    ) -> Result<LedgerPreset, ApiError> {
+        let value = self
+            .analytics
+            .create_ledger_preset(
+                &preset.name,
+                &preset.kind,
+                &preset.description,
+                preset.amount,
+                &preset.tag,
+            )
+            .await
+            .map_err(analytics_error("ledger preset create"))?;
+        shape(value, "ledger preset create shaping")
+    }
+
+    /// Delete a ledger preset; a missing preset is a not-found.
+    pub async fn ledger_preset_delete(&self, preset_id: String) -> Result<(), ApiError> {
+        match self
+            .analytics
+            .delete_ledger_preset(&preset_id)
+            .await
+            .map_err(analytics_error("ledger preset delete"))?
+        {
+            true => Ok(()),
+            false => Err(ApiError::not_found("Preset not found")),
+        }
+    }
+
+    /// The inventory items, newest acquisition first.
+    pub async fn inventory_list(&self) -> Result<Vec<InventoryItem>, ApiError> {
+        let rows = self
+            .analytics
+            .list_inventory()
+            .await
+            .map_err(analytics_error("inventory list"))?;
+        shape_each(rows, "inventory list shaping")
+    }
+
+    /// Create an inventory item.
+    pub async fn inventory_create(
+        &self,
+        item: InventoryItemInput,
+    ) -> Result<InventoryItem, ApiError> {
+        let value = self
+            .analytics
+            .create_inventory_item(
+                &item.name,
+                item.tt_value,
+                item.markup_paid,
+                item.notes.as_deref(),
+                item.acquired_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("inventory create"))?;
+        shape(value, "inventory create shaping")
+    }
+
+    /// Update an inventory item; a missing item is a not-found.
+    pub async fn inventory_update(
+        &self,
+        item_id: String,
+        patch: InventoryPatch,
+    ) -> Result<InventoryItem, ApiError> {
+        match self
+            .analytics
+            .update_inventory_item(
+                &item_id,
+                patch.name.as_deref(),
+                patch.tt_value,
+                patch.markup_paid,
+                patch.notes.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("inventory update"))?
+        {
+            Some(value) => shape(value, "inventory update shaping"),
+            None => Err(ApiError::not_found("Inventory item not found")),
+        }
+    }
+
+    /// Delete an inventory item; a missing item is a not-found.
+    pub async fn inventory_delete(&self, item_id: String) -> Result<(), ApiError> {
+        match self
+            .analytics
+            .delete_inventory_item(&item_id)
+            .await
+            .map_err(analytics_error("inventory delete"))?
+        {
+            true => Ok(()),
+            false => Err(ApiError::not_found("Inventory item not found")),
+        }
+    }
+
+    /// Sell an inventory item (emit the realised delta to the ledger and
+    /// remove the row); a missing item is a not-found.
+    pub async fn inventory_sell(
+        &self,
+        item_id: String,
+        sale: InventorySellInput,
+    ) -> Result<InventorySellResult, ApiError> {
+        match self
+            .analytics
+            .sell_inventory_item(
+                &item_id,
+                sale.sale_price,
+                sale.description.as_deref(),
+                sale.sold_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("inventory sell"))?
+        {
+            Some(value) => shape(value, "inventory sell shaping"),
+            None => Err(ApiError::not_found("Inventory item not found")),
+        }
+    }
+}
+
+/// Bridge one service value into its DTO; a shape mismatch is an internal
+/// error (the service value is the DTO's own wire contract).
+fn shape<T: serde::de::DeserializeOwned>(
+    value: Value,
+    context: &'static str,
+) -> Result<T, ApiError> {
+    serde_json::from_value(value).map_err(ApiError::internal(context))
+}
+
+/// Bridge a list of service values into their DTOs.
+fn shape_each<T: serde::de::DeserializeOwned>(
+    values: Vec<Value>,
+    context: &'static str,
+) -> Result<Vec<T>, ApiError> {
+    values
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<T>, _>>()
+        .map_err(ApiError::internal(context))
+}
+
+/// Map the analytics service's error surface onto the IPC error contract:
+/// the two validation variants become bad-requests carrying their verbatim
+/// message; a driver / rollup failure collapses to the internal error,
+/// logged server-side under `context`.
+fn analytics_error(context: &'static str) -> impl FnOnce(AnalyticsError) -> ApiError {
+    move |err| match err {
+        AnalyticsError::InvalidCursor => ApiError::bad_request("Invalid cursor"),
+        AnalyticsError::InvalidPresetType => {
+            ApiError::bad_request("type must be 'expense' or 'markup'")
+        }
+        source => ApiError::internal(context)(source),
+    }
+}

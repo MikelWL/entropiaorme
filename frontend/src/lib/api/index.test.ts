@@ -204,41 +204,6 @@ describe('plain delegating wrappers map to the expected verb, path, and shape', 
 			'/api/tracking/session/{session_id}/quest-link',
 			{ params: { path: { session_id: 's1' } }, body: { action: 'accept' } },
 		],
-		[
-			'addLedgerEntry',
-			() => api.addLedgerEntry({ description: 'ammo' } as never),
-			'POST',
-			'/api/analytics/ledger',
-			{ body: { description: 'ammo' } },
-		],
-		[
-			'addLedgerPreset',
-			() => api.addLedgerPreset({ name: 'resupply' } as never),
-			'POST',
-			'/api/analytics/ledger/presets',
-			{ body: { name: 'resupply' } },
-		],
-		[
-			'addInventoryItem',
-			() => api.addInventoryItem({ name: 'ESI', tt_value: 10, markup_paid: 2 }),
-			'POST',
-			'/api/analytics/inventory',
-			{ body: { name: 'ESI', tt_value: 10, markup_paid: 2 } },
-		],
-		[
-			'updateInventoryItem',
-			() => api.updateInventoryItem('i1', { tt_value: 12 }),
-			'PATCH',
-			'/api/analytics/inventory/{item_id}',
-			{ params: { path: { item_id: 'i1' } }, body: { tt_value: 12 } },
-		],
-		[
-			'sellInventoryItem',
-			() => api.sellInventoryItem('i1', { sale_price: 15 }),
-			'POST',
-			'/api/analytics/inventory/{item_id}/sell',
-			{ params: { path: { item_id: 'i1' } }, body: { sale_price: 15 } },
-		],
 	];
 
 	it.each(rows)('%s', async (_name, call, verb, path, options) => {
@@ -262,27 +227,6 @@ describe('void-returning wrappers delegate without unwrapping', () => {
 			'DELETE',
 			'/api/tracking/session/{session_id}',
 			{ params: { path: { session_id: 's1' } } },
-		],
-		[
-			'deleteLedgerEntry',
-			() => api.deleteLedgerEntry('e1'),
-			'DELETE',
-			'/api/analytics/ledger/{entry_id}',
-			{ params: { path: { entry_id: 'e1' } } },
-		],
-		[
-			'deleteLedgerPreset',
-			() => api.deleteLedgerPreset('p1'),
-			'DELETE',
-			'/api/analytics/ledger/presets/{preset_id}',
-			{ params: { path: { preset_id: 'p1' } } },
-		],
-		[
-			'deleteInventoryItem',
-			() => api.deleteInventoryItem('i1'),
-			'DELETE',
-			'/api/analytics/inventory/{item_id}',
-			{ params: { path: { item_id: 'i1' } } },
 		],
 	];
 
@@ -313,37 +257,6 @@ describe('guide-mode demo dispatch', () => {
 			'/api/tracking/snapshot',
 			'/api/demo/tracking/snapshot',
 		],
-		[
-			'getAnalyticsOverview',
-			() => api.getAnalyticsOverview('30d'),
-			'/api/analytics/overview',
-			'/api/demo/analytics/overview',
-			{ params: { query: { period: '30d' } } },
-		],
-		[
-			'getAnalyticsActivity',
-			() => api.getAnalyticsActivity(),
-			'/api/analytics/activity',
-			'/api/demo/analytics/activity',
-		],
-		[
-			'getLedgerEntries',
-			() => api.getLedgerEntries(),
-			'/api/analytics/ledger',
-			'/api/demo/analytics/ledger',
-		],
-		[
-			'getLedgerPresets',
-			() => api.getLedgerPresets(),
-			'/api/analytics/ledger/presets',
-			'/api/demo/analytics/ledger/presets',
-		],
-		[
-			'getInventoryItems',
-			() => api.getInventoryItems(),
-			'/api/analytics/inventory',
-			'/api/demo/analytics/inventory',
-		],
 	];
 
 	it.each(
@@ -364,31 +277,99 @@ describe('guide-mode demo dispatch', () => {
 			expect(clientGet.mock.calls[0][1]).toEqual(options);
 		}
 	});
+});
 
-	it('getAnalyticsOverview defaults the period to "all" in both modes', async () => {
-		await api.getAnalyticsOverview();
-		expect(clientGet).toHaveBeenCalledWith('/api/analytics/overview', {
-			params: { query: { period: 'all' } },
-		});
+// The analytics family serves its live surface over typed IPC commands and
+// keeps a per-call demo-route branch (the guide-mode surface still reads the
+// `/api/demo/*` namespace until its own migration): the reads dispatch a
+// command live and the HTTP client in guide mode; the writes are always
+// commands (no demo branch).
+describe('analytics wrappers dispatch typed commands', () => {
+	it('getAnalyticsOverview invokes the command live and reads the demo route in guide mode', async () => {
+		guideState.isActive = false;
+		await api.getAnalyticsOverview('30d');
+		expect(tauriInvoke).toHaveBeenCalledWith('analytics_overview', { period: '30d' });
+		expect(clientGet).not.toHaveBeenCalled();
 
-		clientGet.mockClear();
-		clientGet.mockResolvedValue(GET_RESULT);
+		tauriInvoke.mockClear();
 		guideState.isActive = true;
-		await api.getAnalyticsOverview();
+		await api.getAnalyticsOverview('30d');
 		expect(clientGet).toHaveBeenCalledWith('/api/demo/analytics/overview', {
-			params: { query: { period: 'all' } },
+			params: { query: { period: '30d' } },
 		});
+		expect(tauriInvoke).not.toHaveBeenCalled();
 	});
 
-	it('mutating verbs ignore guide mode entirely', async () => {
+	it('getAnalyticsOverview defaults the period to "all"', async () => {
+		await api.getAnalyticsOverview();
+		expect(tauriInvoke).toHaveBeenCalledWith('analytics_overview', { period: 'all' });
+	});
+
+	it('getAnalyticsActivity invokes the command live', async () => {
+		await api.getAnalyticsActivity();
+		expect(tauriInvoke).toHaveBeenCalledWith('analytics_activity', {});
+	});
+
+	it('getLedgerEntries invokes ledger_list and reshapes the page (cursor from the body)', async () => {
+		tauriInvoke.mockResolvedValue({ entries: [{ id: 'e1' }], nextCursor: 'cur' });
+		const page = await api.getLedgerEntries('seek', 25);
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_list', { cursor: 'seek', limit: 25 });
+		expect(page).toEqual({ items: [{ id: 'e1' }], nextCursor: 'cur' });
+	});
+
+	it('getLedgerEntries passes nulls for an unpaged first read', async () => {
+		tauriInvoke.mockResolvedValue({ entries: [], nextCursor: null });
+		const page = await api.getLedgerEntries();
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_list', { cursor: null, limit: null });
+		expect(page.nextCursor).toBeNull();
+	});
+
+	it('getLedgerPresets / getInventoryItems invoke their list commands live', async () => {
+		await api.getLedgerPresets();
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_presets_list', {});
+		tauriInvoke.mockClear();
+		await api.getInventoryItems();
+		expect(tauriInvoke).toHaveBeenCalledWith('inventory_list', {});
+	});
+
+	it('the write wrappers invoke their commands (no demo branch, even in guide mode)', async () => {
 		guideState.isActive = true;
-		await api.addLedgerEntry({ description: 'ammo' } as never);
-		expect(clientPost).toHaveBeenCalledWith('/api/analytics/ledger', {
-			body: { description: 'ammo' },
+		const entry = { date: '2026-05-01', type: 'expense', description: 'ammo', amount: 1, tag: 't' };
+		await api.addLedgerEntry(entry as never);
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_create', { entry });
+
+		const preset = { name: 'resupply', type: 'expense', description: 'd', amount: 1, tag: 't' };
+		await api.addLedgerPreset(preset as never);
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_preset_create', { preset });
+
+		const item = { name: 'ESI', tt_value: 10, markup_paid: 2 };
+		await api.addInventoryItem(item);
+		expect(tauriInvoke).toHaveBeenCalledWith('inventory_create', { item });
+
+		await api.updateInventoryItem('i1', { tt_value: 12 });
+		expect(tauriInvoke).toHaveBeenCalledWith('inventory_update', {
+			item_id: 'i1',
+			patch: { tt_value: 12 },
 		});
 
-		await api.startTracking();
-		expect(clientPost).toHaveBeenCalledWith('/api/tracking/start');
+		await api.sellInventoryItem('i1', { sale_price: 15 });
+		expect(tauriInvoke).toHaveBeenCalledWith('inventory_sell', {
+			item_id: 'i1',
+			sale: { sale_price: 15 },
+		});
+
+		expect(clientGet).not.toHaveBeenCalled();
+		expect(clientPost).not.toHaveBeenCalled();
+	});
+
+	it('the delete wrappers invoke their commands and resolve void', async () => {
+		tauriInvoke.mockResolvedValue(undefined);
+		await expect(api.deleteLedgerEntry('e1')).resolves.toBeUndefined();
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_delete', { entry_id: 'e1' });
+		await expect(api.deleteLedgerPreset('p1')).resolves.toBeUndefined();
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_preset_delete', { preset_id: 'p1' });
+		await expect(api.deleteInventoryItem('i1')).resolves.toBeUndefined();
+		expect(tauriInvoke).toHaveBeenCalledWith('inventory_delete', { item_id: 'i1' });
 	});
 });
 

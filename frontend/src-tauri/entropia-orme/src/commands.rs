@@ -12,6 +12,11 @@
 
 use std::sync::Arc;
 
+use eo_api::analytics::{
+    AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
+    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
+    LedgerPreset, LedgerPresetInput,
+};
 use eo_api::character::{
     CalibrationStatus, CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult,
     PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
@@ -41,6 +46,17 @@ fn facade(app: &tauri::AppHandle) -> Result<Arc<eo_api::Api>, ApiError> {
     app.try_state::<ApiFacade>()
         .map(|state| state.0.clone())
         .ok_or(ApiError::Unavailable)
+}
+
+/// The analytics fixture-backed read for the native-shell e2e build: the
+/// live analytics surface migrated off `api_request` onto typed commands,
+/// so the e2e build serves the same committed analytics fixture through
+/// these commands (deserialised into their DTO), keeping the visual
+/// baselines stable.
+#[cfg(feature = "e2e-stub")]
+fn e2e_analytics<T: serde::de::DeserializeOwned>(key: &str) -> Result<T, ApiError> {
+    serde_json::from_value(crate::e2e_stub::analytics_fixture(key))
+        .map_err(ApiError::internal("e2e analytics fixture"))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -340,6 +356,141 @@ pub async fn playlists_analytics(
     facade(&app)?.playlists_analytics().await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn analytics_overview(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsOverview, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = (&app, &period);
+        e2e_analytics("overview")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.analytics_overview(&period).await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn analytics_activity(app: tauri::AppHandle) -> Result<AnalyticsActivity, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = &app;
+        e2e_analytics("activity")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.analytics_activity().await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ledger_list(
+    app: tauri::AppHandle,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<LedgerPage, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = (&app, &cursor, &limit);
+        Ok(LedgerPage {
+            entries: e2e_analytics("ledger")?,
+            next_cursor: None,
+        })
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.ledger_list(cursor, limit).await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ledger_create(
+    app: tauri::AppHandle,
+    entry: LedgerEntryInput,
+) -> Result<LedgerItem, ApiError> {
+    facade(&app)?.ledger_create(entry).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ledger_delete(app: tauri::AppHandle, entry_id: String) -> Result<(), ApiError> {
+    facade(&app)?.ledger_delete(entry_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ledger_presets_list(app: tauri::AppHandle) -> Result<Vec<LedgerPreset>, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = &app;
+        e2e_analytics("presets")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.ledger_presets_list().await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ledger_preset_create(
+    app: tauri::AppHandle,
+    preset: LedgerPresetInput,
+) -> Result<LedgerPreset, ApiError> {
+    facade(&app)?.ledger_preset_create(preset).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ledger_preset_delete(
+    app: tauri::AppHandle,
+    preset_id: String,
+) -> Result<(), ApiError> {
+    facade(&app)?.ledger_preset_delete(preset_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_list(app: tauri::AppHandle) -> Result<Vec<InventoryItem>, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = &app;
+        e2e_analytics("inventory")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.inventory_list().await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_create(
+    app: tauri::AppHandle,
+    item: InventoryItemInput,
+) -> Result<InventoryItem, ApiError> {
+    facade(&app)?.inventory_create(item).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_update(
+    app: tauri::AppHandle,
+    item_id: String,
+    patch: InventoryPatch,
+) -> Result<InventoryItem, ApiError> {
+    facade(&app)?.inventory_update(item_id, patch).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_delete(app: tauri::AppHandle, item_id: String) -> Result<(), ApiError> {
+    facade(&app)?.inventory_delete(item_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_sell(
+    app: tauri::AppHandle,
+    item_id: String,
+    sale: InventorySellInput,
+) -> Result<InventorySellResult, ApiError> {
+    facade(&app)?.inventory_sell(item_id, sale).await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -390,6 +541,19 @@ mod tests {
         "playlist_update",
         "playlist_delete",
         "playlists_analytics",
+        "analytics_overview",
+        "analytics_activity",
+        "ledger_list",
+        "ledger_create",
+        "ledger_delete",
+        "ledger_presets_list",
+        "ledger_preset_create",
+        "ledger_preset_delete",
+        "inventory_list",
+        "inventory_create",
+        "inventory_update",
+        "inventory_delete",
+        "inventory_sell",
     ];
 
     #[test]

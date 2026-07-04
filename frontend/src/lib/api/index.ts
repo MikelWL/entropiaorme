@@ -650,68 +650,75 @@ export interface ActivityData {
 	weaponComparisons: WeaponComparison[];
 }
 
+// The live analytics surface is served over typed IPC commands
+// (`commands.gen.ts`); the wrappers keep their hand-written return types,
+// narrowing the generated shapes with `as` (the `unwrap<T>` doctrine's
+// typed-IPC form). Guide mode still reads the parallel `/api/demo/*`
+// namespace over the curated demo database (its own migration is pending),
+// so the read wrappers keep branching on guide state.
 export async function getAnalyticsOverview(period: string = 'all'): Promise<OverviewStats> {
-	const params = { query: { period } };
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/overview', { params })
-			: client.GET('/api/analytics/overview', { params }),
-	);
+	if (guideState.isActive) {
+		return unwrap(client.GET('/api/demo/analytics/overview', { params: { query: { period } } }));
+	}
+	return (await commands.analyticsOverview(period)) as OverviewStats;
 }
 
 export async function getAnalyticsActivity(): Promise<ActivityData> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/activity')
-			: client.GET('/api/analytics/activity'),
-	);
+	if (guideState.isActive) {
+		return unwrap(client.GET('/api/demo/analytics/activity'));
+	}
+	return (await commands.analyticsActivity()) as ActivityData;
 }
 
 /** One keyset page of ledger entries plus the cursor for the next page
- * (null on the last page), read from the `X-Next-Cursor` response header. */
+ * (null on the last page). */
 export interface LedgerPage {
 	items: LedgerEntry[];
 	nextCursor: string | null;
 }
 
 export async function getLedgerEntries(cursor?: string, limit?: number): Promise<LedgerPage> {
-	const query = {
-		...(cursor ? { cursor } : {}),
-		...(limit != null ? { limit } : {}),
-	};
-	const { data, response } = await (guideState.isActive
-		? client.GET('/api/demo/analytics/ledger', { params: { query } })
-		: client.GET('/api/analytics/ledger', { params: { query } }));
+	if (guideState.isActive) {
+		const query = {
+			...(cursor ? { cursor } : {}),
+			...(limit != null ? { limit } : {}),
+		};
+		const { data, response } = await client.GET('/api/demo/analytics/ledger', {
+			params: { query },
+		});
+		return {
+			items: (data ?? []) as LedgerEntry[],
+			nextCursor: response.headers.get('x-next-cursor'),
+		};
+	}
+	const page = await commands.ledgerList(cursor ?? null, limit ?? null);
 	return {
-		items: (data ?? []) as LedgerEntry[],
-		nextCursor: response.headers.get('x-next-cursor'),
+		items: page.entries as LedgerEntry[],
+		nextCursor: page.nextCursor ?? null,
 	};
 }
 
 export async function addLedgerEntry(entry: Omit<LedgerEntry, 'id'>): Promise<LedgerEntry> {
-	return unwrap(client.POST('/api/analytics/ledger', { body: entry }));
+	return (await commands.ledgerCreate(entry as commands.LedgerEntryInput)) as LedgerEntry;
 }
 
 export async function deleteLedgerEntry(id: string): Promise<void> {
-	await client.DELETE('/api/analytics/ledger/{entry_id}', { params: { path: { entry_id: id } } });
+	await commands.ledgerDelete(id);
 }
 
 export async function getLedgerPresets(): Promise<LedgerPreset[]> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/ledger/presets')
-			: client.GET('/api/analytics/ledger/presets'),
-	);
+	if (guideState.isActive) {
+		return unwrap(client.GET('/api/demo/analytics/ledger/presets'));
+	}
+	return (await commands.ledgerPresetsList()) as LedgerPreset[];
 }
 
 export async function addLedgerPreset(preset: Omit<LedgerPreset, 'id'>): Promise<LedgerPreset> {
-	return unwrap(client.POST('/api/analytics/ledger/presets', { body: preset }));
+	return (await commands.ledgerPresetCreate(preset as commands.LedgerPresetInput)) as LedgerPreset;
 }
 
 export async function deleteLedgerPreset(id: string): Promise<void> {
-	await client.DELETE('/api/analytics/ledger/presets/{preset_id}', {
-		params: { path: { preset_id: id } },
-	});
+	await commands.ledgerPresetDelete(id);
 }
 
 // --- Inventory Ledger ---
@@ -738,45 +745,35 @@ export interface InventorySellPayload {
 }
 
 export async function getInventoryItems(): Promise<InventoryItem[]> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/inventory')
-			: client.GET('/api/analytics/inventory'),
-	);
+	if (guideState.isActive) {
+		return unwrap(client.GET('/api/demo/analytics/inventory'));
+	}
+	return (await commands.inventoryList()) as InventoryItem[];
 }
 
 export async function addInventoryItem(payload: InventoryItemPayload): Promise<InventoryItem> {
-	return unwrap(client.POST('/api/analytics/inventory', { body: payload }));
+	return (await commands.inventoryCreate(payload as commands.InventoryItemInput)) as InventoryItem;
 }
 
 export async function updateInventoryItem(
 	id: string,
 	patch: InventoryItemPatchPayload,
 ): Promise<InventoryItem> {
-	return unwrap(
-		client.PATCH('/api/analytics/inventory/{item_id}', {
-			params: { path: { item_id: id } },
-			body: patch,
-		}),
-	);
+	return (await commands.inventoryUpdate(id, patch as commands.InventoryPatch)) as InventoryItem;
 }
 
 export async function deleteInventoryItem(id: string): Promise<void> {
-	await client.DELETE('/api/analytics/inventory/{item_id}', {
-		params: { path: { item_id: id } },
-	});
+	await commands.inventoryDelete(id);
 }
 
 export async function sellInventoryItem(
 	id: string,
 	payload: InventorySellPayload,
 ): Promise<InventorySellResult> {
-	return unwrap(
-		client.POST('/api/analytics/inventory/{item_id}/sell', {
-			params: { path: { item_id: id } },
-			body: payload,
-		}),
-	);
+	return (await commands.inventorySell(
+		id,
+		payload as commands.InventorySellInput,
+	)) as InventorySellResult;
 }
 
 // --- Quests ---

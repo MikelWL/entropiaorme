@@ -16,6 +16,7 @@ use std::path::Path;
 /// Ported verbatim from the Python `FLOORS` map; see that script for the
 /// per-file rationale on each residual-survivor justification.
 const FLOORS: &[(&str, f64)] = &[
+    ("eo-services/src/analytics.rs", 92.0),
     ("eo-services/src/cost_engine.rs", 92.0),
     ("eo-services/src/tt_value_curve.rs", 92.0),
     ("eo-services/src/character_calc.rs", 92.0),
@@ -272,6 +273,6 @@ mod tests {
     #[test]
     fn floor_map_matches_python_count() {
         // Guards against an accidental drop when transcribing the map.
-        assert_eq!(FLOORS.len(), 23);
+        assert_eq!(FLOORS.len(), 24);
     }
 }
