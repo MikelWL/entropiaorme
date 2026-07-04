@@ -265,7 +265,7 @@ fn in_process_router_microbench() {
     // typed facade; their matched after-leg is eo-api's micro-benchmark.)
     let detail = format!("/api/tracking/session/{session_id}");
     let suggestion = format!("/api/tracking/session/{session_id}/quest-link-suggestion");
-    let endpoints: [(&str, &str); 11] = [
+    let endpoints: [(&str, &str); 18] = [
         ("GET_health", "/api/health"),
         ("GET_tracking_snapshot", "/api/tracking/snapshot"),
         ("GET_tracking_sessions", "/api/tracking/sessions"),
@@ -280,6 +280,19 @@ fn in_process_router_microbench() {
         ("GET_quests_playlists", "/api/quests/playlists"),
         ("GET_scan_skills_status", "/api/scan/skills/status"),
         ("GET_codex_meta_attributes", "/api/codex/meta/attributes"),
+        // The character family's no-parameter reads, measured here on
+        // the HTTP dispatch path before their migration to the typed
+        // facade (their matched after-leg is eo-api's micro-benchmark).
+        ("GET_character_calibration", "/api/character/calibration"),
+        ("GET_character_stats", "/api/character/stats"),
+        ("GET_character_skills", "/api/character/skills"),
+        ("GET_character_professions", "/api/character/professions"),
+        (
+            "GET_character_prospect_options",
+            "/api/character/prospect-options",
+        ),
+        ("GET_character_hp_optimizer", "/api/character/hp-optimizer"),
+        ("GET_character_codex", "/api/character/codex"),
     ];
 
     let rows: Vec<(String, f64, f64, f64, f64)> = runtime.block_on(async {
