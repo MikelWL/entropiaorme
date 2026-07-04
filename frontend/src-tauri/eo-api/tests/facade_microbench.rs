@@ -60,7 +60,8 @@ fn facade_microbench() {
         .expect("migrated database");
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
-    let api = Api::new(db, game_data, data_dir);
+    let clock = Arc::new(eo_services::clock::RealClock::new());
+    let api = Api::new(db, game_data, clock, data_dir);
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();
     runtime.block_on(async {

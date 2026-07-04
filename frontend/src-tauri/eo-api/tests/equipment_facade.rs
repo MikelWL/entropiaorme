@@ -42,7 +42,8 @@ async fn api_over(dir: &Path) -> (Api, Db) {
         .await
         .expect("migrated database");
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("snapshot store"));
-    (Api::new(db.clone(), game_data, data_dir), db)
+    let clock = Arc::new(eo_services::clock::RealClock::new());
+    (Api::new(db.clone(), game_data, clock, data_dir), db)
 }
 
 fn consumable(name: &str) -> EquipmentRequest {
