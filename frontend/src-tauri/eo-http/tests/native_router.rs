@@ -719,13 +719,11 @@ async fn out_of_range_path_id_is_not_found() {
 
     // No-body int-id routes (via `path_id`): every method answers the
     // framework 404, like the decoded-slash case.
-    let no_body: [(&str, String); 6] = [
+    let no_body: [(&str, String); 4] = [
         ("DELETE", format!("/api/quests/{big}")),
         ("POST", format!("/api/quests/{big}/start")),
         ("POST", format!("/api/quests/{big}/complete")),
         ("DELETE", format!("/api/quests/playlists/{big}")),
-        ("GET", format!("/api/equipment/library/{big}/detail")),
-        ("DELETE", format!("/api/equipment/library/{big}")),
     ];
     for (method, path) in &no_body {
         let (status, _, body) = send_json(&state, method, path, "").await;
@@ -735,18 +733,13 @@ async fn out_of_range_path_id_is_not_found() {
 
     // Body-carrying int-id routes (via `path_param`): an overflow id on
     // an otherwise-clean body resolves to the deferred 404.
-    let clean_body: [(&str, String, &str); 4] = [
+    let clean_body: [(&str, String, &str); 3] = [
         ("PUT", format!("/api/quests/{big}"), "{\"name\": \"X\"}"),
         ("POST", format!("/api/quests/{big}/cancel"), ""),
         (
             "PUT",
             format!("/api/quests/playlists/{big}"),
             "{\"name\": \"X\"}",
-        ),
-        (
-            "PUT",
-            format!("/api/equipment/library/{big}"),
-            "{\"type\":\"weapon\",\"catalog_id\":\"x\"}",
         ),
     ];
     for (method, path, body) in &clean_body {
@@ -899,13 +892,13 @@ async fn body_failures_answer_the_backend_reply_classes() {
     );
 }
 
-/// The settings/character/equipment surface serves natively over the
+/// The settings/character surface serves natively over the
 /// composed state: the settings reads, the character family over an
 /// empty calibration table, and the equipment routes (a consumable
 /// write needs no catalogue, so the full write path proves itself
 /// against the temp database).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_settings_character_and_equipment_surface_serves_natively() {
+async fn the_settings_and_character_surface_serves_natively() {
     let (state, _dir) = serve_substrate().await;
 
     // Settings assembly over the fresh data dir: defaults, the live
@@ -1045,142 +1038,6 @@ async fn the_settings_character_and_equipment_surface_serves_natively() {
     assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(detail_types(&body), ["float_parsing"]);
 
-    // Equipment: the search type gate, the empty library, and the
-    // catalogue-less validation ladder.
-    let (status, _, body) = get(&state, "/api/equipment/search?q=op&type=banana").await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(body, b"{\"detail\":\"Unknown type 'banana'\"}");
-    let (status, _, body) = get(&state, "/api/equipment/search?q=o").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, b"[]", "short queries return empty before any lookup");
-    let (status, _, body) = get(&state, "/api/equipment/library").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, b"[]");
-
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\":\"banana\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["literal_error"]);
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\":\"weapon\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(body, b"{\"detail\":\"catalog_id required for weapon\"}");
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\":\"weapon\",\"catalog_id\":\"nope\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-    assert_eq!(
-        body,
-        b"{\"detail\":\"Entity 'nope' not found in catalogue endpoint 'weapons'.\"}"
-    );
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\":\"consumable\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body,
-        b"{\"detail\":\"Consumable requires either catalog_id (catalogue pick) or name (custom)\"}"
-    );
-
-    // A custom consumable needs no catalogue: the full write path over
-    // the temp database, then the list, update-type gate, and delete.
-    let (status, headers, body) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\":\"consumable\",\"name\":\"  Nutrio Bar  \"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert!(
-        !headers.contains_key(http::header::ETAG),
-        "write replies carry no conditional-GET headers"
-    );
-    assert_eq!(
-        body,
-        b"{\"id\":\"1\",\"name\":\"Nutrio Bar\",\"type\":\"consumable\",\"amplifierName\":null,\
-          \"costPerUse\":0.0,\"damageMin\":null,\"damageMax\":null,\"reloadSeconds\":null,\
-          \"isLimited\":false,\"enrichmentLevel\":1}"
-    );
-    let (status, _, body) = get(&state, "/api/equipment/library").await;
-    assert_eq!(status, http::StatusCode::OK);
-    let listed: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(listed[0]["id"], "1");
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/equipment/library/1",
-        "{\"type\":\"weapon\",\"catalog_id\":\"x\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::BAD_REQUEST);
-    assert_eq!(body, b"{\"detail\":\"Cannot change equipment type\"}");
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/equipment/library/9",
-        "{\"type\":\"consumable\",\"name\":\"X\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-    assert_eq!(body, b"{\"detail\":\"Equipment item 9 not found\"}");
-    let (status, _, body) = get(&state, "/api/equipment/library/1/detail").await;
-    assert_eq!(status, http::StatusCode::OK);
-    let detail_shape: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(detail_shape["weapon"]["name"], "Nutrio Bar");
-    assert_eq!(detail_shape["totalCostPerUse"], 0.0);
-    let (status, _, body) = get(&state, "/api/equipment/library/9/detail").await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND);
-    assert_eq!(body, b"{\"detail\":\"Equipment item 9 not found\"}");
-    // Deletes are idempotent acknowledgements, present row or not.
-    for item in ["1", "9"] {
-        let (status, _, body) = send(
-            &state,
-            "DELETE",
-            &format!("/api/equipment/library/{item}"),
-            &[("origin", "tauri://localhost")],
-            None,
-        )
-        .await;
-        assert_eq!(status, http::StatusCode::OK);
-        assert_eq!(body, b"{\"status\":\"deleted\"}");
-    }
-    let (status, _, body) = get(&state, "/api/equipment/library").await;
-    assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, b"[]");
-
-    // Cost calculation validates in model order (catalog_id first).
-    let (status, _, body) = send_json(&state, "POST", "/api/equipment/cost/calculate", "{}").await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["missing"]);
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/cost/calculate",
-        "{\"catalog_id\":\"x\",\"type\":\"consumable\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["literal_error"]);
-
     // The overlay-position write needs the composed config service, which the
     // read-only harness does not compose, so it hits the defensive 503 floor
     // here (the producer harness exercises the native success path).
@@ -1203,15 +1060,6 @@ async fn validation_envelopes_aggregate_and_defer_the_backend_way() {
     let (state, _dir) = serve_substrate().await;
 
     // Path + body field issues, one envelope, path first.
-    let (status, _, body) = send_json(
-        &state,
-        "PUT",
-        "/api/equipment/library/abc",
-        "{\"type\": \"banana\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(detail_types(&body), ["int_parsing", "literal_error"]);
     let (status, _, body) = send_json(
         &state,
         "PUT",
@@ -1271,7 +1119,7 @@ async fn validation_envelopes_aggregate_and_defer_the_backend_way() {
 
     // Beyond-i64 BODY integers answer the deferred 500 across the
     // dump builders (quest update field, playlist quest_ids, playlist
-    // item ids, equipment ints), only after validation passes.
+    // item ids), only after validation passes.
     let (status, _, _) = send_json(&state, "POST", "/api/quests", "{\"name\": \"Q\"}").await;
     assert_eq!(status, http::StatusCode::OK);
     for (method, path, body) in [
@@ -1289,21 +1137,6 @@ async fn validation_envelopes_aggregate_and_defer_the_backend_way() {
             "POST",
             "/api/quests/playlists",
             "{\"name\": \"P\", \"items\": [{\"quest_id\": 99999999999999999999999999}]}",
-        ),
-        (
-            "POST",
-            "/api/equipment/library",
-            "{\"type\": \"consumable\", \"name\": \"X\", \"weapon_markup\": 99999999999999999999999999}",
-        ),
-        (
-            "POST",
-            "/api/equipment/library",
-            "{\"type\": \"consumable\", \"name\": \"X\", \"damage_enhancers\": 99999999999999999999999999}",
-        ),
-        (
-            "POST",
-            "/api/equipment/cost/calculate",
-            "{\"catalog_id\": \"x\", \"amp_markup\": 99999999999999999999999999}",
         ),
     ] {
         let (status, _, reply) = send_json(&state, method, path, body).await;
@@ -1332,46 +1165,6 @@ async fn validation_envelopes_aggregate_and_defer_the_backend_way() {
         let (status, _, _) = send_json(&state, "PUT", "/api/quests/playlists/1", body).await;
         assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     }
-
-    // A CONSUMED surrogate-tainted field answers the 500 at its
-    // consumption point; an UNUSED one flows (the lookup miss answers
-    // its renderable 404 on the empty store).
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\": \"weapon\", \"catalog_id\": \"ta\\ud800int\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR);
-    let (status, _, body) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\": \"weapon\", \"catalog_id\": \"clean\", \"name\": \"ta\\ud800int\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::NOT_FOUND, "unused taint flows");
-    assert_eq!(
-        body,
-        b"{\"detail\":\"Entity 'clean' not found in catalogue endpoint 'weapons'.\"}"
-    );
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/cost/calculate",
-        "{\"catalog_id\": \"ta\\ud800int\", \"type\": \"healing\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR);
-    let (status, _, _) = send_json(
-        &state,
-        "POST",
-        "/api/equipment/library",
-        "{\"type\": \"consumable\", \"name\": \"ta\\ud800int\"}",
-    )
-    .await;
-    assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR);
 
     // The calibrate codec message splits singular/plural on the
     // surrogate RUN length, with the exact position arithmetic.

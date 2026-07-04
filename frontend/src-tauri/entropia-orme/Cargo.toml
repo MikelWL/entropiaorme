@@ -32,6 +32,7 @@ tauri-plugin-process = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+eo-api = { workspace = true }
 eo-http = { workspace = true }
 # The composition root constructs the ported services the substrate's
 # native routes read through.

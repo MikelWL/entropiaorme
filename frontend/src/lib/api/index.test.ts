@@ -7,28 +7,37 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // vi.hoisted: the module under test is imported statically, so the vi.mock
 // factories run before ordinary top-level consts initialise; these seams must
 // be hoisted alongside them.
-const { clientGet, clientPost, clientPut, clientPatch, clientDelete, FakeApiError, guideState } =
-	vi.hoisted(() => {
-		class FakeApiError extends Error {
-			constructor(
-				public status: number,
-				message: string,
-			) {
-				super(message);
-				this.name = 'ApiError';
-			}
+const {
+	clientGet,
+	clientPost,
+	clientPut,
+	clientPatch,
+	clientDelete,
+	FakeApiError,
+	guideState,
+	tauriInvoke,
+} = vi.hoisted(() => {
+	class FakeApiError extends Error {
+		constructor(
+			public status: number,
+			message: string,
+		) {
+			super(message);
+			this.name = 'ApiError';
 		}
-		return {
-			clientGet: vi.fn(),
-			clientPost: vi.fn(),
-			clientPut: vi.fn(),
-			clientPatch: vi.fn(),
-			clientDelete: vi.fn(),
-			FakeApiError,
-			// Mutable guide-state seam: tests flip isActive to drive demo dispatch.
-			guideState: { isActive: false },
-		};
-	});
+	}
+	return {
+		tauriInvoke: vi.fn(),
+		clientGet: vi.fn(),
+		clientPost: vi.fn(),
+		clientPut: vi.fn(),
+		clientPatch: vi.fn(),
+		clientDelete: vi.fn(),
+		FakeApiError,
+		// Mutable guide-state seam: tests flip isActive to drive demo dispatch.
+		guideState: { isActive: false },
+	};
+});
 
 vi.mock('./client', () => ({
 	ApiError: FakeApiError,
@@ -46,6 +55,12 @@ vi.mock('./client', () => ({
 
 vi.mock('$lib/guide/state.svelte', () => ({ guideState }));
 
+// The typed-command transport under the generated bindings: the equipment
+// family invokes Tauri commands rather than the HTTP-shaped client.
+vi.mock('@tauri-apps/api/core', () => ({
+	invoke: (...args: unknown[]) => tauriInvoke(...args),
+}));
+
 import * as api from './index';
 
 const DATA = { marker: 'payload' } as const;
@@ -62,6 +77,8 @@ beforeEach(() => {
 	}
 	clientGet.mockReset();
 	clientGet.mockResolvedValue(GET_RESULT);
+	tauriInvoke.mockReset();
+	tauriInvoke.mockResolvedValue(DATA);
 });
 
 type Verb = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -186,28 +203,6 @@ describe('plain delegating wrappers map to the expected verb, path, and shape', 
 			'POST',
 			'/api/codex/meta/claim',
 			{ body: { attribute_name: 'Strength' } },
-		],
-		['getEquipmentLibrary', () => api.getEquipmentLibrary(), 'GET', '/api/equipment/library'],
-		[
-			'addToLibrary',
-			() => api.addToLibrary({ type: 'weapon', catalog_id: 'w1' }),
-			'POST',
-			'/api/equipment/library',
-			{ body: { type: 'weapon', catalog_id: 'w1' } },
-		],
-		[
-			'updateLibrary',
-			() => api.updateLibrary('7', { type: 'weapon' }),
-			'PUT',
-			'/api/equipment/library/{item_id}',
-			{ params: { path: { item_id: 7 } }, body: { type: 'weapon' } },
-		],
-		[
-			'getEquipmentDetail',
-			() => api.getEquipmentDetail('7'),
-			'GET',
-			'/api/equipment/library/{item_id}/detail',
-			{ params: { path: { item_id: 7 } } },
 		],
 		['startTracking', () => api.startTracking(), 'POST', '/api/tracking/start'],
 		['stopTracking', () => api.stopTracking(), 'POST', '/api/tracking/stop'],
@@ -412,13 +407,6 @@ describe('plain delegating wrappers map to the expected verb, path, and shape', 
 describe('void-returning wrappers delegate without unwrapping', () => {
 	const rows: [string, () => Promise<void>, Verb, string, unknown][] = [
 		[
-			'removeFromLibrary coerces the string id to a number',
-			() => api.removeFromLibrary('7'),
-			'DELETE',
-			'/api/equipment/library/{item_id}',
-			{ params: { path: { item_id: 7 } } },
-		],
-		[
 			'deleteSession',
 			() => api.deleteSession('s1'),
 			'DELETE',
@@ -575,17 +563,75 @@ describe('guide-mode demo dispatch', () => {
 	});
 });
 
-describe('searchEquipmentItems', () => {
-	it('short-circuits to [] without a network call below two characters', async () => {
+describe('equipment wrappers dispatch typed commands', () => {
+	it('searchEquipmentItems short-circuits to [] without a command below two characters', async () => {
 		await expect(api.searchEquipmentItems('a', 'weapon')).resolves.toEqual([]);
 		await expect(api.searchEquipmentItems('', 'weapon')).resolves.toEqual([]);
-		expect(clientGet).not.toHaveBeenCalled();
+		expect(tauriInvoke).not.toHaveBeenCalled();
 	});
 
-	it('queries with q and type from two characters', async () => {
+	it('searchEquipmentItems invokes with q and kind from two characters', async () => {
+		tauriInvoke.mockResolvedValue([]);
 		await api.searchEquipmentItems('op', 'amp');
-		expect(clientGet).toHaveBeenCalledWith('/api/equipment/search', {
-			params: { query: { q: 'op', type: 'amp' } },
+		expect(tauriInvoke).toHaveBeenCalledWith('equipment_search', { q: 'op', kind: 'amp' });
+	});
+
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>][] = [
+		['getEquipmentLibrary', () => api.getEquipmentLibrary(), 'equipment_library', {}],
+		[
+			'addToLibrary',
+			() => api.addToLibrary({ type: 'weapon', catalog_id: 'w1' }),
+			'equipment_add',
+			{ req: { type: 'weapon', catalog_id: 'w1' } },
+		],
+		[
+			'updateLibrary coerces the string id to a number',
+			() => api.updateLibrary('7', { type: 'weapon' }),
+			'equipment_update',
+			{ item_id: 7, req: { type: 'weapon' } },
+		],
+		[
+			'removeFromLibrary coerces the string id to a number',
+			() => api.removeFromLibrary('7'),
+			'equipment_delete',
+			{ item_id: 7 },
+		],
+		[
+			'getEquipmentDetail coerces the string id to a number',
+			() => api.getEquipmentDetail('7'),
+			'equipment_detail',
+			{ item_id: 7 },
+		],
+	];
+	it.each(rows)('%s', async (_name, call, command, args) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
+	});
+
+	it('maps a typed error payload onto the thrown ApiError contract', async () => {
+		tauriInvoke.mockRejectedValue({ kind: 'notFound', message: 'Equipment item 9 not found' });
+		const failure = api.getEquipmentDetail('9');
+		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
+		await expect(failure).rejects.toMatchObject({
+			status: 404,
+			message: 'Equipment item 9 not found',
+		});
+	});
+
+	it('maps a message-less kind onto its fixed message', async () => {
+		tauriInvoke.mockRejectedValue({ kind: 'unavailable' });
+		await expect(api.getEquipmentLibrary()).rejects.toMatchObject({
+			status: 503,
+			message: 'backend substrate not ready',
+		});
+	});
+
+	it('surfaces an out-of-contract rejection verbatim', async () => {
+		tauriInvoke.mockRejectedValue('command equipment_detail not found');
+		await expect(api.getEquipmentDetail('7')).rejects.toMatchObject({
+			status: 500,
+			message: 'command equipment_detail not found',
 		});
 	});
 });

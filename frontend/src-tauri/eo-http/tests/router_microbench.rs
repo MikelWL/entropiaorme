@@ -260,7 +260,9 @@ fn in_process_router_microbench() {
     });
 
     // The baseline's endpoint set and order: health first, then the curated
-    // hydration GET surface, with the session-scoped templates filled.
+    // hydration GET surface, with the session-scoped templates filled. (The
+    // equipment reads measured here before their migration now live on the
+    // typed facade; their matched after-leg is eo-api's micro-benchmark.)
     let detail = format!("/api/tracking/session/{session_id}");
     let suggestion = format!("/api/tracking/session/{session_id}/quest-link-suggestion");
     let endpoints: [(&str, &str); 11] = [

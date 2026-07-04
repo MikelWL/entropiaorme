@@ -16,7 +16,7 @@
 
 [workspace]
 resolver = "2"
-members = ["entropia-orme", "eo-http", "eo-services", "eo-wire", "xtask"]
+members = ["entropia-orme", "eo-api", "eo-http", "eo-services", "eo-wire", "xtask"]
 
 [workspace.package]
 version = "0.2.1"
@@ -131,7 +131,13 @@ tracing-appender = "0.2"
 # a typed error with a `source()` chain instead of a stringly `Result<_,
 # String>`; wire-facing texts live as explicit Display strings on variants.
 thiserror = "2"
+# JSON-Schema derives on the IPC facade's DTOs: the schema is the
+# intermediate representation the owned TypeScript generator (`cargo xtask
+# gen-ts`) emits bindings from, read straight off the serde attributes so
+# the generated types cannot drift from the wire serialisation.
+schemars = "1"
 
+eo-api = { path = "eo-api" }
 eo-http = { path = "eo-http" }
 eo-services = { path = "eo-services" }
 eo-wire = { path = "eo-wire" }

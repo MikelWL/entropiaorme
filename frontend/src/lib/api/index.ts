@@ -264,71 +264,52 @@ export async function claimCodexMeta(attributeName: string): Promise<CodexMetaCl
 }
 
 // --- Equipment ---
+// The first family served over typed IPC commands (`commands.gen.ts`,
+// generated from the Rust DTOs): the wrappers keep their signatures,
+// with the hand-written `$lib/types` interfaces still the declared
+// contract they narrow onto, exactly as `unwrap<T>` asserted before.
 
 import type { Equipment, EquipmentDetail } from '$lib/types/equipment';
+import type { EquipmentRequest, EquipmentSearchHit, SearchKind } from './commands.gen';
+import * as commands from './commands.gen';
 
-/** Search result from GET /api/equipment/search */
-export interface EquipmentSearchResult {
-	catalogId: string | null;
-	name: string;
-	decay: number; // PEC
-	ammoBurn: number; // PEC (ammo units / 100)
+/** Search result from the equipment catalogue search command. The two
+ * optional fields are not part of the wire shape: the equipment page
+ * reuses this type to seed its selection state from a stored detail,
+ * which carries them. */
+export type EquipmentSearchResult = EquipmentSearchHit & {
 	markupPercent?: number;
-	isLimited: boolean;
 	damageEnhancers?: number;
-}
+};
 
-interface AddLibraryRequest {
-	type: 'weapon' | 'healing' | 'consumable';
-	catalog_id?: string | null;
-	name?: string | null;
-	amp_catalog_id?: string | null;
-	scope_catalog_id?: string | null;
-	absorber_catalog_id?: string | null;
-	weapon_markup?: number;
-	amp_markup?: number;
-	scope_markup?: number;
-	absorber_markup?: number;
-	damage_enhancers?: number;
-}
+type AddLibraryRequest = EquipmentRequest;
 
 export async function searchEquipmentItems(
 	q: string,
-	type: 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable',
+	type: SearchKind,
 ): Promise<EquipmentSearchResult[]> {
 	if (q.length < 2) return [];
-	return unwrap(client.GET('/api/equipment/search', { params: { query: { q, type } } }));
+	return commands.equipmentSearch(q, type);
 }
 
 export async function getEquipmentLibrary(): Promise<Equipment[]> {
-	return unwrap(client.GET('/api/equipment/library'));
+	return (await commands.equipmentLibrary()) as Equipment[];
 }
 
 export async function addToLibrary(req: AddLibraryRequest): Promise<Equipment> {
-	return unwrap(client.POST('/api/equipment/library', { body: req }));
+	return (await commands.equipmentAdd(req)) as Equipment;
 }
 
 export async function removeFromLibrary(id: string): Promise<void> {
-	await client.DELETE('/api/equipment/library/{item_id}', {
-		params: { path: { item_id: Number(id) } },
-	});
+	await commands.equipmentDelete(Number(id));
 }
 
 export async function updateLibrary(id: string, req: AddLibraryRequest): Promise<Equipment> {
-	return unwrap(
-		client.PUT('/api/equipment/library/{item_id}', {
-			params: { path: { item_id: Number(id) } },
-			body: req,
-		}),
-	);
+	return (await commands.equipmentUpdate(Number(id), req)) as Equipment;
 }
 
 export async function getEquipmentDetail(id: string): Promise<EquipmentDetail> {
-	return unwrap(
-		client.GET('/api/equipment/library/{item_id}/detail', {
-			params: { path: { item_id: Number(id) } },
-		}),
-	);
+	return (await commands.equipmentDetail(Number(id))) as EquipmentDetail;
 }
 
 // --- Tracking ---

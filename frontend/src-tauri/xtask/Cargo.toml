@@ -23,3 +23,6 @@ path = "src/main.rs"
 [dependencies]
 serde_json = { workspace = true }
 regex = { workspace = true }
+# The typed-IPC facade: `gen-ts` walks its command manifest and DTO
+# schemas to emit the committed TypeScript bindings.
+eo-api = { workspace = true }
