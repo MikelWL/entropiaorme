@@ -20,6 +20,7 @@ use eo_api::character::{
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::ApiError;
 
 /// Holds the composed facade for the typed commands, published by
@@ -143,6 +144,35 @@ pub async fn character_hp_optimizer(app: tauri::AppHandle) -> Result<HpOptimizer
     facade(&app)?.character_hp_optimizer().await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_get(app: tauri::AppHandle) -> Result<AppSettings, ApiError> {
+    facade(&app)?.settings().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_overlay_position(
+    app: tauri::AppHandle,
+) -> Result<OverlayPosition, ApiError> {
+    facade(&app)?.settings_overlay_position().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_set_overlay_position(
+    app: tauri::AppHandle,
+    x: i64,
+    y: i64,
+) -> Result<(), ApiError> {
+    facade(&app)?.settings_set_overlay_position(x, y).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_update(
+    app: tauri::AppHandle,
+    patch: SettingsPatch,
+) -> Result<AppSettings, ApiError> {
+    facade(&app)?.settings_update(patch).await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -166,6 +196,10 @@ mod tests {
         "character_profession_optimizer",
         "character_path_optimizer",
         "character_hp_optimizer",
+        "settings_get",
+        "settings_overlay_position",
+        "settings_set_overlay_position",
+        "settings_update",
     ];
 
     #[test]

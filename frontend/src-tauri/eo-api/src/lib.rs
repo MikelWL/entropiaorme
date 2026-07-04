@@ -17,16 +17,21 @@
 //! than fronting it.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::Clock;
+use eo_services::config_service::ConfigService;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
+use eo_services::hotbar_listener::HotbarListener;
+use eo_services::tracker::HuntTracker;
 
 pub mod character;
 pub mod equipment;
 mod error;
 pub mod manifest;
+pub mod settings;
 
 pub use error::ApiError;
 
@@ -40,20 +45,39 @@ pub struct Api {
     /// The resolved data directory: configuration read-through
     /// (`settings.json`) for the operations that consult it.
     data_dir: PathBuf,
+    /// The sole settings writer: the settings-write operations lock and
+    /// save through it, so there is no second writer to lose updates.
+    config_service: Arc<Mutex<ConfigService>>,
+    /// The live hunt tracker: a settings write re-signals it so an
+    /// in-flight session re-reads its config.
+    tracker: Arc<HuntTracker>,
+    /// The hotbar listener: a `hotbar_hooks_enabled` change flips its gate.
+    hotbar: Arc<HotbarListener>,
+    /// The chat-log watcher: a `chatlog_path` change restarts its tail.
+    watcher: Arc<ChatlogWatcher>,
 }
 
 impl Api {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db: Db,
         game_data: Arc<GameDataStore>,
         clock: Arc<dyn Clock>,
         data_dir: PathBuf,
+        config_service: Arc<Mutex<ConfigService>>,
+        tracker: Arc<HuntTracker>,
+        hotbar: Arc<HotbarListener>,
+        watcher: Arc<ChatlogWatcher>,
     ) -> Self {
         Self {
             db,
             game_data,
             clock,
             data_dir,
+            config_service,
+            tracker,
+            hotbar,
+            watcher,
         }
     }
 

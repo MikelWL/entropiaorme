@@ -662,14 +662,20 @@ async fn compose_with(
     )
     .await;
 
-    // The typed-command facade shares the read surface's handles; families
-    // migrate onto it from the in-process HTTP router one by one, and both
-    // serve over the same pools during the migration.
+    // The typed-command facade shares the read surface's handles plus the
+    // producers the settings-write family signals (the config writer, the
+    // tracker, the hotbar gate, the chat-log watcher); families migrate
+    // onto it from the in-process HTTP router one by one, and both serve
+    // over the same handles during the migration.
     let api = Arc::new(eo_api::Api::new(
         db.clone(),
         game_data.clone(),
         clock.clone(),
         data_dir.clone(),
+        producers.config_service_handle(),
+        producers.tracker_handle(),
+        producers.hotbar_handle(),
+        producers.watcher_handle(),
     ));
     let hydration = Arc::new(HydrationState::new(db, game_data, clock, data_dir));
     Composition::Ready(Composed {

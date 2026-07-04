@@ -901,19 +901,19 @@ export interface SettingsUpdate {
 }
 
 export async function getSettings(): Promise<AppSettings> {
-	return unwrap(client.GET('/api/settings'));
+	return (await commands.settingsGet()) as AppSettings;
 }
 
 export async function updateSettings(updates: SettingsUpdate): Promise<AppSettings> {
-	return unwrap(client.PATCH('/api/settings', { body: updates }));
+	return (await commands.settingsUpdate(updates)) as AppSettings;
 }
 
 // --- Overlay ---
 
 export async function getOverlayPosition(): Promise<{ x: number | null; y: number | null }> {
-	return unwrap(client.GET('/api/settings/overlay-position'));
+	return (await commands.settingsOverlayPosition()) as { x: number | null; y: number | null };
 }
 
 export async function saveOverlayPosition(x: number, y: number): Promise<void> {
-	await client.PUT('/api/settings/overlay-position', { body: { x, y } });
+	await commands.settingsSetOverlayPosition(x, y);
 }

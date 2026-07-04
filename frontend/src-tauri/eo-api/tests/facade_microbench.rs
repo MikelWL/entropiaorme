@@ -25,6 +25,8 @@ use eo_api::Api;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 
+mod common;
+
 const WARMUPS: usize = 3;
 const SAMPLES: usize = 30;
 
@@ -61,7 +63,18 @@ fn facade_microbench() {
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
     let clock = Arc::new(eo_services::clock::RealClock::new());
-    let api = Api::new(db, game_data, clock, data_dir);
+    let (config_service, tracker, hotbar, watcher) =
+        common::producer_handles(&db, &data_dir, runtime.handle().clone());
+    let api = Api::new(
+        db,
+        game_data,
+        clock,
+        data_dir,
+        config_service,
+        tracker,
+        hotbar,
+        watcher,
+    );
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();
     runtime.block_on(async {
