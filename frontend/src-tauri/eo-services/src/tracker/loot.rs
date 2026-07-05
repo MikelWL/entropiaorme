@@ -5,6 +5,7 @@ use eo_wire::normalizer::round_half_even;
 
 use crate::bus_events::{BusEvent, GlobalPayload};
 use crate::loot_filter::is_tracked_loot;
+use crate::ped::Ped;
 use crate::tracking_models::Kill;
 
 use super::time::{naive_to_epoch, parse_timestamp_str, python_total_seconds};
@@ -22,9 +23,10 @@ impl HuntTracker {
         };
         let kill = {
             let mut state = self.lock_state();
-            if state.accumulator.is_none() || state.session.is_none() {
+            let state = &mut *state;
+            let Some(active) = state.session.active_mut() else {
                 return;
-            }
+            };
 
             let total_ped = group.total_ped;
             let now = group
@@ -41,18 +43,17 @@ impl HuntTracker {
                 .map(|item| item.item_name.clone())
                 .unwrap_or_default();
             let fingerprint = (round_half_even(total_ped, 4), group.items.len(), first_item);
-            if state.last_loot_fingerprint.as_ref() == Some(&fingerprint) {
-                if let Some(last) = state.last_loot_time {
-                    if python_total_seconds(now - last) < LOOT_DEDUP_WINDOW_SECONDS {
-                        return;
-                    }
+            if let Some((last_fingerprint, last_time)) = &active.last_loot {
+                if *last_fingerprint == fingerprint
+                    && python_total_seconds(now - *last_time) < LOOT_DEDUP_WINDOW_SECONDS
+                {
+                    return;
                 }
             }
-            state.last_loot_fingerprint = Some(fingerprint);
-            state.last_loot_time = Some(now);
+            active.last_loot = Some((fingerprint, now));
             // Past the dedup guard a Kill is always recorded, so the
             // readout changes.
-            state.session_dirty = true;
+            active.dirty = true;
 
             let mut items = Vec::new();
             for item in &group.items {
@@ -60,26 +61,24 @@ impl HuntTracker {
                     items.push(item.clone());
                 }
             }
-            let filtered_total_ped = round_half_even(
+            let filtered_total_ped = Ped(round_half_even(
                 items
                     .iter()
                     .filter(|item| !item.is_enhancer_shrapnel)
                     .map(|item| item.value_ped)
                     .sum(),
                 4,
-            );
+            ));
 
-            // Snapshot mob/tag from manual configuration.
-            let mob_name = if state.confirmed_mob_name.is_empty() {
-                "Unknown".to_string()
-            } else {
-                state.confirmed_mob_name.clone()
-            };
+            // Snapshot the mob/tag stamp from the selection (the
+            // variant carries the source, so the stamp cannot drift
+            // from where it came from).
+            let mob_name = active.stamped_mob_name().unwrap_or("Unknown").to_string();
+            let (mob_species, mob_maturity) = active.mob.species_maturity();
+            let (mob_species, mob_maturity) = (mob_species.to_string(), mob_maturity.to_string());
 
-            let session_id = state.session.as_ref().expect("checked above").id.clone();
-            let mob_species = state.confirmed_mob_species.clone();
-            let mob_maturity = state.confirmed_mob_maturity.clone();
-            let accumulator = state.accumulator.as_mut().expect("checked above");
+            let session_id = active.session.id.clone();
+            let accumulator = &mut active.accumulator;
             let kill = Kill {
                 id: uuid::Uuid::new_v4().to_string(),
                 session_id,
@@ -103,16 +102,11 @@ impl HuntTracker {
             // Reset accumulator for next kill (tool_stats moved into
             // the kill above, exactly the original's shallow copy
             // followed by a fresh dict).
-            state.accumulator.as_mut().expect("checked above").reset();
+            accumulator.reset();
 
             // Append the finalised kill to the session; the list tail
             // doubles as the original's `_last_kill` alias.
-            state
-                .session
-                .as_mut()
-                .expect("checked above")
-                .kills
-                .push(kill.clone());
+            active.session.kills.push(kill.clone());
             kill
         };
 
@@ -120,6 +114,7 @@ impl HuntTracker {
         // the lock is never held across SQLite.
         self.persist_kill(&kill);
     }
+
     /// Handle a global/HoF event from chat.log: tags the most
     /// recently created kill (globals arrive shortly after loot). The
     /// in-memory tag lands under the guard, capturing the values the
@@ -156,9 +151,9 @@ impl HuntTracker {
         };
         let (session_id, kill_id, target_is_hof, event_type, mob_or_item, value_ped, ts) = {
             let mut state = self.lock_state();
-            if state.session.is_none() {
+            let Some(active) = state.session.active_mut() else {
                 return;
-            }
+            };
 
             // Filter for own player.
             if self.providers.player_name.is_empty()
@@ -167,8 +162,8 @@ impl HuntTracker {
                 return;
             }
 
-            state.session_dirty = true;
-            let session_id = state.session.as_ref().expect("checked above").id.clone();
+            active.dirty = true;
+            let session_id = active.session.id.clone();
             let event_type = event_type.to_string();
             // The original's falsy chain on creature/item: an empty
             // subject falls through to "Unknown".
@@ -188,13 +183,7 @@ impl HuntTracker {
             // `_last_kill` alias.
             let mut kill_id: Option<String> = None;
             let mut target_is_hof = false;
-            if let Some(target) = state
-                .session
-                .as_mut()
-                .expect("checked above")
-                .kills
-                .last_mut()
-            {
+            if let Some(target) = active.session.kills.last_mut() {
                 if (ts - target.timestamp).abs() < GLOBAL_CORRELATION_WINDOW_SECONDS {
                     target.is_global = true;
                     if is_hof {

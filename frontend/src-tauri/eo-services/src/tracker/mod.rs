@@ -1,7 +1,11 @@
-//! The hunt tracker, ported from the original Python implementation: the
-//! central coordinator that subscribes to the bus, accumulates combat
-//! stats, creates kill records on loot events, and persists to the
-//! database.
+//! The hunt tracker: the central coordinator that subscribes to the
+//! bus, accumulates combat stats, creates kill records on loot events,
+//! and persists to the database. Ported from the original Python
+//! implementation, with the session state re-founded as a typestate:
+//! `Idle | Active(ActiveSession)`, so the invariants the original held
+//! in comments (an accumulator exists exactly while a session runs,
+//! a mob stamp always carries its source) are unrepresentable when
+//! violated rather than checked at each use.
 //!
 //! The kills model: shots accumulate with cost; a loot group is a
 //! kill (snapshot the accumulator, stamp the configured mob or tag,
@@ -16,19 +20,15 @@
 //! the tracker lock is never held across SQLite for the tracker's own
 //! writes); the provider callbacks reached from handlers may read the
 //! database while the guard is held, exactly as the original's lock
-//! order allows. The original's re-entrant lock is unnecessary once
-//! the stop-before-lock shape is kept, which the borrow checker now
-//! enforces rather than documents.
+//! order allows.
 //!
 //! Representation differences, all observation-equivalent: the
 //! original's `_last_kill` alias of `session.kills[-1]` is the
-//! `last_mut()` of the kills list (the alias and the tail are the
-//! same object there, established by the loot handler and cleared
-//! with the session); phase-keyed tool stats live in an ordered
-//! vector rather than an insertion-ordered dict; the original's
-//! logging, debug-only performance counters and development-build
-//! priming hook are omitted, as is its `enhancer_tt_lookup` provider
-//! (stored but never read there).
+//! `last_mut()` of the kills list; phase-keyed tool stats live in an
+//! ordered vector rather than an insertion-ordered dict; the
+//! original's logging, debug-only performance counters and
+//! development-build priming hook are omitted, as is its
+//! `enhancer_tt_lookup` provider (stored but never read there).
 
 mod combat;
 mod loot;
@@ -41,20 +41,19 @@ mod tests;
 mod time;
 mod weapons;
 
+pub use mob::{MobSelection, MobSource, TrackingMode};
 pub use providers::{EquipmentProfile, Providers};
 pub(crate) use time::parse_timestamp_str;
 pub use time::{naive_isoformat, naive_to_epoch, to_iso_utc};
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use chrono::NaiveDateTime;
 use eo_wire::domain_events::{
     TrackingReason, TrackingSessionUpdated, TrackingSessionUpdatedPayload,
     TrackingSessionUpdatedTag, TrackingStatus,
 };
-use serde_json::Value;
 use tokio::runtime::Handle;
 
 use crate::bus_events::BusEvent;
@@ -63,11 +62,9 @@ use crate::db::{Db, DbError};
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::loot_filter::normalize_blacklist;
 use crate::mob_lookup_service::python_whitespace;
-use crate::tool_inference::DamageAttributor;
-use crate::tracking_models::TrackingSession;
+use crate::ped::Ped;
 
-use combat::Accumulator;
-use weapons::DamageEnhancerState;
+use session::ActiveSession;
 
 /// Loot groups with an identical fingerprint within this window are
 /// duplicates.
@@ -79,7 +76,7 @@ const GLOBAL_CORRELATION_WINDOW_SECONDS: f64 = 5.0;
 
 /// The mob/tag command preconditions the original raises as
 /// `RuntimeError`/`ValueError`; the messages match verbatim so the
-/// HTTP layer surfaces identical text.
+/// command boundary surfaces identical text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TrackerCommandError {
     #[error("No active session")]
@@ -94,43 +91,63 @@ pub enum TrackerCommandError {
     ManualEntryDisabled,
 }
 
-/// The in-memory state the tracker's one mutex owns.
+/// The session typestate: everything session-scoped lives inside the
+/// `Active` payload and cannot exist without a session.
+#[derive(Default)]
+enum SessionState {
+    #[default]
+    Idle,
+    Active(Box<ActiveSession>),
+}
+
+impl SessionState {
+    fn active(&self) -> Option<&ActiveSession> {
+        match self {
+            SessionState::Idle => None,
+            SessionState::Active(active) => Some(active),
+        }
+    }
+
+    fn active_mut(&mut self) -> Option<&mut ActiveSession> {
+        match self {
+            SessionState::Idle => None,
+            SessionState::Active(active) => Some(active),
+        }
+    }
+}
+
+/// The equipped heal tool. Hotbar-equipment state, NOT session state:
+/// a heal tool equipped during one session stays equipped into the
+/// next (the original never reset these fields at start or stop; only
+/// a heal-tool change or a trifecta reload moves them).
+pub(super) struct HealTool {
+    pub(super) name: Option<String>,
+    pub(super) cost_per_use: Ped,
+    pub(super) reload_seconds: f64,
+    pub(super) amount_min: Option<f64>,
+    pub(super) amount_max: Option<f64>,
+}
+
+impl Default for HealTool {
+    fn default() -> Self {
+        Self {
+            name: None,
+            cost_per_use: Ped::ZERO,
+            reload_seconds: 2.5,
+            amount_min: None,
+            amount_max: None,
+        }
+    }
+}
+
+/// The in-memory state the tracker's one mutex owns: the session
+/// typestate plus the two pieces that outlive a session (the loot
+/// blacklist and the equipped heal tool).
 #[derive(Default)]
 struct TrackerState {
-    session: Option<TrackingSession>,
-    accumulator: Option<Accumulator>,
-    session_dirty: bool,
-    session_heal_cost: f64,
-    heal_warning_emitted: bool,
-    session_warnings: Vec<String>,
+    session: SessionState,
     loot_blacklist: BTreeSet<String>,
-    current_mob_name: String,
-    current_mob_species: String,
-    current_mob_maturity: String,
-    confirmed_mob_name: String,
-    confirmed_mob_species: String,
-    confirmed_mob_maturity: String,
-    mob_source: Option<&'static str>,
-    session_mob_tracking_mode: String,
-    session_mob_tracking_tag: String,
-    last_heal_time: Option<NaiveDateTime>,
-    last_loot_fingerprint: Option<(f64, usize, String)>,
-    last_loot_time: Option<NaiveDateTime>,
-    trifecta_unmatched_warning_emitted: bool,
-    active_hotbar_tool_name: Option<String>,
-    active_heal_tool_name: Option<String>,
-    heal_cost_per_use_ped: f64,
-    heal_reload_seconds: f64,
-    heal_amount_min: Option<f64>,
-    heal_amount_max: Option<f64>,
-    trifecta_weapon_profiles: BTreeMap<String, Arc<Value>>,
-    weapon_enhancer_states: BTreeMap<String, DamageEnhancerState>,
-    active_weapon_state_key: Option<String>,
-    active_weapon_observed_name: Option<String>,
-    last_offensive_tool_name: Option<String>,
-    damage_attributor: DamageAttributor,
-    profile_match_cache: BTreeMap<String, Option<(String, Arc<Value>)>>,
-    static_tool_cost_cache: BTreeMap<String, f64>,
+    heal_tool: HealTool,
 }
 
 pub struct HuntTracker {
@@ -162,8 +179,6 @@ impl HuntTracker {
             .trim_matches(python_whitespace)
             .to_string();
         let state = TrackerState {
-            heal_reload_seconds: 2.5,
-            session_mob_tracking_mode: "mob".to_string(),
             loot_blacklist: normalize_blacklist(Some(
                 providers.loot_filter_blacklist.iter().map(String::as_str),
             )),
@@ -186,7 +201,7 @@ impl HuntTracker {
     }
 
     /// Bridge a database future onto the runtime from either calling
-    /// context: a runtime worker thread (the web layer) yields its
+    /// context: a runtime worker thread (the command layer) yields its
     /// slot via `block_in_place`, while a plain producer thread (the
     /// chat-log tail, the hotbar listener) parks directly.
     fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
@@ -208,21 +223,22 @@ impl HuntTracker {
     }
 
     pub fn is_tracking(&self) -> bool {
-        self.lock_state().session.is_some()
+        self.lock_state().session.active().is_some()
     }
 
-    /// Whether the active session was captured in tag mode
-    /// (`backend.services.hunt_tracker.is_session_tag_mode`): the
+    /// Whether the active session was captured in tag mode: the
     /// per-session mode snapshotted at `start_session`, not the live
-    /// config. The snapshot is not cleared at `stop_session`, so the
-    /// active-session guard is what makes idle read `false` (a stopped
-    /// tag session would otherwise leave the snapshot at `"tag"`); the
-    /// manual-mob-suggestions handler only consults it while tracking,
-    /// gating the idle case on the live config instead.
+    /// config. Idle reads `false` structurally (the snapshot lives in
+    /// the `Active` payload); the manual-mob-suggestions handler only
+    /// consults it while tracking, gating the idle case on the live
+    /// config instead.
     pub fn is_session_tag_mode(&self) -> bool {
-        let state = self.lock_state();
-        state.session.is_some() && state.session_mob_tracking_mode == "tag"
+        self.lock_state()
+            .session
+            .active()
+            .is_some_and(|active| active.mode == TrackingMode::Tag)
     }
+
     fn subscribe_handlers(self: &Arc<Self>) {
         if self.subscribed.swap(true, Ordering::SeqCst) {
             return;

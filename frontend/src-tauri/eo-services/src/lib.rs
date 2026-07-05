@@ -33,6 +33,7 @@ pub mod mob_lookup_service;
 pub mod observability_config;
 pub mod ocr_engine;
 pub mod paths;
+pub mod ped;
 pub mod quests;
 pub mod repair_ocr;
 pub mod scan_completion;
