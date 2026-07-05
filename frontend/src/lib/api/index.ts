@@ -855,9 +855,9 @@ export async function saveOverlayPosition(x: number, y: number): Promise<void> {
 // the not-found `ApiError` (status 404), exactly as the gate-off HTTP route
 // answered, so the metrics page's existing 404 handling is unchanged.
 
-import type { MetricsSnapshot } from './commands.gen';
+import type { HistogramSnapshot, MetricsSnapshot } from './commands.gen';
 
-export type { MetricsSnapshot };
+export type { HistogramSnapshot, MetricsSnapshot };
 
 export async function getDevMetrics(): Promise<MetricsSnapshot> {
 	return commands.devMetrics();
