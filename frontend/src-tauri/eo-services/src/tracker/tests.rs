@@ -1,6 +1,10 @@
 use chrono::NaiveDateTime;
 use serde_json::Value;
 
+use crate::bus_events::BusEvent;
+use crate::event_bus::Topic;
+
+use super::actor::TrackerActor;
 use super::mob::MobSource;
 use super::time::{epoch_to_naive, epoch_to_parts, parse_bus_timestamp, python_total_seconds};
 use super::weapons::{value_truthy, DamageEnhancerState};
@@ -53,14 +57,29 @@ fn rig() -> Rig {
 
 impl Rig {
     fn tracker(&self, providers: Providers) -> Arc<HuntTracker> {
-        HuntTracker::new(
-            self.bus.clone(),
-            Db::from_pool(self.pool.clone()),
-            self.runtime.handle().clone(),
-            self.clock.clone(),
-            providers,
-        )
-        .unwrap()
+        self.runtime
+            .block_on(HuntTracker::new(
+                self.bus.clone(),
+                Db::from_pool(self.pool.clone()),
+                self.clock.clone(),
+                providers,
+            ))
+            .unwrap()
+    }
+
+    /// Drive one tracker command (or any future) to completion on the
+    /// rig's runtime.
+    fn wait<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+
+    /// Structural probe against the actor's owned state.
+    fn probe<R, F>(&self, tracker: &HuntTracker, probe: F) -> R
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut super::actor::TrackerActor) -> R + Send + 'static,
+    {
+        self.runtime.block_on(tracker.inspect(probe))
     }
 
     fn capture(&self) -> Arc<StdMutex<Vec<(Topic, Value)>>> {
@@ -129,10 +148,10 @@ fn session_lifecycle_round_trip() {
     let captured = rig.capture();
 
     assert!(!tracker.is_tracking());
-    assert!(tracker.stop_session().unwrap().is_none());
+    assert!(rig.wait(tracker.stop_session()).unwrap().is_none());
     assert!(!rig.bus.has_subscribers(Topic::Combat));
 
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
     assert!(tracker.is_tracking());
     assert!(rig.bus.has_subscribers(Topic::Combat));
     let start_ts = naive_to_epoch(naive("2026-01-01T00:00:00"));
@@ -207,7 +226,7 @@ fn session_lifecycle_round_trip() {
     });
 
     rig.clock.advance(10.0).unwrap();
-    let stopped = tracker.stop_session().unwrap().unwrap();
+    let stopped = rig.wait(tracker.stop_session()).unwrap().unwrap();
     assert_eq!(stopped.id, session.id);
     assert_eq!(stopped.kills.len(), 1);
     assert_eq!(stopped.dangling_cost, Ped(0.05));
@@ -294,9 +313,9 @@ fn start_while_tracking_stops_the_prior_session() {
     let tracker = rig.tracker(Providers::default());
     let captured = rig.capture();
 
-    let first = tracker.start_session().unwrap();
+    let first = rig.wait(tracker.start_session()).unwrap();
     rig.clock.advance(5.0).unwrap();
-    let second = tracker.start_session().unwrap();
+    let second = rig.wait(tracker.start_session()).unwrap();
     assert_ne!(first.id, second.id);
 
     assert_eq!(
@@ -422,7 +441,7 @@ fn stopping_a_session_relands_its_days_rollups() {
         equipment_cost_lookup: Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 }),
         ..Providers::default()
     });
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
             tool_name: "Rifle".into(),
@@ -472,7 +491,7 @@ fn stopping_a_session_relands_its_days_rollups() {
 
     // The stop transaction persists the dangling cost and relands
     // the session's days in the same commit.
-    let stopped = tracker.stop_session().unwrap().unwrap();
+    let stopped = rig.wait(tracker.stop_session()).unwrap().unwrap();
     assert_eq!(stopped.id, session.id);
     let post_stop: Option<f64> = rig.runtime.block_on(async {
         sqlx::query_scalar("SELECT dangling_cost FROM daily_rollups WHERE day = ?")
@@ -569,7 +588,7 @@ fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
 fn a_failed_stop_rolls_back_every_stop_write() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
     // A kill with convertible Shrapnel and a skill gain, so the stop
     // sequence writes the session close, a ledger gain, and a summary.
     rig.execute(
@@ -591,7 +610,7 @@ fn a_failed_stop_rolls_back_every_stop_write() {
     // Force the final statement of the stop sequence to fail.
     rig.execute("DROP TABLE session_summaries");
 
-    assert!(tracker.stop_session().is_err());
+    assert!(rig.wait(tracker.stop_session()).is_err());
 
     // The whole stop transaction rolled back: the session is still
     // active with no end stamp, and no ledger gain landed.
@@ -622,7 +641,7 @@ fn loot_creates_and_persists_kills_with_filtering() {
         equipment_cost_lookup: Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 }),
         ..Providers::default()
     });
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
             tool_name: "Rifle".into(),
@@ -765,7 +784,7 @@ fn loot_creates_and_persists_kills_with_filtering() {
 fn loot_dedup_inside_the_window_only() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
 
     let group = |ts: &str| {
         BusEvent::LootGroup(LootGroupPayload {
@@ -811,11 +830,11 @@ fn snapshot_aggregates_and_rounds_the_readout() {
         ..Providers::default()
     });
 
-    let idle = tracker.snapshot().unwrap();
+    let idle = rig.wait(tracker.snapshot()).unwrap();
     assert!(idle.active.is_none());
     assert_eq!(idle.current_tool, None);
 
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
             tool_name: "Rifle".into(),
@@ -906,7 +925,7 @@ fn snapshot_aggregates_and_rounds_the_readout() {
     });
 
     rig.clock.advance(60.0).unwrap();
-    let readout = tracker.snapshot().unwrap();
+    let readout = rig.wait(tracker.snapshot()).unwrap();
     assert_eq!(readout.current_tool.as_deref(), Some("Rifle"));
     let active = readout.active.unwrap();
     assert_eq!(active.session_id, session.id);
@@ -944,7 +963,7 @@ fn snapshot_aggregates_and_rounds_the_readout() {
     assert!(active.warnings.is_empty());
 
     // The session heal cost reached the session row on stop.
-    tracker.stop_session().unwrap();
+    rig.wait(tracker.stop_session()).unwrap();
     assert_eq!(
         rig.scalar_f64(
             "SELECT heal_cost FROM tracking_sessions WHERE id = ?",
@@ -961,7 +980,7 @@ fn unknown_tool_stats_merge_on_identification() {
         equipment_cost_lookup: Arc::new(|name| if name == "Pistol" { 0.02 } else { 0.0 }),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
 
     // Shots before any tool is known accumulate under "Unknown".
     rig.bus
@@ -1019,46 +1038,48 @@ fn unknown_tool_stats_merge_on_identification() {
 fn phased_tool_stats_split_on_cost_change() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
 
-    let mut state = tracker.state.lock().unwrap();
-    let accumulator = &mut state.session.active_mut().unwrap().accumulator;
-    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05)).shots_fired += 1;
-    // Within the tolerance: the same phase.
-    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05 + 1e-12)).shots_fired += 1;
-    // A real cost change: a second phase keyed `Rifle#2`.
-    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.04)).shots_fired += 1;
-    // A third: `Rifle#3`; a different tool keeps its bare key.
-    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.03)).shots_fired += 1;
-    HuntTracker::tool_stats_for_phase(accumulator, "Pistol", Ped(0.02)).shots_fired += 1;
-    // A cost difference of exactly the tolerance opens a phase:
-    // the comparison is strict (2e-9 - 1e-9 is exactly 1e-9).
-    HuntTracker::tool_stats_for_phase(accumulator, "Laser", Ped(1e-9)).shots_fired += 1;
-    HuntTracker::tool_stats_for_phase(accumulator, "Laser", Ped(2e-9)).shots_fired += 1;
+    rig.probe(&tracker, |actor| {
+        let accumulator = &mut actor.session.active_mut().unwrap().accumulator;
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05)).shots_fired += 1;
+        // Within the tolerance: the same phase.
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05 + 1e-12)).shots_fired +=
+            1;
+        // A real cost change: a second phase keyed `Rifle#2`.
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.04)).shots_fired += 1;
+        // A third: `Rifle#3`; a different tool keeps its bare key.
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.03)).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Pistol", Ped(0.02)).shots_fired += 1;
+        // A cost difference of exactly the tolerance opens a phase:
+        // the comparison is strict (2e-9 - 1e-9 is exactly 1e-9).
+        TrackerActor::tool_stats_for_phase(accumulator, "Laser", Ped(1e-9)).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Laser", Ped(2e-9)).shots_fired += 1;
 
-    let keys: Vec<(String, String, i64)> = accumulator
-        .tool_stats
-        .iter()
-        .map(|(key, stats)| (key.clone(), stats.tool_name.clone(), stats.shots_fired))
-        .collect();
-    assert_eq!(
-        keys,
-        vec![
-            ("Rifle".to_string(), "Rifle".to_string(), 2),
-            ("Rifle#2".to_string(), "Rifle".to_string(), 1),
-            ("Rifle#3".to_string(), "Rifle".to_string(), 1),
-            ("Pistol".to_string(), "Pistol".to_string(), 1),
-            ("Laser".to_string(), "Laser".to_string(), 1),
-            ("Laser#2".to_string(), "Laser".to_string(), 1),
-        ]
-    );
+        let keys: Vec<(String, String, i64)> = accumulator
+            .tool_stats
+            .iter()
+            .map(|(key, stats)| (key.clone(), stats.tool_name.clone(), stats.shots_fired))
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                ("Rifle".to_string(), "Rifle".to_string(), 2),
+                ("Rifle#2".to_string(), "Rifle".to_string(), 1),
+                ("Rifle#3".to_string(), "Rifle".to_string(), 1),
+                ("Pistol".to_string(), "Pistol".to_string(), 1),
+                ("Laser".to_string(), "Laser".to_string(), 1),
+                ("Laser#2".to_string(), "Laser".to_string(), 1),
+            ]
+        );
+    });
 }
 
 #[test]
 fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
 
     // No heal tool equipped: the warning lands once, no cost.
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
@@ -1069,15 +1090,14 @@ fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
         amount: 10.0,
         timestamp: "2026-01-01T00:00:09".into(),
     }));
-    {
-        let state = tracker.state.lock().unwrap();
-        let active = state.session.active().unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
         assert_eq!(
             active.warnings,
             vec!["Healing detected: no heal tool equipped via hotbar".to_string()]
         );
         assert_eq!(active.heal_cost, Ped::ZERO);
-    }
+    });
 
     rig.bus.publish(&BusEvent::ActiveHealToolChanged(
         ActiveHealToolChangedPayload {
@@ -1101,10 +1121,11 @@ fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
         amount: 10.0,
         timestamp: "2026-01-01T00:00:25".into(),
     }));
-    let state = tracker.state.lock().unwrap();
-    let active = state.session.active().unwrap();
-    assert_eq!(active.heal_cost, Ped(0.06));
-    assert_eq!(active.warnings.len(), 1, "the warning fires once");
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.06));
+        assert_eq!(active.warnings.len(), 1, "the warning fires once");
+    });
 }
 
 #[test]
@@ -1114,7 +1135,7 @@ fn globals_correlate_within_the_window() {
         player_name: "  Hero  ".to_string(),
         ..Providers::default()
     });
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
 
     let loot = |ts: &str, value: f64| {
         BusEvent::LootGroup(LootGroupPayload {
@@ -1197,7 +1218,7 @@ fn globals_correlate_within_the_window() {
 
     // An empty configured player name disables correlation.
     let unnamed = rig.tracker(Providers::default());
-    unnamed.start_session().unwrap();
+    rig.wait(unnamed.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::Global(GlobalPayload::GlobalKill {
             timestamp: "2026-01-01T00:00:20".into(),
@@ -1226,21 +1247,20 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
         }),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
             tool_name: "Rifle".into(),
             source: None,
         }));
-    {
-        let state = tracker.state.lock().unwrap();
-        let weapons = &state.session.active().unwrap().weapons;
+    rig.probe(&tracker, |actor| {
+        let weapons = &actor.session.active().unwrap().weapons;
         assert_eq!(weapons.active_key.as_deref(), Some("Rifle Prime"));
         assert_eq!(
             weapons.enhancer_states["Rifle Prime"].stacks,
             vec![100, 100]
         );
-    }
+    });
 
     // A non-damage enhancer never applies; a damage break naming
     // a different item never applies.
@@ -1262,13 +1282,12 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
             remaining: 150,
             shrapnel_ped: 0.0,
         }));
-    {
-        let state = tracker.state.lock().unwrap();
+    rig.probe(&tracker, |actor| {
         assert_eq!(
-            state.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
+            actor.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
             vec![100, 100]
         );
-    }
+    });
 
     // A matching break with a remaining count redistributes,
     // front-loading the remainder. The match admits the observed
@@ -1282,13 +1301,12 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
             remaining: 151,
             shrapnel_ped: 0.0,
         }));
-    {
-        let state = tracker.state.lock().unwrap();
+    rig.probe(&tracker, |actor| {
         assert_eq!(
-            state.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
+            actor.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
             vec![76, 75]
         );
-    }
+    });
     rig.bus
         .publish(&BusEvent::EnhancerBreak(EnhancerBreakPayload {
             kind: EnhancerBreakTag,
@@ -1298,11 +1316,12 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
             remaining: 150,
             shrapnel_ped: 0.0,
         }));
-    let state = tracker.state.lock().unwrap();
-    assert_eq!(
-        state.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
-        vec![75, 75]
-    );
+    rig.probe(&tracker, |actor| {
+        assert_eq!(
+            actor.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
+            vec![75, 75]
+        );
+    });
 }
 
 #[test]
@@ -1357,7 +1376,7 @@ fn trifecta_attribution_and_heal_filtering() {
         trifecta_resolver: Arc::new(move || Some(trifecta.as_object().unwrap().clone())),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
 
     // Hotbar-driven changes are ignored in trifecta mode.
     rig.bus
@@ -1373,12 +1392,11 @@ fn trifecta_attribution_and_heal_filtering() {
             source: None,
         },
     ));
-    {
-        let state = tracker.state.lock().unwrap();
-        assert_eq!(state.session.active().unwrap().weapons.hotbar_tool, None);
-        assert_eq!(state.heal_tool.name.as_deref(), Some("FAP"));
-        assert_eq!(state.heal_tool.cost_per_use, Ped(0.02));
-    }
+    rig.probe(&tracker, |actor| {
+        assert_eq!(actor.session.active().unwrap().weapons.hotbar_tool, None);
+        assert_eq!(actor.heal_tool.name.as_deref(), Some("FAP"));
+        assert_eq!(actor.heal_tool.cost_per_use, Ped(0.02));
+    });
 
     rig.bus
         .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
@@ -1407,9 +1425,8 @@ fn trifecta_attribution_and_heal_filtering() {
     rig.bus.publish(&BusEvent::Combat(CombatPayload::TargetJam {
         timestamp: "2026-01-01T00:00:02".into(),
     }));
-    {
-        let state = tracker.state.lock().unwrap();
-        let active = state.session.active().unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
         let stats: Vec<(String, i64, f64)> = active
             .accumulator
             .tool_stats
@@ -1428,7 +1445,7 @@ fn trifecta_attribution_and_heal_filtering() {
             active.warnings,
             vec!["Trifecta attribution: damage fell outside both weapon ranges".to_string()]
         );
-    }
+    });
 
     // The trifecta heal band filters mismatched heal amounts
     // entirely (no dedup stamp, no cost).
@@ -1436,18 +1453,18 @@ fn trifecta_attribution_and_heal_filtering() {
         amount: 50.0,
         timestamp: "2026-01-01T00:00:03".into(),
     }));
-    {
-        let state = tracker.state.lock().unwrap();
-        let active = state.session.active().unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
         assert_eq!(active.heal_cost, Ped::ZERO);
         assert_eq!(active.last_heal_time, None);
-    }
+    });
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 15.0,
         timestamp: "2026-01-01T00:00:04".into(),
     }));
-    let state = tracker.state.lock().unwrap();
-    assert_eq!(state.session.active().unwrap().heal_cost, Ped(0.02));
+    rig.probe(&tracker, |actor| {
+        assert_eq!(actor.session.active().unwrap().heal_cost, Ped(0.02));
+    });
 }
 
 #[test]
@@ -1457,11 +1474,11 @@ fn tag_and_manual_mob_rules() {
     // No session: every command refuses.
     let tracker = rig.tracker(Providers::default());
     assert_eq!(
-        tracker.set_manual_tag("Foo"),
+        rig.wait(tracker.set_manual_tag("Foo")),
         Err(TrackerCommandError::NoActiveSession)
     );
     assert_eq!(
-        tracker.set_manual_mob("Atrox", "Atrox", "Young"),
+        rig.wait(tracker.set_manual_mob("Atrox", "Atrox", "Young")),
         Err(TrackerCommandError::NoActiveSession)
     );
 
@@ -1472,7 +1489,7 @@ fn tag_and_manual_mob_rules() {
         mob_tracking_tag: Arc::new(|| "  Team Hunt \u{1c}".to_string()),
         ..Providers::default()
     });
-    let session = tagged.start_session().unwrap();
+    let session = rig.wait(tagged.start_session()).unwrap();
     rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
         kind: LootTag,
         timestamp: Some("2026-01-01T00:00:02".into()),
@@ -1490,23 +1507,25 @@ fn tag_and_manual_mob_rules() {
     });
     assert_eq!(mob, "Team Hunt");
     assert_eq!(
-        tagged.set_manual_mob("Atrox", "Atrox", "Young"),
+        rig.wait(tagged.set_manual_mob("Atrox", "Atrox", "Young")),
         Err(TrackerCommandError::TagModeLocksMob)
     );
     assert_eq!(
-        tagged.set_manual_tag("   "),
+        rig.wait(tagged.set_manual_tag("   ")),
         Err(TrackerCommandError::EmptyTag)
     );
-    tagged.set_manual_tag(" Solo Run ").unwrap();
-    {
-        let state = tagged.state.lock().unwrap();
-        let active = state.session.active().unwrap();
+    rig.wait(tagged.set_manual_tag(" Solo Run ")).unwrap();
+    rig.probe(&tagged, |actor| {
+        let active = actor.session.active().unwrap();
         assert_eq!(active.mob.name(), Some("Solo Run"));
         assert_eq!(active.tag, "Solo Run");
         assert_eq!(active.mob.source(), Some(MobSource::Tag));
-    }
-    assert_eq!(tagged.release_current_mob().as_deref(), Some("Solo Run"));
-    tagged.stop_session().unwrap();
+    });
+    assert_eq!(
+        rig.wait(tagged.release_current_mob()).as_deref(),
+        Some("Solo Run")
+    );
+    rig.wait(tagged.stop_session()).unwrap();
 
     // Mob mode: the manual provider stamps "<maturity> <species>"
     // at start; tag setting refuses; release clears.
@@ -1514,29 +1533,31 @@ fn tag_and_manual_mob_rules() {
         manual_mob: Arc::new(|| Some(("Atrox".to_string(), "Young".to_string()))),
         ..Providers::default()
     });
-    manual.start_session().unwrap();
+    rig.wait(manual.start_session()).unwrap();
     assert_eq!(
-        manual.set_manual_tag("Foo"),
+        rig.wait(manual.set_manual_tag("Foo")),
         Err(TrackerCommandError::NotTagMode)
     );
-    {
-        let state = manual.state.lock().unwrap();
-        let active = state.session.active().unwrap();
+    rig.probe(&manual, |actor| {
+        let active = actor.session.active().unwrap();
         assert_eq!(active.mob.name(), Some("Young Atrox"));
         assert_eq!(active.mob.species_maturity(), ("Atrox", "Young"));
         assert_eq!(active.mob.source(), Some(MobSource::Manual));
-    }
-    manual.set_manual_mob("Old Atrox", "Atrox", "Old").unwrap();
-    {
-        let state = manual.state.lock().unwrap();
+    });
+    rig.wait(manual.set_manual_mob("Old Atrox", "Atrox", "Old"))
+        .unwrap();
+    rig.probe(&manual, |actor| {
         assert_eq!(
-            state.session.active().unwrap().mob.name(),
+            actor.session.active().unwrap().mob.name(),
             Some("Old Atrox")
         );
-    }
-    assert_eq!(manual.release_current_mob().as_deref(), Some("Old Atrox"));
-    assert_eq!(manual.release_current_mob(), None);
-    manual.stop_session().unwrap();
+    });
+    assert_eq!(
+        rig.wait(manual.release_current_mob()).as_deref(),
+        Some("Old Atrox")
+    );
+    assert_eq!(rig.wait(manual.release_current_mob()), None);
+    rig.wait(manual.stop_session()).unwrap();
 
     // Manual entry disabled: the command refuses; a maturity-less
     // manual mob displays the bare species.
@@ -1544,22 +1565,21 @@ fn tag_and_manual_mob_rules() {
         manual_mob_entry_enabled: Arc::new(|| false),
         ..Providers::default()
     });
-    disabled.start_session().unwrap();
+    rig.wait(disabled.start_session()).unwrap();
     assert_eq!(
-        disabled.set_manual_mob("Atrox", "Atrox", ""),
+        rig.wait(disabled.set_manual_mob("Atrox", "Atrox", "")),
         Err(TrackerCommandError::ManualEntryDisabled)
     );
-    disabled.stop_session().unwrap();
+    rig.wait(disabled.stop_session()).unwrap();
     let bare = rig.tracker(Providers {
         manual_mob: Arc::new(|| Some(("Atrox".to_string(), String::new()))),
         ..Providers::default()
     });
-    bare.start_session().unwrap();
-    {
-        let state = bare.state.lock().unwrap();
-        assert_eq!(state.session.active().unwrap().mob.name(), Some("Atrox"));
-    }
-    bare.stop_session().unwrap();
+    rig.wait(bare.start_session()).unwrap();
+    rig.probe(&bare, |actor| {
+        assert_eq!(actor.session.active().unwrap().mob.name(), Some("Atrox"));
+    });
+    rig.wait(bare.stop_session()).unwrap();
 }
 
 #[test]
@@ -1576,10 +1596,10 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     });
 
     // Idle reload only refreshes the loot filter.
-    tracker.reload_config();
+    rig.wait(tracker.reload_config());
     assert!(!tracker.is_tracking());
 
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
     rig.bus.publish(&BusEvent::ActiveHealToolChanged(
         ActiveHealToolChangedPayload {
             tool_name: "FAP".into(),
@@ -1588,32 +1608,31 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
             source: None,
         },
     ));
-    {
-        let state = tracker.state.lock().unwrap();
+    rig.probe(&tracker, |actor| {
         assert_eq!(
-            state.session.active().unwrap().mob.name(),
+            actor.session.active().unwrap().mob.name(),
             Some("Young Atrox")
         );
-        assert_eq!(state.heal_tool.cost_per_use, Ped(0.03));
-    }
+        assert_eq!(actor.heal_tool.cost_per_use, Ped(0.03));
+    });
 
     // The provider switching mobs re-stamps; switching to None
     // clears a manual stamp; the non-trifecta branch resets the
     // heal scalars.
     *scripted_mob.lock().unwrap() = Some(("Feffoid".to_string(), String::new()));
-    tracker.reload_config();
-    {
-        let state = tracker.state.lock().unwrap();
-        assert_eq!(state.session.active().unwrap().mob.name(), Some("Feffoid"));
-        assert_eq!(state.heal_tool.cost_per_use, Ped::ZERO);
-        assert_eq!(state.heal_tool.reload_seconds, 2.5);
-    }
+    rig.wait(tracker.reload_config());
+    rig.probe(&tracker, |actor| {
+        assert_eq!(actor.session.active().unwrap().mob.name(), Some("Feffoid"));
+        assert_eq!(actor.heal_tool.cost_per_use, Ped::ZERO);
+        assert_eq!(actor.heal_tool.reload_seconds, 2.5);
+    });
     *scripted_mob.lock().unwrap() = None;
-    tracker.reload_config();
-    let state = tracker.state.lock().unwrap();
-    let active = state.session.active().unwrap();
-    assert_eq!(active.mob.name(), None);
-    assert_eq!(active.mob.source(), None);
+    rig.wait(tracker.reload_config());
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.mob.name(), None);
+        assert_eq!(active.mob.source(), None);
+    });
 }
 
 #[test]
@@ -1621,7 +1640,7 @@ fn tick_flushed_coalesces_dirty_mutations() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let captured = rig.capture();
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
 
     // A clean tick wakes nothing.
     rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
@@ -1722,7 +1741,7 @@ fn tool_change_emits_a_direct_overlay_nudge() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let captured = rig.capture();
-    let _session = tracker.start_session().unwrap();
+    let _session = rig.wait(tracker.start_session()).unwrap();
     assert_eq!(updated_events(&captured).len(), 1, "only the start event");
 
     // A hotbar weapon-switch emits one re-hydrate nudge immediately,
@@ -1772,7 +1791,7 @@ fn session_event_wire_shape_matches_the_python_model_dump() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let captured = rig.capture();
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
 
     let events = updated_events(&captured);
     let start_ts = naive_to_epoch(naive("2026-01-01T00:00:00"));
@@ -1843,7 +1862,7 @@ fn helper_pins() {
 fn snapshot_prices_enhancer_cost_and_skips_costless_multipliers() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
 
     let loot = |ts: &str, name: &str, value: f64| {
         BusEvent::LootGroup(LootGroupPayload {
@@ -1859,7 +1878,7 @@ fn snapshot_prices_enhancer_cost_and_skips_costless_multipliers() {
         })
     };
     rig.bus.publish(&loot("2026-01-01T00:00:02", "Hide", 2.0));
-    let readout = tracker.snapshot().unwrap();
+    let readout = rig.wait(tracker.snapshot()).unwrap();
     let active = readout.active.unwrap();
     // A costless kill: no rate, no multipliers (a >= admission
     // would divide by zero into infinities).
@@ -1872,22 +1891,24 @@ fn snapshot_prices_enhancer_cost_and_skips_costless_multipliers() {
 
     // Enhancer cost flows from the accumulator into the kill and
     // the live readout arithmetic.
-    tracker
-        .lock_state()
-        .session
-        .active_mut()
-        .unwrap()
-        .accumulator
-        .enhancer_cost = Ped(0.25);
+    rig.probe(&tracker, |actor| {
+        actor
+            .session
+            .active_mut()
+            .unwrap()
+            .accumulator
+            .enhancer_cost = Ped(0.25);
+    });
     rig.bus.publish(&loot("2026-01-01T00:00:05", "Mud", 1.0));
-    tracker
-        .lock_state()
-        .session
-        .active_mut()
-        .unwrap()
-        .accumulator
-        .enhancer_cost = Ped(0.5);
-    let active = tracker.snapshot().unwrap().active.unwrap();
+    rig.probe(&tracker, |actor| {
+        actor
+            .session
+            .active_mut()
+            .unwrap()
+            .accumulator
+            .enhancer_cost = Ped(0.5);
+    });
+    let active = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
     assert_eq!(active.cost, 0.75);
     assert_eq!(active.returns, 3.0);
     assert_eq!(active.net, 2.25);
@@ -1895,7 +1916,7 @@ fn snapshot_prices_enhancer_cost_and_skips_costless_multipliers() {
     assert_eq!(active.cumulative_net_history, vec![2.0, 2.75]);
 
     // The unresolved enhancer cost is the dangling remainder.
-    let stopped = tracker.stop_session().unwrap().unwrap();
+    let stopped = rig.wait(tracker.stop_session()).unwrap().unwrap();
     assert_eq!(stopped.dangling_cost, Ped(0.5));
 }
 
@@ -1916,7 +1937,7 @@ fn inferred_cost_outranks_the_equipment_lookup() {
         equipment_cost_lookup: Arc::new(|_| 0.9),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
 
     rig.bus
         .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
@@ -1933,24 +1954,25 @@ fn inferred_cost_outranks_the_equipment_lookup() {
     rig.bus.publish(&BusEvent::Combat(CombatPayload::TargetJam {
         timestamp: "2026-01-01T00:00:02".into(),
     }));
-    let state = tracker.lock_state();
-    let stats: Vec<(String, f64, i64)> = state
-        .session
-        .active()
-        .unwrap()
-        .accumulator
-        .tool_stats
-        .iter()
-        .map(|(key, stats)| (key.clone(), stats.cost_per_shot.value(), stats.shots_fired))
-        .collect();
-    assert_eq!(
-        stats,
-        vec![
-            ("Pistol".to_string(), 0.05, 1),
-            ("Cannon".to_string(), 0.2, 1),
-            ("Cannon#2".to_string(), 0.9, 1),
-        ]
-    );
+    rig.probe(&tracker, |actor| {
+        let stats: Vec<(String, f64, i64)> = actor
+            .session
+            .active()
+            .unwrap()
+            .accumulator
+            .tool_stats
+            .iter()
+            .map(|(key, stats)| (key.clone(), stats.cost_per_shot.value(), stats.shots_fired))
+            .collect();
+        assert_eq!(
+            stats,
+            vec![
+                ("Pistol".to_string(), 0.05, 1),
+                ("Cannon".to_string(), 0.2, 1),
+                ("Cannon#2".to_string(), 0.9, 1),
+            ]
+        );
+    });
 }
 
 #[test]
@@ -1960,7 +1982,7 @@ fn the_unknown_entry_backfills_its_cost_once() {
         equipment_cost_lookup: Arc::new(|_| 0.7),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
             amount: 9.0,
@@ -2003,7 +2025,7 @@ fn the_unknown_entry_backfills_its_cost_once() {
 fn a_costless_tool_merges_unknown_into_its_bare_entry() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
             amount: 9.0,
@@ -2057,7 +2079,7 @@ fn break_matching_admits_every_containment_direction() {
         }),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
             tool_name: "MyGun".into(),
@@ -2075,15 +2097,11 @@ fn break_matching_admits_every_containment_direction() {
         })
     };
     let stacks = |tracker: &HuntTracker| {
-        tracker
-            .lock_state()
-            .session
-            .active()
-            .unwrap()
-            .weapons
-            .enhancer_states["Blast Master"]
-            .stacks
-            .clone()
+        rig.probe(tracker, |actor| {
+            actor.session.active().unwrap().weapons.enhancer_states["Blast Master"]
+                .stacks
+                .clone()
+        })
     };
     // The canonical name contains the item; the item contains the
     // canonical name; the observed hotbar name contains the item;
@@ -2102,9 +2120,10 @@ fn break_matching_admits_every_containment_direction() {
 
     // Stopping the session drops the whole ActiveSession, weapon
     // runtime included: the clear is structural under the typestate.
-    tracker.stop_session().unwrap();
-    let state = tracker.lock_state();
-    assert!(state.session.active().is_none());
+    rig.wait(tracker.stop_session()).unwrap();
+    rig.probe(&tracker, |actor| {
+        assert!(actor.session.active().is_none());
+    });
 }
 
 #[test]
@@ -2141,12 +2160,13 @@ fn reload_config_in_tag_mode_never_consults_the_manual_provider() {
         manual_mob: Arc::new(|| Some(("Atrox".to_string(), "Young".to_string()))),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
-    tracker.reload_config();
-    let state = tracker.lock_state();
-    let active = state.session.active().unwrap();
-    assert_eq!(active.mob.name(), Some("Team"));
-    assert_eq!(active.mob.source(), Some(MobSource::Tag));
+    rig.wait(tracker.start_session()).unwrap();
+    rig.wait(tracker.reload_config());
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.mob.name(), Some("Team"));
+        assert_eq!(active.mob.source(), Some(MobSource::Tag));
+    });
 }
 
 #[test]
@@ -2165,12 +2185,12 @@ fn is_session_tag_mode_reflects_the_session_capture() {
         !tagged.is_session_tag_mode(),
         "idle (no session) is never tag mode"
     );
-    tagged.start_session().unwrap();
+    tag_rig.wait(tagged.start_session()).unwrap();
     assert!(
         tagged.is_session_tag_mode(),
         "a session captured in tag mode reports tag mode"
     );
-    tagged.stop_session().unwrap();
+    tag_rig.wait(tagged.stop_session()).unwrap();
     assert!(
         !tagged.is_session_tag_mode(),
         "idle after stopping a tag session is never tag mode"
@@ -2181,12 +2201,12 @@ fn is_session_tag_mode_reflects_the_session_capture() {
         mob_tracking_mode: Arc::new(|| "mob".to_string()),
         ..Providers::default()
     });
-    mobbed.start_session().unwrap();
+    mob_rig.wait(mobbed.start_session()).unwrap();
     assert!(
         !mobbed.is_session_tag_mode(),
         "a session captured in mob mode is not tag mode"
     );
-    mobbed.stop_session().unwrap();
+    mob_rig.wait(mobbed.stop_session()).unwrap();
 }
 
 #[test]
@@ -2198,14 +2218,13 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
         manual_mob_entry_enabled: Arc::new(|| false),
         ..Providers::default()
     });
-    mob_mode.start_session().unwrap();
-    {
-        let state = mob_mode.lock_state();
-        let active = state.session.active().unwrap();
+    rig.wait(mob_mode.start_session()).unwrap();
+    rig.probe(&mob_mode, |actor| {
+        let active = actor.session.active().unwrap();
         assert_eq!(active.mob.name(), None);
         assert_eq!(active.mob.source(), None);
-    }
-    mob_mode.stop_session().unwrap();
+    });
+    rig.wait(mob_mode.stop_session()).unwrap();
 
     // Tag mode with an all-blank tag has nothing to stamp.
     let blank = rig.tracker(Providers {
@@ -2213,11 +2232,12 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
         mob_tracking_tag: Arc::new(|| "   ".to_string()),
         ..Providers::default()
     });
-    blank.start_session().unwrap();
-    let state = blank.lock_state();
-    let active = state.session.active().unwrap();
-    assert_eq!(active.mob.name(), None);
-    assert_eq!(active.mob.source(), None);
+    rig.wait(blank.start_session()).unwrap();
+    rig.probe(&blank, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.mob.name(), None);
+        assert_eq!(active.mob.source(), None);
+    });
 }
 
 #[test]
@@ -2227,7 +2247,7 @@ fn the_blacklist_provider_refreshes_at_session_start() {
         loot_filter_blacklist_provider: Some(Arc::new(|| vec!["Mud".to_string()])),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
     rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
         kind: LootTag,
         timestamp: Some("2026-01-01T00:00:02".into()),
@@ -2350,20 +2370,21 @@ fn a_zero_priced_weapon_state_still_prefers_the_inferred_cost() {
         equipment_cost_lookup: Arc::new(|_| 0.3),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
+    rig.wait(tracker.start_session()).unwrap();
     rig.bus
         .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
             amount: 7.0,
             timestamp: "2026-01-01T00:00:01".into(),
         }));
-    let state = tracker.lock_state();
-    let (key, stats) = &state.session.active().unwrap().accumulator.tool_stats[0];
-    assert_eq!(key, "Pistol");
-    assert_eq!(
-        stats.cost_per_shot,
-        Ped(0.05),
-        "the attribution's cost backfills ahead of the equipment lookup"
-    );
+    rig.probe(&tracker, |actor| {
+        let (key, stats) = &actor.session.active().unwrap().accumulator.tool_stats[0];
+        assert_eq!(key, "Pistol");
+        assert_eq!(
+            stats.cost_per_shot,
+            Ped(0.05),
+            "the attribution's cost backfills ahead of the equipment lookup"
+        );
+    });
 }
 
 #[test]
@@ -2373,7 +2394,7 @@ fn a_global_at_the_exact_window_bound_is_not_correlated() {
         player_name: "Hero".to_string(),
         ..Providers::default()
     });
-    let session = tracker.start_session().unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
     rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
         kind: LootTag,
         timestamp: Some("2026-01-01T00:00:20".into()),
@@ -2420,16 +2441,19 @@ fn reload_clears_a_manual_stamp_once_entry_disables() {
         manual_mob: Arc::new(|| Some(("Atrox".to_string(), "Young".to_string()))),
         ..Providers::default()
     });
-    tracker.start_session().unwrap();
-    assert_eq!(
-        tracker.lock_state().session.active().unwrap().mob.name(),
-        Some("Young Atrox")
-    );
+    rig.wait(tracker.start_session()).unwrap();
+    rig.probe(&tracker, |actor| {
+        assert_eq!(
+            actor.session.active().unwrap().mob.name(),
+            Some("Young Atrox")
+        );
+    });
 
     *enabled.lock().unwrap() = false;
-    tracker.reload_config();
-    let state = tracker.lock_state();
-    let active = state.session.active().unwrap();
-    assert_eq!(active.mob.name(), None);
-    assert_eq!(active.mob.source(), None);
+    rig.wait(tracker.reload_config());
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.mob.name(), None);
+        assert_eq!(active.mob.source(), None);
+    });
 }

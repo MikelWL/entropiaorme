@@ -8,10 +8,12 @@ use crate::bus_events::{BusEvent, CombatPayload};
 use crate::ped::Ped;
 use crate::tracking_models::ToolStats;
 
+use super::actor::TrackerActor;
+use super::providers::Providers;
 use super::session::ActiveSession;
 use super::time::{naive_to_epoch, parse_timestamp_str, python_total_seconds};
 use super::weapons::break_matches_active_weapon;
-use super::{HealTool, HuntTracker};
+use super::HealTool;
 
 /// Combat stats since the last kill (or session start).
 #[derive(Default)]
@@ -43,7 +45,7 @@ impl Accumulator {
     }
 }
 
-impl HuntTracker {
+impl TrackerActor {
     /// The accumulator's stats entry for this tool at this cost: an
     /// existing phase within the cost tolerance, or a new phase keyed
     /// `name`, then `name#2`...
@@ -77,7 +79,7 @@ impl HuntTracker {
     /// Accumulate one player attack, including jam/dodge/evade
     /// countered shots.
     fn record_offensive_shot(
-        &self,
+        providers: &Providers,
         active: &mut ActiveSession,
         amount: f64,
         is_crit: bool,
@@ -93,7 +95,7 @@ impl HuntTracker {
 
         let mut inferred_cost = Ped::ZERO;
         let mut tool: Option<String> = None;
-        if (self.providers.weapon_attribution_trifecta)() {
+        if (providers.weapon_attribution_trifecta)() {
             if allow_damage_inference {
                 let attribution = active.weapons.attributor.match_damage(amount, is_crit);
                 if attribution.is_none() && !active.trifecta_unmatched_warning_emitted {
@@ -126,7 +128,8 @@ impl HuntTracker {
             .to_string();
         let mut current_cost = Ped::ZERO;
         if let Some(tool) = &tool {
-            current_cost = self.current_cost_for_tool(&mut active.weapons, tool, inferred_cost);
+            current_cost =
+                Self::current_cost_for_tool(providers, &mut active.weapons, tool, inferred_cost);
         }
 
         let stats: &mut ToolStats = if let (Some(tool), true) = (&tool, current_cost.is_positive())
@@ -155,7 +158,7 @@ impl HuntTracker {
                 let fallback_cost = if inferred_cost.is_positive() {
                     inferred_cost
                 } else {
-                    Ped((self.providers.equipment_cost_lookup)(&tool_key))
+                    Ped((providers.equipment_cost_lookup)(&tool_key))
                 };
                 if fallback_cost.is_positive() {
                     entry.cost_per_shot = fallback_cost;
@@ -176,13 +179,17 @@ impl HuntTracker {
     /// mutates owned in-memory state, so it runs under the guard;
     /// there is no DB write or publish. Defensive incoming events
     /// stay out of the kills model.
-    pub(super) fn on_combat(&self, event: &BusEvent) {
+    pub(super) fn on_combat(&mut self, event: &BusEvent) {
         let BusEvent::Combat(payload) = event else {
             return;
         };
-        let mut state = self.lock_state();
-        let state = &mut *state;
-        let Some(active) = state.session.active_mut() else {
+        let Self {
+            session,
+            heal_tool,
+            providers,
+            ..
+        } = self;
+        let Some(active) = session.active_mut() else {
             return;
         };
 
@@ -194,17 +201,17 @@ impl HuntTracker {
 
         match payload {
             CombatPayload::DamageDealt { amount, .. } => {
-                self.record_offensive_shot(active, *amount, false, true);
+                Self::record_offensive_shot(providers, active, *amount, false, true);
                 mutated = true;
             }
             CombatPayload::CriticalHit { amount, .. } => {
-                self.record_offensive_shot(active, *amount, true, true);
+                Self::record_offensive_shot(providers, active, *amount, true, true);
                 mutated = true;
             }
             CombatPayload::TargetDodge { .. }
             | CombatPayload::TargetEvade { .. }
             | CombatPayload::TargetJam { .. } => {
-                self.record_offensive_shot(active, 0.0, false, false);
+                Self::record_offensive_shot(providers, active, 0.0, false, false);
                 mutated = true;
             }
             CombatPayload::DamageReceived { amount, .. } => {
@@ -219,23 +226,23 @@ impl HuntTracker {
                     let is_new_heal_activation = match active.last_heal_time {
                         None => true,
                         Some(last) => {
-                            python_total_seconds(timestamp - last) >= state.heal_tool.reload_seconds
+                            python_total_seconds(timestamp - last) >= heal_tool.reload_seconds
                         }
                     };
                     if is_new_heal_activation {
-                        if (self.providers.weapon_attribution_trifecta)()
-                            && !heal_amount_matches_trifecta_tool(&state.heal_tool, *amount)
+                        if (providers.weapon_attribution_trifecta)()
+                            && !heal_amount_matches_trifecta_tool(heal_tool, *amount)
                         {
                             return;
                         }
-                        if state.heal_tool.name.is_none() && !active.heal_warning_emitted {
+                        if heal_tool.name.is_none() && !active.heal_warning_emitted {
                             active.warnings.push(
                                 "Healing detected: no heal tool equipped via hotbar".to_string(),
                             );
                             active.heal_warning_emitted = true;
                         }
-                        if state.heal_tool.cost_per_use.is_positive() {
-                            active.heal_cost += state.heal_tool.cost_per_use;
+                        if heal_tool.cost_per_use.is_positive() {
+                            active.heal_cost += heal_tool.cost_per_use;
                         }
                         active.last_heal_time = Some(timestamp);
                         mutated = true;
@@ -258,19 +265,21 @@ impl HuntTracker {
 
     /// Handle hotbar-driven weapon tool change: merges any 'Unknown'
     /// tool stats into the real tool when first detected.
-    pub(super) fn on_tool_changed(&self, event: &BusEvent) {
+    pub(super) fn on_tool_changed(&mut self, event: &BusEvent) {
         let BusEvent::ActiveToolChanged(payload) = event else {
             return;
         };
         let nudge_session_id = {
-            let mut state = self.lock_state();
-            if (self.providers.weapon_attribution_trifecta)() {
+            let Self {
+                session, providers, ..
+            } = &mut *self;
+            if (providers.weapon_attribution_trifecta)() {
                 return;
             }
             if payload.tool_name.is_empty() {
                 return;
             }
-            let Some(active) = state.session.active_mut() else {
+            let Some(active) = session.active_mut() else {
                 return;
             };
             let tool_name = payload.tool_name.clone();
@@ -278,7 +287,7 @@ impl HuntTracker {
             active.weapons.hotbar_tool = Some(tool_name.clone());
 
             let current_cost =
-                self.current_cost_for_tool(&mut active.weapons, &tool_name, Ped::ZERO);
+                Self::current_cost_for_tool(providers, &mut active.weapons, &tool_name, Ped::ZERO);
 
             // Merge "Unknown" stats into the real tool on first
             // identification.
@@ -345,7 +354,7 @@ impl HuntTracker {
     /// Handle hotbar-driven heal tool equip. The equipped tool is
     /// hotbar-equipment state (it outlives the session); the
     /// re-hydrate nudge fires only against an active session.
-    pub(super) fn on_heal_tool_changed(&self, event: &BusEvent) {
+    pub(super) fn on_heal_tool_changed(&mut self, event: &BusEvent) {
         let BusEvent::ActiveHealToolChanged(payload) = event else {
             return;
         };
@@ -355,16 +364,15 @@ impl HuntTracker {
         let name = Some(payload.tool_name.clone());
 
         let nudge_session_id = {
-            let mut state = self.lock_state();
-            let heal_tool_changed = state.heal_tool.name != name;
-            state.heal_tool = HealTool {
+            let heal_tool_changed = self.heal_tool.name != name;
+            self.heal_tool = HealTool {
                 name,
                 cost_per_use: Ped(payload.cost_per_use_ped),
                 reload_seconds: payload.reload_seconds,
                 amount_min: None,
                 amount_max: None,
             };
-            let Some(active) = state.session.active_mut() else {
+            let Some(active) = self.session.active_mut() else {
                 return;
             };
             active.heal_warning_emitted = false;
@@ -389,12 +397,11 @@ impl HuntTracker {
 
     /// Handle an enhancer break event: update enhancer state for
     /// future shots. There is no DB write or publish.
-    pub(super) fn on_enhancer_break(&self, event: &BusEvent) {
+    pub(super) fn on_enhancer_break(&mut self, event: &BusEvent) {
         let BusEvent::EnhancerBreak(payload) = event else {
             return;
         };
-        let mut state = self.lock_state();
-        let Some(active) = state.session.active_mut() else {
+        let Some(active) = self.session.active_mut() else {
             return;
         };
 

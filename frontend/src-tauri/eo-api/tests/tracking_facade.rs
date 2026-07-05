@@ -37,7 +37,7 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
     }
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
-    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
     Api::new(
         db,
         game_data,
@@ -294,7 +294,7 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
     let verify = db.clone();
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
-    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
     let api = Api::new(
         db,
         game_data,

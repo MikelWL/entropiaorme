@@ -4,7 +4,8 @@
 
 use crate::mob_lookup_service::python_whitespace;
 
-use super::{HuntTracker, TrackerCommandError};
+use super::actor::TrackerActor;
+use super::TrackerCommandError;
 
 /// The input mode a session is captured under, snapshotted at session
 /// start from the live config. The configured value is free text at
@@ -118,12 +119,11 @@ impl MobSelection {
     }
 }
 
-impl HuntTracker {
+impl TrackerActor {
     /// Immediately set the active free-text tag for tag-mode kill
     /// stamping.
-    pub fn set_manual_tag(&self, tag: &str) -> Result<(), TrackerCommandError> {
-        let mut state = self.lock_state();
-        let Some(active) = state.session.active_mut() else {
+    pub(super) fn set_manual_tag(&mut self, tag: &str) -> Result<(), TrackerCommandError> {
+        let Some(active) = self.session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
         if active.mode != TrackingMode::Tag {
@@ -139,23 +139,24 @@ impl HuntTracker {
     }
 
     /// Immediately set the active mob for manual kill stamping.
-    pub fn set_manual_mob(
-        &self,
+    pub(super) fn set_manual_mob(
+        &mut self,
         mob_name: &str,
         species: &str,
         maturity: &str,
     ) -> Result<(), TrackerCommandError> {
-        let mut state = self.lock_state();
-        let Some(active) = state.session.active_mut() else {
+        let Self {
+            session, providers, ..
+        } = self;
+        let Some(active) = session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
         if active.mode == TrackingMode::Tag {
             return Err(TrackerCommandError::TagModeLocksMob);
         }
-        // The provider may read the database or config; the lock order
-        // allows a provider read under the tracker lock, exactly as the
-        // session-start path relies on.
-        if !(self.providers.manual_mob_entry_enabled)() {
+        // The provider may read the database or config; the actor
+        // simply runs it inline.
+        if !(providers.manual_mob_entry_enabled)() {
             return Err(TrackerCommandError::ManualEntryDisabled);
         }
         active.mob = MobSelection::Manual {
@@ -168,9 +169,8 @@ impl HuntTracker {
 
     /// Clear the current mob selection, returning the released name.
     /// Idle is a no-op (idle carries no selection to release).
-    pub fn release_current_mob(&self) -> Option<String> {
-        let mut state = self.lock_state();
-        let active = state.session.active_mut()?;
+    pub(super) fn release_current_mob(&mut self) -> Option<String> {
+        let active = self.session.active_mut()?;
         let released = active.mob.name().map(str::to_string);
         active.mob = MobSelection::Unset;
         released

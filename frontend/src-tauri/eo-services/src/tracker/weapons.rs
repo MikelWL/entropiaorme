@@ -11,8 +11,10 @@ use crate::cost_engine::cost_per_shot_from_props;
 use crate::ped::Ped;
 use crate::tool_inference::DamageAttributor;
 
+use super::actor::TrackerActor;
+use super::providers::Providers;
 use super::session::ActiveSession;
-use super::{HealTool, HuntTracker};
+use super::HealTool;
 
 /// The session-scoped weapon runtime: which weapon is live (hotbar or
 /// trifecta-attributed), its enhancer stacks, and the memoised
@@ -134,7 +136,7 @@ impl DamageEnhancerState {
     }
 }
 
-impl HuntTracker {
+impl TrackerActor {
     /// Load damage signatures + heal tool from the resolved trifecta
     /// configuration. The weapon fields read with inert defaults
     /// where the original indexes (the resolver supplies complete
@@ -214,7 +216,7 @@ impl HuntTracker {
     /// Resolve a tool name to its canonical profile: the trifecta
     /// table first, then the memoised equipment-library lookup.
     fn match_weapon_profile(
-        &self,
+        providers: &Providers,
         weapons: &mut WeaponRuntime,
         tool_name: &str,
     ) -> Option<(String, Arc<Value>)> {
@@ -228,8 +230,8 @@ impl HuntTracker {
             return cached.clone();
         }
 
-        let resolved = (self.providers.equipment_profile_lookup)(tool_name)
-            .filter(|profile| !profile.is_empty());
+        let resolved =
+            (providers.equipment_profile_lookup)(tool_name).filter(|profile| !profile.is_empty());
         let Some(profile) = resolved else {
             weapons.profile_cache.insert(tool_name.to_string(), None);
             return None;
@@ -253,11 +255,13 @@ impl HuntTracker {
     /// Resolve (creating if first seen) the enhancer state for a
     /// matched weapon, stamping the active-weapon markers either way.
     pub(super) fn ensure_weapon_state<'a>(
-        &self,
+        providers: &Providers,
         weapons: &'a mut WeaponRuntime,
         tool_name: &str,
     ) -> Option<&'a mut DamageEnhancerState> {
-        let Some((canonical_name, profile)) = self.match_weapon_profile(weapons, tool_name) else {
+        let Some((canonical_name, profile)) =
+            Self::match_weapon_profile(providers, weapons, tool_name)
+        else {
             weapons.active_key = None;
             weapons.observed_name = Some(tool_name.to_string());
             return None;
@@ -272,12 +276,12 @@ impl HuntTracker {
     }
 
     pub(super) fn current_cost_for_tool(
-        &self,
+        providers: &Providers,
         weapons: &mut WeaponRuntime,
         tool_name: &str,
         inferred_cost: Ped,
     ) -> Ped {
-        if let Some(weapon) = self.ensure_weapon_state(weapons, tool_name) {
+        if let Some(weapon) = Self::ensure_weapon_state(providers, weapons, tool_name) {
             return weapon.current_cost();
         }
         if inferred_cost.is_positive() {
@@ -286,7 +290,7 @@ impl HuntTracker {
         if let Some(cached) = weapons.static_cost_cache.get(tool_name) {
             return *cached;
         }
-        let cost = Ped((self.providers.equipment_cost_lookup)(tool_name));
+        let cost = Ped((providers.equipment_cost_lookup)(tool_name));
         weapons
             .static_cost_cache
             .insert(tool_name.to_string(), cost);

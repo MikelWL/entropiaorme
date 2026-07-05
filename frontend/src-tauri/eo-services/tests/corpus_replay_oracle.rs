@@ -207,18 +207,20 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
     let recorder = FingerprintRecorder::new();
     recorder.install(&bus);
 
-    let tracker = HuntTracker::new(
-        bus.clone(),
-        Db::from_pool(pool.clone()),
-        runtime.handle().clone(),
-        clock.clone(),
-        Providers {
-            player_name: player_name.to_string(),
-            ..Providers::default()
-        },
-    )
-    .expect("tracker");
-    tracker.start_session().expect("session start");
+    let tracker = runtime
+        .block_on(HuntTracker::new(
+            bus.clone(),
+            Db::from_pool(pool.clone()),
+            clock.clone(),
+            Providers {
+                player_name: player_name.to_string(),
+                ..Providers::default()
+            },
+        ))
+        .expect("tracker");
+    runtime
+        .block_on(tracker.start_session())
+        .expect("session start");
 
     // Stream the replay one tick per flush, then drain on the line
     // count (the watcher counts every line it has read whole).
@@ -238,7 +240,9 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
         .wait_until_drained(appended, Duration::from_secs(10))
         .expect("watcher drains the scenario");
     clock.advance(plan.step_seconds).expect("plan step");
-    tracker.stop_session().expect("session stop");
+    runtime
+        .block_on(tracker.stop_session())
+        .expect("session stop");
     watcher.stop();
 
     // Fingerprint first, snapshot second, one normaliser: the symbol
