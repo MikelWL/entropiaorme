@@ -32,10 +32,11 @@ const FORWARDED_TOPICS = ['tracking.session.updated', 'scan.status.changed'] as 
 
 /**
  * Substrate ready signal. The shell composes the native service spine at startup
- * and publishes the backend substrate only once it is installed (the `api_request`
- * command errors until then); the native producer's events begin flowing from that
- * point. The shell emits this once composition completes so the relay can
- * re-hydrate every window onto the freshly-live native state.
+ * and publishes the typed-command facade only once it is installed (the typed
+ * commands answer their not-ready contract until then); the native producer's
+ * events begin flowing from that point. The shell emits this once composition
+ * completes so the relay can re-hydrate every window onto the freshly-live
+ * native state.
  */
 const SUBSTRATE_NATIVE_INSTALLED_EVENT = 'substrate:native-installed';
 

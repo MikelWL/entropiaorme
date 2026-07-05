@@ -339,7 +339,10 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
         .await
         .unwrap();
     for (label, query) in [
-        ("kills", "SELECT COUNT(*) FROM kills WHERE session_id='ended'"),
+        (
+            "kills",
+            "SELECT COUNT(*) FROM kills WHERE session_id='ended'",
+        ),
         (
             "skill_gains",
             "SELECT COUNT(*) FROM skill_gains WHERE session_id='ended'",

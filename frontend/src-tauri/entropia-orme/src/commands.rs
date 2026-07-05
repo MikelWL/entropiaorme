@@ -6,9 +6,8 @@
 //! command manifest records and the generated TypeScript sends; the
 //! parity test below holds the registered set and the manifest
 //! together. Until composition publishes the facade the commands answer
-//! the typed unavailable error, the same not-ready contract the
-//! `api_request` dispatch has always had (the frontend re-drives its
-//! reads on the substrate-installed event).
+//! the typed unavailable error (the frontend re-drives its reads on the
+//! substrate-installed event).
 
 use std::sync::Arc;
 
@@ -59,10 +58,9 @@ pub(crate) fn facade(app: &tauri::AppHandle) -> Result<Arc<eo_api::Api>, ApiErro
 }
 
 /// The analytics fixture-backed read for the native-shell e2e build: the
-/// live analytics surface migrated off `api_request` onto typed commands,
-/// so the e2e build serves the same committed analytics fixture through
-/// these commands (deserialised into their DTO), keeping the visual
-/// baselines stable.
+/// live analytics surface is served by typed commands, so the e2e build
+/// serves the same committed analytics fixture through these commands
+/// (deserialised into their DTO), keeping the visual baselines stable.
 #[cfg(feature = "e2e-stub")]
 fn e2e_analytics<T: serde::de::DeserializeOwned>(key: &str) -> Result<T, ApiError> {
     serde_json::from_value(crate::e2e_stub::analytics_fixture(key))
