@@ -161,16 +161,39 @@ pub fn load_config_readonly(data_dir: &Path) -> std::io::Result<AppConfig> {
 pub struct ConfigService {
     config_path: PathBuf,
     config: AppConfig,
+    /// The live-config publication: every successful write replaces
+    /// the shared snapshot, so read-through consumers (the tracker's
+    /// configuration seam) follow settings changes without re-reading
+    /// the file per call.
+    live: tokio::sync::watch::Sender<std::sync::Arc<AppConfig>>,
+}
+
+/// A cheap, always-current read handle over the live config. Reads
+/// never touch the filesystem; they borrow the last published
+/// snapshot. (Out-of-band edits to the settings file are picked up at
+/// the next start, as before: the process is the only writer while it
+/// runs.)
+#[derive(Clone)]
+pub struct ConfigReader(tokio::sync::watch::Receiver<std::sync::Arc<AppConfig>>);
+
+impl ConfigReader {
+    /// The current config snapshot.
+    pub fn current(&self) -> std::sync::Arc<AppConfig> {
+        self.0.borrow().clone()
+    }
 }
 
 impl ConfigService {
     pub fn new(data_dir: &Path) -> std::io::Result<Self> {
         let config_path = data_dir.join("settings.json");
+        let (live, _) = tokio::sync::watch::channel(std::sync::Arc::new(AppConfig::default()));
         let mut service = Self {
             config_path,
             config: AppConfig::default(),
+            live,
         };
         service.config = service.load()?;
+        service.publish();
         Ok(service)
     }
 
@@ -206,6 +229,16 @@ impl ConfigService {
         &self.config
     }
 
+    /// A read handle over the live config for read-through consumers.
+    pub fn reader(&self) -> ConfigReader {
+        ConfigReader(self.live.subscribe())
+    }
+
+    fn publish(&self) {
+        self.live
+            .send_replace(std::sync::Arc::new(self.config.clone()));
+    }
+
     /// A candidate config with the updates applied, leaving the live
     /// config untouched (round-trips through the stored representation
     /// first, exactly as the backend's clone path does).
@@ -220,6 +253,7 @@ impl ConfigService {
     pub fn update(&mut self, updates: &Map<String, Value>) -> std::io::Result<&AppConfig> {
         apply_updates(&mut self.config, updates);
         self.save_current()?;
+        self.publish();
         Ok(&self.config)
     }
 
@@ -230,6 +264,7 @@ impl ConfigService {
             ..AppConfig::default()
         };
         self.save_current()?;
+        self.publish();
         Ok(&self.config)
     }
 

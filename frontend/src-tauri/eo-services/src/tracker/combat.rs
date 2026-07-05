@@ -95,7 +95,7 @@ impl TrackerActor {
 
         let mut inferred_cost = Ped::ZERO;
         let mut tool: Option<String> = None;
-        if (providers.weapon_attribution_trifecta)() {
+        if providers.config.weapon_attribution_trifecta() {
             if allow_damage_inference {
                 let attribution = active.weapons.attributor.match_damage(amount, is_crit);
                 if attribution.is_none() && !active.trifecta_unmatched_warning_emitted {
@@ -158,7 +158,7 @@ impl TrackerActor {
                 let fallback_cost = if inferred_cost.is_positive() {
                     inferred_cost
                 } else {
-                    Ped((providers.equipment_cost_lookup)(&tool_key))
+                    Ped(providers.equipment.cost_per_shot(&tool_key))
                 };
                 if fallback_cost.is_positive() {
                     entry.cost_per_shot = fallback_cost;
@@ -230,7 +230,7 @@ impl TrackerActor {
                         }
                     };
                     if is_new_heal_activation {
-                        if (providers.weapon_attribution_trifecta)()
+                        if providers.config.weapon_attribution_trifecta()
                             && !heal_amount_matches_trifecta_tool(heal_tool, *amount)
                         {
                             return;
@@ -273,7 +273,7 @@ impl TrackerActor {
             let Self {
                 session, providers, ..
             } = &mut *self;
-            if (providers.weapon_attribution_trifecta)() {
+            if providers.config.weapon_attribution_trifecta() {
                 return;
             }
             if payload.tool_name.is_empty() {
@@ -358,7 +358,7 @@ impl TrackerActor {
         let BusEvent::ActiveHealToolChanged(payload) = event else {
             return;
         };
-        if (self.providers.weapon_attribution_trifecta)() {
+        if self.providers.config.weapon_attribution_trifecta() {
             return;
         }
         let name = Some(payload.tool_name.clone());

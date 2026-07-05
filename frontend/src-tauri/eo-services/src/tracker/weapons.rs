@@ -230,8 +230,10 @@ impl TrackerActor {
             return cached.clone();
         }
 
-        let resolved =
-            (providers.equipment_profile_lookup)(tool_name).filter(|profile| !profile.is_empty());
+        let resolved = providers
+            .equipment
+            .weapon_profile(tool_name)
+            .filter(|profile| !profile.is_empty());
         let Some(profile) = resolved else {
             weapons.profile_cache.insert(tool_name.to_string(), None);
             return None;
@@ -290,7 +292,7 @@ impl TrackerActor {
         if let Some(cached) = weapons.static_cost_cache.get(tool_name) {
             return *cached;
         }
-        let cost = Ped((providers.equipment_cost_lookup)(tool_name));
+        let cost = Ped(providers.equipment.cost_per_shot(tool_name));
         weapons
             .static_cost_cache
             .insert(tool_name.to_string(), cost);

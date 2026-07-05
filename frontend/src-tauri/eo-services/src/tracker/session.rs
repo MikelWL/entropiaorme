@@ -252,9 +252,9 @@ impl TrackerActor {
     /// providers may read the database; the actor simply runs them
     /// inline (nothing else can touch its state meanwhile).
     pub(super) fn reload_config(&mut self) {
-        let trifecta_mode = (self.providers.weapon_attribution_trifecta)();
+        let trifecta_mode = self.providers.config.weapon_attribution_trifecta();
         let trifecta = if trifecta_mode {
-            (self.providers.trifecta_resolver)()
+            self.providers.equipment.resolve_trifecta()
         } else {
             None
         };
@@ -281,8 +281,8 @@ impl TrackerActor {
             return;
         }
 
-        if (providers.manual_mob_entry_enabled)() {
-            let Some((species, maturity)) = (providers.manual_mob)() else {
+        if providers.config.manual_mob_entry_enabled() {
+            let Some((species, maturity)) = providers.config.manual_mob() else {
                 if active.mob.source() == Some(MobSource::Manual) {
                     active.mob = MobSelection::Unset;
                 }
@@ -304,14 +304,17 @@ impl TrackerActor {
             self.stop_session().await?;
         }
 
-        let mode = TrackingMode::from_config(&(self.providers.mob_tracking_mode)());
-        let tag = (self.providers.mob_tracking_tag)()
+        let mode = TrackingMode::from_config(&self.providers.config.mob_tracking_mode());
+        let tag = self
+            .providers
+            .config
+            .mob_tracking_tag()
             .trim_matches(python_whitespace)
             .to_string();
         let session_id = uuid::Uuid::new_v4().to_string();
-        let trifecta_mode = (self.providers.weapon_attribution_trifecta)();
+        let trifecta_mode = self.providers.config.weapon_attribution_trifecta();
         let trifecta = if trifecta_mode {
-            (self.providers.trifecta_resolver)()
+            self.providers.equipment.resolve_trifecta()
         } else {
             None
         };
@@ -359,8 +362,8 @@ impl TrackerActor {
 
         if mode == TrackingMode::Tag && !tag.is_empty() {
             active.mob = MobSelection::Tag(tag.clone());
-        } else if (self.providers.manual_mob_entry_enabled)() {
-            if let Some((species, maturity)) = (self.providers.manual_mob)() {
+        } else if self.providers.config.manual_mob_entry_enabled() {
+            if let Some((species, maturity)) = self.providers.config.manual_mob() {
                 active.mob = MobSelection::manual_from_parts(species, maturity);
             }
         }

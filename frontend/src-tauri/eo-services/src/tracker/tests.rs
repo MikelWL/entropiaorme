@@ -23,6 +23,75 @@ use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 use std::sync::Mutex as StdMutex;
 
+type CostScript = Arc<dyn Fn(&str) -> f64 + Send + Sync>;
+type ProfileScript = Arc<dyn Fn(&str) -> EquipmentProfile + Send + Sync>;
+type TrifectaScript = Arc<dyn Fn() -> Option<serde_json::Map<String, Value>> + Send + Sync>;
+type BoolScript = Arc<dyn Fn() -> bool + Send + Sync>;
+type ManualMobScript = Arc<dyn Fn() -> Option<(String, String)> + Send + Sync>;
+
+/// Closure-scripted equipment library for tests.
+#[derive(Default)]
+struct ScriptedEquipment {
+    cost: Option<CostScript>,
+    profile: Option<ProfileScript>,
+    trifecta: Option<TrifectaScript>,
+}
+
+impl EquipmentLibrary for ScriptedEquipment {
+    fn weapon_profile(&self, tool_name: &str) -> EquipmentProfile {
+        self.profile.as_ref().and_then(|lookup| lookup(tool_name))
+    }
+
+    fn cost_per_shot(&self, tool_name: &str) -> f64 {
+        self.cost
+            .as_ref()
+            .map(|lookup| lookup(tool_name))
+            .unwrap_or(0.0)
+    }
+
+    fn resolve_trifecta(&self) -> Option<serde_json::Map<String, Value>> {
+        self.trifecta.as_ref().and_then(|resolve| resolve())
+    }
+}
+
+/// Closure-scripted session-capture config for tests; unset fields
+/// fall back to the inert defaults.
+#[derive(Default)]
+struct ScriptedConfig {
+    mode: Option<String>,
+    tag: Option<String>,
+    manual_entry_enabled: Option<BoolScript>,
+    manual_mob: Option<ManualMobScript>,
+    trifecta_mode: bool,
+    blacklist: Vec<String>,
+}
+
+impl TrackingConfig for ScriptedConfig {
+    fn mob_tracking_mode(&self) -> String {
+        self.mode.clone().unwrap_or_else(|| "mob".to_string())
+    }
+
+    fn mob_tracking_tag(&self) -> String {
+        self.tag.clone().unwrap_or_default()
+    }
+
+    fn manual_mob_entry_enabled(&self) -> bool {
+        self.manual_entry_enabled.as_ref().is_none_or(|f| f())
+    }
+
+    fn manual_mob(&self) -> Option<(String, String)> {
+        self.manual_mob.as_ref().and_then(|f| f())
+    }
+
+    fn weapon_attribution_trifecta(&self) -> bool {
+        self.trifecta_mode
+    }
+
+    fn loot_filter_blacklist(&self) -> Vec<String> {
+        self.blacklist.clone()
+    }
+}
+
 struct Rig {
     _dir: tempfile::TempDir,
     runtime: tokio::runtime::Runtime,
@@ -142,7 +211,10 @@ fn updated_events(captured: &StdMutex<Vec<(Topic, Value)>>) -> Vec<Value> {
 fn session_lifecycle_round_trip() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_cost_lookup: Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 }),
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 })),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     let captured = rig.capture();
@@ -438,7 +510,10 @@ fn recovery_closes_crash_orphaned_sessions() {
 fn stopping_a_session_relands_its_days_rollups() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_cost_lookup: Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 }),
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 })),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     let session = rig.wait(tracker.start_session()).unwrap();
@@ -638,7 +713,10 @@ fn a_failed_stop_rolls_back_every_stop_write() {
 fn loot_creates_and_persists_kills_with_filtering() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_cost_lookup: Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 }),
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 })),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     let session = rig.wait(tracker.start_session()).unwrap();
@@ -825,7 +903,10 @@ fn loot_dedup_inside_the_window_only() {
 fn snapshot_aggregates_and_rounds_the_readout() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_cost_lookup: Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 }),
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|name| if name == "Rifle" { 0.05 } else { 0.0 })),
+            ..Default::default()
+        }),
         player_name: "Hero".to_string(),
         ..Providers::default()
     });
@@ -977,7 +1058,10 @@ fn snapshot_aggregates_and_rounds_the_readout() {
 fn unknown_tool_stats_merge_on_identification() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_cost_lookup: Arc::new(|name| if name == "Pistol" { 0.02 } else { 0.0 }),
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|name| if name == "Pistol" { 0.02 } else { 0.0 })),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();
@@ -1236,14 +1320,17 @@ fn globals_correlate_within_the_window() {
 fn enhancer_breaks_filter_and_deplete_stacks() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_profile_lookup: Arc::new(|name| {
-            (name == "Rifle").then(|| {
-                let profile = json!({
-                    "damage_enhancers": 2,
-                    "weapon_entity": {"name": "Rifle Prime"},
-                });
-                profile.as_object().unwrap().clone()
-            })
+        equipment: Arc::new(ScriptedEquipment {
+            profile: Some(Arc::new(|name| {
+                (name == "Rifle").then(|| {
+                    let profile = json!({
+                        "damage_enhancers": 2,
+                        "weapon_entity": {"name": "Rifle Prime"},
+                    });
+                    profile.as_object().unwrap().clone()
+                })
+            })),
+            ..Default::default()
         }),
         ..Providers::default()
     });
@@ -1372,8 +1459,16 @@ fn trifecta_attribution_and_heal_filtering() {
                       "heal_min": 10.0, "heal_max": 20.0},
     });
     let tracker = rig.tracker(Providers {
-        weapon_attribution_trifecta: Arc::new(|| true),
-        trifecta_resolver: Arc::new(move || Some(trifecta.as_object().unwrap().clone())),
+        equipment: Arc::new(ScriptedEquipment {
+            trifecta: Some(Arc::new(move || {
+                Some(trifecta.as_object().unwrap().clone())
+            })),
+            ..Default::default()
+        }),
+        config: Arc::new(ScriptedConfig {
+            trifecta_mode: true,
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();
@@ -1485,8 +1580,11 @@ fn tag_and_manual_mob_rules() {
     // Tag mode: the configured tag is stripped and stamps kills;
     // manual mob locking refuses; empty tags refuse.
     let tagged = rig.tracker(Providers {
-        mob_tracking_mode: Arc::new(|| "tag".to_string()),
-        mob_tracking_tag: Arc::new(|| "  Team Hunt \u{1c}".to_string()),
+        config: Arc::new(ScriptedConfig {
+            mode: Some("tag".to_string()),
+            tag: Some("  Team Hunt \u{1c}".to_string()),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     let session = rig.wait(tagged.start_session()).unwrap();
@@ -1530,7 +1628,12 @@ fn tag_and_manual_mob_rules() {
     // Mob mode: the manual provider stamps "<maturity> <species>"
     // at start; tag setting refuses; release clears.
     let manual = rig.tracker(Providers {
-        manual_mob: Arc::new(|| Some(("Atrox".to_string(), "Young".to_string()))),
+        config: Arc::new(ScriptedConfig {
+            manual_mob: Some(Arc::new(|| {
+                Some(("Atrox".to_string(), "Young".to_string()))
+            })),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(manual.start_session()).unwrap();
@@ -1562,7 +1665,10 @@ fn tag_and_manual_mob_rules() {
     // Manual entry disabled: the command refuses; a maturity-less
     // manual mob displays the bare species.
     let disabled = rig.tracker(Providers {
-        manual_mob_entry_enabled: Arc::new(|| false),
+        config: Arc::new(ScriptedConfig {
+            manual_entry_enabled: Some(Arc::new(|| false)),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(disabled.start_session()).unwrap();
@@ -1572,7 +1678,10 @@ fn tag_and_manual_mob_rules() {
     );
     rig.wait(disabled.stop_session()).unwrap();
     let bare = rig.tracker(Providers {
-        manual_mob: Arc::new(|| Some(("Atrox".to_string(), String::new()))),
+        config: Arc::new(ScriptedConfig {
+            manual_mob: Some(Arc::new(|| Some(("Atrox".to_string(), String::new())))),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(bare.start_session()).unwrap();
@@ -1591,7 +1700,10 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     ))));
     let provider_view = scripted_mob.clone();
     let tracker = rig.tracker(Providers {
-        manual_mob: Arc::new(move || provider_view.lock().unwrap().clone()),
+        config: Arc::new(ScriptedConfig {
+            manual_mob: Some(Arc::new(move || provider_view.lock().unwrap().clone())),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
 
@@ -1932,9 +2044,17 @@ fn inferred_cost_outranks_the_equipment_lookup() {
                        "role": "big_weapon"},
     });
     let tracker = rig.tracker(Providers {
-        weapon_attribution_trifecta: Arc::new(|| true),
-        trifecta_resolver: Arc::new(move || Some(trifecta.as_object().unwrap().clone())),
-        equipment_cost_lookup: Arc::new(|_| 0.9),
+        equipment: Arc::new(ScriptedEquipment {
+            trifecta: Some(Arc::new(move || {
+                Some(trifecta.as_object().unwrap().clone())
+            })),
+            cost: Some(Arc::new(|_| 0.9)),
+            ..Default::default()
+        }),
+        config: Arc::new(ScriptedConfig {
+            trifecta_mode: true,
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();
@@ -1979,7 +2099,10 @@ fn inferred_cost_outranks_the_equipment_lookup() {
 fn the_unknown_entry_backfills_its_cost_once() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_cost_lookup: Arc::new(|_| 0.7),
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|_| 0.7)),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();
@@ -2069,13 +2192,16 @@ fn a_costless_tool_merges_unknown_into_its_bare_entry() {
 fn break_matching_admits_every_containment_direction() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        equipment_profile_lookup: Arc::new(|name| {
-            (name == "MyGun").then(|| {
-                json!({"damage_enhancers": 1, "weapon_entity": {"name": "Blast Master"}})
-                    .as_object()
-                    .unwrap()
-                    .clone()
-            })
+        equipment: Arc::new(ScriptedEquipment {
+            profile: Some(Arc::new(|name| {
+                (name == "MyGun").then(|| {
+                    json!({"damage_enhancers": 1, "weapon_entity": {"name": "Blast Master"}})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                })
+            })),
+            ..Default::default()
         }),
         ..Providers::default()
     });
@@ -2155,9 +2281,14 @@ fn recovery_zero_timestamp_kills_fall_back_to_the_start() {
 fn reload_config_in_tag_mode_never_consults_the_manual_provider() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        mob_tracking_mode: Arc::new(|| "tag".to_string()),
-        mob_tracking_tag: Arc::new(|| "Team".to_string()),
-        manual_mob: Arc::new(|| Some(("Atrox".to_string(), "Young".to_string()))),
+        config: Arc::new(ScriptedConfig {
+            mode: Some("tag".to_string()),
+            tag: Some("Team".to_string()),
+            manual_mob: Some(Arc::new(|| {
+                Some(("Atrox".to_string(), "Young".to_string()))
+            })),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();
@@ -2177,8 +2308,11 @@ fn is_session_tag_mode_reflects_the_session_capture() {
     // tag-mode session is true, a mob-mode session is false.
     let tag_rig = rig();
     let tagged = tag_rig.tracker(Providers {
-        mob_tracking_mode: Arc::new(|| "tag".to_string()),
-        mob_tracking_tag: Arc::new(|| "Team".to_string()),
+        config: Arc::new(ScriptedConfig {
+            mode: Some("tag".to_string()),
+            tag: Some("Team".to_string()),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     assert!(
@@ -2198,7 +2332,10 @@ fn is_session_tag_mode_reflects_the_session_capture() {
 
     let mob_rig = rig();
     let mobbed = mob_rig.tracker(Providers {
-        mob_tracking_mode: Arc::new(|| "mob".to_string()),
+        config: Arc::new(ScriptedConfig {
+            mode: Some("mob".to_string()),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     mob_rig.wait(mobbed.start_session()).unwrap();
@@ -2214,8 +2351,11 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
     let rig = rig();
     // A configured tag outside tag mode never stamps.
     let mob_mode = rig.tracker(Providers {
-        mob_tracking_tag: Arc::new(|| "Sneaky".to_string()),
-        manual_mob_entry_enabled: Arc::new(|| false),
+        config: Arc::new(ScriptedConfig {
+            tag: Some("Sneaky".to_string()),
+            manual_entry_enabled: Some(Arc::new(|| false)),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(mob_mode.start_session()).unwrap();
@@ -2228,8 +2368,11 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
 
     // Tag mode with an all-blank tag has nothing to stamp.
     let blank = rig.tracker(Providers {
-        mob_tracking_mode: Arc::new(|| "tag".to_string()),
-        mob_tracking_tag: Arc::new(|| "   ".to_string()),
+        config: Arc::new(ScriptedConfig {
+            mode: Some("tag".to_string()),
+            tag: Some("   ".to_string()),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(blank.start_session()).unwrap();
@@ -2244,7 +2387,10 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
 fn the_blacklist_provider_refreshes_at_session_start() {
     let rig = rig();
     let tracker = rig.tracker(Providers {
-        loot_filter_blacklist_provider: Some(Arc::new(|| vec!["Mud".to_string()])),
+        config: Arc::new(ScriptedConfig {
+            blacklist: vec!["Mud".to_string()],
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();
@@ -2365,9 +2511,17 @@ fn a_zero_priced_weapon_state_still_prefers_the_inferred_cost() {
                              "decay": 0, "ammo_burn": 0}}}},
     });
     let tracker = rig.tracker(Providers {
-        weapon_attribution_trifecta: Arc::new(|| true),
-        trifecta_resolver: Arc::new(move || Some(trifecta.as_object().unwrap().clone())),
-        equipment_cost_lookup: Arc::new(|_| 0.3),
+        equipment: Arc::new(ScriptedEquipment {
+            trifecta: Some(Arc::new(move || {
+                Some(trifecta.as_object().unwrap().clone())
+            })),
+            cost: Some(Arc::new(|_| 0.3)),
+            ..Default::default()
+        }),
+        config: Arc::new(ScriptedConfig {
+            trifecta_mode: true,
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();
@@ -2437,8 +2591,13 @@ fn reload_clears_a_manual_stamp_once_entry_disables() {
     let enabled = Arc::new(StdMutex::new(true));
     let provider_view = enabled.clone();
     let tracker = rig.tracker(Providers {
-        manual_mob_entry_enabled: Arc::new(move || *provider_view.lock().unwrap()),
-        manual_mob: Arc::new(|| Some(("Atrox".to_string(), "Young".to_string()))),
+        config: Arc::new(ScriptedConfig {
+            manual_entry_enabled: Some(Arc::new(move || *provider_view.lock().unwrap())),
+            manual_mob: Some(Arc::new(|| {
+                Some(("Atrox".to_string(), "Young".to_string()))
+            })),
+            ..Default::default()
+        }),
         ..Providers::default()
     });
     rig.wait(tracker.start_session()).unwrap();

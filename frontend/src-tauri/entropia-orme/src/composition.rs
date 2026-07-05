@@ -69,7 +69,7 @@ use eo_services::bus_events::BusEvent;
 use eo_services::chatlog_watcher::{ChatlogWatcher, QuestRewardFilter};
 use eo_services::clock::{Clock, RealClock};
 use eo_services::config_service::{
-    active_trifecta_preset, load_config_readonly, AppConfig, ConfigService,
+    active_trifecta_preset, load_config_readonly, AppConfig, ConfigReader, ConfigService,
 };
 use eo_services::cost_engine::{cost_per_shot_from_props, heal_cost_per_use, heal_reload_seconds};
 use eo_services::db::{AdoptError, Db};
@@ -91,7 +91,9 @@ pub use eo_services::skill_scan_manual::SkillScanManual;
 use eo_services::skill_scan_manual::{ScanProviders, ScanRegion};
 use eo_services::skill_tracker::SkillTracker;
 pub use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
-use eo_services::tracker::{naive_to_epoch, EquipmentProfile, HuntTracker, Providers};
+use eo_services::tracker::{
+    naive_to_epoch, EquipmentLibrary, EquipmentProfile, HuntTracker, Providers, TrackingConfig,
+};
 use eo_services::trifecta_service::{describe_trifecta, TrifectaPreset};
 use eo_wire::bus::DomainBus;
 use eo_wire::domain_events::DomainEvent;
@@ -1015,13 +1017,17 @@ fn compose_producers(
     // is active (the listener reconciles on the session bus events).
     hotbar.set_hotbar_hooks_enabled(config.hotbar_hooks_enabled);
 
+    let config_reader = config_service
+        .lock()
+        .expect("config service lock at composition")
+        .reader();
     let tracker = block_on_pool(
         &runtime,
         HuntTracker::new(
             bus.clone(),
             db.clone(),
             clock.clone(),
-            build_providers(db, data_dir, &config, runtime.clone()),
+            build_providers(db, config_reader, &config, runtime.clone()),
         ),
     )?;
 
@@ -1178,135 +1184,124 @@ fn quest_reward_filter_adapter(
     )
 }
 
-/// Wire the hunt-tracker providers to the same sources the backend's
-/// composition uses. Lookups that read the equipment library bridge
-/// onto the runtime from inside the (synchronous) provider callback;
-/// config-derived providers read the live config read-through so they
-/// follow settings writes. `enhancer_tt_lookup` is intentionally absent:
-/// the Rust tracker never reads it (see `tracker.rs`).
-fn build_providers(
+/// The live equipment library behind the tracker's equipment seam:
+/// profile and cost lookups over the equipment tables, and the
+/// trifecta resolution over the live config plus those tables. The
+/// lookups bridge onto the runtime from the synchronous trait calls
+/// (the tracker invokes them inline on its own task).
+struct LiveEquipmentLibrary {
     db: Db,
-    data_dir: &std::path::Path,
-    initial_config: &AppConfig,
+    reader: ConfigReader,
     runtime: tokio::runtime::Handle,
-) -> Providers {
-    let data_dir = data_dir.to_path_buf();
+}
 
-    // equipment_profile_lookup: the weapon row whose name contains the
-    // tool fragment, as parsed JSON properties.
-    let profile_db = db.clone();
-    let profile_runtime = runtime.clone();
-    let equipment_profile_lookup: Arc<dyn Fn(&str) -> EquipmentProfile + Send + Sync> =
-        Arc::new(move |tool_name: &str| {
-            let tool_name = tool_name.to_string();
-            let db = profile_db.clone();
-            let json = block_on_pool(&profile_runtime, async move {
-                db.weapon_properties_by_name_fragment(&tool_name)
-                    .await
-                    .ok()
-                    .flatten()
-            })?;
-            match serde_json::from_str::<Value>(&json) {
-                Ok(Value::Object(map)) => Some(map),
-                _ => None,
-            }
-        });
+impl EquipmentLibrary for LiveEquipmentLibrary {
+    fn weapon_profile(&self, tool_name: &str) -> EquipmentProfile {
+        let tool_name = tool_name.to_string();
+        let db = self.db.clone();
+        let json = block_on_pool(&self.runtime, async move {
+            db.weapon_properties_by_name_fragment(&tool_name)
+                .await
+                .ok()
+                .flatten()
+        })?;
+        match serde_json::from_str::<Value>(&json) {
+            Ok(Value::Object(map)) => Some(map),
+            _ => None,
+        }
+    }
 
-    // equipment_cost_lookup: the per-shot cost in PED derived from the
-    // profile, `totalCostPerUse / 100`, or 0.0 when the tool is unknown.
-    let cost_lookup_profile = equipment_profile_lookup.clone();
-    let equipment_cost_lookup: Arc<dyn Fn(&str) -> f64 + Send + Sync> = Arc::new(
-        move |tool_name: &str| match cost_lookup_profile(tool_name) {
+    fn cost_per_shot(&self, tool_name: &str) -> f64 {
+        // The per-shot cost in PED derived from the profile,
+        // `totalCostPerUse / 100`, or 0.0 when the tool is unknown.
+        match self.weapon_profile(tool_name) {
             Some(props) => {
                 let cost = cost_per_shot_from_props(&Value::Object(props), None);
                 cost["totalCostPerUse"].as_f64().unwrap_or(0.0) / 100.0
             }
             None => 0.0,
-        },
-    );
+        }
+    }
 
-    // The config-derived providers read the live read-through so they
-    // follow settings writes between sessions.
-    let mode_dir = data_dir.clone();
-    let mob_tracking_mode: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
-        load_config_readonly(&mode_dir)
-            .map(|c| c.mob_tracking_mode)
-            .unwrap_or_else(|_| "mob".to_string())
-    });
-    let tag_dir = data_dir.clone();
-    let mob_tracking_tag: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
-        load_config_readonly(&tag_dir)
-            .map(|c| c.mob_tracking_tag)
-            .unwrap_or_default()
-    });
-    let manual_enabled_dir = data_dir.clone();
-    let manual_mob_entry_enabled: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
-        load_config_readonly(&manual_enabled_dir)
-            .map(|c| c.mob_tracking_mode != "tag")
-            .unwrap_or(true)
-    });
-    let manual_mob_dir = data_dir.clone();
-    let manual_mob: Arc<dyn Fn() -> Option<(String, String)> + Send + Sync> = Arc::new(move || {
-        let config = load_config_readonly(&manual_mob_dir).ok()?;
+    fn resolve_trifecta(&self) -> Option<Map<String, Value>> {
+        // Resolve the active preset's attribution map off the live
+        // config and the equipment library; the resolver discards the
+        // validation reason and yields just the data.
+        let config = self.reader.current();
+        let preset = active_trifecta_preset(&config).map(|p| TrifectaPreset {
+            small_weapon_id: p.small_weapon_id,
+            big_weapon_id: p.big_weapon_id,
+            heal_id: p.heal_id,
+        });
+        let db = self.db.clone();
+        block_on_pool(&self.runtime, async move {
+            describe_trifecta(&db, preset.as_ref())
+                .await
+                .ok()
+                .and_then(|(data, _error)| data)
+        })
+    }
+}
+
+/// The live session-capture configuration behind the tracker's config
+/// seam: every read borrows the config service's published snapshot,
+/// so settings writes are visible immediately and no call touches the
+/// filesystem.
+struct LiveTrackingConfig {
+    reader: ConfigReader,
+}
+
+impl TrackingConfig for LiveTrackingConfig {
+    fn mob_tracking_mode(&self) -> String {
+        self.reader.current().mob_tracking_mode.clone()
+    }
+
+    fn mob_tracking_tag(&self) -> String {
+        self.reader.current().mob_tracking_tag.clone()
+    }
+
+    fn manual_mob_entry_enabled(&self) -> bool {
+        self.reader.current().mob_tracking_mode != "tag"
+    }
+
+    fn manual_mob(&self) -> Option<(String, String)> {
+        let config = self.reader.current();
         let species = config.manual_mob_species.trim().to_string();
         let maturity = config.manual_mob_maturity.trim().to_string();
         if species.is_empty() {
             return None;
         }
         Some((species, maturity))
-    });
-    let trifecta_mode_dir = data_dir.clone();
-    let weapon_attribution_trifecta: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
-        // `not hotbar_hooks_enabled`, exactly as the backend's
-        // `_is_weapon_attribution_trifecta`.
-        load_config_readonly(&trifecta_mode_dir)
-            .map(|c| !c.hotbar_hooks_enabled)
-            .unwrap_or(false)
-    });
-    let blacklist_dir = data_dir.clone();
-    let loot_filter_blacklist_provider: Arc<dyn Fn() -> Vec<String> + Send + Sync> =
-        Arc::new(move || {
-            load_config_readonly(&blacklist_dir)
-                .map(|c| c.loot_filter_blacklist)
-                .unwrap_or_default()
-        });
+    }
 
-    // trifecta_resolver: resolve the active preset's attribution map
-    // off the live config and the equipment library (the backend's
-    // `_resolve_trifecta`); the resolver discards the validation reason
-    // and yields just the data, as the backend does.
-    let resolver_db = db;
-    let resolver_dir = data_dir;
-    let resolver_runtime = runtime;
-    let trifecta_resolver: Arc<dyn Fn() -> Option<Map<String, Value>> + Send + Sync> =
-        Arc::new(move || {
-            let config = load_config_readonly(&resolver_dir).ok()?;
-            let preset = active_trifecta_preset(&config).map(|p| TrifectaPreset {
-                small_weapon_id: p.small_weapon_id,
-                big_weapon_id: p.big_weapon_id,
-                heal_id: p.heal_id,
-            });
-            let db = resolver_db.clone();
-            block_on_pool(&resolver_runtime, async move {
-                describe_trifecta(&db, preset.as_ref())
-                    .await
-                    .ok()
-                    .and_then(|(data, _error)| data)
-            })
-        });
+    fn weapon_attribution_trifecta(&self) -> bool {
+        // `not hotbar_hooks_enabled`: hotbar hooks off selects
+        // trifecta attribution.
+        !self.reader.current().hotbar_hooks_enabled
+    }
 
+    fn loot_filter_blacklist(&self) -> Vec<String> {
+        self.reader.current().loot_filter_blacklist.clone()
+    }
+}
+
+/// Wire the hunt-tracker seams to the same sources the backend's
+/// composition uses: the equipment library over the database, and the
+/// session-capture config over the config service's live snapshot.
+fn build_providers(
+    db: Db,
+    reader: ConfigReader,
+    initial_config: &AppConfig,
+    runtime: tokio::runtime::Handle,
+) -> Providers {
     Providers {
-        equipment_cost_lookup,
-        equipment_profile_lookup,
+        equipment: Arc::new(LiveEquipmentLibrary {
+            db,
+            reader: reader.clone(),
+            runtime,
+        }),
+        config: Arc::new(LiveTrackingConfig { reader }),
         player_name: initial_config.player_name.clone(),
-        loot_filter_blacklist: initial_config.loot_filter_blacklist.clone(),
-        loot_filter_blacklist_provider: Some(loot_filter_blacklist_provider),
-        weapon_attribution_trifecta,
-        mob_tracking_mode,
-        mob_tracking_tag,
-        manual_mob_entry_enabled,
-        manual_mob,
-        trifecta_resolver,
     }
 }
 
@@ -1981,15 +1976,18 @@ mod tests {
             }),
         );
         let config = load_config_readonly(&data_dir).expect("config reads");
+        let mut config_service = ConfigService::new(&data_dir).expect("config service");
         let providers = build_providers(
             Db::from_pool(pool.clone()),
-            &data_dir,
+            config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),
         );
 
-        // equipment_profile_lookup: the parsed property object, by fragment.
-        let profile = (providers.equipment_profile_lookup)("Korss")
+        // The equipment seam: the parsed property object, by fragment.
+        let profile = providers
+            .equipment
+            .weapon_profile("Korss")
             .expect("the seeded weapon resolves to a property object");
         assert_eq!(
             profile.get("weapon_markup").and_then(Value::as_f64),
@@ -2001,53 +1999,51 @@ mod tests {
             "the profile carries the weapon entity"
         );
 
-        // equipment_cost_lookup: totalCostPerUse (250) / 100 == 2.5.
-        let cost = (providers.equipment_cost_lookup)("Korss");
+        // cost_per_shot: totalCostPerUse (250) / 100 == 2.5.
+        let cost = providers.equipment.cost_per_shot("Korss");
         assert!(
             (cost - 2.5).abs() < 1e-9,
             "per-shot cost is totalCostPerUse/100 == 2.5, not {cost} \
              (% would be 50.0, * would be 25000.0)"
         );
 
-        // Config-derived providers read live: under tag mode + hooks-on,
-        // manual entry is disabled and trifecta attribution is off.
+        // The config seam reads the live snapshot: under tag mode +
+        // hooks-on, manual entry is disabled and trifecta attribution
+        // is off.
         assert!(
-            !(providers.manual_mob_entry_enabled)(),
+            !providers.config.manual_mob_entry_enabled(),
             "manual mob entry is disabled in tag mode"
         );
         assert!(
-            !(providers.weapon_attribution_trifecta)(),
+            !providers.config.weapon_attribution_trifecta(),
             "trifecta attribution is off when hotbar hooks are enabled"
         );
 
-        // Rewrite settings.json and re-invoke the SAME closures: they read
-        // live, so the flipped config flips both booleans. mob mode +
-        // hooks-off -> manual entry enabled, trifecta attribution on.
-        write_settings(
-            &data_dir,
-            &serde_json::json!({
-                "mob_tracking_mode": "mob",
-                "hotbar_hooks_enabled": false,
-            }),
-        );
+        // A config-service write publishes a new snapshot, and the SAME
+        // seam follows it: mob mode + hooks-off -> manual entry enabled,
+        // trifecta attribution on.
+        let mut updates = serde_json::Map::new();
+        updates.insert("mob_tracking_mode".into(), serde_json::json!("mob"));
+        updates.insert("hotbar_hooks_enabled".into(), serde_json::json!(false));
+        config_service.update(&updates).expect("settings write");
         assert!(
-            (providers.manual_mob_entry_enabled)(),
+            providers.config.manual_mob_entry_enabled(),
             "manual mob entry is enabled outside tag mode"
         );
         assert!(
-            (providers.weapon_attribution_trifecta)(),
+            providers.config.weapon_attribution_trifecta(),
             "trifecta attribution is on when hotbar hooks are disabled"
         );
     }
 
-    /// REGRESSION: the equipment provider runs on the chat-log watcher's
-    /// plain OS thread, which has NO current tokio runtime (the bus
-    /// dispatches synchronously on the watcher's tail thread). The
-    /// provider's `block_on_pool` must therefore use the runtime handle
-    /// captured at composition time, never `Handle::current()` (which
-    /// panics off-runtime). Build the providers inside the runtime, then
-    /// invoke the lookup from a plain `std::thread` with no runtime
-    /// context and assert it resolves rather than panicking.
+    /// REGRESSION: the equipment seam must resolve from a plain OS
+    /// thread with NO current tokio runtime. Its production caller is
+    /// now the tracker's actor task (a runtime context, bridged via
+    /// `block_in_place`), but the seam's `block_on_pool` keeps the
+    /// composition-time handle rather than `Handle::current()` (which
+    /// panics off-runtime), so it stays robust from either context.
+    /// Build the providers inside the runtime, then invoke the lookup
+    /// from a plain `std::thread` and assert it resolves.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn equipment_provider_resolves_from_a_non_runtime_thread() {
         let dir = tempfile::tempdir().unwrap();
@@ -2069,20 +2065,20 @@ mod tests {
         .await;
         write_settings(&data_dir, &serde_json::json!({}));
         let config = load_config_readonly(&data_dir).expect("config reads");
+        let config_service = ConfigService::new(&data_dir).expect("config service");
         let providers = build_providers(
             Db::from_pool(pool),
-            &data_dir,
+            config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),
         );
 
         // Invoke the lookup AND the derived cost from a plain OS thread
-        // (no current runtime), exactly the watcher tail-thread context.
-        let profile_lookup = providers.equipment_profile_lookup.clone();
-        let cost_lookup = providers.equipment_cost_lookup.clone();
+        // (no current runtime).
+        let equipment = providers.equipment.clone();
         let outcome = std::thread::spawn(move || {
-            let resolved = profile_lookup("Korss").is_some();
-            let cost = cost_lookup("Korss");
+            let resolved = equipment.weapon_profile("Korss").is_some();
+            let cost = equipment.cost_per_shot("Korss");
             (resolved, cost)
         })
         .join()
