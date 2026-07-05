@@ -1,21 +1,18 @@
 /**
- * Backend API client: typed fetch wrappers for the Python backend.
+ * Backend API surface: the typed wrappers the app calls the backend through.
  *
- * All backend communication goes through this module. Since the generated
- * client landed, each wrapper delegates to `client` (openapi-fetch over the
- * generated `schema.d.ts`), which verifies the path, method, parameters, and
- * request body against the backend's OpenAPI contract at compile time. The
- * wrappers keep their hand-written return types: those interfaces are the
- * authoritative frontend contract and may deliberately narrow the generated
- * schema (see `unwrap` in `./client`). The public surface of this module is
- * unchanged from its hand-rolled predecessor.
+ * All backend communication goes through this module. Each wrapper delegates
+ * to a generated typed command (`commands.gen.ts`, emitted from the Rust
+ * command DTOs), which types the arguments and return value against the
+ * backend contract at compile time. The wrappers keep their hand-written
+ * return types: those interfaces are the authoritative frontend contract and
+ * may deliberately narrow the generated shapes (the `as`-narrowing doctrine).
  */
 
-export { ApiError, manualSkillScanCapturePng, request } from './client';
+export { ApiError, manualSkillScanCapturePng } from './client';
 
 import { guideState } from '$lib/guide/state.svelte';
 import type { NotableEventCategory, NotableEventType } from '$lib/types/common';
-import { client } from './client';
 
 /*
  * Guide-mode read swap for analytics-flavoured surfaces.

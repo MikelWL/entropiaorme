@@ -198,9 +198,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      # Fails when the committed generated API types drift from the OpenAPI
-      # snapshot (the frontend twin of the backend's openapi drift gate).
-      - run: npm run gen:api:check
       - run: npm run build
       - run: npm run check
       # Biome lint + format gate over the TypeScript and JavaScript sources
@@ -393,7 +390,7 @@ jobs:
   rust-members:
     name: Rust backend members (nextest, Linux)
     runs-on: ubuntu-latest
-    # The native-backend members (eo-api, eo-http, eo-services, eo-wire) must
+    # The native-backend members (eo-api, eo-services, eo-wire) must
     # build and test without the Tauri toolchain. This runner is the structural proof: it
     # has none of the Tauri system stack installed (webkit2gtk et al.), and the
     # package selection keeps the shell crate (the only Tauri-coupled member)
@@ -429,7 +426,7 @@ jobs:
         with:
           tool: cargo-nextest
       - name: Run the backend-member tests (nextest)
-        run: cargo nextest run -p eo-wire -p eo-http -p eo-services -p eo-api
+        run: cargo nextest run -p eo-wire -p eo-services -p eo-api
       # Fails when the committed TypeScript bindings drift from the typed
       # command manifest (the typed-command twin of the frontend job's
       # OpenAPI drift gate).
@@ -486,16 +483,16 @@ jobs:
       # the human summary and the badge JSON below both read the same single run
       # rather than re-executing the suite.
       - name: Measure branch coverage (cargo-llvm-cov)
-        run: cargo llvm-cov nextest --branch --no-report -p eo-wire -p eo-http -p eo-services
+        run: cargo llvm-cov nextest --branch --no-report -p eo-wire -p eo-services
       - name: Summarise branch coverage
-        run: cargo llvm-cov report --branch --summary-only -p eo-wire -p eo-http -p eo-services
+        run: cargo llvm-cov report --branch --summary-only -p eo-wire -p eo-services
       # Reduce the measured coverage to the shields.io endpoint document the
       # README's Coverage badge points at. Built on every run so the pipeline is
       # exercised in review; published (next step) only from main so the figure
       # tracks the trunk, matching the mutation badge's main-only publish.
       - name: Build coverage badge
         run: |
-          cargo llvm-cov report --branch --json -p eo-wire -p eo-http -p eo-services --output-path coverage-llvm.json
+          cargo llvm-cov report --branch --json -p eo-wire -p eo-services --output-path coverage-llvm.json
           bash ../../.github/scripts/coverage-badge.sh coverage-llvm.json coverage.json
       # Hand the badge to the main-only publish job as an artifact rather than
       # pushing here: this job builds pull-request-author code (tests, build

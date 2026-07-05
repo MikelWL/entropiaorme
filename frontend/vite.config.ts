@@ -16,14 +16,9 @@ function readPort(name: string, defaultValue: number): number {
 	return port;
 }
 
-// Frontend port: bound by Vite's dev server. Backend port: injected into
-// the client bundle as import.meta.env.ENTROPIAORME_BACKEND_PORT so api.ts
-// addresses the backend on its env-driven port without a hardcoded fallback.
-// Process env is available here because just sources .env.local before
-// invoking vite; `define` substitutes the value as a string literal at
-// build time.
+// Frontend port: bound by Vite's dev server. Process env is available here
+// because just sources .env.local before invoking vite.
 const port = readPort('ENTROPIAORME_FRONTEND_PORT', 5173);
-const backendPort = readPort('ENTROPIAORME_BACKEND_PORT', 8421);
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
@@ -32,7 +27,6 @@ export default defineConfig({
 		strictPort: true,
 	},
 	define: {
-		'import.meta.env.ENTROPIAORME_BACKEND_PORT': JSON.stringify(String(backendPort)),
 		// Forces the JS-driven chart tweens to settle instantly (visual-regression
 		// determinism). Set to '1' only by the e2e's own Vite build; unset (so '')
 		// in every shipped build, where the freeze branch then folds to a static

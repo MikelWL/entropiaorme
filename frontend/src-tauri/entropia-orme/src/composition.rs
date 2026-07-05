@@ -65,7 +65,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use eo_http::hydration::HydrationState;
 use eo_services::bus_events::BusEvent;
 use eo_services::chatlog_watcher::{ChatlogWatcher, QuestRewardFilter};
 use eo_services::clock::{Clock, RealClock};
@@ -268,7 +267,7 @@ fn init_ort_runtime(resource_dir: Option<&PathBuf>) {
 /// The live producer spine: the in-process event bus, the chat-log
 /// watcher (tailing in its own thread), and the trackers subscribed to
 /// the bus, all sharing the substrate's single-owner database pool and
-/// one injected clock. Kept as a sibling of [`HydrationState`] so the
+/// one injected clock. Kept separate from the typed-command facade so the
 /// read surface stays a pure read surface and the producers are a
 /// separate, stoppable concern.
 ///
@@ -431,10 +430,13 @@ impl ProducerState {
 /// `Arc` because the scan consumer seams will each capture a clone when
 /// their routes flip.
 pub struct Composed {
-    pub hydration: Arc<HydrationState>,
+    /// The composed database handle, held so the exit seam can run the
+    /// once-per-lifecycle `PRAGMA optimize` at shutdown (the last live user
+    /// of the composed `Db` outside the typed-command facade).
+    pub db: Db,
     /// The typed-command facade (the application boundary the typed
-    /// Tauri commands dispatch into), sharing the hydration surface's
-    /// database and catalogue handles.
+    /// Tauri commands dispatch into), sharing the database and catalogue
+    /// handles.
     pub api: Arc<eo_api::Api>,
     pub producers: ProducerState,
     pub ocr_engine: Option<Arc<OcrEngine>>,
@@ -444,9 +446,6 @@ pub struct Composed {
     /// its capture and extraction seams stand down to "engine unavailable"
     /// when the OCR runtime is absent, exactly as the Python reference reports.
     pub skill_scan: Arc<SkillScanManual>,
-    /// The one-shot repair-cost OCR service, composed over the same capture
-    /// and recogniser seams.
-    pub repair_ocr: Arc<RepairOcrService>,
     /// The spacebar-capture listener, composed over the scan and the shared
     /// OS hook. Held for the spacebar-capture route (its toggle) and the exit
     /// seam (its teardown).
@@ -686,14 +685,12 @@ async fn compose_with(
         repair_ocr.clone(),
         demo_db_path,
     ));
-    let hydration = Arc::new(HydrationState::new(db));
     Composition::Ready(Composed {
-        hydration,
+        db,
         api,
         producers,
         ocr_engine,
         skill_scan,
-        repair_ocr,
         spacebar_listener,
     })
 }
@@ -1701,16 +1698,10 @@ mod tests {
         // the game window is never present on a headless host.
         assert_eq!(status["configured"], composed.ocr_engine.is_some());
         assert_eq!(status["game_window_present"], false);
-
-        // The repair reader runs its composed provider chain to the
-        // no-window leg (its region lookup reads the live game window).
-        let repair = composed.repair_ocr.scan_repair_cost();
-        assert_eq!(
-            repair["error"],
-            "Entropia Universe window not found: start the game first"
-        );
         // The scan composed on the spine bus (its status frames reach the SSE
-        // stream); the bridge forwarding is covered by `sse_bridge_*`.
+        // stream); the bridge forwarding is covered by `sse_bridge_*`. The
+        // repair reader's no-window leg is covered by the facade test
+        // `tracking_facade::repair_scan_soft_error_rides_the_body`.
 
         composed.producers.stop();
     }

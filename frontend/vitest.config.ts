@@ -16,11 +16,6 @@ import { defineConfig } from 'vitest/config';
 // CI.
 export default defineConfig({
 	plugins: [svelte(), svelteTesting()],
-	// vite.config.ts inlines the backend port the same way for the real build;
-	// the suites pin URLs against this fixed value rather than a machine's env.
-	define: {
-		'import.meta.env.ENTROPIAORME_BACKEND_PORT': JSON.stringify('8421'),
-	},
 	resolve: {
 		alias: {
 			$lib: fileURLToPath(new URL('./src/lib', import.meta.url)),

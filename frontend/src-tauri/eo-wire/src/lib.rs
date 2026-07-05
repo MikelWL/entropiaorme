@@ -22,7 +22,6 @@ pub mod domain_events;
 pub mod fingerprint;
 pub mod http_fingerprint;
 pub mod metrics;
-pub mod models;
 pub mod normalizer;
 
 /// Identifies this crate in diagnostics and smoke checks.
