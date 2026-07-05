@@ -523,9 +523,14 @@ pub async fn scan_start(
     facade(&app)?.scan_start(page_count)
 }
 
+// The capture runs a synchronous screen grab + OCR read; offload it so a
+// slow grab never ties up an async runtime worker.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn scan_capture(app: tauri::AppHandle) -> Result<CaptureResult, ApiError> {
-    facade(&app)?.scan_capture()
+    let api = facade(&app)?;
+    tokio::task::spawn_blocking(move || api.scan_capture())
+        .await
+        .map_err(|_| ApiError::invalid_state("scan capture task failed"))?
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -735,15 +740,17 @@ pub async fn tracking_quest_link(
     facade(&app)?.tracking_quest_link(session_id, action).await
 }
 
-// The repair-scan facade method is synchronous (it reads the config flag
-// and runs the one-shot OCR read without awaiting), so this wrapper does
-// not `.await` it.
+// The repair scan runs a synchronous screen grab + one-shot OCR read;
+// offload it so a slow grab never ties up an async runtime worker.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_repair_scan(
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<RepairScanResult, ApiError> {
-    facade(&app)?.tracking_repair_scan(session_id)
+    let api = facade(&app)?;
+    tokio::task::spawn_blocking(move || api.tracking_repair_scan(session_id))
+        .await
+        .map_err(|_| ApiError::invalid_state("repair scan task failed"))?
 }
 
 #[tauri::command(rename_all = "snake_case")]

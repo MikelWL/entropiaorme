@@ -285,6 +285,9 @@ pub struct ProducerState {
     // [`ProducerState::stop`]; `restart`/`stop` take `&self`, so sharing is safe.
     watcher: Arc<ChatlogWatcher>,
     tracker: Arc<HuntTracker>,
+    // The substrate runtime handle, kept for the synchronous exit seam's
+    // one bridge onto the async tracker.
+    runtime: tokio::runtime::Handle,
     // The typed domain-event channel. The bus bridge (subscribed below)
     // holds clones of this through its subscriber closures, and the shell's
     // Tauri-emit bridge subscribes over a clone handed off before this
@@ -329,10 +332,12 @@ impl ProducerState {
     /// watcher and an already-idle tracker.
     pub fn stop(&self) {
         // Stop the input listener first (it detaches the shared OS hook), then
-        // end any open session while the bus is live, then the watcher.
+        // end any open session while the bus is live, then the watcher. The
+        // exit seam is the one synchronous caller of the async tracker, so it
+        // bridges onto the substrate runtime here.
         self.hotbar.stop();
         if self.tracker.is_tracking() {
-            let _ = self.tracker.stop_session();
+            let _ = block_on_pool(&self.runtime, self.tracker.stop_session());
         }
         self.watcher.stop();
     }
@@ -1010,12 +1015,14 @@ fn compose_producers(
     // is active (the listener reconciles on the session bus events).
     hotbar.set_hotbar_hooks_enabled(config.hotbar_hooks_enabled);
 
-    let tracker = HuntTracker::new(
-        bus.clone(),
-        db.clone(),
-        runtime.clone(),
-        clock.clone(),
-        build_providers(db, data_dir, &config, runtime.clone()),
+    let tracker = block_on_pool(
+        &runtime,
+        HuntTracker::new(
+            bus.clone(),
+            db.clone(),
+            clock.clone(),
+            build_providers(db, data_dir, &config, runtime.clone()),
+        ),
     )?;
 
     // Start the tail thread last, after every subscriber is registered,
@@ -1025,6 +1032,7 @@ fn compose_producers(
     Ok(ProducerState {
         watcher,
         tracker,
+        runtime,
         domain_bus,
         config_service,
         skill_tracker,
@@ -1769,6 +1777,7 @@ mod tests {
         producers
             .tracker()
             .start_session()
+            .await
             .expect("composed session starts");
 
         // Three lines across three ticks: a combat tick, then two loot
@@ -1801,11 +1810,15 @@ mod tests {
 
         // A snapshot proves the live tracker accumulated through the
         // composed bus.
-        let readout = producers.tracker().snapshot().expect("snapshot");
+        let readout = producers.tracker().snapshot().await.expect("snapshot");
         let active = readout.active.expect("a session is active");
         assert_eq!(active.kill_count, 2, "two loot groups, two kills");
 
-        producers.tracker().stop_session().expect("session stops");
+        producers
+            .tracker()
+            .stop_session()
+            .await
+            .expect("session stops");
         producers.stop();
 
         // The persisted rows match: one session, two kills.
@@ -1856,6 +1869,7 @@ mod tests {
         producers
             .tracker()
             .start_session()
+            .await
             .expect("composed session starts");
 
         // Before stop: exactly one active session row exists.

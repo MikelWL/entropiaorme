@@ -42,7 +42,6 @@ use eo_services::tracking_models::{
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
-use tokio::runtime::Handle;
 use tokio::sync::OnceCell;
 
 use crate::analytics::{
@@ -184,13 +183,8 @@ impl DemoState {
         let db = Db::open(&work).await?;
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
         let bus = Arc::new(EventBus::new());
-        let tracker = HuntTracker::new(
-            bus,
-            db.clone(),
-            Handle::current(),
-            clock.clone(),
-            Providers::default(),
-        )?;
+        let tracker =
+            HuntTracker::new(bus, db.clone(), clock.clone(), Providers::default()).await?;
         let fixture: Fixture = serde_json::from_str(MID_HUNT_FIXTURE)?;
         Ok(DemoState {
             db,
@@ -492,15 +486,17 @@ impl DemoState {
             kills,
             dangling_cost: Ped(session.dangling_cost),
         };
-        self.tracker.prime_demo(
-            demo_session,
-            MobSelection::Manual {
-                name: DEMO_MOB.0.to_string(),
-                species: DEMO_MOB.1.to_string(),
-                maturity: DEMO_MOB.2.to_string(),
-            },
-            TrackingMode::Mob,
-        );
+        self.tracker
+            .prime_demo(
+                demo_session,
+                MobSelection::Manual {
+                    name: DEMO_MOB.0.to_string(),
+                    species: DEMO_MOB.1.to_string(),
+                    maturity: DEMO_MOB.2.to_string(),
+                },
+                TrackingMode::Mob,
+            )
+            .await;
         Ok(())
     }
 

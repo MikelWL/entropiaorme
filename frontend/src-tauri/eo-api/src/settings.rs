@@ -332,7 +332,7 @@ impl Api {
         if hooks_present {
             self.hotbar.set_hotbar_hooks_enabled(hooks_value);
         }
-        self.tracker.reload_config();
+        self.tracker.reload_config().await;
         self.settings().await
     }
 

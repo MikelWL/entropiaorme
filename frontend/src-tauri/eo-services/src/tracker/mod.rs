@@ -1,35 +1,28 @@
 //! The hunt tracker: the central coordinator that subscribes to the
 //! bus, accumulates combat stats, creates kill records on loot events,
 //! and persists to the database. Ported from the original Python
-//! implementation, with the session state re-founded as a typestate:
-//! `Idle | Active(ActiveSession)`, so the invariants the original held
-//! in comments (an accumulator exists exactly while a session runs,
-//! a mob stamp always carries its source) are unrepresentable when
-//! violated rather than checked at each use.
+//! implementation, then re-founded: the session state is a typestate
+//! (`Idle | Active(ActiveSession)`), and the state is owned by a
+//! single actor task fed over a typed message channel (see `actor`)
+//! rather than shared behind a mutex. `HuntTracker` is the handle:
+//! commands are async message calls, and the two hot predicates read
+//! a watch channel the actor keeps current.
 //!
 //! The kills model: shots accumulate with cost; a loot group is a
 //! kill (snapshot the accumulator, stamp the configured mob or tag,
 //! persist, reset); deaths are invisible; a session ending with
 //! unresolved shots carries them as dangling cost.
 //!
-//! Concurrency shape: one mutex owns the in-memory session state, and
-//! the original's documented invariants hold structurally here. Bus
-//! publishes run only after the guard drops; the session-persistence
-//! writes run after the guard drops (bridged onto the async pool
-//! through a runtime handle, preserving the original's lock order:
-//! the tracker lock is never held across SQLite for the tracker's own
-//! writes); the provider callbacks reached from handlers may read the
-//! database while the guard is held, exactly as the original's lock
-//! order allows.
-//!
-//! Representation differences, all observation-equivalent: the
-//! original's `_last_kill` alias of `session.kills[-1]` is the
-//! `last_mut()` of the kills list; phase-keyed tool stats live in an
-//! ordered vector rather than an insertion-ordered dict; the
-//! original's logging, debug-only performance counters and
-//! development-build priming hook are omitted, as is its
-//! `enhancer_tt_lookup` provider (stored but never read there).
+//! Representation differences from the original, all
+//! observation-equivalent: the original's `_last_kill` alias of
+//! `session.kills[-1]` is the `last_mut()` of the kills list;
+//! phase-keyed tool stats live in an ordered vector rather than an
+//! insertion-ordered dict; the original's logging, debug-only
+//! performance counters and development-build priming hook are
+//! omitted, as is its `enhancer_tt_lookup` provider (stored but never
+//! read there).
 
+mod actor;
 mod combat;
 mod loot;
 mod mob;
@@ -46,24 +39,18 @@ pub use providers::{EquipmentProfile, Providers};
 pub(crate) use time::parse_timestamp_str;
 pub use time::{naive_isoformat, naive_to_epoch, to_iso_utc};
 
-use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use eo_wire::domain_events::{
-    TrackingReason, TrackingSessionUpdated, TrackingSessionUpdatedPayload,
-    TrackingSessionUpdatedTag, TrackingStatus,
-};
-use tokio::runtime::Handle;
+use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::bus_events::BusEvent;
 use crate::clock::Clock;
 use crate::db::{Db, DbError};
-use crate::event_bus::{EventBus, Registration, Topic};
-use crate::loot_filter::normalize_blacklist;
+use crate::event_bus::EventBus;
 use crate::mob_lookup_service::python_whitespace;
 use crate::ped::Ped;
+use crate::tracking_models::TrackingSession;
 
+use actor::{TrackerActor, TrackerMsg, TrackerStatus};
 use session::ActiveSession;
 
 /// Loot groups with an identical fingerprint within this window are
@@ -140,37 +127,23 @@ impl Default for HealTool {
     }
 }
 
-/// The in-memory state the tracker's one mutex owns: the session
-/// typestate plus the two pieces that outlive a session (the loot
-/// blacklist and the equipped heal tool).
-#[derive(Default)]
-struct TrackerState {
-    session: SessionState,
-    loot_blacklist: BTreeSet<String>,
-    heal_tool: HealTool,
-}
-
+/// The tracker handle: an unbounded sender into the actor plus the
+/// watch the actor keeps current. The composition root keeps one
+/// `Arc` for the process lifetime as before.
 pub struct HuntTracker {
-    bus: Arc<EventBus>,
     db: Db,
-    runtime: Handle,
-    clock: Arc<dyn Clock>,
-    providers: Providers,
-    state: Mutex<TrackerState>,
-    subscriptions: Mutex<Vec<(Topic, Registration)>>,
-    subscribed: AtomicBool,
+    sender: mpsc::UnboundedSender<TrackerMsg>,
+    status: watch::Receiver<TrackerStatus>,
 }
 
 impl HuntTracker {
-    /// Build the tracker over an already-migrated pool. Recovery of
-    /// crash-orphaned sessions runs here, as the original's
-    /// constructor does. The handler closures hold the tracker
-    /// strongly while subscribed (released on session stop), so the
-    /// composition root keeps one `Arc` for the process lifetime.
-    pub fn new(
+    /// Build the tracker over an already-migrated pool: spawn the
+    /// state-owning actor on the current runtime and wait for its
+    /// crash-orphan recovery to finish (a recovery failure surfaces
+    /// here, exactly as the blocking constructor's did).
+    pub async fn new(
         bus: Arc<EventBus>,
         db: Db,
-        runtime: Handle,
         clock: Arc<dyn Clock>,
         mut providers: Providers,
     ) -> Result<Arc<Self>, DbError> {
@@ -178,132 +151,133 @@ impl HuntTracker {
             .player_name
             .trim_matches(python_whitespace)
             .to_string();
-        let state = TrackerState {
-            loot_blacklist: normalize_blacklist(Some(
-                providers.loot_filter_blacklist.iter().map(String::as_str),
-            )),
-            ..TrackerState::default()
-        };
-
-        let tracker = Arc::new(Self {
+        let (sender, inbox) = mpsc::unbounded_channel();
+        let (status_tx, status_rx) = watch::channel(TrackerStatus::default());
+        let (ready_tx, ready_rx) = oneshot::channel();
+        tokio::spawn(TrackerActor::run(
             bus,
-            db,
-            runtime,
+            db.clone(),
             clock,
             providers,
-            state: Mutex::new(state),
-            subscriptions: Mutex::new(Vec::new()),
-            subscribed: AtomicBool::new(false),
-        });
-        tracker.refresh_loot_filter_locked(&mut tracker.lock_state());
-        tracker.recover_orphaned_sessions()?;
-        Ok(tracker)
+            sender.clone(),
+            inbox,
+            status_tx,
+            ready_tx,
+        ));
+        ready_rx.await.expect("tracker actor start")?;
+        Ok(Arc::new(Self {
+            db,
+            sender,
+            status: status_rx,
+        }))
     }
 
-    /// Bridge a database future onto the runtime from either calling
-    /// context: a runtime worker thread (the command layer) yields its
-    /// slot via `block_in_place`, while a plain producer thread (the
-    /// chat-log tail, the hotbar listener) parks directly.
-    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        if Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| self.runtime.block_on(future))
-        } else {
-            self.runtime.block_on(future)
-        }
-    }
-
-    /// The state guard, tolerating poison: a panicking provider or
-    /// cost computation must not brick the tracker, mirroring the
-    /// original's per-event exception containment (its state stays
-    /// serviceable after a contained failure).
-    fn lock_state(&self) -> std::sync::MutexGuard<'_, TrackerState> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// One message call: enqueue with a reply channel, await the reply.
+    /// The actor lives as long as any handle does, so a dead channel is
+    /// a bug, not a condition to handle.
+    async fn call<R>(&self, build: impl FnOnce(oneshot::Sender<R>) -> TrackerMsg) -> R {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.sender
+            .send(build(reply_tx))
+            .expect("tracker actor alive");
+        reply_rx.await.expect("tracker actor replies")
     }
 
     pub fn is_tracking(&self) -> bool {
-        self.lock_state().session.active().is_some()
+        self.status.borrow().tracking
     }
 
     /// Whether the active session was captured in tag mode: the
     /// per-session mode snapshotted at `start_session`, not the live
     /// config. Idle reads `false` structurally (the snapshot lives in
-    /// the `Active` payload); the manual-mob-suggestions handler only
-    /// consults it while tracking, gating the idle case on the live
-    /// config instead.
+    /// the `Active` payload).
     pub fn is_session_tag_mode(&self) -> bool {
-        self.lock_state()
-            .session
-            .active()
-            .is_some_and(|active| active.mode == TrackingMode::Tag)
+        let status = self.status.borrow();
+        status.tracking && status.tag_mode
     }
 
-    fn subscribe_handlers(self: &Arc<Self>) {
-        if self.subscribed.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let mut subscriptions = self.subscriptions.lock().expect("subscriptions");
-        type Handler = fn(&HuntTracker, &BusEvent);
-        let pairs: [(Topic, Handler); 7] = [
-            (Topic::Combat, Self::on_combat),
-            (Topic::LootGroup, Self::on_loot),
-            (Topic::ActiveToolChanged, Self::on_tool_changed),
-            (Topic::ActiveHealToolChanged, Self::on_heal_tool_changed),
-            (Topic::Global, Self::on_global),
-            (Topic::EnhancerBreak, Self::on_enhancer_break),
-            (Topic::TickFlushed, Self::on_tick_flushed),
-        ];
-        for (topic, handler) in pairs {
-            let tracker = self.clone();
-            let registration = self
-                .bus
-                .subscribe(topic, move |data| handler(&tracker, data));
-            subscriptions.push((topic, registration));
-        }
+    /// Start a new tracking session; any prior session stops first.
+    pub async fn start_session(&self) -> Result<TrackingSession, DbError> {
+        self.call(TrackerMsg::Start).await
     }
 
-    fn unsubscribe_handlers(&self) {
-        if !self.subscribed.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        let mut subscriptions = self.subscriptions.lock().expect("subscriptions");
-        for (topic, registration) in subscriptions.drain(..) {
-            self.bus.unsubscribe(topic, registration);
-        }
+    /// Stop the active session (None when idle).
+    pub async fn stop_session(&self) -> Result<Option<TrackingSession>, DbError> {
+        self.call(TrackerMsg::Stop).await
     }
 
-    /// Publish the coarse, frontend-facing tracking.session.updated
-    /// event: the typed envelope rides the bus directly, the same
-    /// shape the original's model dump records and the domain bridge
-    /// forwards. `occurred_at` is stamped from the domain timestamp
-    /// that triggered the event, not a fresh clock read, so the event
-    /// is deterministic under replay.
-    fn emit_session_event(
+    /// Refresh trifecta-attribution and loot-filter state after config
+    /// changes.
+    pub async fn reload_config(&self) {
+        self.call(TrackerMsg::ReloadConfig).await
+    }
+
+    /// Immediately set the active free-text tag for tag-mode kill
+    /// stamping.
+    pub async fn set_manual_tag(&self, tag: &str) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::SetManualTag(tag.to_string(), reply))
+            .await
+    }
+
+    /// Immediately set the active mob for manual kill stamping.
+    pub async fn set_manual_mob(
         &self,
-        reason: TrackingReason,
-        status: TrackingStatus,
-        occurred_ts: f64,
-        session_id: Option<&str>,
-    ) {
-        self.bus
-            .publish(&BusEvent::TrackingSessionUpdated(TrackingSessionUpdated {
-                topic: TrackingSessionUpdatedTag,
-                event_version: 1,
-                occurred_at: to_iso_utc(occurred_ts),
-                payload: TrackingSessionUpdatedPayload {
-                    session_id: session_id.map(str::to_string),
-                    status,
-                    reason,
-                },
-            }));
+        mob_name: &str,
+        species: &str,
+        maturity: &str,
+    ) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::SetManualMob {
+            name: mob_name.to_string(),
+            species: species.to_string(),
+            maturity: maturity.to_string(),
+            reply,
+        })
+        .await
     }
 
-    fn refresh_loot_filter_locked(&self, state: &mut TrackerState) {
-        let blacklist: Vec<String> = match &self.providers.loot_filter_blacklist_provider {
-            Some(provider) => provider(),
-            None => self.providers.loot_filter_blacklist.clone(),
-        };
-        state.loot_blacklist = normalize_blacklist(Some(blacklist.iter().map(String::as_str)));
+    /// Clear the current mob selection, returning the released name.
+    pub async fn release_current_mob(&self) -> Option<String> {
+        self.call(TrackerMsg::ReleaseMob).await
+    }
+
+    /// Prime the tracker with a fully-formed demo session (guide-mode
+    /// demo playback over a throwaway database only).
+    pub async fn prime_demo(
+        &self,
+        session: TrackingSession,
+        mob: MobSelection,
+        mode: TrackingMode,
+    ) {
+        self.call(|reply| TrackerMsg::PrimeDemo {
+            session,
+            mob,
+            mode,
+            reply,
+        })
+        .await
+    }
+
+    /// The in-memory aggregate half of the snapshot (see
+    /// `session::SessionAggregate`).
+    async fn aggregate(&self) -> (Option<String>, Option<session::SessionAggregate>) {
+        self.call(|reply| TrackerMsg::Aggregate(Box::new(reply)))
+            .await
+    }
+
+    /// Test-only structural inspection: run a probe against the
+    /// actor's owned state and return its result.
+    #[cfg(test)]
+    async fn inspect<R, F>(&self, probe: F) -> R
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut TrackerActor) -> R + Send + 'static,
+    {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.sender
+            .send(TrackerMsg::Inspect(Box::new(move |actor| {
+                let _ = reply_tx.send(probe(actor));
+            })))
+            .expect("tracker actor alive");
+        reply_rx.await.expect("tracker actor replies")
     }
 }

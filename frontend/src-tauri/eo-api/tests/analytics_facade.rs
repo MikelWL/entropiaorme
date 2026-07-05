@@ -34,7 +34,7 @@ async fn analytics_api(dir: &Path) -> Api {
         .expect("migrated database");
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
-    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
     Api::new(
         db,
         game_data,

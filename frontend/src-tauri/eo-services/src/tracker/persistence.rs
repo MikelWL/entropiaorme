@@ -10,15 +10,15 @@ use crate::db::{decoded_f64, DbError};
 use crate::session_summary::write_session_summary;
 use crate::tracking_models::Kill;
 
+use super::actor::TrackerActor;
 use super::time::{epoch_to_naive, naive_isoformat};
-use super::HuntTracker;
 
-impl HuntTracker {
+impl TrackerActor {
     /// Close sessions left open by a crash: end at the latest kill
     /// (or the start), write the ledger gains and the summary, and
     /// clear the active flag.
-    pub(super) fn recover_orphaned_sessions(&self) -> Result<(), DbError> {
-        self.block_on(async {
+    pub(super) async fn recover_orphaned_sessions(&self) -> Result<(), DbError> {
+        {
             let rows =
                 sqlx::query("SELECT id, started_at FROM tracking_sessions WHERE is_active = 1")
                     .fetch_all(self.db.read())
@@ -56,15 +56,15 @@ impl HuntTracker {
                 tx.commit().await?;
             }
             Ok(())
-        })
+        }
     }
     /// Write a finalised kill to the database: the kill row, the
     /// per-tool stats (`INSERT OR REPLACE` keyed on the tool name, so
     /// among same-name phases the last written wins, as the
     /// original's insertion-ordered iteration does), and the loot
     /// items, under one commit.
-    pub(super) fn persist_kill(&self, kill: &Kill) {
-        let result = self.block_on(async {
+    pub(super) async fn persist_kill(&self, kill: &Kill) {
+        let result: Result<(), sqlx::Error> = async {
             let mut tx = self.db.write().begin().await?;
             sqlx::query(
                 "INSERT OR REPLACE INTO kills \
@@ -124,8 +124,9 @@ impl HuntTracker {
                 .await?;
             }
             tx.commit().await?;
-            Ok::<(), sqlx::Error>(())
-        });
+            Ok(())
+        }
+        .await;
         // Contained like the original's handler exception.
         let _ = result;
     }

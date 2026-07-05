@@ -1851,6 +1851,7 @@ impl Api {
         let session = self
             .tracker
             .start_session()
+            .await
             .map_err(ApiError::internal("tracking start"))?;
         Ok(StartResult {
             session_id: session.id,
@@ -1867,6 +1868,7 @@ impl Api {
         match self
             .tracker
             .stop_session()
+            .await
             .map_err(ApiError::internal("tracking stop"))?
         {
             Some(session) => Ok(StopResult {
@@ -1884,16 +1886,22 @@ impl Api {
 
     /// Clear the locked mob or tag, echoing what was released.
     pub async fn tracking_release_mob(&self) -> Result<ReleaseResult, ApiError> {
-        let Ok(mut guard) = self.config_service.lock() else {
-            return Err(ApiError::invalid_state("release mob: poisoned config lock"));
+        // The (non-`Send`) config guard is scoped around each read/write
+        // so it is never held across the tracker's await points; the
+        // release-then-write order within each branch is unchanged.
+        let lock_config = || {
+            self.config_service
+                .lock()
+                .map_err(|_| ApiError::invalid_state("release mob: poisoned config lock"))
         };
         let released = if self.tracker.is_tracking() && self.tracker.is_session_tag_mode() {
-            let released = self.tracker.release_current_mob();
-            guard
+            let released = self.tracker.release_current_mob().await;
+            lock_config()?
                 .update(&clear_tag())
                 .map_err(ApiError::internal("release mob"))?;
             released.map(Value::from).unwrap_or(Value::Null)
         } else if !self.tracker.is_tracking() {
+            let mut guard = lock_config()?;
             if guard.get().mob_tracking_mode == "tag" {
                 let trimmed = guard.get().mob_tracking_tag.trim().to_string();
                 let released = if trimmed.is_empty() {
@@ -1915,8 +1923,8 @@ impl Api {
                 released
             }
         } else {
-            let released = self.tracker.release_current_mob();
-            guard
+            let released = self.tracker.release_current_mob().await;
+            lock_config()?
                 .update(&clear_manual_mob())
                 .map_err(ApiError::internal("release mob"))?;
             released.map(Value::from).unwrap_or(Value::Null)
@@ -1934,35 +1942,41 @@ impl Api {
         maturity: Option<String>,
     ) -> Result<ManualMobLockResult, ApiError> {
         let maturity = maturity.unwrap_or_default();
-        let Ok(mut guard) = self.config_service.lock() else {
-            return Err(ApiError::invalid_state(
-                "manual mob lock: poisoned config lock",
-            ));
-        };
-        let idle_tag_mode = !self.tracker.is_tracking() && guard.get().mob_tracking_mode == "tag";
-        if (self.tracker.is_tracking() && self.tracker.is_session_tag_mode()) || idle_tag_mode {
-            return Err(ApiError::conflict("Tag mode disables manual mob selection"));
-        }
         let species = species.trim();
         let maturity = maturity.trim();
-        if !MobLookupService::new(&self.game_data).has_mob_name(species, maturity) {
-            return Err(ApiError::bad_request("Mob is not present in the catalogue"));
-        }
         let display = if maturity.is_empty() {
             species.to_string()
         } else {
             format!("{maturity} {species}")
         };
-        let mut updates = Map::new();
-        updates.insert("manual_mob_species".into(), json!(species));
-        updates.insert("manual_mob_maturity".into(), json!(maturity));
-        guard
-            .update(&updates)
-            .map_err(ApiError::internal("manual mob lock"))?;
+        // Validate and write inside a block so the (non-`Send`) config
+        // guard is gone before the tracker await below.
+        {
+            let Ok(mut guard) = self.config_service.lock() else {
+                return Err(ApiError::invalid_state(
+                    "manual mob lock: poisoned config lock",
+                ));
+            };
+            let idle_tag_mode =
+                !self.tracker.is_tracking() && guard.get().mob_tracking_mode == "tag";
+            if (self.tracker.is_tracking() && self.tracker.is_session_tag_mode()) || idle_tag_mode {
+                return Err(ApiError::conflict("Tag mode disables manual mob selection"));
+            }
+            if !MobLookupService::new(&self.game_data).has_mob_name(species, maturity) {
+                return Err(ApiError::bad_request("Mob is not present in the catalogue"));
+            }
+            let mut updates = Map::new();
+            updates.insert("manual_mob_species".into(), json!(species));
+            updates.insert("manual_mob_maturity".into(), json!(maturity));
+            guard
+                .update(&updates)
+                .map_err(ApiError::internal("manual mob lock"))?;
+        }
         if self.tracker.is_tracking()
             && self
                 .tracker
                 .set_manual_mob(&display, species, maturity)
+                .await
                 .is_err()
         {
             // The gate cleared an active non-tag session; the only reachable
@@ -1982,27 +1996,31 @@ impl Api {
     /// Set the active free-text tag. 409 when not in tag mode, 400 on an
     /// empty tag.
     pub async fn tracking_tag_lock(&self, tag: String) -> Result<TagLockResult, ApiError> {
-        let Ok(mut guard) = self.config_service.lock() else {
-            return Err(ApiError::invalid_state("tag lock: poisoned config lock"));
-        };
-        if self.tracker.is_tracking() {
-            if !self.tracker.is_session_tag_mode() {
-                return Err(ApiError::conflict("Active session is not in tag mode"));
-            }
-        } else if guard.get().mob_tracking_mode != "tag" {
-            return Err(ApiError::conflict("Tag mode is not enabled"));
-        }
         let tag = tag.trim();
-        if tag.is_empty() {
-            return Err(ApiError::bad_request("Tag cannot be empty"));
+        // Validate and write inside a block so the (non-`Send`) config
+        // guard is gone before the tracker await below.
+        {
+            let Ok(mut guard) = self.config_service.lock() else {
+                return Err(ApiError::invalid_state("tag lock: poisoned config lock"));
+            };
+            if self.tracker.is_tracking() {
+                if !self.tracker.is_session_tag_mode() {
+                    return Err(ApiError::conflict("Active session is not in tag mode"));
+                }
+            } else if guard.get().mob_tracking_mode != "tag" {
+                return Err(ApiError::conflict("Tag mode is not enabled"));
+            }
+            if tag.is_empty() {
+                return Err(ApiError::bad_request("Tag cannot be empty"));
+            }
+            let mut updates = Map::new();
+            updates.insert("mob_tracking_tag".into(), json!(tag));
+            guard
+                .update(&updates)
+                .map_err(ApiError::internal("tag lock"))?;
         }
-        let mut updates = Map::new();
-        updates.insert("mob_tracking_tag".into(), json!(tag));
-        guard
-            .update(&updates)
-            .map_err(ApiError::internal("tag lock"))?;
         if self.tracker.is_tracking() {
-            let _ = self.tracker.set_manual_tag(tag);
+            let _ = self.tracker.set_manual_tag(tag).await;
         }
         Ok(TagLockResult {
             tag: tag.to_string(),
@@ -2188,6 +2206,7 @@ pub(crate) async fn build_snapshot_value(
     };
     let readout = tracker
         .snapshot()
+        .await
         .map_err(ApiError::internal("snapshot readout"))?;
     let current_tool = match &readout.current_tool {
         Some(tool) => Value::String(tool.clone()),

@@ -8,23 +8,28 @@ use crate::loot_filter::is_tracked_loot;
 use crate::ped::Ped;
 use crate::tracking_models::Kill;
 
+use super::actor::TrackerActor;
 use super::time::{naive_to_epoch, parse_timestamp_str, python_total_seconds};
-use super::{HuntTracker, GLOBAL_CORRELATION_WINDOW_SECONDS, LOOT_DEDUP_WINDOW_SECONDS};
+use super::{GLOBAL_CORRELATION_WINDOW_SECONDS, LOOT_DEDUP_WINDOW_SECONDS};
 
-impl HuntTracker {
+impl TrackerActor {
     /// Handle a loot group from chat.log: creates a Kill record. The
     /// kill is built from the accumulator, the accumulator reset, and
     /// the kill appended to the session under the guard; the kill is
     /// a detached value by then, so the persisting DB write runs
     /// after release.
-    pub(super) fn on_loot(&self, event: &BusEvent) {
+    pub(super) async fn on_loot(&mut self, event: &BusEvent) {
         let BusEvent::LootGroup(group) = event else {
             return;
         };
         let kill = {
-            let mut state = self.lock_state();
-            let state = &mut *state;
-            let Some(active) = state.session.active_mut() else {
+            let Self {
+                session,
+                loot_blacklist,
+                clock,
+                ..
+            } = &mut *self;
+            let Some(active) = session.active_mut() else {
                 return;
             };
 
@@ -33,7 +38,7 @@ impl HuntTracker {
                 .timestamp
                 .as_deref()
                 .and_then(parse_timestamp_str)
-                .unwrap_or_else(|| self.clock.now());
+                .unwrap_or_else(|| clock.now());
             let now_epoch = naive_to_epoch(now);
 
             // Loot deduplication (same fingerprint within 2s window).
@@ -57,7 +62,7 @@ impl HuntTracker {
 
             let mut items = Vec::new();
             for item in &group.items {
-                if is_tracked_loot(&item.item_name, &state.loot_blacklist) {
+                if is_tracked_loot(&item.item_name, loot_blacklist) {
                     items.push(item.clone());
                 }
             }
@@ -110,16 +115,16 @@ impl HuntTracker {
             kill
         };
 
-        // Persist outside the guard: `kill` is a detached value and
-        // the lock is never held across SQLite.
-        self.persist_kill(&kill);
+        // `kill` is a detached value by here; the borrow of the live
+        // session ended with the block above.
+        self.persist_kill(&kill).await;
     }
 
     /// Handle a global/HoF event from chat.log: tags the most
     /// recently created kill (globals arrive shortly after loot). The
     /// in-memory tag lands under the guard, capturing the values the
     /// DB writes need; the UPDATE/INSERT run after release.
-    pub(super) fn on_global(&self, event: &BusEvent) {
+    pub(super) async fn on_global(&mut self, event: &BusEvent) {
         let BusEvent::Global(payload) = event else {
             return;
         };
@@ -150,14 +155,19 @@ impl HuntTracker {
             } => ("hof_item", player, item, *value, timestamp),
         };
         let (session_id, kill_id, target_is_hof, event_type, mob_or_item, value_ped, ts) = {
-            let mut state = self.lock_state();
-            let Some(active) = state.session.active_mut() else {
+            let Self {
+                session,
+                providers,
+                clock,
+                ..
+            } = &mut *self;
+            let Some(active) = session.active_mut() else {
                 return;
             };
 
             // Filter for own player.
-            if self.providers.player_name.is_empty()
-                || player.to_lowercase() != self.providers.player_name.to_lowercase()
+            if providers.player_name.is_empty()
+                || player.to_lowercase() != providers.player_name.to_lowercase()
             {
                 return;
             }
@@ -176,7 +186,7 @@ impl HuntTracker {
             let is_hof = matches!(event_type.as_str(), "hof_kill" | "hof_item");
             let ts = parse_timestamp_str(raw_ts)
                 .map(naive_to_epoch)
-                .unwrap_or_else(|| naive_to_epoch(self.clock.now()));
+                .unwrap_or_else(|| naive_to_epoch(clock.now()));
 
             // Tag the most recently created kill (staleness check:
             // within 5s). The kills tail is the original's
@@ -204,7 +214,7 @@ impl HuntTracker {
             )
         };
 
-        let result = self.block_on(async {
+        let result: Result<(), sqlx::Error> = async {
             let mut tx = self.db.write().begin().await?;
             if let Some(kill_id) = &kill_id {
                 sqlx::query("UPDATE kills SET is_global = 1, is_hof = ? WHERE id = ?")
@@ -227,8 +237,9 @@ impl HuntTracker {
             .execute(&mut *tx)
             .await?;
             tx.commit().await?;
-            Ok::<(), sqlx::Error>(())
-        });
+            Ok(())
+        }
+        .await;
         // A persistence failure is contained like the original's
         // handler exception: the in-memory tag stands.
         let _ = result;
