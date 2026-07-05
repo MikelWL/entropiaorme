@@ -1,6 +1,12 @@
 //! Playlist CRUD and shaping: classified items (immediate /
 //! long-horizon), membership normalisation from either payload shape,
 //! and the item-group split.
+//!
+//! The write path parses payloads into [`PlaylistItemPayload`] at the
+//! normalisation boundary: the group vocabulary is validated once,
+//! there, and the insert loop consumes only well-formed items (the
+//! defensive re-validation and bare-id fallbacks the loop used to
+//! carry are unrepresentable now).
 
 use serde_json::{json, Map, Value};
 use sqlx::sqlite::SqliteConnection;
@@ -11,6 +17,47 @@ use super::{QuestError, QuestService};
 
 pub const PLAYLIST_GROUP_IMMEDIATE: &str = "immediate";
 pub const PLAYLIST_GROUP_LONG_HORIZON: &str = "long_horizon";
+
+/// A playlist item's classification: the closed two-word vocabulary,
+/// parsed once at the payload boundary and rendered back at the bind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PlaylistGroup {
+    Immediate,
+    LongHorizon,
+}
+
+impl PlaylistGroup {
+    fn as_str(self) -> &'static str {
+        match self {
+            PlaylistGroup::Immediate => PLAYLIST_GROUP_IMMEDIATE,
+            PlaylistGroup::LongHorizon => PLAYLIST_GROUP_LONG_HORIZON,
+        }
+    }
+
+    /// Parse a payload group value; the refusal renders the raw value
+    /// the way the original's message does (`None` for null, verbatim
+    /// text otherwise).
+    fn parse(raw: &Value) -> Result<PlaylistGroup, QuestError> {
+        match raw.as_str() {
+            Some(text) if text == PLAYLIST_GROUP_IMMEDIATE => Ok(PlaylistGroup::Immediate),
+            Some(text) if text == PLAYLIST_GROUP_LONG_HORIZON => Ok(PlaylistGroup::LongHorizon),
+            _ => Err(QuestError::Invalid(format!(
+                "Invalid playlist group type: {}",
+                python_str(raw)
+            ))),
+        }
+    }
+}
+
+/// One normalised playlist item on the write path. The id and
+/// description stay raw payload values (they bind under the original's
+/// adapter rules, whatever scalar the payload carried); the group is
+/// parsed.
+pub(super) struct PlaylistItemPayload {
+    quest_id: Value,
+    description: Value,
+    group: PlaylistGroup,
+}
 
 impl QuestService {
     // ── Playlist CRUD ───────────────────────────────────────────────
@@ -223,53 +270,31 @@ fn row_to_playlist(row: &sqlx::sqlite::SqliteRow) -> Map<String, Value> {
     playlist
 }
 
-/// Rewrite a playlist's items with explicit grouping. The original
-/// validates each item inside the loop, after its delete; an invalid
-/// group raises there with nothing committed, and this port's enclosing
-/// transaction rolls the partial rewrite back on the same error.
+/// Rewrite a playlist's items with explicit grouping. The items arrive
+/// parsed (the group vocabulary validated at the normalisation
+/// boundary); the caller's enclosing transaction rolls the rewrite
+/// back whole on any error, preserving the original's
+/// nothing-committed refusal shape.
 async fn set_playlist_items(
     conn: &mut SqliteConnection,
     playlist_id: i64,
-    items: &[Value],
+    items: &[PlaylistItemPayload],
 ) -> Result<(), QuestError> {
     sqlx::query("DELETE FROM quest_playlist_items WHERE playlist_id = ?")
         .bind(playlist_id)
         .execute(&mut *conn)
         .await?;
     for (index, item) in items.iter().enumerate() {
-        let (quest_id, description, group_type) = match item {
-            Value::Object(entry) => (
-                entry
-                    .get("quest_id")
-                    .expect("item carries quest_id")
-                    .clone(),
-                entry.get("description").cloned().unwrap_or(Value::Null),
-                entry
-                    .get("group_type")
-                    .cloned()
-                    .unwrap_or_else(|| json!(PLAYLIST_GROUP_IMMEDIATE)),
-            ),
-            other => (other.clone(), Value::Null, json!(PLAYLIST_GROUP_IMMEDIATE)),
-        };
-        let valid_group = group_type
-            .as_str()
-            .is_some_and(|g| g == PLAYLIST_GROUP_IMMEDIATE || g == PLAYLIST_GROUP_LONG_HORIZON);
-        if !valid_group {
-            return Err(QuestError::Invalid(format!(
-                "Invalid playlist group type: {}",
-                python_str(&group_type)
-            )));
-        }
         let query = sqlx::query(
             "INSERT INTO quest_playlist_items \
              (playlist_id, quest_id, sort_order, description, group_type) \
              VALUES (?, ?, ?, ?, ?)",
         )
         .bind(playlist_id);
-        let query = bind_json(query, &quest_id);
+        let query = bind_json(query, &item.quest_id);
         let query = query.bind(index as i64);
-        let query = bind_json(query, &description);
-        let query = bind_json(query, &group_type);
+        let query = bind_json(query, &item.description);
+        let query = query.bind(item.group.as_str());
         query.execute(&mut *conn).await?;
     }
     Ok(())
@@ -284,23 +309,29 @@ async fn set_playlist_items(
 /// refuses instead: the original crashes iterating it (an unhandled
 /// error on the wire, with no surviving write), and the update path
 /// is reachable with an explicit null through the route model.
-fn normalize_playlist_items(data: &Value) -> Result<Vec<Value>, QuestError> {
+///
+/// The group vocabulary is validated here, at the boundary; the
+/// original validated inside the insert loop, but every refusal rolls
+/// back whole either way, so the observable outcome (the verbatim
+/// message, no surviving write) is identical.
+fn normalize_playlist_items(data: &Value) -> Result<Vec<PlaylistItemPayload>, QuestError> {
     if let Some(items) = data.get("items").filter(|value| !value.is_null()) {
-        return Ok(items
+        return items
             .as_array()
             .expect("items is a list")
             .iter()
             .map(|item| {
-                json!({
-                    "quest_id": item.get("quest_id").expect("item carries quest_id"),
-                    "description": item.get("description").cloned().unwrap_or(Value::Null),
-                    "group_type": item
-                        .get("group_type")
-                        .cloned()
-                        .unwrap_or_else(|| json!(PLAYLIST_GROUP_IMMEDIATE)),
+                let group = match item.get("group_type") {
+                    None => PlaylistGroup::Immediate,
+                    Some(raw) => PlaylistGroup::parse(raw)?,
+                };
+                Ok(PlaylistItemPayload {
+                    quest_id: item.get("quest_id").expect("item carries quest_id").clone(),
+                    description: item.get("description").cloned().unwrap_or(Value::Null),
+                    group,
                 })
             })
-            .collect());
+            .collect();
     }
     let quest_ids = match data.get("quest_ids") {
         None => &[] as &[Value],
@@ -313,12 +344,10 @@ fn normalize_playlist_items(data: &Value) -> Result<Vec<Value>, QuestError> {
     };
     Ok(quest_ids
         .iter()
-        .map(|quest_id| {
-            json!({
-                "quest_id": quest_id,
-                "description": null,
-                "group_type": PLAYLIST_GROUP_IMMEDIATE,
-            })
+        .map(|quest_id| PlaylistItemPayload {
+            quest_id: quest_id.clone(),
+            description: Value::Null,
+            group: PlaylistGroup::Immediate,
         })
         .collect())
 }
