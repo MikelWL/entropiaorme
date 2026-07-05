@@ -348,8 +348,11 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
     .execute(&pool)
     .await
     .unwrap();
-    for (sid, qid, at) in [("sess-1", 1i64, 1500.0), ("sess-n", 2, 7040.0), ("sess-p", 1, 2050.0)]
-    {
+    for (sid, qid, at) in [
+        ("sess-1", 1i64, 1500.0),
+        ("sess-n", 2, 7040.0),
+        ("sess-p", 1, 2050.0),
+    ] {
         sqlx::query(
             "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
              VALUES (?, ?, ?)",
