@@ -11,7 +11,7 @@ use crate::tracking_models::ToolStats;
 use super::actor::TrackerActor;
 use super::providers::Providers;
 use super::session::ActiveSession;
-use super::time::{naive_to_epoch, parse_timestamp_str, python_total_seconds};
+use super::time::{instant_to_epoch, parse_timestamp_instant, python_total_seconds, resolve_local};
 use super::weapons::break_matches_active_weapon;
 use super::HealTool;
 
@@ -222,7 +222,7 @@ impl TrackerActor {
                 // Deduplicate: tool activations produce multiple heal
                 // ticks in chat.log. Use the tool's reload time as the
                 // dedup window.
-                if let Some(timestamp) = parse_timestamp_str(timestamp) {
+                if let Some(timestamp) = parse_timestamp_instant(timestamp) {
                     let is_new_heal_activation = match active.last_heal_time {
                         None => true,
                         Some(last) => {
@@ -345,7 +345,7 @@ impl TrackerActor {
             self.emit_session_event(
                 TrackingReason::Updated,
                 TrackingStatus::Active,
-                naive_to_epoch(self.clock.now()),
+                instant_to_epoch(resolve_local(self.clock.now())),
                 Some(&session_id),
             );
         }
@@ -389,7 +389,7 @@ impl TrackerActor {
             self.emit_session_event(
                 TrackingReason::Updated,
                 TrackingStatus::Active,
-                naive_to_epoch(self.clock.now()),
+                instant_to_epoch(resolve_local(self.clock.now())),
                 Some(&session_id),
             );
         }

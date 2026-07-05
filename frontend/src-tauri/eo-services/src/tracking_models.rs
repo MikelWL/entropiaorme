@@ -4,7 +4,7 @@
 //! session can never read ambient time; the readout views are owned
 //! detached values, never references into live tracker state.
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 
 use crate::ped::Ped;
 
@@ -80,12 +80,13 @@ pub struct Kill {
     pub is_hof: bool,
 }
 
-/// A tracking session, started and stopped by the user.
+/// A tracking session, started and stopped by the user. The instants
+/// are UTC; wall-clock renderings happen at the read surfaces.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackingSession {
     pub id: String,
-    pub start_time: NaiveDateTime,
-    pub end_time: Option<NaiveDateTime>,
+    pub start_time: DateTime<Utc>,
+    pub end_time: Option<DateTime<Utc>>,
     pub kills: Vec<Kill>,
     /// Unresolved shots at session end.
     pub dangling_cost: Ped,

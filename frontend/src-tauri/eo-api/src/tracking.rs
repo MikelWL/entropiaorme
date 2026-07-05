@@ -42,7 +42,7 @@ use eo_services::config_service::{active_trifecta_preset, load_config_readonly, 
 use eo_services::db::{Db, DbError};
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
 use eo_services::quests::QuestError;
-use eo_services::tracker::{naive_isoformat, naive_to_epoch, to_iso_utc, HuntTracker};
+use eo_services::tracker::{local_isoformat, naive_to_epoch, to_iso_utc, HuntTracker};
 use eo_services::trifecta_service::{validate_trifecta, TrifectaPreset};
 use eo_wire::normalizer::round_half_even;
 use schemars::JsonSchema;
@@ -1855,7 +1855,7 @@ impl Api {
             .map_err(ApiError::internal("tracking start"))?;
         Ok(StartResult {
             session_id: session.id,
-            started_at: naive_isoformat(session.start_time),
+            started_at: local_isoformat(session.start_time),
             status: "active".to_string(),
         })
     }
@@ -1873,8 +1873,8 @@ impl Api {
         {
             Some(session) => Ok(StopResult {
                 session_id: session.id.clone(),
-                started_at: naive_isoformat(session.start_time),
-                ended_at: session.end_time.map(naive_isoformat),
+                started_at: local_isoformat(session.start_time),
+                ended_at: session.end_time.map(local_isoformat),
                 kill_count: session.kills.len() as i64,
             }),
             // Defensive: `is_tracking` was true above, so a None is a broken

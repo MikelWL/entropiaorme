@@ -36,7 +36,9 @@ use eo_services::config_service::{AppConfig, TrifectaPresetConfig};
 use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::ped::Ped;
-use eo_services::tracker::{naive_to_epoch, HuntTracker, MobSelection, Providers, TrackingMode};
+use eo_services::tracker::{
+    epoch_to_instant, naive_to_epoch, HuntTracker, MobSelection, Providers, TrackingMode,
+};
 use eo_services::tracking_models::{
     Kill, LootItem, ToolStats, TrackingSession as TrackingSessionModel,
 };
@@ -481,7 +483,7 @@ impl DemoState {
 
         let demo_session = TrackingSessionModel {
             id: session.id.clone(),
-            start_time: started_naive,
+            start_time: epoch_to_instant(started_epoch),
             end_time: None,
             kills,
             dangling_cost: Ped(session.dangling_cost),

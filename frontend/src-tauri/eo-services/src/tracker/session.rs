@@ -2,7 +2,7 @@
 //! the `ActiveSession` typestate payload, the aggregated tracking
 //! readout, and the coalesced tick flush.
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 use eo_wire::normalizer::round_half_even;
 use sqlx::Row;
@@ -16,7 +16,7 @@ use crate::tracking_models::{ActiveSessionView, TrackingReadout, TrackingSession
 use super::actor::TrackerActor;
 use super::combat::Accumulator;
 use super::mob::{MobSelection, MobSource, TrackingMode};
-use super::time::{naive_isoformat, naive_to_epoch, parse_timestamp_str};
+use super::time::{instant_to_epoch, local_isoformat, resolve_local};
 use super::weapons::WeaponRuntime;
 use super::{HealTool, HuntTracker, SessionState};
 
@@ -44,10 +44,10 @@ pub(super) struct ActiveSession {
     pub(super) mode: TrackingMode,
     /// The tag-mode free-text tag (empty outside tag mode).
     pub(super) tag: String,
-    pub(super) last_heal_time: Option<NaiveDateTime>,
+    pub(super) last_heal_time: Option<DateTime<Utc>>,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
-    pub(super) last_loot: Option<(LootFingerprint, NaiveDateTime)>,
+    pub(super) last_loot: Option<(LootFingerprint, DateTime<Utc>)>,
     pub(super) trifecta_unmatched_warning_emitted: bool,
     pub(super) weapons: WeaponRuntime,
 }
@@ -198,11 +198,11 @@ impl TrackerActor {
             .copied()
             .collect();
 
-        let start_ts = naive_to_epoch(active.session.start_time);
+        let start_ts = instant_to_epoch(active.session.start_time);
         let aggregate = SessionAggregate {
             session_id: active.session.id.clone(),
-            started_at: naive_isoformat(active.session.start_time),
-            elapsed: (naive_to_epoch(self.clock.now()) - start_ts) as i64,
+            started_at: local_isoformat(active.session.start_time),
+            elapsed: (instant_to_epoch(resolve_local(self.clock.now())) - start_ts) as i64,
             kill_count: kills.len() as i64,
             cost,
             returns,
@@ -322,12 +322,14 @@ impl TrackerActor {
         self.refresh_loot_filter();
         let session = TrackingSession {
             id: session_id.clone(),
-            start_time: self.clock.now(),
+            // The one wall-clock read of the start path, resolved to
+            // its instant at the boundary.
+            start_time: resolve_local(self.clock.now()),
             end_time: None,
             kills: Vec::new(),
             dangling_cost: Ped::ZERO,
         };
-        let start_ts = naive_to_epoch(session.start_time);
+        let start_ts = instant_to_epoch(session.start_time);
 
         // Persist session start BEFORE activating in memory: a failed
         // insert leaves the tracker idle rather than a phantom session
@@ -395,7 +397,7 @@ impl TrackerActor {
                 return Ok(None);
             };
             let dangling_cost = active.accumulator.total_cost();
-            active.session.end_time = Some(self.clock.now());
+            active.session.end_time = Some(resolve_local(self.clock.now()));
             active.session.dangling_cost = dangling_cost;
             let snapshot = active.session.clone();
             let session_id = snapshot.id.clone();
@@ -416,7 +418,7 @@ impl TrackerActor {
             "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
              heal_cost = ?, dangling_cost = ? WHERE id = ?",
         )
-        .bind(naive_to_epoch(end_time))
+        .bind(instant_to_epoch(end_time))
         .bind(heal_cost.value())
         .bind(dangling_cost.value())
         .bind(&session_id)
@@ -455,7 +457,7 @@ impl TrackerActor {
         self.emit_session_event(
             TrackingReason::Stopped,
             TrackingStatus::Idle,
-            naive_to_epoch(end_time),
+            instant_to_epoch(end_time),
             Some(&session_id),
         );
 
@@ -493,9 +495,9 @@ impl TrackerActor {
         // the dirty flag already consumed: no event), and an absent
         // timestamp falls back to the injected clock.
         let occurred_ts = match &payload.timestamp {
-            None => naive_to_epoch(self.clock.now()),
-            Some(text) => match parse_timestamp_str(text) {
-                Some(instant) => naive_to_epoch(instant),
+            None => instant_to_epoch(resolve_local(self.clock.now())),
+            Some(text) => match super::time::parse_timestamp_instant(text) {
+                Some(instant) => instant_to_epoch(instant),
                 None => match text.trim().parse::<f64>() {
                     Ok(numeric) => numeric,
                     Err(_) => return,
