@@ -25,7 +25,7 @@
 use eo_services::config_service::load_config_readonly;
 use eo_services::maintenance::rebuild_and_verify;
 use eo_services::observability_config::{crash_reporting_enabled, set_crash_reporting_enabled};
-use eo_services::tracker::naive_to_epoch;
+use eo_services::time::naive_to_epoch;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
