@@ -65,15 +65,17 @@ async fn seed_ended(db: &Db) {
     .await
     .unwrap();
     for (id, loot) in [("k1", 10.0), ("k2", 20.0)] {
-        sqlx::query("INSERT INTO kills(id,session_id,mob_name,timestamp,loot_total_ped) VALUES(?,?,?,?,?)")
-            .bind(id)
-            .bind("ended")
-            .bind("Atrox")
-            .bind(1001.0)
-            .bind(loot)
-            .execute(db.write())
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO kills(id,session_id,mob_name,timestamp,loot_total_ped) VALUES(?,?,?,?,?)",
+        )
+        .bind(id)
+        .bind("ended")
+        .bind("Atrox")
+        .bind(1001.0)
+        .bind(loot)
+        .execute(db.write())
+        .await
+        .unwrap();
     }
 }
 
@@ -109,7 +111,10 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
 async fn empty_tag_suggestions_serialise_to_the_empty_array() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), false, None).await;
-    let suggestions = api.tracking_tag_suggestions(String::new(), None).await.unwrap();
+    let suggestions = api
+        .tracking_tag_suggestions(String::new(), None)
+        .await
+        .unwrap();
     assert_eq!(serde_json::to_string(&suggestions).unwrap(), "[]");
 }
 
@@ -117,7 +122,10 @@ async fn empty_tag_suggestions_serialise_to_the_empty_array() {
 async fn a_missing_session_detail_is_not_found() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), false, None).await;
-    let error = api.tracking_session_detail("nope".to_string()).await.unwrap_err();
+    let error = api
+        .tracking_session_detail("nope".to_string())
+        .await
+        .unwrap_err();
     assert_eq!(serde_json::to_value(&error).unwrap()["kind"], "notFound");
 }
 
@@ -125,7 +133,10 @@ async fn a_missing_session_detail_is_not_found() {
 async fn a_seeded_session_detail_shapes_the_summary() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), true, None).await;
-    let detail = api.tracking_session_detail("ended".to_string()).await.unwrap();
+    let detail = api
+        .tracking_session_detail("ended".to_string())
+        .await
+        .unwrap();
     // Two Atrox kills, 30 PED loot; the summary carries the float-typed
     // returns and the integer kill count.
     assert_eq!(detail.session_id, "ended");
@@ -202,13 +213,19 @@ async fn rename_mob_happy_path_and_validation_legs() {
 async fn armour_cost_echoes_the_submitted_value() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), true, None).await;
-    let result = api.tracking_armour_cost("ended".to_string(), 2.5).await.unwrap();
+    let result = api
+        .tracking_armour_cost("ended".to_string(), 2.5)
+        .await
+        .unwrap();
     assert_eq!(
         serde_json::to_string(&result).unwrap(),
         "{\"sessionId\":\"ended\",\"armourCost\":2.5}"
     );
     // An absent session is a not-found (no active-session guard on this leg).
-    let missing = api.tracking_armour_cost("nope".to_string(), 1.0).await.unwrap_err();
+    let missing = api
+        .tracking_armour_cost("nope".to_string(), 1.0)
+        .await
+        .unwrap_err();
     assert_eq!(serde_json::to_value(&missing).unwrap()["kind"], "notFound");
 }
 

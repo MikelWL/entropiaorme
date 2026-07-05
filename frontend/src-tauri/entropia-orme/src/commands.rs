@@ -634,7 +634,9 @@ pub async fn tracking_quest_link_suggestion(
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<SessionQuestLinkSuggestion, ApiError> {
-    facade(&app)?.tracking_quest_link_suggestion(session_id).await
+    facade(&app)?
+        .tracking_quest_link_suggestion(session_id)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -658,7 +660,9 @@ pub async fn tracking_manual_mob_lock(
     species: String,
     maturity: Option<String>,
 ) -> Result<ManualMobLockResult, ApiError> {
-    facade(&app)?.tracking_manual_mob_lock(species, maturity).await
+    facade(&app)?
+        .tracking_manual_mob_lock(species, maturity)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
