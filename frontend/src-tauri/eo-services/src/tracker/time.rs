@@ -116,12 +116,10 @@ pub(super) fn epoch_to_naive(epoch: f64) -> NaiveDateTime {
         .unwrap_or_default()
 }
 
-/// `datetime.isoformat()` for naive instants (ledger dates, the
-/// readout's started_at): microseconds only when non-zero.
-/// A naive `datetime.isoformat()`: no offset suffix, microseconds only
-/// when non-zero. The start/stop producer routes render
-/// `session.start_time.isoformat()` / `session.end_time.isoformat()`
-/// through this, exactly as the snapshot renders `started_at`.
+/// A naive `datetime.isoformat()`: no offset suffix, microseconds
+/// only when non-zero. The instant-carrying surfaces render through
+/// `local_isoformat`, which converts to the local wall clock and then
+/// through this.
 pub fn naive_isoformat(instant: NaiveDateTime) -> String {
     if instant.and_utc().timestamp_subsec_micros() == 0 {
         instant.format("%Y-%m-%dT%H:%M:%S").to_string()

@@ -1,7 +1,7 @@
 # ADR-0020: The tracker as a single-owner actor with a typestate session
 
 - Status: Accepted
-- Context: with the HTTP transport gone ([ADR-0019](0019-typed-command-facade.md)), the hunt tracker's interior remained a faithful transcription of the retired reference implementation's asyncio-plus-threads shape: one mutex over a ~34-field state struct whose invariants lived in comments, producer threads bridging onto the async runtime through `block_on`/`block_in_place` at nine sites, eleven individually-injected closure fields as the dependency surface, settings re-read from disk on every provider call, and naive local datetimes as the domain time basis.
+- Context: with the HTTP transport gone ([ADR-0019](0019-typed-command-facade.md)), the hunt tracker's interior remained a faithful transcription of the retired reference implementation's asyncio-plus-threads shape: one mutex over a ~34-field state struct whose invariants lived in comments, producer threads bridging onto the async runtime through `block_on`/`block_in_place` at nine sites, an eleven-field provider bundle (nine of them injected closures) as the dependency surface, settings re-read from disk on every provider call, and naive local datetimes as the domain time basis.
 
 ## Context and problem statement
 
@@ -19,7 +19,7 @@ Re-found the tracker's interior in five moves, each landing green on the full su
 
 ## Consequences
 
-The invariants the original documented are now unrepresentable when violated rather than checked at each use, and the concurrency doctrine is gone because there is nothing to misuse: no lock to order, no poison to tolerate, no bridge to choose. Failure paths became coherent as a direct consequence of single ownership: a failed session-start insert leaves the tracker idle (the row persists before activation), and a failed stop leaves the session fully live rather than active-but-deaf (forwarders unsubscribe only after the stop transaction commits), both safe to order that way because the actor processes one message at a time.
+The invariants the original documented are now unrepresentable when violated rather than checked at each use, and the concurrency doctrine is gone because there is nothing to misuse: no lock to order, no poison to tolerate, and no per-call-site bridge to choose (the bus forwarders' single documented rendezvous wait is what remains). Failure paths became coherent as a direct consequence of single ownership: a failed session-start insert leaves the tracker idle (the row persists before activation), and a failed stop leaves the session fully live rather than active-but-deaf (forwarders unsubscribe only after the stop transaction commits), both safe to order that way because the actor processes one message at a time.
 
 The behavioural contract did not move: the full suite, the replay corpus, and every golden set (event-stream fingerprints, database snapshots, curated wire captures) reproduce byte-for-byte across all five moves, and the typed-command byte-parity pins held throughout. The one deliberate semantic edge is documented in the time basis: a wall-clock reading inside a DST gap cannot round-trip, and the instant is the truth.
 

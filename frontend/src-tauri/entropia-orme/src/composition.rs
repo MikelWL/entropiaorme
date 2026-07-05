@@ -1085,7 +1085,7 @@ fn build_hotbar_resolver(
 }
 
 /// The per-shot weapon cost in PED for a tool by name fragment, mirroring the
-/// cost provider's `_equipment_cost_lookup`: `totalCostPerUse / 100`, or 0
+/// cost provider's `equipment.cost_per_shot`: `totalCostPerUse / 100`, or 0
 /// when the tool is unknown.
 async fn weapon_cost_by_name(db: &Db, name: &str) -> f64 {
     match db
@@ -1930,11 +1930,11 @@ mod tests {
     /// The `build_providers` transforms, each invoked against on-disk
     /// fixtures so a mutation to any one transform is observable:
     ///
-    /// - equipment_profile_lookup returns the parsed property object for a
+    /// - equipment.weapon_profile returns the parsed property object for a
     ///   weapon matched by name fragment (kills the deleted `Ok(Object)`
     ///   match arm and the `Default::default()` whole-function replacement,
     ///   both of which yield `None`).
-    /// - equipment_cost_lookup returns `totalCostPerUse / 100`; the seeded
+    /// - equipment.cost_per_shot returns `totalCostPerUse / 100`; the seeded
     ///   props make totalCostPerUse == 250 so the expected 2.5 differs from
     ///   both `250 % 100` (50.0) and `250 * 100` (25000.0): kills the `/`->`%`
     ///   and `/`->`*` mutants.
@@ -1954,7 +1954,7 @@ mod tests {
         // A weapon whose name carries the fragment "Korss", with a
         // property object whose economy yields a known totalCostPerUse.
         // ammo_burn 25000 -> 250 PEC ammo at markup 1.0, decay 0 ->
-        // totalCostPerUse == 250, so equipment_cost_lookup == 250/100 == 2.5.
+        // totalCostPerUse == 250, so equipment.cost_per_shot == 250/100 == 2.5.
         let props = serde_json::json!({
             "weapon_entity": {"economy": {"decay": 0.0, "ammo_burn": 25000}},
             "weapon_markup": 100,
@@ -2085,11 +2085,11 @@ mod tests {
         .expect("the provider must not panic off-runtime");
         assert!(
             outcome.0,
-            "equipment_profile_lookup resolves from a non-runtime thread"
+            "equipment.weapon_profile resolves from a non-runtime thread"
         );
         assert!(
             (outcome.1 - 2.5).abs() < 1e-9,
-            "equipment_cost_lookup resolves off-runtime to 2.5, got {}",
+            "equipment.cost_per_shot resolves off-runtime to 2.5, got {}",
             outcome.1
         );
     }
