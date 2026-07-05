@@ -66,7 +66,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eo_services::bus_events::BusEvent;
-use eo_services::chatlog_watcher::{ChatlogWatcher, QuestRewardFilter};
+use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::{Clock, RealClock};
 use eo_services::config_service::{
     active_trifecta_preset, load_config_readonly, AppConfig, ConfigReader, ConfigService,
@@ -321,9 +321,10 @@ pub struct ProducerState {
     // hook is single-instance, so two independent sources would have one
     // stand inert.
     keystroke_source: Arc<dyn KeystrokeSource>,
-    // Held to keep its permanent bus subscription alive for the substrate's
-    // lifetime; never read directly here.
-    _quests: Arc<QuestService>,
+    // The quest service: its owning task holds the permanent bus
+    // subscriptions for the substrate's lifetime, and the typed-command
+    // facade serves the quest families over this same instance.
+    quests: Arc<QuestService>,
 }
 
 impl ProducerState {
@@ -398,6 +399,16 @@ impl ProducerState {
     /// subscription side share one tracker.
     pub fn skill_tracker_handle(&self) -> Arc<SkillTracker> {
         self.skill_tracker.clone()
+    }
+
+    /// A handle to the composed quest service. The typed-command facade
+    /// serves the quest and playlist families over this same
+    /// `Arc<QuestService>`: cloned into the facade at the composition
+    /// handoff, so the bus-fed flows (session tracking, mission
+    /// auto-start, reward suppression) and the command surface share one
+    /// instance.
+    pub fn quests_handle(&self) -> Arc<QuestService> {
+        self.quests.clone()
     }
 
     /// A handle to the spine's event bus. The scan services compose on this
@@ -690,6 +701,7 @@ async fn compose_with(
         skill_scan.clone(),
         spacebar_listener.clone(),
         repair_ocr.clone(),
+        producers.quests_handle(),
         demo_db_path,
     ));
     Composition::Ready(Composed {
@@ -982,16 +994,15 @@ fn compose_producers(
     // The quest service is bus-subscribed (session tracking + mission
     // auto-start) and supplies the watcher's quest-reward filter, so a
     // mission completion can suppress its reward echo just as the
-    // Python reference's does.
-    let quests = Arc::new(QuestService::new(db.clone(), clock.clone()));
-    quests.subscribe(&bus, runtime.clone());
+    // Python reference's does. Its owning task serialises those flows;
+    // the filter closure is a rendezvous into it.
+    let quests = QuestService::start(&bus, db.clone(), clock.clone(), runtime.clone());
 
     let watched_chatlog = chatlog_override.unwrap_or_else(|| PathBuf::from(&config.chatlog_path));
-    let quest_reward_filter = quest_reward_filter_adapter(quests.clone(), runtime.clone());
     let watcher = Arc::new(ChatlogWatcher::new(
         bus.clone(),
         watched_chatlog,
-        Some(quest_reward_filter),
+        Some(quests.watcher_filter()),
     ));
 
     let skill_tracker = SkillTracker::new(&bus, db.clone(), runtime.clone(), clock.clone());
@@ -1045,7 +1056,7 @@ fn compose_producers(
         bus,
         hotbar,
         keystroke_source,
-        _quests: quests,
+        quests,
     })
 }
 
@@ -1146,42 +1157,6 @@ fn subscribe_domain_bridge(bus: &EventBus, domain_bus: &Arc<DomainBus>) {
             _ => {}
         });
     }
-}
-
-/// Adapt the quest service's async reward filter to the watcher's
-/// synchronous `QuestRewardFilter` closure: the watcher invokes it from
-/// its tail thread, where there is no current runtime, so the closure
-/// bridges onto the substrate runtime and parks. A filter error
-/// surfaces as no suppression, exactly as the backend contains a filter
-/// exception.
-fn quest_reward_filter_adapter(
-    quests: Arc<QuestService>,
-    runtime: tokio::runtime::Handle,
-) -> QuestRewardFilter {
-    Arc::new(
-        move |mission_name: &str, loot_items: &[Value], skill_gains: &[Value]| {
-            let mission_name = mission_name.to_string();
-            let loot_items = loot_items.to_vec();
-            let skill_gains = skill_gains.to_vec();
-            let quests = quests.clone();
-            let result = if tokio::runtime::Handle::try_current().is_ok() {
-                tokio::task::block_in_place(|| {
-                    runtime.block_on(async {
-                        quests
-                            .quest_reward_filter(&mission_name, &loot_items, &skill_gains)
-                            .await
-                    })
-                })
-            } else {
-                runtime.block_on(async {
-                    quests
-                        .quest_reward_filter(&mission_name, &loot_items, &skill_gains)
-                        .await
-                })
-            };
-            result.unwrap_or(None)
-        },
-    )
 }
 
 /// The live equipment library behind the tracker's equipment seam:
@@ -1314,8 +1289,9 @@ fn block_on_pool<F: std::future::Future>(handle: &tokio::runtime::Handle, future
     // chat-log watcher's plain OS thread (no current runtime), so the
     // handle is the one captured at composition time. A runtime worker
     // thread (an HTTP-driven reload) yields its slot via `block_in_place`;
-    // a plain producer thread parks directly. This mirrors the tracker's
-    // own `block_on` and the quest-reward-filter adapter.
+    // a plain producer thread parks directly. The tracker's and quest
+    // service's bus forwarders wait on their reply channels in this same
+    // dual shape.
     if tokio::runtime::Handle::try_current().is_ok() {
         tokio::task::block_in_place(|| handle.block_on(future))
     } else {

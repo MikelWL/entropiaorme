@@ -17,6 +17,7 @@ use eo_services::config_service::ConfigService;
 use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::hotbar_listener::HotbarListener;
+use eo_services::quests::QuestService;
 use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
 use eo_services::skill_scan_manual::{ScanProviders, SkillScanManual};
 use eo_services::skill_tracker::SkillTracker;
@@ -46,6 +47,9 @@ pub struct ProducerHandles {
     // `Api::new` and never reads it.
     #[allow(dead_code)]
     pub repair_ocr: Arc<RepairOcrService>,
+    // The composed quest service (its owning task subscribed on this
+    // module's bus); the facade serves the quest families over it.
+    pub quests: Arc<QuestService>,
 }
 
 /// Build the write-family producer handles for a facade under test.
@@ -79,7 +83,7 @@ pub async fn producer_handles(
     let skill_tracker = SkillTracker::new(
         &bus,
         Db::from_pool(db.write().clone()),
-        handle,
+        handle.clone(),
         Arc::new(RealClock::new()),
     );
     let skill_scan = SkillScanManual::new(
@@ -91,6 +95,12 @@ pub async fn producer_handles(
     );
     let spacebar = SpacebarCaptureListener::new(skill_scan.clone(), None);
     let repair_ocr = Arc::new(RepairOcrService::new(RepairProviders::default()));
+    let quests = QuestService::start(
+        &bus,
+        Db::from_pool(db.write().clone()),
+        Arc::new(RealClock::new()),
+        handle,
+    );
     ProducerHandles {
         config_service,
         tracker,
@@ -100,5 +110,6 @@ pub async fn producer_handles(
         skill_scan,
         spacebar,
         repair_ocr,
+        quests,
     }
 }

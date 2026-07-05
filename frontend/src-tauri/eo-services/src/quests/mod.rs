@@ -19,7 +19,15 @@
 //! `is_active` as 0/1 integers, ids as integers), exactly as the
 //! original's `dict(row)` does; the camelCase wire shaping lives in the
 //! router layer, not here.
+//!
+//! One `QuestService` exists per composition, started with [`start`]
+//! (`QuestService::start`): the bus-fed flows (session tracking,
+//! mission auto-start) and the watcher's reward-filter calls serialise
+//! through a single owning task (see `actor`), while the CRUD, linking,
+//! and analytics surfaces are plain `&self` async reads and writes over
+//! the shared database handles.
 
+mod actor;
 mod analytics;
 mod crud;
 mod lifecycle;
@@ -33,14 +41,22 @@ mod tests;
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
 pub use playlists::{PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_LONG_HORIZON};
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use tokio::runtime::Handle;
+use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::bus_events::BusEvent;
+use crate::chatlog_watcher::QuestRewardFilter;
 use crate::clock::Clock;
 use crate::db::Db;
-use crate::event_bus::{EventBus, Registration, Topic};
+use crate::event_bus::EventBus;
+
+use actor::QuestMsg;
+
+/// The identifier source for ledger rows and session-less completion
+/// keys (random by default; injected by the tests so the committed
+/// goldens stamp the same identifiers).
+pub type IdSource = Arc<dyn Fn() -> String + Send + Sync>;
 
 /// The service's error surface: `Invalid` carries the original's
 /// raised-exception messages (its `ValueError` texts verbatim; the
@@ -64,118 +80,97 @@ pub enum QuestError {
 pub struct QuestService {
     db: Db,
     clock: Arc<dyn Clock>,
-    /// The active tracking session, fed by the bus handlers.
-    current_session_id: Mutex<Option<String>>,
-    /// The identifier source for ledger rows and session-less
-    /// completion keys (random by default; injected by the tests so the
-    /// committed goldens stamp the same identifiers).
-    id_source: Mutex<Arc<dyn Fn() -> String + Send + Sync>>,
-    /// The runtime the bus handlers bridge their database work onto,
-    /// set when the service subscribes.
-    runtime: Mutex<Option<Handle>>,
-    /// Held for the service's lifetime: the original subscribes once
-    /// in its constructor and never unsubscribes.
-    _subscriptions: Mutex<Vec<(Topic, Registration)>>,
+    id_source: IdSource,
+    /// The active tracking session, kept current by the owning task;
+    /// reads are lock-free snapshots.
+    session: watch::Receiver<Option<String>>,
+    /// The sender into the owning task, for the watcher's
+    /// reward-filter rendezvous.
+    pump: mpsc::UnboundedSender<QuestMsg>,
 }
 
 impl QuestService {
-    pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
-        Self {
+    /// Start the quest service: subscribe the permanent bus forwarders
+    /// (session start/stop track the active session, and a received
+    /// mission auto-starts its matching quest, exactly the original's
+    /// constructor-time subscriptions) and spawn the owning task on
+    /// `runtime`.
+    pub fn start(bus: &Arc<EventBus>, db: Db, clock: Arc<dyn Clock>, runtime: Handle) -> Arc<Self> {
+        Self::start_with_id_source(
+            bus,
             db,
             clock,
-            current_session_id: Mutex::new(None),
-            id_source: Mutex::new(Arc::new(|| uuid::Uuid::new_v4().to_string())),
-            runtime: Mutex::new(None),
-            _subscriptions: Mutex::new(Vec::new()),
-        }
+            runtime,
+            Arc::new(|| uuid::Uuid::new_v4().to_string()),
+        )
     }
 
-    /// Replace the identifier source (tests and the differential).
-    pub fn set_id_source(&self, source: Arc<dyn Fn() -> String + Send + Sync>) {
-        *self
-            .id_source
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = source;
+    /// [`start`](Self::start) with an explicit identifier source (the
+    /// tests pin deterministic ledger and completion keys).
+    pub fn start_with_id_source(
+        bus: &Arc<EventBus>,
+        db: Db,
+        clock: Arc<dyn Clock>,
+        runtime: Handle,
+        id_source: IdSource,
+    ) -> Arc<Self> {
+        let (pump, inbox) = mpsc::unbounded_channel();
+        let (session_tx, session_rx) = watch::channel(None);
+        let service = Arc::new(Self {
+            db,
+            clock,
+            id_source,
+            session: session_rx,
+            pump: pump.clone(),
+        });
+        let subscriptions = actor::subscribe_handlers(bus, &pump);
+        runtime.spawn(actor::run(
+            service.clone(),
+            inbox,
+            session_tx,
+            subscriptions,
+        ));
+        service
     }
 
     pub(super) fn next_id(&self) -> String {
-        let source = self
-            .id_source
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        source()
+        (self.id_source)()
     }
 
-    /// The session guard, tolerating poison: a contained panic must
-    /// not brick the service.
-    pub(super) fn lock_session(&self) -> MutexGuard<'_, Option<String>> {
-        self.current_session_id
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// A snapshot of the active tracking session id (the owning task
+    /// keeps the watch current; an empty string passes through, and
+    /// the truthiness gates downstream treat it as no session).
+    pub(super) fn current_session(&self) -> Option<String> {
+        self.session.borrow().clone()
     }
 
-    /// Subscribe to the bus (the original's constructor-time
-    /// subscriptions): session start/stop track the active session,
-    /// and a received mission auto-starts its matching quest.
-    pub fn subscribe(self: &Arc<Self>, bus: &Arc<EventBus>, runtime: Handle) {
-        *self
-            .runtime
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(runtime);
-        type Handler = fn(&QuestService, &BusEvent);
-        let pairs: [(Topic, Handler); 3] = [
-            (Topic::SessionStarted, Self::on_session_start),
-            (Topic::SessionStopped, Self::on_session_stop),
-            (Topic::MissionReceived, Self::on_mission_received),
-        ];
-        let mut subscriptions = Vec::new();
-        for (topic, handler) in pairs {
-            let subscriber = self.clone();
-            let registration = bus.subscribe(topic, move |data| handler(&subscriber, data));
-            subscriptions.push((topic, registration));
-        }
-        *self
-            ._subscriptions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = subscriptions;
-    }
-
-    /// Bridge a database future from either calling context (the
-    /// tracker's dual shape).
-    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        let handle = self
-            .runtime
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-            .expect("a subscribed service carries its runtime");
-        if Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| handle.block_on(future))
-        } else {
-            handle.block_on(future)
-        }
-    }
-
-    fn on_session_start(&self, event: &BusEvent) {
-        let BusEvent::SessionStarted(payload) = event else {
-            return;
-        };
-        *self.lock_session() = Some(payload.session_id.clone());
-    }
-
-    fn on_session_stop(&self, _event: &BusEvent) {
-        *self.lock_session() = None;
-    }
-
-    fn on_mission_received(&self, event: &BusEvent) {
-        let BusEvent::MissionReceived(payload) = event else {
-            return;
-        };
-        if !payload.mission_name.is_empty() {
-            // A failure surfaces nowhere, exactly as the original's
-            // bus contains a handler exception.
-            let _ = self.block_on(self.start_quest_from_mission(&payload.mission_name));
-        }
+    /// The chat-log watcher's reward-filter seam: a synchronous closure
+    /// the watcher invokes from its tail thread on a MISSION_COMPLETE
+    /// tick. Each call is a rendezvous into the owning task (enqueue,
+    /// wait for the reply), so filter decisions serialise with the
+    /// session events the task owns; the tick does not publish until
+    /// the filter has answered, preserving the original's synchronous
+    /// suppression contract. A filter error surfaces as no suppression,
+    /// exactly as the original contains a filter exception.
+    pub fn watcher_filter(&self) -> QuestRewardFilter {
+        let pump = self.pump.clone();
+        Arc::new(move |mission_name, loot_items, skill_gains| {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let message = QuestMsg::RewardFilter {
+                mission_name: mission_name.to_string(),
+                loot_items: loot_items.to_vec(),
+                skill_gains: skill_gains.to_vec(),
+                reply: reply_tx,
+            };
+            if pump.send(message).is_err() {
+                return None;
+            }
+            let result = if Handle::try_current().is_ok() {
+                tokio::task::block_in_place(|| reply_rx.blocking_recv())
+            } else {
+                reply_rx.blocking_recv()
+            };
+            result.unwrap_or(None)
+        })
     }
 }

@@ -49,6 +49,7 @@ async fn quests_api(dir: &Path) -> Api {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.quests.clone(),
         None,
     )
 }
@@ -283,6 +284,7 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.quests.clone(),
         None,
     );
 

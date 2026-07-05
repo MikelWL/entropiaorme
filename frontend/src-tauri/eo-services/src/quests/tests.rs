@@ -20,9 +20,14 @@ use super::payload::json_truthy;
 use super::QuestService;
 use crate::ped::Ped;
 
-async fn service_with_clock(
-    dir: &std::path::Path,
-) -> (Arc<QuestService>, SqlitePool, Arc<crate::clock::MockClock>) {
+type ServiceRig = (
+    Arc<QuestService>,
+    SqlitePool,
+    Arc<crate::clock::MockClock>,
+    Arc<crate::event_bus::EventBus>,
+);
+
+async fn service_with_clock(dir: &std::path::Path) -> ServiceRig {
     let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
     // Tests drive direct SQL through the writer pool (single connection),
     // reproducing the original pool-of-one semantics.
@@ -34,20 +39,23 @@ async fn service_with_clock(
         ),
         0.0,
     ));
-    let svc = Arc::new(QuestService::new(
+    let bus = Arc::new(crate::event_bus::EventBus::new());
+    let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let svc = QuestService::start_with_id_source(
+        &bus,
         Db::from_pool(pool.clone()),
         clock.clone(),
-    ));
-    let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    svc.set_id_source(Arc::new(move || {
-        let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        format!("fixed-{n:04}")
-    }));
-    (svc, pool, clock)
+        Handle::current(),
+        Arc::new(move || {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            format!("fixed-{n:04}")
+        }),
+    );
+    (svc, pool, clock, bus)
 }
 
 async fn service(dir: &std::path::Path) -> (Arc<QuestService>, SqlitePool) {
-    let (svc, pool, _clock) = service_with_clock(dir).await;
+    let (svc, pool, _clock, _bus) = service_with_clock(dir).await;
     (svc, pool)
 }
 
@@ -574,9 +582,7 @@ async fn a_null_items_payload_clears_the_playlist() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_lifecycle_walkthrough_matches_the_original() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool, clock) = service_with_clock(dir.path()).await;
-    let bus = Arc::new(crate::event_bus::EventBus::new());
-    svc.subscribe(&bus, Handle::current());
+    let (svc, pool, clock, bus) = service_with_clock(dir.path()).await;
 
     let qa = quest_id(
         &svc.create_quest(
@@ -1071,9 +1077,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_received_mission_event_starts_its_quest() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool, _clock) = service_with_clock(dir.path()).await;
-    let bus = Arc::new(crate::event_bus::EventBus::new());
-    svc.subscribe(&bus, Handle::current());
+    let (svc, _pool, _clock, bus) = service_with_clock(dir.path()).await;
     let q = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
@@ -1245,9 +1249,7 @@ async fn cancelling_outside_the_cooldown_window_keeps_completions() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_empty_session_id_skips_overlay_events() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool, _clock) = service_with_clock(dir.path()).await;
-    let bus = Arc::new(crate::event_bus::EventBus::new());
-    svc.subscribe(&bus, Handle::current());
+    let (svc, pool, _clock, bus) = service_with_clock(dir.path()).await;
     svc.create_quest(&json!({"name": "Iron Challenge"}))
         .await
         .unwrap();

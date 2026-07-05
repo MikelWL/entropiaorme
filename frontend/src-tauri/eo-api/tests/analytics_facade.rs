@@ -48,6 +48,7 @@ async fn analytics_api(dir: &Path) -> Api {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.quests.clone(),
         None,
     )
 }
