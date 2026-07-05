@@ -324,6 +324,25 @@ impl TrackerActor {
             kills: Vec::new(),
             dangling_cost: Ped::ZERO,
         };
+        let start_ts = naive_to_epoch(session.start_time);
+
+        // Persist session start BEFORE activating in memory: a failed
+        // insert leaves the tracker idle rather than a phantom session
+        // with no row for its kills. `mob_tracking_mode` records the
+        // input mode the session was captured under so post-hoc UI
+        // surfaces can choose label vocabulary; the value never mutates
+        // after session start.
+        sqlx::query(
+            "INSERT INTO tracking_sessions \
+             (id, started_at, is_active, mob_tracking_mode) \
+             VALUES (?, ?, 1, ?)",
+        )
+        .bind(&session_id)
+        .bind(start_ts)
+        .bind(mode.as_str())
+        .execute(self.db.write())
+        .await?;
+
         // The fresh ActiveSession IS the session reset: every
         // session-scoped field starts at its documented initial
         // state by construction. (The equipped heal tool
@@ -349,22 +368,6 @@ impl TrackerActor {
         self.session = SessionState::Active(Box::new(active));
         self.subscribe_handlers();
         self.publish_status();
-        let start_ts = naive_to_epoch(session.start_time);
-
-        // Persist session start. `mob_tracking_mode` records the input
-        // mode the session was captured under so post-hoc UI surfaces
-        // can choose label vocabulary; the value never mutates after
-        // session start.
-        sqlx::query(
-            "INSERT INTO tracking_sessions \
-             (id, started_at, is_active, mob_tracking_mode) \
-             VALUES (?, ?, 1, ?)",
-        )
-        .bind(&session_id)
-        .bind(start_ts)
-        .bind(mode.as_str())
-        .execute(self.db.write())
-        .await?;
 
         self.bus
             .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
@@ -397,15 +400,14 @@ impl TrackerActor {
             let heal_cost = active.heal_cost;
             (snapshot, session_id, end_time, heal_cost, dangling_cost)
         };
-        // Unsubscribe so no producer event lands on the session past
-        // here (the forwarders are gone before the persistence await
-        // yields the task).
-        self.unsubscribe_handlers();
-
         // One transaction over the whole stop sequence, matching the
         // original's single commit: a failure (or crash) mid-way leaves
         // no half-stopped session, no orphaned ledger gains, and no
-        // summary computed from a partially persisted stop.
+        // summary computed from a partially persisted stop. The bus
+        // forwarders stay subscribed until it commits, so a failed stop
+        // leaves the session fully live (still tracking, still hearing
+        // events) rather than active-but-deaf; no event can interleave
+        // meanwhile because the actor processes one message at a time.
         let mut tx = self.db.write().begin().await?;
         sqlx::query(
             "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
@@ -423,6 +425,7 @@ impl TrackerActor {
         crate::session_summary::write_session_summary(&mut tx, &session_id).await?;
         crate::daily_rollup::refresh_session_days(&mut tx, &session_id).await?;
         tx.commit().await?;
+        self.unsubscribe_handlers();
 
         // Session end is a quiescent boundary: checkpoint and truncate the WAL
         // so its growth over a tracked session is bounded. Best-effort: the
