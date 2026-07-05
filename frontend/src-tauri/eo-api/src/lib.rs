@@ -38,6 +38,7 @@ pub mod analytics;
 pub mod character;
 pub mod codex;
 pub mod demo;
+pub mod dev;
 pub mod equipment;
 mod error;
 pub mod manifest;

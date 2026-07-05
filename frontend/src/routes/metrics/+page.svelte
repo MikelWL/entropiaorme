@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { request, ApiError } from '$lib/api/client';
+	import { ApiError, getCrashReporting, getDevMetrics, setCrashReporting } from '$lib/api';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 
 	type Bucket = { bound_us: number | null; count: number };
@@ -23,7 +23,7 @@
 
 	async function refreshMetrics(): Promise<void> {
 		try {
-			snapshot = await request<MetricsSnapshot>('/dev/metrics');
+			snapshot = (await getDevMetrics()) as MetricsSnapshot;
 			developerModeOff = false;
 			errorMessage = null;
 		} catch (err) {
@@ -38,8 +38,7 @@
 
 	async function refreshCrashReporting(): Promise<void> {
 		try {
-			const body = await request<{ crash_reporting_enabled: boolean }>('/dev/crash-reporting');
-			crashReporting = body.crash_reporting_enabled;
+			crashReporting = await getCrashReporting();
 		} catch {
 			crashReporting = null;
 		}
@@ -47,11 +46,7 @@
 
 	async function toggleCrashReporting(enabled: boolean): Promise<void> {
 		try {
-			const body = await request<{ crash_reporting_enabled: boolean }>('/dev/crash-reporting', {
-				method: 'POST',
-				body: JSON.stringify({ crash_reporting_enabled: enabled })
-			});
-			crashReporting = body.crash_reporting_enabled;
+			crashReporting = await setCrashReporting(enabled);
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : String(err);
 		}

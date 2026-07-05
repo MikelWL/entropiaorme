@@ -848,3 +848,25 @@ export async function getOverlayPosition(): Promise<{ x: number | null; y: numbe
 export async function saveOverlayPosition(x: number, y: number): Promise<void> {
 	await commands.settingsSetOverlayPosition(x, y);
 }
+
+// --- Developer tools (hidden, developer-mode-gated) ---
+// Served over typed IPC commands (`commands.gen.ts`). Each command is gated
+// on developer mode in the facade; when it is off the command rejects with
+// the not-found `ApiError` (status 404), exactly as the gate-off HTTP route
+// answered, so the metrics page's existing 404 handling is unchanged.
+
+import type { MetricsSnapshot } from './commands.gen';
+
+export type { MetricsSnapshot };
+
+export async function getDevMetrics(): Promise<MetricsSnapshot> {
+	return commands.devMetrics();
+}
+
+export async function getCrashReporting(): Promise<boolean> {
+	return (await commands.devCrashReporting()).crash_reporting_enabled;
+}
+
+export async function setCrashReporting(enabled: boolean): Promise<boolean> {
+	return (await commands.devSetCrashReporting(enabled)).crash_reporting_enabled;
+}

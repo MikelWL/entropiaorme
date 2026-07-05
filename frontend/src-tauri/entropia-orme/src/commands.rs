@@ -26,6 +26,7 @@ use eo_api::codex::{
     CodexCalibrateResult, CodexClaimResult, CodexMetaAttribute, CodexMetaClaimResult,
     CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
 };
+use eo_api::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildReport};
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -807,6 +808,38 @@ pub async fn demo_tracking_snapshot(app: tauri::AppHandle) -> Result<TrackingSna
     facade(&app)?.demo_tracking_snapshot().await
 }
 
+// The hidden developer-tools family: native-only, each gated on developer
+// mode (a gate-off command returns the typed not-found the HTTP route's 404
+// stood for). The metrics read and the crash-reporting read/write are
+// synchronous facade methods, so their wrappers do not `.await`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_metrics(app: tauri::AppHandle) -> Result<MetricsSnapshot, ApiError> {
+    facade(&app)?.dev_metrics()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_crash_reporting(app: tauri::AppHandle) -> Result<CrashReportingStatus, ApiError> {
+    facade(&app)?.dev_crash_reporting()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_set_crash_reporting(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<CrashReportingStatus, ApiError> {
+    facade(&app)?.dev_set_crash_reporting(enabled)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_compact_database(app: tauri::AppHandle) -> Result<CompactResult, ApiError> {
+    facade(&app)?.dev_compact_database().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_rebuild_projections(app: tauri::AppHandle) -> Result<RebuildReport, ApiError> {
+    facade(&app)?.dev_rebuild_projections().await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -906,6 +939,11 @@ mod tests {
         "demo_tracking_sessions",
         "demo_tracking_session_detail",
         "demo_tracking_snapshot",
+        "dev_metrics",
+        "dev_crash_reporting",
+        "dev_set_crash_reporting",
+        "dev_compact_database",
+        "dev_rebuild_projections",
     ];
 
     #[test]

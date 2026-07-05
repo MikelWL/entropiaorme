@@ -27,6 +27,7 @@ use crate::codex::{
     CodexCalibrateResult, CodexClaimResult, CodexMetaAttribute, CodexMetaClaimResult,
     CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
 };
+use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildReport};
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -839,6 +840,37 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "demo_tracking_snapshot",
             args: Vec::new(),
             returns: Some(schema(schema_for!(TrackingSnapshot))),
+        },
+        // The hidden developer-tools family: native-only, each gated on
+        // developer mode (a gate-off command answers the not-found the HTTP
+        // route's 404 stood for).
+        CommandSpec {
+            name: "dev_metrics",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(MetricsSnapshot))),
+        },
+        CommandSpec {
+            name: "dev_crash_reporting",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CrashReportingStatus))),
+        },
+        CommandSpec {
+            name: "dev_set_crash_reporting",
+            args: vec![ArgSpec {
+                name: "enabled",
+                schema: schema(schema_for!(bool)),
+            }],
+            returns: Some(schema(schema_for!(CrashReportingStatus))),
+        },
+        CommandSpec {
+            name: "dev_compact_database",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CompactResult))),
+        },
+        CommandSpec {
+            name: "dev_rebuild_projections",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(RebuildReport))),
         },
     ]
 }

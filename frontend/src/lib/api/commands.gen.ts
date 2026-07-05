@@ -244,6 +244,15 @@ export interface CodexSpeciesRanks {
 }
 
 /**
+ * The compaction result: the path of the written compacted copy and its
+ * size in bytes.
+ */
+export interface CompactResult {
+	path: string;
+	bytes: number;
+}
+
+/**
  * GET stats: current HP and the top five professions.
  */
 export interface ComputedCharacterStats {
@@ -269,6 +278,14 @@ export interface CostBreakdownLine {
 	costPec: number;
 	markupMultiplier: number;
 	effectiveCostPec: number;
+}
+
+/**
+ * The crash-reporting opt-in state, in the one-key body the HTTP route
+ * returned.
+ */
+export interface CrashReportingStatus {
+	crash_reporting_enabled: boolean;
 }
 
 /**
@@ -378,6 +395,27 @@ export interface GameConnection {
 	chatLogPath: string;
 	chatLogValid: boolean;
 	playerName: string;
+}
+
+/**
+ * One latency-histogram bucket: the inclusive upper bound in
+ * microseconds (`None` for the final overflow bucket) and its count.
+ * Mirrors `eo_wire::metrics::Bucket`.
+ */
+export interface HistogramBucket {
+	bound_us?: number | null;
+	count: number;
+}
+
+/**
+ * A point-in-time read of one latency histogram: the total count, the
+ * microsecond sum (so a mean is recoverable), and the per-bucket counts.
+ * Mirrors `eo_wire::metrics::HistogramSnapshot`.
+ */
+export interface HistogramSnapshot {
+	count: number;
+	sum_us: number;
+	buckets: HistogramBucket[];
 }
 
 /**
@@ -569,6 +607,25 @@ export interface ManualMobSuggestion {
 	display: string;
 	species: string;
 	maturity: string;
+}
+
+/**
+ * A point-in-time read of the process telemetry registry: event
+ * throughput, the OCR / database / request latency histograms, the
+ * per-handler latencies, and the resource-drift gauges. Counts and
+ * durations only; no PII. Mirrors `eo_wire::metrics::MetricsSnapshot`
+ * field-for-field, so `serde_json::to_string` yields identical bytes
+ * (pinned in the tests below).
+ */
+export interface MetricsSnapshot {
+	events_published: number;
+	http_requests: number;
+	ocr_latency: HistogramSnapshot;
+	db_query_latency: HistogramSnapshot;
+	http_request_latency: HistogramSnapshot;
+	handler_latency: Record<string, HistogramSnapshot>;
+	rss_bytes: number;
+	handle_count: number;
 }
 
 /**
@@ -981,6 +1038,17 @@ export interface QuestPlaylist {
 }
 
 /**
+ * The rebuild-and-verify report: whether every projection rebuilt
+ * byte-identically, and the per-table verdicts in their stable order.
+ * `allMatched` keeps its camelCase HTTP key; the verdict fields keep
+ * their snake_case.
+ */
+export interface RebuildReport {
+	allMatched: boolean;
+	tables: TableVerdict[];
+}
+
+/**
  * One recent event in the active-session snapshot feed.
  */
 export interface RecentEvent {
@@ -1203,6 +1271,17 @@ export interface StopResult {
 	started_at: string;
 	ended_at?: string | null;
 	kill_count: number;
+}
+
+/**
+ * One projection table's verdict from a rebuild-and-verify run: the
+ * table name, whether its rebuilt rows were byte-identical to the
+ * incrementally-maintained ones, and the row count after the rebuild.
+ */
+export interface TableVerdict {
+	table: string;
+	matched: boolean;
+	row_count: number;
 }
 
 /**
@@ -1776,4 +1855,24 @@ export async function demoTrackingSessionDetail(sessionId: string): Promise<Sess
 
 export async function demoTrackingSnapshot(): Promise<TrackingSnapshot> {
 	return invokeCommand('demo_tracking_snapshot', {});
+}
+
+export async function devMetrics(): Promise<MetricsSnapshot> {
+	return invokeCommand('dev_metrics', {});
+}
+
+export async function devCrashReporting(): Promise<CrashReportingStatus> {
+	return invokeCommand('dev_crash_reporting', {});
+}
+
+export async function devSetCrashReporting(enabled: boolean): Promise<CrashReportingStatus> {
+	return invokeCommand('dev_set_crash_reporting', { enabled });
+}
+
+export async function devCompactDatabase(): Promise<CompactResult> {
+	return invokeCommand('dev_compact_database', {});
+}
+
+export async function devRebuildProjections(): Promise<RebuildReport> {
+	return invokeCommand('dev_rebuild_projections', {});
 }
