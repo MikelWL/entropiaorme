@@ -16,8 +16,6 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"gen:api": "openapi-typescript src-tauri/contracts/openapi.snapshot.json -o src/lib/api/schema.d.ts --default-non-nullable false",
-		"gen:api:check": "npm run gen:api && git diff --exit-code -- src/lib/api/schema.d.ts",
 		"tauri": "tauri",
 		"tauri:dev": "node src-tauri/entropia-orme/build-dev-config.mjs && tauri dev --config src-tauri/entropia-orme/tauri.dev.conf.json --config src-tauri/entropia-orme/tauri.dev.local.json",
 		"tauri:build": "tauri build --no-bundle",
@@ -47,7 +45,6 @@
 		"@wdio/visual-service": "^9.2.3",
 		"expect-webdriverio": "^5.6.8",
 		"happy-dom": "^20.9.0",
-		"openapi-typescript": "^7.13.0",
 		"svelte": "^5.51.0",
 		"svelte-check": "^4.4.2",
 		"tailwindcss": "^4.2.2",
@@ -61,8 +58,7 @@
 		"@tauri-apps/plugin-shell": "^2.3.5",
 		"@tauri-apps/plugin-store": "^2.4.3",
 		"marked": "^15.0.0",
-		"motion": "^12.38.0",
-		"openapi-fetch": "^0.17.0"
+		"motion": "^12.38.0"
 	},
 	"overrides": {
 		"cookie": "^0.7.0"

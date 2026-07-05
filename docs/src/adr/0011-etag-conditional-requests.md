@@ -1,7 +1,9 @@
 # ADR-0011: Strong-ETag conditional requests
 
-- Status: Accepted
-- Context: reflects the landed implementation
+- Status: Superseded by [ADR-0019](0019-typed-command-facade.md) (typed-command facade)
+- Context: reflects an implementation since retired; kept as a historical record
+
+> **Superseded.** The strong-ETag conditional-GET contract described here retired together with the in-process HTTP transport. Once the frontend spoke only typed Tauri commands over the `eo-api` facade ([ADR-0019](0019-typed-command-facade.md)), there was no HTTP envelope and no cache hierarchy for a validator to serve: a same-process command returns a typed value directly, and event-driven re-hydration is the freshness mechanism. The ETag middleware and its native port (`eo-http/src/hydration.rs`) went away with the `eo-http` crate. This ADR is preserved for the record of why the contract existed and how it worked.
 
 ## Context and problem statement
 
@@ -32,5 +34,5 @@ The narrow remit is enforced, not merely intended. `backend/tests/test_etag.py` 
 - `backend/middleware/etag.py`
 - `backend/tests/test_etag.py`
 - `backend/tests/test_network_quiet_seam.py`
-- `frontend/src-tauri/eo-http/src/hydration.rs`
+- `frontend/src-tauri/eo-http/src/hydration.rs` (retired: this native port went away when the in-process HTTP transport, the `eo-http` crate, was deleted under [ADR-0019](0019-typed-command-facade.md))
 - `frontend/src-tauri/eo-wire/src/normalizer.rs`

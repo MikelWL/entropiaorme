@@ -1,28 +1,25 @@
 /**
- * Backend API client: typed fetch wrappers for the Python backend.
+ * Backend API surface: the typed wrappers the app calls the backend through.
  *
- * All backend communication goes through this module. Since the generated
- * client landed, each wrapper delegates to `client` (openapi-fetch over the
- * generated `schema.d.ts`), which verifies the path, method, parameters, and
- * request body against the backend's OpenAPI contract at compile time. The
- * wrappers keep their hand-written return types: those interfaces are the
- * authoritative frontend contract and may deliberately narrow the generated
- * schema (see `unwrap` in `./client`). The public surface of this module is
- * unchanged from its hand-rolled predecessor.
+ * All backend communication goes through this module. Each wrapper delegates
+ * to a generated typed command (`commands.gen.ts`, emitted from the Rust
+ * command DTOs), which types the arguments and return value against the
+ * backend contract at compile time. The wrappers keep their hand-written
+ * return types: those interfaces are the authoritative frontend contract and
+ * may deliberately narrow the generated shapes (the `as`-narrowing doctrine).
  */
 
-export { ApiError, manualSkillScanCapturePng, request } from './client';
+export { ApiError, manualSkillScanCapturePng } from './client';
 
 import { guideState } from '$lib/guide/state.svelte';
 import type { NotableEventCategory, NotableEventType } from '$lib/types/common';
-import { ApiError, client, unwrap } from './client';
 
 /*
- * Guide-mode route swap for analytics-flavoured endpoints.
+ * Guide-mode read swap for analytics-flavoured surfaces.
  *
  * When the interactive user guide is active on an analytics-backed surface
  * (analytics or dashboard), reads of analytics / tracking / ledger / inventory
- * are transparently retargeted onto the parallel `/api/demo/*` namespace
+ * are transparently retargeted onto the parallel typed `demo_*` commands
  * served by the curated demo DB. Surface components stay unchanged. Only the
  * read wrappers below branch on guide state, per call (never at client
  * construction); everything else (live tracking, mutating verbs, etc.) goes
@@ -48,48 +45,56 @@ import type {
 	ProspectResult,
 	SkillLevel,
 } from '$lib/types/analytics';
+import type { ProspectQuery } from './commands.gen';
+import * as commands from './commands.gen';
+
+// The character family is served over typed IPC commands
+// (`commands.gen.ts`, generated from the Rust DTOs): the wrappers keep
+// their signatures, with the hand-written `$lib/types/analytics`
+// interfaces still the declared contract they narrow onto, exactly as
+// `unwrap<T>` asserted before.
 
 export async function getCalibrationStatus(): Promise<CalibrationStatus> {
-	return unwrap(client.GET('/api/character/calibration'));
+	return (await commands.characterCalibration()) as CalibrationStatus;
 }
 
 export async function getCharacterStats(): Promise<ComputedCharacterStats> {
-	return unwrap(client.GET('/api/character/stats'));
+	return (await commands.characterStats()) as ComputedCharacterStats;
 }
 
 export async function getCharacterSkills(): Promise<SkillLevel[]> {
-	return unwrap(client.GET('/api/character/skills'));
+	return (await commands.characterSkills()) as SkillLevel[];
 }
 
 export async function getCharacterProfessions(): Promise<ProfessionLevel[]> {
-	return unwrap(client.GET('/api/character/professions'));
+	return (await commands.characterProfessions()) as ProfessionLevel[];
 }
 
 export async function getProfessionOptimizer(
 	profession: string,
 ): Promise<ProfessionOptimizerResult> {
-	return unwrap(
-		client.GET('/api/character/profession-optimizer', { params: { query: { profession } } }),
-	);
+	return (await commands.characterProfessionOptimizer(profession)) as ProfessionOptimizerResult;
 }
 
 export async function getProfessionPathOptimizer(
 	profession: string,
 	params: { targetLevel: number } | { pedBudget: number },
 ): Promise<PathOptimizerResult> {
-	const query =
-		'targetLevel' in params
-			? { profession, target_level: params.targetLevel }
-			: { profession, ped_budget: params.pedBudget };
-	return unwrap(client.GET('/api/character/profession-path-optimizer', { params: { query } }));
+	const targetLevel = 'targetLevel' in params ? params.targetLevel : null;
+	const pedBudget = 'pedBudget' in params ? params.pedBudget : null;
+	return (await commands.characterPathOptimizer(
+		profession,
+		targetLevel,
+		pedBudget,
+	)) as PathOptimizerResult;
 }
 
 export async function getHpOptimizer(): Promise<HpOptimizerResult> {
-	return unwrap(client.GET('/api/character/hp-optimizer'));
+	return (await commands.characterHpOptimizer()) as HpOptimizerResult;
 }
 
 export async function getCharacterProspectOptions(): Promise<CharacterProspectOptions> {
-	return unwrap(client.GET('/api/character/prospect-options'));
+	return (await commands.characterProspectOptions()) as CharacterProspectOptions;
 }
 
 export async function getCharacterProspect(params: {
@@ -99,27 +104,26 @@ export async function getCharacterProspect(params: {
 	sliceValue?: string | null;
 	markupUplift?: number;
 }): Promise<ProspectResult> {
-	const query: {
-		profession: string;
-		target_level: number;
-		slice_type: string;
-		slice_value?: string;
-		markup_uplift?: number;
-	} = {
+	const query: ProspectQuery = {
 		profession: params.profession,
-		target_level: params.targetLevel,
-		slice_type: params.sliceType,
+		targetLevel: params.targetLevel,
+		sliceType: params.sliceType,
 	};
 	if (params.sliceType !== 'global' && params.sliceValue) {
-		query.slice_value = params.sliceValue;
+		query.sliceValue = params.sliceValue;
 	}
 	if ((params.markupUplift ?? 0) > 0) {
-		query.markup_uplift = params.markupUplift;
+		query.markupUplift = params.markupUplift;
 	}
-	return unwrap(client.GET('/api/character/prospect', { params: { query } }));
+	return (await commands.characterProspect(query)) as ProspectResult;
 }
 
 // --- Manual scan flow (public, user-driven page-by-page capture) ---
+// Served over typed IPC commands (`commands.gen.ts`); the wrappers keep
+// their hand-written return types (the authoritative frontend contract),
+// narrowing the generated types with `as`. A logical refusal rides the
+// returned status' `error` field (the scanner never throws for one), so
+// every caller reads `.error` first and the status fields defensively.
 
 export type ScanPhase = 'idle' | 'capturing' | 'processing' | 'awaiting_review';
 
@@ -143,35 +147,34 @@ export interface SkillScanPending {
 }
 
 export async function getManualSkillScanStatus(): Promise<ScanManualStatus> {
-	return unwrap(client.GET('/api/scan/skills/status'));
+	return (await commands.scanStatus()) as ScanManualStatus;
 }
 
-export async function startManualSkillScan(
-	pageCount?: number,
-): Promise<ScanManualStatus & { error?: string }> {
-	return unwrap(
-		client.POST('/api/scan/skills/start', { params: { query: { page_count: pageCount } } }),
-	);
+export async function startManualSkillScan(pageCount?: number): Promise<ScanManualStatus> {
+	return (await commands.scanStart(pageCount ?? null)) as ScanManualStatus;
 }
 
 export async function captureManualSkillPage(): Promise<
-	ScanManualStatus & { page?: number; captured?: boolean; error?: string }
+	ScanManualStatus & { page?: number; captured?: boolean }
 > {
-	return unwrap(client.POST('/api/scan/skills/capture'));
+	return (await commands.scanCapture()) as ScanManualStatus & {
+		page?: number;
+		captured?: boolean;
+	};
 }
 
-export async function cancelManualSkillScan(): Promise<ScanManualStatus & { error?: string }> {
-	return unwrap(client.POST('/api/scan/skills/cancel'));
+export async function cancelManualSkillScan(): Promise<ScanManualStatus> {
+	return (await commands.scanCancel()) as ScanManualStatus;
 }
 
 export async function undoManualSkillCapture(): Promise<
-	ScanManualStatus & { undone_page?: number; error?: string }
+	ScanManualStatus & { undone_page?: number }
 > {
-	return unwrap(client.POST('/api/scan/skills/undo'));
+	return (await commands.scanUndo()) as ScanManualStatus & { undone_page?: number };
 }
 
-export async function processManualSkillScan(): Promise<ScanManualStatus & { error?: string }> {
-	return unwrap(client.POST('/api/scan/skills/process'));
+export async function processManualSkillScan(): Promise<ScanManualStatus> {
+	return (await commands.scanProcess()) as ScanManualStatus;
 }
 
 export async function acceptManualSkillScan(): Promise<{
@@ -179,36 +182,38 @@ export async function acceptManualSkillScan(): Promise<{
 	skills_persisted?: number;
 	error?: string;
 }> {
-	return unwrap(client.POST('/api/scan/skills/accept'));
+	return (await commands.scanAccept()) as {
+		ok?: boolean;
+		skills_persisted?: number;
+		error?: string;
+	};
 }
 
 export async function rejectManualSkillScan(): Promise<{ ok?: boolean; error?: string }> {
-	return unwrap(client.POST('/api/scan/skills/reject'));
+	return (await commands.scanReject()) as { ok?: boolean; error?: string };
 }
 
 export async function getManualSkillScanPending(): Promise<SkillScanPending | null> {
-	try {
-		return await unwrap<SkillScanPending>(client.GET('/api/scan/skills/pending'));
-	} catch (err) {
-		if (err instanceof ApiError && err.status === 404) return null;
-		throw err;
-	}
+	return (await commands.scanPending()) as SkillScanPending | null;
 }
 
 export async function setSpacebarCapture(
 	enabled: boolean,
 ): Promise<{ ok?: boolean; enabled?: boolean; error?: string }> {
-	return unwrap(client.POST('/api/scan/spacebar-capture', { params: { query: { enabled } } }));
+	return commands.scanSpacebarCapture(enabled);
 }
 
 // --- Codex ---
+// Served over typed IPC commands (`commands.gen.ts`); the wrappers keep
+// their hand-written return types (the authoritative frontend contract),
+// narrowing the generated types with `as`.
 
 export async function getCodexSpecies(): Promise<CodexSpecies[]> {
-	return unwrap(client.GET('/api/codex/species'));
+	return (await commands.codexSpecies()) as CodexSpecies[];
 }
 
 export async function getCodexSpeciesRanks(name: string): Promise<CodexRankBreakdown> {
-	return unwrap(client.GET('/api/codex/species/{name}/ranks', { params: { path: { name } } }));
+	return (await commands.codexSpeciesRanks(name)) as CodexRankBreakdown;
 }
 
 export async function claimCodexRank(
@@ -216,22 +221,21 @@ export async function claimCodexRank(
 	rank: number,
 	skillName: string,
 ): Promise<CodexClaimResult> {
-	return unwrap(
-		client.POST('/api/codex/claim', {
-			body: { species_name: speciesName, rank, skill_name: skillName },
-		}),
-	);
+	return (await commands.codexClaim(speciesName, rank, skillName)) as CodexClaimResult;
 }
 
 export async function unclaimCodexRank(speciesName: string): Promise<CodexClaimResult> {
-	return unwrap(client.POST('/api/codex/unclaim', { body: { species_name: speciesName } }));
+	return (await commands.codexUnclaim(speciesName)) as CodexClaimResult;
 }
 
 export async function calibrateCodex(
 	speciesName: string,
 	rank: number,
 ): Promise<{ speciesName: string; rank: number }> {
-	return unwrap(client.POST('/api/codex/calibrate', { body: { species_name: speciesName, rank } }));
+	return (await commands.codexCalibrate(speciesName, rank)) as {
+		speciesName: string;
+		rank: number;
+	};
 }
 
 export async function getCodexRecommendation(
@@ -239,96 +243,70 @@ export async function getCodexRecommendation(
 	rank: number,
 	options?: { target?: 'profession' | 'hp'; profession?: string },
 ): Promise<CodexSkillOption[]> {
-	return unwrap(
-		client.GET('/api/codex/recommend', {
-			params: {
-				query: {
-					species_name: speciesName,
-					rank,
-					target: options?.target,
-					profession: options?.profession,
-				},
-			},
-		}),
-	);
+	return (await commands.codexRecommend(
+		speciesName,
+		rank,
+		options?.profession ?? null,
+		options?.target ?? 'profession',
+	)) as CodexSkillOption[];
 }
 
 // --- Codex Meta ---
 
 export async function getCodexMetaAttributes(): Promise<CodexMetaAttribute[]> {
-	return unwrap(client.GET('/api/codex/meta/attributes'));
+	return (await commands.codexMetaAttributes()) as CodexMetaAttribute[];
 }
 
 export async function claimCodexMeta(attributeName: string): Promise<CodexMetaClaimResult> {
-	return unwrap(client.POST('/api/codex/meta/claim', { body: { attribute_name: attributeName } }));
+	return (await commands.codexMetaClaim(attributeName)) as CodexMetaClaimResult;
 }
 
 // --- Equipment ---
+// The first family served over typed IPC commands (`commands.gen.ts`,
+// generated from the Rust DTOs): the wrappers keep their signatures,
+// with the hand-written `$lib/types` interfaces still the declared
+// contract they narrow onto, exactly as `unwrap<T>` asserted before.
 
 import type { Equipment, EquipmentDetail } from '$lib/types/equipment';
+import type { EquipmentRequest, EquipmentSearchHit, SearchKind } from './commands.gen';
 
-/** Search result from GET /api/equipment/search */
-export interface EquipmentSearchResult {
-	catalogId: string | null;
-	name: string;
-	decay: number; // PEC
-	ammoBurn: number; // PEC (ammo units / 100)
+/** Search result from the equipment catalogue search command. The two
+ * optional fields are not part of the wire shape: the equipment page
+ * reuses this type to seed its selection state from a stored detail,
+ * which carries them. */
+export type EquipmentSearchResult = EquipmentSearchHit & {
 	markupPercent?: number;
-	isLimited: boolean;
 	damageEnhancers?: number;
-}
+};
 
-interface AddLibraryRequest {
-	type: 'weapon' | 'healing' | 'consumable';
-	catalog_id?: string | null;
-	name?: string | null;
-	amp_catalog_id?: string | null;
-	scope_catalog_id?: string | null;
-	absorber_catalog_id?: string | null;
-	weapon_markup?: number;
-	amp_markup?: number;
-	scope_markup?: number;
-	absorber_markup?: number;
-	damage_enhancers?: number;
-}
+type AddLibraryRequest = EquipmentRequest;
 
 export async function searchEquipmentItems(
 	q: string,
-	type: 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable',
+	type: SearchKind,
 ): Promise<EquipmentSearchResult[]> {
 	if (q.length < 2) return [];
-	return unwrap(client.GET('/api/equipment/search', { params: { query: { q, type } } }));
+	return commands.equipmentSearch(q, type);
 }
 
 export async function getEquipmentLibrary(): Promise<Equipment[]> {
-	return unwrap(client.GET('/api/equipment/library'));
+	return (await commands.equipmentLibrary()) as Equipment[];
 }
 
 export async function addToLibrary(req: AddLibraryRequest): Promise<Equipment> {
-	return unwrap(client.POST('/api/equipment/library', { body: req }));
+	return (await commands.equipmentAdd(req)) as Equipment;
 }
 
 export async function removeFromLibrary(id: string): Promise<void> {
-	await client.DELETE('/api/equipment/library/{item_id}', {
-		params: { path: { item_id: Number(id) } },
-	});
+	await commands.equipmentDelete(Number(id));
 }
 
 export async function updateLibrary(id: string, req: AddLibraryRequest): Promise<Equipment> {
-	return unwrap(
-		client.PUT('/api/equipment/library/{item_id}', {
-			params: { path: { item_id: Number(id) } },
-			body: req,
-		}),
-	);
+	return (await commands.equipmentUpdate(Number(id), req)) as Equipment;
 }
 
 export async function getEquipmentDetail(id: string): Promise<EquipmentDetail> {
-	return unwrap(
-		client.GET('/api/equipment/library/{item_id}/detail', {
-			params: { path: { item_id: Number(id) } },
-		}),
-	);
+	return (await commands.equipmentDetail(Number(id))) as EquipmentDetail;
 }
 
 // --- Tracking ---
@@ -381,34 +359,31 @@ export async function startTracking(): Promise<{
 	started_at: string;
 	status: string;
 }> {
-	return unwrap(client.POST('/api/tracking/start'));
+	return commands.trackingStart();
 }
 
 export async function stopTracking(): Promise<{ session_id: string; kill_count: number }> {
-	return unwrap(client.POST('/api/tracking/stop'));
+	return commands.trackingStop();
 }
 
 export async function getTrackingSessions(): Promise<TrackingSession[]> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/tracking/sessions')
-			: client.GET('/api/tracking/sessions'),
-	);
+	// Guide mode reads the parallel demo dataset over its own typed command,
+	// sharing the live command's DTO; both narrow to the hand-written type.
+	if (guideState.isActive) {
+		return (await commands.demoTrackingSessions()) as TrackingSession[];
+	}
+	return (await commands.trackingSessions()) as TrackingSession[];
 }
 
 export async function getSessionDetail(sessionId: string): Promise<SessionDetail> {
-	const params = { path: { session_id: sessionId } };
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/tracking/session/{session_id}', { params })
-			: client.GET('/api/tracking/session/{session_id}', { params }),
-	);
+	if (guideState.isActive) {
+		return (await commands.demoTrackingSessionDetail(sessionId)) as SessionDetail;
+	}
+	return (await commands.trackingSessionDetail(sessionId)) as SessionDetail;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-	await client.DELETE('/api/tracking/session/{session_id}', {
-		params: { path: { session_id: sessionId } },
-	});
+	await commands.trackingSessionDelete(sessionId);
 }
 
 /** Response shape from the loot-item deactivate / activate endpoints.
@@ -426,22 +401,14 @@ export async function deactivateLootItem(
 	sessionId: string,
 	itemName: string,
 ): Promise<LootItemEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/loot-item/{item_name}/deactivate', {
-			params: { path: { session_id: sessionId, item_name: itemName } },
-		}),
-	);
+	return (await commands.trackingLootItemDeactivate(sessionId, itemName)) as LootItemEditResponse;
 }
 
 export async function activateLootItem(
 	sessionId: string,
 	itemName: string,
 ): Promise<LootItemEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/loot-item/{item_name}/activate', {
-			params: { path: { session_id: sessionId, item_name: itemName } },
-		}),
-	);
+	return (await commands.trackingLootItemActivate(sessionId, itemName)) as LootItemEditResponse;
 }
 
 /** Response shape from the rename-mob / restore-mob endpoints. */
@@ -456,24 +423,14 @@ export async function renameSessionMob(
 	fromMobName: string,
 	toMobName: string,
 ): Promise<MobEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/rename-mob', {
-			params: { path: { session_id: sessionId } },
-			body: { fromMobName, toMobName },
-		}),
-	);
+	return (await commands.trackingRenameMob(sessionId, fromMobName, toMobName)) as MobEditResponse;
 }
 
 export async function restoreSessionMob(
 	sessionId: string,
 	currentMobName: string,
 ): Promise<MobEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/restore-mob', {
-			params: { path: { session_id: sessionId } },
-			body: { currentMobName },
-		}),
-	);
+	return (await commands.trackingRestoreMob(sessionId, currentMobName)) as MobEditResponse;
 }
 
 export interface TrackingLive {
@@ -536,15 +493,14 @@ export interface TrackingSnapshot extends TrackingStatus {
 }
 
 export async function getTrackingSnapshot(): Promise<TrackingSnapshot> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/tracking/snapshot')
-			: client.GET('/api/tracking/snapshot'),
-	);
+	if (guideState.isActive) {
+		return (await commands.demoTrackingSnapshot()) as TrackingSnapshot;
+	}
+	return (await commands.trackingSnapshot()) as TrackingSnapshot;
 }
 
 export async function releaseMob(): Promise<{ released: string | null }> {
-	return unwrap(client.POST('/api/tracking/release-mob'));
+	return (await commands.trackingReleaseMob()) as { released: string | null };
 }
 
 export interface ManualMobSuggestion {
@@ -555,20 +511,16 @@ export interface ManualMobSuggestion {
 
 export async function getTrackingTagSuggestions(query: string): Promise<string[]> {
 	if (!query.trim()) return [];
-	return unwrap(
-		client.GET('/api/tracking/tag-suggestions', { params: { query: { q: query.trim() } } }),
-	);
+	return commands.trackingTagSuggestions(query.trim(), null);
 }
 
 export async function lockTrackingTag(tag: string): Promise<{ tag: string }> {
-	return unwrap(client.POST('/api/tracking/tag-lock', { body: { tag } }));
+	return commands.trackingTagLock(tag);
 }
 
 export async function getManualMobSuggestions(query: string): Promise<ManualMobSuggestion[]> {
 	if (!query.trim()) return [];
-	return unwrap(
-		client.GET('/api/tracking/manual-mob-suggestions', { params: { query: { q: query.trim() } } }),
-	);
+	return (await commands.trackingManualMobSuggestions(query.trim(), null)) as ManualMobSuggestion[];
 }
 
 export async function lockManualMob(
@@ -579,29 +531,25 @@ export async function lockManualMob(
 	species: string;
 	maturity: string;
 }> {
-	return unwrap(client.POST('/api/tracking/manual-mob-lock', { body: { species, maturity } }));
+	return commands.trackingManualMobLock(species, maturity);
 }
 
 export async function scanRepairCost(
 	sessionId: string,
 ): Promise<{ cost_ped: number; raw_text: string; confidence: number; error?: string }> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/repair-scan', {
-			params: { path: { session_id: sessionId } },
-		}),
-	);
+	return (await commands.trackingRepairScan(sessionId)) as {
+		cost_ped: number;
+		raw_text: string;
+		confidence: number;
+		error?: string;
+	};
 }
 
 export async function saveArmourCost(
 	sessionId: string,
 	cost: number,
 ): Promise<{ sessionId: string; armourCost: number }> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/armour-cost', {
-			params: { path: { session_id: sessionId } },
-			body: { cost },
-		}),
-	);
+	return commands.trackingArmourCost(sessionId, cost);
 }
 
 export interface SessionQuestLinkSuggestion {
@@ -634,23 +582,14 @@ export interface SessionQuestLinkDecision {
 export async function getSessionQuestLinkSuggestion(
 	sessionId: string,
 ): Promise<SessionQuestLinkSuggestion> {
-	return unwrap(
-		client.GET('/api/tracking/session/{session_id}/quest-link-suggestion', {
-			params: { path: { session_id: sessionId } },
-		}),
-	);
+	return (await commands.trackingQuestLinkSuggestion(sessionId)) as SessionQuestLinkSuggestion;
 }
 
 export async function decideSessionQuestLink(
 	sessionId: string,
 	action: 'accept' | 'decline',
 ): Promise<SessionQuestLinkDecision> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/quest-link', {
-			params: { path: { session_id: sessionId } },
-			body: { action },
-		}),
-	);
+	return (await commands.trackingQuestLink(sessionId, action)) as SessionQuestLinkDecision;
 }
 
 // --- Analytics ---
@@ -672,68 +611,64 @@ export interface ActivityData {
 	weaponComparisons: WeaponComparison[];
 }
 
+// The live analytics surface is served over typed IPC commands
+// (`commands.gen.ts`); the wrappers keep their hand-written return types,
+// narrowing the generated shapes with `as` (the `unwrap<T>` doctrine's
+// typed-IPC form). Guide mode reads the parallel curated demo database over
+// its own typed `demo_*` commands (sharing the live DTOs), so the read
+// wrappers keep branching on guide state between two typed functions.
 export async function getAnalyticsOverview(period: string = 'all'): Promise<OverviewStats> {
-	const params = { query: { period } };
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/overview', { params })
-			: client.GET('/api/analytics/overview', { params }),
-	);
+	if (guideState.isActive) {
+		return (await commands.demoAnalyticsOverview(period)) as OverviewStats;
+	}
+	return (await commands.analyticsOverview(period)) as OverviewStats;
 }
 
 export async function getAnalyticsActivity(): Promise<ActivityData> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/activity')
-			: client.GET('/api/analytics/activity'),
-	);
+	if (guideState.isActive) {
+		return (await commands.demoAnalyticsActivity()) as ActivityData;
+	}
+	return (await commands.analyticsActivity()) as ActivityData;
 }
 
 /** One keyset page of ledger entries plus the cursor for the next page
- * (null on the last page), read from the `X-Next-Cursor` response header. */
+ * (null on the last page). */
 export interface LedgerPage {
 	items: LedgerEntry[];
 	nextCursor: string | null;
 }
 
 export async function getLedgerEntries(cursor?: string, limit?: number): Promise<LedgerPage> {
-	const query = {
-		...(cursor ? { cursor } : {}),
-		...(limit != null ? { limit } : {}),
-	};
-	const { data, response } = await (guideState.isActive
-		? client.GET('/api/demo/analytics/ledger', { params: { query } })
-		: client.GET('/api/analytics/ledger', { params: { query } }));
+	const page = guideState.isActive
+		? await commands.demoLedgerList(cursor ?? null, limit ?? null)
+		: await commands.ledgerList(cursor ?? null, limit ?? null);
 	return {
-		items: (data ?? []) as LedgerEntry[],
-		nextCursor: response.headers.get('x-next-cursor'),
+		items: page.entries as LedgerEntry[],
+		nextCursor: page.nextCursor ?? null,
 	};
 }
 
 export async function addLedgerEntry(entry: Omit<LedgerEntry, 'id'>): Promise<LedgerEntry> {
-	return unwrap(client.POST('/api/analytics/ledger', { body: entry }));
+	return (await commands.ledgerCreate(entry as commands.LedgerEntryInput)) as LedgerEntry;
 }
 
 export async function deleteLedgerEntry(id: string): Promise<void> {
-	await client.DELETE('/api/analytics/ledger/{entry_id}', { params: { path: { entry_id: id } } });
+	await commands.ledgerDelete(id);
 }
 
 export async function getLedgerPresets(): Promise<LedgerPreset[]> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/ledger/presets')
-			: client.GET('/api/analytics/ledger/presets'),
-	);
+	if (guideState.isActive) {
+		return (await commands.demoLedgerPresetsList()) as LedgerPreset[];
+	}
+	return (await commands.ledgerPresetsList()) as LedgerPreset[];
 }
 
 export async function addLedgerPreset(preset: Omit<LedgerPreset, 'id'>): Promise<LedgerPreset> {
-	return unwrap(client.POST('/api/analytics/ledger/presets', { body: preset }));
+	return (await commands.ledgerPresetCreate(preset as commands.LedgerPresetInput)) as LedgerPreset;
 }
 
 export async function deleteLedgerPreset(id: string): Promise<void> {
-	await client.DELETE('/api/analytics/ledger/presets/{preset_id}', {
-		params: { path: { preset_id: id } },
-	});
+	await commands.ledgerPresetDelete(id);
 }
 
 // --- Inventory Ledger ---
@@ -760,45 +695,35 @@ export interface InventorySellPayload {
 }
 
 export async function getInventoryItems(): Promise<InventoryItem[]> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/analytics/inventory')
-			: client.GET('/api/analytics/inventory'),
-	);
+	if (guideState.isActive) {
+		return (await commands.demoInventoryList()) as InventoryItem[];
+	}
+	return (await commands.inventoryList()) as InventoryItem[];
 }
 
 export async function addInventoryItem(payload: InventoryItemPayload): Promise<InventoryItem> {
-	return unwrap(client.POST('/api/analytics/inventory', { body: payload }));
+	return (await commands.inventoryCreate(payload as commands.InventoryItemInput)) as InventoryItem;
 }
 
 export async function updateInventoryItem(
 	id: string,
 	patch: InventoryItemPatchPayload,
 ): Promise<InventoryItem> {
-	return unwrap(
-		client.PATCH('/api/analytics/inventory/{item_id}', {
-			params: { path: { item_id: id } },
-			body: patch,
-		}),
-	);
+	return (await commands.inventoryUpdate(id, patch as commands.InventoryPatch)) as InventoryItem;
 }
 
 export async function deleteInventoryItem(id: string): Promise<void> {
-	await client.DELETE('/api/analytics/inventory/{item_id}', {
-		params: { path: { item_id: id } },
-	});
+	await commands.inventoryDelete(id);
 }
 
 export async function sellInventoryItem(
 	id: string,
 	payload: InventorySellPayload,
 ): Promise<InventorySellResult> {
-	return unwrap(
-		client.POST('/api/analytics/inventory/{item_id}/sell', {
-			params: { path: { item_id: id } },
-			body: payload,
-		}),
-	);
+	return (await commands.inventorySell(
+		id,
+		payload as commands.InventorySellInput,
+	)) as InventorySellResult;
 }
 
 // --- Quests ---
@@ -814,83 +739,66 @@ import type {
 	QuestUpdateData,
 } from '$lib/types/quests';
 
+// Served over typed IPC commands (`commands.gen.ts`); the wrappers keep
+// their string-id signatures and hand-written return types, narrowing the
+// generated shapes with `as` (the `unwrap<T>` doctrine's typed-IPC form).
 export async function getQuests(): Promise<Quest[]> {
-	return unwrap(client.GET('/api/quests'));
+	return (await commands.questsList()) as Quest[];
 }
 
 export async function getQuest(id: string): Promise<Quest> {
-	return unwrap(
-		client.GET('/api/quests/{quest_id}', { params: { path: { quest_id: Number(id) } } }),
-	);
+	return (await commands.questGet(Number(id))) as Quest;
 }
 
 export async function createQuest(data: QuestCreateData): Promise<Quest> {
-	return unwrap(client.POST('/api/quests', { body: data }));
+	return (await commands.questCreate(data as commands.QuestInput)) as Quest;
 }
 
 export async function updateQuest(id: string, data: QuestUpdateData): Promise<Quest> {
-	return unwrap(
-		client.PUT('/api/quests/{quest_id}', {
-			params: { path: { quest_id: Number(id) } },
-			body: data,
-		}),
-	);
+	return (await commands.questUpdate(Number(id), data as commands.QuestInput)) as Quest;
 }
 
 export async function deleteQuest(id: string): Promise<void> {
-	await client.DELETE('/api/quests/{quest_id}', { params: { path: { quest_id: Number(id) } } });
+	await commands.questDelete(Number(id));
 }
 
 export async function startQuest(id: string): Promise<Quest> {
-	return unwrap(
-		client.POST('/api/quests/{quest_id}/start', { params: { path: { quest_id: Number(id) } } }),
-	);
+	return (await commands.questStart(Number(id))) as Quest;
 }
 
 export async function completeQuest(id: string): Promise<Quest> {
-	return unwrap(
-		client.POST('/api/quests/{quest_id}/complete', { params: { path: { quest_id: Number(id) } } }),
-	);
+	return (await commands.questComplete(Number(id))) as Quest;
 }
 
 export async function cancelQuest(id: string, undoReward = false): Promise<Quest> {
-	return unwrap(
-		client.POST('/api/quests/{quest_id}/cancel', {
-			params: { path: { quest_id: Number(id) } },
-			body: { undo_reward: undoReward },
-		}),
-	);
+	return (await commands.questCancel(Number(id), undoReward)) as Quest;
 }
 
 export async function getQuestAnalytics(): Promise<QuestAnalyticsRow[]> {
-	return unwrap(client.GET('/api/quests/analytics'));
+	return (await commands.questsAnalytics()) as QuestAnalyticsRow[];
 }
 
 export async function getPlaylistAnalytics(): Promise<PlaylistAnalyticsRow[]> {
-	return unwrap(client.GET('/api/quests/playlists/analytics'));
+	return (await commands.playlistsAnalytics()) as PlaylistAnalyticsRow[];
 }
 
 export async function getPlaylists(): Promise<QuestPlaylist[]> {
-	return unwrap(client.GET('/api/quests/playlists'));
+	return (await commands.playlistsList()) as QuestPlaylist[];
 }
 
 export async function createPlaylist(data: PlaylistCreateData): Promise<QuestPlaylist> {
-	return unwrap(client.POST('/api/quests/playlists', { body: data }));
+	return (await commands.playlistCreate(data as commands.PlaylistInput)) as QuestPlaylist;
 }
 
 export async function updatePlaylist(id: string, data: PlaylistUpdateData): Promise<QuestPlaylist> {
-	return unwrap(
-		client.PUT('/api/quests/playlists/{playlist_id}', {
-			params: { path: { playlist_id: Number(id) } },
-			body: data,
-		}),
-	);
+	return (await commands.playlistUpdate(
+		Number(id),
+		data as commands.PlaylistInput,
+	)) as QuestPlaylist;
 }
 
 export async function deletePlaylist(id: string): Promise<void> {
-	await client.DELETE('/api/quests/playlists/{playlist_id}', {
-		params: { path: { playlist_id: Number(id) } },
-	});
+	await commands.playlistDelete(Number(id));
 }
 
 // --- Settings ---
@@ -919,19 +827,41 @@ export interface SettingsUpdate {
 }
 
 export async function getSettings(): Promise<AppSettings> {
-	return unwrap(client.GET('/api/settings'));
+	return (await commands.settingsGet()) as AppSettings;
 }
 
 export async function updateSettings(updates: SettingsUpdate): Promise<AppSettings> {
-	return unwrap(client.PATCH('/api/settings', { body: updates }));
+	return (await commands.settingsUpdate(updates)) as AppSettings;
 }
 
 // --- Overlay ---
 
 export async function getOverlayPosition(): Promise<{ x: number | null; y: number | null }> {
-	return unwrap(client.GET('/api/settings/overlay-position'));
+	return (await commands.settingsOverlayPosition()) as { x: number | null; y: number | null };
 }
 
 export async function saveOverlayPosition(x: number, y: number): Promise<void> {
-	await client.PUT('/api/settings/overlay-position', { body: { x, y } });
+	await commands.settingsSetOverlayPosition(x, y);
+}
+
+// --- Developer tools (hidden, developer-mode-gated) ---
+// Served over typed IPC commands (`commands.gen.ts`). Each command is gated
+// on developer mode in the facade; when it is off the command rejects with
+// the not-found `ApiError` (status 404), exactly as the gate-off HTTP route
+// answered, so the metrics page's existing 404 handling is unchanged.
+
+import type { HistogramSnapshot, MetricsSnapshot } from './commands.gen';
+
+export type { HistogramSnapshot, MetricsSnapshot };
+
+export async function getDevMetrics(): Promise<MetricsSnapshot> {
+	return commands.devMetrics();
+}
+
+export async function getCrashReporting(): Promise<boolean> {
+	return (await commands.devCrashReporting()).crash_reporting_enabled;
+}
+
+export async function setCrashReporting(enabled: boolean): Promise<boolean> {
+	return (await commands.devSetCrashReporting(enabled)).crash_reporting_enabled;
 }

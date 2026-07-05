@@ -181,7 +181,7 @@ export async function ensureDashboard(browser, devUrl) {
 	// Navigate the attached webview to the app's own origin (devUrl). The e2e
 	// shell embeds the frontend and serves it at tauri://localhost, which has
 	// native IPC (exactly as the shipped app), so the suite drives the real
-	// invoke('api_request') transport there rather than a remote dev origin
+	// typed-command IPC there rather than a remote dev origin
 	// (which Tauri denies IPC). tauri-driver attaches to an arbitrary one of the
 	// app's webviews, so this navigation to the main route is explicit.
 	await browser.url(devUrl);

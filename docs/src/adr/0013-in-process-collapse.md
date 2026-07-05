@@ -3,6 +3,8 @@
 - Status: Accepted (supersedes [ADR-0001](0001-strangler-fig-port.md))
 - Context: reflects the landed implementation
 
+> **Later development.** This ADR records the collapse to a single process, which kept the in-process HTTP router (`eo-http`) alive behind the `api_request` IPC command. That router was subsequently retired in favour of typed Tauri commands over a service facade, and the `eo-http` crate was deleted; see [ADR-0019](0019-typed-command-facade.md). The single-process topology this ADR established is unchanged; only the transport inside the process moved on from an in-process HTTP dispatch to typed commands.
+
 ## Context and problem statement
 
 The strangler-fig seam ([ADR-0001](0001-strangler-fig-port.md)) did its job. Every route is now served by a native Rust handler, proven byte-equivalent to the original against the shared oracle ([ADR-0005](0005-cross-language-equivalence-oracle.md)). With the native arm serving the whole surface, the proxy fallback forwards nothing, and the machinery that made the migration incremental has become pure cost rather than insurance.
@@ -25,7 +27,7 @@ The Python implementation **stays in the repository as the cross-language testin
 
 - A running instance is one process. No second process to launch, relocate, idle, or reap; no loopback socket bound, so the network attack surface the proxy edge once presented is gone (the IPC command carries no listener).
 - The installer drops by roughly three-quarters (the bundled Python runtime is gone): the shipped bundle is the single Rust binary plus its data, model, and ONNX Runtime assets, with no `entropiaorme-backend.exe`, no `python` runtime, and no PyInstaller payload.
-- In-process dispatch is sub-millisecond per request at p50 and p95 across the hydration surface, with no socket or serialisation hop. The `eo-http` router micro-benchmark (`frontend/src-tauri/eo-http/tests/router_microbench.rs`) measures it.
+- The former in-process HTTP router measured sub-millisecond dispatch at p50 and p95 across the hydration surface, with no socket or serialisation hop. (That measurement was taken before the router was retired with the `eo-http` crate under [ADR-0019](0019-typed-command-facade.md); the typed commands that replaced it dispatch as direct in-process calls.)
 - The byte contract that the proxy arm once had to preserve is now wholly the native handlers' own. This is not a new risk: the equivalence oracle that proved each route stays in place and continues to grade the native output against the Python reference.
 - The runtime arm-override kill-switch is gone. The revert for a misbehaving route is now a source change rather than a runtime flip, which is acceptable because the migration is complete and every route is oracle-proven; there is no second implementation to fall back to.
 - The first-launch database upgrade the sidecar used to perform (migrating a pre-baseline schema forward) now runs natively in-process for the one schema version existing installations occupy: a version-32 database is upgraded to the version-33 baseline on open (dropping the retired write-only `tt_curve_observations` table, which no read path consumed) and then adopted, exactly as a fresh version-33 database is. Schemas older than version 32 remain a deliberate decline, since no installed database occupies them.
@@ -36,8 +38,7 @@ See also the [architecture overview](../architecture/overview.md) and the [servi
 ## Evidence
 
 - `frontend/src-tauri/entropia-orme/src/lib.rs`
-- `frontend/src-tauri/eo-http/src/lib.rs`
+- `frontend/src-tauri/eo-http/src/lib.rs` (retired: the `eo-http` crate was deleted when the in-process HTTP transport gave way to the typed command facade under [ADR-0019](0019-typed-command-facade.md))
 - `frontend/src-tauri/entropia-orme/src/composition.rs`
 - `frontend/src/lib/realtime/eventRelay.ts`
-- `frontend/src-tauri/eo-http/tests/router_microbench.rs`
 - `THIRD-PARTY-NOTICES.md`

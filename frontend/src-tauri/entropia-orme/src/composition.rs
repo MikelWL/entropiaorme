@@ -65,7 +65,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use eo_http::hydration::HydrationState;
 use eo_services::bus_events::BusEvent;
 use eo_services::chatlog_watcher::{ChatlogWatcher, QuestRewardFilter};
 use eo_services::clock::{Clock, RealClock};
@@ -268,7 +267,7 @@ fn init_ort_runtime(resource_dir: Option<&PathBuf>) {
 /// The live producer spine: the in-process event bus, the chat-log
 /// watcher (tailing in its own thread), and the trackers subscribed to
 /// the bus, all sharing the substrate's single-owner database pool and
-/// one injected clock. Kept as a sibling of [`HydrationState`] so the
+/// one injected clock. Kept separate from the typed-command facade so the
 /// read surface stays a pure read surface and the producers are a
 /// separate, stoppable concern.
 ///
@@ -431,7 +430,14 @@ impl ProducerState {
 /// `Arc` because the scan consumer seams will each capture a clone when
 /// their routes flip.
 pub struct Composed {
-    pub hydration: Arc<HydrationState>,
+    /// The composed database handle, held so the exit seam can run the
+    /// once-per-lifecycle `PRAGMA optimize` at shutdown (the last live user
+    /// of the composed `Db` outside the typed-command facade).
+    pub db: Db,
+    /// The typed-command facade (the application boundary the typed
+    /// Tauri commands dispatch into), sharing the database and catalogue
+    /// handles.
+    pub api: Arc<eo_api::Api>,
     pub producers: ProducerState,
     pub ocr_engine: Option<Arc<OcrEngine>>,
     /// The manual skill-scan state machine, composed on the spine bus (its
@@ -440,9 +446,6 @@ pub struct Composed {
     /// its capture and extraction seams stand down to "engine unavailable"
     /// when the OCR runtime is absent, exactly as the Python reference reports.
     pub skill_scan: Arc<SkillScanManual>,
-    /// The one-shot repair-cost OCR service, composed over the same capture
-    /// and recogniser seams.
-    pub repair_ocr: Arc<RepairOcrService>,
     /// The spacebar-capture listener, composed over the scan and the shared
     /// OS hook. Held for the spacebar-capture route (its toggle) and the exit
     /// seam (its teardown).
@@ -491,6 +494,7 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
         data_dir(),
         snapshot_dir(resource_dir.as_ref()),
         models_dir(resource_dir.as_ref()),
+        Some(demo_db_path(resource_dir.as_ref())),
         keystroke_source,
     )
     .await
@@ -505,6 +509,7 @@ async fn compose_with(
     data_dir: PathBuf,
     snapshot: PathBuf,
     models: PathBuf,
+    demo_db_path: Option<PathBuf>,
     keystroke_source: Arc<dyn KeystrokeSource>,
 ) -> Composition {
     if let Err(err) = std::fs::create_dir_all(&data_dir) {
@@ -658,13 +663,34 @@ async fn compose_with(
     )
     .await;
 
-    let hydration = Arc::new(HydrationState::new(db, game_data, clock, data_dir));
+    // The typed-command facade shares the read surface's handles plus the
+    // producers the migrated write families signal (the config writer, the
+    // hunt tracker, the hotbar gate, the chat-log watcher, the skill
+    // tracker a codex claim suppresses on, and the manual-scan state
+    // machine + spacebar listener the scan family drives); families migrate
+    // onto it from the in-process HTTP router one by one, and both serve
+    // over the same handles during the migration.
+    let api = Arc::new(eo_api::Api::new(
+        db.clone(),
+        game_data.clone(),
+        clock.clone(),
+        data_dir.clone(),
+        producers.config_service_handle(),
+        producers.tracker_handle(),
+        producers.hotbar_handle(),
+        producers.watcher_handle(),
+        producers.skill_tracker_handle(),
+        skill_scan.clone(),
+        spacebar_listener.clone(),
+        repair_ocr.clone(),
+        demo_db_path,
+    ));
     Composition::Ready(Composed {
-        hydration,
+        db,
+        api,
         producers,
         ocr_engine,
         skill_scan,
-        repair_ocr,
         spacebar_listener,
     })
 }
@@ -1344,6 +1370,7 @@ mod tests {
             dir.path().join("data"),
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1370,6 +1397,7 @@ mod tests {
             data_dir,
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1406,6 +1434,7 @@ mod tests {
             data_dir,
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1422,6 +1451,7 @@ mod tests {
             dir.path().join("data"),
             dir.path().join("no-such-snapshot"),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1594,6 +1624,7 @@ mod tests {
             dir.path().join("data"),
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1652,6 +1683,7 @@ mod tests {
             dir.path().join("data"),
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1666,16 +1698,10 @@ mod tests {
         // the game window is never present on a headless host.
         assert_eq!(status["configured"], composed.ocr_engine.is_some());
         assert_eq!(status["game_window_present"], false);
-
-        // The repair reader runs its composed provider chain to the
-        // no-window leg (its region lookup reads the live game window).
-        let repair = composed.repair_ocr.scan_repair_cost();
-        assert_eq!(
-            repair["error"],
-            "Entropia Universe window not found: start the game first"
-        );
         // The scan composed on the spine bus (its status frames reach the SSE
-        // stream); the bridge forwarding is covered by `sse_bridge_*`.
+        // stream); the bridge forwarding is covered by `sse_bridge_*`. The
+        // repair reader's no-window leg is covered by the facade test
+        // `tracking_facade::repair_scan_soft_error_rides_the_body`.
 
         composed.producers.stop();
     }

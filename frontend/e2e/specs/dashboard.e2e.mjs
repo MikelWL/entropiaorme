@@ -3,10 +3,10 @@ import { ensureDashboard } from '../helpers/onboarding.mjs';
 import { DEV_URL } from '../wdio.conf.mjs';
 
 // Functional panel-flow coverage against the REAL Tauri shell. The deterministic
-// backend stub (the e2e-stub feature's in-process api_request handler) pins the
-// dashboard's reads, so these assertions are reproducible run-to-run. The IPC
-// checks are the migration hedge: they exercise window.__TAURI_INTERNALS__, which
-// only the native shell exposes (a browser-only e2e is structurally blind to it).
+// backend stub (the e2e-stub feature's in-process typed read-command handlers)
+// pins the dashboard's reads, so these assertions are reproducible run-to-run.
+// The IPC checks exercise window.__TAURI_INTERNALS__, which only the native
+// shell exposes (a browser-only e2e is structurally blind to it).
 describe('dashboard (native Tauri shell)', () => {
 	before(async () => {
 		await ensureDashboard(browser, DEV_URL);
@@ -49,7 +49,7 @@ describe('dashboard (native Tauri shell)', () => {
 		expect(surface.hasInternals).toBe(true);
 		expect(surface.invokeIsFn).toBe(true);
 		// The real command round-trip is exercised by the hydration test (the
-		// dashboard's reads flow over invoke('api_request')) and the overlay-button
+		// dashboard's reads flow over the typed IPC commands) and the overlay-button
 		// test below, both over the app's native IPC at the tauri:// origin.
 	});
 

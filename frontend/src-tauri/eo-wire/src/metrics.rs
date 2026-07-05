@@ -1,8 +1,8 @@
 //! Process-global, lock-free telemetry registry for the observability floor.
 //!
 //! A single static the whole workspace records into from its hot paths
-//! (event-bus publishes, OCR inferences, database queries, HTTP requests)
-//! and a periodic resource sampler (RSS / handle count). The registry is the
+//! (event-bus publishes, OCR inferences, database queries) and a periodic
+//! resource sampler (RSS / handle count). The registry is the
 //! aggregation sink the hidden devtools metrics page reads, and the source
 //! the rolling structured logs' drift samples derive from, so resource and
 //! latency drift (RSS trend, handle count, per-event latencies) is measured
@@ -16,7 +16,6 @@
 //! carries chatlog content or any other PII (durations, counts, and
 //! process-resource gauges only).
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -120,57 +119,14 @@ impl Default for LatencyHistogram {
     }
 }
 
-/// The read handlers whose per-endpoint latency the registry breaks out
-/// individually (on top of the aggregate `http_request_latency`), so a
-/// read-path change has a before/after figure per surface rather than one
-/// blended number. The dispatch seam classifies a served request to one of
-/// these (or to none, for every other route) and records its whole-request
-/// elapsed time here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Handler {
-    AnalyticsOverview,
-    AnalyticsActivity,
-    SessionList,
-    SessionDetail,
-}
-
-impl Handler {
-    /// Every handler, in the order their histograms are stored and reported.
-    pub const ALL: [Handler; 4] = [
-        Handler::AnalyticsOverview,
-        Handler::AnalyticsActivity,
-        Handler::SessionList,
-        Handler::SessionDetail,
-    ];
-
-    /// The stable snake_case key this handler reports under in the snapshot.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Handler::AnalyticsOverview => "analytics_overview",
-            Handler::AnalyticsActivity => "analytics_activity",
-            Handler::SessionList => "session_list",
-            Handler::SessionDetail => "session_detail",
-        }
-    }
-
-    const fn index(self) -> usize {
-        self as usize
-    }
-}
-
 /// The process-wide telemetry registry. Construct a fresh instance in tests
 /// ([`Metrics::new`] is `const`); production records into the single global
 /// returned by [`metrics`].
 #[derive(Debug)]
 pub struct Metrics {
     events_published: AtomicU64,
-    http_requests: AtomicU64,
     ocr_latency: LatencyHistogram,
     db_query_latency: LatencyHistogram,
-    http_request_latency: LatencyHistogram,
-    // Per-handler request latency for the instrumented read surfaces, indexed
-    // by `Handler::index`. Alongside `http_request_latency`, not instead of it.
-    handler_latency: [LatencyHistogram; Handler::ALL.len()],
     // Drift gauges, set by the periodic resource sampler. `0` means
     // "not yet sampled" (the page renders a dash); resident-set bytes and
     // the OS handle/descriptor count are the two monotonic-growth signals a
@@ -183,11 +139,8 @@ impl Metrics {
     pub const fn new() -> Self {
         Self {
             events_published: AtomicU64::new(0),
-            http_requests: AtomicU64::new(0),
             ocr_latency: LatencyHistogram::new(),
             db_query_latency: LatencyHistogram::new(),
-            http_request_latency: LatencyHistogram::new(),
-            handler_latency: [const { LatencyHistogram::new() }; Handler::ALL.len()],
             rss_bytes: AtomicU64::new(0),
             handle_count: AtomicU64::new(0),
         }
@@ -211,19 +164,6 @@ impl Metrics {
         self.db_query_latency.record(elapsed);
     }
 
-    /// Record one served HTTP request: bumps the count and the latency
-    /// histogram.
-    pub fn record_http_request(&self, elapsed: Duration) {
-        self.http_requests.fetch_add(1, Ordering::Relaxed);
-        self.http_request_latency.record(elapsed);
-    }
-
-    /// Record one served request against a specific instrumented read handler
-    /// (in addition to the aggregate `record_http_request`).
-    pub fn record_handler_latency(&self, handler: Handler, elapsed: Duration) {
-        self.handler_latency[handler.index()].record(elapsed);
-    }
-
     /// Set the latest resident-set-size sample, in bytes.
     pub fn set_rss_bytes(&self, bytes: u64) {
         self.rss_bytes.store(bytes, Ordering::Relaxed);
@@ -237,19 +177,8 @@ impl Metrics {
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
             events_published: self.events_published.load(Ordering::Relaxed),
-            http_requests: self.http_requests.load(Ordering::Relaxed),
             ocr_latency: self.ocr_latency.snapshot(),
             db_query_latency: self.db_query_latency.snapshot(),
-            http_request_latency: self.http_request_latency.snapshot(),
-            handler_latency: Handler::ALL
-                .iter()
-                .map(|handler| {
-                    (
-                        handler.as_str().to_string(),
-                        self.handler_latency[handler.index()].snapshot(),
-                    )
-                })
-                .collect(),
             rss_bytes: self.rss_bytes.load(Ordering::Relaxed),
             handle_count: self.handle_count.load(Ordering::Relaxed),
         }
@@ -263,19 +192,13 @@ impl Default for Metrics {
 }
 
 /// A serialisable point-in-time read of the registry, the body the hidden
-/// devtools metrics route returns and the shape the rolling logs' drift
+/// devtools metrics command returns and the shape the rolling logs' drift
 /// samples mirror. Counts and durations only: no PII, ever.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MetricsSnapshot {
     pub events_published: u64,
-    pub http_requests: u64,
     pub ocr_latency: HistogramSnapshot,
     pub db_query_latency: HistogramSnapshot,
-    pub http_request_latency: HistogramSnapshot,
-    /// Per-handler request latency keyed by [`Handler::as_str`], for the
-    /// instrumented read surfaces. Ordered (a `BTreeMap`) so the snapshot is
-    /// deterministic.
-    pub handler_latency: BTreeMap<String, HistogramSnapshot>,
     pub rss_bytes: u64,
     pub handle_count: u64,
 }
@@ -283,7 +206,7 @@ pub struct MetricsSnapshot {
 static METRICS: Metrics = Metrics::new();
 
 /// The process-wide telemetry registry every instrumented seam records into
-/// and the devtools metrics route reads from.
+/// and the devtools metrics command reads from.
 pub fn metrics() -> &'static Metrics {
     &METRICS
 }
@@ -297,33 +220,11 @@ mod tests {
         let m = Metrics::new();
         let snap = m.snapshot();
         assert_eq!(snap.events_published, 0);
-        assert_eq!(snap.http_requests, 0);
         assert_eq!(snap.ocr_latency.count, 0);
         assert_eq!(snap.db_query_latency.count, 0);
-        assert_eq!(snap.http_request_latency.count, 0);
         assert_eq!(snap.rss_bytes, 0);
         assert_eq!(snap.handle_count, 0);
         assert_eq!(snap.ocr_latency.mean_us(), None);
-        // Every instrumented handler is present and empty.
-        assert_eq!(snap.handler_latency.len(), Handler::ALL.len());
-        for handler in Handler::ALL {
-            assert_eq!(snap.handler_latency[handler.as_str()].count, 0);
-        }
-    }
-
-    #[test]
-    fn per_handler_latency_records_against_the_named_handler_only() {
-        let m = Metrics::new();
-        m.record_handler_latency(Handler::AnalyticsActivity, Duration::from_millis(5));
-        m.record_handler_latency(Handler::AnalyticsActivity, Duration::from_millis(7));
-        m.record_handler_latency(Handler::SessionList, Duration::from_millis(2));
-        let snap = m.snapshot();
-        assert_eq!(snap.handler_latency["analytics_activity"].count, 2);
-        assert_eq!(snap.handler_latency["session_list"].count, 1);
-        assert_eq!(snap.handler_latency["analytics_overview"].count, 0);
-        assert_eq!(snap.handler_latency["session_detail"].count, 0);
-        // Recording a handler does not touch the aggregate request counter.
-        assert_eq!(snap.http_requests, 0);
     }
 
     #[test]
@@ -331,13 +232,10 @@ mod tests {
         let m = Metrics::new();
         m.record_event_published();
         m.record_event_published();
-        m.record_http_request(Duration::from_millis(3));
         m.set_rss_bytes(1_234_567);
         m.set_handle_count(42);
         let snap = m.snapshot();
         assert_eq!(snap.events_published, 2);
-        assert_eq!(snap.http_requests, 1);
-        assert_eq!(snap.http_request_latency.count, 1);
         assert_eq!(snap.rss_bytes, 1_234_567);
         assert_eq!(snap.handle_count, 42);
     }

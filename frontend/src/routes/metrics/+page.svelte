@@ -1,18 +1,13 @@
 <script lang="ts">
-	import { request, ApiError } from '$lib/api/client';
+	import {
+		ApiError,
+		getCrashReporting,
+		getDevMetrics,
+		setCrashReporting,
+		type HistogramSnapshot,
+		type MetricsSnapshot
+	} from '$lib/api';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
-
-	type Bucket = { bound_us: number | null; count: number };
-	type Histogram = { count: number; sum_us: number; buckets: Bucket[] };
-	type MetricsSnapshot = {
-		events_published: number;
-		http_requests: number;
-		ocr_latency: Histogram;
-		db_query_latency: Histogram;
-		http_request_latency: Histogram;
-		rss_bytes: number;
-		handle_count: number;
-	};
 
 	const POLL_INTERVAL_MS = 2000;
 
@@ -23,7 +18,7 @@
 
 	async function refreshMetrics(): Promise<void> {
 		try {
-			snapshot = await request<MetricsSnapshot>('/dev/metrics');
+			snapshot = await getDevMetrics();
 			developerModeOff = false;
 			errorMessage = null;
 		} catch (err) {
@@ -38,20 +33,17 @@
 
 	async function refreshCrashReporting(): Promise<void> {
 		try {
-			const body = await request<{ crash_reporting_enabled: boolean }>('/dev/crash-reporting');
-			crashReporting = body.crash_reporting_enabled;
+			crashReporting = await getCrashReporting();
 		} catch {
-			crashReporting = null;
+			// Leave the last-good value in place: this is a one-shot read (no
+			// self-healing poll), so a transient failure must not permanently
+			// hide the toggle. Developer-mode-off keeps it null (never set).
 		}
 	}
 
 	async function toggleCrashReporting(enabled: boolean): Promise<void> {
 		try {
-			const body = await request<{ crash_reporting_enabled: boolean }>('/dev/crash-reporting', {
-				method: 'POST',
-				body: JSON.stringify({ crash_reporting_enabled: enabled })
-			});
-			crashReporting = body.crash_reporting_enabled;
+			crashReporting = await setCrashReporting(enabled);
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : String(err);
 		}
@@ -66,18 +58,18 @@
 		return value > 0 ? value.toLocaleString() : '-';
 	}
 
-	function meanMs(histogram: Histogram): string {
+	function meanMs(histogram: HistogramSnapshot): string {
 		if (histogram.count === 0) return '-';
 		return `${(histogram.sum_us / histogram.count / 1000).toFixed(2)} ms`;
 	}
 
-	function bucketLabel(bound_us: number | null): string {
-		if (bound_us === null) return '1s+';
+	function bucketLabel(bound_us: number | null | undefined): string {
+		if (bound_us == null) return '1s+';
 		if (bound_us < 1000) return `${bound_us}µs`;
 		return `${bound_us / 1000}ms`;
 	}
 
-	function maxBucket(histogram: Histogram): number {
+	function maxBucket(histogram: HistogramSnapshot): number {
 		return histogram.buckets.reduce((max, bucket) => Math.max(max, bucket.count), 0);
 	}
 
@@ -93,7 +85,7 @@
 
 <svelte:head><title>Developer metrics</title></svelte:head>
 
-{#snippet histogramCard(title: string, histogram: Histogram)}
+{#snippet histogramCard(title: string, histogram: HistogramSnapshot)}
 	<div class="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
 		<div class="flex items-baseline justify-between">
 			<h3 class="text-sm font-medium text-slate-200">{title}</h3>
@@ -122,7 +114,7 @@
 	<header class="mb-6">
 		<h1 class="text-xl font-semibold">Developer metrics</h1>
 		<p class="text-sm text-slate-400">
-			Live in-process telemetry: event throughput, OCR / database / request latencies, and
+			Live in-process telemetry: event throughput, OCR / database latencies, and
 			resource-drift gauges. Refreshes every {POLL_INTERVAL_MS / 1000}s while this tab is visible.
 		</p>
 	</header>
@@ -136,14 +128,10 @@
 			Could not read metrics: {errorMessage}
 		</div>
 	{:else if snapshot}
-		<section class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+		<section class="grid grid-cols-2 gap-4 sm:grid-cols-3">
 			<div class="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
 				<p class="text-xs text-slate-400">Events published</p>
 				<p class="mt-1 text-2xl font-semibold">{snapshot.events_published.toLocaleString()}</p>
-			</div>
-			<div class="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
-				<p class="text-xs text-slate-400">HTTP requests</p>
-				<p class="mt-1 text-2xl font-semibold">{snapshot.http_requests.toLocaleString()}</p>
 			</div>
 			<div class="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
 				<p class="text-xs text-slate-400">Resident set</p>
@@ -155,10 +143,9 @@
 			</div>
 		</section>
 
-		<section class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+		<section class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
 			{@render histogramCard('OCR inference latency', snapshot.ocr_latency)}
 			{@render histogramCard('Database query latency', snapshot.db_query_latency)}
-			{@render histogramCard('HTTP request latency', snapshot.http_request_latency)}
 		</section>
 	{:else}
 		<p class="text-sm text-slate-400">Loading…</p>

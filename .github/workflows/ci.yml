@@ -198,9 +198,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      # Fails when the committed generated API types drift from the OpenAPI
-      # snapshot (the frontend twin of the backend's openapi drift gate).
-      - run: npm run gen:api:check
       - run: npm run build
       - run: npm run check
       # Biome lint + format gate over the TypeScript and JavaScript sources
@@ -218,7 +215,7 @@ jobs:
     #
     # BLOCKING (a required input of the ci-gate aggregator): the suite drives the
     # app at its own tauri:// origin (native IPC) with the deterministic in-process
-    # api_request stub, and every visual capture is gated on a recovered inner
+    # typed read-command stub, and every visual capture is gated on a recovered inner
     # viewport (ensureViewport), so the WebView2 inner-viewport collapse is
     # absorbed rather than flaking the gate. A failure uploads the actual + diff
     # PNGs for inspection.
@@ -266,7 +263,7 @@ jobs:
           Expand-Archive "$env:RUNNER_TEMP\edgedriver.zip" -DestinationPath e2e/.drivers -Force
       # The e2e build embeds the frontend and serves it at the app's own tauri://
       # origin (native IPC), built with the `e2e-stub` feature (the in-process
-      # api_request fixture stub) and E2E_FREEZE_TWEENS (chart-tween determinism
+      # typed read-command fixture stub) and E2E_FREEZE_TWEENS (chart-tween determinism
       # for the visual baselines). tauri.e2e.conf.json is an e2e-only overlay
       # (capture window size + CSP) that never ships.
       - name: Build the e2e shell
@@ -393,8 +390,8 @@ jobs:
   rust-members:
     name: Rust backend members (nextest, Linux)
     runs-on: ubuntu-latest
-    # The native-backend members (eo-http, eo-services, eo-wire) must build and
-    # test without the Tauri toolchain. This runner is the structural proof: it
+    # The native-backend members (eo-api, eo-services, eo-wire) must
+    # build and test without the Tauri toolchain. This runner is the structural proof: it
     # has none of the Tauri system stack installed (webkit2gtk et al.), and the
     # package selection keeps the shell crate (the only Tauri-coupled member)
     # out of the dependency graph entirely, so a GUI dependency creeping into
@@ -429,7 +426,12 @@ jobs:
         with:
           tool: cargo-nextest
       - name: Run the backend-member tests (nextest)
-        run: cargo nextest run -p eo-wire -p eo-http -p eo-services
+        run: cargo nextest run -p eo-wire -p eo-services -p eo-api
+      # Fails when the committed TypeScript bindings drift from the typed
+      # command manifest (the typed-command twin of the frontend job's
+      # OpenAPI drift gate).
+      - name: Check the generated TypeScript bindings are current
+        run: cargo run -q -p xtask -- gen-ts --check
       # The criterion micro-benchmark rail, compile-check only: shared CI
       # runners produce noisy timings, so benchmark figures are taken locally
       # when a hot path lands, and CI guarantees the benches keep building.
@@ -481,16 +483,16 @@ jobs:
       # the human summary and the badge JSON below both read the same single run
       # rather than re-executing the suite.
       - name: Measure branch coverage (cargo-llvm-cov)
-        run: cargo llvm-cov nextest --branch --no-report -p eo-wire -p eo-http -p eo-services
+        run: cargo llvm-cov nextest --branch --no-report -p eo-wire -p eo-services
       - name: Summarise branch coverage
-        run: cargo llvm-cov report --branch --summary-only -p eo-wire -p eo-http -p eo-services
+        run: cargo llvm-cov report --branch --summary-only -p eo-wire -p eo-services
       # Reduce the measured coverage to the shields.io endpoint document the
       # README's Coverage badge points at. Built on every run so the pipeline is
       # exercised in review; published (next step) only from main so the figure
       # tracks the trunk, matching the mutation badge's main-only publish.
       - name: Build coverage badge
         run: |
-          cargo llvm-cov report --branch --json -p eo-wire -p eo-http -p eo-services --output-path coverage-llvm.json
+          cargo llvm-cov report --branch --json -p eo-wire -p eo-services --output-path coverage-llvm.json
           bash ../../.github/scripts/coverage-badge.sh coverage-llvm.json coverage.json
       # Hand the badge to the main-only publish job as an artifact rather than
       # pushing here: this job builds pull-request-author code (tests, build
@@ -591,7 +593,7 @@ jobs:
           fi
           # The native-shell e2e + visual job (frontend-e2e) is a REQUIRED input:
           # it drives the app at its tauri:// origin (native IPC) with the
-          # deterministic in-process api_request stub, and every visual capture is
+          # deterministic in-process typed read-command stub, and every visual capture is
           # gated on a recovered inner viewport (ensureViewport), so a failure is a
           # real regression rather than the old environment flake.
           if [ "$FRONTEND_RESULT" = "success" ] && [ "$RUST_RESULT" = "success" ] && [ "$RUST_MEMBERS_RESULT" = "success" ] && [ "$RUST_COVERAGE_RESULT" = "success" ] && [ "$FRONTEND_E2E_RESULT" = "success" ]; then

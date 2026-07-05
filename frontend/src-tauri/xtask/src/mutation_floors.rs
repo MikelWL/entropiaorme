@@ -13,9 +13,12 @@ use std::path::Path;
 
 /// file (workspace-relative, as cargo-mutants reports it) -> floor %.
 ///
-/// Ported verbatim from the Python `FLOORS` map; see that script for the
-/// per-file rationale on each residual-survivor justification.
+/// Per-file mutation-score floors: the minimum caught-mutant percentage each
+/// listed source file must hold, with each floor set to just below its
+/// measured score so a regression trips the gate while justified residual
+/// survivors do not.
 const FLOORS: &[(&str, f64)] = &[
+    ("eo-services/src/analytics.rs", 92.0),
     ("eo-services/src/cost_engine.rs", 92.0),
     ("eo-services/src/tt_value_curve.rs", 92.0),
     ("eo-services/src/character_calc.rs", 92.0),
@@ -29,16 +32,8 @@ const FLOORS: &[(&str, f64)] = &[
     ("eo-services/src/codex.rs", 92.0),
     ("eo-services/src/quests.rs", 92.0),
     ("eo-services/src/difflib.rs", 92.0),
-    ("eo-http/src/hydration.rs", 92.0),
     ("eo-wire/src/normalizer.rs", 81.0),
     ("eo-wire/src/http_fingerprint.rs", 97.0),
-    ("eo-http/src/pyjson.rs", 79.0),
-    ("eo-http/src/body.rs", 78.0),
-    ("eo-http/src/native.rs", 98.0),
-    ("eo-http/src/character_routes.rs", 85.0),
-    ("eo-http/src/equipment_routes.rs", 90.0),
-    ("eo-http/src/analytics_routes.rs", 92.0),
-    ("eo-http/src/tracking_routes.rs", 90.0),
 ];
 
 /// Map a score to a shields.io colour band (identical floors to
@@ -270,8 +265,8 @@ mod tests {
     }
 
     #[test]
-    fn floor_map_matches_python_count() {
-        // Guards against an accidental drop when transcribing the map.
-        assert_eq!(FLOORS.len(), 23);
+    fn floor_map_has_the_expected_entry_count() {
+        // Guards against an accidental drop when editing the map.
+        assert_eq!(FLOORS.len(), 16);
     }
 }

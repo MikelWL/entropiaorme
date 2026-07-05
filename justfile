@@ -42,11 +42,11 @@ dev:
 # with `cargo clean`.
 [windows]
 test-rust:
-    cd frontend/src-tauri; cargo nextest run -p eo-wire -p eo-http -p eo-services
+    cd frontend/src-tauri; cargo nextest run -p eo-wire -p eo-services -p eo-api
 
 [unix]
 test-rust:
-    cd frontend/src-tauri && cargo nextest run -p eo-wire -p eo-http -p eo-services
+    cd frontend/src-tauri && cargo nextest run -p eo-wire -p eo-services -p eo-api
 
 # Each step is its own recipe line (just stops on the first non-zero exit)
 # rather than an `&&` chain, so the body runs under any shell, including
@@ -74,16 +74,15 @@ smoke:
     @echo "just smoke: headless smoke verification is not yet implemented."
     @exit 1
 
-# Regenerate the typed frontend API client from the committed OpenAPI
-# snapshot (frontend/src-tauri/contracts/openapi.snapshot.json). Run after a
-# change that regenerates the snapshot.
-gen-api:
-    npm --prefix frontend run gen:api
+# Regenerate the TypeScript bindings for the typed IPC commands from the
+# eo-api command manifest.
+gen-ts:
+    cd frontend/src-tauri && cargo run -q -p xtask -- gen-ts
 
-# Verify the committed generated client matches the OpenAPI snapshot
-# (matches the CI freshness step).
-gen-api-check:
-    npm --prefix frontend run gen:api:check
+# Fail when the committed typed-command bindings drift from the manifest
+# (the CI drift gate, runnable locally).
+gen-ts-check:
+    cd frontend/src-tauri && cargo run -q -p xtask -- gen-ts --check
 
 # Start Caddy in the background using the main worktree's Caddyfile.
 # Routes through caddy-lifecycle.ps1 so the main worktree (resolved via

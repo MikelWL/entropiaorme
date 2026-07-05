@@ -1,3 +1,4 @@
+mod commands;
 mod composition;
 mod crash;
 mod resources;
@@ -45,107 +46,18 @@ fn hide_scan_overlay(app: tauri::AppHandle) {
     }
 }
 
-/// The backend-call IPC seam: the typed request descriptor the frontend's
-/// `tauriFetch` sends in place of a loopback HTTP request. `path` carries the
-/// `/api/...` path plus any query string; `headers` round-trips the request
-/// headers (Content-Type, If-None-Match); `body` is the JSON request body.
-#[derive(serde::Deserialize)]
-struct ApiRequest {
-    method: String,
-    path: String,
-    // Under `e2e-stub` the in-process fixture stub dispatches on method + path
-    // only, so these two are deserialized but unread; the live dispatch below
-    // reads both. Scope the allow to the feature so the live build still flags a
-    // genuinely-unread field.
-    #[serde(default)]
-    #[cfg_attr(feature = "e2e-stub", allow(dead_code))]
-    headers: Vec<(String, String)>,
-    #[serde(default)]
-    #[cfg_attr(feature = "e2e-stub", allow(dead_code))]
-    body: Option<String>,
-}
-
-/// The response the seam returns, mirroring an HTTP response so the frontend
-/// rebuilds a `Response` the existing openapi-fetch client consumes unchanged.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiResponse {
-    status: u16,
-    status_text: String,
-    headers: Vec<(String, String)>,
-    body: String,
-}
-
-/// Dispatch a frontend backend call through the in-process router (no socket):
-/// the server side of the IPC transport that replaces the loopback HTTP hop.
-/// The shell publishes the composed state to this command only once the native
-/// spine is installed; until then (a brief startup window, or permanently if
-/// composition declines) the command errors. The frontend's initial reads then
-/// fail and are re-driven by the `substrate:native-installed` event the shell
-/// emits the moment the spine is live (there is no transport-level retry).
-#[tauri::command]
-async fn api_request(app: tauri::AppHandle, request: ApiRequest) -> Result<ApiResponse, String> {
-    // The native-shell e2e build serves the suite's committed fixtures from the
-    // in-process stub instead of dispatching the live router, so the real
-    // `invoke('api_request')` transport is exercised against deterministic data
-    // (WebDriver cannot intercept `invoke`). Compiled in only under `e2e-stub`;
-    // dev and release dispatch the live router below.
-    #[cfg(feature = "e2e-stub")]
-    {
-        let _ = &app;
-        Ok(e2e_stub::serve(&request.method, &request.path))
-    }
-    #[cfg(not(feature = "e2e-stub"))]
-    {
-        let state = app
-            .try_state::<ApiSubstrate>()
-            .ok_or("backend substrate not ready")?
-            .0
-            .clone();
-        let body = request.body.unwrap_or_default().into_bytes();
-        let response = eo_http::dispatch_in_process(
-            state,
-            &request.method,
-            &request.path,
-            &request.headers,
-            body,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-        Ok(ApiResponse {
-            status: response.status,
-            status_text: response.status_text,
-            headers: response.headers,
-            // The first slice carries JSON routes; the raw-bytes capture-PNG route
-            // moves to its own base64-returning command in a later slice.
-            body: String::from_utf8_lossy(&response.body).into_owned(),
-        })
-    }
-}
-
-/// GET the manual-scan capture preview PNG for `page`, base64-encoded for an
-/// `<img>` `data:` URL. The route returns raw image bytes and is excluded from
-/// the JSON IPC envelope (`api_request` carries text bodies), so it rides its
-/// own command, dispatched through the same in-process router (no socket).
+/// The manual-scan capture preview PNG for `page`, base64-encoded for an
+/// `<img>` `data:` URL. The facade returns raw image bytes, which cannot ride
+/// the typed-DTO command surface (the bindings are JSON), so this stays a
+/// bespoke command outside the manifest, base64-encoding the bytes here.
 #[tauri::command]
 async fn capture_png(app: tauri::AppHandle, page: u32) -> Result<String, String> {
     use base64::Engine as _;
-    let state = app
-        .try_state::<ApiSubstrate>()
-        .ok_or("backend substrate not ready")?
-        .0
-        .clone();
-    let path = format!("/api/scan/skills/capture/{page}");
-    let response = eo_http::dispatch_in_process(state, "GET", &path, &[], Vec::new())
-        .await
+    let facade = commands::facade(&app).map_err(|error| error.to_string())?;
+    let bytes = facade
+        .scan_capture_png(i64::from(page))
         .map_err(|error| error.to_string())?;
-    if response.status != 200 {
-        return Err(format!(
-            "capture preview unavailable (status {})",
-            response.status
-        ));
-    }
-    Ok(base64::engine::general_purpose::STANDARD.encode(&response.body))
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 // Holds the substrate's live producer spine so the Tauri exit seam can
@@ -185,11 +97,11 @@ struct ScanInput {
     skill_scan: std::sync::Arc<composition::SkillScanManual>,
 }
 
-// Holds the composed HTTP substrate state so the `api_request` IPC command can
-// dispatch the in-process router (the loopback-socket replacement). The
-// substrate task hands it here once the AppState is built; `api_request` reads
-// it per call and errors until then.
-struct ApiSubstrate(std::sync::Arc<eo_http::AppState>);
+// Holds the composed database handle so the exit seam can run the
+// once-per-lifecycle `PRAGMA optimize` at shutdown. The composition task
+// hands it here once the database opens; the typed-command facade holds its
+// own clone for serving.
+struct ShutdownDb(eo_services::db::Db);
 
 #[cfg(windows)]
 struct RuntimeWindowIcons(Mutex<Vec<isize>>);
@@ -224,8 +136,106 @@ pub fn run() {
             toggle_overlay,
             show_scan_overlay,
             hide_scan_overlay,
-            api_request,
             capture_png,
+            // The typed IPC commands (held in lock-step with the eo-api
+            // manifest by the parity test in `commands`).
+            commands::equipment_search,
+            commands::equipment_library,
+            commands::equipment_add,
+            commands::equipment_update,
+            commands::equipment_delete,
+            commands::equipment_detail,
+            commands::character_calibration,
+            commands::character_stats,
+            commands::character_skills,
+            commands::character_professions,
+            commands::character_prospect_options,
+            commands::character_prospect,
+            commands::character_profession_optimizer,
+            commands::character_path_optimizer,
+            commands::character_hp_optimizer,
+            commands::settings_get,
+            commands::settings_overlay_position,
+            commands::settings_set_overlay_position,
+            commands::settings_update,
+            commands::codex_species,
+            commands::codex_species_ranks,
+            commands::codex_recommend,
+            commands::codex_meta_attributes,
+            commands::codex_calibrate,
+            commands::codex_claim,
+            commands::codex_unclaim,
+            commands::codex_meta_claim,
+            commands::quests_list,
+            commands::quest_get,
+            commands::quest_create,
+            commands::quest_update,
+            commands::quest_delete,
+            commands::quest_start,
+            commands::quest_complete,
+            commands::quest_cancel,
+            commands::quests_mobs,
+            commands::quests_analytics,
+            commands::playlists_list,
+            commands::playlist_create,
+            commands::playlist_update,
+            commands::playlist_delete,
+            commands::playlists_analytics,
+            commands::analytics_overview,
+            commands::analytics_activity,
+            commands::ledger_list,
+            commands::ledger_create,
+            commands::ledger_delete,
+            commands::ledger_presets_list,
+            commands::ledger_preset_create,
+            commands::ledger_preset_delete,
+            commands::inventory_list,
+            commands::inventory_create,
+            commands::inventory_update,
+            commands::inventory_delete,
+            commands::inventory_sell,
+            commands::scan_status,
+            commands::scan_start,
+            commands::scan_capture,
+            commands::scan_cancel,
+            commands::scan_undo,
+            commands::scan_process,
+            commands::scan_accept,
+            commands::scan_reject,
+            commands::scan_pending,
+            commands::scan_spacebar_capture,
+            commands::tracking_sessions,
+            commands::tracking_session_detail,
+            commands::tracking_tag_suggestions,
+            commands::tracking_manual_mob_suggestions,
+            commands::tracking_snapshot,
+            commands::tracking_quest_link_suggestion,
+            commands::tracking_start,
+            commands::tracking_stop,
+            commands::tracking_release_mob,
+            commands::tracking_manual_mob_lock,
+            commands::tracking_tag_lock,
+            commands::tracking_rename_mob,
+            commands::tracking_restore_mob,
+            commands::tracking_loot_item_activate,
+            commands::tracking_loot_item_deactivate,
+            commands::tracking_armour_cost,
+            commands::tracking_quest_link,
+            commands::tracking_repair_scan,
+            commands::tracking_session_delete,
+            commands::demo_analytics_overview,
+            commands::demo_analytics_activity,
+            commands::demo_ledger_list,
+            commands::demo_ledger_presets_list,
+            commands::demo_inventory_list,
+            commands::demo_tracking_sessions,
+            commands::demo_tracking_session_detail,
+            commands::demo_tracking_snapshot,
+            commands::dev_metrics,
+            commands::dev_crash_reporting,
+            commands::dev_set_crash_reporting,
+            commands::dev_compact_database,
+            commands::dev_rebuild_projections,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -307,8 +317,8 @@ pub(crate) fn run_exit_teardown(app: &tauri::AppHandle) {
     // planner statistics via `PRAGMA optimize` before the connection closes: the
     // recommended once-per-lifecycle maintenance call, kept off the hot path by
     // running only here at exit.
-    if let Some(substrate) = app.try_state::<ApiSubstrate>() {
-        if tauri::async_runtime::block_on(substrate.0.optimize_on_shutdown()) {
+    if let Some(db) = app.try_state::<ShutdownDb>() {
+        if tauri::async_runtime::block_on(db.0.optimize_on_shutdown()) {
             tracing::info!(target: "eo::db", "ran PRAGMA optimize on shutdown");
         }
     }
@@ -335,49 +345,23 @@ fn destroy_runtime_window_icons(app: &tauri::AppHandle) {
     }
 }
 
-/// The nominal loopback authority the inbound Host allowlist is derived from.
-/// The frontend reaches the backend over the in-process IPC command and sends
-/// no Host header, so the allowlist only bites a request presenting an explicit
-/// Host (which the IPC transport never does); a fixed value therefore suffices.
-const IN_PROCESS_BACKEND_PORT: u16 = 8421;
-
-/// The nominal frontend origin the CORS allowlist is built for. Under in-process
-/// dispatch the webview's own origin (`tauri://localhost`) is always allow-listed
-/// regardless of this value (see `eo_http::cors::CorsConfig::new`), so a fixed
-/// value suffices; it is retained only so the guard's behaviour is unchanged.
-const NOMINAL_FRONTEND_PORT: u16 = 5173;
-
-/// Compose the native backend substrate and publish it to the IPC command.
-/// The single pure-Rust binary serves every route natively in-process: there
-/// is no socket, no sidecar, and no proxy. This builds the shared `AppState`,
-/// composes the native service spine off the setup path, and on success
-/// installs the services, publishes the state to the `api_request` command,
-/// and signals the frontend (see [`install_native_services`]). Until
-/// composition lands the `api_request` command errors; the frontend's initial
-/// reads are re-driven by the `substrate:native-installed` event the install
-/// emits (there is no transport-level retry). A declined composition is logged
-/// and the backend does not come up for the session (an unopenable database, or
-/// one below the supported baseline the retired sidecar used to migrate
-/// forward).
+/// Compose the native backend spine and publish it to the typed commands.
+/// The single pure-Rust binary serves every backend call over a typed Tauri
+/// command dispatched into the composed facade: there is no socket, no
+/// sidecar, and no proxy. This composes the native service spine off the setup
+/// path, and on success installs the services, publishes the facade to the
+/// typed commands, and signals the frontend (see [`install_native_services`]).
+/// Until composition lands the typed commands answer their not-ready contract;
+/// the frontend's initial reads are re-driven by the
+/// `substrate:native-installed` event the install emits (there is no
+/// transport-level retry). A declined composition is logged and the backend
+/// does not come up for the session (an unopenable database, or one below the
+/// supported baseline the retired sidecar used to migrate forward).
 fn compose_substrate(app: tauri::AppHandle, resource_dir: Option<std::path::PathBuf>) {
     tauri::async_runtime::spawn(async move {
-        let state = std::sync::Arc::new(
-            eo_http::AppState::new(IN_PROCESS_BACKEND_PORT)
-                // Answer the browser surface (preflights, origin rules,
-                // response decoration). The in-process transport supplies the
-                // webview's own always-allow-listed origin, so the fixed
-                // allowlist is unchanged in behaviour.
-                .with_cors(eo_http::cors::CorsConfig::new(NOMINAL_FRONTEND_PORT, None))
-                // The data dir powers the developer-mode-gated dev-tools routes
-                // (the developer-mode gate and the crash-reporting toggle).
-                .with_data_dir(composition::data_dir())
-                // The bundled demo database powers the guide-mode `/api/demo`
-                // surface (a writable per-process clone, stood up lazily).
-                .with_demo_db_path(composition::demo_db_path(resource_dir.as_ref())),
-        );
         match composition::compose_native(resource_dir).await {
             composition::Composition::Ready(composed) => {
-                install_native_services(&app, &state, composed);
+                install_native_services(&app, composed);
             }
             composition::Composition::Declined => {
                 tracing::error!(
@@ -389,35 +373,20 @@ fn compose_substrate(app: tauri::AppHandle, resource_dir: Option<std::path::Path
     });
 }
 
-/// Install the composed services into the app state and hand the stoppable
-/// handles to the Tauri-managed exit seam, then publish the state to the
-/// `api_request` IPC command (so the command answers only once every service
-/// is present) and signal the frontend that the backend is live.
-fn install_native_services(
-    app: &tauri::AppHandle,
-    state: &std::sync::Arc<eo_http::AppState>,
-    composed: composition::Composed,
-) {
+/// Install the composed services into the Tauri-managed exit seam, then publish
+/// the facade to the typed commands (so they answer only once every service is
+/// present) and signal the frontend that the backend is live.
+fn install_native_services(app: &tauri::AppHandle, composed: composition::Composed) {
     // Clones for the exit seam, taken before the originals move into the
     // installed bundle below: the spacebar listener detaches its share of
     // the shared OS hook and the scan resets in-flight state on close.
     let exit_spacebar = composed.spacebar_listener.clone();
     let exit_skill_scan = composed.skill_scan.clone();
-    // The producer-spine handles are cloned out of the spine here, BEFORE it
-    // moves into the Tauri-managed holder below, so the HTTP routes serve over
-    // the same handles the exit-seam teardown stops, and the settings-write
-    // route restarts the same `Arc<ChatlogWatcher>` the spine tails on.
-    state.install_native(eo_http::NativeServices {
-        hydration: composed.hydration,
-        tracker: composed.producers.tracker_handle(),
-        chatlog_watcher: composed.producers.watcher_handle(),
-        config_service: composed.producers.config_service_handle(),
-        skill_tracker: composed.producers.skill_tracker_handle(),
-        skill_scan: composed.skill_scan.clone(),
-        repair_ocr: composed.repair_ocr,
-        spacebar_listener: composed.spacebar_listener.clone(),
-        hotbar_listener: composed.producers.hotbar_handle(),
-    });
+    // The typed-command facade, published to its managed slot below.
+    let composed_api = composed.api.clone();
+    // The composed database handle, held so the exit seam can run the
+    // once-per-lifecycle `PRAGMA optimize` on close.
+    let shutdown_db = composed.db.clone();
     // Forward the producer spine's domain events onto the Tauri event bus, the
     // native replacement for the frontend's old EventSource relay. Subscribes
     // the producer spine's typed domain channel while the spine is still in
@@ -436,13 +405,14 @@ fn install_native_services(
         spacebar: exit_spacebar,
         skill_scan: exit_skill_scan,
     });
-    // Publish the composed state to the IPC command LAST: until now
-    // `api_request` errors with "backend substrate not ready", so by the time
-    // any request dispatches every native service is present (there is no
+    // Hold the database handle for the exit-seam `PRAGMA optimize`.
+    app.manage(ShutdownDb(shutdown_db));
+    // Publish the composed facade to the typed commands LAST: until now the
+    // typed commands answer their not-ready contract, so by the time any
+    // request dispatches every native service is present (there is no
     // absent-service window to fall back from). Then signal the frontend that
-    // the backend is live so it (re-)hydrates its
-    // initial reads.
-    app.manage(ApiSubstrate(state.clone()));
+    // the backend is live so it (re-)hydrates its initial reads.
+    app.manage(commands::ApiFacade(composed_api));
     let _ = app.emit("substrate:native-installed", ());
 }
 

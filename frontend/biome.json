@@ -19,7 +19,7 @@
 			"!static",
 			"!src-tauri/target",
 			"!src-tauri/entropia-orme/gen",
-			"!src/lib/api/schema.d.ts"
+			"!src/lib/api/commands.gen.ts"
 		]
 	},
 	"formatter": {
