@@ -6,6 +6,8 @@
 
 use chrono::NaiveDateTime;
 
+use crate::ped::Ped;
+
 /// A single item received from a loot drop. Serialises to its wire
 /// field names directly: the loot-group bus payload carries these
 /// items verbatim (see `bus_events`), so the serde shape is part of
@@ -26,11 +28,11 @@ pub struct ToolStats {
     pub damage_dealt: f64,
     pub critical_hits: i64,
     /// From the equipment library.
-    pub cost_per_shot: f64,
+    pub cost_per_shot: Ped,
 }
 
 impl ToolStats {
-    pub fn new(tool_name: &str, cost_per_shot: f64) -> Self {
+    pub fn new(tool_name: &str, cost_per_shot: Ped) -> Self {
         Self {
             tool_name: tool_name.to_string(),
             shots_fired: 0,
@@ -65,10 +67,10 @@ pub struct Kill {
     pub damage_taken: f64,
     pub critical_hits: i64,
     /// Total weapon cost (cost per shot times shots, summed per tool).
-    pub cost_ped: f64,
+    pub cost_ped: Ped,
     /// Enhancer cost accumulated during this kill's shots.
-    pub enhancer_cost: f64,
-    pub loot_total_ped: f64,
+    pub enhancer_cost: Ped,
+    pub loot_total_ped: Ped,
     pub loot_items: Vec<LootItem>,
     /// Per-tool tracking in first-seen order, keyed by the phase key
     /// (the bare tool name, then `name#2`... when a cost change opens
@@ -86,7 +88,7 @@ pub struct TrackingSession {
     pub end_time: Option<NaiveDateTime>,
     pub kills: Vec<Kill>,
     /// Unresolved shots at session end.
-    pub dangling_cost: f64,
+    pub dangling_cost: Ped,
 }
 
 /// Immutable view of the active-session readout: computed under the

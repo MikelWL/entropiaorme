@@ -84,9 +84,9 @@ impl HuntTracker {
             .bind(kill.damage_dealt)
             .bind(kill.damage_taken)
             .bind(kill.critical_hits)
-            .bind(kill.cost_ped)
-            .bind(kill.enhancer_cost)
-            .bind(kill.loot_total_ped)
+            .bind(kill.cost_ped.value())
+            .bind(kill.enhancer_cost.value())
+            .bind(kill.loot_total_ped.value())
             .bind(i64::from(kill.is_global))
             .bind(i64::from(kill.is_hof))
             .execute(&mut *tx)
@@ -104,7 +104,7 @@ impl HuntTracker {
                 .bind(stats.shots_fired)
                 .bind(stats.damage_dealt)
                 .bind(stats.critical_hits)
-                .bind(stats.cost_per_shot)
+                .bind(stats.cost_per_shot.value())
                 .execute(&mut *tx)
                 .await?;
             }

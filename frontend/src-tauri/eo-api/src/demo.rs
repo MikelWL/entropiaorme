@@ -35,7 +35,8 @@ use eo_services::clock::Clock;
 use eo_services::config_service::{AppConfig, TrifectaPresetConfig};
 use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
-use eo_services::tracker::{naive_to_epoch, HuntTracker, Providers};
+use eo_services::ped::Ped;
+use eo_services::tracker::{naive_to_epoch, HuntTracker, MobSelection, Providers, TrackingMode};
 use eo_services::tracking_models::{
     Kill, LootItem, ToolStats, TrackingSession as TrackingSessionModel,
 };
@@ -450,9 +451,9 @@ impl DemoState {
                 damage_dealt: kill.damage_dealt,
                 damage_taken: kill.damage_taken,
                 critical_hits: kill.critical_hits,
-                cost_ped: kill.cost_ped,
-                enhancer_cost: kill.enhancer_cost,
-                loot_total_ped: kill.loot_total_ped,
+                cost_ped: Ped(kill.cost_ped),
+                enhancer_cost: Ped(kill.enhancer_cost),
+                loot_total_ped: Ped(kill.loot_total_ped),
                 loot_items: kill
                     .loot_items
                     .iter()
@@ -474,7 +475,7 @@ impl DemoState {
                                 shots_fired: tool.shots_fired,
                                 damage_dealt: tool.damage_dealt,
                                 critical_hits: tool.critical_hits,
-                                cost_per_shot: tool.cost_per_shot,
+                                cost_per_shot: Ped(tool.cost_per_shot),
                             },
                         )
                     })
@@ -489,17 +490,16 @@ impl DemoState {
             start_time: started_naive,
             end_time: None,
             kills,
-            dangling_cost: session.dangling_cost,
+            dangling_cost: Ped(session.dangling_cost),
         };
         self.tracker.prime_demo(
             demo_session,
-            (
-                DEMO_MOB.0.to_string(),
-                DEMO_MOB.1.to_string(),
-                DEMO_MOB.2.to_string(),
-            ),
-            "manual",
-            "mob",
+            MobSelection::Manual {
+                name: DEMO_MOB.0.to_string(),
+                species: DEMO_MOB.1.to_string(),
+                maturity: DEMO_MOB.2.to_string(),
+            },
+            TrackingMode::Mob,
         );
         Ok(())
     }

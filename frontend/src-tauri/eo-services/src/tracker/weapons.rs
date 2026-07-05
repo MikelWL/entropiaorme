@@ -1,21 +1,69 @@
-//! Weapon runtime state: trifecta damage-signature profiles, the
+//! Weapon runtime state: the hotbar/trifecta weapon identity, the
 //! per-weapon damage-enhancer stacks, cost resolution through the
 //! memoised profile caches, and enhancer-break matching.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
 use crate::cost_engine::cost_per_shot_from_props;
+use crate::ped::Ped;
+use crate::tool_inference::DamageAttributor;
 
-use super::{HuntTracker, TrackerState};
+use super::session::ActiveSession;
+use super::{HealTool, HuntTracker};
+
+/// The session-scoped weapon runtime: which weapon is live (hotbar or
+/// trifecta-attributed), its enhancer stacks, and the memoised
+/// profile/cost lookups. Built fresh at session start; the
+/// non-identity fields also reset on a mid-session config reload.
+#[derive(Default)]
+pub(super) struct WeaponRuntime {
+    /// The hotbar-reported active tool (hotbar mode only).
+    pub(super) hotbar_tool: Option<String>,
+    /// Trifecta weapon props by canonical name (truthy props only).
+    pub(super) trifecta_profiles: BTreeMap<String, Arc<Value>>,
+    /// Damage-enhancer stack state per canonical weapon name.
+    pub(super) enhancer_states: BTreeMap<String, DamageEnhancerState>,
+    /// The canonical name of the weapon whose enhancer state is live.
+    pub(super) active_key: Option<String>,
+    /// The tool name as the hotbar/attribution observed it (which may
+    /// differ in spelling from the canonical name).
+    pub(super) observed_name: Option<String>,
+    /// The last tool an offensive shot attributed to (countered shots
+    /// re-use it in trifecta mode).
+    pub(super) last_offensive_tool: Option<String>,
+    /// Damage-signature attribution for trifecta mode.
+    pub(super) attributor: DamageAttributor,
+    /// Memoised equipment-library profile lookups.
+    pub(super) profile_cache: BTreeMap<String, Option<(String, Arc<Value>)>>,
+    /// Memoised static per-shot costs for tools without enhancer state.
+    pub(super) static_cost_cache: BTreeMap<String, Ped>,
+}
+
+impl WeaponRuntime {
+    /// The mid-session reset (a config reload leaving trifecta mode):
+    /// everything except the hotbar tool identity and the attributor,
+    /// exactly the field list the original reset carried (the
+    /// attributor is cleared separately at each call site).
+    pub(super) fn reset_runtime(&mut self) {
+        self.trifecta_profiles.clear();
+        self.enhancer_states.clear();
+        self.active_key = None;
+        self.observed_name = None;
+        self.last_offensive_tool = None;
+        self.profile_cache.clear();
+        self.static_cost_cache.clear();
+    }
+}
 
 /// Per-weapon damage-enhancer state within the current session.
 pub(super) struct DamageEnhancerState {
     pub(super) tool_name: String,
     pub(super) props: Arc<Value>,
     pub(super) stacks: Vec<i64>,
-    pub(super) cached_cost_ped: Option<f64>,
+    pub(super) cached_cost: Option<Ped>,
 }
 
 impl DamageEnhancerState {
@@ -30,7 +78,7 @@ impl DamageEnhancerState {
             tool_name: tool_name.to_string(),
             props,
             stacks: vec![100; configured as usize],
-            cached_cost_ped: None,
+            cached_cost: None,
         }
     }
 
@@ -51,7 +99,7 @@ impl DamageEnhancerState {
         self.stacks = (0..slot_count)
             .map(|index| per_slot + i64::from(index < remainder))
             .collect();
-        self.cached_cost_ped = None;
+        self.cached_cost = None;
     }
 
     /// Apply one break; true when a slot fully depleted.
@@ -63,7 +111,7 @@ impl DamageEnhancerState {
                 for index in (0..self.stacks.len()).rev() {
                     if self.stacks[index] > 0 {
                         self.stacks[index] -= 1;
-                        self.cached_cost_ped = None;
+                        self.cached_cost = None;
                         break;
                     }
                 }
@@ -72,48 +120,40 @@ impl DamageEnhancerState {
         old_active != self.active_slots()
     }
 
-    pub(super) fn current_cost_ped(&mut self) -> f64 {
-        if self.cached_cost_ped.is_none() {
+    pub(super) fn current_cost(&mut self) -> Ped {
+        if self.cached_cost.is_none() {
             let result = cost_per_shot_from_props(&self.props, Some(self.active_slots()));
             let total = result
                 .get("totalCostPerUse")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
-            self.cached_cost_ped = Some(total / 100.0);
+            // The cost engine prices in PEC; the tracker accounts in PED.
+            self.cached_cost = Some(Ped(total / 100.0));
         }
-        self.cached_cost_ped.expect("just cached")
+        self.cached_cost.expect("just cached")
     }
 }
 
 impl HuntTracker {
-    pub(super) fn reset_weapon_runtime_state(state: &mut TrackerState) {
-        state.trifecta_weapon_profiles.clear();
-        state.weapon_enhancer_states.clear();
-        state.active_weapon_state_key = None;
-        state.active_weapon_observed_name = None;
-        state.last_offensive_tool_name = None;
-        state.profile_match_cache.clear();
-        state.static_tool_cost_cache.clear();
-    }
-
     /// Load damage signatures + heal tool from the resolved trifecta
     /// configuration. The weapon fields read with inert defaults
     /// where the original indexes (the resolver supplies complete
     /// weapon objects by contract).
     pub(super) fn load_trifecta_weapon_profiles(
-        state: &mut TrackerState,
+        active: &mut ActiveSession,
+        heal_tool: &mut HealTool,
         trifecta: Option<&Map<String, Value>>,
     ) {
-        state.damage_attributor.clear();
-        state.active_heal_tool_name = None;
-        state.heal_cost_per_use_ped = 0.0;
-        state.heal_reload_seconds = 2.5;
-        state.heal_amount_min = None;
-        state.heal_amount_max = None;
-        state.heal_warning_emitted = false;
-        state.trifecta_weapon_profiles.clear();
-        state.active_weapon_state_key = None;
-        state.active_weapon_observed_name = None;
+        active.weapons.attributor.clear();
+        heal_tool.name = None;
+        heal_tool.cost_per_use = Ped::ZERO;
+        heal_tool.reload_seconds = 2.5;
+        heal_tool.amount_min = None;
+        heal_tool.amount_max = None;
+        active.heal_warning_emitted = false;
+        active.weapons.trifecta_profiles.clear();
+        active.weapons.active_key = None;
+        active.weapons.observed_name = None;
 
         let Some(trifecta) = trifecta.filter(|map| !map.is_empty()) else {
             return;
@@ -123,7 +163,7 @@ impl HuntTracker {
                 continue;
             };
             let name = weapon.get("name").and_then(Value::as_str).unwrap_or("");
-            state.damage_attributor.add_weapon_profile(
+            active.weapons.attributor.add_weapon_profile(
                 name,
                 weapon
                     .get("damage_min")
@@ -147,8 +187,9 @@ impl HuntTracker {
                 .get("weapon_props")
                 .filter(|value| value_truthy(value))
             {
-                state
-                    .trifecta_weapon_profiles
+                active
+                    .weapons
+                    .trifecta_profiles
                     .insert(name.to_string(), Arc::new(props.clone()));
             }
         }
@@ -156,18 +197,17 @@ impl HuntTracker {
             .get("heal_tool")
             .filter(|value| value_truthy(value))
         {
-            state.active_heal_tool_name =
-                heal.get("name").and_then(Value::as_str).map(str::to_string);
-            state.heal_cost_per_use_ped = heal
+            heal_tool.name = heal.get("name").and_then(Value::as_str).map(str::to_string);
+            heal_tool.cost_per_use = Ped(heal
                 .get("cost_per_use_ped")
                 .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            state.heal_reload_seconds = heal
+                .unwrap_or(0.0));
+            heal_tool.reload_seconds = heal
                 .get("reload_seconds")
                 .and_then(Value::as_f64)
                 .unwrap_or(2.5);
-            state.heal_amount_min = heal.get("heal_min").and_then(Value::as_f64);
-            state.heal_amount_max = heal.get("heal_max").and_then(Value::as_f64);
+            heal_tool.amount_min = heal.get("heal_min").and_then(Value::as_f64);
+            heal_tool.amount_max = heal.get("heal_max").and_then(Value::as_f64);
         }
     }
 
@@ -175,25 +215,23 @@ impl HuntTracker {
     /// table first, then the memoised equipment-library lookup.
     fn match_weapon_profile(
         &self,
-        state: &mut TrackerState,
+        weapons: &mut WeaponRuntime,
         tool_name: &str,
     ) -> Option<(String, Arc<Value>)> {
         // The trifecta table only stores truthy props, so a hit is the
         // original's `if profile:` taken branch.
-        if let Some(profile) = state.trifecta_weapon_profiles.get(tool_name) {
+        if let Some(profile) = weapons.trifecta_profiles.get(tool_name) {
             return Some((tool_name.to_string(), profile.clone()));
         }
 
-        if let Some(cached) = state.profile_match_cache.get(tool_name) {
+        if let Some(cached) = weapons.profile_cache.get(tool_name) {
             return cached.clone();
         }
 
         let resolved = (self.providers.equipment_profile_lookup)(tool_name)
             .filter(|profile| !profile.is_empty());
         let Some(profile) = resolved else {
-            state
-                .profile_match_cache
-                .insert(tool_name.to_string(), None);
+            weapons.profile_cache.insert(tool_name.to_string(), None);
             return None;
         };
         // `profile.get("weapon_entity", {}).get("name") or tool_name`.
@@ -206,51 +244,51 @@ impl HuntTracker {
             .unwrap_or(tool_name)
             .to_string();
         let matched = Some((canonical_name, Arc::new(Value::Object(profile))));
-        state
-            .profile_match_cache
+        weapons
+            .profile_cache
             .insert(tool_name.to_string(), matched.clone());
         matched
     }
 
     /// Resolve (creating if first seen) the enhancer state for a
     /// matched weapon, stamping the active-weapon markers either way.
-    fn ensure_weapon_state<'a>(
+    pub(super) fn ensure_weapon_state<'a>(
         &self,
-        state: &'a mut TrackerState,
+        weapons: &'a mut WeaponRuntime,
         tool_name: &str,
     ) -> Option<&'a mut DamageEnhancerState> {
-        let Some((canonical_name, profile)) = self.match_weapon_profile(state, tool_name) else {
-            state.active_weapon_state_key = None;
-            state.active_weapon_observed_name = Some(tool_name.to_string());
+        let Some((canonical_name, profile)) = self.match_weapon_profile(weapons, tool_name) else {
+            weapons.active_key = None;
+            weapons.observed_name = Some(tool_name.to_string());
             return None;
         };
-        state
-            .weapon_enhancer_states
+        weapons
+            .enhancer_states
             .entry(canonical_name.clone())
             .or_insert_with(|| DamageEnhancerState::from_props(&canonical_name, profile));
-        state.active_weapon_state_key = Some(canonical_name.clone());
-        state.active_weapon_observed_name = Some(tool_name.to_string());
-        state.weapon_enhancer_states.get_mut(&canonical_name)
+        weapons.active_key = Some(canonical_name.clone());
+        weapons.observed_name = Some(tool_name.to_string());
+        weapons.enhancer_states.get_mut(&canonical_name)
     }
 
     pub(super) fn current_cost_for_tool(
         &self,
-        state: &mut TrackerState,
+        weapons: &mut WeaponRuntime,
         tool_name: &str,
-        inferred_cost: f64,
-    ) -> f64 {
-        if let Some(weapon) = self.ensure_weapon_state(state, tool_name) {
-            return weapon.current_cost_ped();
+        inferred_cost: Ped,
+    ) -> Ped {
+        if let Some(weapon) = self.ensure_weapon_state(weapons, tool_name) {
+            return weapon.current_cost();
         }
-        if inferred_cost > 0.0 {
+        if inferred_cost.is_positive() {
             return inferred_cost;
         }
-        if let Some(cached) = state.static_tool_cost_cache.get(tool_name) {
+        if let Some(cached) = weapons.static_cost_cache.get(tool_name) {
             return *cached;
         }
-        let cost = (self.providers.equipment_cost_lookup)(tool_name);
-        state
-            .static_tool_cost_cache
+        let cost = Ped((self.providers.equipment_cost_lookup)(tool_name));
+        weapons
+            .static_cost_cache
             .insert(tool_name.to_string(), cost);
         cost
     }
@@ -259,11 +297,11 @@ impl HuntTracker {
 /// Whether a break's item name names the active weapon (either the
 /// canonical or the observed hotbar spelling), compared on lowercased
 /// alphanumerics in either containment direction.
-pub(super) fn break_matches_active_weapon(state: &TrackerState, item_name: &str) -> bool {
-    let Some(weapon) = state
-        .active_weapon_state_key
+pub(super) fn break_matches_active_weapon(weapons: &WeaponRuntime, item_name: &str) -> bool {
+    let Some(weapon) = weapons
+        .active_key
         .as_ref()
-        .and_then(|key| state.weapon_enhancer_states.get(key))
+        .and_then(|key| weapons.enhancer_states.get(key))
     else {
         return false;
     };
@@ -278,7 +316,7 @@ pub(super) fn break_matches_active_weapon(state: &TrackerState, item_name: &str)
     };
     let item_norm = normalise(item_name);
     let tool_norm = normalise(&weapon.tool_name);
-    let observed_norm = normalise(state.active_weapon_observed_name.as_deref().unwrap_or(""));
+    let observed_norm = normalise(weapons.observed_name.as_deref().unwrap_or(""));
     !item_norm.is_empty()
         && (tool_norm.contains(&item_norm)
             || item_norm.contains(&tool_norm)

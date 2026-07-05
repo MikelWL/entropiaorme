@@ -1,3 +1,7 @@
+use chrono::NaiveDateTime;
+use serde_json::Value;
+
+use super::mob::MobSource;
 use super::time::{epoch_to_naive, epoch_to_parts, parse_bus_timestamp, python_total_seconds};
 use super::weapons::{value_truthy, DamageEnhancerState};
 use super::*;
@@ -9,6 +13,7 @@ use crate::bus_events::{CombatPayload, GlobalPayload};
 use crate::clock::MockClock;
 use crate::cost_engine::cost_per_shot_from_props;
 use crate::db::decoded_f64;
+use crate::ped::Ped;
 use serde_json::json;
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
@@ -205,7 +210,7 @@ fn session_lifecycle_round_trip() {
     let stopped = tracker.stop_session().unwrap().unwrap();
     assert_eq!(stopped.id, session.id);
     assert_eq!(stopped.kills.len(), 1);
-    assert_eq!(stopped.dangling_cost, 0.05);
+    assert_eq!(stopped.dangling_cost, Ped(0.05));
     assert!(!tracker.is_tracking());
     assert!(!rig.bus.has_subscribers(Topic::Combat));
 
@@ -1017,23 +1022,21 @@ fn phased_tool_stats_split_on_cost_change() {
     tracker.start_session().unwrap();
 
     let mut state = tracker.state.lock().unwrap();
-    HuntTracker::tool_stats_for_phase(&mut state, "Rifle", 0.05).shots_fired += 1;
+    let accumulator = &mut state.session.active_mut().unwrap().accumulator;
+    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05)).shots_fired += 1;
     // Within the tolerance: the same phase.
-    HuntTracker::tool_stats_for_phase(&mut state, "Rifle", 0.05 + 1e-12).shots_fired += 1;
+    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05 + 1e-12)).shots_fired += 1;
     // A real cost change: a second phase keyed `Rifle#2`.
-    HuntTracker::tool_stats_for_phase(&mut state, "Rifle", 0.04).shots_fired += 1;
+    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.04)).shots_fired += 1;
     // A third: `Rifle#3`; a different tool keeps its bare key.
-    HuntTracker::tool_stats_for_phase(&mut state, "Rifle", 0.03).shots_fired += 1;
-    HuntTracker::tool_stats_for_phase(&mut state, "Pistol", 0.02).shots_fired += 1;
+    HuntTracker::tool_stats_for_phase(accumulator, "Rifle", Ped(0.03)).shots_fired += 1;
+    HuntTracker::tool_stats_for_phase(accumulator, "Pistol", Ped(0.02)).shots_fired += 1;
     // A cost difference of exactly the tolerance opens a phase:
     // the comparison is strict (2e-9 - 1e-9 is exactly 1e-9).
-    HuntTracker::tool_stats_for_phase(&mut state, "Laser", 1e-9).shots_fired += 1;
-    HuntTracker::tool_stats_for_phase(&mut state, "Laser", 2e-9).shots_fired += 1;
+    HuntTracker::tool_stats_for_phase(accumulator, "Laser", Ped(1e-9)).shots_fired += 1;
+    HuntTracker::tool_stats_for_phase(accumulator, "Laser", Ped(2e-9)).shots_fired += 1;
 
-    let keys: Vec<(String, String, i64)> = state
-        .accumulator
-        .as_ref()
-        .unwrap()
+    let keys: Vec<(String, String, i64)> = accumulator
         .tool_stats
         .iter()
         .map(|(key, stats)| (key.clone(), stats.tool_name.clone(), stats.shots_fired))
@@ -1068,11 +1071,12 @@ fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
     }));
     {
         let state = tracker.state.lock().unwrap();
+        let active = state.session.active().unwrap();
         assert_eq!(
-            state.session_warnings,
+            active.warnings,
             vec!["Healing detected: no heal tool equipped via hotbar".to_string()]
         );
-        assert_eq!(state.session_heal_cost, 0.0);
+        assert_eq!(active.heal_cost, Ped::ZERO);
     }
 
     rig.bus.publish(&BusEvent::ActiveHealToolChanged(
@@ -1098,8 +1102,9 @@ fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
         timestamp: "2026-01-01T00:00:25".into(),
     }));
     let state = tracker.state.lock().unwrap();
-    assert_eq!(state.session_heal_cost, 0.06);
-    assert_eq!(state.session_warnings.len(), 1, "the warning fires once");
+    let active = state.session.active().unwrap();
+    assert_eq!(active.heal_cost, Ped(0.06));
+    assert_eq!(active.warnings.len(), 1, "the warning fires once");
 }
 
 #[test]
@@ -1229,12 +1234,10 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
         }));
     {
         let state = tracker.state.lock().unwrap();
+        let weapons = &state.session.active().unwrap().weapons;
+        assert_eq!(weapons.active_key.as_deref(), Some("Rifle Prime"));
         assert_eq!(
-            state.active_weapon_state_key.as_deref(),
-            Some("Rifle Prime")
-        );
-        assert_eq!(
-            state.weapon_enhancer_states["Rifle Prime"].stacks,
+            weapons.enhancer_states["Rifle Prime"].stacks,
             vec![100, 100]
         );
     }
@@ -1262,7 +1265,7 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
     {
         let state = tracker.state.lock().unwrap();
         assert_eq!(
-            state.weapon_enhancer_states["Rifle Prime"].stacks,
+            state.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
             vec![100, 100]
         );
     }
@@ -1282,7 +1285,7 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
     {
         let state = tracker.state.lock().unwrap();
         assert_eq!(
-            state.weapon_enhancer_states["Rifle Prime"].stacks,
+            state.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
             vec![76, 75]
         );
     }
@@ -1297,7 +1300,7 @@ fn enhancer_breaks_filter_and_deplete_stacks() {
         }));
     let state = tracker.state.lock().unwrap();
     assert_eq!(
-        state.weapon_enhancer_states["Rifle Prime"].stacks,
+        state.session.active().unwrap().weapons.enhancer_states["Rifle Prime"].stacks,
         vec![75, 75]
     );
 }
@@ -1372,9 +1375,9 @@ fn trifecta_attribution_and_heal_filtering() {
     ));
     {
         let state = tracker.state.lock().unwrap();
-        assert_eq!(state.active_hotbar_tool_name, None);
-        assert_eq!(state.active_heal_tool_name.as_deref(), Some("FAP"));
-        assert_eq!(state.heal_cost_per_use_ped, 0.02);
+        assert_eq!(state.session.active().unwrap().weapons.hotbar_tool, None);
+        assert_eq!(state.heal_tool.name.as_deref(), Some("FAP"));
+        assert_eq!(state.heal_tool.cost_per_use, Ped(0.02));
     }
 
     rig.bus
@@ -1406,13 +1409,12 @@ fn trifecta_attribution_and_heal_filtering() {
     }));
     {
         let state = tracker.state.lock().unwrap();
-        let stats: Vec<(String, i64, f64)> = state
+        let active = state.session.active().unwrap();
+        let stats: Vec<(String, i64, f64)> = active
             .accumulator
-            .as_ref()
-            .unwrap()
             .tool_stats
             .iter()
-            .map(|(key, stats)| (key.clone(), stats.shots_fired, stats.cost_per_shot))
+            .map(|(key, stats)| (key.clone(), stats.shots_fired, stats.cost_per_shot.value()))
             .collect();
         assert_eq!(
             stats,
@@ -1423,7 +1425,7 @@ fn trifecta_attribution_and_heal_filtering() {
             ]
         );
         assert_eq!(
-            state.session_warnings,
+            active.warnings,
             vec!["Trifecta attribution: damage fell outside both weapon ranges".to_string()]
         );
     }
@@ -1436,15 +1438,16 @@ fn trifecta_attribution_and_heal_filtering() {
     }));
     {
         let state = tracker.state.lock().unwrap();
-        assert_eq!(state.session_heal_cost, 0.0);
-        assert_eq!(state.last_heal_time, None);
+        let active = state.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped::ZERO);
+        assert_eq!(active.last_heal_time, None);
     }
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 15.0,
         timestamp: "2026-01-01T00:00:04".into(),
     }));
     let state = tracker.state.lock().unwrap();
-    assert_eq!(state.session_heal_cost, 0.02);
+    assert_eq!(state.session.active().unwrap().heal_cost, Ped(0.02));
 }
 
 #[test]
@@ -1497,9 +1500,10 @@ fn tag_and_manual_mob_rules() {
     tagged.set_manual_tag(" Solo Run ").unwrap();
     {
         let state = tagged.state.lock().unwrap();
-        assert_eq!(state.confirmed_mob_name, "Solo Run");
-        assert_eq!(state.session_mob_tracking_tag, "Solo Run");
-        assert_eq!(state.mob_source, Some("tag"));
+        let active = state.session.active().unwrap();
+        assert_eq!(active.mob.name(), Some("Solo Run"));
+        assert_eq!(active.tag, "Solo Run");
+        assert_eq!(active.mob.source(), Some(MobSource::Tag));
     }
     assert_eq!(tagged.release_current_mob().as_deref(), Some("Solo Run"));
     tagged.stop_session().unwrap();
@@ -1517,15 +1521,18 @@ fn tag_and_manual_mob_rules() {
     );
     {
         let state = manual.state.lock().unwrap();
-        assert_eq!(state.confirmed_mob_name, "Young Atrox");
-        assert_eq!(state.confirmed_mob_species, "Atrox");
-        assert_eq!(state.confirmed_mob_maturity, "Young");
-        assert_eq!(state.mob_source, Some("manual"));
+        let active = state.session.active().unwrap();
+        assert_eq!(active.mob.name(), Some("Young Atrox"));
+        assert_eq!(active.mob.species_maturity(), ("Atrox", "Young"));
+        assert_eq!(active.mob.source(), Some(MobSource::Manual));
     }
     manual.set_manual_mob("Old Atrox", "Atrox", "Old").unwrap();
     {
         let state = manual.state.lock().unwrap();
-        assert_eq!(state.confirmed_mob_name, "Old Atrox");
+        assert_eq!(
+            state.session.active().unwrap().mob.name(),
+            Some("Old Atrox")
+        );
     }
     assert_eq!(manual.release_current_mob().as_deref(), Some("Old Atrox"));
     assert_eq!(manual.release_current_mob(), None);
@@ -1550,7 +1557,7 @@ fn tag_and_manual_mob_rules() {
     bare.start_session().unwrap();
     {
         let state = bare.state.lock().unwrap();
-        assert_eq!(state.confirmed_mob_name, "Atrox");
+        assert_eq!(state.session.active().unwrap().mob.name(), Some("Atrox"));
     }
     bare.stop_session().unwrap();
 }
@@ -1583,8 +1590,11 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     ));
     {
         let state = tracker.state.lock().unwrap();
-        assert_eq!(state.confirmed_mob_name, "Young Atrox");
-        assert_eq!(state.heal_cost_per_use_ped, 0.03);
+        assert_eq!(
+            state.session.active().unwrap().mob.name(),
+            Some("Young Atrox")
+        );
+        assert_eq!(state.heal_tool.cost_per_use, Ped(0.03));
     }
 
     // The provider switching mobs re-stamps; switching to None
@@ -1594,15 +1604,16 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     tracker.reload_config();
     {
         let state = tracker.state.lock().unwrap();
-        assert_eq!(state.confirmed_mob_name, "Feffoid");
-        assert_eq!(state.heal_cost_per_use_ped, 0.0);
-        assert_eq!(state.heal_reload_seconds, 2.5);
+        assert_eq!(state.session.active().unwrap().mob.name(), Some("Feffoid"));
+        assert_eq!(state.heal_tool.cost_per_use, Ped::ZERO);
+        assert_eq!(state.heal_tool.reload_seconds, 2.5);
     }
     *scripted_mob.lock().unwrap() = None;
     tracker.reload_config();
     let state = tracker.state.lock().unwrap();
-    assert_eq!(state.confirmed_mob_name, "");
-    assert_eq!(state.mob_source, None);
+    let active = state.session.active().unwrap();
+    assert_eq!(active.mob.name(), None);
+    assert_eq!(active.mob.source(), None);
 }
 
 #[test]
@@ -1863,17 +1874,19 @@ fn snapshot_prices_enhancer_cost_and_skips_costless_multipliers() {
     // the live readout arithmetic.
     tracker
         .lock_state()
-        .accumulator
-        .as_mut()
+        .session
+        .active_mut()
         .unwrap()
-        .enhancer_cost = 0.25;
+        .accumulator
+        .enhancer_cost = Ped(0.25);
     rig.bus.publish(&loot("2026-01-01T00:00:05", "Mud", 1.0));
     tracker
         .lock_state()
-        .accumulator
-        .as_mut()
+        .session
+        .active_mut()
         .unwrap()
-        .enhancer_cost = 0.5;
+        .accumulator
+        .enhancer_cost = Ped(0.5);
     let active = tracker.snapshot().unwrap().active.unwrap();
     assert_eq!(active.cost, 0.75);
     assert_eq!(active.returns, 3.0);
@@ -1883,7 +1896,7 @@ fn snapshot_prices_enhancer_cost_and_skips_costless_multipliers() {
 
     // The unresolved enhancer cost is the dangling remainder.
     let stopped = tracker.stop_session().unwrap().unwrap();
-    assert_eq!(stopped.dangling_cost, 0.5);
+    assert_eq!(stopped.dangling_cost, Ped(0.5));
 }
 
 #[test]
@@ -1922,12 +1935,13 @@ fn inferred_cost_outranks_the_equipment_lookup() {
     }));
     let state = tracker.lock_state();
     let stats: Vec<(String, f64, i64)> = state
-        .accumulator
-        .as_ref()
+        .session
+        .active()
         .unwrap()
+        .accumulator
         .tool_stats
         .iter()
-        .map(|(key, stats)| (key.clone(), stats.cost_per_shot, stats.shots_fired))
+        .map(|(key, stats)| (key.clone(), stats.cost_per_shot.value(), stats.shots_fired))
         .collect();
     assert_eq!(
         stats,
@@ -2061,7 +2075,13 @@ fn break_matching_admits_every_containment_direction() {
         })
     };
     let stacks = |tracker: &HuntTracker| {
-        tracker.lock_state().weapon_enhancer_states["Blast Master"]
+        tracker
+            .lock_state()
+            .session
+            .active()
+            .unwrap()
+            .weapons
+            .enhancer_states["Blast Master"]
             .stacks
             .clone()
     };
@@ -2080,12 +2100,11 @@ fn break_matching_admits_every_containment_direction() {
     rig.bus.publish(&break_event("Sword", 90));
     assert_eq!(stacks(&tracker), vec![96]);
 
-    // Stopping the session clears the weapon runtime wholesale.
+    // Stopping the session drops the whole ActiveSession, weapon
+    // runtime included: the clear is structural under the typestate.
     tracker.stop_session().unwrap();
     let state = tracker.lock_state();
-    assert_eq!(state.active_weapon_state_key, None);
-    assert!(state.weapon_enhancer_states.is_empty());
-    assert_eq!(state.active_weapon_observed_name, None);
+    assert!(state.session.active().is_none());
 }
 
 #[test]
@@ -2125,8 +2144,9 @@ fn reload_config_in_tag_mode_never_consults_the_manual_provider() {
     tracker.start_session().unwrap();
     tracker.reload_config();
     let state = tracker.lock_state();
-    assert_eq!(state.confirmed_mob_name, "Team");
-    assert_eq!(state.mob_source, Some("tag"));
+    let active = state.session.active().unwrap();
+    assert_eq!(active.mob.name(), Some("Team"));
+    assert_eq!(active.mob.source(), Some(MobSource::Tag));
 }
 
 #[test]
@@ -2181,8 +2201,9 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
     mob_mode.start_session().unwrap();
     {
         let state = mob_mode.lock_state();
-        assert_eq!(state.confirmed_mob_name, "");
-        assert_eq!(state.mob_source, None);
+        let active = state.session.active().unwrap();
+        assert_eq!(active.mob.name(), None);
+        assert_eq!(active.mob.source(), None);
     }
     mob_mode.stop_session().unwrap();
 
@@ -2194,8 +2215,9 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
     });
     blank.start_session().unwrap();
     let state = blank.lock_state();
-    assert_eq!(state.confirmed_mob_name, "");
-    assert_eq!(state.mob_source, None);
+    let active = state.session.active().unwrap();
+    assert_eq!(active.mob.name(), None);
+    assert_eq!(active.mob.source(), None);
 }
 
 #[test]
@@ -2275,15 +2297,15 @@ fn enhancer_state_prices_through_the_cost_engine() {
     };
     let two_slots = priced(2);
     assert!(two_slots > 0.0);
-    assert_eq!(state.current_cost_ped(), two_slots);
+    assert_eq!(state.current_cost().value(), two_slots);
     assert_eq!(
-        state.current_cost_ped(),
+        state.current_cost().value(),
         two_slots,
         "the cached read agrees"
     );
     state.set_total(1);
     assert_eq!(
-        state.current_cost_ped(),
+        state.current_cost().value(),
         priced(1),
         "a stack change reprices at the new active count"
     );
@@ -2335,10 +2357,11 @@ fn a_zero_priced_weapon_state_still_prefers_the_inferred_cost() {
             timestamp: "2026-01-01T00:00:01".into(),
         }));
     let state = tracker.lock_state();
-    let (key, stats) = &state.accumulator.as_ref().unwrap().tool_stats[0];
+    let (key, stats) = &state.session.active().unwrap().accumulator.tool_stats[0];
     assert_eq!(key, "Pistol");
     assert_eq!(
-        stats.cost_per_shot, 0.05,
+        stats.cost_per_shot,
+        Ped(0.05),
         "the attribution's cost backfills ahead of the equipment lookup"
     );
 }
@@ -2398,11 +2421,15 @@ fn reload_clears_a_manual_stamp_once_entry_disables() {
         ..Providers::default()
     });
     tracker.start_session().unwrap();
-    assert_eq!(tracker.lock_state().confirmed_mob_name, "Young Atrox");
+    assert_eq!(
+        tracker.lock_state().session.active().unwrap().mob.name(),
+        Some("Young Atrox")
+    );
 
     *enabled.lock().unwrap() = false;
     tracker.reload_config();
     let state = tracker.lock_state();
-    assert_eq!(state.confirmed_mob_name, "");
-    assert_eq!(state.mob_source, None);
+    let active = state.session.active().unwrap();
+    assert_eq!(active.mob.name(), None);
+    assert_eq!(active.mob.source(), None);
 }

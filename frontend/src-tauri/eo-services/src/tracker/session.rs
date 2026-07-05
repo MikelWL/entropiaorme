@@ -1,8 +1,10 @@
 //! The session lifecycle (start, stop, demo priming, config reload),
-//! the aggregated tracking readout, and the coalesced tick flush.
+//! the `ActiveSession` typestate payload, the aggregated tracking
+//! readout, and the coalesced tick flush.
 
 use std::sync::Arc;
 
+use chrono::NaiveDateTime;
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 use eo_wire::normalizer::round_half_even;
 use sqlx::Row;
@@ -10,12 +12,73 @@ use sqlx::Row;
 use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::{decoded_f64, DbError};
 use crate::mob_lookup_service::python_whitespace;
-use crate::session_summary::write_session_summary;
+use crate::ped::Ped;
 use crate::tracking_models::{ActiveSessionView, TrackingReadout, TrackingSession};
 
 use super::combat::Accumulator;
+use super::mob::{MobSelection, MobSource, TrackingMode};
 use super::time::{naive_isoformat, naive_to_epoch, parse_timestamp_str};
-use super::HuntTracker;
+use super::weapons::WeaponRuntime;
+use super::{HealTool, HuntTracker, SessionState};
+
+/// A loot group's dedup identity: (total, item count, first item name).
+pub(super) type LootFingerprint = (f64, usize, String);
+
+/// Everything that exists exactly while a session runs. Constructed at
+/// `start_session`, dropped wholesale when the session stops, so no
+/// session-scoped field can leak into idle state or arrive stale in
+/// the next session.
+pub(super) struct ActiveSession {
+    pub(super) session: TrackingSession,
+    pub(super) accumulator: Accumulator,
+    /// Whether an event since the last flushed tick changed the live
+    /// readout (the coalesced update fires only on a real mutation).
+    pub(super) dirty: bool,
+    /// Heal cost accrued this session (the equipped tool's per-use
+    /// cost per counted activation).
+    pub(super) heal_cost: Ped,
+    pub(super) heal_warning_emitted: bool,
+    pub(super) warnings: Vec<String>,
+    /// The mob/tag selection kills stamp from.
+    pub(super) mob: MobSelection,
+    /// The input mode snapshotted at session start (not live config).
+    pub(super) mode: TrackingMode,
+    /// The tag-mode free-text tag (empty outside tag mode).
+    pub(super) tag: String,
+    pub(super) last_heal_time: Option<NaiveDateTime>,
+    /// The last recorded loot group's dedup identity and instant,
+    /// always stamped together.
+    pub(super) last_loot: Option<(LootFingerprint, NaiveDateTime)>,
+    pub(super) trifecta_unmatched_warning_emitted: bool,
+    pub(super) weapons: WeaponRuntime,
+}
+
+impl ActiveSession {
+    pub(super) fn new(session: TrackingSession, mode: TrackingMode, tag: String) -> Self {
+        Self {
+            session,
+            accumulator: Accumulator::default(),
+            dirty: false,
+            heal_cost: Ped::ZERO,
+            heal_warning_emitted: false,
+            warnings: Vec::new(),
+            mob: MobSelection::Unset,
+            mode,
+            tag,
+            last_heal_time: None,
+            last_loot: None,
+            trifecta_unmatched_warning_emitted: false,
+            weapons: WeaponRuntime::default(),
+        }
+    }
+
+    /// The mob name a kill stamps or the readout shows: the selection's
+    /// display name when it is set AND non-empty (an empty manual name
+    /// behaves as unset, the original's falsy check).
+    pub(super) fn stamped_mob_name(&self) -> Option<&str> {
+        self.mob.name().filter(|name| !name.is_empty())
+    }
+}
 
 impl HuntTracker {
     /// An owned, immutable view of the current tracking readout:
@@ -29,66 +92,59 @@ impl HuntTracker {
             started_at: String,
             start_ts: f64,
             kill_count: i64,
-            cost: f64,
-            returns: f64,
+            cost: Ped,
+            returns: Ped,
             damage_total: f64,
             shots_total: i64,
             crits_total: i64,
             max_damage: f64,
             live_weapon_damage: f64,
-            weapon_cost: f64,
+            weapon_cost: Ped,
             globals_count: i64,
             hofs_count: i64,
-            latest_kill_loot: Option<f64>,
+            latest_kill_loot: Option<Ped>,
             multiplier_last: Option<f64>,
             multiplier_avg: Option<f64>,
             multiplier_max: Option<f64>,
             multiplier_history: Vec<f64>,
             cumulative_net: Vec<f64>,
-            confirmed_mob_name: String,
-            mob_source: Option<&'static str>,
-            mob_entry_mode: String,
+            mob_name: Option<String>,
+            mob_source: Option<MobSource>,
+            mob_entry_mode: TrackingMode,
             warnings: Vec<String>,
         }
 
         let (current_tool, aggregated) = {
             let state = self.lock_state();
-            let current_tool = state.active_hotbar_tool_name.clone();
-            let Some(session) = state.session.as_ref() else {
+            let Some(active) = state.session.active() else {
                 return Ok(TrackingReadout {
-                    current_tool,
+                    current_tool: None,
                     active: None,
                 });
             };
+            let current_tool = active.weapons.hotbar_tool.clone();
 
-            let kills = &session.kills;
-            let mut weapon_cost: f64 = kills
+            let kills = &active.session.kills;
+            let mut weapon_cost: Ped = kills
                 .iter()
                 .flat_map(|kill| kill.tool_stats.iter())
-                .map(|(_, stats)| stats.cost_per_shot * stats.shots_fired as f64)
+                .map(|(_, stats)| stats.cost_per_shot * stats.shots_fired)
                 .sum();
-            let mut enhancer_cost: f64 = kills.iter().map(|kill| kill.enhancer_cost).sum();
-            if let Some(accumulator) = state.accumulator.as_ref() {
-                weapon_cost += accumulator.weapon_cost();
-                enhancer_cost += accumulator.enhancer_cost;
-            }
-            let heal_cost = state.session_heal_cost;
+            let mut enhancer_cost: Ped = kills.iter().map(|kill| kill.enhancer_cost).sum();
+            weapon_cost += active.accumulator.weapon_cost();
+            enhancer_cost += active.accumulator.enhancer_cost;
+            let heal_cost = active.heal_cost;
             let cost = weapon_cost + heal_cost + enhancer_cost;
-            let returns: f64 = kills.iter().map(|kill| kill.loot_total_ped).sum();
+            let returns: Ped = kills.iter().map(|kill| kill.loot_total_ped).sum();
 
             let damage_total: f64 = kills.iter().map(|kill| kill.damage_dealt).sum();
-            let live_weapon_damage = damage_total
-                + state
-                    .accumulator
-                    .as_ref()
-                    .map(|accumulator| accumulator.damage_dealt)
-                    .unwrap_or(0.0);
+            let live_weapon_damage = damage_total + active.accumulator.damage_dealt;
 
             // Multipliers use kill.cost_ped (weapon cost only) per EU
-            // convention.
+            // convention; a ratio of two PED amounts is dimensionless.
             let mult_per_kill: Vec<f64> = kills
                 .iter()
-                .filter(|kill| kill.cost_ped > 0.0)
+                .filter(|kill| kill.cost_ped.is_positive())
                 .map(|kill| kill.loot_total_ped / kill.cost_ped)
                 .collect();
             let multiplier_avg = if mult_per_kill.is_empty() {
@@ -104,7 +160,7 @@ impl HuntTracker {
                 });
             let multiplier_last = kills
                 .last()
-                .filter(|kill| kill.cost_ped > 0.0)
+                .filter(|kill| kill.cost_ped.is_positive())
                 .map(|kill| kill.loot_total_ped / kill.cost_ped);
             let multiplier_history: Vec<f64> = mult_per_kill
                 .iter()
@@ -118,26 +174,26 @@ impl HuntTracker {
             // session-level heal cost pro-rata across kills by their
             // weapon-cost share so the curve's final point reconciles
             // with the displayed Net stat (returns - cost).
-            let per_kill_weapon: Vec<f64> = kills
+            let per_kill_weapon: Vec<Ped> = kills
                 .iter()
                 .map(|kill| {
                     kill.tool_stats
                         .iter()
-                        .map(|(_, stats)| stats.cost_per_shot * stats.shots_fired as f64)
+                        .map(|(_, stats)| stats.cost_per_shot * stats.shots_fired)
                         .sum()
                 })
                 .collect();
-            let total_weapon: f64 = per_kill_weapon.iter().sum();
+            let total_weapon: Ped = per_kill_weapon.iter().copied().sum();
             let mut cumulative_net = Vec::new();
-            let mut running = 0.0;
+            let mut running = Ped::ZERO;
             for (kill, weapon) in kills.iter().zip(per_kill_weapon.iter()) {
-                let heal_share = if total_weapon > 0.0 {
-                    heal_cost * (weapon / total_weapon)
+                let heal_share = if total_weapon.is_positive() {
+                    heal_cost * (*weapon / total_weapon)
                 } else {
-                    0.0
+                    Ped::ZERO
                 };
-                running += kill.loot_total_ped - weapon - kill.enhancer_cost - heal_share;
-                cumulative_net.push(round_half_even(running, 2));
+                running += kill.loot_total_ped - *weapon - kill.enhancer_cost - heal_share;
+                cumulative_net.push(running.round_half_even(2).value());
             }
             let cumulative_net: Vec<f64> = cumulative_net
                 .iter()
@@ -148,9 +204,9 @@ impl HuntTracker {
                 .collect();
 
             let aggregated = Aggregated {
-                session_id: session.id.clone(),
-                started_at: naive_isoformat(session.start_time),
-                start_ts: naive_to_epoch(session.start_time),
+                session_id: active.session.id.clone(),
+                started_at: naive_isoformat(active.session.start_time),
+                start_ts: naive_to_epoch(active.session.start_time),
                 kill_count: kills.len() as i64,
                 cost,
                 returns,
@@ -171,10 +227,10 @@ impl HuntTracker {
                 multiplier_max,
                 multiplier_history,
                 cumulative_net,
-                confirmed_mob_name: state.confirmed_mob_name.clone(),
-                mob_source: state.mob_source,
-                mob_entry_mode: state.session_mob_tracking_mode.clone(),
-                warnings: state.session_warnings.clone(),
+                mob_name: active.stamped_mob_name().map(str::to_string),
+                mob_source: active.mob.source(),
+                mob_entry_mode: active.mode,
+                warnings: active.warnings.clone(),
             };
             (current_tool, aggregated)
         };
@@ -218,40 +274,42 @@ impl HuntTracker {
             started_at: aggregated.started_at,
             kill_count: aggregated.kill_count,
             elapsed: (naive_to_epoch(self.clock.now()) - aggregated.start_ts) as i64,
-            cost: round_half_even(aggregated.cost, 2),
-            returns: round_half_even(aggregated.returns, 2),
+            cost: aggregated.cost.round_half_even(2).value(),
+            returns: aggregated.returns.round_half_even(2).value(),
             pes: round_half_even(skill_tt, 2),
-            net: round_half_even(aggregated.returns - aggregated.cost, 2),
-            return_rate: if aggregated.cost > 0.0 {
+            net: (aggregated.returns - aggregated.cost)
+                .round_half_even(2)
+                .value(),
+            return_rate: if aggregated.cost.is_positive() {
                 round_half_even(aggregated.returns / aggregated.cost, 4)
             } else {
                 0.0
             },
             damage_dealt_total: round_half_even(aggregated.damage_total, 1),
             weapon_damage_dealt: round_half_even(aggregated.live_weapon_damage, 1),
-            weapon_cost: round_half_even(aggregated.weapon_cost, 6),
+            weapon_cost: aggregated.weapon_cost.round_half_even(6).value(),
             shots_fired_total: aggregated.shots_total,
             critical_hits_total: aggregated.crits_total,
             max_damage: round_half_even(aggregated.max_damage, 1),
             globals_count: aggregated.globals_count,
             hofs_count: aggregated.hofs_count,
-            latest_kill_loot: round_opt(aggregated.latest_kill_loot, 2),
+            latest_kill_loot: aggregated
+                .latest_kill_loot
+                .map(|loot| loot.round_half_even(2).value()),
             multiplier_last: round_opt(aggregated.multiplier_last, 4),
             multiplier_avg: round_opt(aggregated.multiplier_avg, 4),
             multiplier_max: round_opt(aggregated.multiplier_max, 4),
             multiplier_history: aggregated.multiplier_history,
             cumulative_net_history: aggregated.cumulative_net,
-            current_mob: if aggregated.confirmed_mob_name.is_empty() {
-                None
+            current_mob: aggregated.mob_name.clone(),
+            mob_source: if aggregated.mob_name.is_some() {
+                aggregated
+                    .mob_source
+                    .map(|source| source.as_str().to_string())
             } else {
-                Some(aggregated.confirmed_mob_name.clone())
-            },
-            mob_source: if aggregated.confirmed_mob_name.is_empty() {
                 None
-            } else {
-                aggregated.mob_source.map(str::to_string)
             },
-            mob_entry_mode: aggregated.mob_entry_mode,
+            mob_entry_mode: aggregated.mob_entry_mode.as_str().to_string(),
             notable_event_rows: notable_rows,
             warnings: aggregated.warnings,
         };
@@ -261,34 +319,17 @@ impl HuntTracker {
         })
     }
 
-    /// Prime the tracker with a fully-formed demo session, bypassing the
-    /// normal `start_session` lifecycle. This mirrors the Python demo's
-    /// `_prime_mid_hunt` direct field assignment (it pokes the same
-    /// lock-guarded state, so the "every write to the owned state holds the
-    /// lock" invariant has no exception); `_last_kill` needs no field here
-    /// because this port derives it from `session.kills.last()`. It exists
-    /// solely for guide-mode demo playback over a throwaway database and
-    /// must never run on the live tracker. Called once at demo-state
-    /// construction, before any producer thread exists, so it cannot race.
-    pub fn prime_demo(
-        &self,
-        session: TrackingSession,
-        confirmed_mob: (String, String, String),
-        mob_source: &'static str,
-        mob_tracking_mode: &str,
-    ) {
-        let (name, species, maturity) = confirmed_mob;
+    /// Prime the tracker with a fully-formed demo session, bypassing
+    /// the normal `start_session` lifecycle (no handlers subscribe,
+    /// nothing persists). It exists solely for guide-mode demo playback
+    /// over a throwaway database and must never run on the live
+    /// tracker. Called once at demo-state construction, before any
+    /// producer thread exists, so it cannot race.
+    pub fn prime_demo(&self, session: TrackingSession, mob: MobSelection, mode: TrackingMode) {
         let mut state = self.lock_state();
-        state.session = Some(session);
-        state.accumulator = None;
-        state.session_heal_cost = 0.0;
-        state.session_warnings = Vec::new();
-        state.confirmed_mob_name = name;
-        state.confirmed_mob_species = species;
-        state.confirmed_mob_maturity = maturity;
-        state.mob_source = Some(mob_source);
-        state.session_mob_tracking_mode = mob_tracking_mode.to_string();
-        state.session_mob_tracking_tag = String::new();
+        let mut active = ActiveSession::new(session, mode, String::new());
+        active.mob = mob;
+        state.session = SessionState::Active(Box::new(active));
     }
 
     /// Refresh trifecta-attribution state after config changes. The
@@ -303,46 +344,39 @@ impl HuntTracker {
         };
         let mut state = self.lock_state();
         self.refresh_loot_filter_locked(&mut state);
-        if state.session.is_none() {
+        let state = &mut *state;
+        let Some(active) = state.session.active_mut() else {
             return;
-        }
+        };
         if trifecta_mode {
-            Self::load_trifecta_weapon_profiles(&mut state, trifecta.as_ref());
+            Self::load_trifecta_weapon_profiles(active, &mut state.heal_tool, trifecta.as_ref());
         } else {
-            state.damage_attributor.clear();
-            state.active_heal_tool_name = None;
-            state.heal_cost_per_use_ped = 0.0;
-            state.heal_reload_seconds = 2.5;
-            state.heal_amount_min = None;
-            state.heal_amount_max = None;
-            state.heal_warning_emitted = false;
-            Self::reset_weapon_runtime_state(&mut state);
+            active.weapons.attributor.clear();
+            state.heal_tool = HealTool::default();
+            active.heal_warning_emitted = false;
+            active.weapons.reset_runtime();
         }
 
-        if state.session_mob_tracking_mode == "tag" {
+        if active.mode == TrackingMode::Tag {
             return;
         }
 
         if (self.providers.manual_mob_entry_enabled)() {
             let Some((species, maturity)) = (self.providers.manual_mob)() else {
-                if state.mob_source == Some("manual") {
-                    Self::clear_mob_state(&mut state);
+                if active.mob.source() == Some(MobSource::Manual) {
+                    active.mob = MobSelection::Unset;
                 }
                 return;
             };
-            let display = if maturity.is_empty() {
-                species.clone()
-            } else {
-                format!("{maturity} {species}")
-            };
-            Self::set_manual_mob_state(&mut state, &display, &species, &maturity);
+            active.mob = MobSelection::manual_from_parts(species, maturity);
             return;
         }
 
-        if state.mob_source == Some("manual") {
-            Self::clear_mob_state(&mut state);
+        if active.mob.source() == Some(MobSource::Manual) {
+            active.mob = MobSelection::Unset;
         }
     }
+
     /// Start a new tracking session; any prior session stops first,
     /// outside the state guard so its own stop events publish cleanly.
     pub fn start_session(self: &Arc<Self>) -> Result<TrackingSession, DbError> {
@@ -350,8 +384,8 @@ impl HuntTracker {
             self.stop_session()?;
         }
 
-        let session_mob_tracking_mode = (self.providers.mob_tracking_mode)();
-        let session_mob_tracking_tag = (self.providers.mob_tracking_tag)()
+        let mode = TrackingMode::from_config(&(self.providers.mob_tracking_mode)());
+        let tag = (self.providers.mob_tracking_tag)()
             .trim_matches(python_whitespace)
             .to_string();
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -372,44 +406,31 @@ impl HuntTracker {
                 start_time: self.clock.now(),
                 end_time: None,
                 kills: Vec::new(),
-                dangling_cost: 0.0,
+                dangling_cost: Ped::ZERO,
             };
-            state.session = Some(session.clone());
-            state.accumulator = Some(Accumulator::default());
-            state.active_hotbar_tool_name = None;
-            state.last_heal_time = None;
-            state.session_heal_cost = 0.0;
-            state.heal_warning_emitted = false;
-            state.session_warnings.clear();
-            state.last_loot_fingerprint = None;
-            state.last_loot_time = None;
-            Self::clear_mob_state(&mut state);
-            state.session_mob_tracking_mode = session_mob_tracking_mode.clone();
-            state.session_mob_tracking_tag = session_mob_tracking_tag.clone();
-            state.trifecta_unmatched_warning_emitted = false;
-            // Reset under the lock, ordered with the handler
-            // subscribes below, so a producer mutation arriving after
-            // release correctly re-sets it.
-            state.session_dirty = false;
-            state.damage_attributor.clear();
-            Self::reset_weapon_runtime_state(&mut state);
+            // The fresh ActiveSession IS the session reset: every
+            // session-scoped field starts at its documented initial
+            // state by construction. (The equipped heal tool
+            // deliberately persists; it lives outside the typestate.)
+            let mut active = ActiveSession::new(session.clone(), mode, tag.clone());
 
             if trifecta_mode {
-                Self::load_trifecta_weapon_profiles(&mut state, trifecta.as_ref());
+                Self::load_trifecta_weapon_profiles(
+                    &mut active,
+                    &mut state.heal_tool,
+                    trifecta.as_ref(),
+                );
             }
 
-            if state.session_mob_tracking_mode == "tag" && !session_mob_tracking_tag.is_empty() {
-                Self::set_session_tag(&mut state, &session_mob_tracking_tag);
+            if mode == TrackingMode::Tag && !tag.is_empty() {
+                active.mob = MobSelection::Tag(tag.clone());
             } else if (self.providers.manual_mob_entry_enabled)() {
                 if let Some((species, maturity)) = (self.providers.manual_mob)() {
-                    let display = if maturity.is_empty() {
-                        species.clone()
-                    } else {
-                        format!("{maturity} {species}")
-                    };
-                    Self::set_manual_mob_state(&mut state, &display, &species, &maturity);
+                    active.mob = MobSelection::manual_from_parts(species, maturity);
                 }
             }
+
+            state.session = SessionState::Active(Box::new(active));
 
             self.subscribe_handlers();
             let start_ts = naive_to_epoch(session.start_time);
@@ -428,7 +449,7 @@ impl HuntTracker {
             )
             .bind(&session_id)
             .bind(start_ts)
-            .bind(&session_mob_tracking_mode)
+            .bind(mode.as_str())
             .execute(self.db.write())
             .await?;
             Ok::<(), DbError>(())
@@ -450,26 +471,22 @@ impl HuntTracker {
     /// Stop the active session: dangling cost, the handler
     /// unsubscribes and the end stamp under the guard; persistence,
     /// ledger gains, summary, and the stop events after it; then the
-    /// in-memory clear.
+    /// in-memory clear (dropping the whole `ActiveSession`).
     pub fn stop_session(&self) -> Result<Option<TrackingSession>, DbError> {
         let (session, session_id, end_time, heal_cost, dangling_cost) = {
             let mut state = self.lock_state();
-            let dangling_cost = state
-                .accumulator
-                .as_ref()
-                .map(Accumulator::total_cost)
-                .unwrap_or(0.0);
-            let Some(session) = state.session.as_mut() else {
+            let Some(active) = state.session.active_mut() else {
                 return Ok(None);
             };
+            let dangling_cost = active.accumulator.total_cost();
             // Unsubscribe so no producer event mutates the session
             // past here.
-            session.end_time = Some(self.clock.now());
-            session.dangling_cost = dangling_cost;
-            let snapshot = session.clone();
+            active.session.end_time = Some(self.clock.now());
+            active.session.dangling_cost = dangling_cost;
+            let snapshot = active.session.clone();
             let session_id = snapshot.id.clone();
             let end_time = snapshot.end_time.expect("just stamped");
-            let heal_cost = state.session_heal_cost;
+            let heal_cost = active.heal_cost;
             self.unsubscribe_handlers();
             (snapshot, session_id, end_time, heal_cost, dangling_cost)
         };
@@ -485,8 +502,8 @@ impl HuntTracker {
                  heal_cost = ?, dangling_cost = ? WHERE id = ?",
             )
             .bind(naive_to_epoch(end_time))
-            .bind(heal_cost)
-            .bind(dangling_cost)
+            .bind(heal_cost.value())
+            .bind(dangling_cost.value())
             .bind(&session_id)
             .execute(&mut *tx)
             .await?;
@@ -494,7 +511,7 @@ impl HuntTracker {
             // rows.
             Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_time).await?;
             Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_time).await?;
-            write_session_summary(&mut tx, &session_id).await?;
+            crate::session_summary::write_session_summary(&mut tx, &session_id).await?;
             crate::daily_rollup::refresh_session_days(&mut tx, &session_id).await?;
             tx.commit().await?;
             Ok::<(), DbError>(())
@@ -529,16 +546,14 @@ impl HuntTracker {
             Some(&session_id),
         );
 
-        {
-            let mut state = self.lock_state();
-            state.session = None;
-            state.accumulator = None;
-            state.active_hotbar_tool_name = None;
-            Self::reset_weapon_runtime_state(&mut state);
-            Self::clear_mob_state(&mut state);
-        }
+        // Dropping the ActiveSession IS the in-memory clear: the
+        // accumulator, weapon runtime, and mob selection cannot
+        // survive the session because they live inside it. (The
+        // equipped heal tool deliberately does.)
+        self.lock_state().session = SessionState::Idle;
         Ok(Some(session))
     }
+
     /// Coalesce a settled tick's mutations into one domain event.
     /// Subscribed only while a session is active; fires only when the
     /// tick actually changed the live session readout, stamped with
@@ -553,15 +568,14 @@ impl HuntTracker {
         // its lock.
         let session_id = {
             let mut state = self.lock_state();
-            let Some(session) = state.session.as_ref() else {
+            let Some(active) = state.session.active_mut() else {
                 return;
             };
-            if !state.session_dirty {
+            if !active.dirty {
                 return;
             }
-            let session_id = session.id.clone();
-            state.session_dirty = false;
-            session_id
+            active.dirty = false;
+            active.session.id.clone()
         };
         // The original's three-way stamp: a datetime-equivalent string
         // takes its instant, an epoch-float string goes through
