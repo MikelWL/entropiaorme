@@ -39,7 +39,7 @@ use crate::codex_categories::{
 };
 use crate::db::Db;
 use crate::game_data_store::GameDataStore;
-use crate::tracker::naive_to_epoch;
+use crate::time::naive_to_epoch;
 use crate::tt_value_curve::levels_for_tt_value;
 use eo_wire::normalizer::round_half_even;
 
@@ -1458,7 +1458,7 @@ mod tests {
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
 
         // Two days later the claim day is behind the heal watermark.
-        let claim_epoch = crate::tracker::naive_to_epoch(start_instant());
+        let claim_epoch = crate::time::naive_to_epoch(start_instant());
         let claim_day = crate::daily_rollup::epoch_day(claim_epoch);
         crate::daily_rollup::heal_rollups(&pool, claim_epoch + 2.0 * 86_400.0)
             .await

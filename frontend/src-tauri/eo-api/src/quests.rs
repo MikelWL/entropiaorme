@@ -13,10 +13,11 @@
 //! the facade builds the exact snake_case `Value` the service consumed
 //! before, so no stored bytes change.
 //!
-//! The facade builds its own [`QuestService`] over the shared db + clock
-//! (the same instance shape `hydration.rs` built for CRUD); the
-//! bus-subscribed service that auto-starts a quest on a received mission
-//! is a separate producer concern and stays where it composes.
+//! The facade serves over the composed [`QuestService`] (the same
+//! instance whose owning task carries the bus-fed session tracking,
+//! mission auto-start, and reward suppression), so a facade-driven
+//! completion records against the live tracking session exactly as a
+//! chat-log-driven one does.
 //!
 //! Transport-era behaviours retire with the migration, ratified under
 //! ADR-0017/0019. The conditional-GET (ETag) contract retires with the
@@ -31,9 +32,7 @@
 //! family, unlike codex). The `{"ok": true}` delete body retires with no
 //! consumer (the frontend delete wrappers ignore it).
 
-use eo_services::clock::Clock;
-use eo_services::db::Db;
-use eo_services::quests::{QuestError, QuestService};
+use eo_services::quests::QuestError;
 use eo_wire::normalizer::round_half_even;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -666,12 +665,4 @@ fn quest_not_found() -> ApiError {
 
 fn playlist_not_found() -> ApiError {
     ApiError::not_found("Playlist not found")
-}
-
-/// Construct the quest service over the facade's shared handles, the CRUD
-/// instance shape the HTTP layer built (unsubscribed: the bus-driven
-/// auto-start is a separate producer concern). Kept a free function so
-/// [`Api::new`] can build it before the struct is assembled.
-pub(crate) fn build_quests_service(db: Db, clock: std::sync::Arc<dyn Clock>) -> QuestService {
-    QuestService::new(db, clock)
 }

@@ -51,6 +51,7 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.quests.clone(),
         None,
     )
 }
@@ -308,6 +309,7 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.quests.clone(),
         None,
     );
 
