@@ -9,9 +9,14 @@ use serde_json::{json, Value};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::difflib::sequence_ratio;
+use crate::ped::Ped;
 
+use super::lifecycle::NotableEventKind;
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
+
+/// Loot values this close to the reward (in PED) count as its echo.
+const REWARD_MATCH_TOLERANCE: Ped = Ped(0.02);
 
 /// Stripped from chat.log mission names before matching.
 static REPEATABLE_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
@@ -90,9 +95,9 @@ impl QuestService {
         self.start_quest(quest["id"].as_i64().expect("quest id"))
             .await?;
         self.record_notable_event(
-            "quest_started",
+            NotableEventKind::Started,
             quest["name"].as_str().expect("quest name"),
-            0.0,
+            Ped::ZERO,
         )
         .await;
         Ok(())
@@ -114,7 +119,7 @@ impl QuestService {
         self.complete_quest(quest["id"].as_i64().expect("quest id"))
             .await?;
 
-        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64);
+        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
         let is_skill = json_truthy(quest.get("reward_is_skill"));
         let mut result = None;
         let mut suppressed_desc: Option<String> = None;
@@ -131,13 +136,13 @@ impl QuestService {
             }
         } else if let Some(reward) = reward_ped {
             if !loot_items.is_empty() {
-                if reward > 0.0 {
+                if reward.is_positive() {
                     let mut best_idx: Option<usize> = None;
-                    let mut best_diff = f64::INFINITY;
+                    let mut best_diff = Ped(f64::INFINITY);
                     for (index, item) in loot_items.iter().enumerate() {
-                        let value = item.get("value").and_then(Value::as_f64).unwrap_or(0.0);
+                        let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
                         let diff = (value - reward).abs();
-                        if diff < best_diff && diff <= 0.02 {
+                        if diff < best_diff && diff <= REWARD_MATCH_TOLERANCE {
                             best_diff = diff;
                             best_idx = Some(index);
                         }
@@ -151,15 +156,18 @@ impl QuestService {
                             .get("item_name")
                             .and_then(Value::as_str)
                             .unwrap_or("?");
-                        suppressed_desc = Some(format!("{item_name} ({reward:.2} PED) suppressed"));
+                        suppressed_desc = Some(format!(
+                            "{item_name} ({:.2} PED) suppressed",
+                            reward.value()
+                        ));
                     }
                 } else {
                     // A non-positive reward still suppresses the
                     // cheapest item of the tick.
                     let mut min_idx = 0usize;
-                    let mut min_value = f64::INFINITY;
+                    let mut min_value = Ped(f64::INFINITY);
                     for (index, item) in loot_items.iter().enumerate() {
-                        let value = item.get("value").and_then(Value::as_f64).unwrap_or(0.0);
+                        let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
                         if value < min_value {
                             min_value = value;
                             min_idx = index;
@@ -183,12 +191,12 @@ impl QuestService {
             description.push_str(": ");
             description.push_str(&suppressed);
         }
-        let event_type = if is_skill {
-            "quest_completed_pes"
+        let kind = if is_skill {
+            NotableEventKind::CompletedPes
         } else {
-            "quest_completed"
+            NotableEventKind::Completed
         };
-        self.record_notable_event(event_type, &description, reward_ped.unwrap_or(0.0))
+        self.record_notable_event(kind, &description, reward_ped.unwrap_or(Ped::ZERO))
             .await;
 
         Ok(result)

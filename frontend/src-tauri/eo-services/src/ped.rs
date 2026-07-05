@@ -38,6 +38,12 @@ impl Ped {
     pub fn is_positive(self) -> bool {
         self.0 > 0.0
     }
+
+    /// The magnitude of an amount is an amount (a reward-matching
+    /// difference, a signed correction's size).
+    pub fn abs(self) -> Ped {
+        Ped(self.0.abs())
+    }
 }
 
 impl Add for Ped {
@@ -102,6 +108,7 @@ mod tests {
         assert_eq!([Ped(1.0), Ped(2.5)].into_iter().sum::<Ped>(), Ped(3.5));
         assert!(Ped(0.01).is_positive());
         assert!(!Ped::ZERO.is_positive());
+        assert_eq!((Ped(1.0) - Ped(3.5)).abs(), Ped(2.5));
         assert_eq!(Ped(1.005).round_half_even(2), Ped(1.0));
     }
 

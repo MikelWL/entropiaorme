@@ -6,10 +6,30 @@ use serde_json::Value;
 use sqlx::sqlite::SqliteConnection;
 use sqlx::Row;
 
+use crate::ped::Ped;
 use crate::tracker::{naive_to_epoch, to_iso_utc};
 
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
+
+/// The overlay-event vocabulary the quest flows record: a started
+/// quest, a completed liquid reward, a completed skill (PES) reward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NotableEventKind {
+    Started,
+    Completed,
+    CompletedPes,
+}
+
+impl NotableEventKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            NotableEventKind::Started => "quest_started",
+            NotableEventKind::Completed => "quest_completed",
+            NotableEventKind::CompletedPes => "quest_completed_pes",
+        }
+    }
+}
 
 impl QuestService {
     // ── Quest actions ───────────────────────────────────────────────
@@ -46,8 +66,8 @@ impl QuestService {
             .execute(self.db.write())
             .await?;
 
-        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64);
-        if let Some(reward) = reward_ped.filter(|&reward| reward > 0.0) {
+        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
+        if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
             let name = quest["name"].as_str().expect("quest name");
             if json_truthy(quest.get("reward_is_skill")) {
                 // Skill rewards are PES, not PED: a claim row, not a
@@ -58,7 +78,7 @@ impl QuestService {
                 )
                 .bind(quest_id)
                 .bind(name)
-                .bind(reward)
+                .bind(reward.value())
                 .bind(now)
                 .execute(self.db.write())
                 .await?;
@@ -76,7 +96,7 @@ impl QuestService {
                 .bind(&date)
                 .bind("markup")
                 .bind(format!("Quest: {name}"))
-                .bind(reward)
+                .bind(reward.value())
                 .bind("quest_reward")
                 .execute(self.db.write())
                 .await?;
@@ -133,8 +153,8 @@ impl QuestService {
         .await?;
 
         if undo_reward {
-            let reward_ped = quest.get("reward_ped").and_then(Value::as_f64);
-            if let Some(reward) = reward_ped.filter(|&reward| reward > 0.0) {
+            let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
+            if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
                 if json_truthy(quest.get("reward_is_skill")) {
                     delete_latest_quest_claim(&mut tx, quest_id).await?;
                 } else {
@@ -155,9 +175,9 @@ impl QuestService {
     /// failure is swallowed, exactly as the original's bare except.
     pub(super) async fn record_notable_event(
         &self,
-        event_type: &str,
+        kind: NotableEventKind,
         description: &str,
-        value_ped: f64,
+        value: Ped,
     ) {
         // The original gates on truthiness, so an empty session id
         // skips the write exactly like an absent one.
@@ -171,9 +191,9 @@ impl QuestService {
              VALUES (?, NULL, ?, ?, ?, ?)",
         )
         .bind(&session_id)
-        .bind(event_type)
+        .bind(kind.as_str())
         .bind(description)
-        .bind(value_ped)
+        .bind(value.value())
         .bind(now)
         .execute(self.db.write())
         .await;
@@ -258,7 +278,7 @@ pub(super) async fn delete_latest_quest_claim(
 pub(super) async fn delete_latest_quest_reward_entry(
     conn: &mut SqliteConnection,
     quest_name: &str,
-    reward_ped: f64,
+    reward_ped: Ped,
 ) -> Result<bool, QuestError> {
     let Some(row) = sqlx::query(
         "SELECT id, date FROM ledger_entries \
@@ -270,7 +290,7 @@ pub(super) async fn delete_latest_quest_reward_entry(
          LIMIT 1",
     )
     .bind(format!("Quest: {quest_name}"))
-    .bind(reward_ped)
+    .bind(reward_ped.value())
     .fetch_optional(&mut *conn)
     .await?
     else {

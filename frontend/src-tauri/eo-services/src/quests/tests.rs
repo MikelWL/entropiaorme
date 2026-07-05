@@ -18,6 +18,7 @@ use crate::db::Db;
 use super::lifecycle::{delete_latest_quest_claim, delete_latest_quest_reward_entry};
 use super::payload::json_truthy;
 use super::QuestService;
+use crate::ped::Ped;
 
 async fn service_with_clock(
     dir: &std::path::Path,
@@ -117,7 +118,7 @@ async fn quest_claim_undo_relands_the_days_rollups() {
     let mut conn = pool.acquire().await.unwrap();
     assert!(delete_latest_quest_claim(&mut conn, 7).await.unwrap());
     assert!(
-        delete_latest_quest_reward_entry(&mut conn, "Daily Feffoid", 4.0)
+        delete_latest_quest_reward_entry(&mut conn, "Daily Feffoid", Ped(4.0))
             .await
             .unwrap()
     );
