@@ -9,7 +9,7 @@ use crate::ped::Ped;
 use crate::tracking_models::Kill;
 
 use super::actor::TrackerActor;
-use super::time::{naive_to_epoch, parse_timestamp_str, python_total_seconds};
+use super::time::{instant_to_epoch, parse_timestamp_instant, python_total_seconds, resolve_local};
 use super::{GLOBAL_CORRELATION_WINDOW_SECONDS, LOOT_DEDUP_WINDOW_SECONDS};
 
 impl TrackerActor {
@@ -37,9 +37,9 @@ impl TrackerActor {
             let now = group
                 .timestamp
                 .as_deref()
-                .and_then(parse_timestamp_str)
-                .unwrap_or_else(|| clock.now());
-            let now_epoch = naive_to_epoch(now);
+                .and_then(parse_timestamp_instant)
+                .unwrap_or_else(|| resolve_local(clock.now()));
+            let now_epoch = instant_to_epoch(now);
 
             // Loot deduplication (same fingerprint within 2s window).
             let first_item = group
@@ -184,9 +184,9 @@ impl TrackerActor {
             };
             let value_ped = raw_value;
             let is_hof = matches!(event_type.as_str(), "hof_kill" | "hof_item");
-            let ts = parse_timestamp_str(raw_ts)
-                .map(naive_to_epoch)
-                .unwrap_or_else(|| naive_to_epoch(clock.now()));
+            let ts = parse_timestamp_instant(raw_ts)
+                .map(instant_to_epoch)
+                .unwrap_or_else(|| instant_to_epoch(resolve_local(clock.now())));
 
             // Tag the most recently created kill (staleness check:
             // within 5s). The kills tail is the original's

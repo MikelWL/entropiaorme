@@ -1958,6 +1958,23 @@ fn helper_pins() {
     let instant = naive("2026-06-15T12:30:45");
     assert_eq!(epoch_to_naive(naive_to_epoch(instant)), instant);
 
+    // The instant basis composes to the same bytes: resolving a local
+    // reading and rendering it back is the identity for representable
+    // wall-clock times, and its epoch matches the naive path exactly.
+    let resolved = super::time::resolve_local(instant);
+    assert_eq!(
+        super::time::local_isoformat(resolved),
+        naive_isoformat(instant)
+    );
+    assert_eq!(
+        super::time::instant_to_epoch(resolved),
+        naive_to_epoch(instant)
+    );
+    assert_eq!(
+        super::time::epoch_to_instant(naive_to_epoch(instant)),
+        resolved
+    );
+
     assert!(value_truthy(&json!(true)));
     assert!(value_truthy(&json!(1.5)));
     assert!(value_truthy(&json!("x")));

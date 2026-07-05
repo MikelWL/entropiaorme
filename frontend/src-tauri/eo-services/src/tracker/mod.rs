@@ -40,7 +40,10 @@ pub use providers::{
     TrackingConfig,
 };
 pub(crate) use time::parse_timestamp_str;
-pub use time::{naive_isoformat, naive_to_epoch, to_iso_utc};
+pub use time::{
+    epoch_to_instant, instant_to_epoch, local_isoformat, naive_isoformat, naive_to_epoch,
+    resolve_local, to_iso_utc,
+};
 
 use std::sync::Arc;
 

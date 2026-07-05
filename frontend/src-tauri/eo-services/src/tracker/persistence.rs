@@ -1,7 +1,7 @@
 //! The tracker's database writes: kill persistence, the session-end
 //! ledger gains, and crash-orphan recovery.
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use eo_wire::normalizer::round_half_even;
 use sqlx::sqlite::SqliteConnection;
 use sqlx::Row;
@@ -11,7 +11,7 @@ use crate::session_summary::write_session_summary;
 use crate::tracking_models::Kill;
 
 use super::actor::TrackerActor;
-use super::time::{epoch_to_naive, naive_isoformat};
+use super::time::{epoch_to_instant, local_isoformat};
 
 impl TrackerActor {
     /// Close sessions left open by a crash: end at the latest kill
@@ -48,7 +48,7 @@ impl TrackerActor {
                 .execute(&mut *tx)
                 .await?;
 
-                let end_dt = epoch_to_naive(ended_at);
+                let end_dt = epoch_to_instant(ended_at);
                 Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_dt).await?;
                 Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_dt).await?;
                 write_session_summary(&mut tx, &session_id).await?;
@@ -137,7 +137,7 @@ impl TrackerActor {
     pub(super) async fn create_shrapnel_ledger_entry(
         conn: &mut SqliteConnection,
         session_id: &str,
-        end_time: NaiveDateTime,
+        end_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
         let row = sqlx::query(
             "SELECT COALESCE(SUM(kli.value_ped), 0) \
@@ -155,7 +155,7 @@ impl TrackerActor {
             return Ok(());
         }
         let margin = round_half_even(shrapnel_ped * 0.01, 4);
-        let date = naive_isoformat(end_time);
+        let date = local_isoformat(end_time);
         sqlx::query(
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -180,7 +180,7 @@ impl TrackerActor {
     pub(super) async fn create_enhancer_rebate_ledger_entry(
         conn: &mut SqliteConnection,
         session_id: &str,
-        end_time: NaiveDateTime,
+        end_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
         let row = sqlx::query(
             "SELECT COALESCE(SUM(kli.value_ped), 0) \
@@ -196,7 +196,7 @@ impl TrackerActor {
         if rebate <= 0.0 {
             return Ok(());
         }
-        let date = naive_isoformat(end_time);
+        let date = local_isoformat(end_time);
         sqlx::query(
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
              VALUES (?, ?, ?, ?, ?, ?)",
