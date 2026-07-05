@@ -32,3 +32,4 @@
   - [ADR-0017: Own the behavioural contract in this codebase](adr/0017-behavioural-contract-ownership.md)
   - [ADR-0018: Daily-rollup read model for the analytics Overview](adr/0018-daily-rollup-read-model.md)
   - [ADR-0019: Typed IPC commands over a service facade](adr/0019-typed-command-facade.md)
+  - [ADR-0020: The tracker as a single-owner actor](adr/0020-tracker-actor-refounding.md)

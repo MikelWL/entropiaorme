@@ -63,7 +63,11 @@ fn facade_microbench() {
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
     let clock = Arc::new(eo_services::clock::RealClock::new());
-    let handles = common::producer_handles(&db, &data_dir, runtime.handle().clone());
+    let handles = runtime.block_on(common::producer_handles(
+        &db,
+        &data_dir,
+        runtime.handle().clone(),
+    ));
     let api = Api::new(
         db,
         game_data,

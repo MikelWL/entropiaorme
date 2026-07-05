@@ -1,0 +1,35 @@
+# ADR-0020: The tracker as a single-owner actor with a typestate session
+
+- Status: Accepted
+- Context: with the HTTP transport gone ([ADR-0019](0019-typed-command-facade.md)), the hunt tracker's interior remained a faithful transcription of the retired reference implementation's asyncio-plus-threads shape: one mutex over a ~34-field state struct whose invariants lived in comments, producer threads bridging onto the async runtime through `block_on`/`block_in_place` at nine sites, an eleven-field provider bundle (nine of them injected closures) as the dependency surface, settings re-read from disk on every provider call, and naive local datetimes as the domain time basis.
+
+## Context and problem statement
+
+The tracker is the application's central coordinator: it subscribes to the event bus while a session runs, accumulates combat statistics, converts loot groups into kill records, and persists them. The transcription worked, but each of its structures encoded the source language's constraints rather than a chosen design. The state mutex demanded a documented lock-order doctrine ("never held across SQLite", "publishes after the guard drops") that only discipline enforced. Cross-field invariants (an accumulator exists exactly while a session runs; a mob stamp always carries its source; stopping clears the weapon runtime) were checked at each use, with over a dozen "checked above" `expect`s standing in for what the type system could guarantee. Currency amounts were bare `f64`s indistinguishable from damage numbers, mode vocabularies were strings, and the wall-clock time basis carried a DST landmine.
+
+## Decision
+
+Re-found the tracker's interior in five moves, each landing green on the full suite:
+
+- **A module directory replaces the god-file.** The 4,641-line `tracker.rs` splits by concern: session lifecycle, combat handlers, loot and global correlation, weapon runtime, mob selection, persistence, provider seams, and time helpers.
+- **Session state is a typestate.** `SessionState { Idle, Active(ActiveSession) }`, with everything session-scoped living inside the `Active` payload. Constructing the `ActiveSession` is the session reset; dropping it is the stop-time clear; the cross-field invariants hold structurally and the "checked above" expects delete. The equipped heal tool lives outside the typestate, documenting that it deliberately outlives sessions (it is hotbar-equipment state).
+- **Domain vocabulary gains real types.** A `Ped` currency newtype (transparent serialisation; amounts add and scale, and a ratio of two amounts is a dimensionless `f64`), a `TrackingMode` enum parsed once at the session-capture boundary, and a `MobSelection` enum whose variant carries its source, so a stamped name without a source is unrepresentable.
+- **One actor task owns the state.** The mutex is deleted; exclusive access IS the task. Bus subscriptions become thin forwarders installed and removed by the actor at session boundaries (preserving the chatlog watcher's idle fast-path, which keys off subscriber presence), commands are typed messages, the two hot predicates read a watch channel the actor keeps current, and inside the actor the database is simply awaited: every `block_on` bridge in the tracker deletes. Messaging deliberately uses **call semantics** (every message carries a completion reply the sender waits for): a producer returning from `publish` has always meant the tracker fully absorbed the event, persistence included, and the frozen replay fingerprints pin that interleaving byte-for-byte. Call semantics keep both properties and the existing backpressure; decoupling producers from persistence latency (a free-running mailbox) is a measurable follow-up, not a default.
+- **Named seams and a live time basis.** The closure fields collapse into two traits (`EquipmentLibrary`, `TrackingConfig`) the composition root implements once; the configuration seam reads a live snapshot the settings writer publishes on every write (a watch channel), ending the per-call file reads. The interior time basis becomes UTC instants, resolved from wall-clock inputs exactly once at the boundary with the established fold rule; renders back to local wall-clock form happen at the seams and are byte-neutral for representable times.
+
+## Consequences
+
+The invariants the original documented are now unrepresentable when violated rather than checked at each use, and the concurrency doctrine is gone because there is nothing to misuse: no lock to order, no poison to tolerate, and no per-call-site bridge to choose (the bus forwarders' single documented rendezvous wait is what remains). Failure paths became coherent as a direct consequence of single ownership: a failed session-start insert leaves the tracker idle (the row persists before activation), and a failed stop leaves the session fully live rather than active-but-deaf (forwarders unsubscribe only after the stop transaction commits), both safe to order that way because the actor processes one message at a time.
+
+The behavioural contract did not move: the full suite, the replay corpus, and every golden set (event-stream fingerprints, database snapshots, curated wire captures) reproduce byte-for-byte across all five moves, and the typed-command byte-parity pins held throughout. The one deliberate semantic edge is documented in the time basis: a wall-clock reading inside a DST gap cannot round-trip, and the instant is the truth.
+
+The actor's call semantics leave one measurable question open by design: whether producers should decouple from persistence latency. That assessment belongs to the concurrency-posture review this re-founding was sequenced before, which can now measure a single-owner task instead of a bridged mutex.
+
+See [ADR-0002](0002-event-spine.md) for the typed event spine the actor emits onto, [ADR-0012](0012-supervised-worker-threads.md) for the producer-thread posture the forwarders bridge from, [ADR-0019](0019-typed-command-facade.md) for the command boundary above this interior, and the [ADR index](index.md).
+
+## Evidence
+
+- `frontend/src-tauri/eo-services/src/tracker/` (the module directory: `actor.rs`, `session.rs`, `combat.rs`, `loot.rs`, `weapons.rs`, `mob.rs`, `persistence.rs`, `providers.rs`, `time.rs`)
+- `frontend/src-tauri/eo-services/src/ped.rs` (the currency newtype)
+- `frontend/src-tauri/eo-services/src/config_service.rs` (`ConfigReader`, the live-config publication)
+- `frontend/src-tauri/eo-services/tests/corpus_replay_oracle.rs` (the byte-frozen replay evidence the conversion held against)

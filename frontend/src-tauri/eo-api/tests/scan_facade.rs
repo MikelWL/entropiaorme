@@ -52,7 +52,7 @@ async fn scan_api(dir: &Path, providers: ScanProviders) -> (Api, Arc<SkillScanMa
         .expect("migrated database");
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
-    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
     let skill_scan = SkillScanManual::new(providers, clock.clone(), None, None, 0);
     let spacebar = SpacebarCaptureListener::new(skill_scan.clone(), None);
     let api = Api::new(

@@ -90,7 +90,7 @@ async fn seeded_api(dir: &Path) -> Api {
         ),
         0.0,
     ));
-    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
     Api::new(
         db,
         Arc::new(GameDataStore::new(&snapshot).unwrap()),

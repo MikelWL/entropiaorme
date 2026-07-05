@@ -53,7 +53,7 @@ pub struct ProducerHandles {
 /// inside a `#[tokio::test]`, or a built runtime's handle in a sync
 /// harness). The trackers read over their own pool handles so the caller's
 /// database is left to move into the facade.
-pub fn producer_handles(
+pub async fn producer_handles(
     db: &Db,
     data_dir: &Path,
     handle: tokio::runtime::Handle,
@@ -65,10 +65,10 @@ pub fn producer_handles(
     let tracker = HuntTracker::new(
         bus.clone(),
         Db::from_pool(db.write().clone()),
-        handle.clone(),
         Arc::new(RealClock::new()),
         Providers::default(),
     )
+    .await
     .expect("tracker");
     let hotbar = HotbarListener::new(bus.clone(), None, None);
     let watcher = Arc::new(ChatlogWatcher::new(

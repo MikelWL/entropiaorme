@@ -37,7 +37,7 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
     }
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
-    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
     Api::new(
         db,
         game_data,
@@ -294,7 +294,7 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
     let verify = db.clone();
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
-    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
     let api = Api::new(
         db,
         game_data,
@@ -382,4 +382,21 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
         .await
         .unwrap_err();
     assert_eq!(serde_json::to_value(&again).unwrap()["kind"], "notFound");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_quest_link_decline_reply_narrows_to_the_two_set_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(dir.path(), true, None).await;
+    // The decline reply shares the idle snapshot's exclude-unset ->
+    // exclude-none narrowing: the five accept-only fields are None and
+    // skip, leaving exactly `sessionId` / `status` on the wire.
+    let decision = api
+        .tracking_quest_link("ended".to_string(), "decline".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(&decision).unwrap(),
+        "{\"sessionId\":\"ended\",\"status\":\"declined\"}"
+    );
 }
