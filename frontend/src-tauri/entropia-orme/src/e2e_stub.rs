@@ -166,4 +166,21 @@ mod tests {
         serde_json::from_value::<Vec<InventoryItem>>(super::analytics_fixture("inventory"))
             .expect("inventory fixture matches Vec<InventoryItem>");
     }
+
+    /// The tracking reads that feed the dashboard baseline serve fixtures
+    /// through their typed commands: the snapshot and session-detail from the
+    /// dashboard fixture, the session list from the analytics fixture. A
+    /// fixture / DTO drift fails here rather than as a blank dashboard in the
+    /// visual run (this also guards the session-detail DTO's `notableEvents`
+    /// `serde(default)`, which lets the fixture omit that array).
+    #[test]
+    fn the_dashboard_fixture_deserialises_into_the_tracking_dtos() {
+        use eo_api::tracking::{SessionDetail, TrackingSession, TrackingSnapshot};
+        serde_json::from_value::<TrackingSnapshot>(super::dashboard_fixture("snapshot"))
+            .expect("snapshot fixture matches TrackingSnapshot");
+        serde_json::from_value::<SessionDetail>(super::dashboard_fixture("sessionDetail"))
+            .expect("sessionDetail fixture matches SessionDetail");
+        serde_json::from_value::<Vec<TrackingSession>>(super::analytics_fixture("sessions"))
+            .expect("sessions fixture matches Vec<TrackingSession>");
+    }
 }

@@ -1078,7 +1078,7 @@ export interface SessionDetail {
 	sessionId: string;
 	summary: SessionSummary;
 	mobEntryMode: string;
-	notableEvents?: NotableEvent[];
+	notableEvents: NotableEvent[];
 	lootBreakdown: LootEntry[];
 	deactivatedLootBreakdown: LootEntry[];
 	mobBreakdown: MobBreakdownRow[];

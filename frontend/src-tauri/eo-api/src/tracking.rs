@@ -158,7 +158,8 @@ fn list_ts_to_iso(ts: Option<f64>) -> Value {
         secs -= 1;
         micros += 1_000_000;
     }
-    let dt = DateTime::from_timestamp(secs, (micros as u32) * 1_000).expect("timestamp within range");
+    let dt =
+        DateTime::from_timestamp(secs, (micros as u32) * 1_000).expect("timestamp within range");
     let base = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
     if micros == 0 {
         json!(format!("{base}+00:00"))
@@ -178,7 +179,12 @@ fn event_ts_to_iso(ts: Option<f64>) -> Value {
 
 /// Duration in whole seconds: stored span for an ended session, the clock's
 /// running span for an active one, else zero.
-fn duration_seconds(started_at: Option<f64>, ended_at: Option<f64>, is_active: bool, now: f64) -> i64 {
+fn duration_seconds(
+    started_at: Option<f64>,
+    ended_at: Option<f64>,
+    is_active: bool,
+    now: f64,
+) -> i64 {
     match (ended_at, started_at) {
         (Some(end), Some(start)) => (end - start) as i64,
         _ if is_active => match started_at {
@@ -427,14 +433,22 @@ async fn scalar(pool: &SqlitePool, sql: &'static str, sid: &str) -> Result<Value
     Ok(sql_number(&row, 0))
 }
 
-async fn string_column(pool: &SqlitePool, sql: &'static str, sid: &str) -> Result<Vec<String>, sqlx::Error> {
+async fn string_column(
+    pool: &SqlitePool,
+    sql: &'static str,
+    sid: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     let rows = sqlx::query(sql).bind(sid).fetch_all(pool).await?;
     Ok(rows.iter().map(|r| r.get::<String, _>(0)).collect())
 }
 
 // ── Session detail ──────────────────────────────────────────────────
 
-async fn get_session_impl(pool: &SqlitePool, session_id: &str, now: f64) -> Result<Option<Value>, sqlx::Error> {
+async fn get_session_impl(
+    pool: &SqlitePool,
+    session_id: &str,
+    now: f64,
+) -> Result<Option<Value>, sqlx::Error> {
     let session_row = sqlx::query(
         "SELECT id, started_at, ended_at, is_active, mob_tracking_mode \
          FROM tracking_sessions WHERE id = ?",
@@ -502,7 +516,8 @@ async fn get_session_impl(pool: &SqlitePool, session_id: &str, now: f64) -> Resu
     }
 
     let merged_loot = loot_agg(pool, session_id, "l.deactivated_at IS NULL").await?;
-    let merged_deactivated_loot = loot_agg(pool, session_id, "l.deactivated_at IS NOT NULL").await?;
+    let merged_deactivated_loot =
+        loot_agg(pool, session_id, "l.deactivated_at IS NOT NULL").await?;
 
     let mob_breakdown_rows = sqlx::query(
         "SELECT mob_name, original_mob_name, COUNT(*) FROM kills \
@@ -523,7 +538,8 @@ async fn get_session_impl(pool: &SqlitePool, session_id: &str, now: f64) -> Resu
         })
         .collect();
 
-    let total_cost = weapon_cost + session_heal_cost + total_enhancer_cost + armour_cost + dangling_cost;
+    let total_cost =
+        weapon_cost + session_heal_cost + total_enhancer_cost + armour_cost + dangling_cost;
 
     let detail_skill_tt = as_f64(
         &scalar(
@@ -724,7 +740,11 @@ fn stable_sort_desc_by_f64(entries: &mut [(f64, Value)]) {
 
 // ── Tag suggestions ─────────────────────────────────────────────────
 
-async fn tag_suggestions_impl(pool: &SqlitePool, q: &str, limit: i64) -> Result<Vec<String>, sqlx::Error> {
+async fn tag_suggestions_impl(
+    pool: &SqlitePool,
+    q: &str,
+    limit: i64,
+) -> Result<Vec<String>, sqlx::Error> {
     let query = q.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -798,7 +818,11 @@ async fn validate_session_exists(pool: &SqlitePool, session_id: &str) -> Result<
     Ok(())
 }
 
-async fn build_mob_edit_response(pool: &SqlitePool, session_id: &str, mob_name: &str) -> Result<Value, EditError> {
+async fn build_mob_edit_response(
+    pool: &SqlitePool,
+    session_id: &str,
+    mob_name: &str,
+) -> Result<Value, EditError> {
     let row = sqlx::query("SELECT COUNT(*) FROM kills WHERE session_id = ? AND mob_name = ?")
         .bind(session_id)
         .bind(mob_name)
@@ -818,10 +842,11 @@ async fn build_loot_item_edit_response(
     affected_rows: i64,
     total_value_delta: f64,
 ) -> Result<Value, EditError> {
-    let row = sqlx::query("SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?")
-        .bind(session_id)
-        .fetch_one(pool)
-        .await?;
+    let row =
+        sqlx::query("SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(pool)
+            .await?;
     let session_returns = as_f64(&sql_number(&row, 0));
     Ok(json!({
         "sessionId": session_id,
@@ -842,7 +867,9 @@ async fn rename_session_mob_impl(
     let from_mob = from_mob.trim();
     let to_mob = to_mob.trim();
     if from_mob.is_empty() || to_mob.is_empty() {
-        return Err(EditError::BadRequest("Mob names cannot be blank".to_string()));
+        return Err(EditError::BadRequest(
+            "Mob names cannot be blank".to_string(),
+        ));
     }
     if from_mob == to_mob {
         return Err(EditError::Conflict(
@@ -890,11 +917,17 @@ async fn rename_session_mob_impl(
     build_mob_edit_response(pool, session_id, to_mob).await
 }
 
-async fn restore_session_mob_impl(pool: &SqlitePool, session_id: &str, current_mob: &str) -> Result<Value, EditError> {
+async fn restore_session_mob_impl(
+    pool: &SqlitePool,
+    session_id: &str,
+    current_mob: &str,
+) -> Result<Value, EditError> {
     validate_session_exists(pool, session_id).await?;
     let current_mob = current_mob.trim();
     if current_mob.is_empty() {
-        return Err(EditError::BadRequest("Mob name cannot be blank".to_string()));
+        return Err(EditError::BadRequest(
+            "Mob name cannot be blank".to_string(),
+        ));
     }
 
     let mut tx = pool.begin().await?;
@@ -942,11 +975,18 @@ async fn restore_session_mob_impl(pool: &SqlitePool, session_id: &str, current_m
     build_mob_edit_response(pool, session_id, &restored_to).await
 }
 
-async fn bulk_flip_loot_item(pool: &SqlitePool, session_id: &str, item_name: &str, to_state: &str) -> Result<Value, EditError> {
+async fn bulk_flip_loot_item(
+    pool: &SqlitePool,
+    session_id: &str,
+    item_name: &str,
+    to_state: &str,
+) -> Result<Value, EditError> {
     validate_session_exists(pool, session_id).await?;
     let item_name = item_name.trim();
     if item_name.is_empty() {
-        return Err(EditError::BadRequest("Item name cannot be blank".to_string()));
+        return Err(EditError::BadRequest(
+            "Item name cannot be blank".to_string(),
+        ));
     }
 
     let (opposite_clause, new_flag_sql, delta_sign) = match to_state {
@@ -1022,10 +1062,21 @@ async fn bulk_flip_loot_item(pool: &SqlitePool, session_id: &str, item_name: &st
     eo_services::daily_rollup::refresh_session_days(&mut tx, session_id).await?;
     tx.commit().await?;
 
-    build_loot_item_edit_response(pool, session_id, item_name, flipped.len() as i64, delta_sign * total_delta).await
+    build_loot_item_edit_response(
+        pool,
+        session_id,
+        item_name,
+        flipped.len() as i64,
+        delta_sign * total_delta,
+    )
+    .await
 }
 
-async fn set_armour_cost_impl(pool: &SqlitePool, session_id: &str, cost: f64) -> Result<Value, EditError> {
+async fn set_armour_cost_impl(
+    pool: &SqlitePool,
+    session_id: &str,
+    cost: f64,
+) -> Result<Value, EditError> {
     let row = sqlx::query("SELECT started_at FROM tracking_sessions WHERE id = ?")
         .bind(session_id)
         .fetch_optional(pool)
@@ -1035,12 +1086,18 @@ async fn set_armour_cost_impl(pool: &SqlitePool, session_id: &str, cost: f64) ->
     };
     let started_at: f64 = row.try_get(0)?;
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE tracking_sessions SET armour_cost = COALESCE(armour_cost, 0) + ? WHERE id = ?")
-        .bind(cost)
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    eo_services::daily_rollup::refresh_days(&mut tx, [eo_services::daily_rollup::epoch_day(started_at)]).await?;
+    sqlx::query(
+        "UPDATE tracking_sessions SET armour_cost = COALESCE(armour_cost, 0) + ? WHERE id = ?",
+    )
+    .bind(cost)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?;
+    eo_services::daily_rollup::refresh_days(
+        &mut tx,
+        [eo_services::daily_rollup::epoch_day(started_at)],
+    )
+    .await?;
     eo_services::session_summary::write_session_summary(&mut tx, session_id).await?;
     tx.commit().await?;
     Ok(json!({
@@ -1054,13 +1111,18 @@ async fn set_armour_cost_impl(pool: &SqlitePool, session_id: &str, cost: f64) ->
 /// `_validate_hotbar`: hotbar attribution is workable while at least one
 /// slot is bound (a non-null library id).
 fn validate_hotbar(config: &AppConfig) -> (bool, Option<String>) {
-    let any_bound = config.hotbar.values().any(|library_id| !library_id.is_null());
+    let any_bound = config
+        .hotbar
+        .values()
+        .any(|library_id| !library_id.is_null());
     if any_bound {
         (true, None)
     } else {
         (
             false,
-            Some("Bind at least one hotbar slot in the Equipment page before tracking.".to_string()),
+            Some(
+                "Bind at least one hotbar slot in the Equipment page before tracking.".to_string(),
+            ),
         )
     }
 }
@@ -1072,7 +1134,10 @@ fn configured_manual_label(config: &AppConfig) -> (Value, Value) {
         if tag.is_empty() {
             return (Value::Null, Value::Null);
         }
-        return (Value::String(tag.to_string()), Value::String("tag".to_string()));
+        return (
+            Value::String(tag.to_string()),
+            Value::String("tag".to_string()),
+        );
     }
     let species = config.manual_mob_species.trim();
     let maturity = config.manual_mob_maturity.trim();
@@ -1307,11 +1372,6 @@ pub struct SessionDetail {
     pub session_id: String,
     pub summary: SessionSummary,
     pub mob_entry_mode: String,
-    // The live wire always emits this array (empty when there are no
-    // events); `default` lets the e2e session-detail fixture, which omits
-    // it, still deserialise into this DTO. Serialisation is unaffected, so
-    // the byte-parity pin holds.
-    #[serde(default)]
     pub notable_events: Vec<NotableEvent>,
     pub loot_breakdown: Vec<LootEntry>,
     pub deactivated_loot_breakdown: Vec<LootEntry>,
@@ -1580,21 +1640,27 @@ impl Api {
     }
 
     /// One session's full detail; an absent session is a not-found.
-    pub async fn tracking_session_detail(&self, session_id: String) -> Result<SessionDetail, ApiError> {
+    pub async fn tracking_session_detail(
+        &self,
+        session_id: String,
+    ) -> Result<SessionDetail, ApiError> {
         let now = naive_to_epoch(self.clock.now());
         match get_session_impl(self.read(), &session_id, now)
             .await
             .map_err(ApiError::internal("tracking session detail"))?
         {
-            Some(value) => {
-                serde_json::from_value(value).map_err(ApiError::internal("tracking session detail shaping"))
-            }
+            Some(value) => serde_json::from_value(value)
+                .map_err(ApiError::internal("tracking session detail shaping")),
             None => Err(ApiError::not_found("Session not found")),
         }
     }
 
     /// Free-text tag autocomplete over species-less kills.
-    pub async fn tracking_tag_suggestions(&self, q: String, limit: Option<i64>) -> Result<Vec<String>, ApiError> {
+    pub async fn tracking_tag_suggestions(
+        &self,
+        q: String,
+        limit: Option<i64>,
+    ) -> Result<Vec<String>, ApiError> {
         tag_suggestions_impl(self.read(), &q, limit.unwrap_or(10))
             .await
             .map_err(ApiError::internal("tracking tag suggestions"))
@@ -1629,15 +1695,20 @@ impl Api {
         lookup
             .search_mob_names(query, bounded)
             .into_iter()
-            .map(|value| serde_json::from_value(value).map_err(ApiError::internal("manual mob suggestions shaping")))
+            .map(|value| {
+                serde_json::from_value(value)
+                    .map_err(ApiError::internal("manual mob suggestions shaping"))
+            })
             .collect()
     }
 
     /// The consolidated dashboard hydration snapshot.
     pub async fn tracking_snapshot(&self) -> Result<TrackingSnapshot, ApiError> {
-        let config =
-            load_config_readonly(&self.data_dir).map_err(ApiError::internal("tracking snapshot config"))?;
-        let value = self.build_snapshot_value(&config, self.hotbar.is_running()).await?;
+        let config = load_config_readonly(&self.data_dir)
+            .map_err(ApiError::internal("tracking snapshot config"))?;
+        let value = self
+            .build_snapshot_value(&config, self.hotbar.is_running())
+            .await?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking snapshot shaping"))
     }
 
@@ -1665,8 +1736,8 @@ impl Api {
         if self.tracker.is_tracking() {
             return Err(ApiError::conflict("Session already active"));
         }
-        let config =
-            load_config_readonly(&self.data_dir).map_err(ApiError::internal("tracking start config"))?;
+        let config = load_config_readonly(&self.data_dir)
+            .map_err(ApiError::internal("tracking start config"))?;
         let (ready, message) = if config.hotbar_hooks_enabled {
             validate_hotbar(&config)
         } else {
@@ -1680,12 +1751,17 @@ impl Api {
                 .map_err(ApiError::internal("tracking start validate"))?;
             (
                 ready,
-                reason.or_else(|| Some("Configure the trifecta in the Equipment page before tracking.".to_string())),
+                reason.or_else(|| {
+                    Some(
+                        "Configure the trifecta in the Equipment page before tracking.".to_string(),
+                    )
+                }),
             )
         };
         if !ready {
-            let detail_message = message
-                .unwrap_or_else(|| "Configure the trifecta in the Equipment page before tracking.".to_string());
+            let detail_message = message.unwrap_or_else(|| {
+                "Configure the trifecta in the Equipment page before tracking.".to_string()
+            });
             return Err(ApiError::bad_request(detail_message));
         }
         let session = self
@@ -1704,7 +1780,11 @@ impl Api {
         if !self.tracker.is_tracking() {
             return Err(ApiError::conflict("No active session"));
         }
-        match self.tracker.stop_session().map_err(ApiError::internal("tracking stop"))? {
+        match self
+            .tracker
+            .stop_session()
+            .map_err(ApiError::internal("tracking stop"))?
+        {
             Some(session) => Ok(StopResult {
                 session_id: session.id.clone(),
                 started_at: naive_isoformat(session.start_time),
@@ -1725,7 +1805,9 @@ impl Api {
         };
         let released = if self.tracker.is_tracking() && self.tracker.is_session_tag_mode() {
             let released = self.tracker.release_current_mob();
-            guard.update(&clear_tag()).map_err(ApiError::internal("release mob"))?;
+            guard
+                .update(&clear_tag())
+                .map_err(ApiError::internal("release mob"))?;
             released.map(Value::from).unwrap_or(Value::Null)
         } else if !self.tracker.is_tracking() {
             if guard.get().mob_tracking_mode == "tag" {
@@ -1735,18 +1817,24 @@ impl Api {
                 } else {
                     Value::String(trimmed)
                 };
-                guard.update(&clear_tag()).map_err(ApiError::internal("release mob"))?;
+                guard
+                    .update(&clear_tag())
+                    .map_err(ApiError::internal("release mob"))?;
                 released
             } else {
                 let species = guard.get().manual_mob_species.trim().to_string();
                 let maturity = guard.get().manual_mob_maturity.trim().to_string();
                 let released = mob_display(&species, &maturity);
-                guard.update(&clear_manual_mob()).map_err(ApiError::internal("release mob"))?;
+                guard
+                    .update(&clear_manual_mob())
+                    .map_err(ApiError::internal("release mob"))?;
                 released
             }
         } else {
             let released = self.tracker.release_current_mob();
-            guard.update(&clear_manual_mob()).map_err(ApiError::internal("release mob"))?;
+            guard
+                .update(&clear_manual_mob())
+                .map_err(ApiError::internal("release mob"))?;
             released.map(Value::from).unwrap_or(Value::Null)
         };
         Ok(ReleaseResult {
@@ -1763,7 +1851,9 @@ impl Api {
     ) -> Result<ManualMobLockResult, ApiError> {
         let maturity = maturity.unwrap_or_default();
         let Ok(mut guard) = self.config_service.lock() else {
-            return Err(ApiError::invalid_state("manual mob lock: poisoned config lock"));
+            return Err(ApiError::invalid_state(
+                "manual mob lock: poisoned config lock",
+            ));
         };
         let idle_tag_mode = !self.tracker.is_tracking() && guard.get().mob_tracking_mode == "tag";
         if (self.tracker.is_tracking() && self.tracker.is_session_tag_mode()) || idle_tag_mode {
@@ -1782,12 +1872,21 @@ impl Api {
         let mut updates = Map::new();
         updates.insert("manual_mob_species".into(), json!(species));
         updates.insert("manual_mob_maturity".into(), json!(maturity));
-        guard.update(&updates).map_err(ApiError::internal("manual mob lock"))?;
-        if self.tracker.is_tracking() && self.tracker.set_manual_mob(&display, species, maturity).is_err() {
+        guard
+            .update(&updates)
+            .map_err(ApiError::internal("manual mob lock"))?;
+        if self.tracker.is_tracking()
+            && self
+                .tracker
+                .set_manual_mob(&display, species, maturity)
+                .is_err()
+        {
             // The gate cleared an active non-tag session; the only reachable
             // error is the live config having flipped to tag mode since the
             // session started. Mirror the reference's post-write 500.
-            return Err(ApiError::invalid_state("manual mob lock: session flipped to tag mode"));
+            return Err(ApiError::invalid_state(
+                "manual mob lock: session flipped to tag mode",
+            ));
         }
         Ok(ManualMobLockResult {
             mob_name: display,
@@ -1815,11 +1914,15 @@ impl Api {
         }
         let mut updates = Map::new();
         updates.insert("mob_tracking_tag".into(), json!(tag));
-        guard.update(&updates).map_err(ApiError::internal("tag lock"))?;
+        guard
+            .update(&updates)
+            .map_err(ApiError::internal("tag lock"))?;
         if self.tracker.is_tracking() {
             let _ = self.tracker.set_manual_tag(tag);
         }
-        Ok(TagLockResult { tag: tag.to_string() })
+        Ok(TagLockResult {
+            tag: tag.to_string(),
+        })
     }
 
     /// Rename a mob across an ended session.
@@ -1829,9 +1932,10 @@ impl Api {
         from_mob_name: String,
         to_mob_name: String,
     ) -> Result<MobEditResult, ApiError> {
-        let value = rename_session_mob_impl(self.write(), &session_id, &from_mob_name, &to_mob_name)
-            .await
-            .map_err(edit_error("tracking rename mob"))?;
+        let value =
+            rename_session_mob_impl(self.write(), &session_id, &from_mob_name, &to_mob_name)
+                .await
+                .map_err(edit_error("tracking rename mob"))?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking rename mob shaping"))
     }
 
@@ -1856,7 +1960,8 @@ impl Api {
         let value = bulk_flip_loot_item(self.write(), &session_id, &item_name, "active")
             .await
             .map_err(edit_error("tracking loot item activate"))?;
-        serde_json::from_value(value).map_err(ApiError::internal("tracking loot item activate shaping"))
+        serde_json::from_value(value)
+            .map_err(ApiError::internal("tracking loot item activate shaping"))
     }
 
     /// Deactivate a loot line.
@@ -1868,12 +1973,17 @@ impl Api {
         let value = bulk_flip_loot_item(self.write(), &session_id, &item_name, "deactivated")
             .await
             .map_err(edit_error("tracking loot item deactivate"))?;
-        serde_json::from_value(value).map_err(ApiError::internal("tracking loot item deactivate shaping"))
+        serde_json::from_value(value)
+            .map_err(ApiError::internal("tracking loot item deactivate shaping"))
     }
 
     /// Add an armour cost to a session (no active-session guard; 404 only
     /// when absent). Echoes the submitted value.
-    pub async fn tracking_armour_cost(&self, session_id: String, cost: f64) -> Result<ArmourCostResult, ApiError> {
+    pub async fn tracking_armour_cost(
+        &self,
+        session_id: String,
+        cost: f64,
+    ) -> Result<ArmourCostResult, ApiError> {
         let value = set_armour_cost_impl(self.write(), &session_id, cost)
             .await
             .map_err(edit_error("tracking armour cost"))?;
@@ -1883,13 +1993,21 @@ impl Api {
     /// Accept or decline the curated quest-link suggestion. 404 for an absent
     /// session, 400 for an unknown action; accept with no linkable suggestion
     /// is a 409.
-    pub async fn tracking_quest_link(&self, session_id: String, action: String) -> Result<QuestLinkDecision, ApiError> {
+    pub async fn tracking_quest_link(
+        &self,
+        session_id: String,
+        action: String,
+    ) -> Result<QuestLinkDecision, ApiError> {
         if !self.tracking_session_exists(&session_id).await? {
             return Err(ApiError::not_found("Session not found"));
         }
         let action = action.trim().to_lowercase();
         if action == "accept" {
-            return match self.quests.accept_session_link_suggestion(&session_id).await {
+            return match self
+                .quests
+                .accept_session_link_suggestion(&session_id)
+                .await
+            {
                 Ok(suggestion) => Ok(QuestLinkDecision {
                     session_id: session_id.clone(),
                     status: "linked".to_string(),
@@ -1918,7 +2036,9 @@ impl Api {
                 playlist_name: None,
             });
         }
-        Err(ApiError::bad_request("Action must be 'accept' or 'decline'"))
+        Err(ApiError::bad_request(
+            "Action must be 'accept' or 'decline'",
+        ))
     }
 
     /// The one-shot repair-cost OCR read, gated on `repair_ocr_enabled`
@@ -1926,8 +2046,8 @@ impl Api {
     /// ignores it too); it stays in the signature for the route mapping.
     pub fn tracking_repair_scan(&self, session_id: String) -> Result<RepairScanResult, ApiError> {
         let _ = session_id;
-        let config =
-            load_config_readonly(&self.data_dir).map_err(ApiError::internal("repair scan config"))?;
+        let config = load_config_readonly(&self.data_dir)
+            .map_err(ApiError::internal("repair scan config"))?;
         if !config.repair_ocr_enabled {
             return Err(ApiError::bad_request("Repair OCR is disabled"));
         }
@@ -1949,7 +2069,11 @@ impl Api {
 
     /// Assemble the projected snapshot value from the tracker readout, the
     /// resolved config, and the hotbar listener's running state.
-    async fn build_snapshot_value(&self, config: &AppConfig, hotbar_active: bool) -> Result<Value, ApiError> {
+    async fn build_snapshot_value(
+        &self,
+        config: &AppConfig,
+        hotbar_active: bool,
+    ) -> Result<Value, ApiError> {
         let weapon_attribution = if config.hotbar_hooks_enabled {
             "hotbar"
         } else {
@@ -1962,7 +2086,10 @@ impl Api {
         } else {
             Value::Null
         };
-        let readout = self.tracker.snapshot().map_err(ApiError::internal("snapshot readout"))?;
+        let readout = self
+            .tracker
+            .snapshot()
+            .map_err(ApiError::internal("snapshot readout"))?;
         let current_tool = match &readout.current_tool {
             Some(tool) => Value::String(tool.clone()),
             None => Value::Null,
@@ -2079,9 +2206,18 @@ impl Api {
             },
         );
         summary.insert("presets".into(), Value::Array(presets));
-        summary.insert("smallWeapon".into(), self.equipment_name(small, "weapon").await?);
-        summary.insert("bigWeapon".into(), self.equipment_name(big, "weapon").await?);
-        summary.insert("healTool".into(), self.equipment_name(heal, "healing").await?);
+        summary.insert(
+            "smallWeapon".into(),
+            self.equipment_name(small, "weapon").await?,
+        );
+        summary.insert(
+            "bigWeapon".into(),
+            self.equipment_name(big, "weapon").await?,
+        );
+        summary.insert(
+            "healTool".into(),
+            self.equipment_name(heal, "healing").await?,
+        );
         Ok(Value::Object(summary))
     }
 

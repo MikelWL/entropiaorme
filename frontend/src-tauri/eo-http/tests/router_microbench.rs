@@ -40,7 +40,6 @@ use eo_services::event_bus::EventBus;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
 use eo_services::tracker::{HuntTracker, Providers};
-use serde_json::Value;
 
 const WARMUPS: usize = 3;
 const SAMPLES: usize = 30;
@@ -231,39 +230,11 @@ fn in_process_router_microbench() {
             .with_hotbar_listener(hotbar),
     );
 
-    // The replayed session's id, for the two session-scoped endpoints.
-    let session_id = runtime.block_on(async {
-        let response =
-            dispatch_in_process(state.clone(), "GET", "/api/tracking/sessions", &[], vec![])
-                .await
-                .expect("sessions dispatch");
-        assert_eq!(response.status, 200, "sessions list");
-        let sessions: Value = serde_json::from_slice(&response.body).expect("sessions json");
-        sessions
-            .as_array()
-            .and_then(|list| list.first())
-            .and_then(|session| session["id"].as_str())
-            .expect("a replayed session id")
-            .to_string()
-    });
-
-    // The baseline's endpoint set and order: health first, then the curated
-    // hydration GET surface, with the session-scoped templates filled. (The
-    // equipment, quests, and scan reads measured here before their migration
-    // now live on the typed facade; their matched after-leg is eo-api's
-    // micro-benchmark.)
-    let detail = format!("/api/tracking/session/{session_id}");
-    let suggestion = format!("/api/tracking/session/{session_id}/quest-link-suggestion");
-    let endpoints: [(&str, &str); 5] = [
-        ("GET_health", "/api/health"),
-        ("GET_tracking_snapshot", "/api/tracking/snapshot"),
-        ("GET_tracking_sessions", "/api/tracking/sessions"),
-        ("GET_tracking_session_detail", detail.as_str()),
-        (
-            "GET_tracking_session_quest_link_suggestion",
-            suggestion.as_str(),
-        ),
-    ];
+    // The live tracking reads measured here before their migration now live on
+    // the typed-command facade (their matched after-leg is eo-api's
+    // micro-benchmark), leaving the framework health check as the sole HTTP-arm
+    // endpoint this harness still benchmarks over the replayed state.
+    let endpoints: [(&str, &str); 1] = [("GET_health", "/api/health")];
 
     let rows: Vec<(String, f64, f64, f64, f64)> = runtime.block_on(async {
         let mut rows = Vec::with_capacity(endpoints.len());
