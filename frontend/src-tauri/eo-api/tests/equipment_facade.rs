@@ -60,6 +60,7 @@ async fn api_over(dir: &Path) -> (Api, Db) {
             handles.skill_scan,
             handles.spacebar,
             handles.repair_ocr,
+            handles.quests.clone(),
             None,
         ),
         db,

@@ -105,7 +105,7 @@ impl QuestService {
             }
         }
 
-        let session_id = self.lock_session().clone();
+        let session_id = self.current_session();
         self.record_session_completion(session_id.as_deref(), quest_id, Some(now))
             .await?;
         self.get_quest(quest_id).await
@@ -181,7 +181,7 @@ impl QuestService {
     ) {
         // The original gates on truthiness, so an empty session id
         // skips the write exactly like an absent one.
-        let Some(session_id) = self.lock_session().clone().filter(|id| !id.is_empty()) else {
+        let Some(session_id) = self.current_session().filter(|id| !id.is_empty()) else {
             return;
         };
         let now = naive_to_epoch(self.clock.now());

@@ -45,6 +45,7 @@ async fn dev_api(dir: &Path) -> (Api, std::path::PathBuf) {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.quests.clone(),
         None,
     );
     (api, data_dir)

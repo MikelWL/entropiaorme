@@ -85,11 +85,12 @@ pub struct Api {
     /// The codex service (species / ranks / recommendations / claims),
     /// built over the facade's shared db, catalogue, and clock.
     codex: CodexService,
-    /// The quest service (quest + playlist CRUD, lifecycle, analytics),
-    /// built over the facade's shared db and clock. This is the CRUD
-    /// instance (unsubscribed); the bus-driven auto-start service is a
-    /// separate producer concern.
-    quests: QuestService,
+    /// The composed quest service (quest + playlist CRUD, lifecycle,
+    /// analytics): the same instance whose owning task carries the
+    /// bus-fed flows (session tracking, mission auto-start, reward
+    /// suppression), so the command surface and the producer spine
+    /// share one service.
+    quests: Arc<QuestService>,
     /// The analytics service (Overview / Activity aggregates, ledger,
     /// presets, inventory), built over the facade's shared db and clock.
     analytics: AnalyticsService,
@@ -119,10 +120,10 @@ impl Api {
         skill_scan: Arc<SkillScanManual>,
         spacebar: Arc<SpacebarCaptureListener>,
         repair_ocr: Arc<RepairOcrService>,
+        quests: Arc<QuestService>,
         demo_db_path: Option<PathBuf>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
-        let quests = quests::build_quests_service(db.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
         Self {
             db,
