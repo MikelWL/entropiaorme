@@ -129,14 +129,13 @@ async fn dispatch_event(
         BusEvent::SessionStopped(_) => {
             let _ = session.send(None);
         }
-        BusEvent::MissionReceived(payload) => {
-            if !payload.mission_name.is_empty() {
-                // A failure surfaces nowhere, exactly as the original's
-                // bus contains a handler exception.
-                let _ = service
-                    .start_quest_from_mission(&payload.mission_name)
-                    .await;
-            }
+        // A nameless mission is ignored; a start failure surfaces
+        // nowhere, exactly as the original's bus contains a handler
+        // exception.
+        BusEvent::MissionReceived(payload) if !payload.mission_name.is_empty() => {
+            let _ = service
+                .start_quest_from_mission(&payload.mission_name)
+                .await;
         }
         _ => {}
     }
