@@ -1112,9 +1112,15 @@ async fn set_armour_cost_impl(
 /// first, and repairs the daily rollups for exactly the calendar days the
 /// session touched (captured before the deletes empty those tables).
 async fn delete_session_impl(pool: &SqlitePool, session_id: &str) -> Result<(), EditError> {
+    let mut tx = pool.begin().await?;
+
+    // Read the existence-and-active guard inside the transaction, so the check
+    // and the cascade are one atomic unit (a separate pool acquisition for the
+    // check could interleave with another write between the read and the
+    // delete).
     let row = sqlx::query("SELECT is_active FROM tracking_sessions WHERE id = ?")
         .bind(session_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await?;
     let Some(row) = row else {
         return Err(EditError::NotFound("Session not found".to_string()));
@@ -1124,8 +1130,6 @@ async fn delete_session_impl(pool: &SqlitePool, session_id: &str) -> Result<(), 
             "Cannot delete an active session".to_string(),
         ));
     }
-
-    let mut tx = pool.begin().await?;
 
     // Capture the days this session touches before its rows are deleted, so
     // the rollup repair below recomputes exactly those days.

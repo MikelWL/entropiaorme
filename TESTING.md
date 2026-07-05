@@ -277,8 +277,8 @@ cargo clippy --workspace --all-targets -- -D warnings   # lints, warnings promot
 cargo build                                             # compile check, all members (debug profile)
 cargo nextest run -p eo-wire -p eo-services -p eo-api   # backend members alone, no Tauri toolchain needed
 cargo test --workspace --doc                            # doctests (nextest does not run them)
-cargo llvm-cov nextest --branch -p eo-wire -p eo-services  # branch coverage (nightly toolchain)
-cargo mutants -p eo-wire -p eo-services --in-place         # mutation testing (nightly CI cadence)
+cargo llvm-cov nextest --branch -p eo-wire -p eo-services  # branch coverage (eo-api is nextest-only here, not measured)
+cargo mutants -p eo-wire -p eo-services --in-place         # mutation testing (eo-wire + eo-services only, matching CI)
 cargo run -p xtask -- mutation-floors --outcomes mutants.out/outcomes.json  # the floor gate over the campaign
 cargo bench -p eo-services                              # criterion micro-benchmarks (hot-path figures)
 cargo audit -D warnings                                 # RustSec advisories against Cargo.lock

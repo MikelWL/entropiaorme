@@ -198,22 +198,22 @@ The status payload also reports the captured page count, the expected page
 count, per-page processing progress (`done`/`total`), whether the engine is
 available, whether the game window is present, and any error string.
 
-### Endpoints
+### Commands
 
-The routes drive the service verbs under the `/api/scan/skills` prefix:
+The typed scan commands drive the service verbs:
 
-| Endpoint | Verb | Effect |
+| Command | Verb | Effect |
 | --- | --- | --- |
-| `POST /api/scan/skills/start` | `start` | Begin a scan; resolves the region and the (optional) page count |
-| `POST /api/scan/skills/capture` | `capture_current_page` | Grab the current page; stores its PNG (or records a failed grab) |
-| `POST /api/scan/skills/undo` | `undo_last_capture` | Pop the most recent capture, stepping the user back one page |
-| `POST /api/scan/skills/process` | `process` | Kick off recognition on a background worker |
-| `POST /api/scan/skills/accept` | `accept` | Persist the held result via the completion callback |
-| `POST /api/scan/skills/reject` | `reject` | Discard the held result |
-| `POST /api/scan/skills/cancel` | `cancel` | Abandon the active scan and reset |
-| `GET /api/scan/skills/status` | `get_status` | Read the current status |
-| `GET /api/scan/skills/pending` | `get_pending_result` | Read the held result awaiting review |
-| `GET /api/scan/skills/capture/{page}` | `get_capture_png` | Read a captured page's PNG for preview |
+| `scan_start` | `start` | Begin a scan; resolves the region and the (optional) page count |
+| `scan_capture` | `capture_current_page` | Grab the current page; stores its PNG (or records a failed grab) |
+| `scan_undo` | `undo_last_capture` | Pop the most recent capture, stepping the user back one page |
+| `scan_process` | `process` | Kick off recognition on a background worker |
+| `scan_accept` | `accept` | Persist the held result via the completion callback |
+| `scan_reject` | `reject` | Discard the held result |
+| `scan_cancel` | `cancel` | Abandon the active scan and reset |
+| `scan_status` | `get_status` | Read the current status |
+| `scan_pending` | `get_pending_result` | Read the held result awaiting review |
+| `capture_png` | `get_capture_png` | Read a captured page's PNG for preview (raw bytes, base64 at the shell) |
 
 The default page count is 12; a scan may request between 1 and 30 pages, and a
 request outside that range is refused. The verbs guard their preconditions:

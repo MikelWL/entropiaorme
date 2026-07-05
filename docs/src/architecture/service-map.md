@@ -63,16 +63,15 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 
 | Area | Operations |
 |---|---|
-| Health | health check |
 | Quests | quest list and create; `mobs`; `analytics`; playlists list/create, playlist analytics, playlist update/delete; quest read/update/delete; quest `start`, `complete`, `cancel` |
 | Codex | `species`; species `ranks`; `recommend`; `calibrate`; `claim`; meta `claim`; meta `attributes` |
 | Analytics | `overview`; `activity`; the ledger (list, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
 | Tracking (reads) | `sessions`; session read; `tag-suggestions`; `snapshot` |
 | Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `tag-lock` |
-| Tracking (session edits) | session `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `quest-link`, `repair-scan`; `quest-link-suggestion` |
+| Tracking (session edits) | session `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `quest-link`, `repair-scan`, session delete; `quest-link-suggestion` |
 | Scan | skills `status`; `start`, `capture`, `cancel`, `undo`, `process`, `accept`, `reject`; skills capture read by page; skills `pending`; `spacebar-capture` |
-| Settings | settings read/patch; `reset`; overlay-position read/update |
-| Character | `calibration`, `stats`, `skills`, `professions`, `prospect-options`, `prospect`, `profession-optimizer`, `profession-path-optimizer`, `hp-optimizer`, `codex` |
+| Settings | settings read/patch; overlay-position read/update |
+| Character | `calibration`, `stats`, `skills`, `professions`, `prospect-options`, `prospect`, `profession-optimizer`, `profession-path-optimizer`, `hp-optimizer` |
 | Demo (guide mode) | the guide-mode reads: analytics `overview`, `activity`, `ledger`, ledger `presets`, `inventory`; tracking `sessions`, session read, `snapshot` |
 
 The settings patch and reset writes signal the live producers (restarting the chat-log watcher on a path change, toggling the hotbar hooks, and reloading the tracker configuration) so a settings change reconciles without a restart. The demo namespace is a parallel set of typed commands sharing the live commands' DTO types, backed by a lazily-built demo state over a writable clone of the bundled demo database. Domain events do not travel as commands; they reach the frontend over the Tauri event bridge described in the [System overview](overview.md). Beyond the areas above sit the developer-mode-gated dev-tools operations (the metrics snapshot and the crash-reporting toggle); these are gated on developer mode and decline when it is disabled, so they sit off the equivalence-covered surface.

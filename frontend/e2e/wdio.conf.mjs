@@ -25,11 +25,9 @@ const FRONTEND_DIR = dirname(E2E_DIR);
 
 // Ports: kept off the project anchor pair so a stray app/dev server does not
 // collide with the suite. FRONTEND_PORT is the shell's dev origin (the suite
-// navigates the webview here). BACKEND_PORT is nominal only: the frontend bakes
-// it into the never-dialled API origin so tauriFetch has a valid URL to parse
-// for its path; every call dispatches in-process over invoke.
+// navigates the webview here); every backend call dispatches in-process over
+// invoke, so there is no backend port.
 const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT || '5173';
-const BACKEND_PORT = process.env.E2E_BACKEND_PORT || '8424';
 const TAURI_DRIVER_PORT = 4444;
 
 // The app's own origin. The e2e shell embeds the frontend (frontendDist) and
@@ -158,7 +156,6 @@ export const config = {
 			env: {
 				...process.env,
 				ENTROPIAORME_FRONTEND_PORT: FRONTEND_PORT,
-				ENTROPIAORME_BACKEND_PORT: BACKEND_PORT,
 				// Settle the charts' JS-driven tweens instantly so the visual
 				// baselines capture each chart's end-state, not a mid-rescale frame.
 				E2E_FREEZE_TWEENS: '1',
