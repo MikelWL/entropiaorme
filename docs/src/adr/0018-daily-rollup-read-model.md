@@ -32,5 +32,5 @@ See [ADR-0007](0007-sqlite-wal.md) for the WAL storage base, [ADR-0010](0010-loo
 
 - `frontend/src-tauri/eo-services/migrations/0004_daily_rollups.sql`
 - `frontend/src-tauri/eo-services/src/daily_rollup.rs`
-- `frontend/src-tauri/eo-http/src/analytics_routes.rs`
-- `frontend/src-tauri/eo-http/tests/perf_fixture_bench.rs`
+- `frontend/src-tauri/eo-services/src/analytics.rs` (the `AnalyticsService` that reads the Overview from the rollup) and `frontend/src-tauri/eo-api/src/analytics.rs` (the typed-command surface over it)
+- the rollup fixture benchmark that measured the read speed-up rode the in-process HTTP router and was retired with it (see [ADR-0019](0019-typed-command-facade.md)); the projection's standing correctness proof, the rebuild-and-verify path, lives on in `frontend/src-tauri/eo-services/src/daily_rollup.rs`

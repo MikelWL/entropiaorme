@@ -179,8 +179,9 @@ concern.
 The user-driven flow is a small state machine over an owned scan state. It is
 implemented by `SkillScanManual`
 (`frontend/src-tauri/eo-services/src/skill_scan_manual.rs`) and exposed over
-the in-process loopback HTTP surface by the scan routes in
-`frontend/src-tauri/eo-http/src/native.rs`.
+typed Tauri commands by the scan and tracking facades
+(`frontend/src-tauri/eo-api/src/scan.rs` and
+`frontend/src-tauri/eo-api/src/tracking.rs`).
 
 ### Phases
 
