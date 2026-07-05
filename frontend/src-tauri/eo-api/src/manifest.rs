@@ -38,6 +38,11 @@ use crate::scan::{
     UndoResult,
 };
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
+use crate::tracking::{
+    ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
+    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionQuestLinkSuggestion,
+    StartResult, StopResult, TagLockResult, TrackingSession, TrackingSnapshot,
+};
 use crate::ApiError;
 
 /// One argument of a typed command.
@@ -590,6 +595,193 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(bool)),
             }],
             returns: Some(schema(schema_for!(SpacebarResult))),
+        },
+        CommandSpec {
+            name: "tracking_sessions",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<TrackingSession>))),
+        },
+        CommandSpec {
+            name: "tracking_session_detail",
+            args: vec![ArgSpec {
+                name: "session_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(SessionDetail))),
+        },
+        CommandSpec {
+            name: "tracking_tag_suggestions",
+            args: vec![
+                ArgSpec {
+                    name: "q",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "limit",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<String>))),
+        },
+        CommandSpec {
+            name: "tracking_manual_mob_suggestions",
+            args: vec![
+                ArgSpec {
+                    name: "q",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "limit",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<ManualMobSuggestion>))),
+        },
+        CommandSpec {
+            name: "tracking_snapshot",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(TrackingSnapshot))),
+        },
+        CommandSpec {
+            name: "tracking_quest_link_suggestion",
+            args: vec![ArgSpec {
+                name: "session_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(SessionQuestLinkSuggestion))),
+        },
+        CommandSpec {
+            name: "tracking_start",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(StartResult))),
+        },
+        CommandSpec {
+            name: "tracking_stop",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(StopResult))),
+        },
+        CommandSpec {
+            name: "tracking_release_mob",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(ReleaseResult))),
+        },
+        CommandSpec {
+            name: "tracking_manual_mob_lock",
+            args: vec![
+                ArgSpec {
+                    name: "species",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "maturity",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(ManualMobLockResult))),
+        },
+        CommandSpec {
+            name: "tracking_tag_lock",
+            args: vec![ArgSpec {
+                name: "tag",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(TagLockResult))),
+        },
+        CommandSpec {
+            name: "tracking_rename_mob",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "from_mob_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "to_mob_name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(MobEditResult))),
+        },
+        CommandSpec {
+            name: "tracking_restore_mob",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "current_mob_name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(MobEditResult))),
+        },
+        CommandSpec {
+            name: "tracking_loot_item_activate",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "item_name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(LootItemEditResult))),
+        },
+        CommandSpec {
+            name: "tracking_loot_item_deactivate",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "item_name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(LootItemEditResult))),
+        },
+        CommandSpec {
+            name: "tracking_armour_cost",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "cost",
+                    schema: schema(schema_for!(f64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(ArmourCostResult))),
+        },
+        CommandSpec {
+            name: "tracking_quest_link",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "action",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(QuestLinkDecision))),
+        },
+        CommandSpec {
+            name: "tracking_repair_scan",
+            args: vec![ArgSpec {
+                name: "session_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(RepairScanResult))),
         },
     ]
 }

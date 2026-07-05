@@ -78,6 +78,24 @@ pub fn analytics_fixture(key: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// The dashboard fixture value under `key` (`snapshot` / `sessionDetail` /
+/// `quests` / `playlists`), for the typed tracking read commands. The live
+/// tracking surface no longer flows through `api_request` (it migrated to
+/// typed IPC commands), so the e2e build serves the same committed
+/// dashboard fixture through those commands, keeping the visual baselines
+/// stable. The session-list fixture lives in the analytics fixture under
+/// `sessions` (`analytics_fixture`). Built once and cached.
+pub fn dashboard_fixture(key: &str) -> Value {
+    static DASHBOARD: OnceLock<Value> = OnceLock::new();
+    DASHBOARD
+        .get_or_init(|| {
+            serde_json::from_str(DASHBOARD_FIXTURE).expect("e2e dashboard fixture is valid JSON")
+        })
+        .get(key)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn json_response(body: String) -> ApiResponse {
     ApiResponse {
         status: 200,

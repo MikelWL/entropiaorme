@@ -37,6 +37,11 @@ use eo_api::scan::{
     UndoResult,
 };
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
+use eo_api::tracking::{
+    ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
+    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionQuestLinkSuggestion,
+    StartResult, StopResult, TagLockResult, TrackingSession, TrackingSnapshot,
+};
 use eo_api::ApiError;
 
 /// Holds the composed facade for the typed commands, published by
@@ -61,6 +66,17 @@ pub(crate) fn facade(app: &tauri::AppHandle) -> Result<Arc<eo_api::Api>, ApiErro
 fn e2e_analytics<T: serde::de::DeserializeOwned>(key: &str) -> Result<T, ApiError> {
     serde_json::from_value(crate::e2e_stub::analytics_fixture(key))
         .map_err(ApiError::internal("e2e analytics fixture"))
+}
+
+/// The dashboard fixture value under `key`, deserialised into the typed
+/// tracking read command's DTO: the live tracking snapshot and
+/// session-detail reads migrated to typed commands, so the e2e build
+/// serves the same committed dashboard fixture through them (the sessions
+/// list rides the analytics fixture; see [`e2e_analytics`]).
+#[cfg(feature = "e2e-stub")]
+fn e2e_dashboard<T: serde::de::DeserializeOwned>(key: &str) -> Result<T, ApiError> {
+    serde_json::from_value(crate::e2e_stub::dashboard_fixture(key))
+        .map_err(ApiError::internal("e2e dashboard fixture"))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -551,6 +567,182 @@ pub async fn scan_spacebar_capture(
     facade(&app)?.scan_set_spacebar_capture(enabled)
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_sessions(app: tauri::AppHandle) -> Result<Vec<TrackingSession>, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = &app;
+        e2e_analytics("sessions")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.tracking_sessions().await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_session_detail(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<SessionDetail, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = (&app, &session_id);
+        e2e_dashboard("sessionDetail")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.tracking_session_detail(session_id).await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_tag_suggestions(
+    app: tauri::AppHandle,
+    q: String,
+    limit: Option<i64>,
+) -> Result<Vec<String>, ApiError> {
+    facade(&app)?.tracking_tag_suggestions(q, limit).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_manual_mob_suggestions(
+    app: tauri::AppHandle,
+    q: String,
+    limit: Option<i64>,
+) -> Result<Vec<ManualMobSuggestion>, ApiError> {
+    facade(&app)?
+        .tracking_manual_mob_suggestions(q, limit)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_snapshot(app: tauri::AppHandle) -> Result<TrackingSnapshot, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = &app;
+        e2e_dashboard("snapshot")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.tracking_snapshot().await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_quest_link_suggestion(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<SessionQuestLinkSuggestion, ApiError> {
+    facade(&app)?.tracking_quest_link_suggestion(session_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_start(app: tauri::AppHandle) -> Result<StartResult, ApiError> {
+    facade(&app)?.tracking_start().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_stop(app: tauri::AppHandle) -> Result<StopResult, ApiError> {
+    facade(&app)?.tracking_stop().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_release_mob(app: tauri::AppHandle) -> Result<ReleaseResult, ApiError> {
+    facade(&app)?.tracking_release_mob().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_manual_mob_lock(
+    app: tauri::AppHandle,
+    species: String,
+    maturity: Option<String>,
+) -> Result<ManualMobLockResult, ApiError> {
+    facade(&app)?.tracking_manual_mob_lock(species, maturity).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_tag_lock(
+    app: tauri::AppHandle,
+    tag: String,
+) -> Result<TagLockResult, ApiError> {
+    facade(&app)?.tracking_tag_lock(tag).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_rename_mob(
+    app: tauri::AppHandle,
+    session_id: String,
+    from_mob_name: String,
+    to_mob_name: String,
+) -> Result<MobEditResult, ApiError> {
+    facade(&app)?
+        .tracking_rename_mob(session_id, from_mob_name, to_mob_name)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_restore_mob(
+    app: tauri::AppHandle,
+    session_id: String,
+    current_mob_name: String,
+) -> Result<MobEditResult, ApiError> {
+    facade(&app)?
+        .tracking_restore_mob(session_id, current_mob_name)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_loot_item_activate(
+    app: tauri::AppHandle,
+    session_id: String,
+    item_name: String,
+) -> Result<LootItemEditResult, ApiError> {
+    facade(&app)?
+        .tracking_loot_item_activate(session_id, item_name)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_loot_item_deactivate(
+    app: tauri::AppHandle,
+    session_id: String,
+    item_name: String,
+) -> Result<LootItemEditResult, ApiError> {
+    facade(&app)?
+        .tracking_loot_item_deactivate(session_id, item_name)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_armour_cost(
+    app: tauri::AppHandle,
+    session_id: String,
+    cost: f64,
+) -> Result<ArmourCostResult, ApiError> {
+    facade(&app)?.tracking_armour_cost(session_id, cost).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_quest_link(
+    app: tauri::AppHandle,
+    session_id: String,
+    action: String,
+) -> Result<QuestLinkDecision, ApiError> {
+    facade(&app)?.tracking_quest_link(session_id, action).await
+}
+
+// The repair-scan facade method is synchronous (it reads the config flag
+// and runs the one-shot OCR read without awaiting), so this wrapper does
+// not `.await` it.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_repair_scan(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<RepairScanResult, ApiError> {
+    facade(&app)?.tracking_repair_scan(session_id)
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -624,6 +816,24 @@ mod tests {
         "scan_reject",
         "scan_pending",
         "scan_spacebar_capture",
+        "tracking_sessions",
+        "tracking_session_detail",
+        "tracking_tag_suggestions",
+        "tracking_manual_mob_suggestions",
+        "tracking_snapshot",
+        "tracking_quest_link_suggestion",
+        "tracking_start",
+        "tracking_stop",
+        "tracking_release_mob",
+        "tracking_manual_mob_lock",
+        "tracking_tag_lock",
+        "tracking_rename_mob",
+        "tracking_restore_mob",
+        "tracking_loot_item_activate",
+        "tracking_loot_item_deactivate",
+        "tracking_armour_cost",
+        "tracking_quest_link",
+        "tracking_repair_scan",
     ];
 
     #[test]

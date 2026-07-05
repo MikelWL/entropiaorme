@@ -28,6 +28,7 @@ use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
 use eo_services::quests::QuestService;
+use eo_services::repair_ocr::RepairOcrService;
 use eo_services::skill_scan_manual::SkillScanManual;
 use eo_services::skill_tracker::SkillTracker;
 use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
@@ -42,6 +43,7 @@ pub mod manifest;
 pub mod quests;
 pub mod scan;
 pub mod settings;
+pub mod tracking;
 
 pub use error::ApiError;
 
@@ -75,6 +77,9 @@ pub struct Api {
     /// The hands-free spacebar-capture listener: the scan family's toggle
     /// flips its enabled gate.
     spacebar: Arc<SpacebarCaptureListener>,
+    /// The one-shot repair-cost OCR: the tracking family's repair-scan leg
+    /// drives it (gated on the `repair_ocr_enabled` config flag).
+    repair_ocr: Arc<RepairOcrService>,
     /// The codex service (species / ranks / recommendations / claims),
     /// built over the facade's shared db, catalogue, and clock.
     codex: CodexService,
@@ -102,6 +107,7 @@ impl Api {
         skill_tracker: Arc<SkillTracker>,
         skill_scan: Arc<SkillScanManual>,
         spacebar: Arc<SpacebarCaptureListener>,
+        repair_ocr: Arc<RepairOcrService>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let quests = quests::build_quests_service(db.clone(), clock.clone());
@@ -118,6 +124,7 @@ impl Api {
             skill_tracker,
             skill_scan,
             spacebar,
+            repair_ocr,
             codex,
             quests,
             analytics,

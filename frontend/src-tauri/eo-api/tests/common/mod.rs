@@ -17,6 +17,7 @@ use eo_services::config_service::ConfigService;
 use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::hotbar_listener::HotbarListener;
+use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
 use eo_services::skill_scan_manual::{ScanProviders, SkillScanManual};
 use eo_services::skill_tracker::SkillTracker;
 use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
@@ -40,6 +41,11 @@ pub struct ProducerHandles {
     pub skill_scan: Arc<SkillScanManual>,
     #[allow(dead_code)]
     pub spacebar: Arc<SpacebarCaptureListener>,
+    // The tracking family's own facade test exercises repair-scan through
+    // this handle; every other facade test binary passes it inertly to
+    // `Api::new` and never reads it.
+    #[allow(dead_code)]
+    pub repair_ocr: Arc<RepairOcrService>,
 }
 
 /// Build the write-family producer handles for a facade under test.
@@ -84,6 +90,7 @@ pub fn producer_handles(
         0,
     );
     let spacebar = SpacebarCaptureListener::new(skill_scan.clone(), None);
+    let repair_ocr = Arc::new(RepairOcrService::new(RepairProviders::default()));
     ProducerHandles {
         config_service,
         tracker,
@@ -92,5 +99,6 @@ pub fn producer_handles(
         skill_tracker,
         skill_scan,
         spacebar,
+        repair_ocr,
     }
 }
