@@ -45,6 +45,7 @@ async fn settings_api(dir: &Path) -> Api {
         handles.skill_tracker,
         handles.skill_scan,
         handles.spacebar,
+        handles.repair_ocr,
     )
 }
 

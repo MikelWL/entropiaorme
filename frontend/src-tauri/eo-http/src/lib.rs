@@ -18,7 +18,6 @@ pub mod hydration;
 pub mod native;
 pub mod producer_routes;
 pub mod pyjson;
-pub mod scan_routes;
 pub mod tracking_routes;
 
 use std::future::Future;
@@ -40,9 +39,18 @@ use axum::Router;
 pub struct AppState {
     allowed_hosts: [String; 2],
     hydration: RwLock<Option<Arc<crate::hydration::HydrationState>>>,
+    // The producer-spine and repair-OCR handles are still installed through the
+    // shell's `NativeServices` composition contract, but no HTTP route reads
+    // them any longer: the tracking + repair route families moved to the
+    // typed-command facade (`eo_api`), so these are retained as the install-time
+    // service contract rather than a live read surface.
+    #[allow(dead_code)]
     tracker: RwLock<Option<Arc<eo_services::tracker::HuntTracker>>>,
+    #[allow(dead_code)]
     config_service: RwLock<Option<Arc<Mutex<eo_services::config_service::ConfigService>>>>,
+    #[allow(dead_code)]
     repair_ocr: RwLock<Option<Arc<eo_services::repair_ocr::RepairOcrService>>>,
+    #[allow(dead_code)]
     hotbar_listener: RwLock<Option<Arc<eo_services::hotbar_listener::HotbarListener>>>,
     cors: Option<cors::CorsConfig>,
     // The resolved data directory, for the hidden dev-tools routes (the
@@ -212,11 +220,6 @@ impl AppState {
         self
     }
 
-    /// The live producer-spine tracker, when composed.
-    pub(crate) fn tracker(&self) -> Option<Arc<eo_services::tracker::HuntTracker>> {
-        self.tracker.read().expect("tracker service lock").clone()
-    }
-
     /// Attach the settings writer (the same `Arc<Mutex<ConfigService>>` the
     /// producer spine holds). Without it (a substrate built before
     /// composition, or composition declined at startup) the settings-write
@@ -230,16 +233,6 @@ impl AppState {
         self
     }
 
-    /// The settings writer, when composed.
-    pub(crate) fn config_service(
-        &self,
-    ) -> Option<Arc<Mutex<eo_services::config_service::ConfigService>>> {
-        self.config_service
-            .read()
-            .expect("config service lock")
-            .clone()
-    }
-
     /// Attach the composed repair-OCR service. Without it the repair-scan
     /// route answers the 503 service-unavailable floor.
     pub fn with_repair_ocr(
@@ -248,14 +241,6 @@ impl AppState {
     ) -> Self {
         self.repair_ocr = RwLock::new(Some(repair_ocr));
         self
-    }
-
-    /// The composed repair-OCR service, when present.
-    pub(crate) fn repair_ocr(&self) -> Option<Arc<eo_services::repair_ocr::RepairOcrService>> {
-        self.repair_ocr
-            .read()
-            .expect("repair ocr service lock")
-            .clone()
     }
 
     /// Attach the composed hotbar listener (the same `Arc<HotbarListener>` the
@@ -267,16 +252,6 @@ impl AppState {
     ) -> Self {
         self.hotbar_listener = RwLock::new(Some(hotbar_listener));
         self
-    }
-
-    /// The composed hotbar listener, when present.
-    pub(crate) fn hotbar_listener(
-        &self,
-    ) -> Option<Arc<eo_services::hotbar_listener::HotbarListener>> {
-        self.hotbar_listener
-            .read()
-            .expect("hotbar listener service lock")
-            .clone()
     }
 
     /// Install the composed native services into the shared state. The

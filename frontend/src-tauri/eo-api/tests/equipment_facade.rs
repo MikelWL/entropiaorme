@@ -59,6 +59,7 @@ async fn api_over(dir: &Path) -> (Api, Db) {
             handles.skill_tracker,
             handles.skill_scan,
             handles.spacebar,
+            handles.repair_ocr,
         ),
         db,
     )

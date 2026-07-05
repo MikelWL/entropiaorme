@@ -78,6 +78,24 @@ pub fn analytics_fixture(key: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// The dashboard fixture value under `key` (`snapshot` / `sessionDetail` /
+/// `quests` / `playlists`), for the typed tracking read commands. The live
+/// tracking surface no longer flows through `api_request` (it migrated to
+/// typed IPC commands), so the e2e build serves the same committed
+/// dashboard fixture through those commands, keeping the visual baselines
+/// stable. The session-list fixture lives in the analytics fixture under
+/// `sessions` (`analytics_fixture`). Built once and cached.
+pub fn dashboard_fixture(key: &str) -> Value {
+    static DASHBOARD: OnceLock<Value> = OnceLock::new();
+    DASHBOARD
+        .get_or_init(|| {
+            serde_json::from_str(DASHBOARD_FIXTURE).expect("e2e dashboard fixture is valid JSON")
+        })
+        .get(key)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn json_response(body: String) -> ApiResponse {
     ApiResponse {
         status: 200,
@@ -147,5 +165,22 @@ mod tests {
             .expect("presets fixture matches Vec<LedgerPreset>");
         serde_json::from_value::<Vec<InventoryItem>>(super::analytics_fixture("inventory"))
             .expect("inventory fixture matches Vec<InventoryItem>");
+    }
+
+    /// The tracking reads that feed the dashboard baseline serve fixtures
+    /// through their typed commands: the snapshot and session-detail from the
+    /// dashboard fixture, the session list from the analytics fixture. A
+    /// fixture / DTO drift fails here rather than as a blank dashboard in the
+    /// visual run (this also guards the session-detail DTO's `notableEvents`
+    /// `serde(default)`, which lets the fixture omit that array).
+    #[test]
+    fn the_dashboard_fixture_deserialises_into_the_tracking_dtos() {
+        use eo_api::tracking::{SessionDetail, TrackingSession, TrackingSnapshot};
+        serde_json::from_value::<TrackingSnapshot>(super::dashboard_fixture("snapshot"))
+            .expect("snapshot fixture matches TrackingSnapshot");
+        serde_json::from_value::<SessionDetail>(super::dashboard_fixture("sessionDetail"))
+            .expect("sessionDetail fixture matches SessionDetail");
+        serde_json::from_value::<Vec<TrackingSession>>(super::analytics_fixture("sessions"))
+            .expect("sessions fixture matches Vec<TrackingSession>");
     }
 }

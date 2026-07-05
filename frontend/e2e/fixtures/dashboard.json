@@ -50,8 +50,15 @@
       "net": 57.0,
       "returnRate": 1.057,
       "kills": 42,
-      "duration": 3600
+      "duration": 3600,
+      "costBreakdown": {
+        "weaponCost": 900.0,
+        "healCost": 50.0,
+        "enhancerCost": 30.0,
+        "armourCost": 20.0
+      }
     },
+    "notableEvents": [],
     "mobEntryMode": "auto",
     "lootBreakdown": [
       { "name": "Animal Oil Residue", "quantity": 1200, "ttValue": 240.5 },

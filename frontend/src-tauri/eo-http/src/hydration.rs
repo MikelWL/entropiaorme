@@ -1,18 +1,13 @@
-//! The in-process HTTP layer's shared response machinery and the
-//! tracking-session quest-link handlers, byte-faithful to the backend's
-//! responses: the body serialisation form the backend's HTTP layer
-//! emits, the strong-ETag conditional-GET semantics of its middleware (a
-//! SHA-256 ETag over the body, `Cache-Control: no-cache`, and `304 Not
+//! The in-process HTTP layer's shared response machinery, byte-faithful to
+//! the backend's responses: the body serialisation form the backend's HTTP
+//! layer emits, the strong-ETag conditional-GET semantics of its middleware
+//! (a SHA-256 ETag over the body, `Cache-Control: no-cache`, and `304 Not
 //! Modified` with an empty body when `If-None-Match` already names the
-//! representation), the unhandled-exception envelope, and the quest-link
-//! suggestion / decision formatters (ids as strings).
+//! representation), and the unhandled-exception envelope.
 //!
-//! Route families migrate off this surface onto typed IPC commands
-//! family by family (ADR-0019); the quests + playlists reads and writes
-//! moved to `eo-api`, leaving the shared helpers here plus the two
-//! `/api/tracking/session/{id}/quest-link*` handlers a later family
-//! carries. The handlers were each proven against the Python reference
-//! over a shared database before its route registered natively.
+//! Route families have migrated off this surface onto typed IPC commands
+//! (ADR-0019); what remains is the shared response toolkit plus the
+//! [`HydrationState`] the guide-mode demo namespace reads through.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,7 +17,7 @@ use axum::http::{header, Response, StatusCode};
 use eo_services::clock::Clock;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
-use eo_services::quests::{QuestError, QuestService};
+use eo_services::quests::QuestError;
 use eo_wire::normalizer::to_wire_json;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -30,7 +25,6 @@ use sqlx::SqlitePool;
 
 /// The services the hydration handlers read through.
 pub struct HydrationState {
-    quests: QuestService,
     pub(crate) db: Db,
     pub(crate) game_data: Arc<GameDataStore>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -48,18 +42,11 @@ impl HydrationState {
         data_dir: PathBuf,
     ) -> Self {
         Self {
-            quests: QuestService::new(db.clone(), clock.clone()),
             db,
             game_data,
             clock,
             data_dir,
         }
-    }
-
-    /// The reader pool, for plain reads on the hydration/analytics read
-    /// surface (dashboard GETs run concurrently with combat writes).
-    pub(crate) fn read(&self) -> &SqlitePool {
-        self.db.read()
     }
 
     /// The writer pool, for the surface's mutations (ledger edits, claims,
@@ -140,7 +127,7 @@ pub(crate) fn conditional_response(
 /// A hydration JSON response under the conditional-GET contract: 200
 /// with the body (or 304 with none) plus the ETag and Cache-Control
 /// headers either way.
-pub(crate) fn json_response(payload: &Value, if_none_match: Option<&str>) -> Response<Body> {
+pub fn json_response(payload: &Value, if_none_match: Option<&str>) -> Response<Body> {
     conditional_response(
         to_wire_json(payload).into_bytes(),
         "application/json",
@@ -173,137 +160,6 @@ pub(crate) fn internal_error() -> Response<Body> {
         .expect("response assembles")
 }
 
-// ── Router-layer formatters ────────────
-
-/// `str(value)` as the formatters apply it to ids (integers render
-/// identically in both languages; strings pass through).
-pub(crate) fn python_str_of(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Number(number) => number.to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// `str(id) if id is not None else None` over a suggestion's nullable
-/// id (the quest-link routes stringify the integer ids, leaving null
-/// through).
-fn str_id_or_null(value: &Value) -> Value {
-    if value.is_null() {
-        Value::Null
-    } else {
-        json!(python_str_of(value))
-    }
-}
-
-/// The quest-link suggestion wire shape, mirroring
-/// `get_session_quest_link_suggestion`'s dict construction (all seven
-/// fields always present; the link fields null when absent).
-fn format_quest_link_suggestion(session_id: &str, suggestion: &Value) -> Value {
-    json!({
-        "sessionId": session_id,
-        "suggestionType": suggestion["suggestion_type"],
-        "reason": suggestion["reason"],
-        "questId": str_id_or_null(&suggestion["quest_id"]),
-        "questName": suggestion["quest_name"],
-        "playlistId": str_id_or_null(&suggestion["playlist_id"]),
-        "playlistName": suggestion["playlist_name"],
-    })
-}
-
-/// The write surface: each method mirrors its router handler (the
-/// service call, the 404 mapping, the formatter), replying without
-/// conditional-GET headers (the backend's middleware covers 2xx GETs
-/// only).
-impl HydrationState {
-    /// GET /api/tracking/session/{session_id}/quest-link-suggestion (a
-    /// read: the conditional-GET contract applies). 404 if the session
-    /// is absent, checked before the quest service runs.
-    pub async fn session_quest_link_suggestion(
-        &self,
-        session_id: &str,
-        if_none_match: Option<&str>,
-    ) -> Response<Body> {
-        match self.session_exists(session_id).await {
-            Ok(true) => {}
-            Ok(false) => return session_not_found(),
-            Err(_) => return internal_error(),
-        }
-        match self.quests.get_session_link_suggestion(session_id).await {
-            Ok(suggestion) => json_response(
-                &format_quest_link_suggestion(session_id, &suggestion),
-                if_none_match,
-            ),
-            Err(error) => quest_error_response(error),
-        }
-    }
-
-    /// POST /api/tracking/session/{session_id}/quest-link (a plain-200
-    /// write). 404 if the session is absent; an unknown action is a
-    /// 400. Accept persists the curated suggestion and replies with the
-    /// full link object; decline records the refusal and replies with
-    /// only `sessionId`/`status` (the reference serialises the decision
-    /// with `response_model_exclude_unset`, so the two arms emit
-    /// different field sets).
-    pub async fn decide_session_quest_link(
-        &self,
-        session_id: &str,
-        action: &str,
-    ) -> Response<Body> {
-        match self.session_exists(session_id).await {
-            Ok(true) => {}
-            Ok(false) => return session_not_found(),
-            Err(_) => return internal_error(),
-        }
-        let action = action.trim().to_lowercase();
-        if action == "accept" {
-            return match self.quests.accept_session_link_suggestion(session_id).await {
-                Ok(suggestion) => plain_json_response(&json!({
-                    "sessionId": session_id,
-                    "status": "linked",
-                    "linkType": suggestion["suggestion_type"],
-                    "questId": str_id_or_null(&suggestion["quest_id"]),
-                    "questName": suggestion["quest_name"],
-                    "playlistId": str_id_or_null(&suggestion["playlist_id"]),
-                    "playlistName": suggestion["playlist_name"],
-                })),
-                // The route catches the no-linkable-suggestion
-                // ValueError and maps it to 409 (unlike the rest of the
-                // quest surface, where Invalid stays an unhandled 500);
-                // a genuine database failure still surfaces as 500.
-                Err(QuestError::Invalid(message)) => {
-                    error_response(StatusCode::CONFLICT, &detail(&message))
-                }
-                Err(QuestError::Db(_) | QuestError::Rollup(_)) => internal_error(),
-            };
-        }
-        if action == "decline" {
-            return match self.quests.decline_session_link(session_id).await {
-                Ok(()) => plain_json_response(&json!({
-                    "sessionId": session_id,
-                    "status": "declined",
-                })),
-                Err(error) => quest_error_response(error),
-            };
-        }
-        error_response(
-            StatusCode::BAD_REQUEST,
-            &detail("Action must be 'accept' or 'decline'"),
-        )
-    }
-
-    /// The session-existence precondition both quest-link routes apply
-    /// before the quest service runs (a bare `SELECT id`, the
-    /// reference's own guard).
-    async fn session_exists(&self, session_id: &str) -> Result<bool, sqlx::Error> {
-        let row = sqlx::query("SELECT id FROM tracking_sessions WHERE id = ?")
-            .bind(session_id)
-            .fetch_optional(self.read())
-            .await?;
-        Ok(row.is_some())
-    }
-}
-
 /// A plain JSON 200: no conditional-GET headers. Write replies use
 /// it everywhere; reads outside the ETag middleware's prefixes
 /// (settings, character, equipment) use it too.
@@ -313,10 +169,6 @@ pub(crate) fn plain_json_response(payload: &Value) -> Response<Body> {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(to_wire_json(payload)))
         .expect("write response builds")
-}
-
-fn session_not_found() -> Response<Body> {
-    error_response(StatusCode::NOT_FOUND, &detail("Session not found"))
 }
 
 /// The quest router's error mapping: the quests router catches no
@@ -362,8 +214,6 @@ mod tests {
 
     #[test]
     fn scalar_helpers_match_the_router_layer() {
-        assert_eq!(python_str_of(&json!("s")), "s");
-        assert_eq!(python_str_of(&json!(42)), "42");
         assert_eq!(detail("gone"), json!({"detail": "gone"}));
     }
 

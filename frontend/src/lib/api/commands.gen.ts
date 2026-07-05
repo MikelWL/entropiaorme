@@ -89,6 +89,14 @@ export interface AppSettings {
 }
 
 /**
+ * The armour-cost result (echoes the submitted value, not the new total).
+ */
+export interface ArmourCostResult {
+	sessionId: string;
+	armourCost: number;
+}
+
+/**
  * GET calibration: whether skills are calibrated and how fresh.
  */
 export interface CalibrationStatus {
@@ -241,6 +249,16 @@ export interface CodexSpeciesRanks {
 export interface ComputedCharacterStats {
 	hp: number;
 	topProfessions: StatProfession[];
+}
+
+/**
+ * The session-detail cost split.
+ */
+export interface CostBreakdown {
+	weaponCost: number;
+	healCost: number;
+	enhancerCost: number;
+	armourCost: number;
 }
 
 /**
@@ -506,6 +524,26 @@ export interface LedgerPresetInput {
 }
 
 /**
+ * One aggregated loot line.
+ */
+export interface LootEntry {
+	name: string;
+	quantity: number;
+	ttValue: number;
+}
+
+/**
+ * The loot-item activate / deactivate result.
+ */
+export interface LootItemEditResult {
+	sessionId: string;
+	itemName: string;
+	affectedRows: number;
+	totalValueDelta: number;
+	sessionTotalReturns: number;
+}
+
+/**
  * The losses breakdown: tracking cost, its cycled split, and the ledger
  * expenses.
  */
@@ -513,6 +551,33 @@ export interface LossesBreakdown {
 	trackingCost: number;
 	cycledBreakdown: CycledBreakdown;
 	ledger: Record<string, number>;
+}
+
+/**
+ * The manual-mob-lock acknowledgement.
+ */
+export interface ManualMobLockResult {
+	mobName: string;
+	species: string;
+	maturity: string;
+}
+
+/**
+ * One manual-mob autocomplete suggestion.
+ */
+export interface ManualMobSuggestion {
+	display: string;
+	species: string;
+	maturity: string;
+}
+
+/**
+ * One per-mob breakdown row.
+ */
+export interface MobBreakdownRow {
+	currentName: string;
+	originalName?: string | null;
+	killCount: number;
 }
 
 /**
@@ -529,6 +594,15 @@ export interface MobComparison {
 }
 
 /**
+ * The mob rename / restore result.
+ */
+export interface MobEditResult {
+	sessionId: string;
+	mobName: string;
+	killCount: number;
+}
+
+/**
  * One month of the Overview monthly breakdown.
  */
 export interface MonthlyEntry {
@@ -540,6 +614,17 @@ export interface MonthlyEntry {
 	ledgerGains: Record<string, number>;
 	trackingCost: number;
 	ledgerLosses: Record<string, number>;
+}
+
+/**
+ * One notable event in a session detail.
+ */
+export interface NotableEvent {
+	type: string;
+	eventType: string;
+	target?: string | null;
+	item?: string | null;
+	value: number;
 }
 
 /**
@@ -865,6 +950,22 @@ export interface QuestInput {
 }
 
 /**
+ * The quest-link decision: `accept` carries the full link object, `decline`
+ * only `sessionId` / `status`. The accept-only fields skip when absent
+ * (exclude-unset -> exclude-none movement: a present-null link field is
+ * dropped rather than serialised null).
+ */
+export interface QuestLinkDecision {
+	sessionId: string;
+	status: string;
+	linkType?: string | null;
+	questId?: string | null;
+	questName?: string | null;
+	playlistId?: string | null;
+	playlistName?: string | null;
+}
+
+/**
  * A playlist in the wire shape (`_format_playlist`). Membership arrives
  * pre-classified from the service; ids are stringified.
  */
@@ -880,11 +981,41 @@ export interface QuestPlaylist {
 }
 
 /**
+ * One recent event in the active-session snapshot feed.
+ */
+export interface RecentEvent {
+	type: string;
+	description: string;
+	value: number;
+	eventType: string;
+	timestamp?: string | null;
+	id: string;
+}
+
+/**
  * The reject verb's result: `{ok: true}` on success, the lone `error`
  * on a refusal.
  */
 export interface RejectResult {
 	ok?: boolean | null;
+	error?: string | null;
+}
+
+/**
+ * The release-mob acknowledgement.
+ */
+export interface ReleaseResult {
+	released?: string | null;
+}
+
+/**
+ * The one-shot repair-cost read (`exclude_unset`): the cost / raw text /
+ * confidence on success, plus `error` on a logical refusal.
+ */
+export interface RepairScanResult {
+	cost_ped?: number | null;
+	raw_text?: string | null;
+	confidence?: number | null;
 	error?: string | null;
 }
 
@@ -941,6 +1072,49 @@ export interface ScanStatus {
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable';
 
 /**
+ * The full session detail.
+ */
+export interface SessionDetail {
+	sessionId: string;
+	summary: SessionSummary;
+	mobEntryMode: string;
+	notableEvents: NotableEvent[];
+	lootBreakdown: LootEntry[];
+	deactivatedLootBreakdown: LootEntry[];
+	mobBreakdown: MobBreakdownRow[];
+	effectiveLoot: number;
+	toolStats: ToolStat[];
+	skillGains: SkillGain[];
+}
+
+/**
+ * The quest-link suggestion (all seven fields always present).
+ */
+export interface SessionQuestLinkSuggestion {
+	sessionId: string;
+	suggestionType?: string | null;
+	reason?: string | null;
+	questId?: string | null;
+	questName?: string | null;
+	playlistId?: string | null;
+	playlistName?: string | null;
+}
+
+/**
+ * The session-detail headline summary.
+ */
+export interface SessionSummary {
+	cost: number;
+	returns: number;
+	pes: number;
+	net: number;
+	returnRate: number;
+	kills: number;
+	duration: number;
+	costBreakdown: CostBreakdown;
+}
+
+/**
  * The partial settings update: every field optional, only the present
  * ones applied (the `exclude_unset` semantics the pydantic model had).
  * `active_trifecta_preset_id` is a double option so an explicit `null`
@@ -961,6 +1135,15 @@ export interface SettingsPatch {
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;
 	loot_filter_blacklist?: string[] | null;
+}
+
+/**
+ * One per-skill gain (attributes excluded).
+ */
+export interface SkillGain {
+	skillName: string;
+	level: number;
+	ttValueGained: number;
 }
 
 /**
@@ -994,6 +1177,15 @@ export interface SpacebarResult {
 }
 
 /**
+ * The start lifecycle acknowledgement.
+ */
+export interface StartResult {
+	session_id: string;
+	started_at: string;
+	status: string;
+}
+
+/**
  * One of the top professions on the stats card: the trimmed shape the
  * card renders (name, level, category), not the full profession row.
  */
@@ -1001,6 +1193,16 @@ export interface StatProfession {
 	name: string;
 	level: number;
 	category: string;
+}
+
+/**
+ * The stop lifecycle acknowledgement.
+ */
+export interface StopResult {
+	session_id: string;
+	started_at: string;
+	ended_at?: string | null;
+	kill_count: number;
 }
 
 /**
@@ -1014,6 +1216,13 @@ export interface TagComparison {
 	cycled: number;
 	pesPer100Ped: number;
 	lootRate: number;
+}
+
+/**
+ * The tag-lock acknowledgement.
+ */
+export interface TagLockResult {
+	tag: string;
 }
 
 /**
@@ -1031,6 +1240,93 @@ export interface TimelineDay {
 }
 
 /**
+ * One per-tool aggregate.
+ */
+export interface ToolStat {
+	weaponName: string;
+	shotsFired: number;
+	damageDealt: number;
+	crits: number;
+	costAttributed: number;
+}
+
+/**
+ * One row of the session list.
+ */
+export interface TrackingSession {
+	id: string;
+	startTime?: string | null;
+	endTime?: string | null;
+	duration: number;
+	primaryMobs: string[];
+	primaryWeapons: string[];
+	cost: number;
+	returns: number;
+	net: number;
+	returnRate: number;
+	globals: number;
+	hofs: number;
+}
+
+/**
+ * The consolidated dashboard hydration snapshot: the polymorphic idle /
+ * active shape, in the model's declaration order. Every field is optional
+ * and skipped when absent; under the ratified exclude-unset -> exclude-none
+ * movement a present-null field is dropped rather than serialised null.
+ */
+export interface TrackingSnapshot {
+	status?: string | null;
+	hotbarListenerActive?: boolean | null;
+	weaponAttribution?: string | null;
+	repairOcrEnabled?: boolean | null;
+	endOfSessionArmourReminderEnabled?: boolean | null;
+	mobEntryMode?: string | null;
+	currentMob?: string | null;
+	mobSource?: string | null;
+	currentTool?: string | null;
+	trifectaAttribution?: TrifectaAttribution | null;
+	recentEvents?: RecentEvent[] | null;
+	session_id?: string | null;
+	started_at?: string | null;
+	kill_count?: number | null;
+	elapsed?: number | null;
+	cost?: number | null;
+	returns?: number | null;
+	pes?: number | null;
+	net?: number | null;
+	returnRate?: number | null;
+	damageDealtTotal?: number | null;
+	weaponDamageDealt?: number | null;
+	weaponCost?: number | null;
+	shotsFiredTotal?: number | null;
+	criticalHitsTotal?: number | null;
+	maxDamage?: number | null;
+	globalsCount?: number | null;
+	hofsCount?: number | null;
+	latestKillLoot?: number | null;
+	multiplierLast?: number | null;
+	multiplierAvg?: number | null;
+	multiplierMax?: number | null;
+	multiplierHistory?: number[] | null;
+	cumulativeNetHistory?: number[] | null;
+	warnings?: Warning[] | null;
+}
+
+/**
+ * The trifecta attribution summary (present when trifecta mode is active
+ * and a preset or binding exists). Its members are always emitted (a
+ * null binding stays on the wire), so none skip.
+ */
+export interface TrifectaAttribution {
+	activePresetId?: string | null;
+	presetName?: string | null;
+	presets: TrifectaPresetRef[];
+	smallWeapon?: string | null;
+	bigWeapon?: string | null;
+	healTool?: string | null;
+}
+
+/**
  * One trifecta preset in a settings update. Field names stay in the
  * stored snake_case the config writer re-normalises.
  */
@@ -1040,6 +1336,14 @@ export interface TrifectaPresetInput {
 	small_weapon_id?: number | null;
 	big_weapon_id?: number | null;
 	heal_id?: number | null;
+}
+
+/**
+ * One preset reference inside the trifecta attribution summary.
+ */
+export interface TrifectaPresetRef {
+	id: string;
+	name: string;
 }
 
 /**
@@ -1086,6 +1390,15 @@ export interface UndoResult {
 	has_pending_result: boolean;
 	error?: string | null;
 	undone_page?: number | null;
+}
+
+/**
+ * One active-session warning.
+ */
+export interface Warning {
+	type: string;
+	description: string;
+	value: number;
 }
 
 /**
@@ -1359,4 +1672,76 @@ export async function scanPending(): Promise<SkillScanPending | null> {
 
 export async function scanSpacebarCapture(enabled: boolean): Promise<SpacebarResult> {
 	return invokeCommand('scan_spacebar_capture', { enabled });
+}
+
+export async function trackingSessions(): Promise<TrackingSession[]> {
+	return invokeCommand('tracking_sessions', {});
+}
+
+export async function trackingSessionDetail(sessionId: string): Promise<SessionDetail> {
+	return invokeCommand('tracking_session_detail', { session_id: sessionId });
+}
+
+export async function trackingTagSuggestions(q: string, limit: number | null): Promise<string[]> {
+	return invokeCommand('tracking_tag_suggestions', { q, limit });
+}
+
+export async function trackingManualMobSuggestions(q: string, limit: number | null): Promise<ManualMobSuggestion[]> {
+	return invokeCommand('tracking_manual_mob_suggestions', { q, limit });
+}
+
+export async function trackingSnapshot(): Promise<TrackingSnapshot> {
+	return invokeCommand('tracking_snapshot', {});
+}
+
+export async function trackingQuestLinkSuggestion(sessionId: string): Promise<SessionQuestLinkSuggestion> {
+	return invokeCommand('tracking_quest_link_suggestion', { session_id: sessionId });
+}
+
+export async function trackingStart(): Promise<StartResult> {
+	return invokeCommand('tracking_start', {});
+}
+
+export async function trackingStop(): Promise<StopResult> {
+	return invokeCommand('tracking_stop', {});
+}
+
+export async function trackingReleaseMob(): Promise<ReleaseResult> {
+	return invokeCommand('tracking_release_mob', {});
+}
+
+export async function trackingManualMobLock(species: string, maturity: string | null): Promise<ManualMobLockResult> {
+	return invokeCommand('tracking_manual_mob_lock', { species, maturity });
+}
+
+export async function trackingTagLock(tag: string): Promise<TagLockResult> {
+	return invokeCommand('tracking_tag_lock', { tag });
+}
+
+export async function trackingRenameMob(sessionId: string, fromMobName: string, toMobName: string): Promise<MobEditResult> {
+	return invokeCommand('tracking_rename_mob', { session_id: sessionId, from_mob_name: fromMobName, to_mob_name: toMobName });
+}
+
+export async function trackingRestoreMob(sessionId: string, currentMobName: string): Promise<MobEditResult> {
+	return invokeCommand('tracking_restore_mob', { session_id: sessionId, current_mob_name: currentMobName });
+}
+
+export async function trackingLootItemActivate(sessionId: string, itemName: string): Promise<LootItemEditResult> {
+	return invokeCommand('tracking_loot_item_activate', { session_id: sessionId, item_name: itemName });
+}
+
+export async function trackingLootItemDeactivate(sessionId: string, itemName: string): Promise<LootItemEditResult> {
+	return invokeCommand('tracking_loot_item_deactivate', { session_id: sessionId, item_name: itemName });
+}
+
+export async function trackingArmourCost(sessionId: string, cost: number): Promise<ArmourCostResult> {
+	return invokeCommand('tracking_armour_cost', { session_id: sessionId, cost });
+}
+
+export async function trackingQuestLink(sessionId: string, action: string): Promise<QuestLinkDecision> {
+	return invokeCommand('tracking_quest_link', { session_id: sessionId, action });
+}
+
+export async function trackingRepairScan(sessionId: string): Promise<RepairScanResult> {
+	return invokeCommand('tracking_repair_scan', { session_id: sessionId });
 }

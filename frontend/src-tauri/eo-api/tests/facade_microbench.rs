@@ -76,6 +76,7 @@ fn facade_microbench() {
         handles.skill_tracker,
         handles.skill_scan,
         handles.spacebar,
+        handles.repair_ocr,
     );
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();
@@ -212,10 +213,20 @@ fn facade_microbench() {
             timings[0],
             timings[timings.len() - 1],
         ));
+
+        // The tracking reads, the after-leg of the HTTP dispatch measurement
+        // (`GET_tracking_*`) the router micro-benchmark captured before the
+        // family moved. The session-list and snapshot reads answer over the
+        // same fresh-DB state (an empty session list and the idle snapshot);
+        // the session-scoped detail / quest-link reads need a persisted
+        // session, so like the other families' path-parameter variants they
+        // are left to the byte-parity suite rather than this dispatch harness.
+        bench!("tracking_sessions", api.tracking_sessions());
+        bench!("tracking_snapshot", api.tracking_snapshot());
     });
 
     println!(
-        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex + quests + analytics + scan over typed commands)"
+        "\ntyped-facade micro-bench (AFTER: equipment + character + settings + codex + quests + analytics + scan + tracking over typed commands)"
     );
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups, empty library and catalogue \

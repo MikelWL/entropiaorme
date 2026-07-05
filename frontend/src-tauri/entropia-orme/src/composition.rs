@@ -681,6 +681,7 @@ async fn compose_with(
         producers.skill_tracker_handle(),
         skill_scan.clone(),
         spacebar_listener.clone(),
+        repair_ocr.clone(),
     ));
     let hydration = Arc::new(HydrationState::new(db, game_data, clock, data_dir));
     Composition::Ready(Composed {
