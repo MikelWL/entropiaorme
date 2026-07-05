@@ -35,7 +35,10 @@ mod time;
 mod weapons;
 
 pub use mob::{MobSelection, MobSource, TrackingMode};
-pub use providers::{EquipmentProfile, Providers};
+pub use providers::{
+    DefaultTrackingConfig, EquipmentLibrary, EquipmentProfile, InertEquipment, Providers,
+    TrackingConfig,
+};
 pub(crate) use time::parse_timestamp_str;
 pub use time::{naive_isoformat, naive_to_epoch, to_iso_utc};
 

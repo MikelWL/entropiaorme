@@ -136,13 +136,6 @@ impl TrackerActor {
             subscriptions: Vec::new(),
             status,
         };
-        actor.loot_blacklist = normalize_blacklist(Some(
-            actor
-                .providers
-                .loot_filter_blacklist
-                .iter()
-                .map(String::as_str),
-        ));
         actor.refresh_loot_filter();
 
         let recovered = actor.recover_orphaned_sessions().await;
@@ -320,10 +313,7 @@ impl TrackerActor {
     }
 
     pub(super) fn refresh_loot_filter(&mut self) {
-        let blacklist: Vec<String> = match &self.providers.loot_filter_blacklist_provider {
-            Some(provider) => provider(),
-            None => self.providers.loot_filter_blacklist.clone(),
-        };
+        let blacklist = self.providers.config.loot_filter_blacklist();
         self.loot_blacklist = normalize_blacklist(Some(blacklist.iter().map(String::as_str)));
     }
 }

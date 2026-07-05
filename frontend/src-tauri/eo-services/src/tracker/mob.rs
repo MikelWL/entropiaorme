@@ -156,7 +156,7 @@ impl TrackerActor {
         }
         // The provider may read the database or config; the actor
         // simply runs it inline.
-        if !(providers.manual_mob_entry_enabled)() {
+        if !providers.config.manual_mob_entry_enabled() {
             return Err(TrackerCommandError::ManualEntryDisabled);
         }
         active.mob = MobSelection::Manual {
