@@ -45,6 +45,7 @@ pub mod skill_panel;
 pub mod skill_scan_manual;
 pub mod skill_tracker;
 pub mod spacebar_capture_listener;
+pub mod time;
 pub mod tool_inference;
 pub mod tracker;
 pub mod tracking_models;

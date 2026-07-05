@@ -7,7 +7,7 @@ use sqlx::sqlite::SqliteConnection;
 use sqlx::Row;
 
 use crate::ped::Ped;
-use crate::tracker::{naive_to_epoch, to_iso_utc};
+use crate::time::to_iso_utc;
 
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
@@ -36,7 +36,7 @@ impl QuestService {
 
     /// Mark a quest as in-progress; `None` when absent or inactive.
     pub async fn start_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
-        let now = naive_to_epoch(self.clock.now());
+        let now = self.now_epoch();
         let affected =
             sqlx::query("UPDATE quests SET started_at = ? WHERE id = ? AND is_active = 1")
                 .bind(now)
@@ -60,7 +60,7 @@ impl QuestService {
         let Some(quest) = self.get_quest(quest_id).await? else {
             return Ok(None);
         };
-        let now = naive_to_epoch(self.clock.now());
+        let now = self.now_epoch();
         sqlx::query("UPDATE quests SET started_at = NULL WHERE id = ?")
             .bind(quest_id)
             .execute(self.db.write())
@@ -184,7 +184,7 @@ impl QuestService {
         let Some(session_id) = self.current_session().filter(|id| !id.is_empty()) else {
             return;
         };
-        let now = naive_to_epoch(self.clock.now());
+        let now = self.now_epoch();
         let _ = sqlx::query(
             "INSERT INTO notable_events \
              (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
@@ -214,7 +214,7 @@ impl QuestService {
         };
         let ts = match completed_at {
             Some(ts) => ts,
-            None => naive_to_epoch(self.clock.now()),
+            None => self.now_epoch(),
         };
         sqlx::query(
             "INSERT OR IGNORE INTO session_quest_completions \
@@ -239,7 +239,7 @@ impl QuestService {
         if cooldown_hours <= 0.0 {
             return false;
         }
-        (last + cooldown_hours * 3600.0) > naive_to_epoch(self.clock.now())
+        (last + cooldown_hours * 3600.0) > self.now_epoch()
     }
 }
 

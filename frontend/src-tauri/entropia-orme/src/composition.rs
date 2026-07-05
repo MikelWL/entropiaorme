@@ -91,8 +91,9 @@ pub use eo_services::skill_scan_manual::SkillScanManual;
 use eo_services::skill_scan_manual::{ScanProviders, ScanRegion};
 use eo_services::skill_tracker::SkillTracker;
 pub use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
+use eo_services::time::naive_to_epoch;
 use eo_services::tracker::{
-    naive_to_epoch, EquipmentLibrary, EquipmentProfile, HuntTracker, Providers, TrackingConfig,
+    EquipmentLibrary, EquipmentProfile, HuntTracker, Providers, TrackingConfig,
 };
 use eo_services::trifecta_service::{describe_trifecta, TrifectaPreset};
 use eo_wire::bus::DomainBus;

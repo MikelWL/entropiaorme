@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use crate::bus_events::BusEvent;
 use crate::clock::Clock;
 use crate::event_bus::EventBus;
-use crate::tracker::{naive_to_epoch, to_iso_utc};
+use crate::time::{naive_to_epoch, to_iso_utc};
 use eo_wire::domain_events::{
     ScanPhase, ScanStatusChanged, ScanStatusChangedPayload, ScanStatusChangedTag,
 };

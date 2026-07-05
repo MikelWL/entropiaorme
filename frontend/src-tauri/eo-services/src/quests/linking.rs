@@ -10,8 +10,6 @@ use std::collections::HashSet;
 use serde_json::{json, Value};
 use sqlx::Row;
 
-use crate::tracker::naive_to_epoch;
-
 use super::{QuestError, QuestService};
 
 /// A curated analytics link's kind: the closed vocabulary the link
@@ -267,7 +265,7 @@ impl QuestService {
         .bind(link_type.as_str())
         .bind(quest_id)
         .bind(playlist_id)
-        .bind(naive_to_epoch(self.clock.now()))
+        .bind(self.now_epoch())
         .execute(self.db.write())
         .await?;
         Ok(())

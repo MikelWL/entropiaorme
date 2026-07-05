@@ -28,7 +28,7 @@ use uuid::Uuid;
 use crate::clock::Clock;
 use crate::daily_rollup;
 use crate::db::{Db, DbError};
-use crate::tracker::naive_to_epoch;
+use crate::time::naive_to_epoch;
 
 /// The analytics domain service over the shared database and injected
 /// clock: the Overview / Activity aggregates and the ledger / preset /

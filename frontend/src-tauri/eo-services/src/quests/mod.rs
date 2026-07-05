@@ -137,6 +137,16 @@ impl QuestService {
         (self.id_source)()
     }
 
+    /// The service's one local-to-instant boundary: the injected
+    /// clock's wall-clock reading resolved to the instant it names
+    /// (the fold=0 rule), as the epoch-seconds float the database
+    /// stores. Every timestamp the service stamps or compares passes
+    /// through here; renders back to wire form go through
+    /// [`crate::time::to_iso_utc`].
+    pub(super) fn now_epoch(&self) -> f64 {
+        crate::time::instant_to_epoch(crate::time::resolve_local(self.clock.now()))
+    }
+
     /// A snapshot of the active tracking session id (the owning task
     /// keeps the watch current; an empty string passes through, and
     /// the truthiness gates downstream treat it as no session).
