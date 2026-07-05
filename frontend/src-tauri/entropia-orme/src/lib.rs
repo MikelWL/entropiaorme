@@ -309,6 +309,11 @@ pub fn run() {
             commands::demo_tracking_sessions,
             commands::demo_tracking_session_detail,
             commands::demo_tracking_snapshot,
+            commands::dev_metrics,
+            commands::dev_crash_reporting,
+            commands::dev_set_crash_reporting,
+            commands::dev_compact_database,
+            commands::dev_rebuild_projections,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -450,10 +455,7 @@ fn compose_substrate(app: tauri::AppHandle, resource_dir: Option<std::path::Path
                 // response decoration). The in-process transport supplies the
                 // webview's own always-allow-listed origin, so the fixed
                 // allowlist is unchanged in behaviour.
-                .with_cors(eo_http::cors::CorsConfig::new(NOMINAL_FRONTEND_PORT, None))
-                // The data dir powers the developer-mode-gated dev-tools routes
-                // (the developer-mode gate and the crash-reporting toggle).
-                .with_data_dir(composition::data_dir()),
+                .with_cors(eo_http::cors::CorsConfig::new(NOMINAL_FRONTEND_PORT, None)),
         );
         match composition::compose_native(resource_dir).await {
             composition::Composition::Ready(composed) => {

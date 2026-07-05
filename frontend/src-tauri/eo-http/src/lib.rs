@@ -10,13 +10,11 @@
 
 pub mod body;
 pub mod cors;
-pub mod dev_routes;
 pub mod extract;
 pub mod hydration;
 pub mod pyjson;
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use axum::extract::{Request, State};
@@ -48,11 +46,6 @@ pub struct AppState {
     #[allow(dead_code)]
     hotbar_listener: RwLock<Option<Arc<eo_services::hotbar_listener::HotbarListener>>>,
     cors: Option<cors::CorsConfig>,
-    // The resolved data directory, for the hidden dev-tools routes (the
-    // developer-mode gate reads it fresh, and the crash-reporting toggle
-    // reads/writes the shell-owned `observability.json` there). `None` on a
-    // substrate built without it: the dev routes then read as gate-off (404).
-    data_dir: Option<PathBuf>,
 }
 
 /// The composed native services, handed to [`AppState::install_native`] to
@@ -85,7 +78,6 @@ impl AppState {
             repair_ocr: RwLock::new(None),
             hotbar_listener: RwLock::new(None),
             cors: None,
-            data_dir: None,
         }
     }
 
@@ -98,19 +90,6 @@ impl AppState {
     pub fn with_cors(mut self, cors: cors::CorsConfig) -> Self {
         self.cors = Some(cors);
         self
-    }
-
-    /// Attach the resolved data directory, enabling the hidden dev-tools
-    /// routes (the developer-mode gate and the crash-reporting toggle). Without
-    /// it those routes read as gate-off (404).
-    pub fn with_data_dir(mut self, data_dir: PathBuf) -> Self {
-        self.data_dir = Some(data_dir);
-        self
-    }
-
-    /// The resolved data directory, when set.
-    pub(crate) fn data_dir(&self) -> Option<&Path> {
-        self.data_dir.as_deref()
     }
 
     /// Run `PRAGMA optimize` against the hydration database on a clean
@@ -130,32 +109,6 @@ impl AppState {
             return false;
         };
         sqlx::query("PRAGMA optimize").execute(&pool).await.is_ok()
-    }
-
-    /// The application database handle, when hydration state is composed.
-    /// The developer-mode maintenance routes (database compaction, the
-    /// projection rebuild-and-verify) reach the reader/writer seam through
-    /// it; `None` when nothing is composed, which those routes read as
-    /// gate-off (404).
-    pub(crate) fn hydration_db(&self) -> Option<eo_services::db::Db> {
-        self.hydration
-            .read()
-            .ok()
-            .and_then(|guard| guard.as_ref().map(|hydration| hydration.db.clone()))
-    }
-
-    /// Whether developer mode is currently enabled, read FRESH from the
-    /// settings file on each call (never cached), so the hidden dev-tools gate
-    /// reflects a toggle without a restart. The gate for every dev route: when
-    /// this is false (the default, and the case with no data dir), those routes
-    /// answer 404, keeping them off the equivalence-covered surface and
-    /// invisible to a default install.
-    pub(crate) fn developer_mode(&self) -> bool {
-        self.data_dir
-            .as_deref()
-            .and_then(|dir| eo_services::config_service::load_config_readonly(dir).ok())
-            .map(|config| config.developer_mode_enabled)
-            .unwrap_or(false)
     }
 
     /// Attach the composed native services. Without this (a substrate
@@ -594,13 +547,10 @@ pub async fn dispatch_in_process(
 /// Native route registrations. Each route is one `native_route` line (here
 /// or in [`native`]); together they are the complete route map.
 fn native_routes(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    let router = router.route(
+    router.route(
         "/api/health",
         arm_routed(MethodFilter::GET, "/api/health", routes::health),
-    );
-    // The hidden dev-tools routes: native-only (no Python arm, no golden),
-    // each self-gated on developer mode so they 404 off by default.
-    dev_routes::register(router)
+    )
 }
 
 /// The natively-served handlers, one function per taken-over route.
