@@ -42,7 +42,7 @@ The detail of which events exist and what each carries is its own chapter; see [
 
 ## Where to next
 
-- [Service and crate map](service-map.md): the services behind the routes and how the workspace crates are organised.
+- [Service and crate map](service-map.md): the services behind the typed commands and how the workspace crates are organised.
 - [Event taxonomy](event-taxonomy.md): the two event layers, the typed domain envelopes, and the bridge contract.
 - [OCR pipeline](ocr-pipeline.md): the skill-scan and repair-cost recognition path and its ONNX Runtime obligations.
 - [Database schema reference](database-schema.md): the application database the read surface and producer spine share.

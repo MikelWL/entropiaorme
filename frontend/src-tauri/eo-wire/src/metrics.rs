@@ -192,7 +192,7 @@ impl Default for Metrics {
 }
 
 /// A serialisable point-in-time read of the registry, the body the hidden
-/// devtools metrics route returns and the shape the rolling logs' drift
+/// devtools metrics command returns and the shape the rolling logs' drift
 /// samples mirror. Counts and durations only: no PII, ever.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MetricsSnapshot {
@@ -206,7 +206,7 @@ pub struct MetricsSnapshot {
 static METRICS: Metrics = Metrics::new();
 
 /// The process-wide telemetry registry every instrumented seam records into
-/// and the devtools metrics route reads from.
+/// and the devtools metrics command reads from.
 pub fn metrics() -> &'static Metrics {
     &METRICS
 }

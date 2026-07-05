@@ -114,7 +114,7 @@
 	<header class="mb-6">
 		<h1 class="text-xl font-semibold">Developer metrics</h1>
 		<p class="text-sm text-slate-400">
-			Live in-process telemetry: event throughput, OCR / database / request latencies, and
+			Live in-process telemetry: event throughput, OCR / database latencies, and
 			resource-drift gauges. Refreshes every {POLL_INTERVAL_MS / 1000}s while this tab is visible.
 		</p>
 	</header>

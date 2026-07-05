@@ -2,17 +2,16 @@
 //
 // Drives the REAL Tauri shell (WebView2) through tauri-driver, which proxies
 // to a version-matched Microsoft Edge WebDriver. The shell is the production
-// IPC surface the upcoming fetch-to-invoke collapse will rewrite, so this net is
-// that collapse's entry hedge: a browser-only harness cannot see window.__TAURI__.
+// IPC surface, and a browser-only harness cannot see window.__TAURI__, so the
+// suite drives the real shell.
 //
 // onPrepare brings up the full hermetic stack and onComplete tears it down:
 //   * Vite dev server at the shell's dev origin (the debug shell loads its
 //     frontend from the dev URL; the suite navigates the webview there).
 //   * tauri-driver bridging WebdriverIO to the matched msedgedriver.
 // The deterministic backend is served in-process by the shell's `e2e-stub`
-// feature (the committed fixtures over the real `api_request` IPC handler), not
-// a separate process: `invoke` cannot be intercepted from the test the way the
-// old loopback `fetch` could not be.
+// feature (the committed fixtures over the typed read commands), not a separate
+// process, since `invoke` cannot be intercepted from the test.
 import { execSync, spawn } from 'node:child_process';
 import http from 'node:http';
 import { homedir } from 'node:os';
@@ -147,9 +146,9 @@ export const config = {
 	],
 
 	onPrepare: async () => {
-		// 1. Vite dev server at the shell's dev origin. The frontend bakes the
-		//    nominal backend port from the env (the URL tauriFetch parses for its
-		//    path); every call dispatches in-process over invoke, not to a socket.
+		// 1. Vite dev server at the shell's dev origin. Every backend call
+		//    dispatches in-process over invoke, not to a socket, so there is no
+		//    backend port to bake.
 		spawnProc('vite', 'npm', ['run', 'dev'], {
 			cwd: FRONTEND_DIR,
 			shell: true,
@@ -162,10 +161,10 @@ export const config = {
 			},
 		});
 		// 2. tauri-driver bridging to the matched msedgedriver. The deterministic
-		//    backend is no longer a separate HTTP process: the e2e shell is built
-		//    with the `e2e-stub` feature, which serves the committed fixtures from
-		//    the in-process `api_request` IPC handler (WebDriver cannot intercept
-		//    `invoke`, so the stub lives in the shell, not the harness).
+		//    backend is not a separate process: the e2e shell is built with the
+		//    `e2e-stub` feature, which serves the committed fixtures from the
+		//    in-process typed read commands (WebDriver cannot intercept `invoke`,
+		//    so the stub lives in the shell, not the harness).
 		spawnProc('tauri-driver', TAURI_DRIVER, ['--native-driver', MSEDGEDRIVER]);
 
 		await Promise.all([

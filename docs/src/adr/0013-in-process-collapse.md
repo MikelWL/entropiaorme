@@ -38,7 +38,7 @@ See also the [architecture overview](../architecture/overview.md) and the [servi
 ## Evidence
 
 - `frontend/src-tauri/entropia-orme/src/lib.rs`
-- `frontend/src-tauri/eo-http/src/lib.rs`
+- `frontend/src-tauri/eo-http/src/lib.rs` (retired: the `eo-http` crate was deleted when the in-process HTTP transport gave way to the typed command facade under [ADR-0019](0019-typed-command-facade.md))
 - `frontend/src-tauri/entropia-orme/src/composition.rs`
 - `frontend/src/lib/realtime/eventRelay.ts`
 - `THIRD-PARTY-NOTICES.md`
