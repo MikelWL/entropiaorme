@@ -38,9 +38,7 @@ use std::time::Instant;
 
 use eo_http::hydration::HydrationState;
 use eo_http::{dispatch_in_process, AppState};
-use eo_services::clock::RealClock;
 use eo_services::db::Db;
-use eo_services::game_data_store::GameDataStore;
 
 const WARMUPS: usize = 3;
 const SAMPLES: usize = 15;
@@ -121,14 +119,7 @@ fn read_latency_idle_versus_under_write_load() {
     // surface takes ownership of the Db.
     let writer_pool = db.write().clone();
 
-    let game_data =
-        Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
-    let hydration = Arc::new(HydrationState::new(
-        db,
-        game_data,
-        Arc::new(RealClock::new()),
-        dir.path().to_path_buf(),
-    ));
+    let hydration = Arc::new(HydrationState::new(db));
     let state = Arc::new(AppState::new(0).with_hydration(hydration));
 
     // Reads timed under load. Keep the set small and representative: a heavy

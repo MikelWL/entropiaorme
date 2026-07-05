@@ -488,7 +488,7 @@ impl Api {
 
 /// Bridge one service value into its DTO; a shape mismatch is an internal
 /// error (the service value is the DTO's own wire contract).
-fn shape<T: serde::de::DeserializeOwned>(
+pub(crate) fn shape<T: serde::de::DeserializeOwned>(
     value: Value,
     context: &'static str,
 ) -> Result<T, ApiError> {
@@ -496,7 +496,7 @@ fn shape<T: serde::de::DeserializeOwned>(
 }
 
 /// Bridge a list of service values into their DTOs.
-fn shape_each<T: serde::de::DeserializeOwned>(
+pub(crate) fn shape_each<T: serde::de::DeserializeOwned>(
     values: Vec<Value>,
     context: &'static str,
 ) -> Result<Vec<T>, ApiError> {
@@ -511,7 +511,7 @@ fn shape_each<T: serde::de::DeserializeOwned>(
 /// the two validation variants become bad-requests carrying their verbatim
 /// message; a driver / rollup failure collapses to the internal error,
 /// logged server-side under `context`.
-fn analytics_error(context: &'static str) -> impl FnOnce(AnalyticsError) -> ApiError {
+pub(crate) fn analytics_error(context: &'static str) -> impl FnOnce(AnalyticsError) -> ApiError {
     move |err| match err {
         AnalyticsError::InvalidCursor => ApiError::bad_request("Invalid cursor"),
         AnalyticsError::InvalidPresetType => {

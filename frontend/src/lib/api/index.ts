@@ -15,14 +15,14 @@ export { ApiError, manualSkillScanCapturePng, request } from './client';
 
 import { guideState } from '$lib/guide/state.svelte';
 import type { NotableEventCategory, NotableEventType } from '$lib/types/common';
-import { client, unwrap } from './client';
+import { client } from './client';
 
 /*
- * Guide-mode route swap for analytics-flavoured endpoints.
+ * Guide-mode read swap for analytics-flavoured surfaces.
  *
  * When the interactive user guide is active on an analytics-backed surface
  * (analytics or dashboard), reads of analytics / tracking / ledger / inventory
- * are transparently retargeted onto the parallel `/api/demo/*` namespace
+ * are transparently retargeted onto the parallel typed `demo_*` commands
  * served by the curated demo DB. Surface components stay unchanged. Only the
  * read wrappers below branch on guide state, per call (never at client
  * construction); everything else (live tracking, mutating verbs, etc.) goes
@@ -370,22 +370,17 @@ export async function stopTracking(): Promise<{ session_id: string; kill_count: 
 }
 
 export async function getTrackingSessions(): Promise<TrackingSession[]> {
-	// Guide mode still reads the parallel `/api/demo/*` namespace (its own
-	// migration is pending); the live surface is served over the typed
-	// command, narrowed to the hand-written return type.
+	// Guide mode reads the parallel demo dataset over its own typed command,
+	// sharing the live command's DTO; both narrow to the hand-written type.
 	if (guideState.isActive) {
-		return unwrap(client.GET('/api/demo/tracking/sessions'));
+		return (await commands.demoTrackingSessions()) as TrackingSession[];
 	}
 	return (await commands.trackingSessions()) as TrackingSession[];
 }
 
 export async function getSessionDetail(sessionId: string): Promise<SessionDetail> {
 	if (guideState.isActive) {
-		return unwrap(
-			client.GET('/api/demo/tracking/session/{session_id}', {
-				params: { path: { session_id: sessionId } },
-			}),
-		);
+		return (await commands.demoTrackingSessionDetail(sessionId)) as SessionDetail;
 	}
 	return (await commands.trackingSessionDetail(sessionId)) as SessionDetail;
 }
@@ -504,7 +499,7 @@ export interface TrackingSnapshot extends TrackingStatus {
 
 export async function getTrackingSnapshot(): Promise<TrackingSnapshot> {
 	if (guideState.isActive) {
-		return unwrap(client.GET('/api/demo/tracking/snapshot'));
+		return (await commands.demoTrackingSnapshot()) as TrackingSnapshot;
 	}
 	return (await commands.trackingSnapshot()) as TrackingSnapshot;
 }
@@ -624,19 +619,19 @@ export interface ActivityData {
 // The live analytics surface is served over typed IPC commands
 // (`commands.gen.ts`); the wrappers keep their hand-written return types,
 // narrowing the generated shapes with `as` (the `unwrap<T>` doctrine's
-// typed-IPC form). Guide mode still reads the parallel `/api/demo/*`
-// namespace over the curated demo database (its own migration is pending),
-// so the read wrappers keep branching on guide state.
+// typed-IPC form). Guide mode reads the parallel curated demo database over
+// its own typed `demo_*` commands (sharing the live DTOs), so the read
+// wrappers keep branching on guide state between two typed functions.
 export async function getAnalyticsOverview(period: string = 'all'): Promise<OverviewStats> {
 	if (guideState.isActive) {
-		return unwrap(client.GET('/api/demo/analytics/overview', { params: { query: { period } } }));
+		return (await commands.demoAnalyticsOverview(period)) as OverviewStats;
 	}
 	return (await commands.analyticsOverview(period)) as OverviewStats;
 }
 
 export async function getAnalyticsActivity(): Promise<ActivityData> {
 	if (guideState.isActive) {
-		return unwrap(client.GET('/api/demo/analytics/activity'));
+		return (await commands.demoAnalyticsActivity()) as ActivityData;
 	}
 	return (await commands.analyticsActivity()) as ActivityData;
 }
@@ -649,20 +644,9 @@ export interface LedgerPage {
 }
 
 export async function getLedgerEntries(cursor?: string, limit?: number): Promise<LedgerPage> {
-	if (guideState.isActive) {
-		const query = {
-			...(cursor ? { cursor } : {}),
-			...(limit != null ? { limit } : {}),
-		};
-		const { data, response } = await client.GET('/api/demo/analytics/ledger', {
-			params: { query },
-		});
-		return {
-			items: (data ?? []) as LedgerEntry[],
-			nextCursor: response.headers.get('x-next-cursor'),
-		};
-	}
-	const page = await commands.ledgerList(cursor ?? null, limit ?? null);
+	const page = guideState.isActive
+		? await commands.demoLedgerList(cursor ?? null, limit ?? null)
+		: await commands.ledgerList(cursor ?? null, limit ?? null);
 	return {
 		items: page.entries as LedgerEntry[],
 		nextCursor: page.nextCursor ?? null,
@@ -679,7 +663,7 @@ export async function deleteLedgerEntry(id: string): Promise<void> {
 
 export async function getLedgerPresets(): Promise<LedgerPreset[]> {
 	if (guideState.isActive) {
-		return unwrap(client.GET('/api/demo/analytics/ledger/presets'));
+		return (await commands.demoLedgerPresetsList()) as LedgerPreset[];
 	}
 	return (await commands.ledgerPresetsList()) as LedgerPreset[];
 }
@@ -717,7 +701,7 @@ export interface InventorySellPayload {
 
 export async function getInventoryItems(): Promise<InventoryItem[]> {
 	if (guideState.isActive) {
-		return unwrap(client.GET('/api/demo/analytics/inventory'));
+		return (await commands.demoInventoryList()) as InventoryItem[];
 	}
 	return (await commands.inventoryList()) as InventoryItem[];
 }

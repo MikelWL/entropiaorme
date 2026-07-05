@@ -187,82 +187,68 @@ describe('void-returning wrappers delegate without unwrapping', () => {
 	});
 });
 
-// The three tracking reads with a guide-mode surface: the live route is a
-// typed command, guide mode still reads the `/api/demo/*` namespace over the
-// HTTP client (its own migration is pending).
+// The three tracking reads with a guide-mode surface: the live route and the
+// guide-mode demo route are both typed commands, sharing their DTOs. Guide
+// mode dispatches the `demo_*` command with the identical args; the HTTP
+// client is never touched.
 describe('guide-mode demo dispatch', () => {
-	const rows: [
-		string,
-		() => Promise<unknown>,
-		string,
-		Record<string, unknown>,
-		string,
-		unknown?,
-	][] = [
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>, string][] = [
 		[
 			'getTrackingSessions',
 			() => api.getTrackingSessions(),
 			'tracking_sessions',
 			{},
-			'/api/demo/tracking/sessions',
+			'demo_tracking_sessions',
 		],
 		[
 			'getSessionDetail',
 			() => api.getSessionDetail('s1'),
 			'tracking_session_detail',
 			{ session_id: 's1' },
-			'/api/demo/tracking/session/{session_id}',
-			{ params: { path: { session_id: 's1' } } },
+			'demo_tracking_session_detail',
 		],
 		[
 			'getTrackingSnapshot',
 			() => api.getTrackingSnapshot(),
 			'tracking_snapshot',
 			{},
-			'/api/demo/tracking/snapshot',
+			'demo_tracking_snapshot',
 		],
 	];
 
 	it.each(
 		rows,
-	)('%s invokes the command live and reads the demo route in guide mode', async (_name, call, command, args, demoPath, options) => {
+	)('%s invokes the live command, or the demo command in guide mode', async (_name, call, command, args, demoCommand) => {
 		guideState.isActive = false;
 		await call();
 		expect(tauriInvoke).toHaveBeenCalledTimes(1);
 		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
-		expect(clientGet).not.toHaveBeenCalled();
 
 		tauriInvoke.mockClear();
 		guideState.isActive = true;
 		await call();
-		expect(tauriInvoke).not.toHaveBeenCalled();
-		expect(clientGet).toHaveBeenCalledTimes(1);
-		expect(clientGet.mock.calls[0][0]).toBe(demoPath);
-		if (options !== undefined) {
-			expect(clientGet.mock.calls[0][1]).toEqual(options);
-		}
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(demoCommand, args);
+		expect(clientGet).not.toHaveBeenCalled();
 	});
 });
 
 // The analytics family serves its live surface over typed IPC commands and
-// keeps a per-call demo-route branch (the guide-mode surface still reads the
-// `/api/demo/*` namespace until its own migration): the reads dispatch a
-// command live and the HTTP client in guide mode; the writes are always
-// commands (no demo branch).
+// keeps a per-call demo branch (the guide-mode surface dispatches the parallel
+// `demo_*` command sharing the DTO): the reads dispatch a live command or a
+// demo command by guide state; the writes are always commands (no demo
+// branch).
 describe('analytics wrappers dispatch typed commands', () => {
-	it('getAnalyticsOverview invokes the command live and reads the demo route in guide mode', async () => {
+	it('getAnalyticsOverview invokes the live command, or the demo command in guide mode', async () => {
 		guideState.isActive = false;
 		await api.getAnalyticsOverview('30d');
 		expect(tauriInvoke).toHaveBeenCalledWith('analytics_overview', { period: '30d' });
-		expect(clientGet).not.toHaveBeenCalled();
 
 		tauriInvoke.mockClear();
 		guideState.isActive = true;
 		await api.getAnalyticsOverview('30d');
-		expect(clientGet).toHaveBeenCalledWith('/api/demo/analytics/overview', {
-			params: { query: { period: '30d' } },
-		});
-		expect(tauriInvoke).not.toHaveBeenCalled();
+		expect(tauriInvoke).toHaveBeenCalledWith('demo_analytics_overview', { period: '30d' });
+		expect(clientGet).not.toHaveBeenCalled();
 	});
 
 	it('getAnalyticsOverview defaults the period to "all"', async () => {

@@ -1745,3 +1745,35 @@ export async function trackingQuestLink(sessionId: string, action: string): Prom
 export async function trackingRepairScan(sessionId: string): Promise<RepairScanResult> {
 	return invokeCommand('tracking_repair_scan', { session_id: sessionId });
 }
+
+export async function demoAnalyticsOverview(period: string): Promise<AnalyticsOverview> {
+	return invokeCommand('demo_analytics_overview', { period });
+}
+
+export async function demoAnalyticsActivity(): Promise<AnalyticsActivity> {
+	return invokeCommand('demo_analytics_activity', {});
+}
+
+export async function demoLedgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {
+	return invokeCommand('demo_ledger_list', { cursor, limit });
+}
+
+export async function demoLedgerPresetsList(): Promise<LedgerPreset[]> {
+	return invokeCommand('demo_ledger_presets_list', {});
+}
+
+export async function demoInventoryList(): Promise<InventoryItem[]> {
+	return invokeCommand('demo_inventory_list', {});
+}
+
+export async function demoTrackingSessions(): Promise<TrackingSession[]> {
+	return invokeCommand('demo_tracking_sessions', {});
+}
+
+export async function demoTrackingSessionDetail(sessionId: string): Promise<SessionDetail> {
+	return invokeCommand('demo_tracking_session_detail', { session_id: sessionId });
+}
+
+export async function demoTrackingSnapshot(): Promise<TrackingSnapshot> {
+	return invokeCommand('demo_tracking_snapshot', {});
+}

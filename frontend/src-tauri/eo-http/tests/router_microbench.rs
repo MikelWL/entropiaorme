@@ -34,10 +34,9 @@ use chrono::NaiveDateTime;
 use eo_http::hydration::HydrationState;
 use eo_http::{dispatch_in_process, AppState};
 use eo_services::chatlog_watcher::ChatlogWatcher;
-use eo_services::clock::{MockClock, RealClock};
+use eo_services::clock::MockClock;
 use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
-use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
 use eo_services::tracker::{HuntTracker, Providers};
 
@@ -211,14 +210,7 @@ fn in_process_router_microbench() {
 
     let (db, tracker, bus) = replay_basic_hunt(&runtime, dir.path());
 
-    let game_data =
-        Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
-    let hydration = Arc::new(HydrationState::new(
-        db,
-        game_data,
-        Arc::new(RealClock::new()),
-        dir.path().to_path_buf(),
-    ));
+    let hydration = Arc::new(HydrationState::new(db));
     // An inert hotbar listener (no keystroke source) so `tracking/snapshot`,
     // which reads the composed tracker + hotbar, answers its real 200 the way
     // the app does with the hook library absent.

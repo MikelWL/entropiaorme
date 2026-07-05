@@ -29,9 +29,7 @@ use std::time::Instant;
 
 use eo_http::hydration::HydrationState;
 use eo_http::{dispatch_in_process, AppState};
-use eo_services::clock::RealClock;
 use eo_services::db::Db;
-use eo_services::game_data_store::GameDataStore;
 use serde_json::Value;
 
 const WARMUPS: usize = 3;
@@ -96,14 +94,7 @@ fn read_path_latency_against_a_real_database() {
             .unwrap_or(false)
     });
 
-    let game_data =
-        Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
-    let hydration = Arc::new(HydrationState::new(
-        db,
-        game_data,
-        Arc::new(RealClock::new()),
-        dir.path().to_path_buf(),
-    ));
+    let hydration = Arc::new(HydrationState::new(db));
     // Only the read surface is exercised, so hydration alone composes the
     // state; the producer services (tracker, scan, hotbar) are unused here.
     let state = Arc::new(AppState::new(0).with_hydration(hydration));

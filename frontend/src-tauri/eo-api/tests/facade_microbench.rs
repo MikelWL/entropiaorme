@@ -77,6 +77,7 @@ fn facade_microbench() {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        None,
     );
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();

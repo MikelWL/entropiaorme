@@ -51,6 +51,7 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        None,
     )
 }
 

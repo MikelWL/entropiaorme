@@ -37,6 +37,7 @@ use eo_services::tracker::HuntTracker;
 pub mod analytics;
 pub mod character;
 pub mod codex;
+pub mod demo;
 pub mod equipment;
 mod error;
 pub mod manifest;
@@ -91,6 +92,15 @@ pub struct Api {
     /// The analytics service (Overview / Activity aggregates, ledger,
     /// presets, inventory), built over the facade's shared db and clock.
     analytics: AnalyticsService,
+    /// The bundled guide-mode demo database path (a shipped resource), or
+    /// `None` on a facade built without it (the demo commands then report the
+    /// unavailable error). The demo services are a parallel database + tracker
+    /// built lazily from it on first demo access.
+    demo_db_path: Option<PathBuf>,
+    /// The lazily-built demo services, stood up once on first demo access.
+    /// The inner `None` records a build that could not be served, so a demo
+    /// command degrades gracefully without retrying a hopeless build.
+    demo: tokio::sync::OnceCell<Option<Arc<demo::DemoState>>>,
 }
 
 impl Api {
@@ -108,6 +118,7 @@ impl Api {
         skill_scan: Arc<SkillScanManual>,
         spacebar: Arc<SpacebarCaptureListener>,
         repair_ocr: Arc<RepairOcrService>,
+        demo_db_path: Option<PathBuf>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let quests = quests::build_quests_service(db.clone(), clock.clone());
@@ -128,6 +139,8 @@ impl Api {
             codex,
             quests,
             analytics,
+            demo_db_path,
+            demo: tokio::sync::OnceCell::new(),
         }
     }
 

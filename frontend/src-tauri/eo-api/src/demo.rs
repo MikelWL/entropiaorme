@@ -1,59 +1,64 @@
-//! Guide-mode demo playback: the native `/api/demo/*` read namespace.
+//! Guide-mode demo playback: the typed `demo_*` read commands.
 //!
 //! The demo serves a curated, never-mutated dataset that drives the in-app
 //! guide: a bundled demo database plus a synthetic "mid-hunt" active session.
-//! It mirrors the reference's mechanism exactly:
+//! The frontend's guide-mode read wrappers dispatch these typed commands
+//! instead of the live ones, sharing the same DTOs; the parallel demo state
+//! is built lazily on first access.
 //!
 //! - The bundled demo DB ships as a Tauri resource. On first demo access it is
 //!   copied to a per-process working file and opened read/write, so the demo's
-//!   priming writes never touch the bundled file. A parallel [`HydrationState`]
-//!   serves the analytics + session-read surface over that copy, and a parallel
-//!   [`HuntTracker`] serves the live snapshot, both entirely separate from the
-//!   live tracking state.
+//!   priming writes never touch the bundled file. A parallel [`HuntTracker`]
+//!   serves the live snapshot and an [`AnalyticsService`] over the same copy
+//!   serves the analytics + session-read surface, both entirely separate from
+//!   the live tracking state.
 //! - The analytics / session-list reads need only the database; the tracker is
-//!   primed lazily, and only by the snapshot endpoint (mirroring the
-//!   reference's `_ensure_conn` vs `_ensure_svc` split). Priming writes the
-//!   mid-hunt session into the shared demo copy, so analytics reads taken after
-//!   the snapshot reflect it, exactly as the reference's shared in-memory
-//!   connection does.
+//!   primed lazily, and only by the snapshot read. Priming writes the mid-hunt
+//!   session into the shared demo copy, so analytics reads taken after the
+//!   snapshot reflect it.
 //! - The mid-hunt session is synthesised relative to "now" (`started_at =
 //!   now - elapsed`): its curated kill stream rides a committed fixture
-//!   (captured from the reference prime; see `resources/mid_hunt_fixture.json`),
-//!   replayed with every timestamp rebased onto the live clock. The fixture
-//!   pins the data; the clock keeps the readout fresh.
-//! - Routes are GET-only and carry NO ETag (the `/api/demo` prefix is outside
-//!   the conditional-GET middleware), so every reply is a plain JSON 200.
+//!   (`resources/mid_hunt_fixture.json`), replayed with every timestamp
+//!   rebased onto the live clock. The fixture pins the data; the clock keeps
+//!   the readout fresh.
+//! - The reads share the live commands' computation: [`list_sessions_impl`],
+//!   [`get_session_impl`], and [`build_snapshot_value`] (the tracking family),
+//!   and [`AnalyticsService`] (the analytics family), each run over the demo's
+//!   own parallel database and tracker rather than the live ones.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::body::Body;
-use axum::http::{Response, StatusCode};
 use chrono::TimeDelta;
+use eo_services::analytics::AnalyticsService;
 use eo_services::clock::Clock;
 use eo_services::config_service::{AppConfig, TrifectaPresetConfig};
 use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
-use eo_services::game_data_store::GameDataStore;
 use eo_services::tracker::{naive_to_epoch, HuntTracker, Providers};
-use eo_services::tracking_models::{Kill, LootItem, ToolStats, TrackingSession};
+use eo_services::tracking_models::{
+    Kill, LootItem, ToolStats, TrackingSession as TrackingSessionModel,
+};
 use serde::Deserialize;
+use sqlx::SqlitePool;
 use tokio::runtime::Handle;
 use tokio::sync::OnceCell;
 
-use crate::hydration::{
-    detail, error_response, internal_error, plain_json_response, HydrationState,
+use crate::analytics::{
+    analytics_error, shape, shape_each, AnalyticsActivity, AnalyticsOverview, InventoryItem,
+    LedgerItem, LedgerPage, LedgerPreset,
 };
-use crate::tracking_routes::{get_session_impl, list_sessions_impl};
-use crate::AppState;
+use crate::tracking::{
+    build_snapshot_value, get_session_impl, list_sessions_impl, SessionDetail, TrackingSession,
+    TrackingSnapshot,
+};
+use crate::{Api, ApiError};
 
-/// The curated mid-hunt session, captured once from the reference demo's
-/// `mid_hunt` prime. Timestamps are offsets from `started_at`; every other
-/// value is replayed verbatim.
+/// The curated mid-hunt session. Timestamps are offsets from `started_at`;
+/// every other value is replayed verbatim.
 const MID_HUNT_FIXTURE: &str = include_str!("../resources/mid_hunt_fixture.json");
 
-/// The demo's fixed mob lock and trifecta preset, matching the reference stub
-/// in `_ensure_svc`.
+/// The demo's fixed mob lock and trifecta preset.
 const DEMO_MOB: (&str, &str, &str) = ("Caboria Old", "Caboria", "Old");
 const DEMO_PRESET_ID: &str = "demo_default";
 const DEMO_PRESET_NAME: &str = "Calypso";
@@ -61,8 +66,8 @@ const DEMO_SMALL_WEAPON: &str = "Jester D-1";
 const DEMO_BIG_WEAPON: &str = "Korss H400";
 const DEMO_HEAL_TOOL: &str = "Vivo T1";
 
-/// Why the demo surface could not prime or serve. Log-facing only: the
-/// demo routes reply with the generic 500 and log the failure.
+/// Why the demo surface could not prime or serve. Log-facing only: the demo
+/// commands collapse it to the generic internal error and log the failure.
 #[derive(Debug, thiserror::Error)]
 pub enum DemoError {
     #[error("demo data dir: {0}")]
@@ -156,32 +161,27 @@ struct FixtureNotable {
 /// The parallel demo services over a writable clone of the bundled demo DB.
 pub struct DemoState {
     db: Db,
-    hydration: HydrationState,
+    analytics: AnalyticsService,
     tracker: Arc<HuntTracker>,
     clock: Arc<dyn Clock>,
     fixture: Fixture,
     /// Snapshot-triggered, once: writes the mid-hunt session into the demo DB
-    /// and primes the demo tracker (mirroring `_ensure_svc`).
+    /// and primes the demo tracker.
     primed: OnceCell<()>,
 }
 
 impl DemoState {
     /// Build the demo services: copy the bundled demo DB to a per-process
-    /// working file, open it, and stand up the parallel hydration + tracker.
+    /// working file, open it, and stand up the parallel analytics + tracker.
     /// The tracker stays UNPRIMED until the first snapshot.
-    pub async fn build(
-        demo_db_path: &Path,
-        game_data: Arc<GameDataStore>,
-        clock: Arc<dyn Clock>,
-        data_dir: PathBuf,
-    ) -> Result<DemoState, DemoError> {
+    pub async fn build(demo_db_path: &Path, clock: Arc<dyn Clock>) -> Result<DemoState, DemoError> {
         let work = working_copy_path();
         // A stale copy from a prior run of the same pid (rare) must not be
         // adopted; start from the bundled file each launch.
         let _ = std::fs::remove_file(&work);
         std::fs::copy(demo_db_path, &work)?;
         let db = Db::open(&work).await?;
-        let hydration = HydrationState::new(db.clone(), game_data, clock.clone(), data_dir);
+        let analytics = AnalyticsService::new(db.clone(), clock.clone());
         let bus = Arc::new(EventBus::new());
         let tracker = HuntTracker::new(
             bus,
@@ -193,7 +193,7 @@ impl DemoState {
         let fixture: Fixture = serde_json::from_str(MID_HUNT_FIXTURE)?;
         Ok(DemoState {
             db,
-            hydration,
+            analytics,
             tracker,
             clock,
             fixture,
@@ -201,11 +201,11 @@ impl DemoState {
         })
     }
 
-    fn read(&self) -> &sqlx::SqlitePool {
+    fn read(&self) -> &SqlitePool {
         self.db.read()
     }
 
-    fn write(&self) -> &sqlx::SqlitePool {
+    fn write(&self) -> &SqlitePool {
         self.db.write()
     }
 
@@ -213,80 +213,109 @@ impl DemoState {
         naive_to_epoch(self.clock.now())
     }
 
-    // ── Analytics reads (delegated to the parallel hydration; no prime) ──
+    // ── Analytics reads (delegated to the parallel service; no prime) ──
 
-    pub async fn analytics_overview(&self, period: &str) -> Response<Body> {
-        self.hydration.analytics_overview(period).await
+    async fn analytics_overview(&self, period: &str) -> Result<AnalyticsOverview, ApiError> {
+        let value = self
+            .analytics
+            .overview(period)
+            .await
+            .map_err(analytics_error("demo analytics overview"))?;
+        shape(value, "demo analytics overview shaping")
     }
 
-    pub async fn analytics_activity(&self) -> Response<Body> {
-        self.hydration.analytics_activity(None).await
+    async fn analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
+        let value = self
+            .analytics
+            .activity()
+            .await
+            .map_err(analytics_error("demo analytics activity"))?;
+        shape(value, "demo analytics activity shaping")
     }
 
-    pub async fn list_ledger(&self, cursor: Option<&str>, limit: Option<i64>) -> Response<Body> {
-        self.hydration.list_ledger(cursor, limit).await
+    async fn ledger_list(
+        &self,
+        cursor: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<LedgerPage, ApiError> {
+        let page = self
+            .analytics
+            .list_ledger(cursor.as_deref(), limit)
+            .await
+            .map_err(analytics_error("demo ledger list"))?;
+        let entries = page
+            .entries
+            .into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<Vec<LedgerItem>, _>>()
+            .map_err(ApiError::internal("demo ledger list shaping"))?;
+        Ok(LedgerPage {
+            entries,
+            next_cursor: page.next_cursor,
+        })
     }
 
-    pub async fn list_ledger_presets(&self) -> Response<Body> {
-        self.hydration.list_ledger_presets().await
+    async fn ledger_presets_list(&self) -> Result<Vec<LedgerPreset>, ApiError> {
+        let rows = self
+            .analytics
+            .list_ledger_presets()
+            .await
+            .map_err(analytics_error("demo ledger presets list"))?;
+        shape_each(rows, "demo ledger presets shaping")
     }
 
-    pub async fn list_inventory(&self) -> Response<Body> {
-        self.hydration.list_inventory().await
+    async fn inventory_list(&self) -> Result<Vec<InventoryItem>, ApiError> {
+        let rows = self
+            .analytics
+            .list_inventory()
+            .await
+            .map_err(analytics_error("demo inventory list"))?;
+        shape_each(rows, "demo inventory list shaping")
     }
 
-    // ── Session reads (the live `/api/tracking` versions carry ETag; the
-    //    demo prefix does not, so these call the impls and reply plainly) ──
+    // ── Session reads (the live tracking computation over the demo DB) ──
 
-    pub async fn list_sessions(&self) -> Response<Body> {
-        match list_sessions_impl(&self.db, self.now_epoch()).await {
-            Ok(value) => plain_json_response(&value),
-            Err(_) => internal_error(),
-        }
+    async fn tracking_sessions(&self) -> Result<Vec<TrackingSession>, ApiError> {
+        let value = list_sessions_impl(&self.db, self.now_epoch())
+            .await
+            .map_err(ApiError::internal("demo tracking sessions"))?;
+        serde_json::from_value(value).map_err(ApiError::internal("demo tracking sessions shaping"))
     }
 
-    pub async fn get_session(&self, session_id: &str) -> Response<Body> {
-        match get_session_impl(self.read(), session_id, self.now_epoch()).await {
-            Ok(Some(value)) => plain_json_response(&value),
-            Ok(None) => error_response(StatusCode::NOT_FOUND, &detail("Session not found")),
-            Err(_) => internal_error(),
+    async fn tracking_session_detail(&self, session_id: &str) -> Result<SessionDetail, ApiError> {
+        match get_session_impl(self.read(), session_id, self.now_epoch())
+            .await
+            .map_err(ApiError::internal("demo session detail"))?
+        {
+            Some(value) => serde_json::from_value(value)
+                .map_err(ApiError::internal("demo session detail shaping")),
+            None => Err(ApiError::not_found("Session not found")),
         }
     }
 
     // ── The snapshot (primes on first access) ──
 
-    pub async fn tracking_snapshot(&self) -> Response<Body> {
-        if let Err(error) = self.ensure_primed().await {
-            tracing::warn!("demo prime failed: {error:?}");
-            return internal_error();
-        }
-        let config = match self.demo_config().await {
-            Ok(config) => config,
-            Err(error) => {
-                tracing::warn!("demo config failed: {error:?}");
-                return internal_error();
-            }
-        };
-        // hotbar_active is fixed `true` (the reference stub reports the listener
-        // running); the demo reuses the live snapshot assembly verbatim.
-        match self
-            .hydration
-            .build_snapshot_value(&self.tracker, &config, true)
+    async fn tracking_snapshot(&self) -> Result<TrackingSnapshot, ApiError> {
+        self.ensure_primed()
             .await
-        {
-            Ok(value) => plain_json_response(&value),
-            Err(_) => internal_error(),
-        }
+            .map_err(ApiError::internal("demo prime"))?;
+        let config = self
+            .demo_config()
+            .await
+            .map_err(ApiError::internal("demo config"))?;
+        // hotbar_active is fixed `true` (the demo reports the listener as
+        // running); the snapshot assembly is the live one, reused verbatim.
+        let value = build_snapshot_value(&self.db, &self.tracker, &config, true).await?;
+        serde_json::from_value(value).map_err(ApiError::internal("demo snapshot shaping"))
     }
 
     async fn ensure_primed(&self) -> Result<(), DemoError> {
         // `get_or_try_init` runs the prime exactly once even under concurrent
         // first snapshots: the losers await the winner's result rather than
-        // racing a second prime (the manual get-then-set this replaced left an
-        // await between the check and the set, so two callers could both prime
-        // and the second would hit the fixture's UNIQUE keys). A failed prime
-        // is not cached, so a transient error can still retry. Mirrors the
-        // reference demo's `_state_lock`-serialised prime and `ensure_demo`.
+        // racing a second prime (a manual get-then-set would leave an await
+        // between the check and the set, so two callers could both prime and
+        // the second would hit the fixture's UNIQUE keys). A failed prime is
+        // not cached, so a transient error can still retry.
         self.primed
             .get_or_try_init(|| self.prime())
             .await
@@ -294,8 +323,7 @@ impl DemoState {
     }
 
     /// Write the mid-hunt session into the demo DB and prime the demo tracker,
-    /// rebasing every fixture timestamp onto the live clock. Mirrors
-    /// `_write_demo_session_to_db` + `_prime_mid_hunt`.
+    /// rebasing every fixture timestamp onto the live clock.
     async fn prime(&self) -> Result<(), DemoError> {
         let started_naive = self.clock.now()
             - TimeDelta::milliseconds((self.fixture.elapsed_seconds * 1000.0).round() as i64);
@@ -459,7 +487,7 @@ impl DemoState {
             })
             .collect();
 
-        let demo_session = TrackingSession {
+        let demo_session = TrackingSessionModel {
             id: session.id.clone(),
             start_time: started_naive,
             end_time: None,
@@ -480,8 +508,8 @@ impl DemoState {
     }
 
     /// The demo's config stub: trifecta mode with the curated "Calypso" preset,
-    /// its weapon ids resolved by name from the demo equipment library (the
-    /// reference's `_lookup_id`). Everything else is the default config.
+    /// its weapon ids resolved by name from the demo equipment library.
+    /// Everything else is the default config.
     async fn demo_config(&self) -> Result<AppConfig, DemoError> {
         let preset = TrifectaPresetConfig {
             id: DEMO_PRESET_ID.to_string(),
@@ -518,93 +546,120 @@ fn working_copy_path() -> PathBuf {
     std::env::temp_dir().join(format!("entropiaorme-demo-{}.db", std::process::id()))
 }
 
-/// Resolve the lazily-built demo state, building it once on first demo access.
-/// Returns `None` when the demo cannot be served (the native services are not
-/// composed, no demo DB is bundled, or the build failed); the caller then
-/// answers the 503 service-unavailable floor.
-pub(crate) async fn ensure_demo(state: &Arc<AppState>) -> Option<Arc<DemoState>> {
-    let cell = state.demo_cell();
-    cell.get_or_init(|| async {
-        let demo_db_path = state.demo_db_path()?;
-        let hydration = state.hydration()?;
-        match DemoState::build(
-            &demo_db_path,
-            hydration.game_data.clone(),
-            hydration.clock.clone(),
-            hydration.data_dir.clone(),
-        )
-        .await
-        {
-            Ok(demo) => Some(Arc::new(demo)),
-            Err(error) => {
-                tracing::warn!("demo state build failed: {error:?}");
-                None
-            }
-        }
-    })
-    .await
-    .clone()
+// ── The typed demo commands (Api boundary) ──────────────────────────
+
+impl Api {
+    /// Resolve the lazily-built demo state, building it once on first demo
+    /// access. A build that cannot be served (no demo DB bundled, or the
+    /// build failed) collapses to the internal error, logged server-side; the
+    /// demo DB is a shipped resource, so this is a defensive path.
+    async fn ensure_demo(&self) -> Result<Arc<DemoState>, ApiError> {
+        self.demo
+            .get_or_init(|| async {
+                let path = self.demo_db_path.clone()?;
+                match DemoState::build(&path, self.clock.clone()).await {
+                    Ok(demo) => Some(Arc::new(demo)),
+                    Err(error) => {
+                        tracing::warn!(target: "eo::api", "demo state build failed: {error:?}");
+                        None
+                    }
+                }
+            })
+            .await
+            .clone()
+            .ok_or_else(|| ApiError::invalid_state("demo services unavailable"))
+    }
+
+    /// The demo Overview aggregate for a named period.
+    pub async fn demo_analytics_overview(
+        &self,
+        period: &str,
+    ) -> Result<AnalyticsOverview, ApiError> {
+        self.ensure_demo().await?.analytics_overview(period).await
+    }
+
+    /// The demo Activity aggregate.
+    pub async fn demo_analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
+        self.ensure_demo().await?.analytics_activity().await
+    }
+
+    /// One demo ledger page plus the cursor for the next page.
+    pub async fn demo_ledger_list(
+        &self,
+        cursor: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<LedgerPage, ApiError> {
+        self.ensure_demo().await?.ledger_list(cursor, limit).await
+    }
+
+    /// The demo ledger presets.
+    pub async fn demo_ledger_presets_list(&self) -> Result<Vec<LedgerPreset>, ApiError> {
+        self.ensure_demo().await?.ledger_presets_list().await
+    }
+
+    /// The demo inventory items.
+    pub async fn demo_inventory_list(&self) -> Result<Vec<InventoryItem>, ApiError> {
+        self.ensure_demo().await?.inventory_list().await
+    }
+
+    /// The demo recent sessions.
+    pub async fn demo_tracking_sessions(&self) -> Result<Vec<TrackingSession>, ApiError> {
+        self.ensure_demo().await?.tracking_sessions().await
+    }
+
+    /// One demo session's full detail; an absent session is a not-found.
+    pub async fn demo_tracking_session_detail(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionDetail, ApiError> {
+        self.ensure_demo()
+            .await?
+            .tracking_session_detail(session_id)
+            .await
+    }
+
+    /// The demo dashboard snapshot (primes the mid-hunt session on first call).
+    pub async fn demo_tracking_snapshot(&self) -> Result<TrackingSnapshot, ApiError> {
+        self.ensure_demo().await?.tracking_snapshot().await
+    }
 }
 
-// The goldens are the reference demo's exact HTTP bodies, captured under a
-// frozen clock. The demo's now-relative session
-// makes the absolute-datetime renderings (the snapshot `started_at` and
-// `recentEvents[].timestamp`, the sessions-list `startTime`/`endTime`)
-// clock/timezone-dependent; those are normalised before the comparison (the
-// migration's frozen-ignore-list pattern), so this test pins the curated DATA
-// and the native computation byte-for-byte while treating the live time
-// rendering as the known non-deterministic surface. UTC-stable date buckets
-// (the analytics timeline/monthly keys) are NOT datetime strings and stay
-// asserted.
+// The goldens are the demo's exact command payloads (the DTOs serialised), a
+// byte-faithful pin of the curated DATA and the shared native computation. The
+// demo's now-relative session makes the absolute-datetime renderings (the
+// snapshot `started_at` and `recentEvents[].timestamp`, the sessions-list
+// `startTime`/`endTime`) clock/timezone-dependent; those are normalised before
+// the comparison, so the test pins the curated data while treating the live
+// time rendering as the known non-deterministic surface. UTC-stable date
+// buckets (the analytics timeline/monthly keys) are NOT datetime strings and
+// stay asserted. Set `UPDATE_DEMO_GOLDENS` to rewrite the golden files from the
+// current output (a ratified regeneration when the typed contract moves).
 #[cfg(test)]
 mod tests {
     use super::*;
     use eo_services::clock::MockClock;
-    use http_body_util::BodyExt;
+    use serde::Serialize;
     use serde_json::Value;
-
-    const G_OVERVIEW_ALL: &str =
-        include_str!("../resources/demo_goldens/analytics_overview_all.txt");
-    const G_OVERVIEW_30D: &str =
-        include_str!("../resources/demo_goldens/analytics_overview_30d.txt");
-    const G_ACTIVITY: &str = include_str!("../resources/demo_goldens/analytics_activity.txt");
-    const G_LEDGER: &str = include_str!("../resources/demo_goldens/analytics_ledger.txt");
-    const G_PRESETS: &str = include_str!("../resources/demo_goldens/analytics_ledger_presets.txt");
-    const G_INVENTORY: &str = include_str!("../resources/demo_goldens/analytics_inventory.txt");
-    const G_SESSIONS: &str = include_str!("../resources/demo_goldens/tracking_sessions.txt");
-    const G_SESSION_DETAIL: &str =
-        include_str!("../resources/demo_goldens/tracking_session_detail.txt");
-    const G_SNAPSHOT: &str = include_str!("../resources/demo_goldens/tracking_snapshot.txt");
 
     /// The dev-tree bundled demo DB (the resource the app ships).
     fn demo_db_path() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/demo/entropia_orme.db")
     }
 
-    /// A minimal game-data store: the demo routes never read the catalogue
-    /// (analytics + the tracker snapshot are pure DB/state reads), but
-    /// `HydrationState` requires one.
-    fn empty_game_data(dir: &Path) -> Arc<GameDataStore> {
-        let snapshot = dir.join("snapshot");
-        std::fs::create_dir_all(&snapshot).unwrap();
-        std::fs::write(snapshot.join("mobs.json"), "[]").unwrap();
-        std::fs::write(snapshot.join("professions.json"), "[]").unwrap();
-        std::fs::write(snapshot.join("skills.json"), "[]").unwrap();
-        Arc::new(GameDataStore::new(&snapshot).unwrap())
+    fn golden_path(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/demo_goldens")
+            .join(format!("{name}.txt"))
     }
 
-    async fn body_string(response: Response<Body>) -> String {
-        let bytes = response.into_body().collect().await.unwrap().to_bytes();
-        String::from_utf8(bytes.to_vec()).unwrap()
+    fn to_json<T: Serialize>(value: &T) -> String {
+        serde_json::to_string(value).expect("demo payload serialises")
     }
 
     /// Recursively replace the now-relative surface with placeholders: ISO-8601
-    /// datetime strings (`YYYY-MM-DDThh:...`) and the snapshot's `elapsed` count.
-    /// Date-only (`YYYY-MM-DD`) and month (`YYYY-MM`) bucket keys lack the `T`
-    /// and stay, so the analytics timeline is still asserted. The golden's
-    /// `elapsed` is a wall-clock capture artifact (the reference froze the prime
-    /// clock but not the snapshot clock); the native value is pinned to the
-    /// deterministic 754 separately.
+    /// datetime strings (`YYYY-MM-DDThh:...`) and the snapshot's `elapsed`
+    /// count. Date-only (`YYYY-MM-DD`) and month (`YYYY-MM`) bucket keys lack
+    /// the `T` and stay, so the analytics timeline is still asserted.
     fn normalise(value: &mut Value) {
         match value {
             Value::String(text) => {
@@ -635,24 +690,27 @@ mod tests {
             && b[10] == b'T'
     }
 
-    fn assert_matches_golden(label: &str, body: &str, golden: &str) {
+    fn assert_matches_golden(name: &str, body: &str) {
+        let path = golden_path(name);
+        if std::env::var_os("UPDATE_DEMO_GOLDENS").is_some() {
+            std::fs::write(&path, body).expect("golden writes");
+            return;
+        }
+        let golden = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{name}: golden unreadable: {e}"));
         let mut got: Value = serde_json::from_str(body)
-            .unwrap_or_else(|e| panic!("{label}: native body is not JSON: {e}\n{body}"));
-        let mut want: Value = serde_json::from_str(golden)
-            .unwrap_or_else(|e| panic!("{label}: golden not JSON: {e}"));
+            .unwrap_or_else(|e| panic!("{name}: demo body is not JSON: {e}\n{body}"));
+        let mut want: Value = serde_json::from_str(&golden)
+            .unwrap_or_else(|e| panic!("{name}: golden not JSON: {e}"));
         normalise(&mut got);
         normalise(&mut want);
-        assert_eq!(
-            got, want,
-            "{label}: native demo output diverged from the golden"
-        );
+        assert_eq!(got, want, "{name}: demo output diverged from the golden");
     }
 
     // The parallel tracker bridges DB work onto the runtime via `block_on`,
     // which requires the multi-threaded flavour (as in production).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn demo_routes_reproduce_the_reference_goldens() {
-        let dir = tempfile::tempdir().unwrap();
+    async fn demo_reads_reproduce_the_curated_goldens() {
         let clock = Arc::new(MockClock::new(
             Some(
                 chrono::NaiveDateTime::parse_from_str("2026-06-18 12:00:00", "%Y-%m-%d %H:%M:%S")
@@ -660,19 +718,14 @@ mod tests {
             ),
             0.0,
         ));
-        let demo = DemoState::build(
-            &demo_db_path(),
-            empty_game_data(dir.path()),
-            clock,
-            dir.path().to_path_buf(),
-        )
-        .await
-        .expect("demo state builds over the bundled demo DB");
+        let demo = DemoState::build(&demo_db_path(), clock)
+            .await
+            .expect("demo state builds over the bundled demo DB");
 
         // Snapshot FIRST: primes the mid-hunt session into the shared demo DB,
         // matching the capture order (analytics reads then reflect it).
-        let snapshot = body_string(demo.tracking_snapshot().await).await;
-        assert_matches_golden("snapshot", &snapshot, G_SNAPSHOT);
+        let snapshot = to_json(&demo.tracking_snapshot().await.expect("snapshot"));
+        assert_matches_golden("tracking_snapshot", &snapshot);
         // The now-relative readout: elapsed is the fixed mid-hunt window and the
         // session is active with the full kill stream.
         let snap: Value = serde_json::from_str(&snapshot).unwrap();
@@ -685,39 +738,32 @@ mod tests {
         assert!(is_iso_datetime(snap["started_at"].as_str().unwrap()));
 
         assert_matches_golden(
-            "overview_all",
-            &body_string(demo.analytics_overview("all").await).await,
-            G_OVERVIEW_ALL,
+            "analytics_overview_all",
+            &to_json(&demo.analytics_overview("all").await.expect("overview all")),
         );
         assert_matches_golden(
-            "overview_30d",
-            &body_string(demo.analytics_overview("30d").await).await,
-            G_OVERVIEW_30D,
+            "analytics_overview_30d",
+            &to_json(&demo.analytics_overview("30d").await.expect("overview 30d")),
         );
         assert_matches_golden(
-            "activity",
-            &body_string(demo.analytics_activity().await).await,
-            G_ACTIVITY,
+            "analytics_activity",
+            &to_json(&demo.analytics_activity().await.expect("activity")),
         );
         assert_matches_golden(
-            "ledger",
-            &body_string(demo.list_ledger(None, None).await).await,
-            G_LEDGER,
+            "analytics_ledger",
+            &to_json(&demo.ledger_list(None, None).await.expect("ledger")),
         );
         assert_matches_golden(
-            "presets",
-            &body_string(demo.list_ledger_presets().await).await,
-            G_PRESETS,
+            "analytics_ledger_presets",
+            &to_json(&demo.ledger_presets_list().await.expect("presets")),
         );
         assert_matches_golden(
-            "inventory",
-            &body_string(demo.list_inventory().await).await,
-            G_INVENTORY,
+            "analytics_inventory",
+            &to_json(&demo.inventory_list().await.expect("inventory")),
         );
         assert_matches_golden(
-            "sessions",
-            &body_string(demo.list_sessions().await).await,
-            G_SESSIONS,
+            "tracking_sessions",
+            &to_json(&demo.tracking_sessions().await.expect("sessions")),
         );
 
         // Session detail for the primed mid-hunt session (the fixture's id, the
@@ -725,9 +771,13 @@ mod tests {
         let fixture: Value = serde_json::from_str(MID_HUNT_FIXTURE).unwrap();
         let session_id = fixture["session"]["id"].as_str().unwrap();
         assert_matches_golden(
-            "session_detail",
-            &body_string(demo.get_session(session_id).await).await,
-            G_SESSION_DETAIL,
+            "tracking_session_detail",
+            &to_json(
+                &demo
+                    .tracking_session_detail(session_id)
+                    .await
+                    .expect("detail"),
+            ),
         );
     }
 }

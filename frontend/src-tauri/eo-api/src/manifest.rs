@@ -783,6 +783,63 @@ pub fn manifest() -> Vec<CommandSpec> {
             }],
             returns: Some(schema(schema_for!(RepairScanResult))),
         },
+        // The guide-mode demo reads: typed commands sharing the live
+        // analytics and tracking DTOs, served over the parallel demo state.
+        CommandSpec {
+            name: "demo_analytics_overview",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsOverview))),
+        },
+        CommandSpec {
+            name: "demo_analytics_activity",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AnalyticsActivity))),
+        },
+        CommandSpec {
+            name: "demo_ledger_list",
+            args: vec![
+                ArgSpec {
+                    name: "cursor",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "limit",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(LedgerPage))),
+        },
+        CommandSpec {
+            name: "demo_ledger_presets_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<LedgerPreset>))),
+        },
+        CommandSpec {
+            name: "demo_inventory_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<InventoryItem>))),
+        },
+        CommandSpec {
+            name: "demo_tracking_sessions",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<TrackingSession>))),
+        },
+        CommandSpec {
+            name: "demo_tracking_session_detail",
+            args: vec![ArgSpec {
+                name: "session_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(SessionDetail))),
+        },
+        CommandSpec {
+            name: "demo_tracking_snapshot",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(TrackingSnapshot))),
+        },
     ]
 }
 

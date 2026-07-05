@@ -42,7 +42,7 @@ use eo_services::config_service::{active_trifecta_preset, load_config_readonly, 
 use eo_services::db::{Db, DbError};
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
 use eo_services::quests::QuestError;
-use eo_services::tracker::{naive_isoformat, naive_to_epoch, to_iso_utc};
+use eo_services::tracker::{naive_isoformat, naive_to_epoch, to_iso_utc, HuntTracker};
 use eo_services::trifecta_service::{validate_trifecta, TrifectaPreset};
 use eo_wire::normalizer::round_half_even;
 use schemars::JsonSchema;
@@ -222,7 +222,7 @@ struct ListSummary {
     hofs: i64,
 }
 
-async fn list_sessions_impl(db: &Db, now: f64) -> Result<Value, DbError> {
+pub(crate) async fn list_sessions_impl(db: &Db, now: f64) -> Result<Value, DbError> {
     // Heal so ended sessions carry current summaries (a write on the read
     // path, preserved), then read each recent session's row.
     eo_services::session_summary::heal_summaries(db.write()).await?;
@@ -444,7 +444,7 @@ async fn string_column(
 
 // ── Session detail ──────────────────────────────────────────────────
 
-async fn get_session_impl(
+pub(crate) async fn get_session_impl(
     pool: &SqlitePool,
     session_id: &str,
     now: f64,
@@ -1706,9 +1706,9 @@ impl Api {
     pub async fn tracking_snapshot(&self) -> Result<TrackingSnapshot, ApiError> {
         let config = load_config_readonly(&self.data_dir)
             .map_err(ApiError::internal("tracking snapshot config"))?;
-        let value = self
-            .build_snapshot_value(&config, self.hotbar.is_running())
-            .await?;
+        let value =
+            build_snapshot_value(&self.db, &self.tracker, &config, self.hotbar.is_running())
+                .await?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking snapshot shaping"))
     }
 
@@ -2066,54 +2066,60 @@ impl Api {
             .map_err(ApiError::internal("session existence"))?;
         Ok(row.is_some())
     }
+}
 
-    /// Assemble the projected snapshot value from the tracker readout, the
-    /// resolved config, and the hotbar listener's running state.
-    async fn build_snapshot_value(
-        &self,
-        config: &AppConfig,
-        hotbar_active: bool,
-    ) -> Result<Value, ApiError> {
-        let weapon_attribution = if config.hotbar_hooks_enabled {
-            "hotbar"
-        } else {
-            "trifecta"
-        };
-        let trifecta_attribution = if weapon_attribution == "trifecta" {
-            self.trifecta_attribution_summary(config)
-                .await
-                .map_err(ApiError::internal("snapshot trifecta summary"))?
-        } else {
-            Value::Null
-        };
-        let readout = self
-            .tracker
-            .snapshot()
-            .map_err(ApiError::internal("snapshot readout"))?;
-        let current_tool = match &readout.current_tool {
-            Some(tool) => Value::String(tool.clone()),
-            None => Value::Null,
-        };
+// ── Snapshot assembly (shared by the live and demo snapshots) ────────
 
-        let value = match &readout.active {
-            None => {
-                let (current_mob, mob_source) = configured_manual_label(config);
-                json!({
-                    "status": "idle",
-                    "hotbarListenerActive": hotbar_active,
-                    "weaponAttribution": weapon_attribution,
-                    "repairOcrEnabled": config.repair_ocr_enabled,
-                    "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
-                    "currentTool": current_tool,
-                    "trifectaAttribution": trifecta_attribution,
-                    "mobEntryMode": config.mob_tracking_mode,
-                    "currentMob": current_mob,
-                    "mobSource": mob_source,
-                    "recentEvents": [],
-                })
-            }
-            Some(active) => {
-                let recent_events: Vec<Value> = active
+/// Assemble the projected snapshot value from the tracker readout, the
+/// resolved config, and the hotbar listener's running state. A free
+/// function (rather than an `Api` method) so both the live snapshot and
+/// the guide-mode demo snapshot, which runs over its own parallel tracker
+/// and database, share one assembly.
+pub(crate) async fn build_snapshot_value(
+    db: &Db,
+    tracker: &HuntTracker,
+    config: &AppConfig,
+    hotbar_active: bool,
+) -> Result<Value, ApiError> {
+    let weapon_attribution = if config.hotbar_hooks_enabled {
+        "hotbar"
+    } else {
+        "trifecta"
+    };
+    let trifecta_attribution = if weapon_attribution == "trifecta" {
+        trifecta_attribution_summary(db, config)
+            .await
+            .map_err(ApiError::internal("snapshot trifecta summary"))?
+    } else {
+        Value::Null
+    };
+    let readout = tracker
+        .snapshot()
+        .map_err(ApiError::internal("snapshot readout"))?;
+    let current_tool = match &readout.current_tool {
+        Some(tool) => Value::String(tool.clone()),
+        None => Value::Null,
+    };
+
+    let value = match &readout.active {
+        None => {
+            let (current_mob, mob_source) = configured_manual_label(config);
+            json!({
+                "status": "idle",
+                "hotbarListenerActive": hotbar_active,
+                "weaponAttribution": weapon_attribution,
+                "repairOcrEnabled": config.repair_ocr_enabled,
+                "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
+                "currentTool": current_tool,
+                "trifectaAttribution": trifecta_attribution,
+                "mobEntryMode": config.mob_tracking_mode,
+                "currentMob": current_mob,
+                "mobSource": mob_source,
+                "recentEvents": [],
+            })
+        }
+        Some(active) => {
+            let recent_events: Vec<Value> = active
                     .notable_event_rows
                     .iter()
                     .enumerate()
@@ -2128,107 +2134,103 @@ impl Api {
                         })
                     })
                     .collect();
-                let warnings: Vec<Value> = active
-                    .warnings
-                    .iter()
-                    .map(|message| json!({"type": "warning", "description": message, "value": 0.0}))
-                    .collect();
-                json!({
-                    "status": "active",
-                    "session_id": active.session_id.clone(),
-                    "started_at": active.started_at.clone(),
-                    "kill_count": active.kill_count,
-                    "elapsed": active.elapsed,
-                    "cost": active.cost,
-                    "returns": active.returns,
-                    "pes": active.pes,
-                    "net": active.net,
-                    "returnRate": active.return_rate,
-                    "damageDealtTotal": active.damage_dealt_total,
-                    "weaponDamageDealt": active.weapon_damage_dealt,
-                    "weaponCost": active.weapon_cost,
-                    "shotsFiredTotal": active.shots_fired_total,
-                    "criticalHitsTotal": active.critical_hits_total,
-                    "maxDamage": active.max_damage,
-                    "globalsCount": active.globals_count,
-                    "hofsCount": active.hofs_count,
-                    "latestKillLoot": active.latest_kill_loot,
-                    "multiplierLast": active.multiplier_last,
-                    "multiplierAvg": active.multiplier_avg,
-                    "multiplierMax": active.multiplier_max,
-                    "multiplierHistory": active.multiplier_history.clone(),
-                    "cumulativeNetHistory": active.cumulative_net_history.clone(),
-                    "hotbarListenerActive": hotbar_active,
-                    "weaponAttribution": weapon_attribution,
-                    "repairOcrEnabled": config.repair_ocr_enabled,
-                    "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
-                    "currentTool": current_tool,
-                    "trifectaAttribution": trifecta_attribution,
-                    "mobEntryMode": active.mob_entry_mode.clone(),
-                    "currentMob": active.current_mob.clone(),
-                    "mobSource": active.mob_source.clone(),
-                    "recentEvents": recent_events,
-                    "warnings": warnings,
-                })
-            }
-        };
-        Ok(project(&value, &SNAPSHOT_FIELDS))
-    }
-
-    /// `_trifecta_attribution_summary`: the active preset's bound
-    /// weapon/heal names plus the preset list, or null when nothing exists.
-    async fn trifecta_attribution_summary(&self, config: &AppConfig) -> Result<Value, DbError> {
-        let active = active_trifecta_preset(config);
-        let small = active.and_then(|preset| preset.small_weapon_id);
-        let big = active.and_then(|preset| preset.big_weapon_id);
-        let heal = active.and_then(|preset| preset.heal_id);
-        let presets: Vec<Value> = config
-            .trifecta_presets
-            .iter()
-            .map(|preset| json!({"id": preset.id, "name": preset.name}))
-            .collect();
-        if presets.is_empty() && small.is_none() && big.is_none() && heal.is_none() {
-            return Ok(Value::Null);
+            let warnings: Vec<Value> = active
+                .warnings
+                .iter()
+                .map(|message| json!({"type": "warning", "description": message, "value": 0.0}))
+                .collect();
+            json!({
+                "status": "active",
+                "session_id": active.session_id.clone(),
+                "started_at": active.started_at.clone(),
+                "kill_count": active.kill_count,
+                "elapsed": active.elapsed,
+                "cost": active.cost,
+                "returns": active.returns,
+                "pes": active.pes,
+                "net": active.net,
+                "returnRate": active.return_rate,
+                "damageDealtTotal": active.damage_dealt_total,
+                "weaponDamageDealt": active.weapon_damage_dealt,
+                "weaponCost": active.weapon_cost,
+                "shotsFiredTotal": active.shots_fired_total,
+                "criticalHitsTotal": active.critical_hits_total,
+                "maxDamage": active.max_damage,
+                "globalsCount": active.globals_count,
+                "hofsCount": active.hofs_count,
+                "latestKillLoot": active.latest_kill_loot,
+                "multiplierLast": active.multiplier_last,
+                "multiplierAvg": active.multiplier_avg,
+                "multiplierMax": active.multiplier_max,
+                "multiplierHistory": active.multiplier_history.clone(),
+                "cumulativeNetHistory": active.cumulative_net_history.clone(),
+                "hotbarListenerActive": hotbar_active,
+                "weaponAttribution": weapon_attribution,
+                "repairOcrEnabled": config.repair_ocr_enabled,
+                "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
+                "currentTool": current_tool,
+                "trifectaAttribution": trifecta_attribution,
+                "mobEntryMode": active.mob_entry_mode.clone(),
+                "currentMob": active.current_mob.clone(),
+                "mobSource": active.mob_source.clone(),
+                "recentEvents": recent_events,
+                "warnings": warnings,
+            })
         }
-        let mut summary = Map::new();
-        summary.insert(
-            "activePresetId".into(),
-            match &config.active_trifecta_preset_id {
-                Some(id) => Value::String(id.clone()),
-                None => Value::Null,
-            },
-        );
-        summary.insert(
-            "presetName".into(),
-            match active {
-                Some(preset) => Value::String(preset.name.clone()),
-                None => Value::Null,
-            },
-        );
-        summary.insert("presets".into(), Value::Array(presets));
-        summary.insert(
-            "smallWeapon".into(),
-            self.equipment_name(small, "weapon").await?,
-        );
-        summary.insert(
-            "bigWeapon".into(),
-            self.equipment_name(big, "weapon").await?,
-        );
-        summary.insert(
-            "healTool".into(),
-            self.equipment_name(heal, "healing").await?,
-        );
-        Ok(Value::Object(summary))
-    }
+    };
+    Ok(project(&value, &SNAPSHOT_FIELDS))
+}
 
-    /// The equipment-library name for a bound id and type, or null.
-    async fn equipment_name(&self, id: Option<i64>, item_type: &str) -> Result<Value, DbError> {
-        let Some(id) = id else {
-            return Ok(Value::Null);
-        };
-        match self.db.equipment_item(id, item_type).await? {
-            Some((_id, name, _properties)) => Ok(Value::String(name)),
-            None => Ok(Value::Null),
-        }
+/// `_trifecta_attribution_summary`: the active preset's bound
+/// weapon/heal names plus the preset list, or null when nothing exists.
+async fn trifecta_attribution_summary(db: &Db, config: &AppConfig) -> Result<Value, DbError> {
+    let active = active_trifecta_preset(config);
+    let small = active.and_then(|preset| preset.small_weapon_id);
+    let big = active.and_then(|preset| preset.big_weapon_id);
+    let heal = active.and_then(|preset| preset.heal_id);
+    let presets: Vec<Value> = config
+        .trifecta_presets
+        .iter()
+        .map(|preset| json!({"id": preset.id, "name": preset.name}))
+        .collect();
+    if presets.is_empty() && small.is_none() && big.is_none() && heal.is_none() {
+        return Ok(Value::Null);
+    }
+    let mut summary = Map::new();
+    summary.insert(
+        "activePresetId".into(),
+        match &config.active_trifecta_preset_id {
+            Some(id) => Value::String(id.clone()),
+            None => Value::Null,
+        },
+    );
+    summary.insert(
+        "presetName".into(),
+        match active {
+            Some(preset) => Value::String(preset.name.clone()),
+            None => Value::Null,
+        },
+    );
+    summary.insert("presets".into(), Value::Array(presets));
+    summary.insert(
+        "smallWeapon".into(),
+        equipment_name(db, small, "weapon").await?,
+    );
+    summary.insert("bigWeapon".into(), equipment_name(db, big, "weapon").await?);
+    summary.insert(
+        "healTool".into(),
+        equipment_name(db, heal, "healing").await?,
+    );
+    Ok(Value::Object(summary))
+}
+
+/// The equipment-library name for a bound id and type, or null.
+async fn equipment_name(db: &Db, id: Option<i64>, item_type: &str) -> Result<Value, DbError> {
+    let Some(id) = id else {
+        return Ok(Value::Null);
+    };
+    match db.equipment_item(id, item_type).await? {
+        Some((_id, name, _properties)) => Ok(Value::String(name)),
+        None => Ok(Value::Null),
     }
 }

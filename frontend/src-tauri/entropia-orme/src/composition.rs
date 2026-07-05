@@ -495,6 +495,7 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
         data_dir(),
         snapshot_dir(resource_dir.as_ref()),
         models_dir(resource_dir.as_ref()),
+        Some(demo_db_path(resource_dir.as_ref())),
         keystroke_source,
     )
     .await
@@ -509,6 +510,7 @@ async fn compose_with(
     data_dir: PathBuf,
     snapshot: PathBuf,
     models: PathBuf,
+    demo_db_path: Option<PathBuf>,
     keystroke_source: Arc<dyn KeystrokeSource>,
 ) -> Composition {
     if let Err(err) = std::fs::create_dir_all(&data_dir) {
@@ -682,8 +684,9 @@ async fn compose_with(
         skill_scan.clone(),
         spacebar_listener.clone(),
         repair_ocr.clone(),
+        demo_db_path,
     ));
-    let hydration = Arc::new(HydrationState::new(db, game_data, clock, data_dir));
+    let hydration = Arc::new(HydrationState::new(db));
     Composition::Ready(Composed {
         hydration,
         api,
@@ -1370,6 +1373,7 @@ mod tests {
             dir.path().join("data"),
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1396,6 +1400,7 @@ mod tests {
             data_dir,
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1432,6 +1437,7 @@ mod tests {
             data_dir,
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1448,6 +1454,7 @@ mod tests {
             dir.path().join("data"),
             dir.path().join("no-such-snapshot"),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1620,6 +1627,7 @@ mod tests {
             dir.path().join("data"),
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1678,6 +1686,7 @@ mod tests {
             dir.path().join("data"),
             repo_snapshot(),
             repo_models(),
+            None,
             Arc::new(MockKeystrokeSource::new()),
         )
         .await

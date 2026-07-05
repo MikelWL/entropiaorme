@@ -126,7 +126,7 @@ fn exempt_patterns() -> &'static [Regex] {
             r"(^|/)frontend/src-tauri/entropia-orme/resources/models/",
             r"(^|/)frontend/src-tauri/contracts/[^/]+\.snapshot\.json$",
             r"(^|/)frontend/src/lib/api/schema\.d\.ts$",
-            r"(^|/)frontend/src-tauri/eo-http/resources/demo_goldens/",
+            r"(^|/)frontend/src-tauri/eo-api/resources/demo_goldens/",
         ]
         .iter()
         .map(|p| Regex::new(p).expect("valid exempt pattern"))
