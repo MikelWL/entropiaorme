@@ -8,7 +8,7 @@ The scan family serves over `eo_api::scan` (`eo-api/src/scan.rs`) as typed DTOs 
 
 ## Oracle ratification audit
 
-Range: `9376715..HEAD` (working tree; `HEAD` = `9376715`, the analytics landing). Every claim re-derived from source.
+Range: `9376715..HEAD`. Every claim re-derived from source.
 
 ### Findings
 

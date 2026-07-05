@@ -8,7 +8,7 @@ The eight guide-mode demo reads serve over `eo_api::demo` (`eo-api/src/demo.rs`)
 
 ## Oracle ratification audit
 
-Range: `fc89f04..beca2a15` (`refactor/demo-typed-commands`). Every claim re-derived from source: the snapshot parsed as JSON and diffed object-by-object against `HEAD` with the full `$ref` reachability closure computed on both sides; the demo goldens diffed against their pre-move path under `HEAD`; the two governing tests run.
+Range: `fc89f04..beca2a15`. Every claim re-derived from source: the snapshot parsed as JSON and diffed object-by-object against `HEAD` with the full `$ref` reachability closure computed on both sides; the demo goldens diffed against their pre-move path under `HEAD`; the two governing tests run.
 
 ### Findings
 
@@ -45,7 +45,7 @@ A genuine spec move, not a laundered regression. The old pins (the bare ledger a
 
 ```
 ORACLE-RATIFICATION
-range: fc89f04..beca2a15 (refactor/demo-typed-commands)
+range: fc89f04..beca2a15
 goldens: contracts/openapi.snapshot.json, frontend/src/lib/api/schema.d.ts, frontend/src-tauri/eo-api/resources/demo_goldens/tracking_snapshot.txt, frontend/src-tauri/eo-api/resources/demo_goldens/analytics_ledger.txt
 VERDICT: ratification-sound
 ```

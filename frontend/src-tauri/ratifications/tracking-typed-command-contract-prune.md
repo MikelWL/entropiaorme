@@ -8,7 +8,7 @@ The tracking family serves over `eo_api::tracking` (`eo-api/src/tracking.rs`) as
 
 ## Oracle ratification audit
 
-Range: working tree (`refactor/tracking-typed-commands`, uncommitted). Every claim re-derived from source: the snapshot parsed as JSON and diffed object-by-object against `HEAD`, with the full `$ref` reachability closure computed on both sides.
+Range: `71f7bc9..HEAD`. Every claim re-derived from source: the snapshot parsed as JSON and diffed object-by-object against `HEAD`, with the full `$ref` reachability closure computed on both sides.
 
 ### Findings
 
@@ -42,7 +42,7 @@ The snapshot delta is a structurally strict pure deletion: exactly seventeen tra
 
 ```
 ORACLE-RATIFICATION
-range: worktree (refactor/tracking-typed-commands, uncommitted)
+range: 71f7bc9..HEAD
 goldens: contracts/openapi.snapshot.json, frontend/src/lib/api/schema.d.ts, eo-http/tests/http_consistency_replay.rs, eo-api/tests/tracking_facade.rs
 VERDICT: ratification-sound
 ```
