@@ -201,6 +201,17 @@ impl Db {
         &self.writer
     }
 
+    /// Refresh the query planner's statistics via `PRAGMA optimize`, the
+    /// recommended once-per-lifecycle maintenance call. Run at a quiescent
+    /// boundary (shutdown, with no writes in flight), never on a hot path.
+    /// Returns whether the pragma succeeded (a failure is non-fatal at exit).
+    pub async fn optimize_on_shutdown(&self) -> bool {
+        sqlx::query("PRAGMA optimize")
+            .execute(self.write())
+            .await
+            .is_ok()
+    }
+
     /// Checkpoint the WAL and truncate it to zero, bounding WAL growth
     /// over a long-running session. Runs on the writer (a checkpoint is a
     /// write operation). `TRUNCATE` blocks until it can reset the log,

@@ -62,7 +62,7 @@ jobs:
       # timeout as caught); anything else (usage error, failing baseline,
       # internal error) still fails this step.
       - name: Run mutation campaign (backend members)
-        run: cargo mutants --package eo-wire --package eo-http --package eo-services --in-place || { rc=$?; test "$rc" -eq 2 -o "$rc" -eq 3; }
+        run: cargo mutants --package eo-wire --package eo-services --in-place || { rc=$?; test "$rc" -eq 2 -o "$rc" -eq 3; }
       # Reduce the campaign to the aggregate-score shields badge. Badge-only mode
       # always exits 0, so the badge reflects reality even when the floors step
       # below fails; built on every run, published (next job) only from main.

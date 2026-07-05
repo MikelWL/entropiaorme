@@ -1106,6 +1106,90 @@ async fn set_armour_cost_impl(
     }))
 }
 
+/// Delete a tracking session and every row that references it. An active
+/// session cannot be deleted (its writes are still in flight); a missing one
+/// is a not-found. The cascade runs in one transaction, child-scoped rows
+/// first, and repairs the daily rollups for exactly the calendar days the
+/// session touched (captured before the deletes empty those tables).
+async fn delete_session_impl(pool: &SqlitePool, session_id: &str) -> Result<(), EditError> {
+    let mut tx = pool.begin().await?;
+
+    // Read the existence-and-active guard inside the transaction, so the check
+    // and the cascade are one atomic unit (a separate pool acquisition for the
+    // check could interleave with another write between the read and the
+    // delete).
+    let row = sqlx::query("SELECT is_active FROM tracking_sessions WHERE id = ?")
+        .bind(session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(row) = row else {
+        return Err(EditError::NotFound("Session not found".to_string()));
+    };
+    if row.get::<i64, _>(0) != 0 {
+        return Err(EditError::Conflict(
+            "Cannot delete an active session".to_string(),
+        ));
+    }
+
+    // Capture the days this session touches before its rows are deleted, so
+    // the rollup repair below recomputes exactly those days.
+    let day_rows = sqlx::query(
+        "SELECT DISTINCT date(timestamp, 'unixepoch') FROM kills WHERE session_id = ? \
+         UNION SELECT DISTINCT date(timestamp, 'unixepoch') FROM skill_gains WHERE session_id = ? \
+         UNION SELECT date(started_at, 'unixepoch') FROM tracking_sessions WHERE id = ? \
+         UNION SELECT date(ended_at, 'unixepoch') FROM tracking_sessions \
+               WHERE id = ? AND ended_at IS NOT NULL",
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let days: Vec<String> = day_rows.iter().map(|row| row.get(0)).collect();
+
+    // Child-scoped rows first (the kill-scoped tables have no ON DELETE
+    // cascade), then the kills, the session-scoped rows, and the session.
+    sqlx::query(
+        "DELETE FROM kill_tool_stats \
+         WHERE kill_id IN (SELECT id FROM kills WHERE session_id = ?)",
+    )
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM kill_loot_items \
+         WHERE kill_id IN (SELECT id FROM kills WHERE session_id = ?)",
+    )
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM kills WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM skill_gains WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM notable_events WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM session_summaries WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM tracking_sessions WHERE id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+
+    eo_services::daily_rollup::refresh_days(&mut tx, days).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 // ── Producer helpers ────────────────────────────────────────────────
 
 /// `_validate_hotbar`: hotbar attribution is workable while at least one
@@ -2053,6 +2137,15 @@ impl Api {
         }
         let value = project(&self.repair_ocr.scan_repair_cost(), &REPAIR_FIELDS);
         serde_json::from_value(value).map_err(ApiError::internal("repair scan shaping"))
+    }
+
+    /// Delete a session and all of its data (an active session cannot be
+    /// deleted; a missing one is a not-found). The rollups are repaired for
+    /// the days it touched.
+    pub async fn tracking_session_delete(&self, session_id: String) -> Result<(), ApiError> {
+        delete_session_impl(self.write(), &session_id)
+            .await
+            .map_err(edit_error("tracking session delete"))
     }
 
     // ── Private snapshot assembly ────────────────────────────────────

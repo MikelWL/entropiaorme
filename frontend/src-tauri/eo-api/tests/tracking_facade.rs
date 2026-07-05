@@ -251,3 +251,135 @@ async fn the_lifecycle_guards_hold() {
         })
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleting_a_session_cascades_and_guards_active_and_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let snapshot = dir.path().join("snapshot");
+    std::fs::create_dir_all(&snapshot).unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let db = Db::open(&data_dir.join("entropia_orme.db"))
+        .await
+        .expect("migrated database");
+
+    // One ended session (`ended`) whose kill `k1` fans out into every child
+    // table, plus an active session (`live`) that must resist deletion.
+    seed_ended(&db).await;
+    sqlx::query("INSERT INTO kill_tool_stats(kill_id,tool_name) VALUES('k1','Weapon')")
+        .execute(db.write())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO kill_loot_items(kill_id,item_name,value_ped) VALUES('k1','Shrapnel',5.0)",
+    )
+    .execute(db.write())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount) \
+         VALUES('ended',1001.0,'Rifle',1.0)",
+    )
+    .execute(db.write())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO notable_events(session_id,event_type,mob_or_item,value_ped,timestamp) \
+         VALUES('ended','global','Atrox',60.0,1001.0)",
+    )
+    .execute(db.write())
+    .await
+    .unwrap();
+
+    let verify = db.clone();
+    let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
+    let clock = Arc::new(RealClock::new());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current());
+    let api = Api::new(
+        db,
+        game_data,
+        clock,
+        data_dir,
+        handles.config_service,
+        handles.tracker,
+        handles.hotbar,
+        handles.watcher,
+        handles.skill_tracker,
+        handles.skill_scan,
+        handles.spacebar,
+        handles.repair_ocr,
+        None,
+    );
+
+    // Insert the active session AFTER composition so the tracker's startup
+    // orphan-recovery (which ends dangling active sessions) leaves it active.
+    sqlx::query(
+        "INSERT INTO tracking_sessions(id,started_at,is_active,mob_tracking_mode) \
+         VALUES('live',2000.0,1,'mob')",
+    )
+    .execute(verify.write())
+    .await
+    .unwrap();
+
+    // An active session is a conflict; an absent one is a not-found.
+    let active = api
+        .tracking_session_delete("live".to_string())
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&active).unwrap()["kind"], "conflict");
+    let missing = api
+        .tracking_session_delete("nope".to_string())
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&missing).unwrap()["kind"], "notFound");
+
+    // Happy path: the ended session and every row that references it are gone,
+    // and the active session is untouched.
+    api.tracking_session_delete("ended".to_string())
+        .await
+        .unwrap();
+    for (label, query) in [
+        (
+            "kills",
+            "SELECT COUNT(*) FROM kills WHERE session_id='ended'",
+        ),
+        (
+            "skill_gains",
+            "SELECT COUNT(*) FROM skill_gains WHERE session_id='ended'",
+        ),
+        (
+            "notable_events",
+            "SELECT COUNT(*) FROM notable_events WHERE session_id='ended'",
+        ),
+        (
+            "tracking_sessions",
+            "SELECT COUNT(*) FROM tracking_sessions WHERE id='ended'",
+        ),
+        (
+            "kill_tool_stats",
+            "SELECT COUNT(*) FROM kill_tool_stats WHERE kill_id='k1'",
+        ),
+        (
+            "kill_loot_items",
+            "SELECT COUNT(*) FROM kill_loot_items WHERE kill_id='k1'",
+        ),
+    ] {
+        let count: i64 = sqlx::query_scalar(query)
+            .fetch_one(verify.read())
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{label} still holds rows for the deleted session");
+    }
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE id='live'")
+        .fetch_one(verify.read())
+        .await
+        .unwrap();
+    assert_eq!(live, 1, "the active session must survive");
+
+    // Deleting the now-gone session is a not-found.
+    let again = api
+        .tracking_session_delete("ended".to_string())
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&again).unwrap()["kind"], "notFound");
+}

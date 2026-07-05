@@ -100,7 +100,7 @@ async fn the_metrics_snapshot_reads_under_developer_mode() {
     assert!(snapshot.events_published >= 1);
     // Every instrumented histogram is present with its bucket vector.
     assert!(!snapshot.ocr_latency.buckets.is_empty());
-    assert!(!snapshot.handler_latency.is_empty());
+    assert!(!snapshot.db_query_latency.buckets.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

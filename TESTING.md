@@ -15,7 +15,7 @@ The application was originally a Python (FastAPI) backend. It was ported to Rust
 The proof survives the retirement. The frozen goldens the port was graded against are committed Rust-side, and a family of hermetic tests re-asserts them on every run **with no second implementation present**: a byte-identical native result is the equivalence evidence, banked permanently. The goldens fall into three groups, all under `frontend/src-tauri/`:
 
 - **The replay corpus** (`fixtures/corpus/`): per-scenario event-stream fingerprints (`expected/fingerprint.jsonl`), database-state snapshots (`expected/db_state.json`), and per-endpoint HTTP-response goldens (`expected/http_responses/`).
-- **The contract snapshots** (`contracts/`): the OpenAPI schema snapshot (`openapi.snapshot.json`) and the frontend-facing domain-event schema snapshot (`event_schemas.snapshot.json`).
+- **The contract snapshot** (`contracts/`): the frontend-facing domain-event schema snapshot (`event_schemas.snapshot.json`).
 - **The wire fixtures** (`eo-wire/tests/fixtures/`): the normaliser conformance table and the listener / quest-automation projection mirrors.
 
 These goldens are frozen evidence: the tests below only read and assert them. Changing one is a deliberate re-ratification, governed by the discipline under "Goldens regeneration" below.
@@ -31,13 +31,13 @@ A test that runs code but asserts nothing about the result undermines both: it s
 
 ## Running the Rust suite
 
-The workspace lives at `frontend/src-tauri/`: the Tauri shell (`entropia-orme`, window orchestration and hosting the backend in-process) plus the native-backend members (`eo-wire`, `eo-http`, `eo-services`) that implement the application logic. The backend members carry the equivalence tests and the bulk of the unit coverage; they build and test without the Tauri system toolchain.
+The workspace lives at `frontend/src-tauri/`: the Tauri shell (`entropia-orme`, window orchestration and hosting the backend in-process) plus the native-backend members (`eo-wire`, `eo-services`, `eo-api`) that implement the application logic. The backend members carry the equivalence tests and the bulk of the unit coverage; they build and test without the Tauri system toolchain.
 
 Run the backend members alone (no Tauri toolchain required):
 
 ```sh
 cd frontend/src-tauri
-cargo nextest run -p eo-wire -p eo-http -p eo-services -p eo-api
+cargo nextest run -p eo-wire -p eo-services -p eo-api
 ```
 
 or, from the repository root, the `just` recipe that wraps the same command:
@@ -63,12 +63,10 @@ A `.cargo/config.toml` under the workspace redirects test temporary directories 
 These are the hermetic tests that re-assert the frozen goldens. Each runs with no second implementation; a byte-identical native result is the proof.
 
 - **`eo-services/tests/corpus_replay_oracle.rs`**: replays every scripted scenario through the complete native pipeline (chat-log tail to event bus to tracker to database), then asserts both the event-stream fingerprint and the database-state snapshot byte-for-byte. The two serialisations share one normaliser in fingerprint-then-snapshot order, exactly as the golden harness assigned its encounter-order symbols.
-- **`eo-http/tests/http_consistency_replay.rs`**: replays the consistency scenarios through the same pipeline, then drives the read and producer HTTP surface in-memory and re-asserts the per-endpoint response goldens through the native fingerprint emitter.
 - **`eo-wire/tests/emitters_proof.rs`**: feeds the committed raw captures (pre-normalisation bus events, database rows, and HTTP responses) through the Rust emitters and asserts byte-equality against the goldens. The raw captures and goldens are committed together, so a stale fixture cannot pass.
 - **`eo-wire/tests/conformance.rs`**: replays the normaliser conformance table and checks the native normaliser reproduces every expected output byte-for-byte (and refuses a vacuous pass on an empty table).
-- **`eo-wire/tests/openapi_conformance.rs`** and **`eo-wire/tests/event_schema_conformance.rs`**: assert every registered native response model and the native domain-event union against their component in the committed contract snapshots (property sets, required lists, field shapes, nullability, closed-world posture), and round-trip the snapshot's enum values through the real serde implementations.
+- **`eo-wire/tests/event_schema_conformance.rs`**: asserts the native domain-event union against its component in the committed event-schema snapshot (property sets, required lists, field shapes, nullability, closed-world posture), and round-trips the snapshot's enum values through the real serde implementations.
 - **`eo-wire/tests/yml_family.rs`**: asserts the native normaliser and serialiser reproduce the listener and quest-automation projection mirrors byte-for-byte.
-- **`eo-http/tests/native_router.rs`**: hermetic router-level coverage driving `build_router(state).oneshot` in-memory (the same router core the production binary serves through the IPC command), pinning route registration, the validation envelopes, and the conditional-GET / CORS contracts without any second toolchain.
 
 ### Deterministic scenario clocks
 
@@ -92,7 +90,7 @@ The campaign targets the backend members; the Tauri shell stays out (its logic i
 
 ```sh
 cd frontend/src-tauri
-cargo mutants --package eo-wire --package eo-http --package eo-services --in-place
+cargo mutants --package eo-wire --package eo-services --in-place
 ```
 
 The campaign runs `--in-place` because the member tests read committed fixtures from the repository outside the cargo workspace (the relocated corpus under `fixtures/`), which cargo-mutants' default copied build tree would not contain.
@@ -171,7 +169,7 @@ Tests assert the code's actual behaviour; where a module diverges from what a re
 
 ### Frontend lint and format (Biome)
 
-Biome owns linting and formatting for the frontend's TypeScript, JavaScript, and JSON (Svelte components stay under `svelte-check`). The configuration is `frontend/biome.json`; the generated `src/lib/api/schema.d.ts` and the lockfile are excluded.
+Biome owns linting and formatting for the frontend's TypeScript, JavaScript, and JSON (Svelte components stay under `svelte-check`). The configuration is `frontend/biome.json`; the generated `src/lib/api/commands.gen.ts` and the lockfile are excluded.
 
 ```sh
 cd frontend
@@ -183,9 +181,7 @@ The `frontend` CI job runs `npm run lint` on every change, and a pre-commit hook
 
 ### Generated API client
 
-The typed frontend API client for the families still on the HTTP transport is generated from the committed OpenAPI snapshot (`frontend/src-tauri/contracts/openapi.snapshot.json`). The `frontend` CI job runs `npm run gen:api:check`, which regenerates the client and fails if the committed output drifts from the snapshot. Regenerate it with `npm run gen:api` (or `just gen-api`) after a change that moves the snapshot.
-
-Families migrated onto typed IPC commands have their TypeScript bindings generated from the Rust DTOs instead (`frontend/src/lib/api/commands.gen.ts`, emitted by `cargo xtask gen-ts` from the `eo-api` command manifest). The Linux backend-members CI job runs `cargo xtask gen-ts --check`, which fails if the committed bindings drift from the manifest. Regenerate them with `just gen-ts` after a change that moves an `eo-api` DTO or the manifest.
+The typed frontend API client is generated from the Rust DTOs: the command bindings live in `frontend/src/lib/api/commands.gen.ts`, emitted by `cargo xtask gen-ts` from the `eo-api` command manifest. The Linux backend-members CI job runs `cargo xtask gen-ts --check`, which fails if the committed bindings drift from the manifest. Regenerate them with `just gen-ts` after a change that moves an `eo-api` DTO or the manifest.
 
 ### Runes-native frontend
 
@@ -279,10 +275,10 @@ cd frontend/src-tauri
 cargo fmt --check                                       # formatting, all members (apply with `cargo fmt`)
 cargo clippy --workspace --all-targets -- -D warnings   # lints, warnings promoted to errors
 cargo build                                             # compile check, all members (debug profile)
-cargo nextest run -p eo-wire -p eo-http -p eo-services -p eo-api  # backend members alone, no Tauri toolchain needed
+cargo nextest run -p eo-wire -p eo-services -p eo-api   # backend members alone, no Tauri toolchain needed
 cargo test --workspace --doc                            # doctests (nextest does not run them)
-cargo llvm-cov nextest --branch -p eo-wire -p eo-http -p eo-services  # branch coverage (nightly toolchain)
-cargo mutants -p eo-wire -p eo-http -p eo-services --in-place         # mutation testing (nightly CI cadence)
+cargo llvm-cov nextest --branch -p eo-wire -p eo-services  # branch coverage (eo-api is nextest-only here, not measured)
+cargo mutants -p eo-wire -p eo-services --in-place         # mutation testing (eo-wire + eo-services only, matching CI)
 cargo run -p xtask -- mutation-floors --outcomes mutants.out/outcomes.json  # the floor gate over the campaign
 cargo bench -p eo-services                              # criterion micro-benchmarks (hot-path figures)
 cargo audit -D warnings                                 # RustSec advisories against Cargo.lock

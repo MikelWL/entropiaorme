@@ -1,22 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The facade's behaviour is its mapping: which client verb, which path, which
+// The facade's behaviour is its mapping: which typed command, which
 // params/body shape, and (for the analytics-flavoured reads) the per-call
-// guide-mode demo dispatch. The generated client is mocked out wholesale, so
-// these tests pin the facade layer alone; client.ts has its own suite.
-// vi.hoisted: the module under test is imported statically, so the vi.mock
-// factories run before ordinary top-level consts initialise; these seams must
-// be hoisted alongside them.
-const {
-	clientGet,
-	clientPost,
-	clientPut,
-	clientPatch,
-	clientDelete,
-	FakeApiError,
-	guideState,
-	tauriInvoke,
-} = vi.hoisted(() => {
+// guide-mode demo dispatch. The typed-command transport is mocked out
+// wholesale, so these tests pin the facade layer alone; client.ts has its own
+// suite. vi.hoisted: the module under test is imported statically, so the
+// vi.mock factories run before ordinary top-level consts initialise; these
+// seams must be hoisted alongside them.
+const { FakeApiError, guideState, tauriInvoke } = vi.hoisted(() => {
 	class FakeApiError extends Error {
 		constructor(
 			public status: number,
@@ -28,11 +19,6 @@ const {
 	}
 	return {
 		tauriInvoke: vi.fn(),
-		clientGet: vi.fn(),
-		clientPost: vi.fn(),
-		clientPut: vi.fn(),
-		clientPatch: vi.fn(),
-		clientDelete: vi.fn(),
 		FakeApiError,
 		// Mutable guide-state seam: tests flip isActive to drive demo dispatch.
 		guideState: { isActive: false },
@@ -42,15 +28,6 @@ const {
 vi.mock('./client', () => ({
 	ApiError: FakeApiError,
 	manualSkillScanCapturePng: async (page: number) => `data:image/png;base64,page${page}`,
-	request: vi.fn(),
-	unwrap: async (call: Promise<{ data?: unknown }>) => (await call).data,
-	client: {
-		GET: (...args: unknown[]) => clientGet(...args),
-		POST: (...args: unknown[]) => clientPost(...args),
-		PUT: (...args: unknown[]) => clientPut(...args),
-		PATCH: (...args: unknown[]) => clientPatch(...args),
-		DELETE: (...args: unknown[]) => clientDelete(...args),
-	},
 }));
 
 vi.mock('$lib/guide/state.svelte', () => ({ guideState }));
@@ -64,31 +41,12 @@ vi.mock('@tauri-apps/api/core', () => ({
 import * as api from './index';
 
 const DATA = { marker: 'payload' } as const;
-// GET results also carry a `response` (the raw Response) so header-reading
-// callers like `getLedgerEntries` (which reads the X-Next-Cursor pagination
-// header) have one; `unwrap`-based callers ignore it.
-const GET_RESULT = { data: DATA, response: { headers: new Headers() } };
 
 beforeEach(() => {
 	guideState.isActive = false;
-	for (const mock of [clientPost, clientPut, clientPatch, clientDelete]) {
-		mock.mockReset();
-		mock.mockResolvedValue({ data: DATA });
-	}
-	clientGet.mockReset();
-	clientGet.mockResolvedValue(GET_RESULT);
 	tauriInvoke.mockReset();
 	tauriInvoke.mockResolvedValue(DATA);
 });
-
-type Verb = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-const verbMock: Record<Verb, ReturnType<typeof vi.fn>> = {
-	GET: clientGet,
-	POST: clientPost,
-	PUT: clientPut,
-	PATCH: clientPatch,
-	DELETE: clientDelete,
-};
 
 // The tracking family serves its live surface over typed IPC commands. The
 // session-scoped writes, lifecycle verbs, mob/loot edits, and quest-link
@@ -159,38 +117,24 @@ describe('tracking wrappers dispatch typed commands', () => {
 			'tracking_quest_link',
 			{ session_id: 's1', action: 'accept' },
 		],
+		[
+			'deleteSession',
+			() => api.deleteSession('s1'),
+			'tracking_session_delete',
+			{ session_id: 's1' },
+		],
 	];
 
 	it.each(rows)('%s', async (_name, call, command, args) => {
 		await call();
 		expect(tauriInvoke).toHaveBeenCalledTimes(1);
 		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
-		expect(clientGet).not.toHaveBeenCalled();
-		expect(clientPost).not.toHaveBeenCalled();
 	});
 });
 
-describe('void-returning wrappers delegate without unwrapping', () => {
-	const rows: [string, () => Promise<void>, Verb, string, unknown][] = [
-		[
-			'deleteSession',
-			() => api.deleteSession('s1'),
-			'DELETE',
-			'/api/tracking/session/{session_id}',
-			{ params: { path: { session_id: 's1' } } },
-		],
-	];
-
-	it.each(rows)('%s', async (_name, call, verb, path, options) => {
-		await expect(call()).resolves.toBeUndefined();
-		expect(verbMock[verb]).toHaveBeenCalledWith(path, options);
-	});
-});
-
-// The three tracking reads with a guide-mode surface: the live route and the
-// guide-mode demo route are both typed commands, sharing their DTOs. Guide
-// mode dispatches the `demo_*` command with the identical args; the HTTP
-// client is never touched.
+// The three tracking reads with a guide-mode surface: the live command and the
+// guide-mode demo command share their DTOs. Guide mode dispatches the `demo_*`
+// command with the identical args.
 describe('guide-mode demo dispatch', () => {
 	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>, string][] = [
 		[
@@ -229,7 +173,6 @@ describe('guide-mode demo dispatch', () => {
 		await call();
 		expect(tauriInvoke).toHaveBeenCalledTimes(1);
 		expect(tauriInvoke).toHaveBeenCalledWith(demoCommand, args);
-		expect(clientGet).not.toHaveBeenCalled();
 	});
 });
 
@@ -248,7 +191,6 @@ describe('analytics wrappers dispatch typed commands', () => {
 		guideState.isActive = true;
 		await api.getAnalyticsOverview('30d');
 		expect(tauriInvoke).toHaveBeenCalledWith('demo_analytics_overview', { period: '30d' });
-		expect(clientGet).not.toHaveBeenCalled();
 	});
 
 	it('getAnalyticsOverview defaults the period to "all"', async () => {
@@ -308,9 +250,6 @@ describe('analytics wrappers dispatch typed commands', () => {
 			item_id: 'i1',
 			sale: { sale_price: 15 },
 		});
-
-		expect(clientGet).not.toHaveBeenCalled();
-		expect(clientPost).not.toHaveBeenCalled();
 	});
 
 	it('the delete wrappers invoke their commands and resolve void', async () => {
@@ -753,9 +692,8 @@ describe('getCharacterProspect dispatches the typed command', () => {
 });
 
 describe('re-exported client surface', () => {
-	it('forwards ApiError, request, and the asset helpers from ./client', async () => {
+	it('forwards ApiError and the capture-preview helper from ./client', async () => {
 		expect(api.ApiError).toBe(FakeApiError);
 		expect(await api.manualSkillScanCapturePng(2)).toBe('data:image/png;base64,page2');
-		expect(typeof api.request).toBe('function');
 	});
 });

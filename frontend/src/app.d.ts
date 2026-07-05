@@ -13,7 +13,6 @@ declare global {
 	// (see frontend/vite.config.ts `define`). Keeps svelte-check honest about
 	// the typed surface of import.meta.env reads.
 	interface ImportMetaEnv {
-		readonly ENTROPIAORME_BACKEND_PORT: string;
 		// Build-time flag ('1' only in the e2e's own Vite build) that forces
 		// JS-driven chart tweens to settle instantly so visual-regression
 		// baselines capture the settled end-state. Unset (and so '') in every

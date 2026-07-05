@@ -22,8 +22,6 @@
 //! byte-identical below), and the crash-reporting / compaction / rebuild
 //! bodies match the hand-built HTTP JSON exactly.
 
-use std::collections::BTreeMap;
-
 use eo_services::config_service::load_config_readonly;
 use eo_services::maintenance::rebuild_and_verify;
 use eo_services::observability_config::{crash_reporting_enabled, set_crash_reporting_enabled};
@@ -59,19 +57,15 @@ pub struct HistogramSnapshot {
 }
 
 /// A point-in-time read of the process telemetry registry: event
-/// throughput, the OCR / database / request latency histograms, the
-/// per-handler latencies, and the resource-drift gauges. Counts and
-/// durations only; no PII. Mirrors `eo_wire::metrics::MetricsSnapshot`
-/// field-for-field, so `serde_json::to_string` yields identical bytes
-/// (pinned in the tests below).
+/// throughput, the OCR / database latency histograms, and the
+/// resource-drift gauges. Counts and durations only; no PII. Mirrors
+/// `eo_wire::metrics::MetricsSnapshot` field-for-field, so
+/// `serde_json::to_string` yields identical bytes (pinned in the tests below).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MetricsSnapshot {
     pub events_published: u64,
-    pub http_requests: u64,
     pub ocr_latency: HistogramSnapshot,
     pub db_query_latency: HistogramSnapshot,
-    pub http_request_latency: HistogramSnapshot,
-    pub handler_latency: BTreeMap<String, HistogramSnapshot>,
     pub rss_bytes: u64,
     pub handle_count: u64,
 }
@@ -226,8 +220,8 @@ mod tests {
     #[test]
     fn the_metrics_dto_serialises_byte_identically_to_the_wire_snapshot() {
         // Record onto the process registry so the snapshot carries a
-        // non-zero counter alongside its always-present histograms and
-        // per-handler map, exercising every field name.
+        // non-zero counter alongside its always-present histograms,
+        // exercising every field name.
         eo_wire::metrics::metrics().record_event_published();
         let snapshot = eo_wire::metrics::metrics().snapshot();
         let value = serde_json::to_value(&snapshot).unwrap();

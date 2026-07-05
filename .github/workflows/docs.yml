@@ -69,7 +69,7 @@ jobs:
         # host with platform-specific build inputs and is documented from the
         # Windows build, so it is excluded here to keep this job runner-portable.
         working-directory: frontend/src-tauri
-        run: cargo doc --no-deps -p eo-wire -p eo-http -p eo-services
+        run: cargo doc --no-deps -p eo-wire -p eo-api -p eo-services
 
       - name: Assemble the published site
         run: |
@@ -79,7 +79,7 @@ jobs:
           mkdir -p "$site/api"
           cp -r frontend/src-tauri/target/doc/. "$site/api/"
           # Redirect /api to a crate root so the API reference has a landing page.
-          printf '%s\n' '<!doctype html><meta http-equiv="refresh" content="0; url=eo_http/index.html">' > "$site/api/index.html"
+          printf '%s\n' '<!doctype html><meta http-equiv="refresh" content="0; url=eo_api/index.html">' > "$site/api/index.html"
           echo "SITE_DIR=$site" >> "$GITHUB_ENV"
 
       - name: Upload the Pages artifact

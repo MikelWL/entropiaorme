@@ -128,14 +128,10 @@
 			Could not read metrics: {errorMessage}
 		</div>
 	{:else if snapshot}
-		<section class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+		<section class="grid grid-cols-2 gap-4 sm:grid-cols-3">
 			<div class="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
 				<p class="text-xs text-slate-400">Events published</p>
 				<p class="mt-1 text-2xl font-semibold">{snapshot.events_published.toLocaleString()}</p>
-			</div>
-			<div class="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
-				<p class="text-xs text-slate-400">HTTP requests</p>
-				<p class="mt-1 text-2xl font-semibold">{snapshot.http_requests.toLocaleString()}</p>
 			</div>
 			<div class="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
 				<p class="text-xs text-slate-400">Resident set</p>
@@ -147,10 +143,9 @@
 			</div>
 		</section>
 
-		<section class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+		<section class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
 			{@render histogramCard('OCR inference latency', snapshot.ocr_latency)}
 			{@render histogramCard('Database query latency', snapshot.db_query_latency)}
-			{@render histogramCard('HTTP request latency', snapshot.http_request_latency)}
 		</section>
 	{:else}
 		<p class="text-sm text-slate-400">Loading…</p>

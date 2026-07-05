@@ -11,10 +11,10 @@ publish = false
 name = "entropia_orme_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
-# `e2e-stub` compiles in the native-shell e2e suite's deterministic backend stub
-# at the `api_request` IPC boundary (see src/e2e_stub.rs). The e2e build embeds
-# the frontend and drives it at the app's own tauri:// origin, which has native
-# IPC, so no remote-origin grant is needed. Enabled ONLY by the e2e build
+# `e2e-stub` compiles in the native-shell e2e suite's deterministic backend
+# fixtures, served through the typed read commands (see src/e2e_stub.rs). The
+# e2e build embeds the frontend and drives it at the app's own tauri:// origin,
+# which has native IPC, so no remote-origin grant is needed. Enabled ONLY by the e2e build
 # (`tauri build --features e2e-stub`); dev and release never enable it, so the
 # shipped binary is byte-for-byte unaffected.
 [features]
@@ -33,16 +33,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 eo-api = { workspace = true }
-eo-http = { workspace = true }
-# The composition root constructs the ported services the substrate's
-# native routes read through.
+# The composition root constructs the domain services the typed-command
+# facade reads through.
 eo-services = { workspace = true }
 # The composition root owns the SSE fan-out hub and bridges the producer
 # bus's domain topics onto it (the `/api/events` stream serves over it).
 eo-wire = { workspace = true }
 # The capture-PNG IPC command base64-encodes the raw image bytes into an
-# `<img>` data URL (the route returns raw bytes, excluded from the JSON
-# `api_request` envelope).
+# `<img>` data URL (the capture returns raw bytes, outside the typed JSON
+# command surface).
 base64 = { workspace = true }
 tokio = { workspace = true }
 # The composition root discharges the ONNX Runtime obligations the

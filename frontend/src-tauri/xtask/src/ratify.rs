@@ -70,7 +70,7 @@ pub fn is_ratification_artifact(path: &str) -> bool {
 
 /// A coarse identifier for the golden 'set' a changed golden path belongs to.
 ///
-/// Contract snapshots key on their stem (`openapi`, `event_schemas`); corpus
+/// Contract snapshots key on their stem (`event_schemas`); corpus
 /// scenario goldens key on their scenario directory; eo-wire fixtures key on the
 /// conformance-set or yml-family file stem. The verdict's `goldens:` field must
 /// name each changed set.
@@ -506,7 +506,7 @@ Some prose mentioning VERDICT: regression-suspected should not count.\n\
 ```text\n\
 ORACLE-RATIFICATION\n\
 range: c84cac6..HEAD\n\
-goldens: frontend/src-tauri/contracts/openapi.snapshot.json\n\
+goldens: frontend/src-tauri/contracts/event_schemas.snapshot.json\n\
 VERDICT: ratification-sound\n\
 ```\n";
 
@@ -517,7 +517,7 @@ VERDICT: ratification-sound\n\
         assert!(v.is_sound());
         assert_eq!(
             v.goldens,
-            vec!["frontend/src-tauri/contracts/openapi.snapshot.json"]
+            vec!["frontend/src-tauri/contracts/event_schemas.snapshot.json"]
         );
         assert_eq!(v.range.as_deref(), Some("c84cac6..HEAD"));
     }
@@ -546,9 +546,6 @@ VERDICT: ratification-sound | regression-suspected | needs-user-judgement\n```";
 
     #[test]
     fn golden_paths_classified() {
-        assert!(is_golden_path(
-            "frontend/src-tauri/contracts/openapi.snapshot.json"
-        ));
         assert!(is_golden_path(
             "frontend/src-tauri/contracts/event_schemas.snapshot.json"
         ));
@@ -591,10 +588,6 @@ VERDICT: ratification-sound | regression-suspected | needs-user-judgement\n```";
     #[test]
     fn golden_set_keys() {
         assert_eq!(
-            golden_set_key("frontend/src-tauri/contracts/openapi.snapshot.json"),
-            "openapi"
-        );
-        assert_eq!(
             golden_set_key("frontend/src-tauri/contracts/event_schemas.snapshot.json"),
             "event_schemas"
         );
@@ -634,14 +627,14 @@ VERDICT: ratification-sound | regression-suspected | needs-user-judgement\n```";
             range: None,
         };
         assert!(!verdict_covers(&broad, "basic_hunt_10_events"));
-        // openapi key covered by a longer token.
+        // A stem key covered by a longer full-path token.
         let oa = RatificationVerdict {
             path: "p.md".to_string(),
             verdict: "ratification-sound".to_string(),
-            goldens: vec!["frontend/src-tauri/contracts/openapi.snapshot.json".to_string()],
+            goldens: vec!["frontend/src-tauri/contracts/event_schemas.snapshot.json".to_string()],
             range: None,
         };
-        assert!(verdict_covers(&oa, "openapi"));
+        assert!(verdict_covers(&oa, "event_schemas"));
     }
 
     #[test]

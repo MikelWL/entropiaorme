@@ -611,19 +611,15 @@ export interface ManualMobSuggestion {
 
 /**
  * A point-in-time read of the process telemetry registry: event
- * throughput, the OCR / database / request latency histograms, the
- * per-handler latencies, and the resource-drift gauges. Counts and
- * durations only; no PII. Mirrors `eo_wire::metrics::MetricsSnapshot`
- * field-for-field, so `serde_json::to_string` yields identical bytes
- * (pinned in the tests below).
+ * throughput, the OCR / database latency histograms, and the
+ * resource-drift gauges. Counts and durations only; no PII. Mirrors
+ * `eo_wire::metrics::MetricsSnapshot` field-for-field, so
+ * `serde_json::to_string` yields identical bytes (pinned in the tests below).
  */
 export interface MetricsSnapshot {
 	events_published: number;
-	http_requests: number;
 	ocr_latency: HistogramSnapshot;
 	db_query_latency: HistogramSnapshot;
-	http_request_latency: HistogramSnapshot;
-	handler_latency: Record<string, HistogramSnapshot>;
 	rss_bytes: number;
 	handle_count: number;
 }
@@ -1823,6 +1819,10 @@ export async function trackingQuestLink(sessionId: string, action: string): Prom
 
 export async function trackingRepairScan(sessionId: string): Promise<RepairScanResult> {
 	return invokeCommand('tracking_repair_scan', { session_id: sessionId });
+}
+
+export async function trackingSessionDelete(sessionId: string): Promise<void> {
+	return invokeCommand('tracking_session_delete', { session_id: sessionId });
 }
 
 export async function demoAnalyticsOverview(period: string): Promise<AnalyticsOverview> {

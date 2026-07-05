@@ -5,8 +5,8 @@ Cargo workspace for the desktop application's Rust side.
 ## Members
 
 - **`entropia-orme/`**: the Tauri shell. Window chrome, the overlay windows, and hosting the backend in-process. The only member coupled to the Tauri toolchain; `tauri.conf.json` and its dev overlays live here (see that directory's README).
-- **`eo-http/`**: HTTP substrate for the native backend (router and middleware).
-- **`eo-services/`**: domain services behind that HTTP surface.
+- **`eo-api/`**: the typed-command facade the shell dispatches into (the application boundary; TypeScript bindings are generated from its command DTOs).
+- **`eo-services/`**: the domain services behind that facade.
 - **`eo-wire/`**: wire-format contracts (response and event types, serialisation).
 
 The `eo-*` members implement the backend in-process, a byte-exact port of the original Python backend's shapes, with deliberate divergences recorded inline where the shipped Rust differs. They are deliberately Tauri-free, and CI keeps them that way structurally: a Linux job without the Tauri toolchain's system stack builds and tests them in isolation, so a GUI dependency creeping into backend code fails the gate rather than landing silently.
