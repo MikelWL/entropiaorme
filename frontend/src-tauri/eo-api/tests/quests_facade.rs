@@ -256,6 +256,165 @@ async fn the_not_found_legs_answer_the_typed_not_found() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn populated_analytics_serialise_to_the_wire_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let snapshot = dir.path().join("snapshot");
+    std::fs::create_dir_all(&snapshot).unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let db = Db::open(&data_dir.join("entropia_orme.db"))
+        .await
+        .expect("migrated database");
+    // Keep a seeding handle before the database moves into the facade.
+    let pool = db.write().clone();
+    let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
+    let clock = Arc::new(RealClock::new());
+    let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
+    let api = Api::new(
+        db,
+        game_data,
+        clock,
+        data_dir,
+        handles.config_service,
+        handles.tracker,
+        handles.hotbar,
+        handles.watcher,
+        handles.skill_tracker,
+        handles.skill_scan,
+        handles.spacebar,
+        handles.repair_ocr,
+        None,
+    );
+
+    // Quest 1: a liquid reward with a markup, fully costed sessions.
+    let mut alpha = minimal("Alpha");
+    alpha.reward_ped = Some(2.5);
+    alpha.expected_reward_markup_percent = Some(150.0);
+    api.quest_create(alpha).await.unwrap();
+    // Quest 2: no reward, a bare completed session; its aggregates are
+    // the engine's INTEGER zeros, which the facade coerces to floats.
+    api.quest_create(minimal("Nul")).await.unwrap();
+    // Playlist 1: quest 1 immediate.
+    api.playlist_create(PlaylistInput {
+        name: "Run".to_string(),
+        planet: "Calypso".to_string(),
+        estimated_minutes: 30,
+        items: vec![PlaylistItemInput {
+            quest_id: 1,
+            description: None,
+            group_type: "immediate".to_string(),
+        }],
+    })
+    .await
+    .unwrap();
+
+    for (sid, start, end, heal, armour) in [
+        ("sess-1", 1000.0, 1030.5, Some(1.5), Some(0.25)),
+        ("sess-n", 7000.0, 7050.0, None, None),
+        ("sess-p", 2000.0, 2100.0, Some(0.5), Some(0.0)),
+    ] {
+        sqlx::query(
+            "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
+             VALUES (?, ?, ?, 0, ?, ?)",
+        )
+        .bind(sid)
+        .bind(start)
+        .bind(end)
+        .bind(heal)
+        .bind(armour)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
+         damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
+         VALUES ('k1', 'sess-1', 'Atrox', 1100.0, 40, 100.0, 5.0, 1, 10.0, 0.5, 12.75)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
+         critical_hits, cost_per_shot) VALUES ('k1', 'LR-32', 40, 50.0, 0, 0.25)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+         VALUES ('sess-1', 1100.0, 'Rifle', 1.0, 0.75)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (sid, qid, at) in [
+        ("sess-1", 1i64, 1500.0),
+        ("sess-n", 2, 7040.0),
+        ("sess-p", 1, 2050.0),
+    ] {
+        sqlx::query(
+            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(sid)
+        .bind(qid)
+        .bind(at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    for (sid, lt, qid, plid) in [
+        ("sess-1", "quest", Some(1i64), None::<i64>),
+        ("sess-n", "quest", Some(2), None),
+        ("sess-p", "playlist", None, Some(1)),
+    ] {
+        sqlx::query(
+            "INSERT INTO session_quest_analytics_links \
+             (session_id, link_type, quest_id, playlist_id, linked_at) \
+             VALUES (?, ?, ?, ?, 9000.0)",
+        )
+        .bind(sid)
+        .bind(lt)
+        .bind(qid)
+        .bind(plid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Transport invariance: the populated analytics rows serialise to the
+    // exact bytes the HTTP routes answered (model-float rounding applied,
+    // the engine's INTEGER zeros coerced to floats on the wire).
+    let quest_rows = api.quests_analytics().await.unwrap();
+    assert_eq!(
+        serde_json::to_string(&quest_rows).unwrap(),
+        "[{\"questId\":\"1\",\"questName\":\"Alpha\",\"planet\":\"Calypso\",\"category\":null,\
+         \"rewardPed\":2.5,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":150.0,\
+         \"totalExpectedRewardPed\":3.75,\"linkedSessions\":1,\"totalDurationSec\":30.5,\
+         \"totalWeaponCost\":10.0,\"totalHealCost\":1.5,\"totalEnhancerCost\":0.5,\
+         \"totalArmourCost\":0.25,\"totalLootTt\":12.75,\"totalPes\":0.75},\
+         {\"questId\":\"2\",\"questName\":\"Nul\",\"planet\":\"Calypso\",\"category\":null,\
+         \"rewardPed\":0.0,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":null,\
+         \"totalExpectedRewardPed\":0.0,\"linkedSessions\":1,\"totalDurationSec\":50.0,\
+         \"totalWeaponCost\":0.0,\"totalHealCost\":0.0,\"totalEnhancerCost\":0.0,\
+         \"totalArmourCost\":0.0,\"totalLootTt\":0.0,\"totalPes\":0.0}]"
+    );
+    let playlist_rows = api.playlists_analytics().await.unwrap();
+    assert_eq!(
+        serde_json::to_string(&playlist_rows).unwrap(),
+        "[{\"playlistId\":\"1\",\"playlistName\":\"Run\",\"questCount\":1,\
+         \"longHorizonQuestCount\":0,\"matchedSessions\":1,\"totalRewardPed\":2.5,\
+         \"totalImmediateRewardPed\":2.5,\"totalBonusRewardPed\":0.0,\"totalPesReward\":0.0,\
+         \"totalImmediatePesReward\":0.0,\"totalBonusPesReward\":0.0,\
+         \"totalExpectedRewardPed\":3.75,\"totalExpectedImmediateRewardPed\":3.75,\
+         \"totalExpectedBonusRewardPed\":0.0,\"totalDurationSec\":100.0,\
+         \"totalWeaponCost\":0.0,\"totalHealCost\":0.5,\"totalEnhancerCost\":0.0,\
+         \"totalArmourCost\":0.0,\"totalLootTt\":0.0,\"totalPes\":0.0}]"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_soft_deletes_off_the_active_list() {
     let dir = tempfile::tempdir().unwrap();
     let api = quests_api(dir.path()).await;
