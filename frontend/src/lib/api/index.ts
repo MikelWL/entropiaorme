@@ -362,28 +362,32 @@ export async function startTracking(): Promise<{
 	started_at: string;
 	status: string;
 }> {
-	return unwrap(client.POST('/api/tracking/start'));
+	return commands.trackingStart();
 }
 
 export async function stopTracking(): Promise<{ session_id: string; kill_count: number }> {
-	return unwrap(client.POST('/api/tracking/stop'));
+	return commands.trackingStop();
 }
 
 export async function getTrackingSessions(): Promise<TrackingSession[]> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/tracking/sessions')
-			: client.GET('/api/tracking/sessions'),
-	);
+	// Guide mode still reads the parallel `/api/demo/*` namespace (its own
+	// migration is pending); the live surface is served over the typed
+	// command, narrowed to the hand-written return type.
+	if (guideState.isActive) {
+		return unwrap(client.GET('/api/demo/tracking/sessions'));
+	}
+	return (await commands.trackingSessions()) as TrackingSession[];
 }
 
 export async function getSessionDetail(sessionId: string): Promise<SessionDetail> {
-	const params = { path: { session_id: sessionId } };
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/tracking/session/{session_id}', { params })
-			: client.GET('/api/tracking/session/{session_id}', { params }),
-	);
+	if (guideState.isActive) {
+		return unwrap(
+			client.GET('/api/demo/tracking/session/{session_id}', {
+				params: { path: { session_id: sessionId } },
+			}),
+		);
+	}
+	return (await commands.trackingSessionDetail(sessionId)) as SessionDetail;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
@@ -407,22 +411,14 @@ export async function deactivateLootItem(
 	sessionId: string,
 	itemName: string,
 ): Promise<LootItemEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/loot-item/{item_name}/deactivate', {
-			params: { path: { session_id: sessionId, item_name: itemName } },
-		}),
-	);
+	return (await commands.trackingLootItemDeactivate(sessionId, itemName)) as LootItemEditResponse;
 }
 
 export async function activateLootItem(
 	sessionId: string,
 	itemName: string,
 ): Promise<LootItemEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/loot-item/{item_name}/activate', {
-			params: { path: { session_id: sessionId, item_name: itemName } },
-		}),
-	);
+	return (await commands.trackingLootItemActivate(sessionId, itemName)) as LootItemEditResponse;
 }
 
 /** Response shape from the rename-mob / restore-mob endpoints. */
@@ -437,24 +433,14 @@ export async function renameSessionMob(
 	fromMobName: string,
 	toMobName: string,
 ): Promise<MobEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/rename-mob', {
-			params: { path: { session_id: sessionId } },
-			body: { fromMobName, toMobName },
-		}),
-	);
+	return (await commands.trackingRenameMob(sessionId, fromMobName, toMobName)) as MobEditResponse;
 }
 
 export async function restoreSessionMob(
 	sessionId: string,
 	currentMobName: string,
 ): Promise<MobEditResponse> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/restore-mob', {
-			params: { path: { session_id: sessionId } },
-			body: { currentMobName },
-		}),
-	);
+	return (await commands.trackingRestoreMob(sessionId, currentMobName)) as MobEditResponse;
 }
 
 export interface TrackingLive {
@@ -517,15 +503,14 @@ export interface TrackingSnapshot extends TrackingStatus {
 }
 
 export async function getTrackingSnapshot(): Promise<TrackingSnapshot> {
-	return unwrap(
-		guideState.isActive
-			? client.GET('/api/demo/tracking/snapshot')
-			: client.GET('/api/tracking/snapshot'),
-	);
+	if (guideState.isActive) {
+		return unwrap(client.GET('/api/demo/tracking/snapshot'));
+	}
+	return (await commands.trackingSnapshot()) as TrackingSnapshot;
 }
 
 export async function releaseMob(): Promise<{ released: string | null }> {
-	return unwrap(client.POST('/api/tracking/release-mob'));
+	return (await commands.trackingReleaseMob()) as { released: string | null };
 }
 
 export interface ManualMobSuggestion {
@@ -536,20 +521,16 @@ export interface ManualMobSuggestion {
 
 export async function getTrackingTagSuggestions(query: string): Promise<string[]> {
 	if (!query.trim()) return [];
-	return unwrap(
-		client.GET('/api/tracking/tag-suggestions', { params: { query: { q: query.trim() } } }),
-	);
+	return commands.trackingTagSuggestions(query.trim(), null);
 }
 
 export async function lockTrackingTag(tag: string): Promise<{ tag: string }> {
-	return unwrap(client.POST('/api/tracking/tag-lock', { body: { tag } }));
+	return commands.trackingTagLock(tag);
 }
 
 export async function getManualMobSuggestions(query: string): Promise<ManualMobSuggestion[]> {
 	if (!query.trim()) return [];
-	return unwrap(
-		client.GET('/api/tracking/manual-mob-suggestions', { params: { query: { q: query.trim() } } }),
-	);
+	return (await commands.trackingManualMobSuggestions(query.trim(), null)) as ManualMobSuggestion[];
 }
 
 export async function lockManualMob(
@@ -560,29 +541,25 @@ export async function lockManualMob(
 	species: string;
 	maturity: string;
 }> {
-	return unwrap(client.POST('/api/tracking/manual-mob-lock', { body: { species, maturity } }));
+	return commands.trackingManualMobLock(species, maturity);
 }
 
 export async function scanRepairCost(
 	sessionId: string,
 ): Promise<{ cost_ped: number; raw_text: string; confidence: number; error?: string }> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/repair-scan', {
-			params: { path: { session_id: sessionId } },
-		}),
-	);
+	return (await commands.trackingRepairScan(sessionId)) as {
+		cost_ped: number;
+		raw_text: string;
+		confidence: number;
+		error?: string;
+	};
 }
 
 export async function saveArmourCost(
 	sessionId: string,
 	cost: number,
 ): Promise<{ sessionId: string; armourCost: number }> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/armour-cost', {
-			params: { path: { session_id: sessionId } },
-			body: { cost },
-		}),
-	);
+	return commands.trackingArmourCost(sessionId, cost);
 }
 
 export interface SessionQuestLinkSuggestion {
@@ -615,23 +592,14 @@ export interface SessionQuestLinkDecision {
 export async function getSessionQuestLinkSuggestion(
 	sessionId: string,
 ): Promise<SessionQuestLinkSuggestion> {
-	return unwrap(
-		client.GET('/api/tracking/session/{session_id}/quest-link-suggestion', {
-			params: { path: { session_id: sessionId } },
-		}),
-	);
+	return (await commands.trackingQuestLinkSuggestion(sessionId)) as SessionQuestLinkSuggestion;
 }
 
 export async function decideSessionQuestLink(
 	sessionId: string,
 	action: 'accept' | 'decline',
 ): Promise<SessionQuestLinkDecision> {
-	return unwrap(
-		client.POST('/api/tracking/session/{session_id}/quest-link', {
-			params: { path: { session_id: sessionId } },
-			body: { action },
-		}),
-	);
+	return (await commands.trackingQuestLink(sessionId, action)) as SessionQuestLinkDecision;
 }
 
 // --- Analytics ---

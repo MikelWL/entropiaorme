@@ -90,96 +90,83 @@ const verbMock: Record<Verb, ReturnType<typeof vi.fn>> = {
 	DELETE: clientDelete,
 };
 
-describe('plain delegating wrappers map to the expected verb, path, and shape', () => {
-	const rows: [string, () => Promise<unknown>, Verb, string, unknown?][] = [
-		['startTracking', () => api.startTracking(), 'POST', '/api/tracking/start'],
-		['stopTracking', () => api.stopTracking(), 'POST', '/api/tracking/stop'],
+// The tracking family serves its live surface over typed IPC commands. The
+// session-scoped writes, lifecycle verbs, mob/loot edits, and quest-link
+// decision are always commands (no demo branch); the camelCase call
+// arguments map to the snake_case invoke keys the generated bindings send.
+describe('tracking wrappers dispatch typed commands', () => {
+	const rows: [string, () => Promise<unknown>, string, Record<string, unknown>][] = [
+		['startTracking', () => api.startTracking(), 'tracking_start', {}],
+		['stopTracking', () => api.stopTracking(), 'tracking_stop', {}],
 		[
 			'deactivateLootItem',
 			() => api.deactivateLootItem('s1', 'Shrapnel'),
-			'POST',
-			'/api/tracking/session/{session_id}/loot-item/{item_name}/deactivate',
-			{ params: { path: { session_id: 's1', item_name: 'Shrapnel' } } },
+			'tracking_loot_item_deactivate',
+			{ session_id: 's1', item_name: 'Shrapnel' },
 		],
 		[
 			'activateLootItem',
 			() => api.activateLootItem('s1', 'Shrapnel'),
-			'POST',
-			'/api/tracking/session/{session_id}/loot-item/{item_name}/activate',
-			{ params: { path: { session_id: 's1', item_name: 'Shrapnel' } } },
+			'tracking_loot_item_activate',
+			{ session_id: 's1', item_name: 'Shrapnel' },
 		],
 		[
 			'renameSessionMob',
 			() => api.renameSessionMob('s1', 'Atrox Young', 'Atrox Mature'),
-			'POST',
-			'/api/tracking/session/{session_id}/rename-mob',
-			{
-				params: { path: { session_id: 's1' } },
-				body: { fromMobName: 'Atrox Young', toMobName: 'Atrox Mature' },
-			},
+			'tracking_rename_mob',
+			{ session_id: 's1', from_mob_name: 'Atrox Young', to_mob_name: 'Atrox Mature' },
 		],
 		[
 			'restoreSessionMob',
 			() => api.restoreSessionMob('s1', 'Atrox Mature'),
-			'POST',
-			'/api/tracking/session/{session_id}/restore-mob',
-			{ params: { path: { session_id: 's1' } }, body: { currentMobName: 'Atrox Mature' } },
+			'tracking_restore_mob',
+			{ session_id: 's1', current_mob_name: 'Atrox Mature' },
 		],
-		['releaseMob', () => api.releaseMob(), 'POST', '/api/tracking/release-mob'],
+		['releaseMob', () => api.releaseMob(), 'tracking_release_mob', {}],
 		[
 			'lockTrackingTag',
 			() => api.lockTrackingTag('team hunt'),
-			'POST',
-			'/api/tracking/tag-lock',
-			{ body: { tag: 'team hunt' } },
+			'tracking_tag_lock',
+			{ tag: 'team hunt' },
 		],
 		[
 			'lockManualMob defaults maturity to an empty string',
 			() => api.lockManualMob('Atrox'),
-			'POST',
-			'/api/tracking/manual-mob-lock',
-			{ body: { species: 'Atrox', maturity: '' } },
+			'tracking_manual_mob_lock',
+			{ species: 'Atrox', maturity: '' },
 		],
 		[
 			'scanRepairCost',
 			() => api.scanRepairCost('s1'),
-			'POST',
-			'/api/tracking/session/{session_id}/repair-scan',
-			{ params: { path: { session_id: 's1' } } },
+			'tracking_repair_scan',
+			{ session_id: 's1' },
 		],
 		[
 			'saveArmourCost',
 			() => api.saveArmourCost('s1', 1.25),
-			'POST',
-			'/api/tracking/session/{session_id}/armour-cost',
-			{ params: { path: { session_id: 's1' } }, body: { cost: 1.25 } },
+			'tracking_armour_cost',
+			{ session_id: 's1', cost: 1.25 },
 		],
 		[
 			'getSessionQuestLinkSuggestion',
 			() => api.getSessionQuestLinkSuggestion('s1'),
-			'GET',
-			'/api/tracking/session/{session_id}/quest-link-suggestion',
-			{ params: { path: { session_id: 's1' } } },
+			'tracking_quest_link_suggestion',
+			{ session_id: 's1' },
 		],
 		[
 			'decideSessionQuestLink',
 			() => api.decideSessionQuestLink('s1', 'accept'),
-			'POST',
-			'/api/tracking/session/{session_id}/quest-link',
-			{ params: { path: { session_id: 's1' } }, body: { action: 'accept' } },
+			'tracking_quest_link',
+			{ session_id: 's1', action: 'accept' },
 		],
 	];
 
-	it.each(rows)('%s', async (_name, call, verb, path, options) => {
-		const result = await call();
-		const mock = verbMock[verb];
-		expect(mock).toHaveBeenCalledTimes(1);
-		if (options === undefined) {
-			expect(mock).toHaveBeenCalledWith(path);
-		} else {
-			expect(mock).toHaveBeenCalledWith(path, options);
-		}
-		expect(result).toEqual(DATA);
+	it.each(rows)('%s', async (_name, call, command, args) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
+		expect(clientGet).not.toHaveBeenCalled();
+		expect(clientPost).not.toHaveBeenCalled();
 	});
 });
 
@@ -200,41 +187,55 @@ describe('void-returning wrappers delegate without unwrapping', () => {
 	});
 });
 
+// The three tracking reads with a guide-mode surface: the live route is a
+// typed command, guide mode still reads the `/api/demo/*` namespace over the
+// HTTP client (its own migration is pending).
 describe('guide-mode demo dispatch', () => {
-	const rows: [string, () => Promise<unknown>, string, string, unknown?][] = [
+	const rows: [
+		string,
+		() => Promise<unknown>,
+		string,
+		Record<string, unknown>,
+		string,
+		unknown?,
+	][] = [
 		[
 			'getTrackingSessions',
 			() => api.getTrackingSessions(),
-			'/api/tracking/sessions',
+			'tracking_sessions',
+			{},
 			'/api/demo/tracking/sessions',
 		],
 		[
 			'getSessionDetail',
 			() => api.getSessionDetail('s1'),
-			'/api/tracking/session/{session_id}',
+			'tracking_session_detail',
+			{ session_id: 's1' },
 			'/api/demo/tracking/session/{session_id}',
 			{ params: { path: { session_id: 's1' } } },
 		],
 		[
 			'getTrackingSnapshot',
 			() => api.getTrackingSnapshot(),
-			'/api/tracking/snapshot',
+			'tracking_snapshot',
+			{},
 			'/api/demo/tracking/snapshot',
 		],
 	];
 
 	it.each(
 		rows,
-	)('%s reads the real route normally and the demo route in guide mode', async (_name, call, realPath, demoPath, options) => {
+	)('%s invokes the command live and reads the demo route in guide mode', async (_name, call, command, args, demoPath, options) => {
 		guideState.isActive = false;
 		await call();
-		expect(clientGet).toHaveBeenCalledTimes(1);
-		expect(clientGet.mock.calls[0][0]).toBe(realPath);
+		expect(tauriInvoke).toHaveBeenCalledTimes(1);
+		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
+		expect(clientGet).not.toHaveBeenCalled();
 
-		clientGet.mockClear();
-		clientGet.mockResolvedValue(GET_RESULT);
+		tauriInvoke.mockClear();
 		guideState.isActive = true;
 		await call();
+		expect(tauriInvoke).not.toHaveBeenCalled();
 		expect(clientGet).toHaveBeenCalledTimes(1);
 		expect(clientGet.mock.calls[0][0]).toBe(demoPath);
 		if (options !== undefined) {
@@ -571,21 +572,23 @@ describe('quests wrappers dispatch typed commands', () => {
 describe('suggestion lookups', () => {
 	it('getTrackingTagSuggestions short-circuits on blank input and trims the query', async () => {
 		await expect(api.getTrackingTagSuggestions('   ')).resolves.toEqual([]);
-		expect(clientGet).not.toHaveBeenCalled();
+		expect(tauriInvoke).not.toHaveBeenCalled();
 
 		await api.getTrackingTagSuggestions('  team ');
-		expect(clientGet).toHaveBeenCalledWith('/api/tracking/tag-suggestions', {
-			params: { query: { q: 'team' } },
+		expect(tauriInvoke).toHaveBeenCalledWith('tracking_tag_suggestions', {
+			q: 'team',
+			limit: null,
 		});
 	});
 
 	it('getManualMobSuggestions short-circuits on blank input and trims the query', async () => {
 		await expect(api.getManualMobSuggestions('')).resolves.toEqual([]);
-		expect(clientGet).not.toHaveBeenCalled();
+		expect(tauriInvoke).not.toHaveBeenCalled();
 
 		await api.getManualMobSuggestions(' atrox ');
-		expect(clientGet).toHaveBeenCalledWith('/api/tracking/manual-mob-suggestions', {
-			params: { query: { q: 'atrox' } },
+		expect(tauriInvoke).toHaveBeenCalledWith('tracking_manual_mob_suggestions', {
+			q: 'atrox',
+			limit: null,
 		});
 	});
 });
