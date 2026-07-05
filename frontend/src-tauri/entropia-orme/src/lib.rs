@@ -301,6 +301,14 @@ pub fn run() {
             commands::tracking_armour_cost,
             commands::tracking_quest_link,
             commands::tracking_repair_scan,
+            commands::demo_analytics_overview,
+            commands::demo_analytics_activity,
+            commands::demo_ledger_list,
+            commands::demo_ledger_presets_list,
+            commands::demo_inventory_list,
+            commands::demo_tracking_sessions,
+            commands::demo_tracking_session_detail,
+            commands::demo_tracking_snapshot,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -445,10 +453,7 @@ fn compose_substrate(app: tauri::AppHandle, resource_dir: Option<std::path::Path
                 .with_cors(eo_http::cors::CorsConfig::new(NOMINAL_FRONTEND_PORT, None))
                 // The data dir powers the developer-mode-gated dev-tools routes
                 // (the developer-mode gate and the crash-reporting toggle).
-                .with_data_dir(composition::data_dir())
-                // The bundled demo database powers the guide-mode `/api/demo`
-                // surface (a writable per-process clone, stood up lazily).
-                .with_demo_db_path(composition::demo_db_path(resource_dir.as_ref())),
+                .with_data_dir(composition::data_dir()),
         );
         match composition::compose_native(resource_dir).await {
             composition::Composition::Ready(composed) => {

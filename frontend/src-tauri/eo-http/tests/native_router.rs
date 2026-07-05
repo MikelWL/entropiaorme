@@ -11,22 +11,14 @@ use std::sync::Arc;
 use eo_http::cors::CorsConfig;
 use eo_http::hydration::HydrationState;
 use eo_http::AppState;
-use eo_services::clock::RealClock;
 use eo_services::db::Db;
-use eo_services::game_data_store::GameDataStore;
 
 async fn serve_substrate() -> (Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("temp dir");
     let db = Db::open(&dir.path().join("entropia_orme.db"))
         .await
         .expect("temp db opens");
-    let game_data = Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty store"));
-    let hydration = Arc::new(HydrationState::new(
-        db,
-        game_data,
-        Arc::new(RealClock::new()),
-        dir.path().to_path_buf(),
-    ));
+    let hydration = Arc::new(HydrationState::new(db));
     let state = Arc::new(
         AppState::new(0)
             .with_hydration(hydration)

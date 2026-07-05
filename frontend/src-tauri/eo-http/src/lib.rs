@@ -8,17 +8,12 @@
 //! a registered native handler. The route map is the set of
 //! `native_route` registrations in [`native_routes`].
 
-pub mod analytics_routes;
 pub mod body;
 pub mod cors;
-pub mod demo;
 pub mod dev_routes;
 pub mod extract;
 pub mod hydration;
-pub mod native;
-pub mod producer_routes;
 pub mod pyjson;
-pub mod tracking_routes;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -58,15 +53,6 @@ pub struct AppState {
     // reads/writes the shell-owned `observability.json` there). `None` on a
     // substrate built without it: the dev routes then read as gate-off (404).
     data_dir: Option<PathBuf>,
-    // The bundled demo database path, for the guide-mode `/api/demo` surface.
-    // `None` on a substrate built without it: the demo routes answer the 503
-    // service-unavailable floor.
-    demo_db: Option<PathBuf>,
-    // The lazily-built demo services (a parallel hydration + tracker over a
-    // writable clone of the demo DB), stood up on first demo access. The inner
-    // `None` records a build that could not be served, so the routes degrade
-    // gracefully without retrying a hopeless build on every request.
-    demo: tokio::sync::OnceCell<Option<Arc<crate::demo::DemoState>>>,
 }
 
 /// The composed native services, handed to [`AppState::install_native`] to
@@ -100,8 +86,6 @@ impl AppState {
             hotbar_listener: RwLock::new(None),
             cors: None,
             data_dir: None,
-            demo_db: None,
-            demo: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -160,24 +144,6 @@ impl AppState {
             .and_then(|guard| guard.as_ref().map(|hydration| hydration.db.clone()))
     }
 
-    /// Attach the bundled demo database path, enabling the guide-mode
-    /// `/api/demo` surface. Without it those routes answer the 503
-    /// service-unavailable floor.
-    pub fn with_demo_db_path(mut self, demo_db: PathBuf) -> Self {
-        self.demo_db = Some(demo_db);
-        self
-    }
-
-    /// The bundled demo database path, when set.
-    pub(crate) fn demo_db_path(&self) -> Option<PathBuf> {
-        self.demo_db.clone()
-    }
-
-    /// The lazily-built demo-services cell (built once on first demo access).
-    pub(crate) fn demo_cell(&self) -> &tokio::sync::OnceCell<Option<Arc<crate::demo::DemoState>>> {
-        &self.demo
-    }
-
     /// Whether developer mode is currently enabled, read FRESH from the
     /// settings file on each call (never cached), so the hidden dev-tools gate
     /// reflects a toggle without a restart. The gate for every dev route: when
@@ -199,14 +165,6 @@ impl AppState {
     pub fn with_hydration(mut self, hydration: Arc<crate::hydration::HydrationState>) -> Self {
         self.hydration = RwLock::new(Some(hydration));
         self
-    }
-
-    /// The composed native services, when present.
-    pub(crate) fn hydration(&self) -> Option<Arc<crate::hydration::HydrationState>> {
-        self.hydration
-            .read()
-            .expect("hydration service lock")
-            .clone()
     }
 
     /// Attach the live producer-spine tracker (the same `Arc<HuntTracker>`
@@ -270,21 +228,6 @@ impl AppState {
             .write()
             .expect("hotbar listener service lock") = Some(services.hotbar_listener);
     }
-}
-
-/// A 503 in the backend's `{"detail": ...}` rendering, returned by a native
-/// handler whose composed service is not yet present. The shell publishes the
-/// router only after composition installs every service, so this is a
-/// defensive floor (never reached on the normal startup path) rather than the
-/// retired proxy fallback: a request that somehow arrives mid-composition gets
-/// a clean, retryable 503 instead of a panic.
-pub(crate) fn service_unavailable() -> Response {
-    let body = serde_json::json!({ "detail": "backend services are initialising" }).to_string();
-    Response::builder()
-        .status(http::StatusCode::SERVICE_UNAVAILABLE)
-        .header(http::header::CONTENT_TYPE, "application/json")
-        .body(axum::body::Body::from(body))
-        .expect("static 503 response builds")
 }
 
 /// The framework 404 the router serves for an unmatched path, in the
@@ -651,10 +594,10 @@ pub async fn dispatch_in_process(
 /// Native route registrations. Each route is one `native_route` line (here
 /// or in [`native`]); together they are the complete route map.
 fn native_routes(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    let router = native::register(router.route(
+    let router = router.route(
         "/api/health",
         arm_routed(MethodFilter::GET, "/api/health", routes::health),
-    ));
+    );
     // The hidden dev-tools routes: native-only (no Python arm, no golden),
     // each self-gated on developer mode so they 404 off by default.
     dev_routes::register(router)

@@ -747,6 +747,66 @@ pub async fn tracking_repair_scan(
     facade(&app)?.tracking_repair_scan(session_id)
 }
 
+// The guide-mode demo reads: the frontend's guide-mode wrappers dispatch
+// these instead of the live commands, sharing the same DTOs. They serve the
+// parallel demo state (built lazily on first access); guide mode is never
+// exercised in the native-shell e2e build, so they carry no `e2e-stub` branch.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_analytics_overview(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsOverview, ApiError> {
+    facade(&app)?.demo_analytics_overview(&period).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_analytics_activity(app: tauri::AppHandle) -> Result<AnalyticsActivity, ApiError> {
+    facade(&app)?.demo_analytics_activity().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_ledger_list(
+    app: tauri::AppHandle,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<LedgerPage, ApiError> {
+    facade(&app)?.demo_ledger_list(cursor, limit).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_ledger_presets_list(
+    app: tauri::AppHandle,
+) -> Result<Vec<LedgerPreset>, ApiError> {
+    facade(&app)?.demo_ledger_presets_list().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_inventory_list(app: tauri::AppHandle) -> Result<Vec<InventoryItem>, ApiError> {
+    facade(&app)?.demo_inventory_list().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_tracking_sessions(
+    app: tauri::AppHandle,
+) -> Result<Vec<TrackingSession>, ApiError> {
+    facade(&app)?.demo_tracking_sessions().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_tracking_session_detail(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<SessionDetail, ApiError> {
+    facade(&app)?
+        .demo_tracking_session_detail(&session_id)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_tracking_snapshot(app: tauri::AppHandle) -> Result<TrackingSnapshot, ApiError> {
+    facade(&app)?.demo_tracking_snapshot().await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -838,6 +898,14 @@ mod tests {
         "tracking_armour_cost",
         "tracking_quest_link",
         "tracking_repair_scan",
+        "demo_analytics_overview",
+        "demo_analytics_activity",
+        "demo_ledger_list",
+        "demo_ledger_presets_list",
+        "demo_inventory_list",
+        "demo_tracking_sessions",
+        "demo_tracking_session_detail",
+        "demo_tracking_snapshot",
     ];
 
     #[test]

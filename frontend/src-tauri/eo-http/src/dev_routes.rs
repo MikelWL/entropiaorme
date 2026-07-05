@@ -246,14 +246,7 @@ mod tests {
         let db = eo_services::db::Db::open(&dir.join("entropia_orme.db"))
             .await
             .unwrap();
-        let game_data =
-            Arc::new(eo_services::game_data_store::GameDataStore::new(&dir.join("empty")).unwrap());
-        let hydration = Arc::new(HydrationState::new(
-            db,
-            game_data,
-            Arc::new(eo_services::clock::RealClock::new()),
-            dir.to_path_buf(),
-        ));
+        let hydration = Arc::new(HydrationState::new(db));
         std::fs::write(
             dir.join("settings.json"),
             r#"{"developer_mode_enabled":true}"#,
