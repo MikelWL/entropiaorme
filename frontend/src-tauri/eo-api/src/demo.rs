@@ -293,12 +293,9 @@ impl DemoState {
         }
     }
 
-    // ── The snapshot (primes on first access) ──
+    // ── The snapshot (assumes the primed state ensure_demo guarantees) ──
 
     async fn tracking_snapshot(&self) -> Result<TrackingSnapshot, ApiError> {
-        self.ensure_primed()
-            .await
-            .map_err(ApiError::internal("demo prime"))?;
         let config = self
             .demo_config()
             .await
@@ -554,7 +551,8 @@ impl Api {
     /// build failed) collapses to the internal error, logged server-side; the
     /// demo DB is a shipped resource, so this is a defensive path.
     async fn ensure_demo(&self) -> Result<Arc<DemoState>, ApiError> {
-        self.demo
+        let demo = self
+            .demo
             .get_or_init(|| async {
                 let path = self.demo_db_path.clone()?;
                 match DemoState::build(&path, self.clock.clone()).await {
@@ -567,7 +565,17 @@ impl Api {
             })
             .await
             .clone()
-            .ok_or_else(|| ApiError::invalid_state("demo services unavailable"))
+            .ok_or_else(|| ApiError::invalid_state("demo services unavailable"))?;
+        // Prime the mid-hunt session up front, so every demo read sees the full
+        // curated state regardless of which command the guide issues first. The
+        // reads are otherwise order-dependent (only the snapshot needs the
+        // primed tracker, but analytics and the session list/detail draw on the
+        // primed session too). Priming is idempotent, so only the first demo
+        // access in the process pays it.
+        demo.ensure_primed()
+            .await
+            .map_err(ApiError::internal("demo prime"))?;
+        Ok(demo)
     }
 
     /// The demo Overview aggregate for a named period.
@@ -722,8 +730,17 @@ mod tests {
             .await
             .expect("demo state builds over the bundled demo DB");
 
-        // Snapshot FIRST: primes the mid-hunt session into the shared demo DB,
-        // matching the capture order (analytics reads then reflect it).
+        // Prime up front, exactly as `Api::ensure_demo` does before any demo
+        // command runs (the reads no longer self-prime). Order-independence:
+        // the session list reflects the primed mid-hunt session here, before the
+        // snapshot has been requested at all, so a guide flow that reads any
+        // command first sees the full curated state.
+        demo.ensure_primed().await.expect("demo primes");
+        assert_matches_golden(
+            "tracking_sessions",
+            &to_json(&demo.tracking_sessions().await.expect("sessions")),
+        );
+
         let snapshot = to_json(&demo.tracking_snapshot().await.expect("snapshot"));
         assert_matches_golden("tracking_snapshot", &snapshot);
         // The now-relative readout: elapsed is the fixed mid-hunt window and the
@@ -760,10 +777,6 @@ mod tests {
         assert_matches_golden(
             "analytics_inventory",
             &to_json(&demo.inventory_list().await.expect("inventory")),
-        );
-        assert_matches_golden(
-            "tracking_sessions",
-            &to_json(&demo.tracking_sessions().await.expect("sessions")),
         );
 
         // Session detail for the primed mid-hunt session (the fixture's id, the
