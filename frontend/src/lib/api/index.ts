@@ -386,9 +386,7 @@ export async function getSessionDetail(sessionId: string): Promise<SessionDetail
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-	await client.DELETE('/api/tracking/session/{session_id}', {
-		params: { path: { session_id: sessionId } },
-	});
+	await commands.trackingSessionDelete(sessionId);
 }
 
 /** Response shape from the loot-item deactivate / activate endpoints.

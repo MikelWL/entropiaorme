@@ -1825,6 +1825,10 @@ export async function trackingRepairScan(sessionId: string): Promise<RepairScanR
 	return invokeCommand('tracking_repair_scan', { session_id: sessionId });
 }
 
+export async function trackingSessionDelete(sessionId: string): Promise<void> {
+	return invokeCommand('tracking_session_delete', { session_id: sessionId });
+}
+
 export async function demoAnalyticsOverview(period: string): Promise<AnalyticsOverview> {
 	return invokeCommand('demo_analytics_overview', { period });
 }

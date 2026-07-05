@@ -301,6 +301,7 @@ pub fn run() {
             commands::tracking_armour_cost,
             commands::tracking_quest_link,
             commands::tracking_repair_scan,
+            commands::tracking_session_delete,
             commands::demo_analytics_overview,
             commands::demo_analytics_activity,
             commands::demo_ledger_list,

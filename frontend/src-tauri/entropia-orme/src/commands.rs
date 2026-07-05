@@ -748,6 +748,14 @@ pub async fn tracking_repair_scan(
     facade(&app)?.tracking_repair_scan(session_id)
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_session_delete(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), ApiError> {
+    facade(&app)?.tracking_session_delete(session_id).await
+}
+
 // The guide-mode demo reads: the frontend's guide-mode wrappers dispatch
 // these instead of the live commands, sharing the same DTOs. They serve the
 // parallel demo state (built lazily on first access); guide mode is never
@@ -931,6 +939,7 @@ mod tests {
         "tracking_armour_cost",
         "tracking_quest_link",
         "tracking_repair_scan",
+        "tracking_session_delete",
         "demo_analytics_overview",
         "demo_analytics_activity",
         "demo_ledger_list",

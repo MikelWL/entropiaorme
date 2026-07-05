@@ -784,6 +784,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             }],
             returns: Some(schema(schema_for!(RepairScanResult))),
         },
+        CommandSpec {
+            name: "tracking_session_delete",
+            args: vec![ArgSpec {
+                name: "session_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: None,
+        },
         // The guide-mode demo reads: typed commands sharing the live
         // analytics and tracking DTOs, served over the parallel demo state.
         CommandSpec {

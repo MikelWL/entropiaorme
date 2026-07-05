@@ -159,6 +159,12 @@ describe('tracking wrappers dispatch typed commands', () => {
 			'tracking_quest_link',
 			{ session_id: 's1', action: 'accept' },
 		],
+		[
+			'deleteSession',
+			() => api.deleteSession('s1'),
+			'tracking_session_delete',
+			{ session_id: 's1' },
+		],
 	];
 
 	it.each(rows)('%s', async (_name, call, command, args) => {
@@ -167,23 +173,6 @@ describe('tracking wrappers dispatch typed commands', () => {
 		expect(tauriInvoke).toHaveBeenCalledWith(command, args);
 		expect(clientGet).not.toHaveBeenCalled();
 		expect(clientPost).not.toHaveBeenCalled();
-	});
-});
-
-describe('void-returning wrappers delegate without unwrapping', () => {
-	const rows: [string, () => Promise<void>, Verb, string, unknown][] = [
-		[
-			'deleteSession',
-			() => api.deleteSession('s1'),
-			'DELETE',
-			'/api/tracking/session/{session_id}',
-			{ params: { path: { session_id: 's1' } } },
-		],
-	];
-
-	it.each(rows)('%s', async (_name, call, verb, path, options) => {
-		await expect(call()).resolves.toBeUndefined();
-		expect(verbMock[verb]).toHaveBeenCalledWith(path, options);
 	});
 });
 
