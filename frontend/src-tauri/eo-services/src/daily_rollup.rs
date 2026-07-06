@@ -415,8 +415,6 @@ pub fn rebuild_rollups(conn: &mut rusqlite::Connection, now: f64) -> Result<Stri
 mod tests {
     use super::*;
     use crate::db::Db;
-    use sqlx::sqlite::SqlitePool;
-    use sqlx::Row as _;
 
     /// Fixed clock: 2001-09-09T01:46:40Z. Today is 2001-09-09; the heal
     /// watermark lands on 2001-09-08.
@@ -427,17 +425,23 @@ mod tests {
     const DAY_08: f64 = 999_907_200.0; // 2001-09-08
     const DAY_09: f64 = 999_993_600.0; // 2001-09-09 (today)
 
-    /// A real database (writer/reader pools plus the synchronous core) over a
-    /// temp file; the writer pool is handed back for the sqlx-side seeding and
-    /// assertion reads, while the projection functions under test run on the
-    /// synchronous core via `db.with_writer`.
-    async fn env() -> (tempfile::TempDir, Db, SqlitePool) {
+    /// A day's rollup row as read back for assertions.
+    struct DayRollup {
+        rollup_version: i64,
+        dirty: i64,
+        has_rows: i64,
+        /// The 9 aggregate families, in column order (index 0 = `loot_tt`).
+        families: Vec<Option<f64>>,
+    }
+
+    /// A real database over a temp file; the projection functions under
+    /// test run on the synchronous core via `db.with_writer`/`with_reader`.
+    async fn env() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(&dir.path().join("entropia_orme.db"))
             .await
             .unwrap();
-        let pool = db.write().clone();
-        (dir, db, pool)
+        (dir, db)
     }
 
     /// Heal the rollups on the synchronous core, returning the watermark.
@@ -447,11 +451,33 @@ mod tests {
             .unwrap()
     }
 
-    async fn run(pool: &SqlitePool, sql: &str) {
-        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-            .execute(pool)
-            .await
-            .unwrap();
+    async fn run(db: &Db, sql: &str) {
+        let sql = sql.to_string();
+        db.with_writer(move |conn| {
+            conn.execute_batch(&sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    /// Fetch `(entry_type, tag, amount)` rows for an arbitrary ledger-rollup
+    /// query, preserving the caller's exact SQL text.
+    async fn ledger_rows(db: &Db, sql: &str) -> Vec<(String, String, f64)> {
+        let sql = sql.to_string();
+        db.with_reader(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .unwrap()
     }
 
     /// Data across the fixed calendar: a full day (09-05), an empty gap
@@ -459,9 +485,9 @@ mod tests {
     /// ped_value is NULL), a plain day (09-08, yesterday), today's
     /// in-flight rows (09-09), a swept stray ledger key and an unswept
     /// lexically-greater one.
-    async fn seed_calendar(pool: &SqlitePool) {
+    async fn seed_calendar(db: &Db) {
         run(
-            pool,
+            db,
             &format!(
                 "INSERT INTO tracking_sessions \
                  (id, started_at, ended_at, is_active, armour_cost, heal_cost, dangling_cost) \
@@ -472,7 +498,7 @@ mod tests {
         )
         .await;
         run(
-            pool,
+            db,
             &format!(
                 "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
                  VALUES ('k1', 's1', 'Atrox', {}, 0.02, 2.0), \
@@ -487,13 +513,13 @@ mod tests {
         )
         .await;
         run(
-            pool,
+            db,
             "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, cost_per_shot) \
              VALUES ('k1', 'Rifle', 30, 0.05)",
         )
         .await;
         run(
-            pool,
+            db,
             &format!(
                 "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
                  VALUES ('s1', {}, 'Rifle', 1.0, 0.5), \
@@ -506,7 +532,7 @@ mod tests {
         )
         .await;
         run(
-            pool,
+            db,
             &format!(
                 "INSERT INTO codex_claims (species_name, rank, skill_name, ped_value, claimed_at) \
                  VALUES ('Atrox', 1, 'Rifle', 1.25, {})",
@@ -515,7 +541,7 @@ mod tests {
         )
         .await;
         run(
-            pool,
+            db,
             &format!(
                 "INSERT INTO quest_claims (quest_name, ped_value, claimed_at) \
                  VALUES ('Iron Atrox', 2.5, {})",
@@ -524,7 +550,7 @@ mod tests {
         )
         .await;
         run(
-            pool,
+            db,
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) VALUES \
              ('l1', '2001-09-05', 'markup', 'sale', 3.0, 'manual'), \
              ('l2', '2001-09-05', 'markup', 'sale', 2.0, 'manual'), \
@@ -535,29 +561,50 @@ mod tests {
         .await;
     }
 
-    async fn rollup_row(pool: &SqlitePool, day: &str) -> Option<sqlx::sqlite::SqliteRow> {
-        sqlx::query(
-            "SELECT rollup_version, dirty, has_rows, loot_tt, weapon_cost, enhancer_cost, \
-             armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes \
-             FROM daily_rollups WHERE day = ?",
-        )
-        .bind(day)
-        .fetch_optional(pool)
+    async fn rollup_row(db: &Db, day: &str) -> Option<DayRollup> {
+        let day = day.to_string();
+        db.with_reader(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT rollup_version, dirty, has_rows, loot_tt, weapon_cost, enhancer_cost, \
+                     armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes \
+                     FROM daily_rollups WHERE day = ?1",
+                    rusqlite::params![day],
+                    |row| {
+                        let mut families = Vec::with_capacity(9);
+                        for index in 3..=11 {
+                            families.push(row.get::<_, Option<f64>>(index)?);
+                        }
+                        Ok(DayRollup {
+                            rollup_version: row.get(0)?,
+                            dirty: row.get(1)?,
+                            has_rows: row.get(2)?,
+                            families,
+                        })
+                    },
+                )
+                .optional()?)
+        })
         .await
         .unwrap()
     }
 
-    fn family(row: &sqlx::sqlite::SqliteRow, index: usize) -> Option<f64> {
-        row.try_get::<Option<f64>, _>(index).unwrap()
+    fn family(row: &DayRollup, index: usize) -> Option<f64> {
+        row.families[index - 3]
     }
 
     #[tokio::test]
     async fn epoch_day_matches_sqlite_date_rendering() {
-        let (_dir, _db, pool) = env().await;
+        let (_dir, db) = env().await;
         for epoch in [DAY_05, DAY_09 - 0.1, NOW, NOW + 0.5, DAY_07 + 86_399.0] {
-            let sqlite: String = sqlx::query_scalar("SELECT date(?, 'unixepoch')")
-                .bind(epoch)
-                .fetch_one(&pool)
+            let sqlite: String = db
+                .with_reader(move |conn| {
+                    Ok(conn.query_row(
+                        "SELECT date(?1, 'unixepoch')",
+                        rusqlite::params![epoch],
+                        |row| row.get::<_, String>(0),
+                    )?)
+                })
                 .await
                 .unwrap();
             assert_eq!(epoch_day(epoch), sqlite, "epoch {epoch}");
@@ -574,15 +621,15 @@ mod tests {
 
     #[tokio::test]
     async fn recompute_day_stores_verbatim_sums_and_membership() {
-        let (_dir, db, pool) = env().await;
-        seed_calendar(&pool).await;
+        let (_dir, db) = env().await;
+        seed_calendar(&db).await;
 
         // The full day: every family present, NULL dangling preserved.
         recompute(&db, "2001-09-05").await;
-        let row = rollup_row(&pool, "2001-09-05").await.unwrap();
-        assert_eq!(row.try_get::<i64, _>(0).unwrap(), ROLLUP_VERSION);
-        assert_eq!(row.try_get::<i64, _>(1).unwrap(), 0, "not dirty");
-        assert_eq!(row.try_get::<i64, _>(2).unwrap(), 1, "has rows");
+        let row = rollup_row(&db, "2001-09-05").await.unwrap();
+        assert_eq!(row.rollup_version, ROLLUP_VERSION);
+        assert_eq!(row.dirty, 0, "not dirty");
+        assert_eq!(row.has_rows, 1, "has rows");
         assert_eq!(family(&row, 3), Some(2.0), "loot: SUM skips the NULL");
         assert_eq!(family(&row, 4), Some(1.5), "weapon: 30 shots at 0.05");
         assert_eq!(family(&row, 5), Some(0.04));
@@ -592,13 +639,12 @@ mod tests {
         assert_eq!(family(&row, 9), Some(0.5));
         assert_eq!(family(&row, 10), Some(1.25));
         assert_eq!(family(&row, 11), Some(2.5));
-        let ledger: Vec<(String, String, f64)> = sqlx::query_as(
+        let ledger = ledger_rows(
+            &db,
             "SELECT entry_type, tag, amount FROM daily_ledger_rollups \
              WHERE day = '2001-09-05' ORDER BY entry_type, tag",
         )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        .await;
         assert_eq!(
             ledger,
             [
@@ -609,8 +655,8 @@ mod tests {
 
         // The empty gap day: an all-NULL row with no membership.
         recompute(&db, "2001-09-06").await;
-        let row = rollup_row(&pool, "2001-09-06").await.unwrap();
-        assert_eq!(row.try_get::<i64, _>(2).unwrap(), 0, "no rows");
+        let row = rollup_row(&db, "2001-09-06").await.unwrap();
+        assert_eq!(row.has_rows, 0, "no rows");
         for index in 3..=11 {
             assert_eq!(family(&row, index), None);
         }
@@ -618,40 +664,38 @@ mod tests {
         // The attribute-only day: rows existed, so the day is a member,
         // but the sum over all-NULL ped_value stays NULL.
         recompute(&db, "2001-09-07").await;
-        let row = rollup_row(&pool, "2001-09-07").await.unwrap();
-        assert_eq!(row.try_get::<i64, _>(2).unwrap(), 1);
+        let row = rollup_row(&db, "2001-09-07").await.unwrap();
+        assert_eq!(row.has_rows, 1);
         assert_eq!(family(&row, 9), None, "skill_tt: NULL-sum with rows");
 
         // A stray key: no epoch window, ledger sums only.
         recompute(&db, "2001-08-99").await;
-        let row = rollup_row(&pool, "2001-08-99").await.unwrap();
-        assert_eq!(row.try_get::<i64, _>(2).unwrap(), 1);
+        let row = rollup_row(&db, "2001-08-99").await.unwrap();
+        assert_eq!(row.has_rows, 1);
         for index in 3..=11 {
             assert_eq!(family(&row, index), None);
         }
-        let stray_ledger: Vec<(String, String, f64)> = sqlx::query_as(
+        let stray_ledger = ledger_rows(
+            &db,
             "SELECT entry_type, tag, amount FROM daily_ledger_rollups WHERE day = '2001-08-99'",
         )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        .await;
         assert_eq!(stray_ledger, [("expense".into(), "stray".into(), 7.0)]);
     }
 
     #[tokio::test]
     async fn recompute_replaces_a_days_ledger_rows() {
-        let (_dir, db, pool) = env().await;
-        seed_calendar(&pool).await;
+        let (_dir, db) = env().await;
+        seed_calendar(&db).await;
         recompute(&db, "2001-09-05").await;
 
-        run(&pool, "DELETE FROM ledger_entries WHERE id = 'l3'").await;
+        run(&db, "DELETE FROM ledger_entries WHERE id = 'l3'").await;
         recompute(&db, "2001-09-05").await;
-        let ledger: Vec<(String, String, f64)> = sqlx::query_as(
+        let ledger = ledger_rows(
+            &db,
             "SELECT entry_type, tag, amount FROM daily_ledger_rollups WHERE day = '2001-09-05'",
         )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        .await;
         assert_eq!(
             ledger,
             [("markup".into(), "manual".into(), 5.0)],
@@ -661,14 +705,18 @@ mod tests {
 
     #[tokio::test]
     async fn heal_backfills_to_yesterday_and_never_today() {
-        let (_dir, db, pool) = env().await;
-        seed_calendar(&pool).await;
+        let (_dir, db) = env().await;
+        seed_calendar(&db).await;
 
         let watermark = heal(&db, NOW).await;
         assert_eq!(watermark, "2001-09-08");
 
-        let days: Vec<String> = sqlx::query_scalar("SELECT day FROM daily_rollups ORDER BY day")
-            .fetch_all(&pool)
+        let days: Vec<String> = db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare("SELECT day FROM daily_rollups ORDER BY day")?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            })
             .await
             .unwrap();
         // The walk covers earliest..yesterday contiguously (the empty
@@ -684,81 +732,81 @@ mod tests {
                 "2001-09-08"
             ]
         );
-        let yesterday = rollup_row(&pool, "2001-09-08").await.unwrap();
+        let yesterday = rollup_row(&db, "2001-09-08").await.unwrap();
         assert_eq!(family(&yesterday, 3), Some(4.5));
 
         // Idempotent: a second heal changes nothing.
         let watermark = heal(&db, NOW).await;
         assert_eq!(watermark, "2001-09-08");
-        let row = rollup_row(&pool, "2001-09-05").await.unwrap();
+        let row = rollup_row(&db, "2001-09-05").await.unwrap();
         assert_eq!(family(&row, 3), Some(2.0));
     }
 
     #[tokio::test]
     async fn heal_repairs_dirty_and_below_version_rows() {
-        let (_dir, db, pool) = env().await;
-        seed_calendar(&pool).await;
+        let (_dir, db) = env().await;
+        seed_calendar(&db).await;
         heal(&db, NOW).await;
 
         run(
-            &pool,
+            &db,
             "UPDATE daily_rollups SET loot_tt = 99.0, dirty = 1 WHERE day = '2001-09-05'",
         )
         .await;
         run(
-            &pool,
+            &db,
             "UPDATE daily_rollups SET loot_tt = 88.0, rollup_version = 0 WHERE day = '2001-09-08'",
         )
         .await;
         heal(&db, NOW).await;
 
-        let row = rollup_row(&pool, "2001-09-05").await.unwrap();
+        let row = rollup_row(&db, "2001-09-05").await.unwrap();
         assert_eq!(family(&row, 3), Some(2.0));
-        assert_eq!(row.try_get::<i64, _>(1).unwrap(), 0);
-        let row = rollup_row(&pool, "2001-09-08").await.unwrap();
+        assert_eq!(row.dirty, 0);
+        let row = rollup_row(&db, "2001-09-08").await.unwrap();
         assert_eq!(family(&row, 3), Some(4.5));
-        assert_eq!(row.try_get::<i64, _>(0).unwrap(), ROLLUP_VERSION);
+        assert_eq!(row.rollup_version, ROLLUP_VERSION);
     }
 
     #[tokio::test]
     async fn a_dirty_stub_from_marking_heals_into_a_full_row() {
-        let (_dir, db, pool) = env().await;
-        seed_calendar(&pool).await;
+        let (_dir, db) = env().await;
+        seed_calendar(&db).await;
         heal(&db, NOW).await;
 
         // A crash between the mark and the eager recompute leaves only
         // the stub; the next heal completes it.
-        run(&pool, "DELETE FROM daily_rollups WHERE day = '2001-09-05'").await;
+        run(&db, "DELETE FROM daily_rollups WHERE day = '2001-09-05'").await;
         db.with_writer(move |conn| mark_day_dirty(conn, "2001-09-05"))
             .await
             .unwrap();
-        let stub = rollup_row(&pool, "2001-09-05").await.unwrap();
-        assert_eq!(stub.try_get::<i64, _>(1).unwrap(), 1, "dirty");
-        assert_eq!(stub.try_get::<i64, _>(0).unwrap(), 0, "pre-version");
+        let stub = rollup_row(&db, "2001-09-05").await.unwrap();
+        assert_eq!(stub.dirty, 1, "dirty");
+        assert_eq!(stub.rollup_version, 0, "pre-version");
 
         heal(&db, NOW).await;
-        let row = rollup_row(&pool, "2001-09-05").await.unwrap();
-        assert_eq!(row.try_get::<i64, _>(1).unwrap(), 0);
+        let row = rollup_row(&db, "2001-09-05").await.unwrap();
+        assert_eq!(row.dirty, 0);
         assert_eq!(family(&row, 3), Some(2.0));
     }
 
     #[tokio::test]
     async fn refresh_days_respects_the_watermark() {
-        let (_dir, db, pool) = env().await;
+        let (_dir, db) = env().await;
 
         // Before any heal there is no watermark: a refresh is a no-op.
-        seed_calendar(&pool).await;
+        seed_calendar(&db).await;
         db.with_writer(move |conn| refresh_days(conn, ["2001-09-05"]))
             .await
             .unwrap();
-        assert!(rollup_row(&pool, "2001-09-05").await.is_none());
+        assert!(rollup_row(&db, "2001-09-05").await.is_none());
 
         heal(&db, NOW).await;
 
         // A backdated ledger write, then the hook: the day recomputes
         // eagerly; today (beyond the watermark) is ignored.
         run(
-            &pool,
+            &db,
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
              VALUES ('l9', '2001-09-06', 'expense', 'backdated', 2.5, 'manual')",
         )
@@ -766,68 +814,88 @@ mod tests {
         db.with_writer(move |conn| refresh_days(conn, ["2001-09-06", "2001-09-09"]))
             .await
             .unwrap();
-        let row = rollup_row(&pool, "2001-09-06").await.unwrap();
-        assert_eq!(row.try_get::<i64, _>(1).unwrap(), 0, "recomputed, clean");
-        assert_eq!(row.try_get::<i64, _>(2).unwrap(), 1, "ledger row joined");
-        assert!(rollup_row(&pool, "2001-09-09").await.is_none());
+        let row = rollup_row(&db, "2001-09-06").await.unwrap();
+        assert_eq!(row.dirty, 0, "recomputed, clean");
+        assert_eq!(row.has_rows, 1, "ledger row joined");
+        assert!(rollup_row(&db, "2001-09-09").await.is_none());
     }
 
     #[tokio::test]
     async fn refresh_session_days_relands_every_day_the_session_touches() {
-        let (_dir, db, pool) = env().await;
-        seed_calendar(&pool).await;
+        let (_dir, db) = env().await;
+        seed_calendar(&db).await;
         heal(&db, NOW).await;
 
         // Retroactive edits on two of the session's days, then the hook:
         // both reland; the session's today-side kill day stays unrolled.
+        run(&db, "UPDATE kills SET loot_total_ped = 9.5 WHERE id = 'k3'").await;
         run(
-            &pool,
-            "UPDATE kills SET loot_total_ped = 9.5 WHERE id = 'k3'",
-        )
-        .await;
-        run(
-            &pool,
+            &db,
             "UPDATE tracking_sessions SET armour_cost = 0.5 WHERE id = 's1'",
         )
         .await;
         db.with_writer(move |conn| refresh_session_days(conn, "s1"))
             .await
             .unwrap();
-        let row = rollup_row(&pool, "2001-09-08").await.unwrap();
+        let row = rollup_row(&db, "2001-09-08").await.unwrap();
         assert_eq!(family(&row, 3), Some(9.5), "the kill day relanded");
-        let row = rollup_row(&pool, "2001-09-05").await.unwrap();
+        let row = rollup_row(&db, "2001-09-05").await.unwrap();
         assert_eq!(family(&row, 6), Some(0.5), "the start day relanded");
-        assert!(rollup_row(&pool, "2001-09-09").await.is_none());
+        assert!(rollup_row(&db, "2001-09-09").await.is_none());
     }
 
     #[tokio::test]
     async fn rebuild_regenerates_identical_content() {
-        let (_dir, db, pool) = env().await;
-        seed_calendar(&pool).await;
+        let (_dir, db) = env().await;
+        seed_calendar(&db).await;
         heal(&db, NOW).await;
 
         type RollupRow = (String, i64, i64, i64, Option<f64>, Option<f64>);
-        let snapshot = |pool: SqlitePool| async move {
-            let rollups: Vec<RollupRow> = sqlx::query_as(
-                "SELECT day, rollup_version, dirty, has_rows, loot_tt, skill_tt \
-                 FROM daily_rollups ORDER BY day",
-            )
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-            let ledger: Vec<(String, String, String, f64)> = sqlx::query_as(
-                "SELECT day, entry_type, tag, amount FROM daily_ledger_rollups \
-                 ORDER BY day, entry_type, tag",
-            )
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+        let snapshot = |db: Db| async move {
+            let rollups: Vec<RollupRow> = db
+                .with_reader(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT day, rollup_version, dirty, has_rows, loot_tt, skill_tt \
+                         FROM daily_rollups ORDER BY day",
+                    )?;
+                    let rows = stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, Option<f64>>(4)?,
+                            row.get::<_, Option<f64>>(5)?,
+                        ))
+                    })?;
+                    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+                })
+                .await
+                .unwrap();
+            let ledger: Vec<(String, String, String, f64)> = db
+                .with_reader(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT day, entry_type, tag, amount FROM daily_ledger_rollups \
+                         ORDER BY day, entry_type, tag",
+                    )?;
+                    let rows = stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, f64>(3)?,
+                        ))
+                    })?;
+                    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+                })
+                .await
+                .unwrap();
             (rollups, ledger)
         };
-        let before = snapshot(pool.clone()).await;
+        let before = snapshot(db.clone()).await;
 
         run(
-            &pool,
+            &db,
             "UPDATE daily_rollups SET loot_tt = 77.0, has_rows = 0 WHERE day = '2001-09-05'",
         )
         .await;
@@ -836,6 +904,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(watermark, "2001-09-08");
-        assert_eq!(snapshot(pool.clone()).await, before);
+        assert_eq!(snapshot(db.clone()).await, before);
     }
 }

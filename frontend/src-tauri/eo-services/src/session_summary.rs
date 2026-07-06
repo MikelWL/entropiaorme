@@ -494,16 +494,13 @@ pub fn rebuild_summaries(conn: &rusqlite::Connection) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePool;
-    use sqlx::Row as _;
 
-    async fn env() -> (tempfile::TempDir, Db, SqlitePool) {
+    async fn env() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(&dir.path().join("entropia_orme.db"))
             .await
             .unwrap();
-        let pool = db.write().clone();
-        (dir, db, pool)
+        (dir, db)
     }
 
     /// Compute one session's summary on the synchronous core (reader path).
@@ -530,18 +527,21 @@ mod tests {
             .unwrap();
     }
 
-    async fn run(pool: &SqlitePool, sql: &str) {
-        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-            .execute(pool)
-            .await
-            .unwrap();
+    async fn run(db: &Db, sql: &str) {
+        let sql = sql.to_string();
+        db.with_writer(move |conn| {
+            conn.execute_batch(&sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     /// One ended session: 2h duration, five kills (3 Young Atrox, 1
     /// Snable, 1 Unknown), Rifle-dominant tool stats, mixed gains.
-    async fn seed_standard(pool: &SqlitePool) {
+    async fn seed_standard(db: &Db) {
         run(
-            pool,
+            db,
             "INSERT INTO tracking_sessions \
              (id, started_at, ended_at, is_active, armour_cost, heal_cost, dangling_cost, \
               mob_tracking_mode) \
@@ -556,7 +556,7 @@ mod tests {
             ("k5", "Unknown", "", "", 0.5, 0.02),
         ] {
             run(
-                pool,
+                db,
                 &format!(
                     "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
                      timestamp, shots_fired, damage_dealt, damage_taken, critical_hits, \
@@ -568,14 +568,14 @@ mod tests {
             .await;
         }
         run(
-            pool,
+            db,
             "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
              critical_hits, cost_per_shot) VALUES \
              ('k1', 'Rifle', 30, 300.0, 3, 0.05), ('k2', 'Pistol', 10, 50.0, 1, 0.01)",
         )
         .await;
         run(
-            pool,
+            db,
             "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
              VALUES ('s1', 1100.0, 'Rifle', 1.0, 0.5), ('s1', 1200.0, 'Rifle', 1.0, 0.25), \
              ('s1', 1300.0, 'Anatomy', 1.0, 0.0), \
@@ -587,8 +587,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_standard_session_computes_every_field() {
-        let (_dir, db, pool) = env().await;
-        seed_standard(&pool).await;
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
         let summary = compute(&db, "s1").await.unwrap();
 
         assert_eq!(summary["id"], Value::from("s1"));
@@ -649,17 +649,17 @@ mod tests {
 
     #[tokio::test]
     async fn dominance_admits_the_exact_threshold_and_refuses_below() {
-        let (_dir, db, pool) = env().await;
-        seed_standard(&pool).await;
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
         // Rebalance: 3 Atrox of 5 known = 0.6 exactly (admitted);
         // Rifle 30 of 50 shots = 0.6 exactly (admitted).
         run(
-            &pool,
+            &db,
             "UPDATE kills SET mob_name = 'Feffoid', mob_species = 'Feffoid' WHERE id = 'k5'",
         )
         .await;
         run(
-            &pool,
+            &db,
             "UPDATE kill_tool_stats SET shots_fired = 20 WHERE tool_name = 'Pistol'",
         )
         .await;
@@ -670,7 +670,7 @@ mod tests {
         // One more Feffoid: 3 of 6 known = 0.5 (refused); Pistol up
         // to 25 shots: 30 of 55 (refused).
         run(
-            &pool,
+            &db,
             "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
              timestamp, shots_fired, damage_dealt, damage_taken, critical_hits, \
              cost_ped, enhancer_cost, loot_total_ped, is_global, is_hof) \
@@ -679,7 +679,7 @@ mod tests {
         )
         .await;
         run(
-            &pool,
+            &db,
             "UPDATE kill_tool_stats SET shots_fired = 25 WHERE tool_name = 'Pistol'",
         )
         .await;
@@ -691,11 +691,11 @@ mod tests {
 
     #[tokio::test]
     async fn bare_names_classify_as_tags_and_either_field_makes_a_mob() {
-        let (_dir, db, pool) = env().await;
-        seed_standard(&pool).await;
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
         // Strip the dominant rows bare: a tag, not a mob.
         run(
-            &pool,
+            &db,
             "UPDATE kills SET mob_species = '', mob_maturity = '' WHERE mob_species = 'Atrox'",
         )
         .await;
@@ -705,7 +705,7 @@ mod tests {
 
         // Maturity alone is enough to classify as a mob.
         run(
-            &pool,
+            &db,
             "UPDATE kills SET mob_maturity = 'Young' WHERE mob_name = 'Young Atrox'",
         )
         .await;
@@ -716,12 +716,12 @@ mod tests {
 
     #[tokio::test]
     async fn the_qualifying_filters_refuse_each_axis() {
-        let (_dir, db, pool) = env().await;
-        seed_standard(&pool).await;
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
 
         // An active (un-ended) session never summarises.
         run(
-            &pool,
+            &db,
             "UPDATE tracking_sessions SET ended_at = NULL WHERE id = 's1'",
         )
         .await;
@@ -729,13 +729,13 @@ mod tests {
 
         // Zero duration refuses.
         run(
-            &pool,
+            &db,
             "UPDATE tracking_sessions SET ended_at = 1000.0 WHERE id = 's1'",
         )
         .await;
         assert!(compute(&db, "s1").await.is_none());
         run(
-            &pool,
+            &db,
             "UPDATE tracking_sessions SET ended_at = 8200.0 WHERE id = 's1'",
         )
         .await;
@@ -743,21 +743,17 @@ mod tests {
         // No positive gain totals refuses, but EITHER axis alone
         // qualifies: attribute-only first, then regular-only.
         run(
-            &pool,
+            &db,
             "UPDATE skill_gains SET ped_value = 0.0 WHERE skill_name = 'Rifle'",
         )
         .await;
         let summary = compute(&db, "s1").await.unwrap();
         assert_eq!(summary["regularSkillTt"], Value::from(0.0));
         assert_eq!(summary["attributeLevelsTotal"], Value::from(0.75));
-        run(
-            &pool,
-            "DELETE FROM skill_gains WHERE skill_name = 'Agility'",
-        )
-        .await;
+        run(&db, "DELETE FROM skill_gains WHERE skill_name = 'Agility'").await;
         assert!(compute(&db, "s1").await.is_none());
         run(
-            &pool,
+            &db,
             "UPDATE skill_gains SET ped_value = 0.5 WHERE skill_name = 'Rifle'",
         )
         .await;
@@ -765,87 +761,108 @@ mod tests {
 
         // No skill-gain rows at all refuses; so does the table
         // being absent entirely (the original's tolerated case).
-        run(&pool, "DELETE FROM skill_gains").await;
+        run(&db, "DELETE FROM skill_gains").await;
         assert!(compute(&db, "s1").await.is_none());
-        run(
-            &pool,
-            "ALTER TABLE skill_gains RENAME TO skill_gains_parked",
-        )
-        .await;
+        run(&db, "ALTER TABLE skill_gains RENAME TO skill_gains_parked").await;
         assert!(compute(&db, "s1").await.is_none());
+        run(&db, "ALTER TABLE skill_gains_parked RENAME TO skill_gains").await;
         run(
-            &pool,
-            "ALTER TABLE skill_gains_parked RENAME TO skill_gains",
-        )
-        .await;
-        run(
-            &pool,
+            &db,
             "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
              VALUES ('s1', 1100.0, 'Rifle', 1.0, 0.5)",
         )
         .await;
 
         // Zero cycled value refuses (no tool stats or session costs).
-        run(&pool, "DELETE FROM kill_tool_stats").await;
+        run(&db, "DELETE FROM kill_tool_stats").await;
         run(
-            &pool,
+            &db,
             "UPDATE tracking_sessions SET armour_cost = 0, heal_cost = 0, dangling_cost = 0 \
              WHERE id = 's1'",
         )
         .await;
-        run(&pool, "UPDATE kills SET enhancer_cost = 0").await;
+        run(&db, "UPDATE kills SET enhancer_cost = 0").await;
         assert!(compute(&db, "s1").await.is_none());
     }
 
     #[tokio::test]
     async fn write_upserts_clears_and_delete_removes() {
-        let (_dir, db, pool) = env().await;
-        seed_standard(&pool).await;
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
 
         write_summary(&db, "s1").await;
-        let row = sqlx::query(
-            "SELECT summary_version, duration_hours, cycled_ped, dominant_mob, dominant_weapon, \
-             regular_skill_ped_json FROM session_summaries WHERE session_id = 's1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(row.try_get::<i64, _>(0).unwrap(), SUMMARY_VERSION);
-        assert_eq!(row.try_get::<f64, _>(1).unwrap(), 2.0);
-        assert_eq!(row.try_get::<f64, _>(2).unwrap(), 2.01);
-        assert_eq!(row.try_get::<String, _>(3).unwrap(), "Young Atrox");
-        assert_eq!(row.try_get::<String, _>(4).unwrap(), "Rifle");
-        assert_eq!(row.try_get::<String, _>(5).unwrap(), "{\"Rifle\": 0.75}");
+        let (
+            summary_version,
+            duration_hours,
+            cycled_ped,
+            dominant_mob,
+            dominant_weapon,
+            regular_skill_ped_json,
+        ): (i64, f64, f64, String, String, String) = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT summary_version, duration_hours, cycled_ped, dominant_mob, \
+                     dominant_weapon, regular_skill_ped_json FROM session_summaries \
+                     WHERE session_id = 's1'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, f64>(1)?,
+                            row.get::<_, f64>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(summary_version, SUMMARY_VERSION);
+        assert_eq!(duration_hours, 2.0);
+        assert_eq!(cycled_ped, 2.01);
+        assert_eq!(dominant_mob, "Young Atrox");
+        assert_eq!(dominant_weapon, "Rifle");
+        assert_eq!(regular_skill_ped_json, "{\"Rifle\": 0.75}");
 
         // A session that stops qualifying clears its stale row.
         run(
-            &pool,
+            &db,
             "UPDATE tracking_sessions SET ended_at = 1000.0 WHERE id = 's1'",
         )
         .await;
         write_summary(&db, "s1").await;
-        let count: i64 = sqlx::query("SELECT COUNT(*) FROM session_summaries")
-            .fetch_one(&pool)
+        let count: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM session_summaries", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .try_get(0)
             .unwrap();
         assert_eq!(count, 0);
 
         // Delete is explicit and idempotent.
         run(
-            &pool,
+            &db,
             "UPDATE tracking_sessions SET ended_at = 8200.0 WHERE id = 's1'",
         )
         .await;
         write_summary(&db, "s1").await;
         delete_summary(&db, "s1").await;
         delete_summary(&db, "s1").await;
-        let count: i64 = sqlx::query("SELECT COUNT(*) FROM session_summaries")
-            .fetch_one(&pool)
+        let count: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM session_summaries", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .try_get(0)
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -864,28 +881,36 @@ mod tests {
         let db = crate::db::Db::open(&dir.path().join("entropia_orme.db"))
             .await
             .unwrap();
-        let pool = db.write().clone();
 
-        sqlx::query(
-            "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, dangling_cost) \
-             VALUES ('sess-full', 1000.0, 4600.0, 0, 1.5, 0.25)",
-        )
-        .execute(&pool)
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, dangling_cost) \
+                 VALUES ('sess-full', 1000.0, 4600.0, 0, 1.5, 0.25)",
+                [],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
-             damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
-             VALUES ('pk1', 'sess-full', 'Atrox Young', 1100.0, 10, 100.0, 5.0, 1, 0.3, 0.5, 12.75)",
-        )
-        .execute(&pool)
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
+                 damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
+                 VALUES ('pk1', 'sess-full', 'Atrox Young', 1100.0, 10, 100.0, 5.0, 1, 0.3, 0.5, 12.75)",
+                [],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
-             critical_hits, cost_per_shot) VALUES ('pk1', 'LR-32', 40, 50.0, 0, 0.05)",
-        )
-        .execute(&pool)
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
+                 critical_hits, cost_per_shot) VALUES ('pk1', 'LR-32', 40, 50.0, 0, 0.05)",
+                [],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
         for (sid, ts, skill, amount, ped) in [
@@ -894,16 +919,16 @@ mod tests {
             ("sess-stale", 5050.0, "Anatomy", 0.5, Some(0.1)),
             ("sess-open", 7050.0, "Rifle", 0.1, Some(0.05)),
         ] {
-            sqlx::query(
-                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-                 VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(sid)
-            .bind(ts)
-            .bind(skill)
-            .bind(amount)
-            .bind(ped)
-            .execute(&pool)
+            let sid = sid.to_string();
+            let skill = skill.to_string();
+            db.with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![sid, ts, skill, amount, ped],
+                )?;
+                Ok(())
+            })
             .await
             .unwrap();
         }
@@ -912,39 +937,44 @@ mod tests {
             ("sess-nogains", 6000.0, Some(6100.0), 0),
             ("sess-open", 7000.0, None, 1),
         ] {
-            sqlx::query(
-                "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active) \
-                 VALUES (?, ?, ?, ?)",
-            )
-            .bind(sid)
-            .bind(st)
-            .bind(en)
-            .bind(active)
-            .execute(&pool)
+            let sid = sid.to_string();
+            db.with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![sid, st, en, active],
+                )?;
+                Ok(())
+            })
             .await
             .unwrap();
         }
-        sqlx::query(
-            "INSERT INTO session_summaries (session_id, summary_version, started_at, ended_at, \
-             duration_hours, kills, loot_tt, weapon_cost, enhancer_cost, armour_cost, heal_cost, \
-             dangling_cost, cycled_ped, regular_skill_ped_json, attribute_levels_json, \
-             regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, dominant_weapon) \
-             VALUES ('sess-stale', 0, 1.0, 2.0, 0.1, 99, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, \
-             '{}', '{}', 1.0, 1.0, 'OLD', 'OLD', 'OLD')",
-        )
-        .execute(&pool)
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO session_summaries (session_id, summary_version, started_at, ended_at, \
+                 duration_hours, kills, loot_tt, weapon_cost, enhancer_cost, armour_cost, heal_cost, \
+                 dangling_cost, cycled_ped, regular_skill_ped_json, attribute_levels_json, \
+                 regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, dominant_weapon) \
+                 VALUES ('sess-stale', 0, 1.0, 2.0, 0.1, 99, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, \
+                 '{}', '{}', 1.0, 1.0, 'OLD', 'OLD', 'OLD')",
+                [],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO session_summaries (session_id, summary_version, started_at, ended_at, \
-             duration_hours, kills, loot_tt, weapon_cost, enhancer_cost, armour_cost, heal_cost, \
-             dangling_cost, cycled_ped, regular_skill_ped_json, attribute_levels_json, \
-             regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, dominant_weapon) \
-             VALUES ('sess-manual', ?, 0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, \
-             '', '', 0.0, 0.0, NULL, NULL, NULL)",
-        )
-        .bind(SUMMARY_VERSION)
-        .execute(&pool)
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO session_summaries (session_id, summary_version, started_at, ended_at, \
+                 duration_hours, kills, loot_tt, weapon_cost, enhancer_cost, armour_cost, heal_cost, \
+                 dangling_cost, cycled_ped, regular_skill_ped_json, attribute_levels_json, \
+                 regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, dominant_weapon) \
+                 VALUES ('sess-manual', ?1, 0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, \
+                 '', '', 0.0, 0.0, NULL, NULL, NULL)",
+                rusqlite::params![SUMMARY_VERSION],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
 
@@ -975,14 +1005,15 @@ mod tests {
         );
 
         // The disqualified stale row cleared rather than rebuilding.
-        let rows: Vec<String> =
-            sqlx::query("SELECT session_id FROM session_summaries ORDER BY session_id")
-                .fetch_all(&pool)
-                .await
-                .unwrap()
-                .iter()
-                .map(|row| row.get(0))
-                .collect();
+        let rows: Vec<String> = db
+            .with_reader(|conn| {
+                let mut stmt =
+                    conn.prepare("SELECT session_id FROM session_summaries ORDER BY session_id")?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            })
+            .await
+            .unwrap();
         assert_eq!(rows, ["sess-full", "sess-manual"]);
     }
 }

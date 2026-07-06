@@ -65,24 +65,27 @@ async fn seeded_api(dir: &Path) -> Api {
     let db = Db::open(&data_dir.join("entropia_orme.db"))
         .await
         .expect("migrated database");
-    for (name, level, source, ts) in [
+    let seed_rows: Vec<(String, f64, String, f64)> = [
         ("Rifle", 1200.0, "scan", 1700000000.5),
         ("Rifle", 1250.0, "chatlog", 1700003600.0),
         ("Anatomy", 800.0, "scan", 1700000000.5),
         ("Health", 142.7, "scan", 1700000000.5),
-    ] {
-        sqlx::query(
-            "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(name)
-        .bind(level)
-        .bind(source)
-        .bind(ts)
-        .execute(db.write())
-        .await
-        .unwrap();
-    }
+    ]
+    .into_iter()
+    .map(|(name, level, source, ts)| (name.to_string(), level, source.to_string(), ts))
+    .collect();
+    db.with_writer(move |conn| {
+        for (name, level, source, ts) in &seed_rows {
+            conn.execute(
+                "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![name, level, source, ts],
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
     let clock = Arc::new(MockClock::new(
         Some(
             chrono::NaiveDateTime::parse_from_str("2023-11-20 12:00:00", "%Y-%m-%d %H:%M:%S")

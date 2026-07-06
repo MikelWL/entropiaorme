@@ -31,8 +31,6 @@ use std::sync::Arc;
 
 use rusqlite::OptionalExtension as _;
 use serde_json::{json, Value};
-#[cfg(test)]
-use sqlx::Row;
 
 use crate::clock::Clock;
 use crate::codex_categories::{
@@ -66,8 +64,6 @@ pub const META_PED: f64 = 1.0;
 pub enum CodexError {
     #[error("{0}")]
     Invalid(String),
-    #[error(transparent)]
-    Db(#[from] sqlx::Error),
     /// A daily-rollup refresh failure inside a claim write.
     #[error(transparent)]
     Rollup(#[from] crate::db::DbError),
@@ -847,7 +843,6 @@ mod tests {
 
     use super::*;
     use crate::clock::MockClock;
-    use sqlx::SqlitePool;
 
     fn start_instant() -> NaiveDateTime {
         NaiveDateTime::parse_from_str("2026-03-01 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap()
@@ -904,20 +899,19 @@ mod tests {
         .unwrap();
     }
 
-    async fn service(dir: &Path) -> (CodexService, SqlitePool) {
+    async fn service(dir: &Path) -> (CodexService, Db) {
         let snapshot = dir.join("snapshot");
         std::fs::create_dir_all(&snapshot).unwrap();
         write_snapshot(&snapshot);
         let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
-        let seed_pool = db.write().clone();
         let game_data = Arc::new(GameDataStore::new(&snapshot).unwrap());
         let clock = Arc::new(MockClock::new(Some(start_instant()), 0.0));
-        (CodexService::new(db, game_data, clock), seed_pool)
+        (CodexService::new(db.clone(), game_data, clock), db)
     }
 
     /// The standard calibration seed: Rifle twice (the newer scan
     /// instant wins), plus Athletics, Dodge, and Agility anchors.
-    async fn seed_calibrations(pool: &SqlitePool) {
+    async fn seed_calibrations(db: &Db) {
         for (name, level, at) in [
             ("Rifle", 90.0, 100.0),
             ("Rifle", 100.0, 200.0),
@@ -925,14 +919,14 @@ mod tests {
             ("Dodge", 30.0, 150.0),
             ("Agility", 32.04, 150.0),
         ] {
-            sqlx::query(
-                "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                 VALUES (?, ?, 'scan', ?)",
-            )
-            .bind(name)
-            .bind(level)
-            .bind(at)
-            .execute(pool)
+            db.with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                     VALUES (?1, ?2, 'scan', ?3)",
+                    rusqlite::params![name, level, at],
+                )?;
+                Ok(())
+            })
             .await
             .unwrap();
         }
@@ -948,7 +942,7 @@ mod tests {
     #[tokio::test]
     async fn species_listing_dedupes_skips_and_sorts() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Unranked: alphabetical (every rank ties at 0); the duplicate
         // Boar keeps its first base cost, the nameless/specieless rows
@@ -995,7 +989,7 @@ mod tests {
     #[tokio::test]
     async fn the_first_catalogue_match_decides_species_lookup() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Ghost's first catalogue entry has no base cost, so the
         // lookup paths miss it even though the listing carries it.
@@ -1017,8 +1011,8 @@ mod tests {
     #[tokio::test]
     async fn rank_breakdowns_cross_reference_claims() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
         svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
 
@@ -1051,7 +1045,7 @@ mod tests {
     #[tokio::test]
     async fn claims_validate_each_leg_verbatim() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         let cases: [(&str, i64, &str, &str); 4] = [
             (
@@ -1098,8 +1092,8 @@ mod tests {
     #[tokio::test]
     async fn a_claim_records_progress_and_calibration() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         let result = svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
         assert_eq!(
@@ -1108,37 +1102,60 @@ mod tests {
         );
 
         let now = naive_to_epoch(start_instant());
-        let claim = sqlx::query(
-            "SELECT species_name, rank, skill_name, ped_value, claimed_at, kind \
-             FROM codex_claims",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(claim.get::<String, _>(0), "Boar");
-        assert_eq!(claim.get::<i64, _>(1), 1);
-        assert_eq!(claim.get::<String, _>(2), "Rifle");
-        assert_eq!(claim.get::<f64, _>(3), 0.1875);
-        assert_eq!(claim.get::<f64, _>(4), now);
-        assert_eq!(claim.get::<String, _>(5), "rank");
+        let claim = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT species_name, rank, skill_name, ped_value, claimed_at, kind \
+                     FROM codex_claims",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, f64>(3)?,
+                            row.get::<_, f64>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(claim.0, "Boar");
+        assert_eq!(claim.1, 1);
+        assert_eq!(claim.2, "Rifle");
+        assert_eq!(claim.3, 0.1875);
+        assert_eq!(claim.4, now);
+        assert_eq!(claim.5, "rank");
 
-        let progress =
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(progress.get::<i64, _>(0), 1);
+        let progress: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(progress, 1);
 
         // The reward priced onto the curve from the NEWEST calibration
         // (level 100, not the older 90): 100 + levels bought by 0.1875
         // PED, the original's computed 217.745.
-        let calibration =
-            sqlx::query("SELECT level, scanned_at FROM skill_calibrations WHERE source = 'codex'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(calibration.get::<f64, _>(0), 217.745);
-        assert_eq!(calibration.get::<f64, _>(1), now);
+        let calibration = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT level, scanned_at FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(calibration.0, 217.745);
+        assert_eq!(calibration.1, now);
 
         // The next claim builds on the advanced rank.
         let result = svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
@@ -1148,8 +1165,8 @@ mod tests {
     #[tokio::test]
     async fn an_uncalibrated_skill_claim_skips_the_calibration_write() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
         svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
@@ -1157,24 +1174,34 @@ mod tests {
         // Five seeds plus Rifle's codex row; Anatomy (no calibration
         // history) recorded its claim but wrote no calibration: the
         // reward never reaches the skill curve (see the module doc).
-        let count = sqlx::query("SELECT COUNT(*) FROM skill_calibrations")
-            .fetch_one(&pool)
+        let count: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM skill_calibrations", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get::<i64, _>(0);
+            .unwrap();
         assert_eq!(count, 6);
-        let claims = sqlx::query("SELECT COUNT(*) FROM codex_claims")
-            .fetch_one(&pool)
+        let claims: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM codex_claims", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get::<i64, _>(0);
+            .unwrap();
         assert_eq!(claims, 2);
     }
 
     #[tokio::test]
     async fn cat4_claims_price_through_the_cat4_divisor() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         svc.calibrate("Looter Bird", 4).await.unwrap();
         let result = svc.claim_rank("Looter Bird", 5, "Zoology").await.unwrap();
@@ -1188,7 +1215,7 @@ mod tests {
     #[tokio::test]
     async fn calibrate_bounds_and_upserts() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
+        let (svc, db) = service(dir.path()).await;
 
         for rank in [-1, 26] {
             let error = svc.calibrate("Boar", rank).await.unwrap_err();
@@ -1198,13 +1225,20 @@ mod tests {
         let result = svc.calibrate("Boar", 4).await.unwrap();
         assert_eq!(result, json!({"speciesName": "Boar", "rank": 4}));
         svc.calibrate("Boar", 7).await.unwrap();
-        let rows =
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows: Vec<i64> = db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, i64>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1, "the upsert overwrites in place");
-        assert_eq!(rows[0].get::<i64, _>(0), 7);
+        assert_eq!(rows[0], 7);
 
         // Calibration is catalogue-blind and side-effect-free.
         svc.calibrate("Nessie", 0).await.unwrap();
@@ -1213,8 +1247,8 @@ mod tests {
     #[tokio::test]
     async fn meta_claims_validate_record_and_report() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         let error = svc.meta_claim("Luck").await.unwrap_err();
         assert_eq!(
@@ -1225,18 +1259,31 @@ mod tests {
 
         let result = svc.meta_claim("Agility").await.unwrap();
         assert_eq!(result, json!({"attributeName": "Agility", "pedValue": 1.0}));
-        let row = sqlx::query(
-            "SELECT species_name, rank, skill_name, ped_value, kind, attribute_name \
-             FROM codex_claims WHERE kind = 'meta'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(row.get::<String, _>(0), "__meta__");
-        assert_eq!(row.get::<i64, _>(1), 0);
-        assert_eq!(row.get::<String, _>(2), "Agility");
-        assert_eq!(row.get::<f64, _>(3), 1.0);
-        assert_eq!(row.get::<String, _>(5), "Agility");
+        let row = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT species_name, rank, skill_name, ped_value, kind, attribute_name \
+                     FROM codex_claims WHERE kind = 'meta'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, f64>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.0, "__meta__");
+        assert_eq!(row.1, 0);
+        assert_eq!(row.2, "Agility");
+        assert_eq!(row.3, 1.0);
+        assert_eq!(row.5, "Agility");
 
         // The six attributes in sorted order, levels from the latest
         // calibration rounded to one decimal (32.04 -> 32.0).
@@ -1257,7 +1304,7 @@ mod tests {
     #[tokio::test]
     async fn the_final_rank_claims_at_the_boundary() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Rank 25 itself is claimable; the max-rank guard rejects only
         // beyond the table. Hand-computed reward: multiplier 100 x
@@ -1278,16 +1325,16 @@ mod tests {
             "Maximum rank is 25"
         );
         assert_eq!(
-            CodexError::Db(sqlx::Error::RowNotFound).to_string(),
-            sqlx::Error::RowNotFound.to_string()
+            CodexError::Rollup(crate::db::DbError::CoreClosed).to_string(),
+            crate::db::DbError::CoreClosed.to_string()
         );
     }
 
     #[tokio::test]
     async fn profession_options_rank_by_contribution() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
         // Rifle advances to 217.745 through the claim, matching the
         // original's fixture sequence.
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
@@ -1355,8 +1402,8 @@ mod tests {
     #[tokio::test]
     async fn hp_options_sort_by_gain_then_level_then_name() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         // A MobLooter rank 5 offers cat3 plus the cat4 bonus skills.
         let options = svc
@@ -1426,8 +1473,8 @@ mod tests {
         // double-records and this invariant fails.
         for _ in 0..32 {
             let dir = tempfile::tempdir().unwrap();
-            let (svc, pool) = service(dir.path()).await;
-            seed_calibrations(&pool).await;
+            let (svc, db) = service(dir.path()).await;
+            seed_calibrations(&db).await;
 
             let (a, b) = tokio::join!(
                 svc.claim_rank("Boar", 1, "Rifle"),
@@ -1438,21 +1485,28 @@ mod tests {
                 "exactly one claim must win: a={a:?} b={b:?}"
             );
 
-            let claims: i64 = sqlx::query(
-                "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get(0);
+            let claims: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(claims, 1, "exactly one claim row may be recorded");
 
-            let progress: i64 =
-                sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap()
-                    .get(0);
+            let progress: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(progress, 1, "progress advances exactly once");
         }
     }
@@ -1460,8 +1514,8 @@ mod tests {
     #[tokio::test]
     async fn unclaim_reverts_progress_claim_and_calibration() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         // A claim advances to rank 1, records the claim, and writes a
         // codex calibration on top of Rifle's newest level (100).
@@ -1479,24 +1533,38 @@ mod tests {
         // calibration is removed so Rifle reverts to its scanned 100;
         // the five seed rows are untouched.
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 0);
-        let claims: i64 = sqlx::query("SELECT COUNT(*) FROM codex_claims")
-            .fetch_one(&pool)
+        let claims: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM codex_claims", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get(0);
+            .unwrap();
         assert_eq!(claims, 0);
-        let codex_rows: i64 =
-            sqlx::query("SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'")
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-                .get(0);
-        assert_eq!(codex_rows, 0);
-        let total: i64 = sqlx::query("SELECT COUNT(*) FROM skill_calibrations")
-            .fetch_one(&pool)
+        let codex_rows: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
             .await
-            .unwrap()
-            .get(0);
+            .unwrap();
+        assert_eq!(codex_rows, 0);
+        let total: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM skill_calibrations", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
+            .await
+            .unwrap();
         assert_eq!(total, 5, "the scan-seeded calibrations are untouched");
         assert_eq!(svc.skill_level("Rifle").await.unwrap(), Some(100.0));
     }
@@ -1504,8 +1572,8 @@ mod tests {
     #[tokio::test]
     async fn claim_and_unclaim_reland_the_claim_days_rollup() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
 
@@ -1518,31 +1586,41 @@ mod tests {
             })
             .await
             .unwrap();
-        let codex_pes: Option<f64> =
-            sqlx::query_scalar("SELECT codex_pes FROM daily_rollups WHERE day = ?")
-                .bind(&claim_day)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let day = claim_day.clone();
+        let codex_pes: Option<f64> = db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT codex_pes FROM daily_rollups WHERE day = ?1",
+                    rusqlite::params![day],
+                    |row| row.get::<_, Option<f64>>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(codex_pes, Some(0.1875));
 
         // The unclaim deletes the now-historical claim and relands its
         // day inside the same transaction.
         svc.unclaim_rank("Boar").await.unwrap();
-        let codex_pes: Option<f64> =
-            sqlx::query_scalar("SELECT codex_pes FROM daily_rollups WHERE day = ?")
-                .bind(&claim_day)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let day = claim_day.clone();
+        let codex_pes: Option<f64> = db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT codex_pes FROM daily_rollups WHERE day = ?1",
+                    rusqlite::params![day],
+                    |row| row.get::<_, Option<f64>>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(codex_pes, None, "no claims remain on the day");
     }
 
     #[tokio::test]
     async fn unclaim_of_an_uncalibrated_skill_claim_removes_only_the_claim() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         // Anatomy has no calibration history, so its claim wrote none
         // (the documented silent skip); unclaiming it must not touch
@@ -1553,25 +1631,34 @@ mod tests {
         svc.unclaim_rank("Boar").await.unwrap();
 
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 1);
-        let claims: i64 = sqlx::query("SELECT COUNT(*) FROM codex_claims")
-            .fetch_one(&pool)
+        let claims: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM codex_claims", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get(0);
+            .unwrap();
         assert_eq!(claims, 1, "only the Anatomy claim is removed");
-        let codex_rows: i64 =
-            sqlx::query("SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'")
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-                .get(0);
+        let codex_rows: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(codex_rows, 1, "Rifle's codex calibration survives");
     }
 
     #[tokio::test]
     async fn unclaim_requires_a_claimed_latest_rank() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Nothing claimed at all.
         let error = svc.unclaim_rank("Boar").await.unwrap_err();
@@ -1593,8 +1680,8 @@ mod tests {
         // once and never double-stepped.
         for _ in 0..32 {
             let dir = tempfile::tempdir().unwrap();
-            let (svc, pool) = service(dir.path()).await;
-            seed_calibrations(&pool).await;
+            let (svc, db) = service(dir.path()).await;
+            seed_calibrations(&db).await;
             svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
 
             let (a, b) = tokio::join!(svc.unclaim_rank("Boar"), svc.unclaim_rank("Boar"));
@@ -1603,21 +1690,28 @@ mod tests {
                 "exactly one unclaim must win: a={a:?} b={b:?}"
             );
 
-            let claims: i64 = sqlx::query(
-                "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get(0);
+            let claims: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(claims, 0, "the single claim is reverted exactly once");
 
-            let progress: i64 =
-                sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap()
-                    .get(0);
+            let progress: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(progress, 0, "rank steps back exactly once");
         }
     }

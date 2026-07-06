@@ -23,7 +23,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
@@ -254,7 +254,22 @@ impl SyncCore {
         F: FnOnce(&mut Connection) -> Result<T, DbError> + Send + 'static,
     {
         let wrapped: Job = Box::new(move |connection| {
+            // Time the job and emit an observe-only DB-latency event on a stable
+            // target the telemetry metrics layer aggregates into the database-
+            // latency histogram. The payload is the elapsed wall time only: the
+            // job is an opaque closure at this layer, so no SQL text or bound
+            // value can reach the event (a tighter PII boundary than the driver's
+            // own per-query events carried). At TRACE, so it stays below the
+            // default console/file threshold while the metrics layer sees it
+            // through its own target filter. Emitted BEFORE the reply is sent, so
+            // the sample is recorded by the time an awaiting caller is released.
+            let started = Instant::now();
             let outcome = catch_unwind(AssertUnwindSafe(|| job(connection)));
+            tracing::trace!(
+                target: "eo::db::query",
+                elapsed_secs = started.elapsed().as_secs_f64(),
+                "db job complete"
+            );
             // A caller that stopped listening is not an error; the job has
             // already run to completion either way.
             let _ = reply.send(outcome);

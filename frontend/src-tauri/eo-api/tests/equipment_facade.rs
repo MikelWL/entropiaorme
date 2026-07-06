@@ -13,7 +13,6 @@ use eo_api::equipment::{EquipmentKind, EquipmentRequest, SearchKind};
 use eo_api::{Api, ApiError};
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
-use sqlx::Row;
 
 mod common;
 
@@ -172,11 +171,16 @@ async fn the_custom_consumable_cycle_matches_the_http_era_bytes() {
 
     // Storage invariance: the stored props bytes are the reference
     // `json.dumps` form, unchanged by the transport migration.
-    let stored: String = sqlx::query("SELECT properties_json FROM equipment_library WHERE id = 1")
-        .fetch_one(db.read())
+    let stored: String = db
+        .with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT properties_json FROM equipment_library WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )?)
+        })
         .await
-        .unwrap()
-        .get("properties_json");
+        .unwrap();
     assert_eq!(stored, "{\"catalog_id\": null, \"entity\": null}");
 
     let listed = api.equipment_library().await.unwrap();

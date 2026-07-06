@@ -24,7 +24,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 ort = { workspace = true }
 image = { workspace = true }
-sqlx = { workspace = true }
 tokio = { workspace = true }
 rapidfuzz = "0.5"
 # The analytics ledger's opaque keyset cursor (base64url of the seek key).

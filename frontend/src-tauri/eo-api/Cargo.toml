@@ -20,7 +20,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 thiserror = { workspace = true }
-sqlx = { workspace = true }
 # The database write spine's closure API (`Db::with_writer`) hands the
 # transport-layer edit flows a `rusqlite::Connection`; the projection-hook
 # chain they drive runs synchronously on it.
