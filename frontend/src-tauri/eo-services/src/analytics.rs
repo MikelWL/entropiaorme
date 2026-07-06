@@ -1478,7 +1478,7 @@ fn decode_ledger_cursor(token: &str) -> Option<(String, String)> {
     Some((date, id))
 }
 
-/// `_inventory_row_to_dict`: (id, name, tt_value, markup_paid, notes, acquired_at).
+/// The inventory row's wire shape: (id, name, tt_value, markup_paid, notes, acquired_at).
 fn inventory_item(row: &rusqlite::Row) -> Value {
     json!({
         "id": row.get_unwrap::<_, String>(0),
@@ -1491,7 +1491,7 @@ fn inventory_item(row: &rusqlite::Row) -> Value {
 }
 
 impl AnalyticsService {
-    /// `_utc_date_str(clock)`: the clock's instant as a UTC YYYY-MM-DD date.
+    /// The clock's instant as a UTC YYYY-MM-DD date.
     fn default_date(&self) -> String {
         epoch_to_iso(naive_to_epoch(self.clock.now()))
     }
@@ -1765,7 +1765,7 @@ impl AnalyticsService {
         acquired_at: Option<&str>,
     ) -> Result<Value, AnalyticsError> {
         let id = Uuid::new_v4().to_string();
-        // `item.acquired_at or _utc_date_str(clock)`: the reference's `or`
+        // acquired_at falls back to today's UTC date: the original's `or`
         // treats an empty string as falsy, so "" defaults to the clock date.
         let date = acquired_at
             .filter(|value| !value.is_empty())
@@ -1927,7 +1927,7 @@ impl AnalyticsService {
 
         let cost_basis = tt_value + markup_paid;
         let delta = sale_price - cost_basis;
-        // `payload.sold_at or _utc_date_str(clock)`: empty string is falsy.
+        // sold_at falls back to today's UTC date; an empty string counts as absent.
         let sold_at = sold_at
             .filter(|value| !value.is_empty())
             .map(str::to_string)
@@ -2020,7 +2020,7 @@ mod tests {
     }
 
     /// An [`AnalyticsService`] over a real temp-file database, its clock frozen
-    /// so `default_date()` (`_utc_date_str(clock)`) is deterministic
+    /// so the UTC default date is deterministic
     /// (2026-06-01).
     async fn write_service() -> (tempfile::TempDir, AnalyticsService) {
         use crate::clock::MockClock;
@@ -2666,8 +2666,8 @@ mod tests {
     }
 
     /// PATCH field-selection: only PROVIDED (Some) fields update; a None
-    /// field is left untouched, exactly as the reference's
-    /// `if patch.x is not None`.
+    /// field is left untouched, so the statement carries only the fields
+    /// the patch actually names.
     #[tokio::test]
     async fn inventory_patch_updates_only_provided_fields() {
         let (_dir, service) = write_service().await;
