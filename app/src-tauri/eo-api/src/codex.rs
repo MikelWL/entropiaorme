@@ -2,12 +2,11 @@
 //! the skill-recommendation read, the six meta attributes, and the
 //! claim / unclaim / calibrate / meta-claim writes.
 //!
-//! The computation stays in `eo_services::codex::CodexService` (which
-//! returns `serde_json::Value`); the facade types the boundary by shaping
-//! each response into a declared DTO (`serde_json::from_value`, the
-//! character family's Value-bridge pattern), so no stored bytes change
-//! and the wire shape is single-sourced in Rust. The response DTOs'
-//! field order is the golden-pinned wire order.
+//! The computation stays in `eo_services::codex::CodexService`, which
+//! returns typed records; the facade maps them field by field onto the
+//! declared DTOs, so the wire shape is single-sourced in Rust and the
+//! mapping is compiler-checked. The response DTOs' field order is the
+//! golden-pinned wire order.
 //!
 //! Contract lineage (ADR-0017/0019): several transport-era behaviours
 //! retired at the typed-command crossing. The conditional-GET (ETag) contract retires with
@@ -20,11 +19,10 @@
 //! over the typed command (a `String` argument cannot carry a surrogate
 //! and an `i64` rank cannot overflow the parse).
 
-use eo_services::codex::{CodexError, CodexService};
+use eo_services::codex::{self, CodexError, CodexService};
 use eo_services::skill_tracker::SUPPRESS_TIMEOUT_SECONDS;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{Api, ApiError};
 
@@ -161,8 +159,7 @@ impl Api {
             .get_all_species()
             .await
             .map_err(ApiError::internal("codex species read"))?;
-        serde_json::from_value(Value::Array(species))
-            .map_err(ApiError::internal("codex species shaping"))
+        Ok(species.into_iter().map(species_dto).collect())
     }
 
     /// The 25-rank breakdown for a species, cross-referenced with claims.
@@ -182,7 +179,7 @@ impl Api {
                 "Species '{species_name}' not found"
             )));
         };
-        serde_json::from_value(ranks).map_err(ApiError::internal("codex species ranks shaping"))
+        Ok(species_ranks_dto(ranks))
     }
 
     /// The skill options for a rank, ranked by profession contribution or
@@ -205,8 +202,7 @@ impl Api {
             .get_skill_options(species_name, rank, profession, target.as_str())
             .await
             .map_err(ApiError::internal("codex recommend read"))?;
-        serde_json::from_value(Value::Array(options))
-            .map_err(ApiError::internal("codex recommend shaping"))
+        Ok(options.into_iter().map(skill_option_dto).collect())
     }
 
     /// The six meta attributes with their current calibrated levels.
@@ -216,8 +212,13 @@ impl Api {
             .get_meta_attributes()
             .await
             .map_err(ApiError::internal("codex meta attributes read"))?;
-        serde_json::from_value(Value::Array(attributes))
-            .map_err(ApiError::internal("codex meta attributes shaping"))
+        Ok(attributes
+            .into_iter()
+            .map(|attribute| CodexMetaAttribute {
+                name: attribute.name.to_string(),
+                current_level: attribute.current_level,
+            })
+            .collect())
     }
 
     /// Set a species' codex rank directly (manual calibration, no side
@@ -232,7 +233,10 @@ impl Api {
             .calibrate(species_name, rank)
             .await
             .map_err(codex_write_error("codex calibrate"))?;
-        serde_json::from_value(result).map_err(ApiError::internal("codex calibrate shaping"))
+        Ok(CodexCalibrateResult {
+            species_name: result.species_name,
+            rank: result.rank,
+        })
     }
 
     /// Claim a codex rank reward. On success, an active session suppresses
@@ -253,7 +257,7 @@ impl Api {
             self.skill_tracker
                 .suppress_next(skill_name, SUPPRESS_TIMEOUT_SECONDS);
         }
-        serde_json::from_value(result).map_err(ApiError::internal("codex claim shaping"))
+        Ok(claim_dto(result))
     }
 
     /// Revert a species' most recent rank claim. No session suppression:
@@ -264,7 +268,7 @@ impl Api {
             .unclaim_rank(species_name)
             .await
             .map_err(codex_write_error("codex unclaim"))?;
-        serde_json::from_value(result).map_err(ApiError::internal("codex unclaim shaping"))
+        Ok(claim_dto(result))
     }
 
     /// Claim a meta codex reward (1 PES into an attribute). On success, an
@@ -282,7 +286,75 @@ impl Api {
             self.skill_tracker
                 .suppress_next(attribute_name, SUPPRESS_TIMEOUT_SECONDS);
         }
-        serde_json::from_value(result).map_err(ApiError::internal("codex meta claim shaping"))
+        Ok(CodexMetaClaimResult {
+            attribute_name: result.attribute_name,
+            ped_value: result.ped_value,
+        })
+    }
+}
+
+// ── Service-record to DTO mapping ───────────────────────────────────
+
+fn species_dto(entry: codex::SpeciesEntry) -> CodexSpecies {
+    CodexSpecies {
+        name: entry.name,
+        base_cost: entry.base_cost,
+        codex_type: entry.codex_type,
+        current_rank: entry.current_rank,
+        next_rank: entry.next_rank,
+        next_category: entry.next_category.map(str::to_string),
+        next_cost: entry.next_cost,
+    }
+}
+
+fn species_ranks_dto(ranks: codex::SpeciesRanks) -> CodexSpeciesRanks {
+    CodexSpeciesRanks {
+        species_name: ranks.species_name,
+        base_cost: ranks.base_cost,
+        codex_type: ranks.codex_type,
+        current_rank: ranks.current_rank,
+        ranks: ranks.ranks.into_iter().map(rank_dto).collect(),
+    }
+}
+
+fn rank_dto(entry: codex::RankEntry) -> CodexRank {
+    CodexRank {
+        rank: entry.breakdown.rank,
+        category: entry.breakdown.category.to_string(),
+        cost: entry.breakdown.cost,
+        reward_ped: entry.breakdown.reward_ped,
+        cat4_bonus: entry.breakdown.cat4_bonus,
+        cat4_reward_ped: entry.breakdown.cat4_reward_ped,
+        skills: entry.breakdown.skills,
+        cat4_skills: entry.breakdown.cat4_skills,
+        claimed: entry.claimed,
+        claimed_skill: entry.claimed_skill,
+        claimed_ped: entry.claimed_ped,
+        is_next: entry.is_next,
+    }
+}
+
+fn skill_option_dto(option: codex::SkillOption) -> CodexSkillOption {
+    CodexSkillOption {
+        skill_name: option.skill_name.to_string(),
+        category: option.category.to_string(),
+        reward_ped: option.reward_ped,
+        current_level: option.current_level,
+        levels_gained: option.levels_gained,
+        profession_weight: option.profession_weight,
+        prof_contribution: option.prof_contribution,
+        hp_increase: option.hp_increase,
+        hp_gain: option.hp_gain,
+        recommend_rank: option.recommend_rank,
+    }
+}
+
+fn claim_dto(record: codex::ClaimRecord) -> CodexClaimResult {
+    CodexClaimResult {
+        species_name: record.species_name,
+        rank: record.rank,
+        skill_name: record.skill_name,
+        ped_value: record.ped_value,
     }
 }
 
