@@ -10,18 +10,16 @@
 //! O(rows): the Overview brings the daily rollups current and aggregates
 //! rollup rows plus bounded raw edges (see [`hybrid_window`]).
 //!
-//! The aggregates preserve the engine's numeric typing on the wire: an
-//! empty `COALESCE(SUM(...), 0)` stays the integer `0` (`sql_number` reads
-//! the engine type, `rounded` applies type-preserving rounding, and
-//! `float_field` coerces to float only where the response model declares
-//! one). The typed facade re-coerces these to its `f64` DTO fields at the
-//! boundary; the demo surface renders the value verbatim.
+//! The aggregates carry the engine's numeric typing internally as
+//! [`SqlNumber`]: an empty `COALESCE(SUM(...), 0)` reads as the exact
+//! integer `0`, integer sums stay exact, and rounding applies only to
+//! floats. The response boundary declares `f64` fields, so every number
+//! coerces to its float form exactly where the facade DTOs pin it.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde::Serialize;
-use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::clock::Clock;
@@ -90,6 +88,92 @@ pub struct InventorySale {
     pub sold_item: InventoryRow,
 }
 
+/// The Overview aggregate. Response numerics are in their float form
+/// except the cycled split, which keeps its engine typing
+/// ([`SqlNumber`]: an empty `COALESCE` sum is the exact integer zero).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewData {
+    pub total_return_rate: f64,
+    pub trend: &'static str,
+    pub returns_breakdown: ReturnsData,
+    pub losses_breakdown: LossesData,
+    pub total_gains: f64,
+    pub total_losses: f64,
+    pub timeline: Vec<TimelinePoint>,
+    pub monthly_breakdown: Vec<TimelinePoint>,
+}
+
+/// The liquid + progression returns breakdown.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReturnsData {
+    pub loot_tt: f64,
+    pub pes: f64,
+    pub codex_pes: f64,
+    pub quest_pes: f64,
+    pub ledger: std::collections::BTreeMap<String, f64>,
+}
+
+/// The losses breakdown: tracking cost, its cycled split, and the
+/// ledger expenses.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LossesData {
+    pub tracking_cost: f64,
+    pub cycled_breakdown: CycledData,
+    pub ledger: std::collections::BTreeMap<String, f64>,
+}
+
+/// The per-family cycled-cost split, engine-typed.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CycledData {
+    pub weapon: SqlNumber,
+    pub healing: SqlNumber,
+    pub enhancer: SqlNumber,
+    pub armour: SqlNumber,
+    pub dangling: SqlNumber,
+}
+
+/// One day or month of the Overview timeline; the caller labels the
+/// bucket (`date` for days, `month` for months).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelinePoint {
+    pub bucket: String,
+    pub loot_tt: f64,
+    pub pes: f64,
+    pub codex_pes: f64,
+    pub quest_pes: f64,
+    pub ledger_gains: std::collections::BTreeMap<String, f64>,
+    pub tracking_cost: f64,
+    pub ledger_losses: std::collections::BTreeMap<String, f64>,
+}
+
+/// The Activity aggregate: the three comparison tables.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityData {
+    pub mob_comparisons: Vec<ActivityRow>,
+    pub tag_comparisons: Vec<ActivityRow>,
+    pub weapon_comparisons: Vec<ActivityRow>,
+}
+
+/// One row of an Activity comparison table; the caller labels the name
+/// (`mobName` / `tagName` / `weaponName`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityRow {
+    pub name: String,
+    pub sessions: i64,
+    pub kills: i64,
+    pub hours: f64,
+    pub cycled: f64,
+    pub pes_per100_ped: f64,
+    pub loot_rate: f64,
+}
+
 /// The analytics service's error surface. The two validation variants (a
 /// malformed ledger cursor, an out-of-vocabulary preset type) carry their
 /// pinned refusal messages verbatim and map to `ApiError::BadRequest` at
@@ -117,50 +201,70 @@ const ACTIVITY_DOMINANCE_THRESHOLD: f64 = 0.6;
 //    eo-services::quests; kept local so this module stays self-contained,
 //    matching the sibling families' per-file formatter convention) ──
 
-/// A SQLite numeric read preserving the engine type: a REAL decodes to a
-/// float, an INTEGER (including the `COALESCE(SUM(...), 0)` empty case) to an
-/// integer. The stored value's affinity (`ValueRef`) drives the branch, so a
-/// REAL sum stays a float and an integer sum (the NULL-sum zeros) stays an
-/// integer, preserving the engine numeric type of the read.
-fn sql_number(row: &rusqlite::Row, index: usize) -> Value {
-    match row.get_ref_unwrap(index) {
-        rusqlite::types::ValueRef::Real(value) => json!(value),
-        value => json!(value.as_i64().expect("sql_number reads a numeric column")),
-    }
+/// A SQLite-engine-typed number: a REAL read stays a float and an INTEGER
+/// read (including the `COALESCE(SUM(...), 0)` empty case) stays an exact
+/// integer, so the engine's numeric typing is visible in the type rather
+/// than carried through untyped JSON.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(untagged)]
+pub enum SqlNumber {
+    Int(i64),
+    Float(f64),
 }
 
-/// The sum of two engine-typed numbers, integer when both are (Python's `+`).
-fn number_sum(a: &Value, b: &Value) -> Value {
-    match (a.as_i64(), b.as_i64()) {
-        (Some(left), Some(right)) => json!(left + right),
-        _ => json!(a.as_f64().unwrap_or(0.0) + b.as_f64().unwrap_or(0.0)),
-    }
-}
-
-/// `round(value, places)`: banker's rounding on a float, an integer left as
-/// an integer (Python keeps `round(int, n)` an int).
-fn rounded(value: &Value, places: usize) -> Value {
-    match value.as_f64() {
-        Some(number) if value.is_f64() => {
-            json!(eo_wire::normalizer::round_half_even(number, places))
+impl SqlNumber {
+    /// Read a numeric column preserving the engine type: the stored
+    /// value's affinity (`ValueRef`) drives the branch, so a REAL sum
+    /// stays a float and an integer sum (the NULL-sum zeros) stays an
+    /// integer.
+    fn read(row: &rusqlite::Row, index: usize) -> SqlNumber {
+        match row.get_ref_unwrap(index) {
+            rusqlite::types::ValueRef::Real(value) => SqlNumber::Float(value),
+            value => SqlNumber::Int(
+                value
+                    .as_i64()
+                    .expect("SqlNumber::read reads a numeric column"),
+            ),
         }
-        _ => value.clone(),
     }
-}
 
-/// A model-declared `float` field: coerce an engine-typed integer to its
-/// float form, so an integer zero leaves the wire as `0.0`.
-fn float_field(value: Value) -> Value {
-    match value.as_i64() {
-        Some(integer) => json!(integer as f64),
-        None => value,
+    /// A window's family sum: an absent (all-NULL) family is the exact
+    /// integer zero.
+    fn from_family(sum: Option<f64>) -> SqlNumber {
+        sum.map_or(SqlNumber::Int(0), SqlNumber::Float)
+    }
+
+    /// The sum of two engine-typed numbers, integer (exact) when both are.
+    fn sum(self, other: SqlNumber) -> SqlNumber {
+        match (self, other) {
+            (SqlNumber::Int(left), SqlNumber::Int(right)) => SqlNumber::Int(left + right),
+            _ => SqlNumber::Float(self.as_f64() + other.as_f64()),
+        }
+    }
+
+    /// Banker's rounding on a float; an integer is already exact.
+    fn rounded(self, places: usize) -> SqlNumber {
+        match self {
+            SqlNumber::Float(value) => {
+                SqlNumber::Float(eo_wire::normalizer::round_half_even(value, places))
+            }
+            int => int,
+        }
+    }
+
+    /// The float form (the response boundary's declared type).
+    pub fn as_f64(self) -> f64 {
+        match self {
+            SqlNumber::Int(value) => value as f64,
+            SqlNumber::Float(value) => value,
+        }
     }
 }
 
 /// `float(value)` over an engine-typed number (the activity path, where every
 /// numeric is summed in float space).
 fn as_float(row: &rusqlite::Row, index: usize) -> f64 {
-    sql_number(row, index).as_f64().unwrap_or(0.0)
+    SqlNumber::read(row, index).as_f64()
 }
 
 // ── Period + WHERE helpers (mirroring `_period_epoch` / `_where` /
@@ -286,10 +390,6 @@ fn merge_family_sums(into: &mut FamilySums, from: FamilySums) {
             *slot = Some(slot.unwrap_or(0.0) + value);
         }
     }
-}
-
-fn family_value(sum: Option<f64>) -> Value {
-    sum.map_or(json!(0), |value| json!(value))
 }
 
 /// The `daily_rollups` family-sum columns, position-matched to
@@ -477,18 +577,18 @@ fn raw_family_sums(
 }
 
 /// A day/month-keyed aggregate (`SELECT <bucket>, COALESCE(SUM(...), 0) ...
-/// GROUP BY <bucket>`) collected as `bucket -> engine-typed number`,
-/// preserving the SQL row order.
+/// GROUP BY <bucket>`) collected as `bucket -> engine-typed number`.
+/// Consumers merge and look up by bucket key; no ordering is carried.
 fn bucketed_epoch(
     conn: &rusqlite::Connection,
     sql: String,
     params: &[f64],
-) -> Result<Map<String, Value>, DbError> {
+) -> Result<std::collections::BTreeMap<String, SqlNumber>, DbError> {
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
-    let mut out = Map::new();
+    let mut out = std::collections::BTreeMap::new();
     while let Some(row) = rows.next()? {
-        out.insert(row.get::<_, String>(0)?, sql_number(row, 1));
+        out.insert(row.get::<_, String>(0)?, SqlNumber::read(row, 1));
     }
     Ok(out)
 }
@@ -497,18 +597,18 @@ fn bucketed_epoch(
 
 /// The gains/losses breakdown for one window (`_compute_metrics`).
 struct Metrics {
-    loot_tt: Value,
-    skill_tt: Value,
-    codex_pes: Value,
-    quest_pes: Value,
-    weapon: Value,
-    healing: Value,
-    enhancer: Value,
-    armour: Value,
-    dangling: Value,
-    tracking_cost: Value,
-    ledger_gains: Map<String, Value>,
-    ledger_losses: Map<String, Value>,
+    loot_tt: SqlNumber,
+    skill_tt: SqlNumber,
+    codex_pes: SqlNumber,
+    quest_pes: SqlNumber,
+    weapon: SqlNumber,
+    healing: SqlNumber,
+    enhancer: SqlNumber,
+    armour: SqlNumber,
+    dangling: SqlNumber,
+    tracking_cost: SqlNumber,
+    ledger_gains: std::collections::BTreeMap<String, f64>,
+    ledger_losses: std::collections::BTreeMap<String, f64>,
 }
 
 /// Per-tag ledger totals for a window, rounded to two places and
@@ -523,7 +623,7 @@ fn ledger_by_tag(
     epoch_start: Option<f64>,
     epoch_end: Option<f64>,
     watermark: &str,
-) -> Result<Map<String, Value>, DbError> {
+) -> Result<std::collections::BTreeMap<String, f64>, DbError> {
     let mut totals: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
     let bounds = |column: &str| {
         let mut sql = String::new();
@@ -571,9 +671,9 @@ fn ledger_by_tag(
     p.extend(params);
     accumulate(conn, &mut totals, &sql, &p)?;
 
-    let mut out = Map::new();
+    let mut out = std::collections::BTreeMap::new();
     for (tag, total) in totals {
-        out.insert(tag, rounded(&json!(total), 2));
+        out.insert(tag, eo_wire::normalizer::round_half_even(total, 2));
     }
     Ok(out)
 }
@@ -602,24 +702,18 @@ fn assemble_metrics(
         merge_family_sums(&mut sums, raw_family_sums(conn, *range)?);
     }
 
-    let loot_tt = family_value(sums[0]);
-    let weapon = family_value(sums[1]);
-    let enhancer = family_value(sums[2]);
-    let armour = family_value(sums[3]);
-    let healing = family_value(sums[4]);
-    let dangling = family_value(sums[5]);
-    let skill_tt = family_value(sums[6]);
-    let codex_pes = family_value(sums[7]);
-    let quest_pes = family_value(sums[8]);
+    let loot_tt = SqlNumber::from_family(sums[0]);
+    let weapon = SqlNumber::from_family(sums[1]);
+    let enhancer = SqlNumber::from_family(sums[2]);
+    let armour = SqlNumber::from_family(sums[3]);
+    let healing = SqlNumber::from_family(sums[4]);
+    let dangling = SqlNumber::from_family(sums[5]);
+    let skill_tt = SqlNumber::from_family(sums[6]);
+    let codex_pes = SqlNumber::from_family(sums[7]);
+    let quest_pes = SqlNumber::from_family(sums[8]);
 
-    // weapon + heal + enhancer + armour + dangling (the reference's order).
-    let tracking_cost = number_sum(
-        &number_sum(
-            &number_sum(&number_sum(&weapon, &healing), &enhancer),
-            &armour,
-        ),
-        &dangling,
-    );
+    // weapon + heal + enhancer + armour + dangling (the pinned order).
+    let tracking_cost = weapon.sum(healing).sum(enhancer).sum(armour).sum(dangling);
 
     let ledger_gains = ledger_by_tag(conn, "markup", epoch_start, epoch_end, watermark)?;
     let ledger_losses = ledger_by_tag(conn, "expense", epoch_start, epoch_end, watermark)?;
@@ -641,15 +735,15 @@ fn assemble_metrics(
 }
 
 /// Sum of a ledger map's values in float space.
-fn sum_values(map: &Map<String, Value>) -> f64 {
-    map.values().filter_map(Value::as_f64).sum()
+fn sum_values(map: &std::collections::BTreeMap<String, f64>) -> f64 {
+    map.values().sum()
 }
 
 /// `_rate_from_metrics`: liquid gains over liquid losses (progression
 /// excluded), 0.0 when losses are non-positive.
 fn rate_from_metrics(m: &Metrics) -> f64 {
-    let total_gains = m.loot_tt.as_f64().unwrap_or(0.0) + sum_values(&m.ledger_gains);
-    let total_losses = m.tracking_cost.as_f64().unwrap_or(0.0) + sum_values(&m.ledger_losses);
+    let total_gains = m.loot_tt.as_f64() + sum_values(&m.ledger_gains);
+    let total_losses = m.tracking_cost.as_f64() + sum_values(&m.ledger_losses);
     if total_losses > 0.0 {
         total_gains / total_losses
     } else {
@@ -669,7 +763,7 @@ fn ledger_buckets(
     entry_type: &str,
     epoch_start: Option<f64>,
     watermark: &str,
-) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, DbError> {
+) -> Result<std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>>, DbError> {
     let mut sums: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>> =
         std::collections::BTreeMap::new();
     let start_iso = epoch_start.map(epoch_to_iso);
@@ -730,12 +824,12 @@ fn ledger_buckets(
     }
     accumulate(conn, &mut sums, &sql, &p)?;
 
-    let mut out: std::collections::BTreeMap<String, Map<String, Value>> =
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>> =
         std::collections::BTreeMap::new();
     for (bucket, tags) in sums {
         let entry = out.entry(bucket).or_default();
         for (tag, amount) in tags {
-            entry.insert(tag, rounded(&json!(amount), 2));
+            entry.insert(tag, eo_wire::normalizer::round_half_even(amount, 2));
         }
     }
     Ok(out)
@@ -747,7 +841,7 @@ fn ledger_buckets(
 /// brings the daily rollups current (steady-state, a single metadata
 /// read), and every window then aggregates rollup rows plus bounded raw
 /// edges (see [`hybrid_window`]).
-async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError> {
+async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<OverviewData, DbError> {
     // The lazy rollup heal is a write (route it to the writer, never a
     // reader-held connection); every subsequent aggregate is a plain read,
     // run as one synchronous unit on a reader-core connection.
@@ -768,7 +862,7 @@ fn overview_read(
     now: f64,
     epoch_start: Option<f64>,
     watermark: &str,
-) -> Result<Value, DbError> {
+) -> Result<OverviewData, DbError> {
     // The Overview reports three metric windows: the requested period
     // window, and the two fixed trend windows (recent-30d, prior-30d, the
     // pair independent of the period). Their rollup-side family sums come
@@ -801,8 +895,8 @@ fn overview_read(
 
     let total_ledger_gains = sum_values(&m.ledger_gains);
     let total_ledger_losses = sum_values(&m.ledger_losses);
-    let total_gains = m.loot_tt.as_f64().unwrap_or(0.0) + total_ledger_gains;
-    let total_losses = m.tracking_cost.as_f64().unwrap_or(0.0) + total_ledger_losses;
+    let total_gains = m.loot_tt.as_f64() + total_ledger_gains;
+    let total_losses = m.tracking_cost.as_f64() + total_ledger_losses;
     let return_rate = if total_losses > 0.0 {
         total_gains / total_losses
     } else {
@@ -822,48 +916,37 @@ fn overview_read(
         "stable"
     };
 
-    // Daily breakdown (the point key is "date", the monthly point's is "month").
-    let timeline = breakdown_points(conn, watermark, epoch_start, "date", BucketKind::Day)?;
-    // Monthly breakdown.
-    let monthly = breakdown_points(conn, watermark, epoch_start, "month", BucketKind::Month)?;
+    // Daily breakdown (the facade labels the point key "date"; monthly
+    // points label it "month").
+    let timeline = breakdown_points(conn, watermark, epoch_start, BucketKind::Day)?;
+    let monthly = breakdown_points(conn, watermark, epoch_start, BucketKind::Month)?;
 
-    let cycled_breakdown = json!({
-        "weapon": rounded(&m.weapon, 2),
-        "healing": rounded(&m.healing, 2),
-        "enhancer": rounded(&m.enhancer, 2),
-        "armour": rounded(&m.armour, 2),
-        "dangling": rounded(&m.dangling, 2),
-    });
-
-    Ok(json!({
-        "totalReturnRate": json!(eo_wire::normalizer::round_half_even(return_rate, 4)),
-        "trend": trend,
-        "returnsBreakdown": {
-            "lootTt": float_field(rounded(&m.loot_tt, 2)),
-            "pes": float_field(rounded(&m.skill_tt, 2)),
-            "codexPes": float_field(rounded(&m.codex_pes, 2)),
-            "questPes": float_field(rounded(&m.quest_pes, 2)),
-            "ledger": coerce_ledger(&m.ledger_gains),
+    Ok(OverviewData {
+        total_return_rate: eo_wire::normalizer::round_half_even(return_rate, 4),
+        trend,
+        returns_breakdown: ReturnsData {
+            loot_tt: m.loot_tt.rounded(2).as_f64(),
+            pes: m.skill_tt.rounded(2).as_f64(),
+            codex_pes: m.codex_pes.rounded(2).as_f64(),
+            quest_pes: m.quest_pes.rounded(2).as_f64(),
+            ledger: m.ledger_gains,
         },
-        "lossesBreakdown": {
-            "trackingCost": float_field(rounded(&m.tracking_cost, 2)),
-            "cycledBreakdown": cycled_breakdown,
-            "ledger": coerce_ledger(&m.ledger_losses),
+        losses_breakdown: LossesData {
+            tracking_cost: m.tracking_cost.rounded(2).as_f64(),
+            cycled_breakdown: CycledData {
+                weapon: m.weapon.rounded(2),
+                healing: m.healing.rounded(2),
+                enhancer: m.enhancer.rounded(2),
+                armour: m.armour.rounded(2),
+                dangling: m.dangling.rounded(2),
+            },
+            ledger: m.ledger_losses,
         },
-        "totalGains": json!(eo_wire::normalizer::round_half_even(total_gains, 2)),
-        "totalLosses": json!(eo_wire::normalizer::round_half_even(total_losses, 2)),
-        "timeline": timeline,
-        "monthlyBreakdown": monthly,
-    }))
-}
-
-/// A model `dict[str, float]` ledger map: coerce each value to its float form.
-fn coerce_ledger(map: &Map<String, Value>) -> Value {
-    let mut out = Map::new();
-    for (tag, amount) in map {
-        out.insert(tag.clone(), float_field(amount.clone()));
-    }
-    Value::Object(out)
+        total_gains: eo_wire::normalizer::round_half_even(total_gains, 2),
+        total_losses: eo_wire::normalizer::round_half_even(total_losses, 2),
+        timeline,
+        monthly_breakdown: monthly,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -879,13 +962,13 @@ enum BucketKind {
 /// family sums as absent keys and membership through `has_rows`.
 #[derive(Default)]
 struct BreakdownMaps {
-    loot: Map<String, Value>,
-    weapon: Map<String, Value>,
-    enhancer: Map<String, Value>,
-    sess: Map<String, Value>,
-    skill: Map<String, Value>,
-    codex: Map<String, Value>,
-    quest: Map<String, Value>,
+    loot: std::collections::BTreeMap<String, SqlNumber>,
+    weapon: std::collections::BTreeMap<String, SqlNumber>,
+    enhancer: std::collections::BTreeMap<String, SqlNumber>,
+    sess: std::collections::BTreeMap<String, SqlNumber>,
+    skill: std::collections::BTreeMap<String, SqlNumber>,
+    codex: std::collections::BTreeMap<String, SqlNumber>,
+    quest: std::collections::BTreeMap<String, SqlNumber>,
     members: BTreeSet<String>,
 }
 
@@ -893,10 +976,14 @@ impl BreakdownMaps {
     /// Merge one bucket's value into a family map. Day buckets never
     /// collide across parts (the hybrid ranges partition the timeline);
     /// month buckets can span the split and sum engine-typed.
-    fn merge(map: &mut Map<String, Value>, bucket: &str, value: Value) {
+    fn merge(
+        map: &mut std::collections::BTreeMap<String, SqlNumber>,
+        bucket: &str,
+        value: SqlNumber,
+    ) {
         match map.get(bucket) {
             Some(existing) => {
-                let total = number_sum(existing, &value);
+                let total = existing.sum(value);
                 map.insert(bucket.to_string(), total);
             }
             None => {
@@ -950,7 +1037,7 @@ fn rollup_breakdown(
             (&mut maps.quest, 10),
         ] {
             if let Some(value) = family(index)? {
-                BreakdownMaps::merge(map, &bucket, json!(value));
+                BreakdownMaps::merge(map, &bucket, SqlNumber::Float(value));
             }
         }
         // The session-cost leg mirrors the raw query's
@@ -962,8 +1049,9 @@ fn rollup_breakdown(
         let heal = family(6)?;
         let dangling = family(7)?;
         if armour.is_some() || heal.is_some() || dangling.is_some() {
-            let leg = |sum: Option<f64>| sum.map_or(json!(0), |value| json!(value));
-            let total = number_sum(&number_sum(&leg(armour), &leg(heal)), &leg(dangling));
+            let total = SqlNumber::from_family(armour)
+                .sum(SqlNumber::from_family(heal))
+                .sum(SqlNumber::from_family(dangling));
             BreakdownMaps::merge(&mut maps.sess, &bucket, total);
         }
     }
@@ -989,7 +1077,11 @@ fn raw_breakdown(
     let (qc_w, qc_p) = where_epoch("qc.claimed_at", start, end);
     let (sess_w, sess_p) = where_epoch("s.started_at", start, end);
 
-    let sources: [(&mut Map<String, Value>, String, &Vec<f64>); 7] = [
+    let sources: [(
+        &mut std::collections::BTreeMap<String, SqlNumber>,
+        String,
+        &Vec<f64>,
+    ); 7] = [
         (
             &mut maps.loot,
             format!(
@@ -1066,9 +1158,8 @@ fn breakdown_points(
     conn: &rusqlite::Connection,
     watermark: &str,
     epoch_start: Option<f64>,
-    bucket_label: &str,
     kind: BucketKind,
-) -> Result<Value, DbError> {
+) -> Result<Vec<TimelinePoint>, DbError> {
     let window = hybrid_window(epoch_start, None, watermark);
     let mut maps = BreakdownMaps::default();
     if let Some((lo, hi)) = &window.rollup_days {
@@ -1079,7 +1170,7 @@ fn breakdown_points(
     }
 
     // cost = weapon + enhancer + sess over the union of their buckets.
-    let mut cost: Map<String, Value> = Map::new();
+    let mut cost: std::collections::BTreeMap<String, SqlNumber> = std::collections::BTreeMap::new();
     let mut cost_keys: BTreeSet<String> = BTreeSet::new();
     for k in maps
         .weapon
@@ -1089,15 +1180,15 @@ fn breakdown_points(
     {
         cost_keys.insert(k.clone());
     }
+    let zero = SqlNumber::Int(0);
     for key in &cost_keys {
-        let zero = json!(0);
-        let total = number_sum(
-            &number_sum(
-                maps.weapon.get(key).unwrap_or(&zero),
-                maps.enhancer.get(key).unwrap_or(&zero),
-            ),
-            maps.sess.get(key).unwrap_or(&zero),
-        );
+        let total = maps
+            .weapon
+            .get(key)
+            .copied()
+            .unwrap_or(zero)
+            .sum(maps.enhancer.get(key).copied().unwrap_or(zero))
+            .sum(maps.sess.get(key).copied().unwrap_or(zero));
         cost.insert(key.clone(), total);
     }
 
@@ -1110,21 +1201,23 @@ fn breakdown_points(
         all.insert(k.clone());
     }
 
-    let zero = json!(0);
+    let family = |map: &std::collections::BTreeMap<String, SqlNumber>, bucket: &String| {
+        map.get(bucket).copied().unwrap_or(zero).rounded(4).as_f64()
+    };
     let mut points = Vec::new();
     for bucket in &all {
-        points.push(json!({
-            bucket_label: bucket,
-            "lootTt": float_field(rounded(maps.loot.get(bucket).unwrap_or(&zero), 4)),
-            "pes": float_field(rounded(maps.skill.get(bucket).unwrap_or(&zero), 4)),
-            "codexPes": float_field(rounded(maps.codex.get(bucket).unwrap_or(&zero), 4)),
-            "questPes": float_field(rounded(maps.quest.get(bucket).unwrap_or(&zero), 4)),
-            "ledgerGains": gains.get(bucket).cloned().map(Value::Object).unwrap_or_else(|| json!({})),
-            "trackingCost": float_field(rounded(cost.get(bucket).unwrap_or(&zero), 4)),
-            "ledgerLosses": losses.get(bucket).cloned().map(Value::Object).unwrap_or_else(|| json!({})),
-        }));
+        points.push(TimelinePoint {
+            bucket: bucket.clone(),
+            loot_tt: family(&maps.loot, bucket),
+            pes: family(&maps.skill, bucket),
+            codex_pes: family(&maps.codex, bucket),
+            quest_pes: family(&maps.quest, bucket),
+            ledger_gains: gains.get(bucket).cloned().unwrap_or_default(),
+            tracking_cost: family(&cost, bucket),
+            ledger_losses: losses.get(bucket).cloned().unwrap_or_default(),
+        });
     }
-    Ok(Value::Array(points))
+    Ok(points)
 }
 
 // ── activity_impl ──
@@ -1359,8 +1452,7 @@ fn build_activity_slice_rows(
     sessions: &[SessionAgg],
     select: impl Fn(&SessionAgg) -> Option<String>,
     kills_of: impl Fn(&SessionAgg) -> i64,
-    name_field: &str,
-) -> Vec<Value> {
+) -> Vec<ActivityRow> {
     let mut order: Vec<String> = Vec::new();
     let mut grouped: std::collections::HashMap<String, Vec<&SessionAgg>> =
         std::collections::HashMap::new();
@@ -1377,7 +1469,7 @@ fn build_activity_slice_rows(
         }
     }
 
-    let mut rows: Vec<(i64, f64, String, Value)> = Vec::new();
+    let mut rows: Vec<(i64, f64, String, ActivityRow)> = Vec::new();
     for value in &order {
         let matched = &grouped[value];
         let sessions_count = matched.len() as i64;
@@ -1398,15 +1490,15 @@ fn build_activity_slice_rows(
         } else {
             0.0
         };
-        let row = json!({
-            name_field: value,
-            "sessions": sessions_count,
-            "kills": kills,
-            "hours": hours_r,
-            "cycled": cycled_r,
-            "pesPer100Ped": pes_per_100,
-            "lootRate": loot_rate,
-        });
+        let row = ActivityRow {
+            name: value.clone(),
+            sessions: sessions_count,
+            kills,
+            hours: hours_r,
+            cycled: cycled_r,
+            pes_per100_ped: pes_per_100,
+            loot_rate,
+        };
         rows.push((kills, cycled, value.clone(), row));
     }
     // sort by (-kills, -cycled, name)
@@ -1418,33 +1510,26 @@ fn build_activity_slice_rows(
     rows.into_iter().map(|(_, _, _, row)| row).collect()
 }
 
-async fn activity_impl(db: &Db) -> Result<Value, DbError> {
+async fn activity_impl(db: &Db) -> Result<ActivityData, DbError> {
     let sessions = load_activity_sessions(db).await?;
     let mob = build_activity_slice_rows(
         &sessions,
         |s| s.dominant_mob.clone(),
         |s| s.dominant_mob_kills,
-        "mobName",
     );
     let tag = build_activity_slice_rows(
         &sessions,
         |s| s.dominant_tag.clone(),
         |s| s.dominant_tag_kills,
-        "tagName",
     );
-    // Weapon comparisons inline the helper but key kills off the session
-    // total (not a dominant-weapon kill count).
-    let weapon = build_activity_slice_rows(
-        &sessions,
-        |s| s.dominant_weapon.clone(),
-        |s| s.kills,
-        "weaponName",
-    );
-    Ok(json!({
-        "mobComparisons": mob,
-        "tagComparisons": tag,
-        "weaponComparisons": weapon,
-    }))
+    // Weapon comparisons key kills off the session total (not a
+    // dominant-weapon kill count).
+    let weapon = build_activity_slice_rows(&sessions, |s| s.dominant_weapon.clone(), |s| s.kills);
+    Ok(ActivityData {
+        mob_comparisons: mob,
+        tag_comparisons: tag,
+        weapon_comparisons: weapon,
+    })
 }
 
 // ── The Overview and Activity aggregates ──
@@ -1456,14 +1541,14 @@ impl AnalyticsService {
     /// Scales O(days), not O(kills): the aggregates read the daily rollup
     /// projection for completed days and touch the raw tables only for the
     /// partial edge days (see [`overview_impl`]).
-    pub async fn overview(&self, period: &str) -> Result<Value, AnalyticsError> {
+    pub async fn overview(&self, period: &str) -> Result<OverviewData, AnalyticsError> {
         let now = naive_to_epoch(self.clock.now());
         Ok(overview_impl(&self.db, now, period).await?)
     }
 
     /// The Activity aggregate: the per-mob / per-tag / per-weapon
     /// comparison tables over the completed sessions.
-    pub async fn activity(&self) -> Result<Value, AnalyticsError> {
+    pub async fn activity(&self) -> Result<ActivityData, AnalyticsError> {
         Ok(activity_impl(&self.db).await?)
     }
 }
@@ -2062,12 +2147,13 @@ impl AnalyticsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The wire shape of a typed row, for byte-shape assertions.
-    fn to_json<T: Serialize>(value: T) -> Value {
-        serde_json::to_value(value).expect("analytics row serialises")
-    }
     use eo_wire::normalizer::to_wire_json;
+    use serde_json::{json, Value};
+
+    /// The wire shape of a typed value, for byte-shape assertions.
+    fn to_json<T: Serialize>(value: T) -> Value {
+        serde_json::to_value(value).expect("analytics value serialises")
+    }
 
     /// A real database (the synchronous core) over a temp file. A temp file
     /// (not `:memory:`) is required: the synchronous core opens its own
@@ -2182,7 +2268,7 @@ mod tests {
     #[tokio::test]
     async fn empty_overview_emits_the_engine_typed_zeros() {
         let (_dir, db) = open_env().await;
-        let value = overview_impl(&db, 1_800_000_000.0, "all").await.unwrap();
+        let value = to_json(overview_impl(&db, 1_800_000_000.0, "all").await.unwrap());
         // cycledBreakdown is an `Any` field: empty COALESCE sums leave the
         // integer zero on the wire, while the float-declared aggregates coerce.
         assert_eq!(
@@ -2198,7 +2284,7 @@ mod tests {
     #[tokio::test]
     async fn empty_activity_emits_three_empty_tables() {
         let (_dir, db) = open_env().await;
-        let value = activity_impl(&db).await.unwrap();
+        let value = to_json(activity_impl(&db).await.unwrap());
         assert_eq!(
             to_wire_json(&value),
             "{\"mobComparisons\":[],\"tagComparisons\":[],\"weaponComparisons\":[]}"
@@ -2301,7 +2387,7 @@ mod tests {
         let now = 1_800_000_000.0;
         let (_dir, db) = open_env().await;
         seed_scenario(&db, now).await;
-        let v = overview_impl(&db, now, "all").await.unwrap();
+        let v = to_json(overview_impl(&db, now, "all").await.unwrap());
         assert_eq!(v["returnsBreakdown"]["lootTt"], json!(65.0));
         assert_eq!(v["returnsBreakdown"]["pes"], json!(4.0));
         assert_eq!(v["returnsBreakdown"]["codexPes"], json!(7.0));
@@ -2320,13 +2406,18 @@ mod tests {
         assert_eq!(v["totalGains"], json!(77.5));
         assert_eq!(v["totalLosses"], json!(17.15));
         assert_eq!(v["totalReturnRate"], json!(4.519));
-        // timeline points key the day as "date"; monthly points as "month".
-        assert!(v["timeline"][0].get("date").is_some());
-        assert!(v["monthlyBreakdown"][0].get("month").is_some());
+        // timeline points carry the day bucket; monthly points the month
+        // (the facade labels them "date" / "month").
+        assert!(v["timeline"][0]["bucket"]
+            .as_str()
+            .is_some_and(|b| b.len() == 10));
+        assert!(v["monthlyBreakdown"][0]["bucket"]
+            .as_str()
+            .is_some_and(|b| b.len() == 7));
         // trend: recent-30d rate exceeds prior-30d rate beyond the 2% band.
         assert_eq!(v["trend"], json!("improving"));
         // period filter: 30d keeps only the recent window (markup in, expense out).
-        let v30 = overview_impl(&db, now, "30d").await.unwrap();
+        let v30 = to_json(overview_impl(&db, now, "30d").await.unwrap());
         assert_eq!(v30["returnsBreakdown"]["lootTt"], json!(50.0));
         assert_eq!(v30["returnsBreakdown"]["ledger"]["loot_sale"], json!(12.5));
         assert_eq!(v30["lossesBreakdown"]["ledger"], json!({}));
@@ -2338,11 +2429,11 @@ mod tests {
         let now = 1_800_000_000.0;
         let (_dir, db) = open_env().await;
         seed_scenario(&db, now).await;
-        let v = activity_impl(&db).await.unwrap();
+        let v = to_json(activity_impl(&db).await.unwrap());
         // sess-z (zero kills) filtered out; sess-a -> dominant mob, sess-b -> tag.
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
-        assert_eq!(mobs[0]["mobName"], json!("Atrox"));
+        assert_eq!(mobs[0]["name"], json!("Atrox"));
         assert_eq!(mobs[0]["kills"], json!(5));
         assert_eq!(mobs[0]["hours"], json!(1.0)); // 3600s / 3600
         assert_eq!(mobs[0]["cycled"], json!(6.75));
@@ -2351,7 +2442,7 @@ mod tests {
         assert_eq!(mobs[0]["lootRate"], json!(7.4074));
         let tags = v["tagComparisons"].as_array().unwrap();
         assert_eq!(tags.len(), 1);
-        assert_eq!(tags[0]["tagName"], json!("Thing"));
+        assert_eq!(tags[0]["name"], json!("Thing"));
         assert_eq!(tags[0]["kills"], json!(3));
         assert_eq!(tags[0]["cycled"], json!(2.4));
         assert_eq!(tags[0]["pesPer100Ped"], json!(41.67));
@@ -2360,7 +2451,7 @@ mod tests {
         // aggregates both sessions' hours / cycled / rates.
         let weapons = v["weaponComparisons"].as_array().unwrap();
         assert_eq!(weapons.len(), 1);
-        assert_eq!(weapons[0]["weaponName"], json!("Opalo"));
+        assert_eq!(weapons[0]["name"], json!("Opalo"));
         assert_eq!(weapons[0]["kills"], json!(8));
         assert_eq!(weapons[0]["hours"], json!(2.0));
         assert_eq!(weapons[0]["cycled"], json!(9.15));
@@ -2381,10 +2472,10 @@ mod tests {
         seed_filter_session(&db, "zcost", "Zerocost", 1000.0, 1000.0 + 3600.0, 0.0, 2).await;
         // zero duration (start == end) -> dropped by the duration guard alone.
         seed_filter_session(&db, "zdur", "Zerodur", 1000.0, 1000.0, 5.0, 2).await;
-        let v = activity_impl(&db).await.unwrap();
+        let v = to_json(activity_impl(&db).await.unwrap());
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1, "only the keeper survives the OR filter");
-        assert_eq!(mobs[0]["mobName"], json!("Keeper"));
+        assert_eq!(mobs[0]["name"], json!("Keeper"));
     }
 
     async fn seed_filter_session(
@@ -2450,7 +2541,7 @@ mod tests {
     async fn overview_trend_bands() {
         let now = 1_800_000_000.0;
         let day = 86400.0;
-        let trend = |v: Value| v["trend"].clone();
+        let trend = |v: OverviewData| json!(v.trend);
 
         // declining: recent rate 1.0 (10/10) below prior 2.0 (20/10) * 0.98.
         let (_dir, db) = open_env().await;
@@ -2522,7 +2613,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let v = activity_impl(&db).await.unwrap();
+        let v = to_json(activity_impl(&db).await.unwrap());
         assert_eq!(v["mobComparisons"].as_array().unwrap().len(), 0);
         assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
 
@@ -2546,10 +2637,10 @@ mod tests {
         })
         .await
         .unwrap();
-        let v = activity_impl(&db).await.unwrap();
+        let v = to_json(activity_impl(&db).await.unwrap());
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
-        assert_eq!(mobs[0]["mobName"], json!("Foo"));
+        assert_eq!(mobs[0]["name"], json!("Foo"));
         assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
     }
 
@@ -2573,10 +2664,10 @@ mod tests {
         .await
         .unwrap();
         // Only the real session's mob is compared; the orphan is ignored.
-        let v = activity_impl(&db).await.unwrap();
+        let v = to_json(activity_impl(&db).await.unwrap());
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
-        assert_eq!(mobs[0]["mobName"], json!("Real"));
+        assert_eq!(mobs[0]["name"], json!("Real"));
     }
 
     #[test]
@@ -2590,23 +2681,29 @@ mod tests {
     }
 
     #[test]
-    fn float_field_coerces_integers_only() {
-        assert_eq!(float_field(json!(0)), json!(0.0));
-        assert_eq!(float_field(json!(3)), json!(3.0));
-        assert_eq!(float_field(json!(1.5)), json!(1.5));
+    fn sql_number_float_form_coerces_integers_only() {
+        assert_eq!(SqlNumber::Int(0).as_f64(), 0.0);
+        assert_eq!(SqlNumber::Int(3).as_f64(), 3.0);
+        assert_eq!(SqlNumber::Float(1.5).as_f64(), 1.5);
     }
 
     #[test]
-    fn rounded_preserves_integers_and_banker_rounds_floats() {
-        assert_eq!(rounded(&json!(0), 2), json!(0)); // int stays int
-        assert_eq!(rounded(&json!(1.005), 2), json!(1.0)); // half-even
-        assert_eq!(rounded(&json!(2.675), 2), json!(2.67));
+    fn sql_number_rounding_preserves_integers_and_banker_rounds_floats() {
+        assert_eq!(SqlNumber::Int(0).rounded(2), SqlNumber::Int(0)); // int stays int
+        assert_eq!(SqlNumber::Float(1.005).rounded(2), SqlNumber::Float(1.0)); // half-even
+        assert_eq!(SqlNumber::Float(2.675).rounded(2), SqlNumber::Float(2.67));
     }
 
     #[test]
-    fn number_sum_is_integral_only_when_both_are() {
-        assert_eq!(number_sum(&json!(2), &json!(3)), json!(5));
-        assert_eq!(number_sum(&json!(2), &json!(0.5)), json!(2.5));
+    fn sql_number_sum_is_integral_only_when_both_are() {
+        assert_eq!(SqlNumber::Int(2).sum(SqlNumber::Int(3)), SqlNumber::Int(5));
+        assert_eq!(
+            SqlNumber::Int(2).sum(SqlNumber::Float(0.5)),
+            SqlNumber::Float(2.5)
+        );
+        // The engine typing serialises untagged: ints as ints.
+        assert_eq!(to_json(SqlNumber::Int(0)), json!(0));
+        assert_eq!(to_json(SqlNumber::Float(0.0)), json!(0.0));
     }
 
     // ── Hermetic write-handler tests (the mutation campaign's kills) ──

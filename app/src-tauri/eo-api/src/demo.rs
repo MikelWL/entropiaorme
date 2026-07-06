@@ -46,8 +46,7 @@ use serde::Deserialize;
 use tokio::sync::OnceCell;
 
 use crate::analytics::{
-    analytics_error, shape, AnalyticsActivity, AnalyticsOverview, InventoryItem, LedgerPage,
-    LedgerPreset,
+    analytics_error, AnalyticsActivity, AnalyticsOverview, InventoryItem, LedgerPage, LedgerPreset,
 };
 use crate::tracking::{
     build_snapshot_value, get_session_impl, list_sessions_impl, SessionDetail, TrackingSession,
@@ -207,7 +206,7 @@ impl DemoState {
             .overview(period)
             .await
             .map_err(analytics_error("demo analytics overview"))?;
-        shape(value, "demo analytics overview shaping")
+        Ok(crate::analytics::overview_dto(value))
     }
 
     async fn analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
@@ -216,7 +215,7 @@ impl DemoState {
             .activity()
             .await
             .map_err(analytics_error("demo analytics activity"))?;
-        shape(value, "demo analytics activity shaping")
+        Ok(crate::analytics::activity_dto(value))
     }
 
     async fn ledger_list(
