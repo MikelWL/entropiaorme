@@ -30,8 +30,7 @@ use crate::time::naive_to_epoch;
 
 /// The analytics domain service over the shared database and injected
 /// clock: the Overview / Activity aggregates and the ledger / preset /
-/// inventory CRUD, ported from the router-resident handlers that hosted
-/// them before the typed-command migration.
+/// inventory CRUD.
 pub struct AnalyticsService {
     db: Db,
     clock: Arc<dyn Clock>,
@@ -47,10 +46,10 @@ pub struct LedgerPage {
 }
 
 /// The analytics service's error surface. The two validation variants (a
-/// malformed ledger cursor, an out-of-vocabulary preset type) were the
-/// router's 400s and carry its verbatim detail; `Db` / `Storage` are the
-/// driver and rollup-refresh failures (the router's 500s). The transports
-/// map these onto their own error contracts.
+/// malformed ledger cursor, an out-of-vocabulary preset type) carry their
+/// pinned refusal messages verbatim and map to `ApiError::BadRequest` at
+/// the facade; `Db` / `Storage` are the driver and rollup-refresh
+/// failures, mapped to `ApiError::Internal`.
 #[derive(Debug, thiserror::Error)]
 pub enum AnalyticsError {
     #[error("Invalid cursor")]
@@ -70,8 +69,8 @@ impl AnalyticsService {
 const ACTIVITY_DOMINANCE_THRESHOLD: f64 = 0.6;
 
 // ── Engine-typed numeric primitives (the quest-analytics siblings in
-//    eo-services::quests; kept local so this router stays self-contained,
-//    matching the per-file formatter convention in hydration/character) ──
+//    eo-services::quests; kept local so this module stays self-contained,
+//    matching the sibling families' per-file formatter convention) ──
 
 /// A SQLite numeric read preserving the engine type: a REAL decodes to a
 /// float, an INTEGER (including the `COALESCE(SUM(...), 0)` empty case) to an

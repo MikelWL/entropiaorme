@@ -1,8 +1,7 @@
 //! Thin git wrapper shared by the guards that inspect history.
 //!
-//! Every guard that reads a diff or commit range shells out to git through these
-//! helpers, mirroring the Python originals' `subprocess.run(["git", ...])` calls.
-//! Output is decoded as UTF-8 (lossily): git emits diff content as UTF-8 and the
+//! Every guard that reads a diff or commit range shells out to git
+//! through these helpers. Output is decoded as UTF-8 (lossily): git emits diff content as UTF-8 and the
 //! authoring lint inspects non-ASCII characters (the em dash is the whole point),
 //! so a lossy UTF-8 decode is required rather than the platform default.
 
@@ -32,8 +31,7 @@ pub fn run(args: &[&str], repo_root: &Path) -> Result<String, String> {
 
 /// Resolve the repository root (the working tree's top level).
 ///
-/// The Python guards take the repo root as `Path(__file__).resolve().parents[2]`
-/// (the project root); here it is resolved from git so the
+/// Resolved from git (not from the binary's own location), so the
 /// binary works regardless of where in the tree it is launched from.
 pub fn repo_root() -> Result<PathBuf, String> {
     let out = run(&["rev-parse", "--show-toplevel"], Path::new("."))?;

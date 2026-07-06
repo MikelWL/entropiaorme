@@ -3,10 +3,9 @@
  * render shape.
  *
  * Hydration-only and event-driven. `hydrate()` reads the consolidated
- * `/tracking/snapshot` once; `subscribeTracking()` listens the backend tracking
- * frames the event relay re-emits onto the Tauri bus and re-reads the snapshot
- * on each, so the dashboard updates by subscription rather than by polling the
- * three legacy tracking endpoints.
+ * tracking snapshot once; `subscribeTracking()` listens for the backend
+ * tracking frames on the Tauri event bus and re-reads the snapshot on
+ * each, so the dashboard updates by subscription rather than by polling.
  *
  * Routing discipline (the load-bearing constraint): a relayed frame is a pure
  * trigger. We never fold a frame field into rendered state; every render-shaping

@@ -1,9 +1,9 @@
-//! Injectable clock, ported from the original Python implementation.
+//! Injectable clock.
 //!
 //! Services that read wall-clock or monotonic time go through a
 //! `Clock` so replay scenarios can freeze and advance time
-//! deterministically. Wall-clock instants are naive (matching the
-//! original's default `datetime.now()` callers); the monotonic stream
+//! deterministically. Wall-clock instants are naive (the local-time
+//! timestamp shape the frozen goldens pin); the monotonic stream
 //! is seconds since an arbitrary epoch where only deltas mean
 //! anything. The mock's two streams advance in lockstep, and the
 //! wall-clock stream can re-freeze independently so monotonic counts

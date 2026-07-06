@@ -1,14 +1,12 @@
-//! In-memory catalogue of game constants, ported from
-//! the original Python implementation.
+//! In-memory catalogue of game constants.
 //!
 //! The snapshot (the bundled per-endpoint JSON snapshot)
 //! is the application's sole source of truth for game-fact data. The
 //! store loads it once at construction and serves queries from memory.
 //! Iteration order is load-bearing: endpoints sit in sorted-filename
-//! order, so cross-endpoint searches walk them exactly as the backend
-//! does, and search rows carry their keys in the backend's order. An
-//! unreadable or unparseable snapshot file fails construction loudly,
-//! exactly as the backend's loader raises at startup; only a parsed
+//! order and search rows carry their keys in catalogue order, the
+//! walk order the pinned response shapes depend on. An unreadable or
+//! unparseable snapshot file fails construction loudly; only a parsed
 //! payload of the wrong shape degrades to an empty endpoint.
 
 use std::path::Path;
@@ -24,9 +22,8 @@ pub struct GameDataStore {
 
 impl GameDataStore {
     /// Load every `*.json` under `snapshot_dir` (sorted by filename); a
-    /// missing directory yields an empty store, mirroring the backend's
-    /// warn-and-continue, while an unreadable or unparseable file is a
-    /// hard error, mirroring its startup raise.
+    /// missing directory yields an empty store (warn-and-continue),
+    /// while an unreadable or unparseable file is a hard error.
     pub fn new(snapshot_dir: &Path) -> std::io::Result<Self> {
         let mut by_endpoint = Map::new();
         let mut paths: Vec<_> = match std::fs::read_dir(snapshot_dir) {

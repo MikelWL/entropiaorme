@@ -2,17 +2,16 @@
 //! crash-reporting opt-in toggle, and the two maintenance actions
 //! (database compaction and the projection rebuild-and-verify).
 //!
-//! Ported from the self-gated HTTP dev routes onto typed DTOs. Every
-//! operation is gated on developer mode, read FRESH from the settings
+//! Every operation is gated on developer mode, read FRESH from the settings
 //! file on each call (never cached), so a toggle in Settings takes effect
 //! without a restart. When developer mode is off the operation returns
-//! [`ApiError::NotFound`] (`kind: "notFound"`, which the frontend maps to
-//! the 404 the gate-off HTTP route answered), keeping the whole family off
+//! [`ApiError::NotFound`] (`kind: "notFound"`), keeping the whole family off
 //! a default install and off the equivalence-covered surface.
 //!
 //! The family is native-only: it never had a Python arm, carries no
 //! corpus golden and no OpenAPI path, so nothing here re-pins a frozen
-//! contract. Two shapes soften with the transport swap, both invisible to
+//! contract. Contract lineage: two shapes softened at the typed-command
+//! crossing, both invisible to
 //! the sole consumer (the hidden developer-metrics page): the malformed-
 //! body 400 the crash-reporting write answered is unrepresentable over a
 //! typed `bool` argument, and the "no data dir / no composed database"
@@ -31,8 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Api, ApiError};
 
-/// The compacted-copy name written beside the live database, matching the
-/// HTTP route's destination so the reported path is unchanged.
+/// The compacted-copy name written beside the live database; the name is
+/// a stable contract, so the reported path never moves.
 const COMPACTED_DB_NAME: &str = "entropia_orme-compacted.db";
 
 // ── Response DTOs ───────────────────────────────────────────────────
@@ -70,8 +69,7 @@ pub struct MetricsSnapshot {
     pub handle_count: u64,
 }
 
-/// The crash-reporting opt-in state, in the one-key body the HTTP route
-/// returned.
+/// The crash-reporting opt-in state, a one-key body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct CrashReportingStatus {
     pub crash_reporting_enabled: bool,
@@ -132,8 +130,8 @@ impl Api {
 
     /// Set the crash-reporting opt-in, acknowledging with the resulting
     /// state. Gate-off => [`ApiError::NotFound`]; a persist failure =>
-    /// [`ApiError::Internal`]. (The HTTP route's malformed-body 400 is
-    /// unrepresentable over the typed `bool`.)
+    /// [`ApiError::Internal`]. (A malformed body is unrepresentable over
+    /// the typed `bool`.)
     pub fn dev_set_crash_reporting(&self, enabled: bool) -> Result<CrashReportingStatus, ApiError> {
         self.require_developer_mode()?;
         set_crash_reporting_enabled(&self.data_dir, enabled)
@@ -201,9 +199,8 @@ impl Api {
             .unwrap_or(false)
     }
 
-    /// The dev-family gate: `Ok` when developer mode is on, else the
-    /// not-found the gate-off HTTP route answered (a dev command is
-    /// indistinguishable from an absent one when the gate is off).
+    /// The dev-family gate: `Ok` when developer mode is on, else not-found
+    /// (a gated-off dev command is indistinguishable from an absent one).
     fn require_developer_mode(&self) -> Result<(), ApiError> {
         if self.developer_mode() {
             Ok(())

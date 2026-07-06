@@ -1,6 +1,6 @@
-//! Shared JSON payload semantics, ported from the original: Python
-//! truthiness, the sqlite3 adapter's bind rules, and Python str()
-//! rendering for byte-exact error messages.
+//! Shared JSON payload semantics, an owned contract pinned by the frozen
+//! goldens: Python truthiness, sqlite3-adapter bind rules, and Python
+//! str() rendering for byte-exact refusal messages.
 
 use serde_json::Value;
 

@@ -1,5 +1,4 @@
-//! Keystroke source abstraction, ported from
-//! the original Python implementation.
+//! Keystroke source abstraction.
 //!
 //! Listeners consume a `KeystrokeSource` rather than touching the OS
 //! hook themselves: production wires the Windows low-level keyboard

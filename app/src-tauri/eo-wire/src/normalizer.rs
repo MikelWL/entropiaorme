@@ -275,10 +275,10 @@ fn is_iso_prefix(s: &str) -> bool {
 /// re-parsing reproduces Python's double bit-for-bit (verified against
 /// genuine ties such as `0.03125` in the tests below).
 ///
-/// Exposed so ported services that round intermediate figures the way the
-/// Python implementation does (e.g. the cost engine's per-line `round(_, 4)`)
-/// share one Python-faithful rounding, keeping their figures bit-identical to
-/// the oracle when they later fold into a fingerprint golden.
+/// Live rounding policy, not only test plumbing: services that round
+/// intermediate figures (e.g. the cost engine's per-line four-place
+/// rounding) share this one implementation, keeping their figures
+/// bit-identical to the frozen goldens they later fold into.
 pub fn round_half_even(x: f64, places: usize) -> f64 {
     if !x.is_finite() {
         return x;

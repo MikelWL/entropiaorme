@@ -1,5 +1,4 @@
-//! The skill gain tracker, ported from
-//! the original Python implementation: records chat-log skill events
+//! The skill gain tracker: records chat-log skill events
 //! during tracking sessions into `skill_gains`, with the gain's TT
 //! value computed off the calibrated level, and keeps the calibration
 //! current between full scans by appending an incremental point per

@@ -1,5 +1,5 @@
-//! Codex category data, ported from the original Python implementation:
-//! skill categories, reward divisors, rank multipliers, and the per-rank
+//! Codex category data: skill categories, reward divisors, rank
+//! multipliers, and the per-rank
 //! breakdown builder whose camelCase wire shape feeds the codex
 //! responses.
 

@@ -5,18 +5,13 @@
 //! restore mob, loot-item activate / deactivate, armour cost, quest-link
 //! decision), and the one-shot repair-cost OCR read.
 //!
-//! Ported from the HTTP route handlers (`tracking_routes`,
-//! `producer_routes`, `hydration`, `scan_routes`) onto typed DTOs over the
-//! composed services. The computation is carried verbatim: the SQL, the
-//! `serde_json::Value` shaping, the helpers, the constants. The transport's
-//! response wrapping (`json_response` / `plain_json_response` /
-//! `error_response` / `internal_error` / `detail`, the `EditError` enum) is
-//! replaced with typed DTO returns plus [`ApiError`]; each read bridges its
-//! computed `Value` into a declared DTO with `serde_json::from_value`, whose
-//! serde field order is the wire order, so `to_string` reproduces the
-//! HTTP-era body byte-for-byte.
+//! Typed DTOs over the composed services. The family's SQL, its
+//! `serde_json::Value` shaping, its helpers, and its constants live
+//! in-module; each read bridges its computed `Value` into a declared DTO
+//! with `serde_json::from_value`, whose serde field order is the
+//! golden-pinned wire order.
 //!
-//! Ratified contract movements riding this migration (ADR-0019 lineage):
+//! Contract lineage (ADR-0019):
 //!
 //! * The **snapshot** and the **quest-link decision** were served
 //!   `response_model_exclude_unset` (a field explicitly set to null stayed

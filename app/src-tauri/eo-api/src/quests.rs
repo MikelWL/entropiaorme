@@ -2,16 +2,13 @@
 //! (start / complete / cancel), the playlist CRUD, the mob-name
 //! autocomplete, and the per-quest and per-playlist analytics.
 //!
-//! Ported from the HTTP route handlers onto typed DTOs. The computation
-//! stays in `eo_services::quests::QuestService`, which speaks
-//! `serde_json::Value` in **snake_case** and leaves the camelCase wire
-//! projection to its caller; the HTTP layer did that projection in
-//! `hydration.rs` (`_format_quest` and friends), so the facade ports
-//! those formatters onto declared response DTOs whose field order is the
-//! wire order and whose serde renders byte-identical to the HTTP-era
-//! body. The request DTOs carry the frontend's snake_case field casing;
-//! the facade builds the exact snake_case `Value` the service consumed
-//! before, so no stored bytes change.
+//! The computation stays in `eo_services::quests::QuestService`, which
+//! speaks `serde_json::Value` in **snake_case** and leaves the camelCase
+//! wire projection to its caller; the facade owns that projection as
+//! declared response DTOs whose field order is the golden-pinned wire
+//! order. The request DTOs carry the frontend's snake_case field casing
+//! and build the exact snake_case `Value` the service consumes, so no
+//! stored bytes change.
 //!
 //! The facade serves over the composed [`QuestService`] (the same
 //! instance whose owning task carries the bus-fed session tracking,
@@ -19,8 +16,8 @@
 //! completion records against the live tracking session exactly as a
 //! chat-log-driven one does.
 //!
-//! Transport-era behaviours retire with the migration, ratified under
-//! ADR-0017/0019. The conditional-GET (ETag) contract retires with the
+//! Contract lineage (ADR-0017/0019): transport-era behaviours retired at
+//! the typed-command crossing. The conditional-GET (ETag) contract retires with the
 //! transport (the reads answer their body directly). The write surface's
 //! framework validation envelope (the create/update field-type 422s, the
 //! surrogate-taint / beyond-`i64` deferred 500 ceremony) becomes
@@ -474,7 +471,7 @@ impl Api {
         Ok(quests.iter().map(Quest::from_service).collect())
     }
 
-    /// One quest by id; a missing quest is the HTTP route's 404.
+    /// One quest by id; a missing quest is the typed not-found.
     pub async fn quest_get(&self, quest_id: i64) -> Result<Quest, ApiError> {
         match self
             .quests
@@ -650,11 +647,11 @@ impl Api {
     }
 }
 
-/// The quests family's error mapping: the HTTP router caught no
-/// `QuestError`, so every failure (invalid input, driver, rollup) was the
-/// backend's unhandled-exception 500. The facade preserves that verbatim
-/// (there is no user-facing `bad_request` on this family), logging the
-/// source server-side while the boundary reply stays fixed.
+/// The quests family's error mapping: every failure (invalid input,
+/// driver, rollup) collapses to the one internal-error reply, an
+/// inherited contract the goldens pin (there is no user-facing
+/// `bad_request` on this family); the source is logged server-side while
+/// the boundary reply stays fixed.
 fn quest_error(context: &'static str) -> impl FnOnce(QuestError) -> ApiError {
     ApiError::internal(context)
 }

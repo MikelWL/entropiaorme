@@ -1,4 +1,4 @@
-//! Repair cost OCR, ported from the original Python implementation: a
+//! Repair cost OCR: a
 //! one-shot screen read of the in-game repair terminal's total cost.
 //! The capture region derives at scan time from the live game window
 //! (the user docks the terminal bottom-right at default interface
@@ -6,8 +6,7 @@
 //! that corner), and the shared recogniser reads the number.
 //!
 //! The window lookup, the capture, and the recogniser arrive as
-//! injected providers, mirroring the manual scan's seams; the
-//! original's logging is omitted.
+//! injected providers, mirroring the manual scan's seams.
 
 use std::sync::{Arc, Mutex};
 

@@ -1,20 +1,24 @@
-//! Wire-format contracts for the EntropiaOrme backend.
+//! The wire contracts and the frozen-evidence emitters for the
+//! EntropiaOrme backend.
 //!
-//! This crate carries the HTTP response and event envelope types and their
-//! serialisation rules. The byte-level contract each type reproduces is the
-//! frozen wire encoding the backend emits.
+//! Two groups live here. The **live contracts**: [`domain_events`] (the
+//! typed frontend-facing event union, gated against the committed
+//! event-schema snapshot), [`bus`] (the monomorphic domain-event channel
+//! with its drop-behind delivery shaping), and [`metrics`] (the
+//! in-process metrics snapshot shapes).
 //!
-//! The equivalence emitters are [`normalizer`] (the shared canonicaliser),
-//! [`fingerprint`] (the event-stream JSONL), [`db_snapshot`] (the DB-state
-//! snapshot), and [`http_fingerprint`] (the HTTP response goldens). Each was a
-//! byte-exact port of its Python testing-oracle counterpart; with the oracle
-//! retired, they are asserted against the committed goldens by the hermetic
-//! tests, with no second implementation present.
+//! The **frozen-evidence emitters**: [`normalizer`] (the shared
+//! canonicaliser), [`fingerprint`] (the event-stream JSONL),
+//! [`db_snapshot`] (the DB-state snapshot), and [`http_fingerprint`] (the
+//! response goldens). Hermetic tests assert them against the committed
+//! goldens on every run; the goldens are the banked equivalence evidence
+//! and pin the codebase's own ratified contract (ADR-0017).
 //!
-//! The wire-contract spine sits beside them: [`domain_events`] (the typed
-//! frontend-facing event union, gated against the committed event-schema
-//! snapshot) and [`bus`] (the monomorphic domain-event channel with its
-//! drop-behind delivery shaping).
+//! One live production policy also lives in [`normalizer`]: the
+//! [`normalizer::round_half_even`] rounding and the Python-format JSON
+//! writers are consumed by services at runtime (cost figures, timestamp
+//! strings, settings and session-summary persistence), not only by the
+//! emitters.
 
 pub mod bus;
 pub mod db_snapshot;

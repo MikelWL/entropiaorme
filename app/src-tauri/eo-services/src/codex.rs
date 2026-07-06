@@ -1,5 +1,4 @@
-//! Codex service, ported from the original Python implementation:
-//! species listing, rank breakdowns, claim recording, manual rank
+//! Codex service: species listing, rank breakdowns, claim recording, manual rank
 //! calibration, per-rank skill recommendations, and the meta
 //! (attribute) codex.
 //!
@@ -7,8 +6,8 @@
 //! progress and claims live in the application database; claim and
 //! calibration timestamps stamp from the injected clock.
 //!
-//! One original behaviour is reproduced deliberately rather than
-//! repaired, so the port stays equivalence-comparable:
+//! One inherited behaviour is kept deliberately rather than repaired,
+//! pinned by the frozen goldens (ADR-0017):
 //!
 //! - **Silent calibration skip.** A claimed reward only lands in
 //!   `skill_calibrations` when the skill already has a calibration
@@ -16,15 +15,14 @@
 //!   the claim and updates progress but writes no calibration row,
 //!   so the reward's levels never reach the skill curve.
 //!
-//! The original's check-then-act claim validation (it read
+//! The inherited check-then-act claim validation (it read
 //! `current_rank` and validated before taking its database lock, so
 //! two racing claims for the same rank could both observe it and both
 //! record a reward) is NOT reproduced: `claim_rank` advances progress
 //! with a conditional upsert gated on the prior rank, so of two racing
 //! claims exactly one advances and the loser aborts. In serial use the
-//! guard always holds, so single-threaded behaviour is identical to the
-//! original (as the retired cross-language differential confirmed) while
-//! the race is closed.
+//! guard always holds, so single-threaded behaviour is unchanged (the
+//! banked equivalence evidence confirmed it) while the race is closed.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -57,9 +55,9 @@ pub const ATTRIBUTES: [&str; 6] = [
 /// Meta rewards are always 1 PES into an attribute.
 pub const META_PED: f64 = 1.0;
 
-/// The service's error surface: `Invalid` carries the original's
-/// `ValueError` messages verbatim (HTTP 400 at the router); `Db` is a
-/// database failure (HTTP 500).
+/// The service's error surface: `Invalid` carries validation-refusal
+/// messages verbatim, as pinned by the frozen goldens; the facade maps
+/// it to `ApiError::BadRequest`. `Rollup` is a database failure.
 #[derive(Debug, thiserror::Error)]
 pub enum CodexError {
     #[error("{0}")]

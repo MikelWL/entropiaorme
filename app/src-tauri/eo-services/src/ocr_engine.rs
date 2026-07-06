@@ -1,7 +1,5 @@
-//! The native text recogniser, ported from the recognition chain
-//! the original Python implementation drives through its bundled ONNX
-//! engine: the SVTRv2-mobile recogniser run under ONNX Runtime with
-//! the production preprocess and decode replicated exactly.
+//! The native text recogniser: the SVTRv2-mobile recogniser run under
+//! ONNX Runtime with the production preprocess and decode.
 //!
 //! * `RecDynamicResize([48, 320])`: bilinear resize to height 48 with
 //!   cv2's half-pixel coordinate mapping, `(v/255 - 0.5)/0.5`

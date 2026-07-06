@@ -2,15 +2,13 @@
 //! read/write, and the partial settings update that re-signals the live
 //! producers.
 //!
-//! Ported from the HTTP route handlers onto typed DTOs. The stored
-//! `settings.json` bytes are unchanged: the native `ConfigService`
-//! remains the sole writer, saving whole-file with the reference JSON
-//! formatting, so the on-disk state is identical either side of the
-//! transport migration. The read response shapes match the frontend's
-//! hand-written contract (`$lib/types/settings.ts`) field for field.
+//! The stored `settings.json` bytes are owned by the `ConfigService`,
+//! the sole writer, saving whole-file in the canonical on-disk format.
+//! The read response shapes match the frontend's hand-written contract
+//! (`$lib/types/settings.ts`) field for field.
 //!
-//! Two behaviours retire with the migration, ratified under
-//! ADR-0017/0019. The pydantic-era `exclude_unset` partial the HTTP layer
+//! Contract lineage (ADR-0017/0019): two behaviours retired at the
+//! typed-command crossing. The pydantic-era `exclude_unset` partial the HTTP layer
 //! parsed is now the all-`Option` [`SettingsPatch`] DTO, so the framework
 //! 422/500 envelopes it produced (a non-integer overlay coordinate, a
 //! structurally-malformed `hotbar`/`trifecta_presets` container, an

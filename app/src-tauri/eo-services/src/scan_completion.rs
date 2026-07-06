@@ -1,5 +1,4 @@
-//! The skill-scan completion path, ported from
-//! the original Python implementation: persists scanned skill
+//! The skill-scan completion path: persists scanned skill
 //! levels into `skill_calibrations` and computes the drift summary
 //! comparing tracked against scanned values before recalibration.
 //! Profession levels derive from skill calibrations on read, so there

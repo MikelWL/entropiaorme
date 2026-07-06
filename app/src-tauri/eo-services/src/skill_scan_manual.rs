@@ -1,5 +1,4 @@
-//! The user-driven skill scan, ported from
-//! the original Python implementation.
+//! The user-driven skill scan.
 //!
 //! The user docks the in-game skills panel, opens the scan overlay,
 //! and captures once per page after flipping pages in-game. After the

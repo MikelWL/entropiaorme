@@ -1,5 +1,4 @@
-//! Trifecta resolution and validation, ported from
-//! the original Python implementation: resolves a configured
+//! Trifecta resolution and validation: resolves a configured
 //! small-weapon / big-weapon / healing-tool preset into tracking-ready
 //! attribution data, validating the damage-band split.
 //!

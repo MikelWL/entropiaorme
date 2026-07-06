@@ -822,8 +822,7 @@ pub async fn demo_tracking_snapshot(app: tauri::AppHandle) -> Result<TrackingSna
 }
 
 // The hidden developer-tools family: native-only, each gated on developer
-// mode (a gate-off command returns the typed not-found the HTTP route's 404
-// stood for). The metrics read and the crash-reporting read/write are
+// mode (a gate-off command returns the typed not-found, kind "notFound"). The metrics read and the crash-reporting read/write are
 // synchronous facade methods, so their wrappers do not `.await`.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn dev_metrics(app: tauri::AppHandle) -> Result<MetricsSnapshot, ApiError> {

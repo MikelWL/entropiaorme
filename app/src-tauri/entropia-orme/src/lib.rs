@@ -91,7 +91,7 @@ struct OcrEngineState(#[allow(dead_code)] Mutex<Option<std::sync::Arc<compositio
 // seam tears them down: the spacebar listener detaches its share of the shared
 // OS keyboard hook (the hotbar listener detaches the other share via
 // `ProducerState::stop`), and the scan resets any in-flight capture state.
-// Both are the same `Arc`s the HTTP app state serves the scan routes over.
+// Both are the same `Arc`s the facade's scan family serves over.
 struct ScanInput {
     spacebar: std::sync::Arc<composition::SpacebarCaptureListener>,
     skill_scan: std::sync::Arc<composition::SkillScanManual>,

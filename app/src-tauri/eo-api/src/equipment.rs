@@ -2,10 +2,9 @@
 //! the trifecta-reference delete guard), the expanded detail, and the
 //! cost shaping behind both.
 //!
-//! Ported from the HTTP route handlers onto typed DTOs; the stored
-//! `properties_json` bytes are unchanged (the writes still serialise
-//! with the reference `json.dumps` spacing), so the database state is
-//! identical either side of the transport migration. The response
+//! The stored `properties_json` bytes are an owned on-disk contract:
+//! the writes serialise with the canonical spacing the DB-state goldens
+//! pin, so stored equipment state is byte-stable. The response
 //! shapes match the frontend's hand-written contract (`$lib/types/
 //! equipment.ts`) field for field; where the HTTP layer passed stored
 //! JSON values through untyped, the DTOs pin the number/string types
