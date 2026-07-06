@@ -20,6 +20,7 @@ pub mod cost_engine;
 pub mod daily_rollup;
 pub mod db;
 pub mod difflib;
+pub mod equipment_pricing;
 pub mod eu_window;
 pub mod event_bus;
 pub mod fingerprint_recorder;
@@ -49,6 +50,7 @@ pub mod time;
 pub mod tool_inference;
 pub mod tracker;
 pub mod tracking_models;
+pub mod tracking_reads;
 pub mod trifecta_service;
 pub mod tt_value_curve;
 

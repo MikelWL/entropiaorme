@@ -753,36 +753,17 @@ impl Api {
     }
 
     /// Latest calibrated level per skill: believed-current when `source`
-    /// is None, the scan anchor when `source='scan'`, mirroring
-    /// `_get_skill_calibrations` (the `MAX(scanned_at)` / `MAX(id)`
-    /// tiebreaker SQL verbatim).
+    /// is None, the scan anchor when `source='scan'` (the
+    /// `MAX(scanned_at)` / `MAX(id)` tiebreaker read behind
+    /// [`Db::latest_skill_calibrations`]), as the insertion-ordered map
+    /// the calculation services consume.
     async fn skill_calibrations(
         &self,
         source: Option<&str>,
     ) -> Result<Map<String, Value>, DbError> {
-        let source = source.map(str::to_string);
-        let rows: Vec<(String, f64)> = self
+        let rows = self
             .db
-            .with_reader(move |conn| match source {
-                None => {
-                    let mut stmt = conn.prepare(
-                        "WITH latest_ts AS (\n                        SELECT skill_name, MAX(scanned_at) AS ts\n                        FROM skill_calibrations\n                        GROUP BY skill_name\n                    )\n                    SELECT skill_name, level FROM skill_calibrations\n                    WHERE id IN (\n                        SELECT MAX(s2.id) FROM skill_calibrations s2\n                        JOIN latest_ts m ON s2.skill_name = m.skill_name AND s2.scanned_at = m.ts\n                        GROUP BY s2.skill_name\n                    )",
-                    )?;
-                    let mapped = stmt.query_map([], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-                    })?;
-                    Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
-                }
-                Some(source) => {
-                    let mut stmt = conn.prepare(
-                        "WITH latest_ts AS (\n                        SELECT skill_name, MAX(scanned_at) AS ts\n                        FROM skill_calibrations\n                        WHERE source = ?\n                        GROUP BY skill_name\n                    )\n                    SELECT skill_name, level FROM skill_calibrations\n                    WHERE id IN (\n                        SELECT MAX(s2.id) FROM skill_calibrations s2\n                        JOIN latest_ts m ON s2.skill_name = m.skill_name AND s2.scanned_at = m.ts\n                        WHERE s2.source = ?\n                        GROUP BY s2.skill_name\n                    )",
-                    )?;
-                    let mapped = stmt.query_map(rusqlite::params![source, source], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-                    })?;
-                    Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
-                }
-            })
+            .latest_skill_calibrations(source.map(str::to_string))
             .await?;
         let mut levels = Map::new();
         for (name, level) in rows {
@@ -793,15 +774,7 @@ impl Api {
 
     /// Epoch timestamp of the most recent calibration, or None.
     async fn last_calibration_ts(&self) -> Result<Option<f64>, DbError> {
-        self.db
-            .with_reader(|conn| {
-                Ok(conn.query_row(
-                    "SELECT MAX(scanned_at) as ts FROM skill_calibrations",
-                    [],
-                    |row| row.get::<_, Option<f64>>(0),
-                )?)
-            })
-            .await
+        self.db.last_calibration_epoch().await
     }
 }
 

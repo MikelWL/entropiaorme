@@ -69,24 +69,6 @@ async fn capture_png(app: tauri::AppHandle, page: u32) -> Result<String, String>
 // seam is the producer teardown path.
 struct Producers(Mutex<Option<composition::ProducerState>>);
 
-// Holds the substrate's warmed OCR engine for the app's lifetime. The
-// composition root constructs and warms it (binding the bundled ONNX
-// Runtime) and the scan services capture their own clones at compose
-// time; this managed handle is the lifetime anchor that keeps the warmed
-// engine pinned for the whole substrate regardless of consumer teardown
-// order. Unlike `Producers`, there is no exit-seam stop: the engine owns
-// no thread and no subscription, its ONNX session drops with this managed
-// state, and the ORT environment self-releases via its own process-exit
-// hook. `None` when the runtime or model was unavailable (OCR is an
-// optional faculty).
-//
-// The handle is held, never read: the scan services reach the engine
-// through their own clones. The `dead_code` allow is scoped to this one
-// field (not the struct, not the module) and justified by that
-// held-not-read intent, the same shape the producer spine documents for
-// its kept-alive bus subscriptions.
-struct OcrEngineState(#[allow(dead_code)] Mutex<Option<std::sync::Arc<composition::OcrEngine>>>);
-
 // Holds the manual-scan input listener and the scan state machine so the exit
 // seam tears them down: the spacebar listener detaches its share of the shared
 // OS keyboard hook (the hotbar listener detaches the other share via
@@ -395,10 +377,11 @@ fn install_native_services(app: &tauri::AppHandle, composed: composition::Compos
     // Hand the producer spine to the exit seam so it stops the tail thread,
     // the hotbar listener, and ends any session on close.
     app.manage(Producers(Mutex::new(Some(composed.producers))));
-    // Hold the warmed OCR engine for the app's lifetime (no exit stop: the
-    // session drops with the managed state, the ORT env self-releases at
-    // process exit).
-    app.manage(OcrEngineState(Mutex::new(composed.ocr_engine)));
+    // No separate lifetime anchor for the OCR engine: the scan services
+    // captured their own clones at compose time and are themselves held
+    // for the app's lifetime, so the warmed engine (and its ONNX session)
+    // lives exactly as long as its consumers; the ORT environment
+    // self-releases at process exit.
     // Hand the scan input listener and the scan state machine to the exit
     // seam for deterministic teardown.
     app.manage(ScanInput {

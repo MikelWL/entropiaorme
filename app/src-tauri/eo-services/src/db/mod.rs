@@ -430,6 +430,190 @@ impl Db {
         .await
     }
 
+    /// The stored equipment library, oldest first:
+    /// `(id, name, item_type, properties_json)` per row.
+    pub async fn equipment_library_rows(
+        &self,
+    ) -> Result<Vec<(i64, String, String, String)>, DbError> {
+        self.with_reader(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, name, item_type, properties_json FROM equipment_library \
+                 ORDER BY created_at",
+            )?;
+            let mapped = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+    }
+
+    /// The latest calibrated level per skill, by scan instant with the
+    /// row id as the tiebreaker: believed-current when `source` is None,
+    /// a single source's anchor otherwise (`source='scan'` for the scan
+    /// anchor).
+    pub async fn latest_skill_calibrations(
+        &self,
+        source: Option<String>,
+    ) -> Result<Vec<(String, f64)>, DbError> {
+        self.with_reader(move |conn| match source {
+            None => {
+                let mut stmt = conn.prepare(
+                    "WITH latest_ts AS (\n                        SELECT skill_name, MAX(scanned_at) AS ts\n                        FROM skill_calibrations\n                        GROUP BY skill_name\n                    )\n                    SELECT skill_name, level FROM skill_calibrations\n                    WHERE id IN (\n                        SELECT MAX(s2.id) FROM skill_calibrations s2\n                        JOIN latest_ts m ON s2.skill_name = m.skill_name AND s2.scanned_at = m.ts\n                        GROUP BY s2.skill_name\n                    )",
+                )?;
+                let mapped = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                })?;
+                Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+            }
+            Some(source) => {
+                let mut stmt = conn.prepare(
+                    "WITH latest_ts AS (\n                        SELECT skill_name, MAX(scanned_at) AS ts\n                        FROM skill_calibrations\n                        WHERE source = ?\n                        GROUP BY skill_name\n                    )\n                    SELECT skill_name, level FROM skill_calibrations\n                    WHERE id IN (\n                        SELECT MAX(s2.id) FROM skill_calibrations s2\n                        JOIN latest_ts m ON s2.skill_name = m.skill_name AND s2.scanned_at = m.ts\n                        WHERE s2.source = ?\n                        GROUP BY s2.skill_name\n                    )",
+                )?;
+                let mapped = stmt.query_map(rusqlite::params![source, source], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                })?;
+                Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+            }
+        })
+        .await
+    }
+
+    /// Epoch timestamp of the most recent skill calibration, or None.
+    pub async fn last_calibration_epoch(&self) -> Result<Option<f64>, DbError> {
+        self.with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT MAX(scanned_at) as ts FROM skill_calibrations",
+                [],
+                |row| row.get::<_, Option<f64>>(0),
+            )?)
+        })
+        .await
+    }
+
+    /// Insert an equipment-library row, returning its generated id.
+    pub async fn insert_equipment(
+        &self,
+        name: String,
+        item_type: String,
+        catalog_id: Option<String>,
+        properties_json: String,
+    ) -> Result<i64, DbError> {
+        self.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO equipment_library (name, item_type, catalog_id, properties_json) \
+                 VALUES (?, ?, ?, ?)",
+                rusqlite::params![name, item_type, catalog_id, properties_json],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+        .await
+    }
+
+    /// One equipment-library row by id:
+    /// `(id, name, item_type, properties_json)`, or None when absent.
+    pub async fn equipment_row(
+        &self,
+        item_id: i64,
+    ) -> Result<Option<(i64, String, String, String)>, DbError> {
+        self.with_reader(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT id, name, item_type, properties_json FROM equipment_library \
+                     WHERE id = ?",
+                    rusqlite::params![item_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .optional()?)
+        })
+        .await
+    }
+
+    /// One equipment-library row's expanded detail by id:
+    /// `(id, name, item_type, catalog_id, properties_json)`, or None.
+    pub async fn equipment_detail_row(
+        &self,
+        item_id: i64,
+    ) -> Result<Option<(i64, String, String, Option<String>, String)>, DbError> {
+        self.with_reader(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT id, name, item_type, catalog_id, properties_json \
+                     FROM equipment_library WHERE id = ?",
+                    rusqlite::params![item_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .optional()?)
+        })
+        .await
+    }
+
+    /// A stored equipment row's item type, or None when absent.
+    pub async fn equipment_item_type(&self, item_id: i64) -> Result<Option<String>, DbError> {
+        self.with_reader(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT id, item_type FROM equipment_library WHERE id = ?",
+                    rusqlite::params![item_id],
+                    |row| row.get::<_, String>(1),
+                )
+                .optional()?)
+        })
+        .await
+    }
+
+    /// Replace a stored equipment row's configuration (name, catalogue
+    /// binding, and properties; the item type is fixed).
+    pub async fn update_equipment(
+        &self,
+        item_id: i64,
+        name: String,
+        catalog_id: Option<String>,
+        properties_json: String,
+    ) -> Result<(), DbError> {
+        self.with_writer(move |conn| {
+            conn.execute(
+                "UPDATE equipment_library SET name = ?, catalog_id = ?, properties_json = ? \
+                 WHERE id = ?",
+                rusqlite::params![name, catalog_id, properties_json, item_id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Delete a stored equipment row (idempotent over a missing row).
+    pub async fn delete_equipment(&self, item_id: i64) -> Result<(), DbError> {
+        self.with_writer(move |conn| {
+            conn.execute(
+                "DELETE FROM equipment_library WHERE id = ?",
+                rusqlite::params![item_id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Test seeding for equipment-reading services (compiled into the
     /// crate's own test builds only).
     #[cfg(test)]
