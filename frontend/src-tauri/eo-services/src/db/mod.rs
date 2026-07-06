@@ -37,17 +37,18 @@
 //! workspace, wire `cargo sqlx prepare` and the committed `.sqlx`
 //! cache into CI in the same change.
 
+mod migrate;
+mod pool;
+
 use std::path::Path;
 use std::time::Duration;
 
+use pool::SyncCore;
 use serde_json::{Map, Value};
-use sqlx::migrate::Migrator;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
 use sqlx::Row;
-
-static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// The schema version the baseline migration reproduces.
 const BASELINE_SCHEMA_VERSION: i64 = 33;
@@ -58,12 +59,20 @@ pub enum DbError {
     /// process upgrades it on its own launch.
     #[error("database schema version {found} predates the supported baseline {supported}")]
     UnsupportedSchemaVersion { found: i64, supported: i64 },
-    /// Any driver failure.
+    /// Any driver failure on the async pools.
     #[error(transparent)]
     Driver(#[from] sqlx::Error),
-    /// A migration failure.
+    /// Any driver failure on the synchronous core.
     #[error(transparent)]
-    Migration(#[from] sqlx::migrate::MigrateError),
+    Sqlite(#[from] rusqlite::Error),
+    /// The synchronous core's worker threads have exited; no further
+    /// statements can run (the handle outlived the database's lifetime).
+    #[error("the database core is closed")]
+    CoreClosed,
+    /// An applied migration-ledger row does not reconcile with the
+    /// embedded migration chain.
+    #[error("migration {version} failed validation: {problem}")]
+    MigrationValidation { version: i64, problem: &'static str },
     /// A stored value that does not decode into its domain shape.
     #[error("{context}: {source}")]
     Decode {
@@ -185,6 +194,11 @@ pub struct Db {
     /// writer under WAL, so a dashboard GET does not wait behind combat
     /// writes.
     reader: SqlitePool,
+    /// The synchronous core: a writer thread and a reader-thread pool
+    /// over their own connections, serving the closure API
+    /// ([`Db::with_writer`] / [`Db::with_reader`]). Absent only on
+    /// handles built by [`Db::from_pool`] (a test-only constructor).
+    core: Option<SyncCore>,
 }
 
 impl Db {
@@ -199,6 +213,65 @@ impl Db {
     /// writes serialise here.
     pub fn write(&self) -> &SqlitePool {
         &self.writer
+    }
+
+    /// Run a read closure on the synchronous core: whichever reader
+    /// thread is free runs it to completion on its own connection,
+    /// concurrently with the writer under WAL. The closure sees a bare
+    /// connection with the seam's session pragmas applied; multi-step
+    /// reads run without an executor between the steps.
+    pub async fn with_reader<T, F>(&self, job: F) -> Result<T, DbError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
+    {
+        self.core().read(job).await
+    }
+
+    /// Run a write closure on the synchronous core's writer thread.
+    /// Every write submitted anywhere in the process runs serially on
+    /// the one write connection, in submission order; a multi-statement
+    /// transaction is a single closure (`connection.transaction()?`),
+    /// so it can never be interleaved or left half-open across an
+    /// executor boundary.
+    pub async fn with_writer<T, F>(&self, job: F) -> Result<T, DbError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
+    {
+        self.core().write(job).await
+    }
+
+    /// The blocking counterpart of [`Db::with_reader`], for plain
+    /// producer threads that have no async context. Never call it on an
+    /// async runtime's worker thread (it parks the thread on the reply).
+    pub fn with_reader_blocking<T, F>(&self, job: F) -> Result<T, DbError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
+    {
+        self.core().read_blocking(job)
+    }
+
+    /// The blocking counterpart of [`Db::with_writer`], for plain
+    /// producer threads that have no async context. Never call it on an
+    /// async runtime's worker thread (it parks the thread on the reply).
+    pub fn with_writer_blocking<T, F>(&self, job: F) -> Result<T, DbError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
+    {
+        self.core().write_blocking(job)
+    }
+
+    /// The synchronous core, which every handle built by [`Db::open`]
+    /// carries. A [`Db::from_pool`] handle has none: that constructor
+    /// exists for test harnesses on the async pools, and a closure call
+    /// through it is a harness wiring error surfaced loudly here.
+    fn core(&self) -> &SyncCore {
+        self.core
+            .as_ref()
+            .expect("this Db handle was built from_pool and carries no synchronous core")
     }
 
     /// Refresh the query planner's statistics via `PRAGMA optimize`, the
@@ -279,6 +352,7 @@ impl Db {
         Db {
             writer: pool.clone(),
             reader: pool,
+            core: None,
         }
     }
 
@@ -300,22 +374,28 @@ impl Db {
     /// Open (creating if missing), adopt or refuse an existing schema,
     /// and bring the migration chain up to date.
     ///
-    /// The writer pool is built and migrated first; the reader pool is
-    /// opened only after the schema is current, so a reader connection
-    /// never observes a pre-migration database (reader connections are
-    /// lazy, but ordering the build removes any doubt).
+    /// The synchronous core's write connection is opened and migrated
+    /// first; every other connection (the core's readers and both async
+    /// pools) opens only after the schema is current, so no connection
+    /// ever observes a pre-migration database.
     pub async fn open(path: &Path) -> Result<Db, DbError> {
+        let mut write_connection = pool::open_configured(path)?;
+        adopt_or_refuse(&mut write_connection)?;
+        migrate::run(&mut write_connection)?;
+        let core = SyncCore::start(path, write_connection)?;
         let writer = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(Self::connect_options(path))
             .await?;
-        adopt_or_refuse(&writer).await?;
-        MIGRATOR.run(&writer).await?;
         let reader = SqlitePoolOptions::new()
             .max_connections(READER_POOL_SIZE)
             .connect_with(Self::connect_options(path))
             .await?;
-        Ok(Db { writer, reader })
+        Ok(Db {
+            writer,
+            reader,
+            core: Some(core),
+        })
     }
 
     /// Open the application's own database at the composition root.
@@ -447,20 +527,26 @@ impl Db {
 
 /// Mark the baseline as applied on a database the backend has already
 /// created at the baseline version; refuse older schemas.
-async fn adopt_or_refuse(pool: &SqlitePool) -> Result<(), DbError> {
-    let has_metadata = table_exists(pool, "db_metadata").await?;
-    if !has_metadata {
+fn adopt_or_refuse(connection: &mut rusqlite::Connection) -> Result<(), DbError> {
+    if !table_exists_sync(connection, "db_metadata")? {
         // A fresh (or empty) database: the migration chain owns it.
         return Ok(());
     }
-    if table_exists(pool, "_sqlx_migrations").await? {
+    if table_exists_sync(connection, "_sqlx_migrations")? {
         // Already adopted (or natively created); the chain validates.
         return Ok(());
     }
-    let version: Option<String> =
-        sqlx::query_scalar("SELECT value FROM db_metadata WHERE key = 'version'")
-            .fetch_optional(pool)
-            .await?;
+    let version: Option<String> = connection
+        .query_row(
+            "SELECT value FROM db_metadata WHERE key = 'version'",
+            [],
+            |row| row.get(0),
+        )
+        .map(Some)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
     let version: i64 = version.and_then(|raw| raw.parse().ok()).unwrap_or_default();
 
     // Upgrade-and-adopt as one transaction: the in-place bridge (below) and the
@@ -468,7 +554,7 @@ async fn adopt_or_refuse(pool: &SqlitePool) -> Result<(), DbError> {
     // back the file to exactly as it was found, honouring the `open_adopted`
     // "left untouched on a decline" contract; without this, a stamp failure
     // after the bridge mutated the file would leave a half-upgraded database.
-    let mut tx = pool.begin().await?;
+    let tx = connection.transaction()?;
     if version < BASELINE_SCHEMA_VERSION {
         // A below-baseline database the backend process now owns: the
         // co-bundled Python sidecar that used to migrate it forward to the
@@ -476,35 +562,28 @@ async fn adopt_or_refuse(pool: &SqlitePool) -> Result<(), DbError> {
         // upgrade runs natively here, in place, before the baseline is
         // stamped. Only the single rung an in-the-wild v0.1.0-lineage
         // database occupies is bridged; older schemas stay a refusal.
-        upgrade_to_baseline(&mut tx, version).await?;
+        upgrade_to_baseline(&tx, version)?;
     }
 
-    // The ledger row sqlx's own runner would have written had it created
-    // the schema; the post-adoption `MIGRATOR.run` validates it (version
-    // and checksum), so drift in this DDL or the row fails loudly.
-    let baseline = MIGRATOR
-        .migrations
+    // The ledger row the runner would have written had it created the
+    // schema; the post-adoption `migrate::run` validates it (version and
+    // checksum), so drift in this DDL or the row fails loudly.
+    let baseline = migrate::MIGRATIONS
         .first()
         .expect("the migration chain carries the baseline");
-    sqlx::query(
+    tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS _sqlx_migrations (\
          version BIGINT PRIMARY KEY, description TEXT NOT NULL, \
          installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \
          success BOOLEAN NOT NULL, checksum BLOB NOT NULL, \
          execution_time BIGINT NOT NULL)",
-    )
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
+    )?;
+    tx.execute(
         "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
-         VALUES (?, ?, TRUE, ?, 0)",
-    )
-    .bind(baseline.version)
-    .bind(baseline.description.as_ref())
-    .bind(baseline.checksum.as_ref())
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
+         VALUES (?1, ?2, TRUE, ?3, 0)",
+        rusqlite::params![baseline.version, baseline.description, baseline.checksum()],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -528,10 +607,7 @@ async fn adopt_or_refuse(pool: &SqlitePool) -> Result<(), DbError> {
 /// Runs inside [`adopt_or_refuse`]'s adopt transaction, so the bridge and the
 /// subsequent baseline stamp share one commit boundary (a failure leaves the
 /// file untouched).
-async fn upgrade_to_baseline(
-    conn: &mut sqlx::sqlite::SqliteConnection,
-    version: i64,
-) -> Result<(), DbError> {
+fn upgrade_to_baseline(tx: &rusqlite::Transaction<'_>, version: i64) -> Result<(), DbError> {
     /// The one below-baseline schema version with a native upgrade path.
     const BRIDGEABLE_VERSION: i64 = 32;
     if version != BRIDGEABLE_VERSION {
@@ -541,16 +617,32 @@ async fn upgrade_to_baseline(
         });
     }
     // v33 rung: drop the retired write-only observations table.
-    sqlx::query("DROP TABLE IF EXISTS tt_curve_observations")
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query("UPDATE db_metadata SET value = ? WHERE key = 'version'")
-        .bind(BASELINE_SCHEMA_VERSION.to_string())
-        .execute(&mut *conn)
-        .await?;
+    tx.execute_batch("DROP TABLE IF EXISTS tt_curve_observations")?;
+    tx.execute(
+        "UPDATE db_metadata SET value = ?1 WHERE key = 'version'",
+        rusqlite::params![BASELINE_SCHEMA_VERSION.to_string()],
+    )?;
     Ok(())
 }
 
+fn table_exists_sync(connection: &rusqlite::Connection, name: &str) -> Result<bool, DbError> {
+    let found = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            rusqlite::params![name],
+            |_| Ok(()),
+        )
+        .map(|()| true)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(false),
+            other => Err(other),
+        })?;
+    Ok(found)
+}
+
+/// The async-pool counterpart of [`table_exists_sync`], serving the
+/// tests that inspect schema state through the pools.
+#[cfg(test)]
 async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool, DbError> {
     let found: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -633,7 +725,7 @@ mod tests {
             .connect_with(options)
             .await
             .unwrap();
-        sqlx::raw_sql(include_str!("../migrations/0001_schema_baseline.sql"))
+        sqlx::raw_sql(include_str!("../../migrations/0001_schema_baseline.sql"))
             .execute(&pool)
             .await
             .unwrap();
@@ -982,7 +1074,7 @@ mod tests {
             .await
             .unwrap();
         // The baseline stamp plus every post-baseline migration.
-        assert_eq!(ledger, MIGRATOR.migrations.len() as i64);
+        assert_eq!(ledger, migrate::MIGRATIONS.len() as i64);
     }
 
     #[tokio::test]
@@ -1101,7 +1193,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             ledger,
-            MIGRATOR.migrations.len() as i64,
+            migrate::MIGRATIONS.len() as i64,
             "the baseline is stamped once, then the post-baseline chain runs"
         );
 
@@ -1283,6 +1375,217 @@ mod tests {
         match Db::open_adopted(&path).await {
             Err(AdoptError::Fresh(_)) => {}
             other => panic!("expected a fresh-path error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_core_connections_carry_the_session_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+        // Both roles: a reader connection and the writer connection.
+        for role in ["reader", "writer"] {
+            let probe = |connection: &mut rusqlite::Connection| {
+                let journal: String =
+                    connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+                let synchronous: i64 =
+                    connection.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+                let cache: i64 = connection.query_row("PRAGMA cache_size", [], |row| row.get(0))?;
+                let foreign_keys: i64 =
+                    connection.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+                let busy: i64 =
+                    connection.query_row("PRAGMA busy_timeout", [], |row| row.get(0))?;
+                Ok((journal, synchronous, cache, foreign_keys, busy))
+            };
+            let (journal, synchronous, cache, foreign_keys, busy) = if role == "reader" {
+                db.with_reader(probe).await.unwrap()
+            } else {
+                db.with_writer(probe).await.unwrap()
+            };
+            assert_eq!(journal, "wal", "{role} journal_mode");
+            assert_eq!(synchronous, 1, "{role} synchronous NORMAL");
+            assert_eq!(cache, -64000, "{role} cache_size 64 MB");
+            assert_eq!(foreign_keys, 0, "{role} foreign keys stay off");
+            assert_eq!(busy, 5000, "{role} busy_timeout");
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_core_serialises_writes_and_serves_concurrent_readers() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+
+        // Concurrent write closures all land; the single writer thread
+        // serialises them (interleaving is structurally impossible).
+        let writes: Vec<_> = (0..32)
+            .map(|i| {
+                let db = db.clone();
+                tokio::spawn(async move {
+                    db.with_writer(move |connection| {
+                        connection.execute(
+                            "INSERT INTO tracking_sessions (id, started_at, is_active) \
+                             VALUES (?1, ?2, 0)",
+                            rusqlite::params![format!("s-{i}"), i as f64],
+                        )?;
+                        Ok(())
+                    })
+                    .await
+                })
+            })
+            .collect();
+        for handle in writes {
+            handle.await.unwrap().unwrap();
+        }
+
+        // Concurrent read closures observe the committed state.
+        let reads: Vec<_> = (0..8)
+            .map(|_| {
+                let db = db.clone();
+                tokio::spawn(async move {
+                    db.with_reader(|connection| {
+                        let count: i64 = connection.query_row(
+                            "SELECT COUNT(*) FROM tracking_sessions",
+                            [],
+                            |row| row.get(0),
+                        )?;
+                        Ok(count)
+                    })
+                    .await
+                })
+            })
+            .collect();
+        for handle in reads {
+            assert_eq!(handle.await.unwrap().unwrap(), 32);
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_core_write_transactions_are_one_closure() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+        // A multi-statement transaction commits atomically inside one
+        // closure; a rolled-back one leaves nothing.
+        db.with_writer(|connection| {
+            let tx = connection.transaction()?;
+            for i in 0..3 {
+                tx.execute(
+                    "INSERT INTO tracking_sessions (id, started_at, is_active) \
+                     VALUES (?1, ?2, 0)",
+                    rusqlite::params![format!("kept-{i}"), i as f64],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        db.with_writer(|connection| {
+            let tx = connection.transaction()?;
+            tx.execute(
+                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES ('gone', 9.0, 0)",
+                [],
+            )?;
+            drop(tx); // an uncommitted transaction rolls back
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let count = db
+            .with_reader(|connection| {
+                let count: i64 =
+                    connection.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                        row.get(0)
+                    })?;
+                Ok(count)
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 3, "the committed rows and nothing else");
+    }
+
+    #[tokio::test]
+    async fn sync_core_propagates_a_closure_panic_and_survives_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+
+        // The panic propagates to the awaiting caller (spawned so this
+        // test observes it as a JoinError rather than dying with it)...
+        let doomed = {
+            let db = db.clone();
+            tokio::spawn(async move {
+                db.with_writer(|_| -> Result<(), DbError> { panic!("closure panic") })
+                    .await
+            })
+        };
+        assert!(doomed.await.unwrap_err().is_panic());
+
+        // ...and the worker thread survives to serve the next job.
+        let alive = db
+            .with_writer(|connection| {
+                let one: i64 = connection.query_row("SELECT 1", [], |row| row.get(0))?;
+                Ok(one)
+            })
+            .await
+            .unwrap();
+        assert_eq!(alive, 1);
+    }
+
+    #[tokio::test]
+    async fn sync_core_blocking_variants_serve_plain_threads() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+        let worker = {
+            let db = db.clone();
+            std::thread::spawn(move || {
+                db.with_writer_blocking(|connection| {
+                    connection.execute(
+                        "INSERT INTO tracking_sessions (id, started_at, is_active) \
+                         VALUES ('from-a-thread', 1.0, 0)",
+                        [],
+                    )?;
+                    Ok(())
+                })?;
+                db.with_reader_blocking(|connection| {
+                    let count: i64 = connection.query_row(
+                        "SELECT COUNT(*) FROM tracking_sessions",
+                        [],
+                        |row| row.get(0),
+                    )?;
+                    Ok(count)
+                })
+            })
+        };
+        assert_eq!(worker.join().unwrap().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "carries no synchronous core")]
+    async fn from_pool_handles_reject_closure_calls_loudly() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+        let handle = Db::from_pool(db.write().clone());
+        let _ = handle.with_reader(|_| Ok(())).await;
+    }
+
+    /// The cross-runner equivalence pin: a database freshly migrated by
+    /// the embedded runner carries a `_sqlx_migrations` ledger
+    /// byte-identical in accounting (versions, descriptions, checksums)
+    /// to the chain's own derivation, which the checksum test in
+    /// `migrate` pins to the digests already in the wild.
+    #[tokio::test]
+    async fn migration_ledger_reproduces_the_inherited_accounting() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+        let rows: Vec<(i64, String, Vec<u8>)> = sqlx::query_as(
+            "SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version",
+        )
+        .fetch_all(db.read())
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), migrate::MIGRATIONS.len());
+        for (row, embedded) in rows.iter().zip(migrate::MIGRATIONS) {
+            assert_eq!(row.0, embedded.version);
+            assert_eq!(row.1, embedded.description);
+            assert_eq!(row.2, embedded.checksum(), "checksum for {}", row.1);
         }
     }
 }
