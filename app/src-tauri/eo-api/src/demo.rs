@@ -46,8 +46,7 @@ use serde::Deserialize;
 use tokio::sync::OnceCell;
 
 use crate::analytics::{
-    analytics_error, shape, shape_each, AnalyticsActivity, AnalyticsOverview, InventoryItem,
-    LedgerItem, LedgerPage, LedgerPreset,
+    analytics_error, AnalyticsActivity, AnalyticsOverview, InventoryItem, LedgerPage, LedgerPreset,
 };
 use crate::tracking::{
     build_snapshot_value, get_session_impl, list_sessions_impl, SessionDetail, TrackingSession,
@@ -207,7 +206,7 @@ impl DemoState {
             .overview(period)
             .await
             .map_err(analytics_error("demo analytics overview"))?;
-        shape(value, "demo analytics overview shaping")
+        Ok(crate::analytics::overview_dto(value))
     }
 
     async fn analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
@@ -216,7 +215,7 @@ impl DemoState {
             .activity()
             .await
             .map_err(analytics_error("demo analytics activity"))?;
-        shape(value, "demo analytics activity shaping")
+        Ok(crate::analytics::activity_dto(value))
     }
 
     async fn ledger_list(
@@ -229,14 +228,12 @@ impl DemoState {
             .list_ledger(cursor.as_deref(), limit)
             .await
             .map_err(analytics_error("demo ledger list"))?;
-        let entries = page
-            .entries
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<Vec<LedgerItem>, _>>()
-            .map_err(ApiError::internal("demo ledger list shaping"))?;
         Ok(LedgerPage {
-            entries,
+            entries: page
+                .entries
+                .into_iter()
+                .map(crate::analytics::ledger_item_dto)
+                .collect(),
             next_cursor: page.next_cursor,
         })
     }
@@ -247,7 +244,10 @@ impl DemoState {
             .list_ledger_presets()
             .await
             .map_err(analytics_error("demo ledger presets list"))?;
-        shape_each(rows, "demo ledger presets shaping")
+        Ok(rows
+            .into_iter()
+            .map(crate::analytics::ledger_preset_dto)
+            .collect())
     }
 
     async fn inventory_list(&self) -> Result<Vec<InventoryItem>, ApiError> {
@@ -256,7 +256,10 @@ impl DemoState {
             .list_inventory()
             .await
             .map_err(analytics_error("demo inventory list"))?;
-        shape_each(rows, "demo inventory list shaping")
+        Ok(rows
+            .into_iter()
+            .map(crate::analytics::inventory_item_dto)
+            .collect())
     }
 
     // ── Session reads (the live tracking computation over the demo DB) ──

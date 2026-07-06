@@ -4,11 +4,9 @@
 //!
 //! The computation lives in [`eo_services::analytics::AnalyticsService`]
 //! (shared with the guide-mode demo surface); this facade is the typed
-//! boundary over it. The service speaks `serde_json::Value` in the wire
-//! shape the HTTP layer answered, so each read bridges the value into a
-//! declared DTO with `serde_json::from_value` (the character-family
-//! pattern), and each write marshals its typed arguments into the service
-//! call and shapes the returned value the same way.
+//! boundary over it. The service returns typed aggregates and rows, and
+//! the facade maps them field by field onto the declared DTOs, so the
+//! wire shape is single-sourced here and the mapping is compiler-checked.
 //!
 //! One contract movement rides this migration, ratified under ADR-0019:
 //! the Overview's numeric fields are typed `f64`, so the pydantic-era
@@ -29,7 +27,6 @@ use std::collections::BTreeMap;
 use eo_services::analytics::AnalyticsError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{Api, ApiError};
 
@@ -289,7 +286,7 @@ impl Api {
             .overview(period)
             .await
             .map_err(analytics_error("analytics overview"))?;
-        shape(value, "analytics overview shaping")
+        Ok(overview_dto(value))
     }
 
     /// The Activity aggregate: the per-mob / per-tag / per-weapon tables.
@@ -299,7 +296,7 @@ impl Api {
             .activity()
             .await
             .map_err(analytics_error("analytics activity"))?;
-        shape(value, "analytics activity shaping")
+        Ok(activity_dto(value))
     }
 
     /// One keyset page of ledger entries (newest first) plus the cursor for
@@ -314,14 +311,8 @@ impl Api {
             .list_ledger(cursor.as_deref(), limit)
             .await
             .map_err(analytics_error("ledger list"))?;
-        let entries = page
-            .entries
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<Vec<LedgerItem>, _>>()
-            .map_err(ApiError::internal("ledger list shaping"))?;
         Ok(LedgerPage {
-            entries,
+            entries: page.entries.into_iter().map(ledger_item_dto).collect(),
             next_cursor: page.next_cursor,
         })
     }
@@ -339,7 +330,7 @@ impl Api {
             )
             .await
             .map_err(analytics_error("ledger create"))?;
-        shape(value, "ledger create shaping")
+        Ok(ledger_item_dto(value))
     }
 
     /// Delete a ledger entry; a missing entry is a not-found.
@@ -362,7 +353,7 @@ impl Api {
             .list_ledger_presets()
             .await
             .map_err(analytics_error("ledger presets list"))?;
-        shape_each(rows, "ledger presets shaping")
+        Ok(rows.into_iter().map(ledger_preset_dto).collect())
     }
 
     /// Create a ledger preset; an invalid type is a bad-request.
@@ -381,7 +372,7 @@ impl Api {
             )
             .await
             .map_err(analytics_error("ledger preset create"))?;
-        shape(value, "ledger preset create shaping")
+        Ok(ledger_preset_dto(value))
     }
 
     /// Delete a ledger preset; a missing preset is a not-found.
@@ -404,7 +395,7 @@ impl Api {
             .list_inventory()
             .await
             .map_err(analytics_error("inventory list"))?;
-        shape_each(rows, "inventory list shaping")
+        Ok(rows.into_iter().map(inventory_item_dto).collect())
     }
 
     /// Create an inventory item.
@@ -423,7 +414,7 @@ impl Api {
             )
             .await
             .map_err(analytics_error("inventory create"))?;
-        shape(value, "inventory create shaping")
+        Ok(inventory_item_dto(value))
     }
 
     /// Update an inventory item; a missing item is a not-found.
@@ -444,7 +435,7 @@ impl Api {
             .await
             .map_err(analytics_error("inventory update"))?
         {
-            Some(value) => shape(value, "inventory update shaping"),
+            Some(value) => Ok(inventory_item_dto(value)),
             None => Err(ApiError::not_found("Inventory item not found")),
         }
     }
@@ -480,31 +471,147 @@ impl Api {
             .await
             .map_err(analytics_error("inventory sell"))?
         {
-            Some(value) => shape(value, "inventory sell shaping"),
+            Some(sale) => Ok(InventorySellResult {
+                ledger_entry: sale.ledger_entry.map(ledger_item_dto),
+                sold_item: inventory_item_dto(sale.sold_item),
+            }),
             None => Err(ApiError::not_found("Inventory item not found")),
         }
     }
 }
 
-/// Bridge one service value into its DTO; a shape mismatch is an internal
-/// error (the service value is the DTO's own wire contract).
-pub(crate) fn shape<T: serde::de::DeserializeOwned>(
-    value: Value,
-    context: &'static str,
-) -> Result<T, ApiError> {
-    serde_json::from_value(value).map_err(ApiError::internal(context))
+// ── Service-row to DTO mapping ──────────────────────────────────────
+
+pub(crate) fn overview_dto(data: eo_services::analytics::OverviewData) -> AnalyticsOverview {
+    AnalyticsOverview {
+        total_return_rate: data.total_return_rate,
+        trend: data.trend.to_string(),
+        returns_breakdown: ReturnsBreakdown {
+            loot_tt: data.returns_breakdown.loot_tt,
+            pes: data.returns_breakdown.pes,
+            codex_pes: data.returns_breakdown.codex_pes,
+            quest_pes: data.returns_breakdown.quest_pes,
+            ledger: data.returns_breakdown.ledger,
+        },
+        losses_breakdown: LossesBreakdown {
+            tracking_cost: data.losses_breakdown.tracking_cost,
+            cycled_breakdown: CycledBreakdown {
+                weapon: data.losses_breakdown.cycled_breakdown.weapon.as_f64(),
+                healing: data.losses_breakdown.cycled_breakdown.healing.as_f64(),
+                enhancer: data.losses_breakdown.cycled_breakdown.enhancer.as_f64(),
+                armour: data.losses_breakdown.cycled_breakdown.armour.as_f64(),
+                dangling: data.losses_breakdown.cycled_breakdown.dangling.as_f64(),
+            },
+            ledger: data.losses_breakdown.ledger,
+        },
+        total_gains: data.total_gains,
+        total_losses: data.total_losses,
+        timeline: data
+            .timeline
+            .into_iter()
+            .map(|point| TimelineDay {
+                date: point.bucket,
+                loot_tt: point.loot_tt,
+                pes: point.pes,
+                codex_pes: point.codex_pes,
+                quest_pes: point.quest_pes,
+                ledger_gains: point.ledger_gains,
+                tracking_cost: point.tracking_cost,
+                ledger_losses: point.ledger_losses,
+            })
+            .collect(),
+        monthly_breakdown: data
+            .monthly_breakdown
+            .into_iter()
+            .map(|point| MonthlyEntry {
+                month: point.bucket,
+                loot_tt: point.loot_tt,
+                pes: point.pes,
+                codex_pes: point.codex_pes,
+                quest_pes: point.quest_pes,
+                ledger_gains: point.ledger_gains,
+                tracking_cost: point.tracking_cost,
+                ledger_losses: point.ledger_losses,
+            })
+            .collect(),
+    }
 }
 
-/// Bridge a list of service values into their DTOs.
-pub(crate) fn shape_each<T: serde::de::DeserializeOwned>(
-    values: Vec<Value>,
-    context: &'static str,
-) -> Result<Vec<T>, ApiError> {
-    values
-        .into_iter()
-        .map(serde_json::from_value)
-        .collect::<Result<Vec<T>, _>>()
-        .map_err(ApiError::internal(context))
+pub(crate) fn activity_dto(data: eo_services::analytics::ActivityData) -> AnalyticsActivity {
+    AnalyticsActivity {
+        mob_comparisons: data
+            .mob_comparisons
+            .into_iter()
+            .map(|row| MobComparison {
+                mob_name: row.name,
+                sessions: row.sessions,
+                kills: row.kills,
+                hours: row.hours,
+                cycled: row.cycled,
+                pes_per100_ped: row.pes_per100_ped,
+                loot_rate: row.loot_rate,
+            })
+            .collect(),
+        tag_comparisons: data
+            .tag_comparisons
+            .into_iter()
+            .map(|row| TagComparison {
+                tag_name: row.name,
+                sessions: row.sessions,
+                kills: row.kills,
+                hours: row.hours,
+                cycled: row.cycled,
+                pes_per100_ped: row.pes_per100_ped,
+                loot_rate: row.loot_rate,
+            })
+            .collect(),
+        weapon_comparisons: data
+            .weapon_comparisons
+            .into_iter()
+            .map(|row| WeaponComparison {
+                weapon_name: row.name,
+                sessions: row.sessions,
+                kills: row.kills,
+                hours: row.hours,
+                cycled: row.cycled,
+                pes_per100_ped: row.pes_per100_ped,
+                loot_rate: row.loot_rate,
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn ledger_item_dto(row: eo_services::analytics::LedgerRow) -> LedgerItem {
+    LedgerItem {
+        id: row.id,
+        date: row.date,
+        kind: row.kind,
+        description: row.description,
+        amount: row.amount,
+        tag: row.tag,
+    }
+}
+
+pub(crate) fn ledger_preset_dto(row: eo_services::analytics::PresetRow) -> LedgerPreset {
+    LedgerPreset {
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        description: row.description,
+        amount: row.amount,
+        tag: row.tag,
+    }
+}
+
+pub(crate) fn inventory_item_dto(row: eo_services::analytics::InventoryRow) -> InventoryItem {
+    InventoryItem {
+        id: row.id,
+        name: row.name,
+        tt_value: row.tt_value,
+        markup_paid: row.markup_paid,
+        notes: row.notes,
+        acquired_at: row.acquired_at,
+    }
 }
 
 /// Map the analytics service's error surface onto the IPC error contract:
