@@ -32,6 +32,11 @@ base64 = { workspace = true }
 # Observe-only instrumentation at the event-bus, OCR, and database seams
 # (structured events for the logs; the metrics registry is in eo-wire).
 tracing = { workspace = true }
+# The synchronous SQLite core behind the `db` seam (see the workspace
+# manifest for the libsqlite3-sys pairing constraint).
+rusqlite = { workspace = true }
+# SHA-384 for the migration ledger's checksum accounting.
+sha2 = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
