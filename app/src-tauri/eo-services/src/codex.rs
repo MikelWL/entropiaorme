@@ -28,12 +28,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use rusqlite::OptionalExtension as _;
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::clock::Clock;
 use crate::codex_categories::{
     build_rank_breakdown, get_category_for_rank, get_rank_cost, get_reward_ped, is_cat4_rank,
-    skills_for_category, CAT4_SKILLS,
+    skills_for_category, RankBreakdown, CAT4_SKILLS,
 };
 use crate::db::Db;
 use crate::game_data_store::GameDataStore;
@@ -71,6 +72,97 @@ pub enum CodexError {
 struct Species {
     base_cost: f64,
     codex_type: Option<String>,
+}
+
+/// One species in the codex listing. Serialises to the wire shape the
+/// goldens pin (camelCase, declaration order).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeciesEntry {
+    pub name: String,
+    pub base_cost: f64,
+    pub codex_type: Option<String>,
+    pub current_rank: i64,
+    pub next_rank: Option<i64>,
+    pub next_category: Option<&'static str>,
+    pub next_cost: Option<f64>,
+}
+
+/// One rank of a species' breakdown with the player's claim overlay:
+/// the breakdown's own fields first, then the overlay (the wire order).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankEntry {
+    #[serde(flatten)]
+    pub breakdown: RankBreakdown,
+    pub claimed: bool,
+    pub claimed_skill: Option<String>,
+    pub claimed_ped: Option<f64>,
+    pub is_next: bool,
+}
+
+/// A species' full 25-rank breakdown, cross-referenced with the
+/// player's claims and current rank.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeciesRanks {
+    pub species_name: String,
+    pub base_cost: f64,
+    pub codex_type: Option<String>,
+    pub current_rank: i64,
+    pub ranks: Vec<RankEntry>,
+}
+
+/// One skill option in a rank recommendation. Numeric fields hold the
+/// rendered (rounded) figures, so ordering and output read the same
+/// values.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillOption {
+    pub skill_name: &'static str,
+    pub category: &'static str,
+    pub reward_ped: f64,
+    pub current_level: Option<f64>,
+    pub levels_gained: f64,
+    pub profession_weight: i64,
+    pub prof_contribution: f64,
+    pub hp_increase: Option<f64>,
+    pub hp_gain: f64,
+    pub recommend_rank: Option<i64>,
+}
+
+/// One meta attribute with its current calibrated level.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaAttribute {
+    pub name: &'static str,
+    pub current_level: Option<f64>,
+}
+
+/// The record a rank claim (or its reversal) reports.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimRecord {
+    pub species_name: String,
+    pub rank: i64,
+    pub skill_name: String,
+    pub ped_value: f64,
+}
+
+/// The record a manual rank calibration reports.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrateRecord {
+    pub species_name: String,
+    pub rank: i64,
+}
+
+/// The record a meta claim reports.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaClaimRecord {
+    pub attribute_name: String,
+    pub ped_value: f64,
 }
 
 /// Codex operations: species listing, rank breakdowns, claim recording.
@@ -119,7 +211,7 @@ impl CodexService {
 
     /// All mob species with a codex base cost, cross-referenced with
     /// player rank, sorted rank-descending then name-ascending.
-    pub async fn get_all_species(&self) -> Result<Vec<Value>, CodexError> {
+    pub async fn get_all_species(&self) -> Result<Vec<SpeciesEntry>, CodexError> {
         // Deduplicate by species name, first occurrence winning; an
         // entry without a name or base cost is skipped (a skipped
         // no-cost entry does NOT reserve its name, so a later
@@ -163,38 +255,38 @@ impl CodexService {
             })
             .await?;
 
-        let mut result: Vec<(i64, String, Value)> = Vec::new();
+        let mut result: Vec<SpeciesEntry> = Vec::new();
         for (name, base_cost, codex_type) in listed {
             let rank = rank_map.get(&name).copied().unwrap_or(0);
             let next_rank = if rank < 25 { Some(rank + 1) } else { None };
-            // The original gates the derived fields on the next rank's
-            // truthiness, so a (hand-edited) rank of -1 yields nextRank
-            // 0 with no category or cost.
+            // The derived fields gate on the next rank's truthiness (an
+            // inherited rule), so a (hand-edited) rank of -1 yields a
+            // nextRank of 0 with no category or cost.
             let derivable = next_rank.filter(|&next| next != 0);
-            let next_category = derivable.map(get_category_for_rank);
-            let next_cost =
-                derivable.map(|next| round_half_even(get_rank_cost(next, base_cost), 2));
-            result.push((
-                rank,
-                name.clone(),
-                json!({
-                    "name": name,
-                    "baseCost": base_cost,
-                    "codexType": codex_type,
-                    "currentRank": rank,
-                    "nextRank": next_rank,
-                    "nextCategory": next_category,
-                    "nextCost": next_cost,
-                }),
-            ));
+            result.push(SpeciesEntry {
+                name,
+                base_cost,
+                codex_type,
+                current_rank: rank,
+                next_rank,
+                next_category: derivable.map(get_category_for_rank),
+                next_cost: derivable.map(|next| round_half_even(get_rank_cost(next, base_cost), 2)),
+            });
         }
-        result.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        Ok(result.into_iter().map(|(_, _, value)| value).collect())
+        result.sort_by(|a, b| {
+            b.current_rank
+                .cmp(&a.current_rank)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        Ok(result)
     }
 
     /// The 25-rank breakdown for a species, cross-referenced with
     /// claims; `None` when the species is not in the catalogue.
-    pub async fn get_species_ranks(&self, species_name: &str) -> Result<Option<Value>, CodexError> {
+    pub async fn get_species_ranks(
+        &self,
+        species_name: &str,
+    ) -> Result<Option<SpeciesRanks>, CodexError> {
         let Some(species) = self.find_species(species_name) else {
             return Ok(None);
         };
@@ -224,31 +316,28 @@ impl CodexService {
 
         let current_rank = self.current_rank(species_name).await?;
 
-        let ranks: Vec<Value> = breakdown
+        let ranks: Vec<RankEntry> = breakdown
             .into_iter()
             .map(|item| {
                 let claim = claims_map.get(&item.rank);
-                let rank = item.rank;
-                let mut value = serde_json::to_value(&item).expect("breakdown serialises");
-                let entry = value.as_object_mut().expect("breakdown object");
-                entry.insert("claimed".into(), json!(claim.is_some()));
-                entry.insert(
-                    "claimedSkill".into(),
-                    json!(claim.map(|(skill, _)| skill.clone())),
-                );
-                entry.insert("claimedPed".into(), json!(claim.map(|&(_, ped)| ped)));
-                entry.insert("isNext".into(), json!(rank == current_rank + 1));
-                value
+                let is_next = item.rank == current_rank + 1;
+                RankEntry {
+                    claimed: claim.is_some(),
+                    claimed_skill: claim.map(|(skill, _)| skill.clone()),
+                    claimed_ped: claim.map(|&(_, ped)| ped),
+                    is_next,
+                    breakdown: item,
+                }
             })
             .collect();
 
-        Ok(Some(json!({
-            "speciesName": species_name,
-            "baseCost": species.base_cost,
-            "codexType": species.codex_type,
-            "currentRank": current_rank,
-            "ranks": ranks,
-        })))
+        Ok(Some(SpeciesRanks {
+            species_name: species_name.to_string(),
+            base_cost: species.base_cost,
+            codex_type: species.codex_type,
+            current_rank,
+            ranks,
+        }))
     }
 
     /// Claim a codex rank reward: validates, records the claim,
@@ -258,7 +347,7 @@ impl CodexService {
         species_name: &str,
         rank: i64,
         skill_name: &str,
-    ) -> Result<Value, CodexError> {
+    ) -> Result<ClaimRecord, CodexError> {
         let species = self.find_species(species_name).ok_or_else(|| {
             CodexError::Invalid(format!(
                 "Species '{species_name}' not found in game-data catalogue"
@@ -374,12 +463,12 @@ impl CodexService {
             )));
         }
 
-        Ok(json!({
-            "speciesName": species_name,
-            "rank": rank,
-            "skillName": skill_name,
-            "pedValue": ped_value,
-        }))
+        Ok(ClaimRecord {
+            species_name: species_name.to_string(),
+            rank,
+            skill_name: skill_name.to_string(),
+            ped_value,
+        })
     }
 
     /// Revert the most recent rank claim for a species: step the rank
@@ -398,7 +487,7 @@ impl CodexService {
     /// A forward feature with no Python-era original; it was mirrored in
     /// the retired oracle so the OpenAPI contract carries the route, but the
     /// cross-language differential never drove it.
-    pub async fn unclaim_rank(&self, species_name: &str) -> Result<Value, CodexError> {
+    pub async fn unclaim_rank(&self, species_name: &str) -> Result<ClaimRecord, CodexError> {
         let now = naive_to_epoch(self.clock.now());
         let species_owned = species_name.to_string();
         let outcome = self
@@ -495,18 +584,22 @@ impl CodexService {
                 rank,
                 skill_name,
                 ped_value,
-            } => Ok(json!({
-                "speciesName": species_name,
-                "rank": rank,
-                "skillName": skill_name,
-                "pedValue": ped_value,
-            })),
+            } => Ok(ClaimRecord {
+                species_name: species_name.to_string(),
+                rank,
+                skill_name,
+                ped_value,
+            }),
         }
     }
 
     /// Set the codex rank directly, no side effects (manual
     /// calibration).
-    pub async fn calibrate(&self, species_name: &str, rank: i64) -> Result<Value, CodexError> {
+    pub async fn calibrate(
+        &self,
+        species_name: &str,
+        rank: i64,
+    ) -> Result<CalibrateRecord, CodexError> {
         if !(0..=25).contains(&rank) {
             return Err(CodexError::Invalid("Rank must be 0-25".to_string()));
         }
@@ -523,7 +616,10 @@ impl CodexService {
                 Ok(())
             })
             .await?;
-        Ok(json!({"speciesName": species_name, "rank": rank}))
+        Ok(CalibrateRecord {
+            species_name: species_name.to_string(),
+            rank,
+        })
     }
 
     /// Skill choices for a rank, ranked by profession contribution or
@@ -539,7 +635,7 @@ impl CodexService {
         rank: i64,
         profession: Option<&str>,
         target: &str,
-    ) -> Result<Vec<Value>, CodexError> {
+    ) -> Result<Vec<SkillOption>, CodexError> {
         let Some(species) = self.find_species(species_name) else {
             return Ok(Vec::new());
         };
@@ -605,7 +701,7 @@ impl CodexService {
             hp_map.insert(name, hp_increase);
         }
 
-        let mut skills: Vec<Value> = Vec::new();
+        let mut skills: Vec<SkillOption> = Vec::new();
         for (skill_name, cat, ped) in skill_entries {
             let current_level = self.skill_level(skill_name).await?;
             let levels_gained = levels_for_tt_value(current_level.unwrap_or(0.0), ped);
@@ -622,54 +718,45 @@ impl CodexService {
                 0.0
             };
 
-            skills.push(json!({
-                "skillName": skill_name,
-                "category": cat,
-                "rewardPed": ped,
-                "currentLevel": current_level.map(|level| round_half_even(level, 1)),
-                "levelsGained": round_half_even(levels_gained, 2),
-                "professionWeight": weight,
-                "profContribution": prof_contribution,
-                "hpIncrease": if hp_increase > 0.0 {
-                    json!(round_half_even(hp_increase, 2))
-                } else {
-                    Value::Null
-                },
-                "hpGain": hp_gain,
-            }));
+            skills.push(SkillOption {
+                skill_name,
+                category: cat,
+                reward_ped: ped,
+                current_level: current_level.map(|level| round_half_even(level, 1)),
+                levels_gained: round_half_even(levels_gained, 2),
+                profession_weight: weight,
+                prof_contribution,
+                hp_increase: (hp_increase > 0.0).then(|| round_half_even(hp_increase, 2)),
+                hp_gain,
+                recommend_rank: None,
+            });
         }
 
-        // Both orderings sort the rendered (rounded) fields, exactly
-        // as the original sorts its dicts; the stable sort preserves
-        // entry order on full ties.
-        let field = |value: &Value, key: &str| value[key].as_f64().expect("numeric sort field");
+        // Both orderings sort the rendered (rounded) figures the struct
+        // stores; the stable sort preserves entry order on full ties.
         if target == "hp" {
             // Highest HP gain first, then lower current level (absent
             // levels last), then name.
             skills.sort_by(|a, b| {
-                field(b, "hpGain")
-                    .partial_cmp(&field(a, "hpGain"))
+                b.hp_gain
+                    .partial_cmp(&a.hp_gain)
                     .expect("finite hpGain")
                     .then_with(|| {
                         let level =
-                            |value: &Value| value["currentLevel"].as_f64().unwrap_or(f64::INFINITY);
+                            |option: &SkillOption| option.current_level.unwrap_or(f64::INFINITY);
                         level(a).partial_cmp(&level(b)).expect("finite level")
                     })
-                    .then_with(|| compare_names(a, b))
+                    .then_with(|| a.skill_name.cmp(b.skill_name))
             });
         } else {
             // Highest profession contribution first, then weight, then
             // name.
             skills.sort_by(|a, b| {
-                field(b, "profContribution")
-                    .partial_cmp(&field(a, "profContribution"))
+                b.prof_contribution
+                    .partial_cmp(&a.prof_contribution)
                     .expect("finite contribution")
-                    .then_with(|| {
-                        let weight =
-                            |value: &Value| value["professionWeight"].as_i64().unwrap_or(0);
-                        weight(b).cmp(&weight(a))
-                    })
-                    .then_with(|| compare_names(a, b))
+                    .then_with(|| b.profession_weight.cmp(&a.profession_weight))
+                    .then_with(|| a.skill_name.cmp(b.skill_name))
             });
         }
 
@@ -677,20 +764,14 @@ impl CodexService {
         let mut rank_counter = 0i64;
         for skill in &mut skills {
             let relevant = if target == "hp" {
-                skill["hpGain"].as_f64().expect("finite hpGain") > 0.0
+                skill.hp_gain > 0.0
             } else {
-                skill["professionWeight"].as_i64().unwrap_or(0) > 0
+                skill.profession_weight > 0
             };
-            let recommend = if relevant {
+            skill.recommend_rank = relevant.then(|| {
                 rank_counter += 1;
-                json!(rank_counter)
-            } else {
-                Value::Null
-            };
-            skill
-                .as_object_mut()
-                .expect("skill object")
-                .insert("recommendRank".into(), recommend);
+                rank_counter
+            });
         }
 
         Ok(skills)
@@ -700,7 +781,7 @@ impl CodexService {
     /// in `codex_claims` with `kind='meta'` and sentinel species and
     /// skill columns (no calibration update; no attribute curve
     /// exists).
-    pub async fn meta_claim(&self, attribute_name: &str) -> Result<Value, CodexError> {
+    pub async fn meta_claim(&self, attribute_name: &str) -> Result<MetaClaimRecord, CodexError> {
         if !ATTRIBUTES.contains(&attribute_name) {
             return Err(CodexError::Invalid(format!(
                 "'{attribute_name}' is not an attribute. \
@@ -723,21 +804,21 @@ impl CodexService {
                 Ok(())
             })
             .await?;
-        Ok(json!({
-            "attributeName": attribute_name,
-            "pedValue": META_PED,
-        }))
+        Ok(MetaClaimRecord {
+            attribute_name: attribute_name.to_string(),
+            ped_value: META_PED,
+        })
     }
 
     /// The six attributes with their current calibrated levels.
-    pub async fn get_meta_attributes(&self) -> Result<Vec<Value>, CodexError> {
+    pub async fn get_meta_attributes(&self) -> Result<Vec<MetaAttribute>, CodexError> {
         let mut result = Vec::with_capacity(ATTRIBUTES.len());
         for attribute in ATTRIBUTES {
             let level = self.skill_level(attribute).await?;
-            result.push(json!({
-                "name": attribute,
-                "currentLevel": level.map(|level| round_half_even(level, 1)),
-            }));
+            result.push(MetaAttribute {
+                name: attribute,
+                current_level: level.map(|level| round_half_even(level, 1)),
+            });
         }
         Ok(result)
     }
@@ -822,14 +903,6 @@ fn base_cost_of(species: &serde_json::Map<String, Value>) -> Option<f64> {
         .map(|value| value.as_f64().expect("numeric codex base cost"))
 }
 
-/// Name-ascending comparison over rendered skill rows.
-fn compare_names(a: &Value, b: &Value) -> std::cmp::Ordering {
-    a["skillName"]
-        .as_str()
-        .unwrap_or("")
-        .cmp(b["skillName"].as_str().unwrap_or(""))
-}
-
 // Expected values in these tests are the original implementation's
 // outputs, computed by running the original Python implementation
 // over byte-identical catalogue fixtures and database seeds.
@@ -838,9 +911,15 @@ mod tests {
     use std::path::Path;
 
     use chrono::NaiveDateTime;
+    use serde_json::json;
 
     use super::*;
     use crate::clock::MockClock;
+
+    /// The wire shape of a typed result, for byte-shape assertions.
+    fn to_json<T: Serialize>(value: T) -> Value {
+        serde_json::to_value(value).expect("codex result serialises")
+    }
 
     fn start_instant() -> NaiveDateTime {
         NaiveDateTime::parse_from_str("2026-03-01 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap()
@@ -945,39 +1024,39 @@ mod tests {
         // Unranked: alphabetical (every rank ties at 0); the duplicate
         // Boar keeps its first base cost, the nameless/specieless rows
         // drop, and Ghost lists through its second (costed) entry.
-        let initial = svc.get_all_species().await.unwrap();
+        let initial = to_json(svc.get_all_species().await.unwrap());
         assert_eq!(
             initial,
-            vec![
+            json!([
                 json!({"name": "Boar", "baseCost": 37.5, "codexType": "Mob", "currentRank": 0,
                        "nextRank": 1, "nextCategory": "cat1", "nextCost": 37.5}),
                 json!({"name": "Ghost", "baseCost": 7.0, "codexType": null, "currentRank": 0,
                        "nextRank": 1, "nextCategory": "cat1", "nextCost": 7.0}),
                 json!({"name": "Looter Bird", "baseCost": 10.0, "codexType": "MobLooter",
                        "currentRank": 0, "nextRank": 1, "nextCategory": "cat1", "nextCost": 10.0}),
-            ]
+            ])
         );
 
         // Ranked: rank-descending, then name; the next-rank fields
         // derive from each species' own cost table.
         svc.calibrate("Looter Bird", 5).await.unwrap();
         svc.calibrate("Boar", 2).await.unwrap();
-        let ranked = svc.get_all_species().await.unwrap();
+        let ranked = to_json(svc.get_all_species().await.unwrap());
         assert_eq!(
             ranked,
-            vec![
+            json!([
                 json!({"name": "Looter Bird", "baseCost": 10.0, "codexType": "MobLooter",
                        "currentRank": 5, "nextRank": 6, "nextCategory": "cat1", "nextCost": 80.0}),
                 json!({"name": "Boar", "baseCost": 37.5, "codexType": "Mob", "currentRank": 2,
                        "nextRank": 3, "nextCategory": "cat2", "nextCost": 112.5}),
                 json!({"name": "Ghost", "baseCost": 7.0, "codexType": null, "currentRank": 0,
                        "nextRank": 1, "nextCategory": "cat1", "nextCost": 7.0}),
-            ]
+            ])
         );
 
         // Rank 25 has no next rank.
         svc.calibrate("Boar", 25).await.unwrap();
-        let maxed = svc.get_all_species().await.unwrap();
+        let maxed = to_json(svc.get_all_species().await.unwrap());
         assert_eq!(maxed[0]["name"], "Boar");
         assert_eq!(maxed[0]["nextRank"], Value::Null);
         assert_eq!(maxed[0]["nextCategory"], Value::Null);
@@ -999,10 +1078,12 @@ mod tests {
         );
         assert_eq!(svc.get_species_ranks("Nessie").await.unwrap(), None);
         assert_eq!(
-            svc.get_skill_options("Nessie", 1, None, "profession")
-                .await
-                .unwrap(),
-            Vec::<Value>::new()
+            to_json(
+                svc.get_skill_options("Nessie", 1, None, "profession")
+                    .await
+                    .unwrap(),
+            ),
+            json!([])
         );
     }
 
@@ -1014,7 +1095,7 @@ mod tests {
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
         svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
 
-        let ranks = svc.get_species_ranks("Boar").await.unwrap().unwrap();
+        let ranks = to_json(svc.get_species_ranks("Boar").await.unwrap().unwrap());
         assert_eq!(ranks["speciesName"], "Boar");
         assert_eq!(ranks["baseCost"], json!(37.5));
         assert_eq!(ranks["codexType"], "Mob");
@@ -1093,7 +1174,7 @@ mod tests {
         let (svc, db) = service(dir.path()).await;
         seed_calibrations(&db).await;
 
-        let result = svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
+        let result = to_json(svc.claim_rank("Boar", 1, "Rifle").await.unwrap());
         assert_eq!(
             result,
             json!({"speciesName": "Boar", "rank": 1, "skillName": "Rifle", "pedValue": 0.1875})
@@ -1156,7 +1237,7 @@ mod tests {
         assert_eq!(calibration.1, now);
 
         // The next claim builds on the advanced rank.
-        let result = svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
+        let result = to_json(svc.claim_rank("Boar", 2, "Anatomy").await.unwrap());
         assert_eq!(result["pedValue"], json!(0.375));
     }
 
@@ -1202,7 +1283,7 @@ mod tests {
         let (svc, _db) = service(dir.path()).await;
 
         svc.calibrate("Looter Bird", 4).await.unwrap();
-        let result = svc.claim_rank("Looter Bird", 5, "Zoology").await.unwrap();
+        let result = to_json(svc.claim_rank("Looter Bird", 5, "Zoology").await.unwrap());
         assert_eq!(
             result,
             json!({"speciesName": "Looter Bird", "rank": 5, "skillName": "Zoology",
@@ -1220,7 +1301,7 @@ mod tests {
             assert_eq!(invalid(error), "Rank must be 0-25");
         }
 
-        let result = svc.calibrate("Boar", 4).await.unwrap();
+        let result = to_json(svc.calibrate("Boar", 4).await.unwrap());
         assert_eq!(result, json!({"speciesName": "Boar", "rank": 4}));
         svc.calibrate("Boar", 7).await.unwrap();
         let rows: Vec<i64> = db
@@ -1255,7 +1336,7 @@ mod tests {
              Valid: ['Agility', 'Health', 'Intelligence', 'Psyche', 'Stamina', 'Strength']"
         );
 
-        let result = svc.meta_claim("Agility").await.unwrap();
+        let result = to_json(svc.meta_claim("Agility").await.unwrap());
         assert_eq!(result, json!({"attributeName": "Agility", "pedValue": 1.0}));
         let row = db
             .with_reader(|conn| {
@@ -1285,17 +1366,17 @@ mod tests {
 
         // The six attributes in sorted order, levels from the latest
         // calibration rounded to one decimal (32.04 -> 32.0).
-        let attributes = svc.get_meta_attributes().await.unwrap();
+        let attributes = to_json(svc.get_meta_attributes().await.unwrap());
         assert_eq!(
             attributes,
-            vec![
+            json!([
                 json!({"name": "Agility", "currentLevel": 32.0}),
                 json!({"name": "Health", "currentLevel": null}),
                 json!({"name": "Intelligence", "currentLevel": null}),
                 json!({"name": "Psyche", "currentLevel": null}),
                 json!({"name": "Stamina", "currentLevel": null}),
                 json!({"name": "Strength", "currentLevel": null}),
-            ]
+            ])
         );
     }
 
@@ -1309,7 +1390,7 @@ mod tests {
         // base 37.5 = 3750 kill cost, cat3 divisor 640 -> 5.859375 ->
         // 5.8594 at four places.
         svc.calibrate("Boar", 24).await.unwrap();
-        let result = svc.claim_rank("Boar", 25, "Evade").await.unwrap();
+        let result = to_json(svc.claim_rank("Boar", 25, "Evade").await.unwrap());
         assert_eq!(
             result,
             json!({"speciesName": "Boar", "rank": 25, "skillName": "Evade", "pedValue": 5.8594})
@@ -1337,11 +1418,12 @@ mod tests {
         // original's fixture sequence.
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
 
-        let options = svc
-            .get_skill_options("Boar", 1, Some("Sniper"), "profession")
-            .await
-            .unwrap();
-        assert_eq!(options.len(), 15);
+        let options = to_json(
+            svc.get_skill_options("Boar", 1, Some("Sniper"), "profession")
+                .await
+                .unwrap(),
+        );
+        assert_eq!(options.as_array().unwrap().len(), 15);
 
         // Weighted skills lead, ranked by contribution computed from
         // the UNROUNDED levels (0.28749, not 0.2875 of the displayed
@@ -1369,6 +1451,8 @@ mod tests {
                    "recommendRank": null})
         );
         let names: Vec<&str> = options
+            .as_array()
+            .unwrap()
             .iter()
             .map(|option| option["skillName"].as_str().unwrap())
             .collect();
@@ -1392,7 +1476,7 @@ mod tests {
                 "Weapons Handling",
             ]
         );
-        assert!(options[2..]
+        assert!(options.as_array().unwrap()[2..]
             .iter()
             .all(|option| option["recommendRank"] == Value::Null));
     }
@@ -1404,11 +1488,12 @@ mod tests {
         seed_calibrations(&db).await;
 
         // A MobLooter rank 5 offers cat3 plus the cat4 bonus skills.
-        let options = svc
-            .get_skill_options("Looter Bird", 5, None, "hp")
-            .await
-            .unwrap();
-        assert_eq!(options.len(), 19);
+        let options = to_json(
+            svc.get_skill_options("Looter Bird", 5, None, "hp")
+                .await
+                .unwrap(),
+        );
+        assert_eq!(options.as_array().unwrap().len(), 19);
 
         assert_eq!(
             options[0],
@@ -1428,6 +1513,8 @@ mod tests {
         // The zero-gain tail interleaves cat3 and cat4 alphabetically
         // (every key ties, so the name decides).
         let names: Vec<&str> = options
+            .as_array()
+            .unwrap()
             .iter()
             .map(|option| option["skillName"].as_str().unwrap())
             .collect();
@@ -1455,7 +1542,7 @@ mod tests {
                 "Vehicle Repairing",
             ]
         );
-        assert!(options[2..]
+        assert!(options.as_array().unwrap()[2..]
             .iter()
             .all(|option| option["recommendRank"] == Value::Null));
     }
@@ -1521,7 +1608,7 @@ mod tests {
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 1);
         assert_eq!(svc.skill_level("Rifle").await.unwrap(), Some(217.745));
 
-        let reverted = svc.unclaim_rank("Boar").await.unwrap();
+        let reverted = to_json(svc.unclaim_rank("Boar").await.unwrap());
         assert_eq!(
             reverted,
             json!({"speciesName": "Boar", "rank": 1, "skillName": "Rifle", "pedValue": 0.1875})
