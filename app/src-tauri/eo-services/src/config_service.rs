@@ -6,8 +6,9 @@
 //! save by a process that does not know them; the unknown keys are also
 //! carried as a typed catch-all on the loaded config, making the
 //! carry-forward contract visible. The on-disk byte shape is the owned
-//! canonical format: ASCII-escaped JSON, two-space indent, stored key
-//! positions preserved on merge, platform line endings.
+//! canonical format: UTF-8 pretty JSON (two-space indent), stored key
+//! positions preserved on merge, platform line endings. Files written
+//! by earlier releases with ASCII-escaped text load unchanged.
 //!
 //! Update semantics: unknown update keys are
 //! ignored; the hotbar always re-normalises to its full slot shape; the
@@ -198,14 +199,14 @@ impl ConfigService {
 
     fn load(&self) -> std::io::Result<AppConfig> {
         if self.config_path.exists() {
-            // Read failures fail loudly (the backend's would too): a
-            // transient lock must never silently reset user settings.
+            // Read failures fail loudly: a transient lock must never
+            // silently reset user settings.
             let raw = std::fs::read_to_string(&self.config_path)?;
             match serde_json::from_str::<Value>(&raw) {
                 Ok(Value::Object(data)) => return Ok(from_stored(&data)),
                 Ok(_) => {
-                    // A parseable file of the wrong shape crashes the
-                    // backend's loader rather than resetting; mirror it.
+                    // A parseable file of the wrong shape errors loudly
+                    // rather than resetting user settings.
                     return Err(std::io::Error::other(
                         "settings file does not contain an object",
                     ));
@@ -240,7 +241,7 @@ impl ConfigService {
 
     /// A candidate config with the updates applied, leaving the live
     /// config untouched (round-trips through the stored representation
-    /// first, exactly as the backend's clone path does).
+    /// first, so validation sees exactly what a save would store).
     pub fn clone_with_updates(&self, updates: &Map<String, Value>) -> AppConfig {
         let mut candidate = from_stored(&known_fields(&self.config));
         candidate.extra = self.config.extra.clone();
@@ -298,7 +299,8 @@ impl ConfigService {
             merged.insert(key, value);
         }
 
-        let mut body = to_ascii_pretty(&Value::Object(merged));
+        let mut body =
+            serde_json::to_string_pretty(&Value::Object(merged)).expect("settings serialise");
         if cfg!(windows) {
             body = body.replace('\n', "\r\n");
         }
@@ -320,8 +322,8 @@ fn known_fields(config: &AppConfig) -> Map<String, Value> {
     }
 }
 
-/// Reconstruct a config from stored JSON, handling missing, extra, and
-/// malformed fields exactly as the backend does.
+/// Reconstruct a config from stored JSON, tolerating missing, extra,
+/// and malformed fields (an inherited tolerance the tests pin).
 fn from_stored(data: &Map<String, Value>) -> AppConfig {
     let defaults = AppConfig::default();
     let string_or = |key: &str, fallback: &str| -> String {
@@ -571,7 +573,7 @@ fn assign_bool(slot: &mut bool, value: &Value) {
 }
 
 /// When the active id no longer resolves, the preset list collapses to
-/// the default preset, exactly as the backend's fallback does.
+/// the default preset.
 fn ensure_active_trifecta_preset(config: &mut AppConfig) {
     if active_trifecta_preset(config).is_some() {
         return;
@@ -579,107 +581,6 @@ fn ensure_active_trifecta_preset(config: &mut AppConfig) {
     let fallback = TrifectaPresetConfig::default_preset();
     config.active_trifecta_preset_id = Some(fallback.id.clone());
     config.trifecta_presets = vec![fallback];
-}
-
-/// `json.dumps(value, indent=2)` with its default ASCII escaping: the
-/// settings file's byte shape.
-fn to_ascii_pretty(value: &Value) -> String {
-    let mut out = String::new();
-    write_value(&mut out, value, 0);
-    out
-}
-
-fn write_value(out: &mut String, value: &Value, depth: usize) {
-    match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(true) => out.push_str("true"),
-        Value::Bool(false) => out.push_str("false"),
-        Value::Number(n) => {
-            // Integers render plainly; floats through the Python repr
-            // rule (exponent thresholds and signs match json.dumps).
-            if let Some(i) = n.as_i64() {
-                out.push_str(&i.to_string());
-            } else if let Some(u) = n.as_u64() {
-                out.push_str(&u.to_string());
-            } else {
-                out.push_str(&eo_wire::normalizer::python_repr_f64(
-                    n.as_f64().expect("numeric JSON value"),
-                ));
-            }
-        }
-        Value::String(s) => write_escaped_string(out, s),
-        Value::Array(items) => {
-            if items.is_empty() {
-                out.push_str("[]");
-                return;
-            }
-            out.push('[');
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                out.push('\n');
-                out.push_str(&"  ".repeat(depth + 1));
-                write_value(out, item, depth + 1);
-            }
-            out.push('\n');
-            out.push_str(&"  ".repeat(depth));
-            out.push(']');
-        }
-        Value::Object(map) => {
-            if map.is_empty() {
-                out.push_str("{}");
-                return;
-            }
-            out.push('{');
-            for (index, (key, item)) in map.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                out.push('\n');
-                out.push_str(&"  ".repeat(depth + 1));
-                write_escaped_string(out, key);
-                out.push_str(": ");
-                write_value(out, item, depth + 1);
-            }
-            out.push('\n');
-            out.push_str(&"  ".repeat(depth));
-            out.push('}');
-        }
-    }
-}
-
-fn write_escaped_string(out: &mut String, raw: &str) {
-    out.push('"');
-    for ch in raw.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 || (c as u32) == 0x7f => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c if c.is_ascii() => out.push(c),
-            c => {
-                // Python's default ensure_ascii: BMP as \uXXXX, beyond
-                // the BMP as a surrogate pair.
-                let code = c as u32;
-                if code <= 0xFFFF {
-                    out.push_str(&format!("\\u{code:04x}"));
-                } else {
-                    let reduced = code - 0x10000;
-                    let high = 0xD800 + (reduced >> 10);
-                    let low = 0xDC00 + (reduced & 0x3FF);
-                    out.push_str(&format!("\\u{high:04x}\\u{low:04x}"));
-                }
-            }
-        }
-    }
-    out.push('"');
 }
 
 #[cfg(test)]
@@ -855,11 +756,18 @@ mod tests {
     }
 
     #[test]
-    fn ascii_escaping_matches_the_stored_byte_shape() {
-        let value = serde_json::json!({"name": "Frussj\u{00e4}ger \u{1F600}", "n": 1.5});
-        let body = to_ascii_pretty(&value);
-        assert!(body.contains("Frussj\\u00e4ger \\ud83d\\ude00"));
-        assert!(body.contains("\"n\": 1.5"));
+    fn ascii_escaped_legacy_files_load_intact() {
+        // Files written by earlier releases carry `\uXXXX` escapes
+        // (including surrogate pairs); the read side decodes them, and
+        // the next save re-stores the text in the canonical UTF-8 form.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            "{\n  \"player_name\": \"Frussj\\u00e4ger \\ud83d\\ude00\"\n}",
+        )
+        .unwrap();
+        let svc = service(dir.path());
+        assert_eq!(svc.get().player_name, "Frussj\u{00e4}ger \u{1F600}");
     }
 
     #[test]
@@ -1058,13 +966,13 @@ mod tests {
     }
 
     #[test]
-    fn the_writer_nests_indentation_commas_and_control_escapes_exactly() {
+    fn the_writer_nests_indentation_and_commas_canonically() {
         let value = serde_json::json!({
             "a": [{"x": 1, "y": [true, null]}, 2],
-            "b": "ctl\u{0001} end",
+            "b": "end",
         });
         assert_eq!(
-            to_ascii_pretty(&value),
+            serde_json::to_string_pretty(&value).unwrap(),
             concat!(
                 "{\n",
                 "  \"a\": [\n",
@@ -1077,7 +985,7 @@ mod tests {
                 "    },\n",
                 "    2\n",
                 "  ],\n",
-                "  \"b\": \"ctl\\u0001 end\"\n",
+                "  \"b\": \"end\"\n",
                 "}"
             )
         );
@@ -1127,11 +1035,18 @@ mod tests {
     }
 
     #[test]
-    fn del_and_small_floats_render_like_the_backend_writer() {
-        let value = serde_json::json!({"k": "a\u{7f}b", "tiny": 1e-5});
-        let body = to_ascii_pretty(&value);
-        assert!(body.contains("a\\u007fb"));
-        assert!(body.contains("1e-05"));
+    fn non_ascii_text_is_stored_as_utf8_and_reloads_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = service(dir.path());
+        let mut updates = Map::new();
+        updates.insert("player_name".into(), Value::from("Frussjäger 😀"));
+        svc.update(&updates).unwrap();
+        assert!(
+            read_settings(dir.path()).contains("Frussjäger 😀"),
+            "the canonical format stores text as raw UTF-8"
+        );
+        let reloaded = service(dir.path());
+        assert_eq!(reloaded.get().player_name, "Frussjäger 😀");
     }
 
     #[test]
