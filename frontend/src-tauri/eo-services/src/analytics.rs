@@ -21,8 +21,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
-use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::clock::Clock;
@@ -70,12 +69,9 @@ impl AnalyticsService {
         Self { db, clock }
     }
 
-    /// The reader pool, for the aggregate and list reads.
-    fn read(&self) -> &SqlitePool {
-        self.db.read()
-    }
-
-    /// The writer pool, for the ledger / inventory mutations.
+    /// The writer pool, for the rollup-coupled ledger / inventory mutations
+    /// that stay on a single sqlx transaction (the raw write and its rollup
+    /// refresh must commit together).
     fn write(&self) -> &SqlitePool {
         self.db.write()
     }
@@ -89,12 +85,13 @@ const ACTIVITY_DOMINANCE_THRESHOLD: f64 = 0.6;
 
 /// A SQLite numeric read preserving the engine type: a REAL decodes to a
 /// float, an INTEGER (including the `COALESCE(SUM(...), 0)` empty case) to an
-/// integer. `try_get::<f64>` rejects an integer-affinity value, so the
-/// integer arm fires for the NULL-sum zeros.
-fn sql_number(row: &SqliteRow, index: usize) -> Value {
-    match row.try_get::<f64, _>(index) {
-        Ok(value) => json!(value),
-        Err(_) => json!(row.get::<i64, _>(index)),
+/// integer. The stored value's affinity (`ValueRef`) drives the branch, so a
+/// REAL sum stays a float and an integer sum (the NULL-sum zeros) stays an
+/// integer, exactly as the sqlx `try_get::<f64>`-then-`i64` cascade did.
+fn sql_number(row: &rusqlite::Row, index: usize) -> Value {
+    match row.get_ref_unwrap(index) {
+        rusqlite::types::ValueRef::Real(value) => json!(value),
+        value => json!(value.as_i64().expect("sql_number reads a numeric column")),
     }
 }
 
@@ -128,7 +125,7 @@ fn float_field(value: Value) -> Value {
 
 /// `float(value)` over an engine-typed number (the activity path, where every
 /// numeric is summed in float space).
-fn as_float(row: &SqliteRow, index: usize) -> f64 {
+fn as_float(row: &rusqlite::Row, index: usize) -> f64 {
     sql_number(row, index).as_f64().unwrap_or(0.0)
 }
 
@@ -291,11 +288,11 @@ const ROLLUP_FAMILY_COLS: [&str; 9] = [
 /// lexically and carry no quotes, so they inline into the CASE guards the
 /// same way this file's other composed statements inline column and period
 /// expressions (`AssertSqlSafe`, never caller data).
-async fn rollup_family_sums_multi(
-    pool: &SqlitePool,
+fn rollup_family_sums_multi(
+    conn: &rusqlite::Connection,
     windows: &[HybridWindow],
-) -> Result<Vec<FamilySums>, sqlx::Error> {
-    let mut out = vec![[None; 9]; windows.len()];
+) -> Result<Vec<FamilySums>, DbError> {
+    let mut out: Vec<FamilySums> = vec![[None; 9]; windows.len()];
 
     // The windows that actually cover full rollup days, paired with their
     // index back into `out`.
@@ -346,16 +343,18 @@ async fn rollup_family_sums_multi(
         "SELECT {} FROM daily_rollups WHERE {where_clause}",
         cols.join(", ")
     );
-    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .fetch_one(pool)
-        .await?;
-
-    for (slot, (out_index, _, _)) in active.iter().enumerate() {
-        let base = slot * 9;
-        let mut sums: FamilySums = [None; 9];
-        for (family, value) in sums.iter_mut().enumerate() {
-            *value = row.try_get(base + family)?;
+    let per_slot = conn.query_row(&sql, [], |row| {
+        let mut per_slot: Vec<FamilySums> = vec![[None; 9]; active.len()];
+        for (slot, sums) in per_slot.iter_mut().enumerate() {
+            let base = slot * 9;
+            for (family, value) in sums.iter_mut().enumerate() {
+                *value = row.get::<_, Option<f64>>(base + family)?;
+            }
         }
+        Ok(per_slot)
+    })?;
+
+    for ((out_index, _, _), sums) in active.iter().zip(per_slot) {
         out[*out_index] = sums;
     }
     Ok(out)
@@ -363,108 +362,99 @@ async fn rollup_family_sums_multi(
 
 /// One raw part's family sums over `[start, end)`, verbatim (NULL kept)
 /// so the merge preserves engine typing.
-async fn raw_family_sums(
-    pool: &SqlitePool,
+fn raw_family_sums(
+    conn: &rusqlite::Connection,
     range: (Option<f64>, Option<f64>),
-) -> Result<FamilySums, sqlx::Error> {
-    async fn fetch(
-        pool: &SqlitePool,
+) -> Result<FamilySums, DbError> {
+    fn fetch(
+        conn: &rusqlite::Connection,
         sql: String,
         params: &[f64],
         sums: usize,
-    ) -> Result<Vec<Option<f64>>, sqlx::Error> {
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-        for value in params {
-            query = query.bind(*value);
-        }
-        let row = query.fetch_one(pool).await?;
-        (0..sums).map(|index| row.try_get(index)).collect()
+    ) -> Result<Vec<Option<f64>>, DbError> {
+        let values = conn.query_row(&sql, rusqlite::params_from_iter(params), |row| {
+            (0..sums)
+                .map(|index| row.get::<_, Option<f64>>(index))
+                .collect::<rusqlite::Result<Vec<Option<f64>>>>()
+        })?;
+        Ok(values)
     }
 
     let (start, end) = range;
     let mut sums: FamilySums = [None; 9];
     let (w, p) = where_epoch("timestamp", start, end);
     let kills = fetch(
-        pool,
+        conn,
         format!("SELECT SUM(loot_total_ped), SUM(enhancer_cost) FROM kills WHERE {w}"),
         &p,
         2,
-    )
-    .await?;
+    )?;
     sums[0] = kills[0];
     sums[2] = kills[1];
 
     let (w, p) = where_epoch("k.timestamp", start, end);
     let weapon = fetch(
-        pool,
+        conn,
         format!(
             "SELECT SUM(ts.cost_per_shot * ts.shots_fired) \
              FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE {w}"
         ),
         &p,
         1,
-    )
-    .await?;
+    )?;
     sums[1] = weapon[0];
 
     let (w, p) = where_epoch("started_at", start, end);
     let sessions = fetch(
-        pool,
+        conn,
         format!(
             "SELECT SUM(armour_cost), SUM(heal_cost), SUM(dangling_cost) \
              FROM tracking_sessions WHERE {w}"
         ),
         &p,
         3,
-    )
-    .await?;
+    )?;
     sums[3] = sessions[0];
     sums[4] = sessions[1];
     sums[5] = sessions[2];
 
     let (w, p) = where_epoch("timestamp", start, end);
     sums[6] = fetch(
-        pool,
+        conn,
         format!("SELECT SUM(ped_value) FROM skill_gains WHERE {w}"),
         &p,
         1,
-    )
-    .await?[0];
+    )?[0];
     let (w, p) = where_epoch("claimed_at", start, end);
     sums[7] = fetch(
-        pool,
+        conn,
         format!("SELECT SUM(ped_value) FROM codex_claims WHERE {w}"),
         &p,
         1,
-    )
-    .await?[0];
+    )?[0];
     let (w, p) = where_epoch("claimed_at", start, end);
     sums[8] = fetch(
-        pool,
+        conn,
         format!("SELECT SUM(ped_value) FROM quest_claims WHERE {w}"),
         &p,
         1,
-    )
-    .await?[0];
+    )?[0];
     Ok(sums)
 }
 
 /// A day/month-keyed aggregate (`SELECT <bucket>, COALESCE(SUM(...), 0) ...
 /// GROUP BY <bucket>`) collected as `bucket -> engine-typed number`,
 /// preserving the SQL row order.
-async fn bucketed_epoch(
-    pool: &SqlitePool,
+fn bucketed_epoch(
+    conn: &rusqlite::Connection,
     sql: String,
     params: &[f64],
-) -> Result<Map<String, Value>, sqlx::Error> {
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for value in params {
-        query = query.bind(*value);
-    }
-    let rows = query.fetch_all(pool).await?;
+) -> Result<Map<String, Value>, DbError> {
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
     let mut out = Map::new();
-    for row in &rows {
-        out.insert(row.get::<String, _>(0), sql_number(row, 1));
+    while let Some(row) = rows.next()? {
+        out.insert(row.get::<_, String>(0)?, sql_number(row, 1));
     }
     Ok(out)
 }
@@ -493,13 +483,13 @@ struct Metrics {
 /// split is purely lexical: date keys at or below the watermark are all
 /// rolled up (the heal sweeps stray spellings); later keys read raw.
 /// Part totals stay unrounded until the final merge.
-async fn ledger_by_tag(
-    pool: &SqlitePool,
+fn ledger_by_tag(
+    conn: &rusqlite::Connection,
     entry_type: &str,
     epoch_start: Option<f64>,
     epoch_end: Option<f64>,
     watermark: &str,
-) -> Result<Map<String, Value>, sqlx::Error> {
+) -> Result<Map<String, Value>, DbError> {
     let mut totals: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
     let bounds = |column: &str| {
         let mut sql = String::new();
@@ -515,35 +505,37 @@ async fn ledger_by_tag(
         (sql, params)
     };
 
+    fn accumulate(
+        conn: &rusqlite::Connection,
+        totals: &mut std::collections::BTreeMap<String, f64>,
+        sql: &str,
+        params: &[String],
+    ) -> Result<(), DbError> {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+        while let Some(row) = rows.next()? {
+            *totals.entry(row.get::<_, String>(0)?).or_insert(0.0) += row.get::<_, f64>(1)?;
+        }
+        Ok(())
+    }
+
     let (extra, params) = bounds("day");
     let sql = format!(
         "SELECT tag, SUM(amount) FROM daily_ledger_rollups \
          WHERE entry_type = ? AND day <= ?{extra} GROUP BY tag"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(entry_type)
-        .bind(watermark);
-    for value in &params {
-        query = query.bind(value);
-    }
-    for row in &query.fetch_all(pool).await? {
-        *totals.entry(row.get(0)).or_insert(0.0) += row.get::<f64, _>(1);
-    }
+    let mut p: Vec<String> = vec![entry_type.to_string(), watermark.to_string()];
+    p.extend(params);
+    accumulate(conn, &mut totals, &sql, &p)?;
 
     let (extra, params) = bounds("le.date");
     let sql = format!(
         "SELECT le.tag, SUM(le.amount) FROM ledger_entries le \
          WHERE le.type = ? AND le.date > ?{extra} GROUP BY le.tag"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(entry_type)
-        .bind(watermark);
-    for value in &params {
-        query = query.bind(value);
-    }
-    for row in &query.fetch_all(pool).await? {
-        *totals.entry(row.get(0)).or_insert(0.0) += row.get::<f64, _>(1);
-    }
+    let mut p: Vec<String> = vec![entry_type.to_string(), watermark.to_string()];
+    p.extend(params);
+    accumulate(conn, &mut totals, &sql, &p)?;
 
     let mut out = Map::new();
     for (tag, total) in totals {
@@ -563,17 +555,17 @@ async fn ledger_by_tag(
 /// single-pass path did (the batched rollup sums are identical to the
 /// per-window ones, so the merge and the response are byte-for-byte
 /// unchanged).
-async fn assemble_metrics(
-    pool: &SqlitePool,
+fn assemble_metrics(
+    conn: &rusqlite::Connection,
     window: &HybridWindow,
     rollup_sums: FamilySums,
     epoch_start: Option<f64>,
     epoch_end: Option<f64>,
     watermark: &str,
-) -> Result<Metrics, sqlx::Error> {
+) -> Result<Metrics, DbError> {
     let mut sums = rollup_sums;
     for range in &window.raw_ranges {
-        merge_family_sums(&mut sums, raw_family_sums(pool, *range).await?);
+        merge_family_sums(&mut sums, raw_family_sums(conn, *range)?);
     }
 
     let loot_tt = family_value(sums[0]);
@@ -595,8 +587,8 @@ async fn assemble_metrics(
         &dangling,
     );
 
-    let ledger_gains = ledger_by_tag(pool, "markup", epoch_start, epoch_end, watermark).await?;
-    let ledger_losses = ledger_by_tag(pool, "expense", epoch_start, epoch_end, watermark).await?;
+    let ledger_gains = ledger_by_tag(conn, "markup", epoch_start, epoch_end, watermark)?;
+    let ledger_losses = ledger_by_tag(conn, "expense", epoch_start, epoch_end, watermark)?;
 
     Ok(Metrics {
         loot_tt,
@@ -637,16 +629,34 @@ fn rate_from_metrics(m: &Metrics) -> f64 {
 /// later keys read raw. Both maps emit in (bucket, tag) order, the
 /// order the raw `GROUP BY` sorter produced; part sums merge unrounded
 /// (month buckets can span the split) and round once.
-async fn ledger_buckets(
-    pool: &SqlitePool,
+fn ledger_buckets(
+    conn: &rusqlite::Connection,
     kind: BucketKind,
     entry_type: &str,
     epoch_start: Option<f64>,
     watermark: &str,
-) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, sqlx::Error> {
+) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, DbError> {
     let mut sums: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>> =
         std::collections::BTreeMap::new();
     let start_iso = epoch_start.map(epoch_to_iso);
+
+    fn accumulate(
+        conn: &rusqlite::Connection,
+        sums: &mut std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>>,
+        sql: &str,
+        params: &[String],
+    ) -> Result<(), DbError> {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+        while let Some(row) = rows.next()? {
+            *sums
+                .entry(row.get::<_, String>(0)?)
+                .or_default()
+                .entry(row.get::<_, String>(1)?)
+                .or_insert(0.0) += row.get::<_, f64>(2)?;
+        }
+        Ok(())
+    }
 
     let bucket_expr = match kind {
         BucketKind::Day => "day",
@@ -661,19 +671,11 @@ async fn ledger_buckets(
         "SELECT {bucket_expr} AS bucket, tag, SUM(amount) FROM daily_ledger_rollups \
          WHERE entry_type = ? AND day <= ?{extra} GROUP BY bucket, tag"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(entry_type)
-        .bind(watermark);
+    let mut p: Vec<String> = vec![entry_type.to_string(), watermark.to_string()];
     if let Some(start) = &start_iso {
-        query = query.bind(start);
+        p.push(start.clone());
     }
-    for row in &query.fetch_all(pool).await? {
-        *sums
-            .entry(row.get(0))
-            .or_default()
-            .entry(row.get(1))
-            .or_insert(0.0) += row.get::<f64, _>(2);
-    }
+    accumulate(conn, &mut sums, &sql, &p)?;
 
     let bucket_expr = match kind {
         BucketKind::Day => "le.date",
@@ -688,19 +690,11 @@ async fn ledger_buckets(
         "SELECT {bucket_expr} AS bucket, le.tag, SUM(le.amount) FROM ledger_entries le \
          WHERE le.type = ? AND le.date > ?{extra} GROUP BY bucket, le.tag"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(entry_type)
-        .bind(watermark);
+    let mut p: Vec<String> = vec![entry_type.to_string(), watermark.to_string()];
     if let Some(start) = &start_iso {
-        query = query.bind(start);
+        p.push(start.clone());
     }
-    for row in &query.fetch_all(pool).await? {
-        *sums
-            .entry(row.get(0))
-            .or_default()
-            .entry(row.get(1))
-            .or_insert(0.0) += row.get::<f64, _>(2);
-    }
+    accumulate(conn, &mut sums, &sql, &p)?;
 
     let mut out: std::collections::BTreeMap<String, Map<String, Value>> =
         std::collections::BTreeMap::new();
@@ -721,12 +715,24 @@ async fn ledger_buckets(
 /// edges (see [`hybrid_window`]).
 async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError> {
     // The lazy rollup heal is a write (route it to the writer, never a
-    // reader-held connection); every subsequent aggregate is a plain read
-    // on the reader pool.
+    // reader-held connection); every subsequent aggregate is a plain read,
+    // run as one synchronous unit on a reader-core connection.
     let watermark = daily_rollup::heal_rollups(db.write(), now).await?;
-    let pool = db.read();
     let epoch_start = period_epoch(period, now);
+    db.with_reader(move |conn| overview_read(conn, now, epoch_start, &watermark))
+        .await
+}
 
+/// The Overview aggregate proper: a single synchronous read pass over a
+/// reader-core connection (the caller heals the rollups first, on the
+/// writer). Every step is a plain read, so the whole aggregate runs
+/// without an executor between its statements.
+fn overview_read(
+    conn: &rusqlite::Connection,
+    now: f64,
+    epoch_start: Option<f64>,
+    watermark: &str,
+) -> Result<Value, DbError> {
     // The Overview reports three metric windows: the requested period
     // window, and the two fixed trend windows (recent-30d, prior-30d, the
     // pair independent of the period). Their rollup-side family sums come
@@ -742,13 +748,15 @@ async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError
     ];
     let windows: Vec<HybridWindow> = window_bounds
         .iter()
-        .map(|&(start, end)| hybrid_window(start, end, &watermark))
+        .map(|&(start, end)| hybrid_window(start, end, watermark))
         .collect();
-    let rollup_sums = rollup_family_sums_multi(pool, &windows).await?;
+    let rollup_sums = rollup_family_sums_multi(conn, &windows)?;
     let mut metrics = Vec::with_capacity(window_bounds.len());
     for ((start, end), (window, sums)) in window_bounds.iter().zip(windows.iter().zip(rollup_sums))
     {
-        metrics.push(assemble_metrics(pool, window, sums, *start, *end, &watermark).await?);
+        metrics.push(assemble_metrics(
+            conn, window, sums, *start, *end, watermark,
+        )?);
     }
     let mut metrics = metrics.into_iter();
     let m = metrics.next().expect("period window metrics");
@@ -779,10 +787,9 @@ async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError
     };
 
     // Daily breakdown (the point key is "date", the monthly point's is "month").
-    let timeline = breakdown_points(pool, &watermark, epoch_start, "date", BucketKind::Day).await?;
+    let timeline = breakdown_points(conn, watermark, epoch_start, "date", BucketKind::Day)?;
     // Monthly breakdown.
-    let monthly =
-        breakdown_points(pool, &watermark, epoch_start, "month", BucketKind::Month).await?;
+    let monthly = breakdown_points(conn, watermark, epoch_start, "month", BucketKind::Month)?;
 
     let cycled_breakdown = json!({
         "weapon": rounded(&m.weapon, 2),
@@ -865,13 +872,13 @@ impl BreakdownMaps {
 
 /// Collect the rollup side of the breakdown maps: one pass over the
 /// rolled days (or their month groups).
-async fn rollup_breakdown(
-    pool: &SqlitePool,
+fn rollup_breakdown(
+    conn: &rusqlite::Connection,
     maps: &mut BreakdownMaps,
     kind: BucketKind,
     lo: Option<&str>,
     hi: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), DbError> {
     let extra = if lo.is_some() { " AND day >= ?" } else { "" };
     let sql = match kind {
         BucketKind::Day => format!(
@@ -886,16 +893,18 @@ async fn rollup_breakdown(
              FROM daily_rollups WHERE day <= ?{extra} GROUP BY bucket ORDER BY bucket"
         ),
     };
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(hi);
+    let mut params: Vec<&str> = vec![hi];
     if let Some(lo) = lo {
-        query = query.bind(lo);
+        params.push(lo);
     }
-    for row in &query.fetch_all(pool).await? {
-        let bucket = row.get::<String, _>(0);
-        if row.get::<i64, _>(1) != 0 {
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+    while let Some(row) = rows.next()? {
+        let bucket = row.get::<_, String>(0)?;
+        if row.get::<_, i64>(1)? != 0 {
             maps.members.insert(bucket.clone());
         }
-        let family = |index: usize| row.try_get::<Option<f64>, _>(index);
+        let family = |index: usize| row.get::<_, Option<f64>>(index);
         for (map, index) in [
             (&mut maps.loot, 2),
             (&mut maps.weapon, 3),
@@ -927,12 +936,12 @@ async fn rollup_breakdown(
 
 /// Collect one raw range's side of the breakdown maps: the original
 /// per-source bucketed queries, windowed to the range.
-async fn raw_breakdown(
-    pool: &SqlitePool,
+fn raw_breakdown(
+    conn: &rusqlite::Connection,
     maps: &mut BreakdownMaps,
     kind: BucketKind,
     range: (Option<f64>, Option<f64>),
-) -> Result<(), sqlx::Error> {
+) -> Result<(), DbError> {
     let (start, end) = range;
     let ts_bucket = |col: &str| match kind {
         BucketKind::Day => format!("date({col}, 'unixepoch')"),
@@ -1005,7 +1014,7 @@ async fn raw_breakdown(
         ),
     ];
     for (map, sql, params) in sources {
-        let buckets = bucketed_epoch(pool, sql, params).await?;
+        let buckets = bucketed_epoch(conn, sql, params)?;
         for (bucket, value) in buckets {
             maps.members.insert(bucket.clone());
             BreakdownMaps::merge(map, &bucket, value);
@@ -1017,20 +1026,20 @@ async fn raw_breakdown(
 /// Build the timeline / monthly breakdown: per-source bucketed sums merged
 /// over the union of all buckets, then one point per bucket in sorted order.
 /// Hybrid over the rollup watermark, exactly as [`assemble_metrics`].
-async fn breakdown_points(
-    pool: &SqlitePool,
+fn breakdown_points(
+    conn: &rusqlite::Connection,
     watermark: &str,
     epoch_start: Option<f64>,
     bucket_label: &str,
     kind: BucketKind,
-) -> Result<Value, sqlx::Error> {
+) -> Result<Value, DbError> {
     let window = hybrid_window(epoch_start, None, watermark);
     let mut maps = BreakdownMaps::default();
     if let Some((lo, hi)) = &window.rollup_days {
-        rollup_breakdown(pool, &mut maps, kind, lo.as_deref(), hi).await?;
+        rollup_breakdown(conn, &mut maps, kind, lo.as_deref(), hi)?;
     }
     for range in &window.raw_ranges {
-        raw_breakdown(pool, &mut maps, kind, *range).await?;
+        raw_breakdown(conn, &mut maps, kind, *range)?;
     }
 
     // cost = weapon + enhancer + sess over the union of their buckets.
@@ -1056,8 +1065,8 @@ async fn breakdown_points(
         cost.insert(key.clone(), total);
     }
 
-    let gains = ledger_buckets(pool, kind, "markup", epoch_start, watermark).await?;
-    let losses = ledger_buckets(pool, kind, "expense", epoch_start, watermark).await?;
+    let gains = ledger_buckets(conn, kind, "markup", epoch_start, watermark)?;
+    let losses = ledger_buckets(conn, kind, "expense", epoch_start, watermark)?;
 
     // all buckets, sorted (lexicographic == chronological for these forms).
     let mut all: BTreeSet<String> = maps.members;
@@ -1109,39 +1118,49 @@ async fn load_activity_sessions(db: &Db) -> Result<Vec<SessionAgg>, DbError> {
     // Read the per-session aggregates from the materialised summaries instead
     // of re-aggregating the raw tables on every request. Heal first (a write,
     // routed to the writer) so a read after a summary-version bump (or on a
-    // fresh install) sees current rows; the read itself runs on the reader.
+    // fresh install) sees current rows; the read itself runs as one
+    // synchronous unit on a reader-core connection.
     crate::session_summary::heal_summaries(db.write()).await?;
-    let pool = db.read();
-    let mut sessions = read_summary_activity_aggs(pool).await?;
+    db.with_reader(activity_sessions_read).await
+}
+
+/// The Activity per-session aggregates, read in one synchronous pass over a
+/// reader-core connection (the caller heals the summaries first, on the
+/// writer).
+fn activity_sessions_read(conn: &mut rusqlite::Connection) -> Result<Vec<SessionAgg>, DbError> {
+    let mut sessions = read_summary_activity_aggs(conn)?;
 
     // Reconcile the sessions Activity counts but a summary never holds: an
     // ended session with kills and cost but no skill gains qualifies for
     // Activity yet fails the summary's gains requirement, so it has no summary
     // row. Rare (usually none); computed raw only for those ids, so the cost
-    // scales with the divergence, not the whole history.
-    let divergent = sqlx::query(
-        "SELECT s.id, s.started_at, s.ended_at, COALESCE(s.armour_cost, 0), \
-         COALESCE(s.heal_cost, 0), COALESCE(s.dangling_cost, 0) \
-         FROM tracking_sessions s \
-         LEFT JOIN session_summaries ss ON ss.session_id = s.id \
-         WHERE s.ended_at IS NOT NULL AND ss.session_id IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
-    for row in &divergent {
-        let id = row.get::<String, _>(0);
-        let started: f64 = row.try_get::<f64, _>(1).unwrap_or(0.0);
-        let ended: f64 = row.try_get::<f64, _>(2).unwrap_or(0.0);
-        let agg = raw_session_agg(
-            pool,
-            &id,
-            started,
-            ended,
-            as_float(row, 3),
-            as_float(row, 4),
-            as_float(row, 5),
-        )
-        .await?;
+    // scales with the divergence, not the whole history. The divergent ids are
+    // collected first, so the streaming read is done before the per-id raw
+    // aggregates prepare their own statements on the same connection.
+    let divergent: Vec<(String, f64, f64, f64, f64, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.started_at, s.ended_at, COALESCE(s.armour_cost, 0), \
+             COALESCE(s.heal_cost, 0), COALESCE(s.dangling_cost, 0) \
+             FROM tracking_sessions s \
+             LEFT JOIN session_summaries ss ON ss.session_id = s.id \
+             WHERE s.ended_at IS NOT NULL AND ss.session_id IS NULL",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1).unwrap_or(0.0),
+                row.get::<_, f64>(2).unwrap_or(0.0),
+                as_float(row, 3),
+                as_float(row, 4),
+                as_float(row, 5),
+            ));
+        }
+        out
+    };
+    for (id, started, ended, armour, heal, dangling) in divergent {
+        let agg = raw_session_agg(conn, &id, started, ended, armour, heal, dangling)?;
         sessions.insert(id, agg);
     }
 
@@ -1158,32 +1177,31 @@ async fn load_activity_sessions(db: &Db) -> Result<Vec<SessionAgg>, DbError> {
 /// keyed by session id. Every field the slice builders read comes from a stored
 /// column (the cost components that only fed `cycled_ped` are left at their
 /// defaults, since the stored `cycled_ped` already carries their rounded sum).
-async fn read_summary_activity_aggs(
-    pool: &SqlitePool,
+fn read_summary_activity_aggs(
+    conn: &rusqlite::Connection,
 ) -> Result<std::collections::HashMap<String, SessionAgg>, DbError> {
-    let rows = sqlx::query(
+    let mut stmt = conn.prepare(
         "SELECT session_id, duration_hours, kills, loot_tt, cycled_ped, activity_skill_tt, \
          dominant_mob, dominant_tag, dominant_weapon, dominant_mob_kills, dominant_tag_kills \
          FROM session_summaries",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut out = std::collections::HashMap::with_capacity(rows.len());
-    for row in &rows {
-        let id = row.get::<String, _>(0);
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut out = std::collections::HashMap::new();
+    while let Some(row) = rows.next()? {
+        let id = row.get::<_, String>(0)?;
         out.insert(
             id,
             SessionAgg {
                 duration_hours: as_float(row, 1),
-                kills: row.try_get::<i64, _>(2).unwrap_or(0),
+                kills: row.get::<_, i64>(2).unwrap_or(0),
                 loot_tt: as_float(row, 3),
                 cycled_ped: as_float(row, 4),
                 skill_tt: as_float(row, 5),
-                dominant_mob: row.get::<Option<String>, _>(6),
-                dominant_tag: row.get::<Option<String>, _>(7),
-                dominant_weapon: row.get::<Option<String>, _>(8),
-                dominant_mob_kills: row.try_get::<i64, _>(9).unwrap_or(0),
-                dominant_tag_kills: row.try_get::<i64, _>(10).unwrap_or(0),
+                dominant_mob: row.get::<_, Option<String>>(6)?,
+                dominant_tag: row.get::<_, Option<String>>(7)?,
+                dominant_weapon: row.get::<_, Option<String>>(8)?,
+                dominant_mob_kills: row.get::<_, i64>(9).unwrap_or(0),
+                dominant_tag_kills: row.get::<_, i64>(10).unwrap_or(0),
                 ..SessionAgg::default()
             },
         );
@@ -1195,8 +1213,8 @@ async fn read_summary_activity_aggs(
 /// the reconciliation path (an ended session with no summary row). Mirrors the
 /// summary's own per-session computation query for query, so an included
 /// no-gains session carries the same numbers a summary would if it held one.
-async fn raw_session_agg(
-    pool: &SqlitePool,
+fn raw_session_agg(
+    conn: &rusqlite::Connection,
     session_id: &str,
     started_at: f64,
     ended_at: f64,
@@ -1212,55 +1230,53 @@ async fn raw_session_agg(
         ..SessionAgg::default()
     };
 
-    let kill_row = sqlx::query(
+    let (kills, loot_tt, enhancer_cost) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(loot_total_ped), 0), COALESCE(SUM(enhancer_cost), 0) \
          FROM kills WHERE session_id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
-    agg.kills = kill_row.get::<i64, _>(0);
-    agg.loot_tt = as_float(&kill_row, 1);
-    agg.enhancer_cost = as_float(&kill_row, 2);
+        rusqlite::params![session_id],
+        |row| Ok((row.get::<_, i64>(0)?, as_float(row, 1), as_float(row, 2))),
+    )?;
+    agg.kills = kills;
+    agg.loot_tt = loot_tt;
+    agg.enhancer_cost = enhancer_cost;
 
-    let weapon_row = sqlx::query(
+    let (weapon_cost, weapon_shots) = conn.query_row(
         "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0), \
          COALESCE(SUM(ts.shots_fired), 0) FROM kill_tool_stats ts \
          JOIN kills k ON k.id = ts.kill_id WHERE k.session_id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
-    agg.weapon_cost = as_float(&weapon_row, 0);
-    agg.weapon_shots = as_float(&weapon_row, 1);
+        rusqlite::params![session_id],
+        |row| Ok((as_float(row, 0), as_float(row, 1))),
+    )?;
+    agg.weapon_cost = weapon_cost;
+    agg.weapon_shots = weapon_shots;
 
-    let skill_row = sqlx::query(
+    agg.skill_tt = conn.query_row(
         "SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains \
          WHERE session_id = ? AND ped_value IS NOT NULL",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
-    agg.skill_tt = as_float(&skill_row, 0);
+        rusqlite::params![session_id],
+        |row| Ok(as_float(row, 0)),
+    )?;
 
-    let mob_rows = sqlx::query(
-        "SELECT mob_name, COALESCE(mob_species, ''), COALESCE(mob_maturity, ''), COUNT(*) \
-         FROM kills WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
-         GROUP BY mob_name, mob_species, mob_maturity ORDER BY COUNT(*) DESC, mob_name ASC",
-    )
-    .bind(session_id)
-    .fetch_all(pool)
-    .await?;
+    let mob_rows: Vec<(String, String, String, i64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT mob_name, COALESCE(mob_species, ''), COALESCE(mob_maturity, ''), COUNT(*) \
+             FROM kills WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
+             GROUP BY mob_name, mob_species, mob_maturity ORDER BY COUNT(*) DESC, mob_name ASC",
+        )?;
+        let mapped = stmt.query_map(rusqlite::params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
     if !mob_rows.is_empty() {
-        let total_known: i64 = mob_rows
-            .iter()
-            .map(|r| r.try_get::<i64, _>(3).unwrap_or(0))
-            .sum();
+        let total_known: i64 = mob_rows.iter().map(|r| r.3).sum();
         if total_known > 0 {
-            let top_name: String = mob_rows[0].get(0);
-            let top_species: String = mob_rows[0].get(1);
-            let top_maturity: String = mob_rows[0].get(2);
-            let top_count: i64 = mob_rows[0].get(3);
+            let (top_name, top_species, top_maturity, top_count) = mob_rows[0].clone();
             if top_count as f64 / total_known as f64 >= ACTIVITY_DOMINANCE_THRESHOLD {
                 if !top_species.is_empty() || !top_maturity.is_empty() {
                     agg.dominant_mob = Some(top_name);
@@ -1273,19 +1289,21 @@ async fn raw_session_agg(
         }
     }
 
-    let tool_rows = sqlx::query(
-        "SELECT ts.tool_name, COALESCE(SUM(ts.shots_fired), 0) \
-         FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
-         WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
-         GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC, ts.tool_name ASC",
-    )
-    .bind(session_id)
-    .fetch_all(pool)
-    .await?;
+    let tool_rows: Vec<(String, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT ts.tool_name, COALESCE(SUM(ts.shots_fired), 0) \
+             FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
+             WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
+             GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC, ts.tool_name ASC",
+        )?;
+        let mapped = stmt.query_map(rusqlite::params![session_id], |row| {
+            Ok((row.get::<_, String>(0)?, as_float(row, 1)))
+        })?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
     if !tool_rows.is_empty() {
-        let total_shots: f64 = tool_rows.iter().map(|r| as_float(r, 1)).sum();
-        let top_name: String = tool_rows[0].get(0);
-        let top_shots = as_float(&tool_rows[0], 1);
+        let total_shots: f64 = tool_rows.iter().map(|r| r.1).sum();
+        let (top_name, top_shots) = tool_rows[0].clone();
         if total_shots > 0.0 && top_shots / total_shots >= ACTIVITY_DOMINANCE_THRESHOLD {
             agg.dominant_weapon = Some(top_name);
         }
@@ -1419,25 +1437,25 @@ const INVENTORY_SALE_TAG: &str = "inventory_sale";
 
 /// `LedgerItem` / `LedgerPresetItem` share a shape; both select
 /// (id, name-or-date, type, description, amount, tag).
-fn ledger_item(row: &SqliteRow) -> Value {
+fn ledger_item(row: &rusqlite::Row) -> Value {
     json!({
-        "id": row.get::<String, _>(0),
-        "date": row.get::<String, _>(1),
-        "type": row.get::<String, _>(2),
-        "description": row.get::<String, _>(3),
+        "id": row.get_unwrap::<_, String>(0),
+        "date": row.get_unwrap::<_, String>(1),
+        "type": row.get_unwrap::<_, String>(2),
+        "description": row.get_unwrap::<_, String>(3),
         "amount": float_field(sql_number(row, 4)),
-        "tag": row.get::<String, _>(5),
+        "tag": row.get_unwrap::<_, String>(5),
     })
 }
 
-fn preset_item(row: &SqliteRow) -> Value {
+fn preset_item(row: &rusqlite::Row) -> Value {
     json!({
-        "id": row.get::<String, _>(0),
-        "name": row.get::<String, _>(1),
-        "type": row.get::<String, _>(2),
-        "description": row.get::<String, _>(3),
+        "id": row.get_unwrap::<_, String>(0),
+        "name": row.get_unwrap::<_, String>(1),
+        "type": row.get_unwrap::<_, String>(2),
+        "description": row.get_unwrap::<_, String>(3),
         "amount": float_field(sql_number(row, 4)),
-        "tag": row.get::<String, _>(5),
+        "tag": row.get_unwrap::<_, String>(5),
     })
 }
 
@@ -1468,14 +1486,14 @@ fn decode_ledger_cursor(token: &str) -> Option<(String, String)> {
 }
 
 /// `_inventory_row_to_dict`: (id, name, tt_value, markup_paid, notes, acquired_at).
-fn inventory_item(row: &SqliteRow) -> Value {
+fn inventory_item(row: &rusqlite::Row) -> Value {
     json!({
-        "id": row.get::<String, _>(0),
-        "name": row.get::<String, _>(1),
+        "id": row.get_unwrap::<_, String>(0),
+        "name": row.get_unwrap::<_, String>(1),
         "ttValue": float_field(sql_number(row, 2)),
         "markupPaid": float_field(sql_number(row, 3)),
-        "notes": row.get::<Option<String>, _>(4),
-        "acquiredAt": row.get::<String, _>(5),
+        "notes": row.get_unwrap::<_, Option<String>>(4),
+        "acquiredAt": row.get_unwrap::<_, String>(5),
     })
 }
 
@@ -1517,11 +1535,31 @@ impl AnalyticsService {
             sql.push_str(" WHERE date < ? OR (date = ? AND id < ?)");
         }
         sql.push_str(" ORDER BY date DESC, id DESC LIMIT ?");
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-        if let Some((date, id)) = &seek {
-            query = query.bind(date).bind(date).bind(id);
-        }
-        let rows = query.bind(page + 1).fetch_all(self.read()).await?;
+
+        // Each fetched row as (date, id, wire shape); the cursor is cut from
+        // the last kept row's (date, id).
+        let rows: Vec<(String, String, Value)> = self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(&sql)?;
+                let map_row = |row: &rusqlite::Row| -> rusqlite::Result<(String, String, Value)> {
+                    Ok((
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(0)?,
+                        ledger_item(row),
+                    ))
+                };
+                let rows = match &seek {
+                    Some((date, id)) => stmt
+                        .query_map(rusqlite::params![date, date, id, page + 1], map_row)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?,
+                    None => stmt
+                        .query_map(rusqlite::params![page + 1], map_row)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?,
+                };
+                Ok(rows)
+            })
+            .await?;
 
         // A full extra row means another page follows: drop it and cut the
         // next cursor from the last row actually served.
@@ -1531,11 +1569,11 @@ impl AnalyticsService {
         } else {
             &rows[..]
         };
-        let entries: Vec<Value> = kept.iter().map(ledger_item).collect();
+        let entries: Vec<Value> = kept.iter().map(|(_, _, item)| item.clone()).collect();
         let next_cursor = has_more
             .then(|| kept.last())
             .flatten()
-            .map(|row| encode_ledger_cursor(&row.get::<String, _>(1), &row.get::<String, _>(0)));
+            .map(|(date, id, _)| encode_ledger_cursor(date, id));
         Ok(LedgerPage {
             entries,
             next_cursor,
@@ -1602,13 +1640,19 @@ impl AnalyticsService {
 
     /// The ledger presets, in creation order.
     pub async fn list_ledger_presets(&self) -> Result<Vec<Value>, AnalyticsError> {
-        let rows = sqlx::query(
-            "SELECT id, name, type, description, amount, tag FROM ledger_presets \
-             ORDER BY created_at ASC, id ASC",
-        )
-        .fetch_all(self.read())
-        .await?;
-        Ok(rows.iter().map(preset_item).collect())
+        Ok(self
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, type, description, amount, tag FROM ledger_presets \
+                     ORDER BY created_at ASC, id ASC",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| Ok(preset_item(row)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
     }
 
     /// Create a ledger preset. The type is a closed vocabulary
@@ -1626,18 +1670,25 @@ impl AnalyticsService {
             return Err(AnalyticsError::InvalidPresetType);
         }
         let id = Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO ledger_presets (id, name, type, description, amount, tag) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(kind)
-        .bind(description)
-        .bind(amount)
-        .bind(tag)
-        .execute(self.write())
-        .await?;
+        {
+            let (id, name, kind, description, tag) = (
+                id.clone(),
+                name.to_string(),
+                kind.to_string(),
+                description.to_string(),
+                tag.to_string(),
+            );
+            self.db
+                .with_writer(move |conn| {
+                    conn.execute(
+                        "INSERT INTO ledger_presets (id, name, type, description, amount, tag) \
+                         VALUES (?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![id, name, kind, description, amount, tag],
+                    )?;
+                    Ok(())
+                })
+                .await?;
+        }
         Ok(json!({
             "id": id, "name": name, "type": kind,
             "description": description, "amount": amount, "tag": tag,
@@ -1646,36 +1697,53 @@ impl AnalyticsService {
 
     /// Delete a ledger preset. Returns whether a row existed.
     pub async fn delete_ledger_preset(&self, preset_id: &str) -> Result<bool, AnalyticsError> {
-        let result = sqlx::query("DELETE FROM ledger_presets WHERE id = ?")
-            .bind(preset_id)
-            .execute(self.write())
+        let preset_id = preset_id.to_string();
+        let affected = self
+            .db
+            .with_writer(move |conn| {
+                Ok(conn.execute(
+                    "DELETE FROM ledger_presets WHERE id = ?",
+                    rusqlite::params![preset_id],
+                )?)
+            })
             .await?;
-        Ok(result.rows_affected() != 0)
+        Ok(affected != 0)
     }
 
     /// The inventory items, newest acquisition first.
     pub async fn list_inventory(&self) -> Result<Vec<Value>, AnalyticsError> {
-        let rows = sqlx::query(
-            "SELECT id, name, tt_value, markup_paid, notes, acquired_at FROM inventory_items \
-             ORDER BY acquired_at DESC, id DESC",
-        )
-        .fetch_all(self.read())
-        .await?;
-        Ok(rows.iter().map(inventory_item).collect())
+        Ok(self
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, tt_value, markup_paid, notes, acquired_at \
+                     FROM inventory_items ORDER BY acquired_at DESC, id DESC",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| Ok(inventory_item(row)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
     }
 
     /// The stored inventory row re-read and shaped (the create / patch
     /// reply). A row that has vanished since the write is a driver-level
-    /// invariant break, surfaced as [`AnalyticsError::Db`].
+    /// invariant break, surfaced as [`AnalyticsError::Storage`].
     async fn inventory_row(&self, item_id: &str) -> Result<Value, AnalyticsError> {
-        let row = sqlx::query(
-            "SELECT id, name, tt_value, markup_paid, notes, acquired_at \
-             FROM inventory_items WHERE id = ?",
-        )
-        .bind(item_id)
-        .fetch_one(self.read())
-        .await?;
-        Ok(inventory_item(&row))
+        let item_id = item_id.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                conn.query_row(
+                    "SELECT id, name, tt_value, markup_paid, notes, acquired_at \
+                     FROM inventory_items WHERE id = ?",
+                    rusqlite::params![item_id],
+                    |row| Ok(inventory_item(row)),
+                )
+                .map_err(DbError::from)
+            })
+            .await?)
     }
 
     /// Create an inventory item; an empty / absent `acquired_at` defaults
@@ -1695,18 +1763,25 @@ impl AnalyticsService {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| self.default_date());
-        sqlx::query(
-            "INSERT INTO inventory_items (id, name, tt_value, markup_paid, notes, acquired_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(tt_value)
-        .bind(markup_paid)
-        .bind(notes)
-        .bind(&date)
-        .execute(self.write())
-        .await?;
+        {
+            let (id, name, notes, date) = (
+                id.clone(),
+                name.to_string(),
+                notes.map(str::to_string),
+                date.clone(),
+            );
+            self.db
+                .with_writer(move |conn| {
+                    conn.execute(
+                        "INSERT INTO inventory_items \
+                         (id, name, tt_value, markup_paid, notes, acquired_at) \
+                         VALUES (?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![id, name, tt_value, markup_paid, notes, date],
+                    )?;
+                    Ok(())
+                })
+                .await?;
+        }
         self.inventory_row(&id).await
     }
 
@@ -1721,59 +1796,84 @@ impl AnalyticsService {
         markup_paid: Option<f64>,
         notes: Option<&str>,
     ) -> Result<Option<Value>, AnalyticsError> {
-        let exists = sqlx::query("SELECT id FROM inventory_items WHERE id = ?")
-            .bind(item_id)
-            .fetch_optional(self.read())
-            .await?;
-        if exists.is_none() {
-            return Ok(None);
-        }
+        // The existence check and the (possibly empty) update run together on
+        // the writer connection, which reads as well as writes.
+        let updated = {
+            let item_id = item_id.to_string();
+            let name = name.map(str::to_string);
+            let notes = notes.map(str::to_string);
+            self.db
+                .with_writer(move |conn| {
+                    use rusqlite::OptionalExtension as _;
+                    let exists = conn
+                        .query_row(
+                            "SELECT 1 FROM inventory_items WHERE id = ?",
+                            rusqlite::params![item_id],
+                            |_| Ok(()),
+                        )
+                        .optional()?;
+                    if exists.is_none() {
+                        return Ok(false);
+                    }
 
-        let mut sets: Vec<&str> = Vec::new();
-        if name.is_some() {
-            sets.push("name = ?");
-        }
-        if tt_value.is_some() {
-            sets.push("tt_value = ?");
-        }
-        if markup_paid.is_some() {
-            sets.push("markup_paid = ?");
-        }
-        if notes.is_some() {
-            sets.push("notes = ?");
-        }
-        if !sets.is_empty() {
-            sets.push("updated_at = unixepoch('now')");
-            let sql = format!(
-                "UPDATE inventory_items SET {} WHERE id = ?",
-                sets.join(", ")
-            );
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-            if let Some(value) = name {
-                query = query.bind(value);
-            }
-            if let Some(value) = tt_value {
-                query = query.bind(value);
-            }
-            if let Some(value) = markup_paid {
-                query = query.bind(value);
-            }
-            if let Some(value) = notes {
-                query = query.bind(value);
-            }
-            query = query.bind(item_id);
-            query.execute(self.write()).await?;
+                    let mut sets: Vec<&str> = Vec::new();
+                    if name.is_some() {
+                        sets.push("name = ?");
+                    }
+                    if tt_value.is_some() {
+                        sets.push("tt_value = ?");
+                    }
+                    if markup_paid.is_some() {
+                        sets.push("markup_paid = ?");
+                    }
+                    if notes.is_some() {
+                        sets.push("notes = ?");
+                    }
+                    if !sets.is_empty() {
+                        sets.push("updated_at = unixepoch('now')");
+                        let sql = format!(
+                            "UPDATE inventory_items SET {} WHERE id = ?",
+                            sets.join(", ")
+                        );
+                        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+                        if let Some(value) = &name {
+                            params.push(value.clone().into());
+                        }
+                        if let Some(value) = tt_value {
+                            params.push(value.into());
+                        }
+                        if let Some(value) = markup_paid {
+                            params.push(value.into());
+                        }
+                        if let Some(value) = &notes {
+                            params.push(value.clone().into());
+                        }
+                        params.push(item_id.clone().into());
+                        conn.execute(&sql, rusqlite::params_from_iter(params))?;
+                    }
+                    Ok(true)
+                })
+                .await?
+        };
+        if !updated {
+            return Ok(None);
         }
         Ok(Some(self.inventory_row(item_id).await?))
     }
 
     /// Delete an inventory item. Returns whether a row existed.
     pub async fn delete_inventory_item(&self, item_id: &str) -> Result<bool, AnalyticsError> {
-        let result = sqlx::query("DELETE FROM inventory_items WHERE id = ?")
-            .bind(item_id)
-            .execute(self.write())
+        let item_id = item_id.to_string();
+        let affected = self
+            .db
+            .with_writer(move |conn| {
+                Ok(conn.execute(
+                    "DELETE FROM inventory_items WHERE id = ?",
+                    rusqlite::params![item_id],
+                )?)
+            })
             .await?;
-        Ok(result.rows_affected() != 0)
+        Ok(affected != 0)
     }
 
     /// Sell an inventory item: emit the realised delta to the ledger and
@@ -1787,20 +1887,36 @@ impl AnalyticsService {
         description: Option<&str>,
         sold_at: Option<&str>,
     ) -> Result<Option<Value>, AnalyticsError> {
-        let row = sqlx::query(
-            "SELECT id, name, tt_value, markup_paid, notes, acquired_at \
-             FROM inventory_items WHERE id = ?",
-        )
-        .bind(item_id)
-        .fetch_optional(self.read())
-        .await?;
-        let Some(row) = row else {
+        // The item is read on a reader-core connection; the realised sale then
+        // writes its ledger row and removes the item in one sqlx transaction
+        // (the rollup refresh must commit atomically with the ledger insert).
+        let fetched = {
+            let item_id = item_id.to_string();
+            self.db
+                .with_reader(move |conn| {
+                    use rusqlite::OptionalExtension as _;
+                    conn.query_row(
+                        "SELECT id, name, tt_value, markup_paid, notes, acquired_at \
+                         FROM inventory_items WHERE id = ?",
+                        rusqlite::params![item_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(1)?,
+                                sql_number(row, 2).as_f64().unwrap_or(0.0),
+                                sql_number(row, 3).as_f64().unwrap_or(0.0),
+                                inventory_item(row),
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(DbError::from)
+                })
+                .await?
+        };
+        let Some((name, tt_value, markup_paid, sold_item)) = fetched else {
             return Ok(None);
         };
 
-        let name = row.get::<String, _>(1);
-        let tt_value = sql_number(&row, 2).as_f64().unwrap_or(0.0);
-        let markup_paid = sql_number(&row, 3).as_f64().unwrap_or(0.0);
         let cost_basis = tt_value + markup_paid;
         let delta = sale_price - cost_basis;
         // `payload.sold_at or _utc_date_str(clock)`: empty string is falsy.
@@ -1808,7 +1924,6 @@ impl AnalyticsService {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| self.default_date());
-        let sold_item = inventory_item(&row);
 
         let mut tx = self.write().begin().await?;
         let ledger_entry = if delta != 0.0 {
@@ -1852,46 +1967,46 @@ impl AnalyticsService {
 }
 
 #[cfg(test)]
+impl AnalyticsService {
+    /// The reader pool, for tests that inspect projection state directly.
+    fn read(&self) -> &SqlitePool {
+        self.db.read()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use eo_wire::normalizer::to_wire_json;
-    use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn memory_pool() -> SqlitePool {
-        use std::str::FromStr;
-        // Match the production connection surface (foreign keys off, as the app
-        // opens the database) so the schema's REFERENCES clauses stay
-        // declarative here too.
-        let options = sqlx::sqlite::SqliteConnectOptions::from_str("sqlite::memory:")
-            .expect("memory url")
-            .foreign_keys(false);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
+    /// A real database (writer/reader pools plus the synchronous core) over a
+    /// temp file, with its writer pool handed back for the sqlx-side seeding
+    /// the tests still do. A temp file (not `:memory:`) is required: the
+    /// synchronous core opens its own connections, which an in-memory pool
+    /// cannot share. The reads under test run on the core; the seeds commit on
+    /// the writer pool and are visible to the core's readers under WAL.
+    async fn open_env() -> (tempfile::TempDir, Db, SqlitePool) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("entropia_orme.db"))
             .await
-            .expect("memory pool");
-        // Build the real schema (the same migration chain the app runs), so the
-        // reads that now depend on the full surface (session_summaries,
-        // notable_events, the complete skill_gains columns) exercise the true
-        // shape rather than a hand-trimmed subset.
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("migrations");
-        pool
+            .unwrap();
+        let pool = db.write().clone();
+        (dir, db, pool)
     }
 
-    /// An [`AnalyticsService`] over an in-memory pool, its clock frozen so
-    /// `default_date()` (`_utc_date_str(clock)`) is deterministic
+    /// An [`AnalyticsService`] over a real temp-file database, its clock frozen
+    /// so `default_date()` (`_utc_date_str(clock)`) is deterministic
     /// (2026-06-01).
-    async fn write_service() -> AnalyticsService {
+    async fn write_service() -> (tempfile::TempDir, AnalyticsService) {
         use crate::clock::MockClock;
-        let pool = memory_pool().await;
-        let db = Db::from_pool(pool);
+        let (dir, db, _pool) = open_env().await;
         let naive =
             chrono::NaiveDateTime::parse_from_str("2026-06-01T12:00:00", "%Y-%m-%dT%H:%M:%S")
                 .unwrap();
-        AnalyticsService::new(db, Arc::new(MockClock::new(Some(naive), 0.0)))
+        (
+            dir,
+            AnalyticsService::new(db, Arc::new(MockClock::new(Some(naive), 0.0))),
+        )
     }
 
     /// 2026-06-05T00:00:00Z: heals the rollup watermark past the
@@ -1916,7 +2031,7 @@ mod tests {
 
     #[tokio::test]
     async fn ledger_create_and_delete_reland_their_days_rollups() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         heal_to_june_fifth(service.write()).await;
 
         // A backdated create lands its day's rollup with the insert.
@@ -1941,7 +2056,7 @@ mod tests {
 
     #[tokio::test]
     async fn inventory_sale_relands_the_sold_days_rollup() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         heal_to_june_fifth(service.write()).await;
         sqlx::query(
             "INSERT INTO inventory_items (id, name, tt_value, markup_paid, notes, acquired_at) \
@@ -1965,10 +2080,8 @@ mod tests {
 
     #[tokio::test]
     async fn empty_overview_emits_the_engine_typed_zeros() {
-        let pool = memory_pool().await;
-        let value = overview_impl(&Db::from_pool(pool.clone()), 1_800_000_000.0, "all")
-            .await
-            .unwrap();
+        let (_dir, db, _pool) = open_env().await;
+        let value = overview_impl(&db, 1_800_000_000.0, "all").await.unwrap();
         // cycledBreakdown is an `Any` field: empty COALESCE sums leave the
         // integer zero on the wire, while the float-declared aggregates coerce.
         assert_eq!(
@@ -1983,8 +2096,8 @@ mod tests {
 
     #[tokio::test]
     async fn empty_activity_emits_three_empty_tables() {
-        let pool = memory_pool().await;
-        let value = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
+        let (_dir, db, _pool) = open_env().await;
+        let value = activity_impl(&db).await.unwrap();
         assert_eq!(
             to_wire_json(&value),
             "{\"mobComparisons\":[],\"tagComparisons\":[],\"weaponComparisons\":[]}"
@@ -2117,11 +2230,9 @@ mod tests {
     #[tokio::test]
     async fn seeded_overview_aggregates_match() {
         let now = 1_800_000_000.0;
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         seed_scenario(&pool, now).await;
-        let v = overview_impl(&Db::from_pool(pool.clone()), now, "all")
-            .await
-            .unwrap();
+        let v = overview_impl(&db, now, "all").await.unwrap();
         assert_eq!(v["returnsBreakdown"]["lootTt"], json!(65.0));
         assert_eq!(v["returnsBreakdown"]["pes"], json!(4.0));
         assert_eq!(v["returnsBreakdown"]["codexPes"], json!(7.0));
@@ -2146,9 +2257,7 @@ mod tests {
         // trend: recent-30d rate exceeds prior-30d rate beyond the 2% band.
         assert_eq!(v["trend"], json!("improving"));
         // period filter: 30d keeps only the recent window (markup in, expense out).
-        let v30 = overview_impl(&Db::from_pool(pool.clone()), now, "30d")
-            .await
-            .unwrap();
+        let v30 = overview_impl(&db, now, "30d").await.unwrap();
         assert_eq!(v30["returnsBreakdown"]["lootTt"], json!(50.0));
         assert_eq!(v30["returnsBreakdown"]["ledger"]["loot_sale"], json!(12.5));
         assert_eq!(v30["lossesBreakdown"]["ledger"], json!({}));
@@ -2158,9 +2267,9 @@ mod tests {
     #[tokio::test]
     async fn seeded_activity_dominance_and_filters() {
         let now = 1_800_000_000.0;
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         seed_scenario(&pool, now).await;
-        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
+        let v = activity_impl(&db).await.unwrap();
         // sess-z (zero kills) filtered out; sess-a -> dominant mob, sess-b -> tag.
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
@@ -2196,14 +2305,14 @@ mod tests {
     /// the keeper: only the keeper's mob survives.
     #[tokio::test]
     async fn activity_filter_drops_a_session_failing_any_single_guard() {
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         // keeper: kills, duration, cost all positive.
         seed_filter_session(&pool, "keep", "Keeper", 1000.0, 1000.0 + 3600.0, 5.0, 2).await;
         // zero cost -> cycled 0 -> dropped by the cycled guard alone.
         seed_filter_session(&pool, "zcost", "Zerocost", 1000.0, 1000.0 + 3600.0, 0.0, 2).await;
         // zero duration (start == end) -> dropped by the duration guard alone.
         seed_filter_session(&pool, "zdur", "Zerodur", 1000.0, 1000.0, 5.0, 2).await;
-        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
+        let v = activity_impl(&db).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1, "only the keeper survives the OR filter");
         assert_eq!(mobs[0]["mobName"], json!("Keeper"));
@@ -2269,67 +2378,47 @@ mod tests {
         let trend = |v: Value| v["trend"].clone();
 
         // declining: recent rate 1.0 (10/10) below prior 2.0 (20/10) * 0.98.
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(
-                overview_impl(&Db::from_pool(pool.clone()), now, "all")
-                    .await
-                    .unwrap()
-            ),
+            trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("declining")
         );
 
         // improving: recent 2.0 above prior 1.0 * 1.02.
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
-            trend(
-                overview_impl(&Db::from_pool(pool.clone()), now, "all")
-                    .await
-                    .unwrap()
-            ),
+            trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("improving")
         );
 
         // stable: recent equals prior, inside the band.
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
-            trend(
-                overview_impl(&Db::from_pool(pool.clone()), now, "all")
-                    .await
-                    .unwrap()
-            ),
+            trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("stable")
         );
 
         // zero recent rate: the positivity guard short-circuits to stable
         // (a mutated guard would fall through into the banding and declare a
         // direction).
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(
-                overview_impl(&Db::from_pool(pool.clone()), now, "all")
-                    .await
-                    .unwrap()
-            ),
+            trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("stable")
         );
 
         // zero prior rate: the other half of the guard.
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
-            trend(
-                overview_impl(&Db::from_pool(pool.clone()), now, "all")
-                    .await
-                    .unwrap()
-            ),
+            trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("stable")
         );
     }
@@ -2340,7 +2429,7 @@ mod tests {
     async fn activity_dominance_threshold_and_tag_split() {
         // Non-dominant: three distinct mobs, one kill each (33% each, below
         // the 0.6 floor) -> no dominant element, no comparison rows.
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         sqlx::query(
             "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
              VALUES('nd',1000.0,4600.0,5.0,0,0)",
@@ -2354,13 +2443,13 @@ mod tests {
             .bind(format!("nd-{i}")).bind(*mob).bind(1000.0 + i as f64)
             .execute(&pool).await.expect("seed");
         }
-        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
+        let v = activity_impl(&db).await.unwrap();
         assert_eq!(v["mobComparisons"].as_array().unwrap().len(), 0);
         assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
 
         // Asymmetric: species present, maturity empty -> still a mob (the
         // presence test is OR, not AND), so it lands in mobComparisons.
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         sqlx::query(
             "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
              VALUES('as',1000.0,4600.0,5.0,0,0)",
@@ -2374,7 +2463,7 @@ mod tests {
             .bind(format!("as-{i}")).bind(1000.0 + i as f64)
             .execute(&pool).await.expect("seed");
         }
-        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
+        let v = activity_impl(&db).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["mobName"], json!("Foo"));
@@ -2386,7 +2475,7 @@ mod tests {
     /// session, so it never enters any session's aggregate.
     #[tokio::test]
     async fn activity_ignores_a_kill_for_a_missing_session() {
-        let pool = memory_pool().await;
+        let (_dir, db, pool) = open_env().await;
         // A valid completed session with one dominant-mob kill.
         seed_filter_session(&pool, "ok", "Real", 1000.0, 1000.0 + 3600.0, 5.0, 2).await;
         // An orphan kill whose session_id matches no tracking_sessions row.
@@ -2396,7 +2485,7 @@ mod tests {
         )
         .execute(&pool).await.expect("seed");
         // Only the real session's mob is compared; the orphan is ignored.
-        let v = activity_impl(&Db::from_pool(pool.clone())).await.unwrap();
+        let v = activity_impl(&db).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["mobName"], json!("Real"));
@@ -2438,7 +2527,7 @@ mod tests {
     /// input plus a generated id, and the list reads it back.
     #[tokio::test]
     async fn ledger_create_and_list_round_trip() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let body = service
             .create_ledger_entry("2026-05-01", "expense", "Ammo", 12.5, "ammo")
             .await
@@ -2460,7 +2549,7 @@ mod tests {
     /// gaps.
     #[tokio::test]
     async fn ledger_list_walks_every_entry_by_keyset_cursor() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         for day in ["01", "02", "03", "04", "05"] {
             service
                 .create_ledger_entry(
@@ -2501,7 +2590,7 @@ mod tests {
 
     #[tokio::test]
     async fn ledger_list_rejects_a_malformed_cursor() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         assert!(matches!(
             service.list_ledger(Some("not a cursor!"), None).await,
             Err(AnalyticsError::InvalidCursor)
@@ -2512,7 +2601,7 @@ mod tests {
     /// [`AnalyticsError::InvalidPresetType`] and writes nothing.
     #[tokio::test]
     async fn preset_create_validates_type() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         for kind in ["expense", "markup"] {
             service
                 .create_ledger_preset("P", kind, "d", 1.0, "t")
@@ -2533,7 +2622,7 @@ mod tests {
     /// defaults to the (frozen) clock's UTC date.
     #[tokio::test]
     async fn inventory_create_defaults_date_and_notes() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let body = service
             .create_inventory_item("Imk2", 50.0, 5.0, None, None)
             .await
@@ -2558,7 +2647,7 @@ mod tests {
     /// `if patch.x is not None`.
     #[tokio::test]
     async fn inventory_patch_updates_only_provided_fields() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let created = service
             .create_inventory_item("Orig", 20.0, 3.0, Some("keep"), Some("2026-03-01"))
             .await
@@ -2597,7 +2686,7 @@ mod tests {
     #[tokio::test]
     async fn sell_emits_the_right_delta_branch() {
         // PROFIT: sale 20 over cost 12 -> markup 8.0; default description.
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let item = service
             .create_inventory_item("Sword", 10.0, 2.0, None, Some("2026-02-01"))
             .await
@@ -2627,7 +2716,7 @@ mod tests {
         );
 
         // LOSS: sale 5 under cost 12 -> expense 7.0; explicit description.
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let item = service
             .create_inventory_item("Shield", 10.0, 2.0, None, Some("2026-02-01"))
             .await
@@ -2646,7 +2735,7 @@ mod tests {
         assert_eq!(entry["date"], json!("2026-06-01"));
 
         // ZERO-DELTA: sale == cost -> no ledger entry, item still removed.
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let item = service
             .create_inventory_item("Even", 8.0, 2.0, None, Some("2026-02-01"))
             .await
@@ -2671,7 +2760,7 @@ mod tests {
         );
 
         // Sell a missing id -> not found.
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         assert!(service
             .sell_inventory_item("no-such", 1.0, None, None)
             .await
@@ -2681,7 +2770,7 @@ mod tests {
 
     #[tokio::test]
     async fn ledger_delete_removes_then_reports_missing() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let created = service
             .create_ledger_entry("2026-05-01", "expense", "Ammo", 12.5, "ammo")
             .await
@@ -2695,7 +2784,7 @@ mod tests {
 
     #[tokio::test]
     async fn preset_list_shapes_rows_then_delete_removes() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let created = service
             .create_ledger_preset("Decay", "expense", "d", 0.5, "decay")
             .await
@@ -2713,7 +2802,7 @@ mod tests {
 
     #[tokio::test]
     async fn inventory_delete_removes_then_reports_missing() {
-        let service = write_service().await;
+        let (_dir, service) = write_service().await;
         let created = service
             .create_inventory_item("Sword", 10.0, 2.0, None, None)
             .await

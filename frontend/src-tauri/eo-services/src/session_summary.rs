@@ -373,26 +373,27 @@ pub async fn write_session_summary(
 /// original's column order and coercions: or-zero floats, an integer
 /// kill count, JSON columns parsed when non-empty, and the dominant
 /// fields passed through raw).
-fn row_to_prospect_dict(row: &sqlx::sqlite::SqliteRow) -> Value {
-    use sqlx::Row as _;
+fn row_to_prospect_dict(row: &rusqlite::Row) -> Value {
     let float_or_zero = |index: usize| -> f64 {
-        row.try_get::<Option<f64>, _>(index)
+        row.get::<_, Option<f64>>(index)
             .ok()
             .flatten()
             .unwrap_or(0.0)
     };
     let json_or_empty = |index: usize| -> Value {
-        row.get::<Option<String>, _>(index)
+        row.get::<_, Option<String>>(index)
+            .ok()
+            .flatten()
             .filter(|text| !text.is_empty())
             .map(|text| serde_json::from_str(&text).expect("stored summary JSON parses"))
             .unwrap_or_else(|| json!({}))
     };
     json!({
-        "id": row.get::<String, _>(0),
+        "id": row.get_unwrap::<_, String>(0),
         "startedAt": float_or_zero(1),
         "endedAt": float_or_zero(2),
         "durationHours": float_or_zero(3),
-        "kills": row.try_get::<Option<i64>, _>(4).ok().flatten().unwrap_or(0),
+        "kills": row.get::<_, Option<i64>>(4).ok().flatten().unwrap_or(0),
         "lootTt": float_or_zero(5),
         "weaponCost": float_or_zero(6),
         "enhancerCost": float_or_zero(7),
@@ -404,9 +405,9 @@ fn row_to_prospect_dict(row: &sqlx::sqlite::SqliteRow) -> Value {
         "attributeLevels": json_or_empty(13),
         "regularSkillTt": float_or_zero(14),
         "attributeLevelsTotal": float_or_zero(15),
-        "dominantMob": row.get::<Option<String>, _>(16),
-        "dominantTag": row.get::<Option<String>, _>(17),
-        "dominantWeapon": row.get::<Option<String>, _>(18),
+        "dominantMob": row.get_unwrap::<_, Option<String>>(16),
+        "dominantTag": row.get_unwrap::<_, Option<String>>(17),
+        "dominantWeapon": row.get_unwrap::<_, Option<String>>(18),
     })
 }
 
@@ -438,21 +439,24 @@ pub async fn heal_summaries(pool: &SqlitePool) -> Result<(), DbError> {
 /// missing or stale-version rows first so new installs converge on
 /// first read without a migration.
 pub async fn load_prospect_sessions(db: &Db) -> Result<Vec<Value>, DbError> {
-    // Heal (a write) on the writer; read the prospect rows on the reader.
+    // Heal (a write) on the writer; read the prospect rows in one synchronous
+    // pass on a reader-core connection.
     heal_summaries(db.write()).await?;
-    let pool = db.read();
-
-    let rows = sqlx::query(
-        "SELECT session_id, started_at, ended_at, duration_hours, kills, loot_tt, \
-         weapon_cost, enhancer_cost, armour_cost, heal_cost, dangling_cost, \
-         cycled_ped, regular_skill_ped_json, attribute_levels_json, \
-         regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, \
-         dominant_weapon \
-         FROM session_summaries",
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.iter().map(row_to_prospect_dict).collect())
+    db.with_reader(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT session_id, started_at, ended_at, duration_hours, kills, loot_tt, \
+             weapon_cost, enhancer_cost, armour_cost, heal_cost, dangling_cost, \
+             cycled_ped, regular_skill_ped_json, attribute_levels_json, \
+             regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, \
+             dominant_weapon \
+             FROM session_summaries",
+        )?;
+        let rows = stmt
+            .query_map([], |row| Ok(row_to_prospect_dict(row)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+    .await
 }
 
 pub async fn delete_session_summary(pool: &SqlitePool, session_id: &str) -> Result<(), DbError> {
@@ -966,9 +970,7 @@ mod tests {
         .await
         .unwrap();
 
-        let prospects = load_prospect_sessions(&Db::from_pool(pool.clone()))
-            .await
-            .unwrap();
+        let prospects = load_prospect_sessions(&db).await.unwrap();
         assert_eq!(
             prospects,
             vec![
