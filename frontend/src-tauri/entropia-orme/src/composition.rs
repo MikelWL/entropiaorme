@@ -446,8 +446,8 @@ impl ProducerState {
 /// drops with the handle and the ORT env self-releases at process exit).
 /// It is `Option` because OCR is an optional faculty: a failed runtime
 /// load leaves it `None` while the rest of composition still succeeds.
-/// `Arc` because the scan consumer seams will each capture a clone when
-/// their routes flip.
+/// `Arc` because the scan consumer seams each hold their own clone,
+/// captured at compose time.
 pub struct Composed {
     /// The composed database handle, held so the exit seam can run the
     /// once-per-lifecycle `PRAGMA optimize` at shutdown (the last live user
@@ -463,7 +463,7 @@ pub struct Composed {
     /// `scan.status.changed` envelopes reach the SSE stream) over the OCR
     /// extraction providers. Always constructed so the scan routes serve;
     /// its capture and extraction seams stand down to "engine unavailable"
-    /// when the OCR runtime is absent, exactly as the Python reference reports.
+    /// when the OCR runtime is absent (a golden-pinned reply).
     pub skill_scan: Arc<SkillScanManual>,
     /// The spacebar-capture listener, composed over the scan and the shared
     /// OS hook. Held for the spacebar-capture route (its toggle) and the exit

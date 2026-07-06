@@ -31,10 +31,6 @@ jobs:
     defaults:
       run:
         working-directory: frontend/src-tauri
-    env:
-      # Compile-time-checked SQL resolves against the committed .sqlx offline
-      # cache; empty until persistence code lands.
-      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

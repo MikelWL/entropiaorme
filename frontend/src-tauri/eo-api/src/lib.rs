@@ -12,9 +12,9 @@
 //! database has opened (construct-then-share): every handle is present
 //! by value, there is no half-initialised state to observe, and the
 //! shell publishes the finished value to the IPC layer in one step.
-//! Route families still served over the in-process HTTP router migrate
-//! here family by family; this crate replaces that transport rather
-//! than fronting it.
+//! This crate owns the entire backend operation surface; it replaced
+//! the in-process HTTP router the migration era ran on, since deleted
+//! (ADR-0019).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

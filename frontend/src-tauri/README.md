@@ -9,13 +9,12 @@ Cargo workspace for the desktop application's Rust side.
 - **`eo-services/`**: the domain services behind that facade.
 - **`eo-wire/`**: wire-format contracts (response and event types, serialisation).
 
-The `eo-*` members implement the backend in-process, a byte-exact port of the original Python backend's shapes, with deliberate divergences recorded inline where the shipped Rust differs. They are deliberately Tauri-free, and CI keeps them that way structurally: a Linux job without the Tauri toolchain's system stack builds and tests them in isolation, so a GUI dependency creeping into backend code fails the gate rather than landing silently.
+The `eo-*` members implement the backend in-process. Behavioural compatibility with the original implementation the backend was ported from is preserved by the frozen goldens the hermetic tests assert against (see `TESTING.md`), with deliberate divergences recorded inline where the shipped behaviour differs. The members are deliberately Tauri-free, and CI keeps them that way structurally: a Linux job without the Tauri toolchain's system stack builds and tests them in isolation, so a GUI dependency creeping into backend code fails the gate rather than landing silently.
 
 ## Workspace-level files
 
 - **`Cargo.toml`**: the virtual manifest. Shared dependency versions live in `[workspace.dependencies]`, including the Tauri minor pin (see the comment there before bumping).
 - **`Cargo.lock`**: the single lockfile for all members.
 - **`.cargo/audit.toml`** / **`deny.toml`**: the dependency audit and supply-chain policies enforced in CI; review both together on any Tauri bump.
-- **`.sqlx/`**: offline query metadata for compile-time-checked SQL (consumed with `SQLX_OFFLINE=true` in CI). Empty until persistence code lands; regenerate with `cargo sqlx prepare` whenever a query or the schema changes.
 
 Commands for the CI gates that cover this workspace are documented in `TESTING.md` ("Rust workspace checks").
