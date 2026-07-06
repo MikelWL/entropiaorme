@@ -5,7 +5,7 @@
 //! inherited verbatim from the previous runner, so every database in
 //! the wild validates unchanged: the same versions, the same
 //! descriptions, the same checksums, byte-for-byte. The runner
-//! re-implements the same semantics — validate every applied row
+//! re-implements the same semantics: validate every applied row
 //! against the embedded chain, refuse a checksum mismatch or a
 //! previously-failed application, then apply the missing tail each in
 //! its own transaction with its ledger row.
