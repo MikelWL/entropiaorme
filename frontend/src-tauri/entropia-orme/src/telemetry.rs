@@ -8,16 +8,17 @@
 //! * a fmt layer (human-readable diagnostics) writing to stderr and to a
 //!   rolling non-blocking file appender, filtered by an env-filter
 //!   (`ENTROPIAORME_LOG`, default `info`);
-//! * the [`MetricsLayer`], which turns the database driver's own per-query
-//!   `sqlx::query` events into database-latency samples in the in-process
-//!   [`eo_wire::metrics`] registry. Capturing the driver's events (rather than
-//!   wrapping every call site) means the metric covers every query in the
+//! * the [`MetricsLayer`], which turns the synchronous database core's own
+//!   per-job `eo::db::query` events into database-latency samples in the
+//!   in-process [`eo_wire::metrics`] registry. The core emits one timing event
+//!   around every closure it runs on a writer or reader thread (see
+//!   `eo_services::db`), so the metric covers every database job in the
 //!   process, including the tracker's hot per-event writes, with zero touch to
 //!   the query code and so zero behaviour risk.
 //!
-//! The metrics layer carries its OWN target filter (`sqlx::query` only), so it
-//! observes query events regardless of the fmt layer's verbosity: turning the
-//! console logs down never blinds the database-latency metric.
+//! The metrics layer carries its OWN target filter (`eo::db::query` only), so
+//! it observes these events regardless of the fmt layer's verbosity: turning
+//! the console logs down never blinds the database-latency metric.
 //!
 //! Behaviour-neutral: the subscriber is a pure observer. It reads event fields
 //! (durations, counts, statement summaries) and never touches a response body,
@@ -81,16 +82,14 @@ pub fn init() -> TelemetryGuard {
     }
 }
 
-/// The default log filter: INFO, with the database driver's own per-query INFO
-/// logging (one line per query) quieted to WARN so neither the console nor the
-/// log file is flooded; the metrics layer still observes every query through
-/// its own target filter, independent of this one. Overridden wholesale by
-/// `ENTROPIAORME_LOG` (standard EnvFilter syntax, e.g. `debug` or
+/// The default log filter: INFO. The database core's own per-job timing events
+/// are emitted at TRACE (below this threshold), so neither the console nor the
+/// log file is flooded, while the metrics layer still observes every job
+/// through its own target filter, independent of this one. Overridden wholesale
+/// by `ENTROPIAORME_LOG` (standard EnvFilter syntax, e.g. `debug` or
 /// `eo::ocr=trace,info`).
 fn default_env_filter() -> EnvFilter {
-    EnvFilter::try_from_env("ENTROPIAORME_LOG")
-        .or_else(|_| EnvFilter::try_new("info,sqlx::query=warn"))
-        .unwrap_or_else(|_| EnvFilter::new("info"))
+    EnvFilter::try_from_env("ENTROPIAORME_LOG").unwrap_or_else(|_| EnvFilter::new("info"))
 }
 
 /// Build the rolling-file log layer and its flush guard: daily-rotated files
@@ -120,7 +119,7 @@ where
         .max_log_files(7)
         .build(log_dir)?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
-    let filter = EnvFilter::try_new("info,sqlx::query=warn,eo::sidecar=off")
+    let filter = EnvFilter::try_new("info,eo::sidecar=off")
         .expect("the static file-log filter directive is valid");
     let layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
@@ -130,21 +129,22 @@ where
     Ok((layer, guard))
 }
 
-/// The metrics-aggregating layer with its own `sqlx::query`-only target
+/// The metrics-aggregating layer with its own `eo::db::query`-only target
 /// filter. Public to the crate so the database-latency integration test can
 /// install a metrics-only subscriber without the fmt noise.
 pub(crate) fn metrics_layer<S>() -> impl Layer<S>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    // Only the driver's own per-query events ("sqlx::query"), at any level, so
-    // the layer sees every completed query regardless of the console filter.
-    MetricsLayer.with_filter(Targets::new().with_target("sqlx::query", LevelFilter::TRACE))
+    // Only the database core's own per-job events ("eo::db::query"), at any
+    // level, so the layer sees every completed job regardless of the console
+    // filter.
+    MetricsLayer.with_filter(Targets::new().with_target("eo::db::query", LevelFilter::TRACE))
 }
 
-/// Records the elapsed time of each `sqlx::query` event into the database
+/// Records the elapsed time of each `eo::db::query` event into the database
 /// latency histogram. Stateless: every event reaching it (the target filter
-/// guarantees it is a completed query) carries an `elapsed_secs` field.
+/// guarantees it is a completed database job) carries an `elapsed_secs` field.
 struct MetricsLayer;
 
 impl<S> Layer<S> for MetricsLayer
@@ -160,8 +160,8 @@ where
     }
 }
 
-/// Extracts the `elapsed_secs` field (the driver records each query's wall
-/// time as fractional seconds) and converts it to a `Duration`.
+/// Extracts the `elapsed_secs` field (the database core records each job's
+/// wall time as fractional seconds) and converts it to a `Duration`.
 #[derive(Default)]
 struct ElapsedVisitor {
     elapsed: Option<Duration>,
@@ -175,8 +175,8 @@ impl Visit for ElapsedVisitor {
     }
 
     // Required, but every field this layer cares about is numeric, so the
-    // catch-all does nothing (it must not record statement text: that is the
-    // one field that could echo a query, though never a bound value).
+    // catch-all does nothing. The core's timing event carries no textual
+    // field anyway (the job is an opaque closure at the emitting layer).
     fn record_debug(&mut self, _field: &Field, _value: &dyn std::fmt::Debug) {}
 }
 
@@ -185,8 +185,8 @@ mod tests {
     use super::*;
 
     /// A real query under a metrics-only subscriber records a database-latency
-    /// sample, proving the driver-event capture path records a sample for a real
-    /// query end to end.
+    /// sample, proving the core's per-job event capture path records a sample
+    /// for a real query end to end.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_database_query_records_a_latency_sample() {
         // A metrics-only global subscriber (no fmt noise). Installed globally

@@ -21,8 +21,6 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
-#[cfg(test)]
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::clock::Clock;
@@ -60,8 +58,6 @@ pub enum AnalyticsError {
     #[error("type must be 'expense' or 'markup'")]
     InvalidPresetType,
     #[error(transparent)]
-    Db(#[from] sqlx::Error),
-    #[error(transparent)]
     Storage(#[from] DbError),
 }
 
@@ -81,7 +77,7 @@ const ACTIVITY_DOMINANCE_THRESHOLD: f64 = 0.6;
 /// float, an INTEGER (including the `COALESCE(SUM(...), 0)` empty case) to an
 /// integer. The stored value's affinity (`ValueRef`) drives the branch, so a
 /// REAL sum stays a float and an integer sum (the NULL-sum zeros) stays an
-/// integer, exactly as the sqlx `try_get::<f64>`-then-`i64` cascade did.
+/// integer, preserving the engine numeric type of the read.
 fn sql_number(row: &rusqlite::Row, index: usize) -> Value {
     match row.get_ref_unwrap(index) {
         rusqlite::types::ValueRef::Real(value) => json!(value),
@@ -1900,7 +1896,7 @@ impl AnalyticsService {
         sold_at: Option<&str>,
     ) -> Result<Option<Value>, AnalyticsError> {
         // The item is read on a reader-core connection; the realised sale then
-        // writes its ledger row and removes the item in one sqlx transaction
+        // writes its ledger row and removes the item in one writer transaction
         // (the rollup refresh must commit atomically with the ledger insert).
         let fetched = {
             let item_id = item_id.to_string();
@@ -1998,18 +1994,8 @@ impl AnalyticsService {
 
 #[cfg(test)]
 impl AnalyticsService {
-    /// The reader pool, for tests that inspect projection state directly.
-    fn read(&self) -> &SqlitePool {
-        self.db.read()
-    }
-
-    /// The writer pool, for the sqlx-side seeding the write-handler tests do.
-    fn write(&self) -> &SqlitePool {
-        self.db.write()
-    }
-
     /// The database handle, for tests that drive the synchronous core
-    /// (the rollup heal) directly.
+    /// (the rollup heal) directly, or seed/read state through it.
     fn db(&self) -> &Db {
         &self.db
     }
@@ -2020,19 +2006,17 @@ mod tests {
     use super::*;
     use eo_wire::normalizer::to_wire_json;
 
-    /// A real database (writer/reader pools plus the synchronous core) over a
-    /// temp file, with its writer pool handed back for the sqlx-side seeding
-    /// the tests still do. A temp file (not `:memory:`) is required: the
-    /// synchronous core opens its own connections, which an in-memory pool
-    /// cannot share. The reads under test run on the core; the seeds commit on
-    /// the writer pool and are visible to the core's readers under WAL.
-    async fn open_env() -> (tempfile::TempDir, Db, SqlitePool) {
+    /// A real database (the synchronous core) over a temp file. A temp file
+    /// (not `:memory:`) is required: the synchronous core opens its own
+    /// connections, which an in-memory database cannot share. The reads
+    /// under test run on the core; the seeds commit through the same handle
+    /// and are visible to the core's readers under WAL.
+    async fn open_env() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(&dir.path().join("entropia_orme.db"))
             .await
             .unwrap();
-        let pool = db.write().clone();
-        (dir, db, pool)
+        (dir, db)
     }
 
     /// An [`AnalyticsService`] over a real temp-file database, its clock frozen
@@ -2040,7 +2024,7 @@ mod tests {
     /// (2026-06-01).
     async fn write_service() -> (tempfile::TempDir, AnalyticsService) {
         use crate::clock::MockClock;
-        let (dir, db, _pool) = open_env().await;
+        let (dir, db) = open_env().await;
         let naive =
             chrono::NaiveDateTime::parse_from_str("2026-06-01T12:00:00", "%Y-%m-%dT%H:%M:%S")
                 .unwrap();
@@ -2059,13 +2043,19 @@ mod tests {
             .unwrap();
     }
 
-    async fn ledger_rollup(pool: &SqlitePool, day: &str, tag: &str) -> Option<(String, f64)> {
-        sqlx::query_as(
-            "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ? AND tag = ?",
-        )
-        .bind(day)
-        .bind(tag)
-        .fetch_optional(pool)
+    async fn ledger_rollup(db: &Db, day: &str, tag: &str) -> Option<(String, f64)> {
+        use rusqlite::OptionalExtension;
+        let day = day.to_string();
+        let tag = tag.to_string();
+        db.with_reader(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ?1 AND tag = ?2",
+                    rusqlite::params![day, tag],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+                )
+                .optional()?)
+        })
         .await
         .unwrap()
     }
@@ -2081,7 +2071,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            ledger_rollup(service.read(), "2026-06-02", "manual").await,
+            ledger_rollup(service.db(), "2026-06-02", "manual").await,
             Some(("expense".into(), 12.5))
         );
 
@@ -2089,7 +2079,7 @@ mod tests {
         let id = body["id"].as_str().unwrap().to_string();
         assert!(service.delete_ledger_entry(&id).await.unwrap());
         assert_eq!(
-            ledger_rollup(service.read(), "2026-06-02", "manual").await,
+            ledger_rollup(service.db(), "2026-06-02", "manual").await,
             None
         );
         assert!(!service.delete_ledger_entry("missing").await.unwrap());
@@ -2099,13 +2089,18 @@ mod tests {
     async fn inventory_sale_relands_the_sold_days_rollup() {
         let (_dir, service) = write_service().await;
         heal_to_june_fifth(service.db()).await;
-        sqlx::query(
-            "INSERT INTO inventory_items (id, name, tt_value, markup_paid, notes, acquired_at) \
-             VALUES ('i1', 'Gun', 10.0, 2.0, NULL, '2026-05-01')",
-        )
-        .execute(service.write())
-        .await
-        .unwrap();
+        service
+            .db()
+            .with_writer(|conn| {
+                conn.execute(
+                    "INSERT INTO inventory_items (id, name, tt_value, markup_paid, notes, acquired_at) \
+                     VALUES ('i1', 'Gun', 10.0, 2.0, NULL, '2026-05-01')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
 
         // Sold at a backdated date for an 8.0 markup delta.
         service
@@ -2114,14 +2109,14 @@ mod tests {
             .unwrap()
             .expect("the item exists");
         assert_eq!(
-            ledger_rollup(service.read(), "2026-06-02", INVENTORY_SALE_TAG).await,
+            ledger_rollup(service.db(), "2026-06-02", INVENTORY_SALE_TAG).await,
             Some(("markup".into(), 8.0))
         );
     }
 
     #[tokio::test]
     async fn empty_overview_emits_the_engine_typed_zeros() {
-        let (_dir, db, _pool) = open_env().await;
+        let (_dir, db) = open_env().await;
         let value = overview_impl(&db, 1_800_000_000.0, "all").await.unwrap();
         // cycledBreakdown is an `Any` field: empty COALESCE sums leave the
         // integer zero on the wire, while the float-declared aggregates coerce.
@@ -2137,7 +2132,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_activity_emits_three_empty_tables() {
-        let (_dir, db, _pool) = open_env().await;
+        let (_dir, db) = open_env().await;
         let value = activity_impl(&db).await.unwrap();
         assert_eq!(
             to_wire_json(&value),
@@ -2148,131 +2143,99 @@ mod tests {
     /// Seed the representative scenario the live probe grounded, with the
     /// window relative to a fixed `now`, and assert the computed aggregates,
     /// the trend, dominance, and the filters.
-    async fn seed_scenario(pool: &SqlitePool, now: f64) {
+    async fn seed_scenario(db: &Db, now: f64) {
         let day = 86400.0;
         let recent = now - 11.0 * day; // inside the 30d window
         let prior = now - 37.0 * day; // inside the 30-60d window
-                                      // sessions
-        for (id, start, armour, heal, dangling) in [
-            ("sess-a", recent, 1.0, 2.0, 0.5),
-            ("sess-b", prior, 0.5, 1.0, 0.0),
-            ("sess-z", recent, 0.0, 0.0, 0.0), // zero-kill, zero-cost: filtered from activity
-        ] {
-            sqlx::query(
-                "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
-                 VALUES(?,?,?,?,?,?)",
+        let recent_iso = epoch_to_iso(recent);
+        let prior_iso = epoch_to_iso(prior);
+        db.with_writer(move |conn| {
+            // sessions
+            for (id, start, armour, heal, dangling) in [
+                ("sess-a", recent, 1.0, 2.0, 0.5),
+                ("sess-b", prior, 0.5, 1.0, 0.0),
+                ("sess-z", recent, 0.0, 0.0, 0.0), // zero-kill, zero-cost: filtered from activity
+            ] {
+                conn.execute(
+                    "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
+                     VALUES(?1,?2,?3,?4,?5,?6)",
+                    rusqlite::params![id, start, start + 3600.0, armour, heal, dangling],
+                )
+                .expect("seed");
+            }
+            for i in 0..5 {
+                let kid = format!("k-a-{i}");
+                conn.execute(
+                    "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                    rusqlite::params![kid, "sess-a", "Atrox", "Atrox", "Young", recent + i as f64, 0.1, 10.0],
+                )
+                .expect("seed");
+                conn.execute(
+                    "INSERT INTO kill_tool_stats(kill_id,tool_name,shots_fired,cost_per_shot) VALUES(?1,?2,?3,?4)",
+                    rusqlite::params![kid, "Opalo", 50_i64, 0.011],
+                )
+                .expect("seed");
+            }
+            for i in 0..3 {
+                let kid = format!("k-b-{i}");
+                conn.execute(
+                    "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
+                     VALUES(?1,?2,?3,NULL,NULL,?4,?5,?6)",
+                    rusqlite::params![kid, "sess-b", "Thing", prior + i as f64, 0.0, 5.0],
+                )
+                .expect("seed");
+                conn.execute(
+                    "INSERT INTO kill_tool_stats(kill_id,tool_name,shots_fired,cost_per_shot) VALUES(?1,?2,?3,?4)",
+                    rusqlite::params![kid, "Opalo", 30_i64, 0.01],
+                )
+                .expect("seed");
+            }
+            conn.execute(
+                "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount,ped_value) \
+                 VALUES(?1,?2,?3,?4,?5)",
+                rusqlite::params!["sess-a", recent, "Laser Weaponry Technology", 1.0, 3.0],
             )
-            .bind(id)
-            .bind(start)
-            .bind(start + 3600.0)
-            .bind(armour)
-            .bind(heal)
-            .bind(dangling)
-            .execute(pool)
-            .await
             .expect("seed");
-        }
-        for i in 0..5 {
-            let kid = format!("k-a-{i}");
-            sqlx::query(
-                "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
-                 VALUES(?,?,?,?,?,?,?,?)",
+            conn.execute(
+                "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount,ped_value) \
+                 VALUES(?1,?2,?3,?4,?5)",
+                rusqlite::params!["sess-b", prior, "Laser Weaponry Technology", 1.0, 1.0],
             )
-            .bind(&kid).bind("sess-a").bind("Atrox").bind("Atrox").bind("Young")
-            .bind(recent + i as f64).bind(0.1).bind(10.0)
-            .execute(pool).await.expect("seed");
-            sqlx::query("INSERT INTO kill_tool_stats(kill_id,tool_name,shots_fired,cost_per_shot) VALUES(?,?,?,?)")
-                .bind(&kid).bind("Opalo").bind(50_i64).bind(0.011)
-                .execute(pool).await.expect("seed");
-        }
-        for i in 0..3 {
-            let kid = format!("k-b-{i}");
-            sqlx::query(
-                "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
-                 VALUES(?,?,?,NULL,NULL,?,?,?)",
-            )
-            .bind(&kid).bind("sess-b").bind("Thing")
-            .bind(prior + i as f64).bind(0.0).bind(5.0)
-            .execute(pool).await.expect("seed");
-            sqlx::query("INSERT INTO kill_tool_stats(kill_id,tool_name,shots_fired,cost_per_shot) VALUES(?,?,?,?)")
-                .bind(&kid).bind("Opalo").bind(30_i64).bind(0.01)
-                .execute(pool).await.expect("seed");
-        }
-        sqlx::query(
-            "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount,ped_value) \
-             VALUES(?,?,?,?,?)",
-        )
-        .bind("sess-a")
-        .bind(recent)
-        .bind("Laser Weaponry Technology")
-        .bind(1.0)
-        .bind(3.0)
-        .execute(pool)
-        .await
-        .expect("seed");
-        sqlx::query(
-            "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount,ped_value) \
-             VALUES(?,?,?,?,?)",
-        )
-        .bind("sess-b")
-        .bind(prior)
-        .bind("Laser Weaponry Technology")
-        .bind(1.0)
-        .bind(1.0)
-        .execute(pool)
-        .await
-        .expect("seed");
-        sqlx::query(
-            "INSERT INTO codex_claims(species_name,rank,skill_name,claimed_at,ped_value) \
-             VALUES(?,?,?,?,?)",
-        )
-        .bind("Atrox")
-        .bind(1_i64)
-        .bind("Rifle")
-        .bind(recent)
-        .bind(7.0)
-        .execute(pool)
-        .await
-        .expect("seed");
-        sqlx::query("INSERT INTO quest_claims(quest_name,claimed_at,ped_value) VALUES(?,?,?)")
-            .bind("A Quest")
-            .bind(recent)
-            .bind(4.0)
-            .execute(pool)
-            .await
             .expect("seed");
-        // ledger: a recent markup and a prior expense, dated by the ISO form.
-        sqlx::query(
-            "INSERT INTO ledger_entries(id,date,type,description,amount,tag) VALUES(?,?,?,?,?,?)",
-        )
-        .bind("led-1")
-        .bind(epoch_to_iso(recent))
-        .bind("markup")
-        .bind("Sold hides")
-        .bind(12.5)
-        .bind("loot_sale")
-        .execute(pool)
+            conn.execute(
+                "INSERT INTO codex_claims(species_name,rank,skill_name,claimed_at,ped_value) \
+                 VALUES(?1,?2,?3,?4,?5)",
+                rusqlite::params!["Atrox", 1_i64, "Rifle", recent, 7.0],
+            )
+            .expect("seed");
+            conn.execute(
+                "INSERT INTO quest_claims(quest_name,claimed_at,ped_value) VALUES(?1,?2,?3)",
+                rusqlite::params!["A Quest", recent, 4.0],
+            )
+            .expect("seed");
+            // ledger: a recent markup and a prior expense, dated by the ISO form.
+            conn.execute(
+                "INSERT INTO ledger_entries(id,date,type,description,amount,tag) VALUES(?1,?2,?3,?4,?5,?6)",
+                rusqlite::params!["led-1", recent_iso, "markup", "Sold hides", 12.5, "loot_sale"],
+            )
+            .expect("seed");
+            conn.execute(
+                "INSERT INTO ledger_entries(id,date,type,description,amount,tag) VALUES(?1,?2,?3,?4,?5,?6)",
+                rusqlite::params!["led-2", prior_iso, "expense", "Deposit", 8.0, "deposit"],
+            )
+            .expect("seed");
+            Ok(())
+        })
         .await
-        .expect("seed");
-        sqlx::query(
-            "INSERT INTO ledger_entries(id,date,type,description,amount,tag) VALUES(?,?,?,?,?,?)",
-        )
-        .bind("led-2")
-        .bind(epoch_to_iso(prior))
-        .bind("expense")
-        .bind("Deposit")
-        .bind(8.0)
-        .bind("deposit")
-        .execute(pool)
-        .await
-        .expect("seed");
+        .unwrap();
     }
 
     #[tokio::test]
     async fn seeded_overview_aggregates_match() {
         let now = 1_800_000_000.0;
-        let (_dir, db, pool) = open_env().await;
-        seed_scenario(&pool, now).await;
+        let (_dir, db) = open_env().await;
+        seed_scenario(&db, now).await;
         let v = overview_impl(&db, now, "all").await.unwrap();
         assert_eq!(v["returnsBreakdown"]["lootTt"], json!(65.0));
         assert_eq!(v["returnsBreakdown"]["pes"], json!(4.0));
@@ -2308,8 +2271,8 @@ mod tests {
     #[tokio::test]
     async fn seeded_activity_dominance_and_filters() {
         let now = 1_800_000_000.0;
-        let (_dir, db, pool) = open_env().await;
-        seed_scenario(&pool, now).await;
+        let (_dir, db) = open_env().await;
+        seed_scenario(&db, now).await;
         let v = activity_impl(&db).await.unwrap();
         // sess-z (zero kills) filtered out; sess-a -> dominant mob, sess-b -> tag.
         let mobs = v["mobComparisons"].as_array().unwrap();
@@ -2346,13 +2309,13 @@ mod tests {
     /// the keeper: only the keeper's mob survives.
     #[tokio::test]
     async fn activity_filter_drops_a_session_failing_any_single_guard() {
-        let (_dir, db, pool) = open_env().await;
+        let (_dir, db) = open_env().await;
         // keeper: kills, duration, cost all positive.
-        seed_filter_session(&pool, "keep", "Keeper", 1000.0, 1000.0 + 3600.0, 5.0, 2).await;
+        seed_filter_session(&db, "keep", "Keeper", 1000.0, 1000.0 + 3600.0, 5.0, 2).await;
         // zero cost -> cycled 0 -> dropped by the cycled guard alone.
-        seed_filter_session(&pool, "zcost", "Zerocost", 1000.0, 1000.0 + 3600.0, 0.0, 2).await;
+        seed_filter_session(&db, "zcost", "Zerocost", 1000.0, 1000.0 + 3600.0, 0.0, 2).await;
         // zero duration (start == end) -> dropped by the duration guard alone.
-        seed_filter_session(&pool, "zdur", "Zerodur", 1000.0, 1000.0, 5.0, 2).await;
+        seed_filter_session(&db, "zdur", "Zerodur", 1000.0, 1000.0, 5.0, 2).await;
         let v = activity_impl(&db).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1, "only the keeper survives the OR filter");
@@ -2360,7 +2323,7 @@ mod tests {
     }
 
     async fn seed_filter_session(
-        pool: &SqlitePool,
+        db: &Db,
         id: &str,
         mob: &str,
         start: f64,
@@ -2368,46 +2331,52 @@ mod tests {
         armour: f64,
         kills: i64,
     ) {
-        sqlx::query(
-            "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
-             VALUES(?,?,?,?,0,0)",
-        )
-        .bind(id).bind(start).bind(end).bind(armour)
-        .execute(pool).await.expect("seed");
-        for i in 0..kills {
-            sqlx::query(
-                "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
-                 VALUES(?,?,?,?,?,?,?,?)",
+        let id = id.to_string();
+        let mob = mob.to_string();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
+                 VALUES(?1,?2,?3,?4,0,0)",
+                rusqlite::params![id, start, end, armour],
             )
-            .bind(format!("{id}-k{i}")).bind(id).bind(mob).bind("Spec").bind("Young")
-            .bind(start + i as f64).bind(0.0).bind(1.0)
-            .execute(pool).await.expect("seed");
-        }
+            .expect("seed");
+            for i in 0..kills {
+                conn.execute(
+                    "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                    rusqlite::params![format!("{id}-k{i}"), id, mob, "Spec", "Young", start + i as f64, 0.0, 1.0],
+                )
+                .expect("seed");
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     /// Seed one session (cost via armour) and `kills` loot rows at `ts`, so a
     /// window's rate is loot_total / armour_cost.
-    async fn seed_rate(pool: &SqlitePool, id: &str, ts: f64, cost: f64, kills: i64, loot: f64) {
-        sqlx::query(
-            "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
-             VALUES(?,?,?,?,0,0)",
-        )
-        .bind(id).bind(ts).bind(ts + 3600.0).bind(cost)
-        .execute(pool).await.expect("seed");
-        for i in 0..kills {
-            sqlx::query(
-                "INSERT INTO kills(id,session_id,mob_name,timestamp,enhancer_cost,loot_total_ped) \
-                 VALUES(?,?,?,?,0,?)",
+    async fn seed_rate(db: &Db, id: &str, ts: f64, cost: f64, kills: i64, loot: f64) {
+        let id = id.to_string();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
+                 VALUES(?1,?2,?3,?4,0,0)",
+                rusqlite::params![id, ts, ts + 3600.0, cost],
             )
-            .bind(format!("{id}-k{i}"))
-            .bind(id)
-            .bind("M")
-            .bind(ts + i as f64)
-            .bind(loot)
-            .execute(pool)
-            .await
             .expect("seed");
-        }
+            for i in 0..kills {
+                conn.execute(
+                    "INSERT INTO kills(id,session_id,mob_name,timestamp,enhancer_cost,loot_total_ped) \
+                     VALUES(?1,?2,?3,?4,0,?5)",
+                    rusqlite::params![format!("{id}-k{i}"), id, "M", ts + i as f64, loot],
+                )
+                .expect("seed");
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     /// The trend compares the recent-30d rate against the prior-30d rate with
@@ -2419,27 +2388,27 @@ mod tests {
         let trend = |v: Value| v["trend"].clone();
 
         // declining: recent rate 1.0 (10/10) below prior 2.0 (20/10) * 0.98.
-        let (_dir, db, pool) = open_env().await;
-        seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
-        seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
+        seed_rate(&db, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
             trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("declining")
         );
 
         // improving: recent 2.0 above prior 1.0 * 1.02.
-        let (_dir, db, pool) = open_env().await;
-        seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
-        seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
+        seed_rate(&db, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
             trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("improving")
         );
 
         // stable: recent equals prior, inside the band.
-        let (_dir, db, pool) = open_env().await;
-        seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
-        seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "r", now - 10.0 * day, 10.0, 1, 10.0).await;
+        seed_rate(&db, "p", now - 45.0 * day, 10.0, 1, 10.0).await;
         assert_eq!(
             trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("stable")
@@ -2448,16 +2417,16 @@ mod tests {
         // zero recent rate: the positivity guard short-circuits to stable
         // (a mutated guard would fall through into the banding and declare a
         // direction).
-        let (_dir, db, pool) = open_env().await;
-        seed_rate(&pool, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "p", now - 45.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
             trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("stable")
         );
 
         // zero prior rate: the other half of the guard.
-        let (_dir, db, pool) = open_env().await;
-        seed_rate(&pool, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "r", now - 10.0 * day, 10.0, 1, 20.0).await;
         assert_eq!(
             trend(overview_impl(&db, now, "all").await.unwrap()),
             json!("stable")
@@ -2470,40 +2439,48 @@ mod tests {
     async fn activity_dominance_threshold_and_tag_split() {
         // Non-dominant: three distinct mobs, one kill each (33% each, below
         // the 0.6 floor) -> no dominant element, no comparison rows.
-        let (_dir, db, pool) = open_env().await;
-        sqlx::query(
-            "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
-             VALUES('nd',1000.0,4600.0,5.0,0,0)",
-        )
-        .execute(&pool).await.expect("seed");
-        for (i, mob) in ["Alpha", "Bravo", "Charlie"].iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
-                 VALUES(?,'nd',?,'Spec','Young',?,0,1.0)",
-            )
-            .bind(format!("nd-{i}")).bind(*mob).bind(1000.0 + i as f64)
-            .execute(&pool).await.expect("seed");
-        }
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
+                 VALUES('nd',1000.0,4600.0,5.0,0,0)",
+                [],
+            )?;
+            for (i, mob) in ["Alpha", "Bravo", "Charlie"].iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
+                     VALUES(?1,'nd',?2,'Spec','Young',?3,0,1.0)",
+                    rusqlite::params![format!("nd-{i}"), mob, 1000.0 + i as f64],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
         let v = activity_impl(&db).await.unwrap();
         assert_eq!(v["mobComparisons"].as_array().unwrap().len(), 0);
         assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
 
         // Asymmetric: species present, maturity empty -> still a mob (the
         // presence test is OR, not AND), so it lands in mobComparisons.
-        let (_dir, db, pool) = open_env().await;
-        sqlx::query(
-            "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
-             VALUES('as',1000.0,4600.0,5.0,0,0)",
-        )
-        .execute(&pool).await.expect("seed");
-        for i in 0..2 {
-            sqlx::query(
-                "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
-                 VALUES(?,'as','Foo','Bar','',?,0,1.0)",
-            )
-            .bind(format!("as-{i}")).bind(1000.0 + i as f64)
-            .execute(&pool).await.expect("seed");
-        }
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
+                 VALUES('as',1000.0,4600.0,5.0,0,0)",
+                [],
+            )?;
+            for i in 0..2 {
+                conn.execute(
+                    "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
+                     VALUES(?1,'as','Foo','Bar','',?2,0,1.0)",
+                    rusqlite::params![format!("as-{i}"), 1000.0 + i as f64],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
         let v = activity_impl(&db).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
@@ -2516,15 +2493,20 @@ mod tests {
     /// session, so it never enters any session's aggregate.
     #[tokio::test]
     async fn activity_ignores_a_kill_for_a_missing_session() {
-        let (_dir, db, pool) = open_env().await;
+        let (_dir, db) = open_env().await;
         // A valid completed session with one dominant-mob kill.
-        seed_filter_session(&pool, "ok", "Real", 1000.0, 1000.0 + 3600.0, 5.0, 2).await;
+        seed_filter_session(&db, "ok", "Real", 1000.0, 1000.0 + 3600.0, 5.0, 2).await;
         // An orphan kill whose session_id matches no tracking_sessions row.
-        sqlx::query(
-            "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
-             VALUES('orphan','ghost-session','Ghost','Spec','Young',1.0,0,9.0)",
-        )
-        .execute(&pool).await.expect("seed");
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO kills(id,session_id,mob_name,mob_species,mob_maturity,timestamp,enhancer_cost,loot_total_ped) \
+                 VALUES('orphan','ghost-session','Ghost','Spec','Young',1.0,0,9.0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
         // Only the real session's mob is compared; the orphan is ignored.
         let v = activity_impl(&db).await.unwrap();
         let mobs = v["mobComparisons"].as_array().unwrap();

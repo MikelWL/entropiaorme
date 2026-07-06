@@ -1,41 +1,41 @@
 //! The persistence base: one SQLite database behind a narrow handle.
 //!
-//! Design decisions, mirroring the original Python implementation and the porting
-//! references:
+//! The database runs behind one synchronous core (see [`pool`]): a single
+//! dedicated writer thread owning the write connection, and a small pool of
+//! reader threads each owning a read connection against the WAL. Callers
+//! submit closures ([`Db::with_reader`] / [`Db::with_writer`], with blocking
+//! counterparts for plain producer threads); exclusive access to a connection
+//! is the thread that owns it, so there is no pool checkout, no lock order, and
+//! no async executor between a caller and SQLite. No driver type escapes this
+//! module's API: callers see [`Db`], [`DbError`], and plain data.
 //!
-//! - **Writer/reader split**: one dedicated writer connection serialises
-//!   every write in-process, and a small reader pool serves reads
-//!   concurrently against the WAL, so a live write stream no longer
-//!   stalls dashboard reads. Callers pick the pool by intent
-//!   ([`Db::read`] for `SELECT`, [`Db::write`] for mutations); no other
-//!   module reaches a raw pool. (The original single-owner pool-of-one,
-//!   a faithful transcription of the backend's shared connection, was
-//!   the benchmark-justified renovation point once real databases
-//!   outgrew it; the split is response-invariant, re-validated against
-//!   the DB-state goldens.)
+//! Design decisions:
+//!
+//! - **Writer/reader split**: one dedicated writer thread serialises every
+//!   write in-process (so two writers queue at the writer thread rather than
+//!   colliding on SQLite's single-writer lock), and a small pool of reader
+//!   threads serves reads concurrently against the WAL, so a live write stream
+//!   no longer stalls dashboard reads. Callers pick the role by intent
+//!   ([`Db::with_reader`] for `SELECT`, [`Db::with_writer`] for mutations); no
+//!   other module reaches a raw connection. (The original single-owner
+//!   connection, a faithful transcription of the backend's shared connection,
+//!   was the benchmark-justified renovation point once real databases outgrew
+//!   it; the split is response-invariant, re-validated against the DB-state
+//!   goldens.)
 //! - **Session configuration**: WAL journal, NORMAL synchronous, a
-//!   5-second busy timeout, and a 64 MB page cache per connection.
-//! - **Schema baseline**: the migration chain starts at the schema the
-//!   backend creates on a fresh install (version 33), statement text
-//!   verbatim, so a freshly-migrated native database is
-//!   `sqlite_master`-identical to a freshly-created backend one.
-//! - **Adoption over re-creation**: opening an existing database that
-//!   the backend has already migrated to version 33 marks the baseline
-//!   as applied without running any DDL. Databases on older schema
-//!   versions are refused: the backend process owns their upgrade for as
-//!   long as it ships, and the pre-baseline upgrade chain moves natively
-//!   only when that ownership ends.
-//!
-//! No driver type escapes this module's API: callers see [`Db`],
-//! [`DbError`], and plain data.
-
-//!
-//! Queries here are runtime-prepared (`sqlx::query`), not compile-time
-//! checked macros: the snapshot catalogue composes its SQL from
-//! constants, so an offline statement cache has nothing to hold. If a
-//! compile-time-checked query (`sqlx::query!`) ever lands in this
-//! workspace, wire `cargo sqlx prepare` and the committed `.sqlx`
-//! cache into CI in the same change.
+//!   five-second busy timeout, foreign keys off (matching the backend's
+//!   effective pragma surface, where `REFERENCES` clauses are declarative),
+//!   and a 64 MB page cache per connection.
+//! - **Schema baseline**: the migration chain (an embedded runner with the
+//!   inherited ledger accounting, see [`migrate`]) starts at the schema the
+//!   backend creates on a fresh install (version 33), statement text verbatim,
+//!   so a freshly-migrated native database is `sqlite_master`-identical to a
+//!   freshly-created backend one.
+//! - **Adoption over re-creation**: opening an existing database that the
+//!   backend has already migrated to version 33 marks the baseline as applied
+//!   without running any DDL. Databases on older schema versions are refused:
+//!   the backend process owns their upgrade for as long as it ships, and the
+//!   pre-baseline upgrade chain moves natively only when that ownership ends.
 
 mod migrate;
 mod pool;
@@ -44,11 +44,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use pool::SyncCore;
+use rusqlite::OptionalExtension;
 use serde_json::{Map, Value};
-use sqlx::sqlite::{
-    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
-};
-use sqlx::Row;
 
 /// The schema version the baseline migration reproduces.
 const BASELINE_SCHEMA_VERSION: i64 = 33;
@@ -59,10 +56,7 @@ pub enum DbError {
     /// process upgrades it on its own launch.
     #[error("database schema version {found} predates the supported baseline {supported}")]
     UnsupportedSchemaVersion { found: i64, supported: i64 },
-    /// Any driver failure on the async pools.
-    #[error(transparent)]
-    Driver(#[from] sqlx::Error),
-    /// Any driver failure on the synchronous core.
+    /// Any driver failure from the synchronous core.
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     /// The synchronous core's worker threads have exited; no further
@@ -124,37 +118,6 @@ impl AdoptError {
     }
 }
 
-/// Decode a numeric aggregate that SQLite may hand back as INTEGER
-/// (a `SUM`/`COALESCE` expression result keeps the integer type even
-/// over REAL-affinity columns). Only a value that decodes as no
-/// number at all (NULL, text) falls back to zero; a structural
-/// failure (a missing column) is a programming error and panics
-/// rather than silently zeroing an analytic. Production reads moved to
-/// the synchronous core; the test rigs' sqlx-pool asserts still decode
-/// through it.
-#[cfg(test)]
-pub(crate) fn decoded_f64(row: &sqlx::sqlite::SqliteRow, index: usize) -> f64 {
-    use sqlx::Row as _;
-    row.try_get::<f64, _>(index)
-        .or_else(|_| row.try_get::<i64, _>(index).map(|value| value as f64))
-        .unwrap_or_else(|error| match error {
-            sqlx::Error::ColumnDecode { .. } => 0.0,
-            other => panic!("decoded_f64 column {index}: {other}"),
-        })
-}
-
-/// The number of reader connections. SQLite in WAL mode serves many
-/// concurrent readers against one writer; a handful is ample for a
-/// desktop app's dashboard, and keeps the page-cache footprint bounded.
-const READER_POOL_SIZE: u32 = 4;
-
-/// The page cache each connection may grow to, in KiB (the leading `-`
-/// is SQLite's "kibibytes, not pages" sign): 64 MB, up from the original
-/// 8 MB, for a database heading past a gigabyte. Applied to every
-/// connection in both pools; pages are demand-allocated up to the limit,
-/// so the resident cost tracks real working set, not the ceiling.
-const CACHE_SIZE_KIB: &str = "-64000";
-
 /// The startup corruption probe's time budget: `PRAGMA quick_check` is far
 /// cheaper than a full `integrity_check`, but still O(database), so it is
 /// bounded and run off the launch path. A database large enough to exceed
@@ -170,54 +133,36 @@ pub enum QuickCheckOutcome {
     /// The probe found problems; the payload is SQLite's own report, one
     /// finding per `; `-joined segment.
     Corrupt(String),
-    /// The probe did not finish within its budget and was abandoned, so
-    /// startup was not blocked. The database is left unprobed this launch.
+    /// The probe did not finish within its budget and was abandoned (the
+    /// running statement is interrupted), so startup was not blocked. The
+    /// database is left unprobed this launch.
     OverBudget,
     /// The probe could not run (a driver error, not a corruption verdict).
     Error(DbError),
 }
 
-/// The application database handle. Cloning shares the underlying pools
-/// (the composition root still opens the database exactly once); a clone
-/// is a handle, never a second owner.
+/// The application database handle. Cloning shares the underlying
+/// synchronous core (the composition root still opens the database exactly
+/// once); a clone is a handle, never a second owner.
 ///
-/// Reads and writes travel separate pools: one dedicated writer
-/// connection serialises every write in-process (so two writers queue at
-/// the pool rather than colliding on SQLite's single-writer lock), while
-/// a small reader pool serves dashboard reads concurrently against the
-/// WAL. This is what stops a live write stream from stalling reads. See
-/// [`Db::read`] and [`Db::write`].
+/// Reads and writes travel separate roles of the core: one dedicated writer
+/// thread serialises every write in-process (so two writers queue at the
+/// writer thread rather than colliding on SQLite's single-writer lock),
+/// while a small pool of reader threads serves dashboard reads concurrently
+/// against the WAL. This is what stops a live write stream from stalling
+/// reads. See [`Db::with_reader`] and [`Db::with_writer`].
 #[derive(Debug, Clone)]
 pub struct Db {
-    /// The single write connection. Every statement that mutates the
-    /// database (including write transactions and the migration chain)
-    /// runs here, so writes serialise through one owner.
-    writer: SqlitePool,
-    /// The reader pool. Plain reads run here, concurrently with the
-    /// writer under WAL, so a dashboard GET does not wait behind combat
-    /// writes.
-    reader: SqlitePool,
-    /// The synchronous core: a writer thread and a reader-thread pool
-    /// over their own connections, serving the closure API
-    /// ([`Db::with_writer`] / [`Db::with_reader`]). Absent only on
-    /// handles built by [`Db::from_pool`] (a test-only constructor).
-    core: Option<SyncCore>,
+    /// The synchronous core: a writer thread and a reader-thread pool over
+    /// their own connections, serving the closure API.
+    core: SyncCore,
+    /// The database file path, retained so the budgeted quick-check can open
+    /// its own throwaway read-only connection (an interruptible probe that
+    /// never disturbs the core's connections).
+    path: std::path::PathBuf,
 }
 
 impl Db {
-    /// The reader pool, for plain reads (`SELECT` / `fetch_*`). Reads on
-    /// this pool run concurrently with the writer under WAL.
-    pub fn read(&self) -> &SqlitePool {
-        &self.reader
-    }
-
-    /// The writer pool (a single connection), for every mutating
-    /// statement and every write transaction (`execute`, `begin`). All
-    /// writes serialise here.
-    pub fn write(&self) -> &SqlitePool {
-        &self.writer
-    }
-
     /// Run a read closure on the synchronous core: whichever reader
     /// thread is free runs it to completion on its own connection,
     /// concurrently with the writer under WAL. The closure sees a bare
@@ -228,7 +173,7 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
     {
-        self.core().read(job).await
+        self.core.read(job).await
     }
 
     /// Run a write closure on the synchronous core's writer thread.
@@ -242,7 +187,7 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
     {
-        self.core().write(job).await
+        self.core.write(job).await
     }
 
     /// The blocking counterpart of [`Db::with_reader`], for plain
@@ -253,7 +198,7 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
     {
-        self.core().read_blocking(job)
+        self.core.read_blocking(job)
     }
 
     /// The blocking counterpart of [`Db::with_writer`], for plain
@@ -264,17 +209,7 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&mut rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
     {
-        self.core().write_blocking(job)
-    }
-
-    /// The synchronous core, which every handle built by [`Db::open`]
-    /// carries. A [`Db::from_pool`] handle has none: that constructor
-    /// exists for test harnesses on the async pools, and a closure call
-    /// through it is a harness wiring error surfaced loudly here.
-    fn core(&self) -> &SyncCore {
-        self.core
-            .as_ref()
-            .expect("this Db handle was built from_pool and carries no synchronous core")
+        self.core.write_blocking(job)
     }
 
     /// Refresh the query planner's statistics via `PRAGMA optimize`, the
@@ -282,10 +217,12 @@ impl Db {
     /// boundary (shutdown, with no writes in flight), never on a hot path.
     /// Returns whether the pragma succeeded (a failure is non-fatal at exit).
     pub async fn optimize_on_shutdown(&self) -> bool {
-        sqlx::query("PRAGMA optimize")
-            .execute(self.write())
-            .await
-            .is_ok()
+        self.with_writer(|connection| {
+            connection.execute_batch("PRAGMA optimize")?;
+            Ok(())
+        })
+        .await
+        .is_ok()
     }
 
     /// Checkpoint the WAL and truncate it to zero, bounding WAL growth
@@ -294,10 +231,11 @@ impl Db {
     /// which is the intended behaviour at a quiescent boundary (session
     /// end), not on a hot path.
     pub async fn checkpoint_truncate(&self) -> Result<(), DbError> {
-        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-            .execute(self.write())
-            .await?;
-        Ok(())
+        self.with_writer(|connection| {
+            connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+            Ok(())
+        })
+        .await
     }
 
     /// Write a compacted copy of the database to `dest` via `VACUUM INTO`,
@@ -312,92 +250,83 @@ impl Db {
     /// caller clears any prior copy first. The path is bound as a
     /// parameter, so no path text is composed into the statement.
     pub async fn vacuum_into(&self, dest: &Path) -> Result<(), DbError> {
-        sqlx::query("VACUUM INTO ?")
-            .bind(dest.to_string_lossy().as_ref())
-            .execute(self.write())
-            .await?;
-        Ok(())
+        let dest = dest.to_string_lossy().into_owned();
+        self.with_writer(move |connection| {
+            connection.execute("VACUUM INTO ?1", rusqlite::params![dest])?;
+            Ok(())
+        })
+        .await
     }
 
-    /// Run `PRAGMA quick_check` on a reader connection, abandoning it if it
-    /// exceeds `budget`. `quick_check` is far cheaper than a full
-    /// `integrity_check` (it skips the costly index-vs-table cross checks)
-    /// but is still O(database), so it is bounded and meant to run off the
-    /// launch path: a corruption signal surfaces (through the caller's
-    /// logging) without ever stalling startup or crashing on a problem.
-    /// Read-only; never mutates.
+    /// Run `PRAGMA quick_check`, abandoning it if it exceeds `budget`.
+    /// `quick_check` is far cheaper than a full `integrity_check` (it skips
+    /// the costly index-vs-table cross checks) but is still O(database), so
+    /// it is bounded and meant to run off the launch path: a corruption
+    /// signal surfaces (through the caller's logging) without ever stalling
+    /// startup or crashing on a problem.
+    ///
+    /// The probe runs on a throwaway, read-only connection (opened
+    /// `SQLITE_OPEN_READ_ONLY`, so it can never mutate) on a spawned thread.
+    /// The budget genuinely cancels the probe: on timeout the connection's
+    /// interrupt handle aborts the in-flight statement, so an over-budget
+    /// `quick_check` on a large database stops scanning rather than merely
+    /// having its result ignored while it runs on. Read-only; never mutates.
     pub async fn quick_check_budgeted(&self, budget: Duration) -> QuickCheckOutcome {
-        let probe = sqlx::query("PRAGMA quick_check").fetch_all(self.read());
-        match tokio::time::timeout(budget, probe).await {
-            Err(_elapsed) => QuickCheckOutcome::OverBudget,
-            Ok(Err(error)) => QuickCheckOutcome::Error(error.into()),
-            Ok(Ok(rows)) => {
-                let lines: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
-                // A healthy database answers with the single row `ok`.
-                if lines.len() == 1 && lines[0] == "ok" {
-                    QuickCheckOutcome::Ok
-                } else {
-                    QuickCheckOutcome::Corrupt(lines.join("; "))
-                }
+        use rusqlite::OpenFlags;
+
+        let connection = match rusqlite::Connection::open_with_flags(
+            &self.path,
+            // Read-only, so the probe can never mutate. Serialized (full-mutex)
+            // rather than the rusqlite default no-mutex, so interrupting from
+            // this thread while the statement scans on the spawned one is safe.
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_URI
+                | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
+        ) {
+            Ok(connection) => connection,
+            Err(error) => return QuickCheckOutcome::Error(error.into()),
+        };
+        // Take the interrupt handle before the query starts so a timeout can
+        // abort the running statement from this thread while it scans on the
+        // spawned one.
+        let interrupt = connection.get_interrupt_handle();
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("db-quick-check".into())
+            .spawn(move || {
+                let _ = reply_tx.send(run_quick_check(&connection));
+            })
+            .expect("spawn the quick-check probe thread");
+
+        match tokio::time::timeout(budget, reply_rx).await {
+            // Over budget: interrupt the still-running statement so the probe
+            // genuinely cancels rather than scanning on unobserved.
+            Err(_elapsed) => {
+                interrupt.interrupt();
+                QuickCheckOutcome::OverBudget
             }
+            // The probe thread dropped its sender without a value: it was
+            // interrupted mid-flight (or the thread failed). Treat as
+            // over-budget; startup is never blocked either way.
+            Ok(Err(_recv)) => QuickCheckOutcome::OverBudget,
+            Ok(Ok(outcome)) => outcome,
         }
-    }
-
-    /// Rebind a handle over an already-opened pool, used as both the
-    /// reader and the writer. The composition root opens the application
-    /// database via [`Db::open`] (which builds the genuine writer/reader
-    /// split); this exists for harnesses attaching to a database another
-    /// process created and migrated, and for in-memory test pools that
-    /// cannot span two pools (each `:memory:` connection is its own
-    /// database). Sharing one pool for both roles reproduces the original
-    /// single-owner behaviour exactly, which is what those harnesses want.
-    pub fn from_pool(pool: SqlitePool) -> Db {
-        Db {
-            writer: pool.clone(),
-            reader: pool,
-            core: None,
-        }
-    }
-
-    /// The connect options shared by both pools: WAL, NORMAL sync, a
-    /// five-second busy timeout, foreign keys off (matching the backend's
-    /// effective pragma surface, where `REFERENCES` clauses are
-    /// declarative), and the 64 MB page cache.
-    fn connect_options(path: &Path) -> SqliteConnectOptions {
-        SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
-            .busy_timeout(Duration::from_secs(5))
-            .foreign_keys(false)
-            .pragma("cache_size", CACHE_SIZE_KIB)
     }
 
     /// Open (creating if missing), adopt or refuse an existing schema,
     /// and bring the migration chain up to date.
     ///
     /// The synchronous core's write connection is opened and migrated
-    /// first; every other connection (the core's readers and both async
-    /// pools) opens only after the schema is current, so no connection
-    /// ever observes a pre-migration database.
+    /// first; the core's reader connections open only after the schema is
+    /// current, so no connection ever observes a pre-migration database.
     pub async fn open(path: &Path) -> Result<Db, DbError> {
         let mut write_connection = pool::open_configured(path)?;
         adopt_or_refuse(&mut write_connection)?;
         migrate::run(&mut write_connection)?;
         let core = SyncCore::start(path, write_connection)?;
-        let writer = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(Self::connect_options(path))
-            .await?;
-        let reader = SqlitePoolOptions::new()
-            .max_connections(READER_POOL_SIZE)
-            .connect_with(Self::connect_options(path))
-            .await?;
         Ok(Db {
-            writer,
-            reader,
-            core: Some(core),
+            core,
+            path: path.to_path_buf(),
         })
     }
 
@@ -423,7 +352,7 @@ impl Db {
     /// The catalogue rows for the DB-state snapshot, each table in its
     /// deterministic order, shaped for the snapshot emitter.
     pub async fn snapshot_rows(&self) -> Result<Map<String, Value>, DbError> {
-        snapshot_rows(self.read()).await
+        self.with_reader(snapshot_rows_sync).await
     }
 
     /// One equipment-library row by id and item type: (id, name,
@@ -434,15 +363,19 @@ impl Db {
         id: i64,
         item_type: &str,
     ) -> Result<Option<(i64, String, String)>, DbError> {
-        let row = sqlx::query_as::<_, (i64, String, String)>(
-            "SELECT id, name, properties_json FROM equipment_library \
-             WHERE id = ? AND item_type = ?",
-        )
-        .bind(id)
-        .bind(item_type)
-        .fetch_optional(self.read())
-        .await?;
-        Ok(row)
+        let item_type = item_type.to_string();
+        self.with_reader(move |connection| {
+            connection
+                .query_row(
+                    "SELECT id, name, properties_json FROM equipment_library \
+                     WHERE id = ?1 AND item_type = ?2",
+                    rusqlite::params![id, item_type],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(DbError::from)
+        })
+        .await
     }
 
     /// One equipment-library row by id alone: `(name, item_type, properties
@@ -455,14 +388,18 @@ impl Db {
         &self,
         id: i64,
     ) -> Result<Option<(String, String, String)>, DbError> {
-        let row = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT name, item_type, properties_json FROM equipment_library \
-             WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(self.read())
-        .await?;
-        Ok(row)
+        self.with_reader(move |connection| {
+            connection
+                .query_row(
+                    "SELECT name, item_type, properties_json FROM equipment_library \
+                     WHERE id = ?1",
+                    rusqlite::params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(DbError::from)
+        })
+        .await
     }
 
     /// The first weapon-row `properties_json` whose name contains the
@@ -481,14 +418,19 @@ impl Db {
             .replace('\\', "\\\\")
             .replace('%', "\\%")
             .replace('_', "\\_");
-        let row = sqlx::query_as::<_, (String,)>(
-            "SELECT properties_json FROM equipment_library \
-             WHERE item_type = 'weapon' AND name LIKE ? ESCAPE '\\'",
-        )
-        .bind(format!("%{safe}%"))
-        .fetch_optional(self.read())
-        .await?;
-        Ok(row.map(|(properties_json,)| properties_json))
+        let pattern = format!("%{safe}%");
+        self.with_reader(move |connection| {
+            connection
+                .query_row(
+                    "SELECT properties_json FROM equipment_library \
+                     WHERE item_type = 'weapon' AND name LIKE ?1 ESCAPE '\\'",
+                    rusqlite::params![pattern],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(DbError::from)
+        })
+        .await
     }
 
     /// Test seeding for equipment-reading services (compiled into the
@@ -501,30 +443,63 @@ impl Db {
         item_type: &str,
         properties_json: &str,
     ) -> Result<(), DbError> {
-        sqlx::query(
-            "INSERT INTO equipment_library (id, name, item_type, properties_json) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(item_type)
-        .bind(properties_json)
-        .execute(self.write())
-        .await?;
-        Ok(())
+        let name = name.to_string();
+        let item_type = item_type.to_string();
+        let properties_json = properties_json.to_string();
+        self.with_writer(move |connection| {
+            connection.execute(
+                "INSERT INTO equipment_library (id, name, item_type, properties_json) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![id, name, item_type, properties_json],
+            )?;
+            Ok(())
+        })
+        .await
     }
 
     /// The schema objects as (type, name, statement) in (type, name)
     /// order, excluding SQLite's own bookkeeping tables: the surface the
     /// schema-conformance acceptance compares across implementations.
     pub async fn schema_master(&self) -> Result<Vec<(String, String, String)>, DbError> {
-        let rows = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL \
-             AND name NOT LIKE 'sqlite_%' ORDER BY type, name",
-        )
-        .fetch_all(self.read())
-        .await?;
-        Ok(rows)
+        self.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL \
+                 AND name NOT LIKE 'sqlite_%' ORDER BY type, name",
+            )?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+}
+
+/// Run `PRAGMA quick_check` to completion on the probe connection and map its
+/// rows to a [`QuickCheckOutcome`]. An interrupt (the budget firing) surfaces
+/// as [`QuickCheckOutcome::OverBudget`], matching the caller's own verdict.
+fn run_quick_check(connection: &rusqlite::Connection) -> QuickCheckOutcome {
+    let mut statement = match connection.prepare("PRAGMA quick_check") {
+        Ok(statement) => statement,
+        Err(error) => return QuickCheckOutcome::Error(error.into()),
+    };
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .and_then(|mapped| mapped.collect::<rusqlite::Result<Vec<String>>>());
+    let lines = match rows {
+        Ok(lines) => lines,
+        Err(rusqlite::Error::SqliteFailure(error, _))
+            if error.code == rusqlite::ErrorCode::OperationInterrupted =>
+        {
+            return QuickCheckOutcome::OverBudget
+        }
+        Err(error) => return QuickCheckOutcome::Error(error.into()),
+    };
+    // A healthy database answers with the single row `ok`.
+    if lines.len() == 1 && lines[0] == "ok" {
+        QuickCheckOutcome::Ok
+    } else {
+        QuickCheckOutcome::Corrupt(lines.join("; "))
     }
 }
 
@@ -643,63 +618,55 @@ fn table_exists_sync(connection: &rusqlite::Connection, name: &str) -> Result<bo
     Ok(found)
 }
 
-/// The async-pool counterpart of [`table_exists_sync`], serving the
-/// tests that inspect schema state through the pools.
-#[cfg(test)]
-async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool, DbError> {
-    let found: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-            .bind(name)
-            .fetch_optional(pool)
-            .await?;
-    Ok(found.is_some())
-}
-
 /// One row as the snapshot emitter expects it: column-ordered keys, JSON
 /// values typed by the stored value (integer, real, text, null). Shared by
 /// the snapshot catalogue and the projection-rebuild verifier, both of
-/// which compare rows by their canonical serialisation.
-pub(crate) fn row_to_json(row: &sqlx::sqlite::SqliteRow) -> Result<Value, DbError> {
-    use sqlx::{Column, TypeInfo, ValueRef};
+/// which compare rows by their canonical serialisation. A stored value
+/// outside the emitter's catalogue (a BLOB) is refused rather than guessed
+/// at, mirroring the original driver-typed shaper's `UnsupportedValueType`.
+pub(crate) fn row_to_json(row: &rusqlite::Row, columns: &[String]) -> Result<Value, DbError> {
     let mut object = Map::new();
-    for column in row.columns() {
-        let raw = row.try_get_raw(column.ordinal())?;
-        let value = if raw.is_null() {
-            Value::Null
-        } else {
-            match raw.type_info().name() {
-                "INTEGER" | "BOOLEAN" => Value::from(row.try_get::<i64, _>(column.ordinal())?),
-                "REAL" => Value::from(row.try_get::<f64, _>(column.ordinal())?),
-                "TEXT" => Value::from(row.try_get::<String, _>(column.ordinal())?),
-                other => {
-                    return Err(DbError::UnsupportedValueType {
-                        type_name: other.to_string(),
-                        column: column.name().to_string(),
-                    })
-                }
+    for (index, name) in columns.iter().enumerate() {
+        let value = match row.get_ref(index)? {
+            rusqlite::types::ValueRef::Null => Value::Null,
+            rusqlite::types::ValueRef::Integer(value) => Value::from(value),
+            rusqlite::types::ValueRef::Real(value) => Value::from(value),
+            rusqlite::types::ValueRef::Text(text) => {
+                Value::from(String::from_utf8(text.to_vec()).expect("snapshot text is UTF-8"))
+            }
+            rusqlite::types::ValueRef::Blob(_) => {
+                return Err(DbError::UnsupportedValueType {
+                    type_name: "BLOB".to_string(),
+                    column: name.clone(),
+                })
             }
         };
-        object.insert(column.name().to_string(), value);
+        object.insert(name.clone(), value);
     }
     Ok(Value::Object(object))
 }
 
-/// Execute the snapshot catalogue: each table's query with its
-/// deterministic ORDER BY, exactly as the catalogue documents.
-async fn snapshot_rows(pool: &SqlitePool) -> Result<Map<String, Value>, DbError> {
+/// Execute the snapshot catalogue on a reader connection: each table's query
+/// with its deterministic ORDER BY, exactly as the catalogue documents.
+fn snapshot_rows_sync(
+    connection: &mut rusqlite::Connection,
+) -> Result<Map<String, Value>, DbError> {
     let mut tables = Map::new();
     for spec in eo_wire::db_snapshot::CATALOGUE {
         // Composed exclusively from the catalogue's compile-time constants
-        // (no caller input reaches this string), so the safety assertion
-        // is genuine rather than a lint bypass.
+        // (no caller input reaches this string).
         let sql = format!("{} ORDER BY {}", spec.query, spec.order_by.join(", "));
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(pool)
-            .await?;
-        let mut json_rows = Vec::with_capacity(rows.len());
-        for row in &rows {
-            json_rows.push(row_to_json(row)?);
-        }
+        let mut statement = connection.prepare(&sql)?;
+        let columns: Vec<String> = statement
+            .column_names()
+            .iter()
+            .map(|&name| name.to_string())
+            .collect();
+        let json_rows = statement
+            .query_map([], |row| Ok(row_to_json(row, &columns)))?
+            .collect::<rusqlite::Result<Vec<Result<Value, DbError>>>>()?
+            .into_iter()
+            .collect::<Result<Vec<Value>, DbError>>()?;
         tables.insert(spec.name.to_string(), Value::Array(json_rows));
     }
     Ok(tables)
@@ -714,25 +681,19 @@ mod tests {
     }
 
     /// A database exactly as a version-33 backend leaves it: the baseline
-    /// schema and version row, with no sqlx migration ledger and none of the
+    /// schema and version row, with no migration ledger and none of the
     /// post-baseline migration objects. Built by running the baseline
     /// migration SQL directly rather than the full native chain, so an
     /// adoption test then exercises the post-baseline chain against a genuine
     /// baseline, and the helper stays correct as later migrations are added.
-    async fn backend_baseline_pool(path: &std::path::Path) -> SqlitePool {
-        let options = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
+    /// Returns a bare connection the caller seeds and then drops, so the file
+    /// is closed before [`Db::open`] adopts it.
+    fn backend_baseline_db(path: &std::path::Path) -> rusqlite::Connection {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        connection
+            .execute_batch(include_str!("../../migrations/0001_schema_baseline.sql"))
             .unwrap();
-        sqlx::raw_sql(include_str!("../../migrations/0001_schema_baseline.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool
+        connection
     }
 
     #[tokio::test]
@@ -818,61 +779,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_database_migrates_with_session_pragmas_in_effect() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = fresh_db(dir.path()).await;
-
-        // The session pragmas hold on BOTH pools: the split configures the
-        // writer and the reader connections identically at connect time.
-        for (label, pool) in [("writer", db.write()), ("reader", db.read())] {
-            let journal: String = sqlx::query_scalar("PRAGMA journal_mode")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(journal, "wal", "{label} journal_mode");
-            let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(synchronous, 1, "{label} synchronous NORMAL");
-            let cache: i64 = sqlx::query_scalar("PRAGMA cache_size")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(cache, -64000, "{label} cache_size 64 MB");
-            let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(
-                foreign_keys, 0,
-                "{label}: referential enforcement stays off, matching the backend's pragma surface"
-            );
-            let busy: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(busy, 5000, "{label} busy_timeout");
-        }
-    }
-
-    #[tokio::test]
     async fn checkpoint_truncate_resets_the_wal_and_keeps_data_readable() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("entropia_orme.db");
         let db = Db::open(&path).await.unwrap();
 
         // Grow the WAL with a batch of committed writes.
-        for i in 0..200 {
-            sqlx::query(
-                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)",
-            )
-            .bind(format!("s-{i}"))
-            .bind(i as f64)
-            .execute(db.write())
-            .await
-            .unwrap();
-        }
+        db.with_writer(|connection| {
+            for i in 0..200 {
+                connection.execute(
+                    "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?1, ?2, 0)",
+                    rusqlite::params![format!("s-{i}"), i as f64],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
         let wal = path.with_extension("db-wal");
         let grown = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
         assert!(
@@ -886,9 +809,15 @@ mod tests {
         let after = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
         assert_eq!(after, 0, "wal_checkpoint(TRUNCATE) empties the WAL");
 
-        // The committed data is intact and readable through the reader pool.
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
-            .fetch_one(db.read())
+        // The committed data is intact and readable through a reader.
+        let count = db
+            .with_reader(|connection| {
+                Ok(
+                    connection.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(count, 200);
@@ -901,20 +830,18 @@ mod tests {
         let db = Db::open(&path).await.unwrap();
 
         // Seed then delete most rows, leaving free pages the compaction packs.
-        for i in 0..500 {
-            sqlx::query(
-                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?, ?, 0)",
-            )
-            .bind(format!("s-{i}"))
-            .bind(i as f64)
-            .execute(db.write())
-            .await
-            .unwrap();
-        }
-        sqlx::query("DELETE FROM tracking_sessions WHERE id != 's-0'")
-            .execute(db.write())
-            .await
-            .unwrap();
+        db.with_writer(|connection| {
+            for i in 0..500 {
+                connection.execute(
+                    "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES (?1, ?2, 0)",
+                    rusqlite::params![format!("s-{i}"), i as f64],
+                )?;
+            }
+            connection.execute("DELETE FROM tracking_sessions WHERE id != 's-0'", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
 
         let dest = dir.path().join("entropia_orme-compacted.db");
         db.vacuum_into(&dest).await.unwrap();
@@ -922,20 +849,24 @@ mod tests {
 
         // The copy is a standalone, readable database carrying the live row
         // (opened raw, without re-running migrations).
-        let copy = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(SqliteConnectOptions::new().filename(&dest))
-            .await
-            .unwrap();
-        let copied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
-            .fetch_one(&copy)
-            .await
+        let copy = rusqlite::Connection::open(&dest).unwrap();
+        let copied: i64 = copy
+            .query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(copied, 1, "the compacted copy carries the surviving row");
+        drop(copy);
 
         // The live database is untouched and still serves.
-        let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
-            .fetch_one(db.read())
+        let live = db
+            .with_reader(|connection| {
+                Ok(
+                    connection.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(live, 1);
@@ -979,14 +910,16 @@ mod tests {
         let db = fresh_db(dir.path()).await;
 
         let count = |kind: &'static str| {
-            let pool = db.write().clone();
+            let db = db.clone();
             async move {
-                sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND sql IS NOT NULL \
-                     AND name != '_sqlx_migrations' AND name NOT LIKE 'sqlite_%'",
-                )
-                .bind(kind)
-                .fetch_one(&pool)
+                db.with_reader(move |connection| {
+                    Ok(connection.query_row(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type = ?1 AND sql IS NOT NULL \
+                         AND name != '_sqlx_migrations' AND name NOT LIKE 'sqlite_%'",
+                        rusqlite::params![kind],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
                 .await
                 .unwrap()
             }
@@ -1000,11 +933,16 @@ mod tests {
         assert_eq!(count("index").await, 23);
         assert_eq!(count("trigger").await, 8);
 
-        let version: String =
-            sqlx::query_scalar("SELECT value FROM db_metadata WHERE key = 'version'")
-                .fetch_one(db.write())
-                .await
-                .unwrap();
+        let version = db
+            .with_reader(|connection| {
+                Ok(connection.query_row(
+                    "SELECT value FROM db_metadata WHERE key = 'version'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(version, "33");
     }
 
@@ -1027,11 +965,14 @@ mod tests {
     async fn snapshot_rows_carry_typed_values_in_deterministic_order() {
         let dir = tempfile::tempdir().unwrap();
         let db = fresh_db(dir.path()).await;
-        sqlx::query(
-            "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES \
-             ('s-2', 200.0, 0), ('s-1', 100.0, 1)",
-        )
-        .execute(db.write())
+        db.with_writer(|connection| {
+            connection.execute(
+                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES \
+                 ('s-2', 200.0, 0), ('s-1', 100.0, 1)",
+                [],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
 
@@ -1051,31 +992,35 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("entropia_orme.db");
         // A backend-created version-33 database: the baseline schema, seeded,
-        // with no sqlx ledger (exactly what the backend leaves).
+        // with no migration ledger (exactly what the backend leaves).
         {
-            let pool = backend_baseline_pool(&path).await;
-            sqlx::query(
-                "INSERT INTO tracking_sessions (id, started_at, is_active) \
-                 VALUES ('kept', 1.0, 0)",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            pool.close().await;
+            let connection = backend_baseline_db(&path);
+            connection
+                .execute(
+                    "INSERT INTO tracking_sessions (id, started_at, is_active) \
+                     VALUES ('kept', 1.0, 0)",
+                    [],
+                )
+                .unwrap();
         }
 
         // Re-open: adoption marks the baseline applied without DDL, then the
         // post-baseline chain runs, and the migrator validates every ledger row.
         let db = Db::open(&path).await.unwrap();
-        let kept: String = sqlx::query_scalar("SELECT id FROM tracking_sessions")
-            .fetch_one(db.write())
+        let (kept, ledger) = db
+            .with_reader(|connection| {
+                let kept: String =
+                    connection
+                        .query_row("SELECT id FROM tracking_sessions", [], |row| row.get(0))?;
+                let ledger: i64 =
+                    connection.query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
+                        row.get(0)
+                    })?;
+                Ok((kept, ledger))
+            })
             .await
             .unwrap();
         assert_eq!(kept, "kept");
-        let ledger: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(db.write())
-            .await
-            .unwrap();
         // The baseline stamp plus every post-baseline migration.
         assert_eq!(ledger, migrate::MIGRATIONS.len() as i64);
     }
@@ -1086,21 +1031,19 @@ mod tests {
         let path = dir.path().join("entropia_orme.db");
         {
             let db = Db::open(&path).await.unwrap();
-            sqlx::query(
-                "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-                 VALUES ('keep-me', '2026-01-01', 'markup', 'survives refusal', 1.25, 'manual')",
-            )
-            .execute(db.write())
+            db.with_writer(|connection| {
+                connection.execute(
+                    "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                     VALUES ('keep-me', '2026-01-01', 'markup', 'survives refusal', 1.25, 'manual')",
+                    [],
+                )?;
+                connection
+                    .execute("UPDATE db_metadata SET value = '28' WHERE key = 'version'", [])?;
+                connection.execute("DROP TABLE _sqlx_migrations", [])?;
+                Ok(())
+            })
             .await
             .unwrap();
-            sqlx::query("UPDATE db_metadata SET value = '28' WHERE key = 'version'")
-                .execute(db.write())
-                .await
-                .unwrap();
-            sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(db.write())
-                .await
-                .unwrap();
         }
         let err = Db::open(&path).await.unwrap_err();
         match err {
@@ -1113,26 +1056,23 @@ mod tests {
         // The refusal is lossless: the user's rows are untouched (the
         // connect-time pragmas may legitimately convert the journal
         // mode, so the assertion is content-level, not byte-level).
-        let options = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(false);
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let (description, amount): (String, f64) = connection
+            .query_row(
+                "SELECT description, amount FROM ledger_entries WHERE id = 'keep-me'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
             .unwrap();
-        let (description, amount): (String, f64) =
-            sqlx::query_as("SELECT description, amount FROM ledger_entries WHERE id = 'keep-me'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
         assert_eq!(description, "survives refusal");
         assert_eq!(amount, 1.25);
-        let version: String =
-            sqlx::query_scalar("SELECT value FROM db_metadata WHERE key = 'version'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let version: String = connection
+            .query_row(
+                "SELECT value FROM db_metadata WHERE key = 'version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(version, "28", "the stamp is left for the upgrade owner");
     }
 
@@ -1142,70 +1082,74 @@ mod tests {
         let path = dir.path().join("entropia_orme.db");
         // Synthesise the real in-the-wild surface: a v0.1.0-lineage database
         // last owned by the Python backend at version 32. Start from the
-        // backend baseline (v33 schema, no sqlx ledger), then walk it back to
+        // backend baseline (v33 schema, no migration ledger), then walk it back to
         // v32: re-create the table v33 dropped (with a row, to prove the drop
         // is the only loss) and stamp the version row back to 32.
         {
-            let pool = backend_baseline_pool(&path).await;
-            sqlx::query(
-                "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-                 VALUES ('keep-me', '2026-01-01', 'markup', 'survives upgrade', 4.2, 'manual')",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query("CREATE TABLE tt_curve_observations (id INTEGER PRIMARY KEY, value REAL)")
-                .execute(&pool)
-                .await
+            let connection = backend_baseline_db(&path);
+            connection
+                .execute(
+                    "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                     VALUES ('keep-me', '2026-01-01', 'markup', 'survives upgrade', 4.2, 'manual')",
+                    [],
+                )
                 .unwrap();
-            sqlx::query("INSERT INTO tt_curve_observations (value) VALUES (1.0)")
-                .execute(&pool)
-                .await
+            connection
+                .execute(
+                    "CREATE TABLE tt_curve_observations (id INTEGER PRIMARY KEY, value REAL)",
+                    [],
+                )
                 .unwrap();
-            sqlx::query("UPDATE db_metadata SET value = '32' WHERE key = 'version'")
-                .execute(&pool)
-                .await
+            connection
+                .execute("INSERT INTO tt_curve_observations (value) VALUES (1.0)", [])
                 .unwrap();
-            pool.close().await;
+            connection
+                .execute(
+                    "UPDATE db_metadata SET value = '32' WHERE key = 'version'",
+                    [],
+                )
+                .unwrap();
         }
 
         // Re-open: the v32 rung runs, then adoption stamps the baseline and the
         // post-adoption migrator validates the ledger. No refusal.
         let db = Db::open(&path).await.unwrap();
 
+        let (has_retired, version, ledger, description, amount) = db
+            .with_reader(|connection| {
+                let has_retired = table_exists_sync(connection, "tt_curve_observations")?;
+                let version: String = connection.query_row(
+                    "SELECT value FROM db_metadata WHERE key = 'version'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let ledger: i64 =
+                    connection.query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
+                        row.get(0)
+                    })?;
+                let (description, amount): (String, f64) = connection.query_row(
+                    "SELECT description, amount FROM ledger_entries WHERE id = 'keep-me'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                Ok((has_retired, version, ledger, description, amount))
+            })
+            .await
+            .unwrap();
+
         // The retired table is gone, and the version row now matches a fresh
         // v33 database.
-        assert!(
-            !table_exists(db.write(), "tt_curve_observations")
-                .await
-                .unwrap(),
-            "the v33 rung drops tt_curve_observations"
-        );
-        let version: String =
-            sqlx::query_scalar("SELECT value FROM db_metadata WHERE key = 'version'")
-                .fetch_one(db.write())
-                .await
-                .unwrap();
+        assert!(!has_retired, "the v33 rung drops tt_curve_observations");
         assert_eq!(
             version, "33",
             "the upgrade bumps the version row to the baseline"
         );
-        let ledger: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(db.write())
-            .await
-            .unwrap();
         assert_eq!(
             ledger,
             migrate::MIGRATIONS.len() as i64,
             "the baseline is stamped once, then the post-baseline chain runs"
         );
-
         // The user's data survives the upgrade untouched.
-        let (description, amount): (String, f64) =
-            sqlx::query_as("SELECT description, amount FROM ledger_entries WHERE id = 'keep-me'")
-                .fetch_one(db.write())
-                .await
-                .unwrap();
         assert_eq!((description.as_str(), amount), ("survives upgrade", 4.2));
     }
 
@@ -1217,14 +1161,16 @@ mod tests {
         let path = dir.path().join("entropia_orme.db");
         {
             let db = Db::open(&path).await.unwrap();
-            sqlx::query("UPDATE db_metadata SET value = '31' WHERE key = 'version'")
-                .execute(db.write())
-                .await
-                .unwrap();
-            sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(db.write())
-                .await
-                .unwrap();
+            db.with_writer(|connection| {
+                connection.execute(
+                    "UPDATE db_metadata SET value = '31' WHERE key = 'version'",
+                    [],
+                )?;
+                connection.execute("DROP TABLE _sqlx_migrations", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
         }
         let err = Db::open(&path).await.unwrap_err();
         match err {
@@ -1301,20 +1247,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         // A database the backend created but has not yet migrated up to the
-        // baseline (version below it, no sqlx ledger): the first-launch-
+        // baseline (version below it, no migration ledger): the first-launch-
         // after-upgrade race. open_adopted quarantines it, and
         // is_below_baseline() flags it as the retry-worthy case.
         let below = dir.path().join("below.db");
         {
             let db = Db::open(&below).await.unwrap();
-            sqlx::query("UPDATE db_metadata SET value = '28' WHERE key = 'version'")
-                .execute(db.write())
-                .await
-                .unwrap();
-            sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(db.write())
-                .await
-                .unwrap();
+            db.with_writer(|connection| {
+                connection.execute(
+                    "UPDATE db_metadata SET value = '28' WHERE key = 'version'",
+                    [],
+                )?;
+                connection.execute("DROP TABLE _sqlx_migrations", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
         }
         let err = Db::open_adopted(&below).await.unwrap_err();
         assert!(
@@ -1333,15 +1281,20 @@ mod tests {
         );
 
         // A fresh-path failure is likewise never the race.
-        let boom = DbError::Driver(sqlx::Error::Protocol("boom".into()));
-        assert!(!AdoptError::Fresh(boom).is_below_baseline());
+        assert!(!AdoptError::Fresh(DbError::CoreClosed).is_below_baseline());
     }
 
     #[test]
     fn adopt_error_display_carries_the_path_and_the_stand_down() {
+        // A driver-level source (SQLite's own "file is not a database"),
+        // wrapped as the quarantine's cause.
+        let not_a_database = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOTADB),
+            Some("file is not a database".to_string()),
+        );
         let quarantined = AdoptError::Quarantined {
             path: std::path::PathBuf::from("somewhere/entropia_orme.db"),
-            source: DbError::Driver(sqlx::Error::Protocol("file is not a database".into())),
+            source: DbError::Sqlite(not_a_database),
         };
         let rendered = quarantined.to_string();
         assert!(rendered.contains("somewhere"), "{rendered}");
@@ -1350,11 +1303,9 @@ mod tests {
         assert!(rendered.contains("left untouched"), "{rendered}");
 
         // `Fresh` renders its source plainly, adding nothing of its own.
-        let inner = sqlx::Error::Protocol("boom".into());
-        let expected = inner.to_string();
         assert_eq!(
-            AdoptError::Fresh(DbError::Driver(inner)).to_string(),
-            expected
+            AdoptError::Fresh(DbError::CoreClosed).to_string(),
+            DbError::CoreClosed.to_string()
         );
 
         // A contextualising variant carries its cause as a walkable source
@@ -1560,15 +1511,6 @@ mod tests {
         assert_eq!(worker.join().unwrap().unwrap(), 1);
     }
 
-    #[tokio::test]
-    #[should_panic(expected = "carries no synchronous core")]
-    async fn from_pool_handles_reject_closure_calls_loudly() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = fresh_db(dir.path()).await;
-        let handle = Db::from_pool(db.write().clone());
-        let _ = handle.with_reader(|_| Ok(())).await;
-    }
-
     /// The cross-runner equivalence pin: a database freshly migrated by
     /// the embedded runner carries a `_sqlx_migrations` ledger
     /// byte-identical in accounting (versions, descriptions, checksums)
@@ -1578,12 +1520,24 @@ mod tests {
     async fn migration_ledger_reproduces_the_inherited_accounting() {
         let dir = tempfile::tempdir().unwrap();
         let db = fresh_db(dir.path()).await;
-        let rows: Vec<(i64, String, Vec<u8>)> = sqlx::query_as(
-            "SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version",
-        )
-        .fetch_all(db.read())
-        .await
-        .unwrap();
+        let rows = db
+            .with_reader(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version",
+                )?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<(i64, String, Vec<u8>)>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
         assert_eq!(rows.len(), migrate::MIGRATIONS.len());
         for (row, embedded) in rows.iter().zip(migrate::MIGRATIONS) {
             assert_eq!(row.0, embedded.version);

@@ -256,10 +256,11 @@ fn print_rows(title: &str, rows: &[(String, usize, f64, f64, f64)]) {
 }
 
 async fn count_kills(db: &Db) -> i64 {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM kills")
-        .fetch_one(db.read())
-        .await
-        .expect("kill count")
+    db.with_reader(|conn| {
+        Ok(conn.query_row("SELECT COUNT(*) FROM kills", [], |row| row.get::<_, i64>(0))?)
+    })
+    .await
+    .expect("kill count")
 }
 
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {

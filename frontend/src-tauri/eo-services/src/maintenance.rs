@@ -185,10 +185,15 @@ mod tests {
     }
 
     async fn run(db: &Db, sql: &str) {
-        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-            .execute(db.write())
-            .await
-            .unwrap();
+        db.with_writer({
+            let sql = sql.to_string();
+            move |conn| {
+                conn.execute_batch(&sql)?;
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
     }
 
     /// Seed a session with kills, skill gains and ledger entries, so all

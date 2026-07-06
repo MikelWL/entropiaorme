@@ -1457,14 +1457,16 @@ mod tests {
         let db_path = data_dir.join(DB_FILE_NAME);
         {
             let db = eo_services::db::Db::open(&db_path).await.unwrap();
-            sqlx::query("UPDATE db_metadata SET value = '28' WHERE key = 'version'")
-                .execute(db.write())
-                .await
-                .unwrap();
-            sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(db.write())
-                .await
-                .unwrap();
+            db.with_writer(|conn| {
+                conn.execute(
+                    "UPDATE db_metadata SET value = '28' WHERE key = 'version'",
+                    [],
+                )?;
+                conn.execute("DROP TABLE _sqlx_migrations", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
         }
         let composed = compose_with(
             data_dir,
@@ -1783,7 +1785,6 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
         // A frozen, plan-advanced clock, exactly the corpus oracle's
         // protocol: the watcher guards its own drain timeout against a
@@ -1846,14 +1847,21 @@ mod tests {
         producers.stop();
 
         // The persisted rows match: one session, two kills.
-        let session_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let session_count: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(session_count, 1, "one closed session persisted");
-        let kill_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kills")
-            .fetch_one(&pool)
+        let kill_count: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM kills", [], |row| row.get::<_, i64>(0))?)
+            })
             .await
             .unwrap();
         assert_eq!(kill_count, 2, "two kills persisted by the composed tracker");
@@ -1874,7 +1882,6 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
         let start =
             chrono::NaiveDateTime::parse_from_str("2026-05-19 10:00:00", "%Y-%m-%d %H:%M:%S")
@@ -1893,11 +1900,16 @@ mod tests {
             .expect("composed session starts");
 
         // Before stop: exactly one active session row exists.
-        let active_before: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let active_before: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(active_before, 1, "a session is open before stop");
         assert!(
             producers.tracker().is_tracking(),
@@ -1909,33 +1921,45 @@ mod tests {
         // session open and fails the assertions below.
         producers.stop();
 
-        let active_after: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let active_after: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(active_after, 0, "stop() ended the open session");
-        let ended_set: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0 AND ended_at IS NOT NULL",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let ended_set: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0 AND ended_at IS NOT NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(ended_set, 1, "the closed session carries an ended_at stamp");
     }
 
-    /// Seed a weapon row directly through the shared pool, the same shape
-    /// `Db::weapon_properties_by_name_fragment` reads (item_type 'weapon',
-    /// a name carrying the lookup fragment, a JSON-object properties blob).
-    async fn seed_weapon(pool: &sqlx::SqlitePool, id: i64, name: &str, properties_json: &str) {
-        sqlx::query(
-            "INSERT INTO equipment_library (id, name, item_type, properties_json) \
-             VALUES (?, ?, 'weapon', ?)",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(properties_json)
-        .execute(pool)
+    /// Seed a weapon row directly through the shared handle, the same
+    /// shape `Db::weapon_properties_by_name_fragment` reads (item_type
+    /// 'weapon', a name carrying the lookup fragment, a JSON-object
+    /// properties blob).
+    async fn seed_weapon(db: &Db, id: i64, name: &str, properties_json: &str) {
+        let name = name.to_string();
+        let properties_json = properties_json.to_string();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO equipment_library (id, name, item_type, properties_json) \
+                 VALUES (?1, ?2, 'weapon', ?3)",
+                rusqlite::params![id, name, properties_json],
+            )?;
+            Ok(())
+        })
         .await
         .expect("weapon row seeds");
     }
@@ -1974,7 +1998,6 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
         // A weapon whose name carries the fragment "Korss", with a
         // property object whose economy yields a known totalCostPerUse.
@@ -1985,7 +2008,7 @@ mod tests {
             "weapon_markup": 100,
         });
         seed_weapon(
-            &pool,
+            &db,
             1,
             "Korss H400 (L)",
             &serde_json::to_string(&props).unwrap(),
@@ -2076,13 +2099,12 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
         let props = serde_json::json!({
             "weapon_entity": {"economy": {"decay": 0.0, "ammo_burn": 25000}},
             "weapon_markup": 100,
         });
         seed_weapon(
-            &pool,
+            &db,
             1,
             "Korss H400 (L)",
             &serde_json::to_string(&props).unwrap(),
@@ -2119,43 +2141,53 @@ mod tests {
         );
     }
 
-    /// The single-owner pool tolerates an HTTP-shaped read concurrent
+    /// The single-owner core tolerates an HTTP-shaped read concurrent
     /// with a producer-shaped write without deadlock and within a bounded
-    /// latency: sqlx serialises both through the one connection, so the
-    /// read simply queues behind the write rather than locking.
+    /// latency: the writer thread serialises the write, while a reader
+    /// thread serves the concurrent read against the WAL, so the read
+    /// simply queues behind the write rather than locking.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_read_during_a_producer_write_does_not_deadlock() {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open_adopted(&dir.path().join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
-        // A producer-shaped write: a short transaction holding the single
+        // A producer-shaped write: a short transaction holding the writer
         // connection briefly, exactly the shape of a tracker persistence
         // write.
-        let write_pool = pool.clone();
-        let writer = tokio::spawn(async move {
-            let mut tx = write_pool.begin().await.expect("begin");
-            sqlx::query(
-                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES ('cc-test', 0, 0)",
-            )
-            .execute(&mut *tx)
-            .await
-            .expect("insert under tx");
-            // Hold the connection a moment so the read genuinely contends.
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            tx.commit().await.expect("commit");
-        });
+        let writer = {
+            let db = db.clone();
+            tokio::spawn(async move {
+                db.with_writer(|conn| {
+                    let tx = conn.transaction()?;
+                    tx.execute(
+                        "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES ('cc-test', 0, 0)",
+                        [],
+                    )?;
+                    // Hold the writer connection a moment so the read genuinely contends.
+                    std::thread::sleep(Duration::from_millis(50));
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await
+                .expect("write under transaction");
+            })
+        };
 
-        // An HTTP-shaped read on the same pool, bounded by a generous
+        // An HTTP-shaped read on the same handle, bounded by a generous
         // deadline: if the single connection deadlocked, this would
         // time out.
         let read = tokio::time::timeout(Duration::from_secs(5), async {
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tracking_sessions")
-                .fetch_one(&pool)
-                .await
-                .expect("read query")
+            db.with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
+            .await
+            .expect("read query")
         })
         .await;
         assert!(
@@ -2164,8 +2196,14 @@ mod tests {
         );
 
         writer.await.expect("writer task joins");
-        let final_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
-            .fetch_one(&pool)
+        let final_count = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(final_count, 1, "the write committed");

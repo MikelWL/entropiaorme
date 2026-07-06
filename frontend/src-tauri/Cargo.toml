@@ -75,13 +75,10 @@ unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 html-escape = "0.2"
-# The persistence stack: sqlx is pinned to the 0.9 minor, mirroring the
-# Tauri pin above; the database layer sits behind a narrow handle so the
-# driver stays swappable.
-sqlx = { version = "~0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
-# The synchronous SQLite core behind the database seam. Pinned to the
-# release sharing sqlx's libsqlite3-sys (one bundled SQLite in the graph;
-# the `links` key permits no second copy).
+# The persistence stack: the synchronous SQLite core behind the database
+# seam, which sits behind a narrow handle so the driver stays swappable.
+# Pinned to the 0.39 minor; `bundled` compiles a private SQLite so the graph
+# carries exactly one copy (the `links` key permits no second).
 rusqlite = { version = "~0.39", features = ["bundled"] }
 # SHA-384 for the migration ledger's checksum column (the accounting the
 # database seam validates on every open).

@@ -267,7 +267,7 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
         .await
         .expect("migrated database");
     // Keep a seeding handle before the database moves into the facade.
-    let pool = db.write().clone();
+    let seed_db = db.clone();
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
     let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
@@ -310,80 +310,62 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
     .await
     .unwrap();
 
-    for (sid, start, end, heal, armour) in [
-        ("sess-1", 1000.0, 1030.5, Some(1.5), Some(0.25)),
-        ("sess-n", 7000.0, 7050.0, None, None),
-        ("sess-p", 2000.0, 2100.0, Some(0.5), Some(0.0)),
-    ] {
-        sqlx::query(
-            "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
-             VALUES (?, ?, ?, 0, ?, ?)",
-        )
-        .bind(sid)
-        .bind(start)
-        .bind(end)
-        .bind(heal)
-        .bind(armour)
-        .execute(&pool)
+    seed_db
+        .with_writer(move |conn| {
+            for (sid, start, end, heal, armour) in [
+                ("sess-1", 1000.0, 1030.5, Some(1.5), Some(0.25)),
+                ("sess-n", 7000.0, 7050.0, None, None),
+                ("sess-p", 2000.0, 2100.0, Some(0.5), Some(0.0)),
+            ] {
+                conn.execute(
+                    "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
+                     VALUES (?1, ?2, ?3, 0, ?4, ?5)",
+                    rusqlite::params![sid, start, end, heal, armour],
+                )?;
+            }
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
+                 damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
+                 VALUES ('k1', 'sess-1', 'Atrox', 1100.0, 40, 100.0, 5.0, 1, 10.0, 0.5, 12.75)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
+                 critical_hits, cost_per_shot) VALUES ('k1', 'LR-32', 40, 50.0, 0, 0.25)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+                 VALUES ('sess-1', 1100.0, 'Rifle', 1.0, 0.75)",
+                [],
+            )?;
+            for (sid, qid, at) in [
+                ("sess-1", 1i64, 1500.0),
+                ("sess-n", 2, 7040.0),
+                ("sess-p", 1, 2050.0),
+            ] {
+                conn.execute(
+                    "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params![sid, qid, at],
+                )?;
+            }
+            for (sid, lt, qid, plid) in [
+                ("sess-1", "quest", Some(1i64), None::<i64>),
+                ("sess-n", "quest", Some(2), None),
+                ("sess-p", "playlist", None, Some(1)),
+            ] {
+                conn.execute(
+                    "INSERT INTO session_quest_analytics_links \
+                     (session_id, link_type, quest_id, playlist_id, linked_at) \
+                     VALUES (?1, ?2, ?3, ?4, 9000.0)",
+                    rusqlite::params![sid, lt, qid, plid],
+                )?;
+            }
+            Ok(())
+        })
         .await
         .unwrap();
-    }
-    sqlx::query(
-        "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
-         damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
-         VALUES ('k1', 'sess-1', 'Atrox', 1100.0, 40, 100.0, 5.0, 1, 10.0, 0.5, 12.75)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
-         critical_hits, cost_per_shot) VALUES ('k1', 'LR-32', 40, 50.0, 0, 0.25)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-         VALUES ('sess-1', 1100.0, 'Rifle', 1.0, 0.75)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    for (sid, qid, at) in [
-        ("sess-1", 1i64, 1500.0),
-        ("sess-n", 2, 7040.0),
-        ("sess-p", 1, 2050.0),
-    ] {
-        sqlx::query(
-            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(sid)
-        .bind(qid)
-        .bind(at)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    for (sid, lt, qid, plid) in [
-        ("sess-1", "quest", Some(1i64), None::<i64>),
-        ("sess-n", "quest", Some(2), None),
-        ("sess-p", "playlist", None, Some(1)),
-    ] {
-        sqlx::query(
-            "INSERT INTO session_quest_analytics_links \
-             (session_id, link_type, quest_id, playlist_id, linked_at) \
-             VALUES (?, ?, ?, ?, 9000.0)",
-        )
-        .bind(sid)
-        .bind(lt)
-        .bind(qid)
-        .bind(plid)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
 
     // Transport invariance: the populated analytics rows serialise to the
     // exact bytes the HTTP routes answered (model-float rounding applied,

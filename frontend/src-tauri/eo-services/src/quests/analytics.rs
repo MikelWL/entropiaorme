@@ -496,8 +496,8 @@ fn row_i64(row: &rusqlite::Row, index: usize) -> i64 {
 /// An aggregate column with the engine's own numeric type: SQLite
 /// returns INTEGER for empty-set COALESCE fallbacks and integer sums,
 /// REAL otherwise, and the original emits whichever arrives. The stored
-/// value's affinity (`ValueRef`) drives the branch, exactly as the sqlx
-/// `try_get::<f64>`-then-`i64` cascade did.
+/// value's affinity (`ValueRef`) drives the branch, mirroring the original
+/// typed read.
 fn sql_number(row: &rusqlite::Row, index: usize) -> Value {
     match row.get_ref_unwrap(index) {
         rusqlite::types::ValueRef::Real(value) => json!(value),

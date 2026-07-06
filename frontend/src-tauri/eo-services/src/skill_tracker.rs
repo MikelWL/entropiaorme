@@ -229,11 +229,10 @@ impl SkillTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::Row;
 
     use crate::bus_events::{SessionLifecyclePayload, SkillGainPayload, SkillGainTag};
     use crate::clock::MockClock;
-    use crate::db::{decoded_f64, Db};
+    use crate::db::Db;
 
     struct Rig {
         _dir: tempfile::TempDir,
@@ -286,61 +285,75 @@ mod tests {
 
         fn gains_count(&self) -> i64 {
             self.runtime.block_on(async {
-                sqlx::query("SELECT COUNT(*) FROM skill_gains")
-                    .fetch_one(self.db.read())
+                self.db
+                    .with_reader(|conn| {
+                        Ok(
+                            conn.query_row("SELECT COUNT(*) FROM skill_gains", [], |row| {
+                                row.get::<_, i64>(0)
+                            })?,
+                        )
+                    })
                     .await
-                    .unwrap()
-                    .try_get(0)
                     .unwrap()
             })
         }
 
         fn calibrations(&self, name: &str) -> Vec<(f64, String)> {
+            let name = name.to_string();
             self.runtime.block_on(async {
-                sqlx::query(
-                    "SELECT level, source FROM skill_calibrations WHERE skill_name = ? \
-                     ORDER BY id",
-                )
-                .bind(name)
-                .fetch_all(self.db.read())
-                .await
-                .unwrap()
-                .iter()
-                .map(|row| (decoded_f64(row, 0), row.try_get(1).unwrap()))
-                .collect()
+                self.db
+                    .with_reader(move |conn| {
+                        let mut stmt = conn.prepare(
+                            "SELECT level, source FROM skill_calibrations WHERE skill_name = ? \
+                             ORDER BY id",
+                        )?;
+                        let rows = stmt.query_map(rusqlite::params![name], |row| {
+                            Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+                        })?;
+                        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+                    })
+                    .await
+                    .unwrap()
             })
         }
 
         fn seed_calibration(&self, name: &str, level: f64, scanned_at: f64) {
+            let name = name.to_string();
             self.runtime.block_on(async {
-                sqlx::query(
-                    "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                     VALUES (?, ?, 'scan', ?)",
-                )
-                .bind(name)
-                .bind(level)
-                .bind(scanned_at)
-                .execute(self.db.write())
-                .await
-                .unwrap();
+                self.db
+                    .with_writer(move |conn| {
+                        conn.execute(
+                            "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                             VALUES (?, ?, 'scan', ?)",
+                            rusqlite::params![name, level, scanned_at],
+                        )?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
             });
         }
 
         fn last_gain(&self) -> (String, f64, Option<f64>, f64) {
             self.runtime.block_on(async {
-                let row = sqlx::query(
-                    "SELECT skill_name, amount, ped_value, timestamp FROM skill_gains \
-                     ORDER BY id DESC LIMIT 1",
-                )
-                .fetch_one(self.db.read())
-                .await
-                .unwrap();
-                (
-                    row.try_get(0).unwrap(),
-                    decoded_f64(&row, 1),
-                    row.try_get(2).unwrap(),
-                    decoded_f64(&row, 3),
-                )
+                self.db
+                    .with_reader(|conn| {
+                        Ok(conn.query_row(
+                            "SELECT skill_name, amount, ped_value, timestamp FROM skill_gains \
+                             ORDER BY id DESC LIMIT 1",
+                            [],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, f64>(1)?,
+                                    row.get::<_, Option<f64>>(2)?,
+                                    row.get::<_, f64>(3)?,
+                                ))
+                            },
+                        )?)
+                    })
+                    .await
+                    .unwrap()
             })
         }
     }

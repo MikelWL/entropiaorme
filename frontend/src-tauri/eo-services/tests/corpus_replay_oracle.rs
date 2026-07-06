@@ -35,10 +35,8 @@ use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::fingerprint_recorder::FingerprintRecorder;
 use eo_services::tracker::{HuntTracker, Providers};
-use eo_wire::db_snapshot::{capture, serialize, CATALOGUE};
+use eo_wire::db_snapshot::{capture, serialize};
 use eo_wire::normalizer::Normalizer;
-use serde_json::{Map, Value};
-use sqlx::{Column, Row, SqlitePool};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -137,40 +135,16 @@ fn first_divergence(expected: &str, actual: &str) -> String {
     )
 }
 
-fn row_to_json(row: &sqlx::sqlite::SqliteRow) -> Value {
-    let mut object = Map::new();
-    for column in row.columns() {
-        let index = column.ordinal();
-        let value = if let Ok(value) = row.try_get::<Option<i64>, _>(index) {
-            value.map(Value::from).unwrap_or(Value::Null)
-        } else if let Ok(value) = row.try_get::<Option<f64>, _>(index) {
-            value.map(Value::from).unwrap_or(Value::Null)
-        } else if let Ok(value) = row.try_get::<Option<String>, _>(index) {
-            value.map(Value::from).unwrap_or(Value::Null)
-        } else {
-            panic!("unsupported column type in {}", column.name());
-        };
-        object.insert(column.name().to_string(), value);
-    }
-    Value::Object(object)
-}
-
 /// The catalogue snapshot over the live database, normalised with the
 /// fingerprint's own symbol tables (the shared-normaliser contract).
-async fn catalogue_snapshot(pool: &SqlitePool, normalizer: &mut Normalizer) -> String {
-    let mut tables = Map::new();
-    for spec in CATALOGUE {
-        let sql = format!("{} ORDER BY {}", spec.query, spec.order_by.join(", "));
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(pool)
-            .await
-            .expect("catalogue query");
-        let mut json_rows = Vec::with_capacity(rows.len());
-        for row in &rows {
-            json_rows.push(row_to_json(row));
-        }
-        tables.insert(spec.name.to_string(), Value::Array(json_rows));
-    }
+///
+/// The rows come from [`Db::snapshot_rows`], which runs the catalogue queries
+/// (each with its deterministic ORDER BY) on a reader connection and shapes
+/// every row through the same stored-value-typed normaliser the production
+/// snapshot uses. Proving the frozen DB-state golden against that path is the
+/// point: the oracle and the app read the database through one shaper.
+async fn catalogue_snapshot(db: &Db, normalizer: &mut Normalizer) -> String {
+    let tables = db.snapshot_rows().await.expect("catalogue snapshot");
     serialize(&capture(&tables, normalizer))
 }
 
@@ -189,10 +163,6 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
     let db = runtime
         .block_on(Db::open(&dir.path().join("entropia_orme.db")))
         .expect("migrated database");
-    // The oracle drives one connection (the writer pool), reproducing the
-    // original pool-of-one so the frozen fingerprint / DB-state goldens are
-    // unaffected by the reader/writer split.
-    let pool = db.write().clone();
 
     let chatlog = dir.path().join("chat_testing.log");
     std::fs::File::create(&chatlog).expect("empty chatlog");
@@ -249,7 +219,7 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
     // tables assign in exactly the golden harness's encounter order.
     let mut normalizer = Normalizer::new();
     let actual_fingerprint = recorder.serialize(&mut normalizer);
-    let actual_snapshot = runtime.block_on(catalogue_snapshot(&pool, &mut normalizer));
+    let actual_snapshot = runtime.block_on(catalogue_snapshot(&db, &mut normalizer));
 
     let expected_fingerprint = std::fs::read_to_string(scenario.join("expected/fingerprint.jsonl"))
         .expect("fingerprint golden");

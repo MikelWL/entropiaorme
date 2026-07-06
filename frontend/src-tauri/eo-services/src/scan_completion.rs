@@ -166,8 +166,6 @@ pub async fn hydrate_skill_scan_state(db: &Db) -> Result<(Option<f64>, i64), DbE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::decoded_f64;
-    use sqlx::Row;
 
     async fn db_fixture() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
@@ -178,15 +176,16 @@ mod tests {
     }
 
     async fn seed(db: &Db, name: &str, level: f64, source: &str, at: f64) {
-        sqlx::query(
-            "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(name)
-        .bind(level)
-        .bind(source)
-        .bind(at)
-        .execute(db.write())
+        let name = name.to_string();
+        let source = source.to_string();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                 VALUES (?, ?, ?, ?)",
+                rusqlite::params![name, level, source, at],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -245,30 +244,36 @@ mod tests {
 
         // The Rifle scan anchor moved to the archive; the chatlog
         // trail and the untouched Sweat anchor stay live.
-        let archived: Vec<(String, f64)> =
-            sqlx::query("SELECT skill_name, level FROM skill_calibrations_archive ORDER BY id")
-                .fetch_all(db.read())
-                .await
-                .unwrap()
-                .iter()
-                .map(|row| (row.try_get(0).unwrap(), decoded_f64(row, 1)))
-                .collect();
+        let archived: Vec<(String, f64)> = db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT skill_name, level FROM skill_calibrations_archive ORDER BY id",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                })?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            })
+            .await
+            .unwrap();
         assert_eq!(archived, vec![("Rifle".to_string(), 100.0)]);
 
-        let live: Vec<(String, f64, String)> =
-            sqlx::query("SELECT skill_name, level, source FROM skill_calibrations ORDER BY id")
-                .fetch_all(db.read())
-                .await
-                .unwrap()
-                .iter()
-                .map(|row| {
-                    (
-                        row.try_get(0).unwrap(),
-                        decoded_f64(row, 1),
-                        row.try_get(2).unwrap(),
-                    )
-                })
-                .collect();
+        let live: Vec<(String, f64, String)> = db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT skill_name, level, source FROM skill_calibrations ORDER BY id",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            })
+            .await
+            .unwrap();
         assert_eq!(
             live,
             vec![

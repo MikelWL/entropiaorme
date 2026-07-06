@@ -113,9 +113,9 @@ const REPAIR_FIELDS: [&str; 4] = ["cost_ped", "raw_text", "confidence", "error"]
 
 /// A SQLite numeric read preserving the engine type: a REAL decodes to a
 /// float, an INTEGER (the `COALESCE(SUM(...), 0)` empty case) to an integer.
-/// The stored value's affinity (`ValueRef`) drives the branch, exactly as the
-/// sqlx `try_get::<f64>`-then-`i64` cascade did (an integer value fails the
-/// float type-check and falls through to the integer read).
+/// The stored value's affinity (`ValueRef`) drives the branch directly,
+/// preserving the same behaviour as before: an integer value never
+/// masquerades as a float.
 fn sql_number(row: &rusqlite::Row, index: usize) -> Value {
     match row.get_ref_unwrap(index) {
         rusqlite::types::ValueRef::Real(value) => json!(value),

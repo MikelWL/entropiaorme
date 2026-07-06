@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
+use rusqlite::params;
 use serde_json::{json, Value};
-use sqlx::{Row, SqlitePool};
 use tokio::runtime::Handle;
 
 use crate::bus_events::{
@@ -22,16 +22,13 @@ use crate::ped::Ped;
 
 type ServiceRig = (
     Arc<QuestService>,
-    SqlitePool,
+    Db,
     Arc<crate::clock::MockClock>,
     Arc<crate::event_bus::EventBus>,
 );
 
 async fn service_with_clock(dir: &std::path::Path) -> ServiceRig {
     let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
-    // Tests drive direct SQL through the writer pool (single connection),
-    // reproducing the original pool-of-one semantics.
-    let pool = db.write().clone();
     let clock = Arc::new(crate::clock::MockClock::new(
         Some(
             chrono::NaiveDateTime::parse_from_str("2026-03-01 12:00:00", "%Y-%m-%d %H:%M:%S")
@@ -51,24 +48,36 @@ async fn service_with_clock(dir: &std::path::Path) -> ServiceRig {
             format!("fixed-{n:04}")
         }),
     );
-    (svc, pool, clock, bus)
+    (svc, db, clock, bus)
 }
 
-async fn service(dir: &std::path::Path) -> (Arc<QuestService>, SqlitePool) {
-    let (svc, pool, _clock, _bus) = service_with_clock(dir).await;
-    (svc, pool)
+async fn service(dir: &std::path::Path) -> (Arc<QuestService>, Db) {
+    let (svc, db, _clock, _bus) = service_with_clock(dir).await;
+    (svc, db)
 }
 
-async fn pin_ts(pool: &SqlitePool, table: &str, id: i64, ts: f64) {
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "UPDATE {table} SET created_at = ?, updated_at = ? WHERE id = ?"
-    )))
-    .bind(ts)
-    .bind(ts)
-    .bind(id)
-    .execute(pool)
+async fn pin_ts(db: &Db, table: &str, id: i64, ts: f64) {
+    let table = table.to_string();
+    db.with_writer(move |conn| {
+        conn.execute(
+            &format!("UPDATE {table} SET created_at = ?1, updated_at = ?2 WHERE id = ?3"),
+            params![ts, ts, id],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
+}
+
+/// A `SELECT COUNT(*) FROM ...` with no bound parameters, the shape
+/// repeated throughout these tests to check a table's row count.
+async fn count_rows(db: &Db, sql: &'static str) -> i64 {
+    db.with_reader(move |conn| {
+        conn.query_row(sql, [], |row| row.get(0))
+            .map_err(Into::into)
+    })
+    .await
+    .unwrap()
 }
 
 fn quest_id(value: &Value) -> i64 {
@@ -92,24 +101,28 @@ async fn quest_claim_undo_relands_the_days_rollups() {
     let db = Db::open(&dir.path().join("entropia_orme.db"))
         .await
         .unwrap();
-    let pool = db.write().clone();
 
     // A historical skill-reward claim and a liquid-reward ledger
     // entry, both two days behind the heal watermark.
     let claimed_at = 999_700_000.0; // inside 2001-09-05 UTC
-    sqlx::query(
-        "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
-         VALUES (7, 'Iron Atrox', 2.5, ?)",
-    )
-    .bind(claimed_at)
-    .execute(&pool)
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
+             VALUES (7, 'Iron Atrox', 2.5, ?1)",
+            params![claimed_at],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-         VALUES ('q1', '2001-09-05', 'markup', 'Quest: Daily Feffoid', 4.0, 'quest_reward')",
-    )
-    .execute(&pool)
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+             VALUES ('q1', '2001-09-05', 'markup', 'Quest: Daily Feffoid', 4.0, 'quest_reward')",
+            [],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
     db.with_writer(move |conn| {
@@ -118,12 +131,18 @@ async fn quest_claim_undo_relands_the_days_rollups() {
     .await
     .unwrap();
     let day = crate::daily_rollup::epoch_day(claimed_at);
-    let quest_pes: Option<f64> =
-        sqlx::query_scalar("SELECT quest_pes FROM daily_rollups WHERE day = ?")
-            .bind(&day)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let day_for_read = day.clone();
+    let quest_pes: Option<f64> = db
+        .with_reader(move |conn| {
+            conn.query_row(
+                "SELECT quest_pes FROM daily_rollups WHERE day = ?1",
+                params![day_for_read],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
     assert_eq!(quest_pes, Some(2.5));
 
     // Both undo paths reland their day inside the caller's commit
@@ -138,36 +157,47 @@ async fn quest_claim_undo_relands_the_days_rollups() {
         .unwrap();
     assert!(claim_undone);
     assert!(reward_undone);
-    let quest_pes: Option<f64> =
-        sqlx::query_scalar("SELECT quest_pes FROM daily_rollups WHERE day = ?")
-            .bind(&day)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let day_for_read = day.clone();
+    let quest_pes: Option<f64> = db
+        .with_reader(move |conn| {
+            conn.query_row(
+                "SELECT quest_pes FROM daily_rollups WHERE day = ?1",
+                params![day_for_read],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
     assert_eq!(quest_pes, None, "the undone claim left the day");
-    let ledger_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM daily_ledger_rollups WHERE day = ? AND tag = 'quest_reward'",
-    )
-    .bind(&day)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let day_for_read = day.clone();
+    let ledger_rows: i64 = db
+        .with_reader(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM daily_ledger_rollups WHERE day = ?1 AND tag = 'quest_reward'",
+                params![day_for_read],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
     assert_eq!(ledger_rows, 0, "the undone reward left the day");
 }
 
 #[tokio::test]
 async fn creates_apply_defaults_normalisation_and_mob_rules() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
 
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", q1, 1000.0).await;
+    pin_ts(&db, "quests", q1, 1000.0).await;
     let q2 = quest_id(&svc.create_quest(&full_quest_payload()).await.unwrap());
-    pin_ts(&pool, "quests", q2, 1001.0).await;
+    pin_ts(&db, "quests", q2, 1001.0).await;
     let q3 = quest_id(
         &svc.create_quest(&json!({
             "name": "Skill Run", "reward_ped": 5.0, "reward_is_skill": true,
@@ -176,7 +206,7 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
         .await
         .unwrap(),
     );
-    pin_ts(&pool, "quests", q3, 1002.0).await;
+    pin_ts(&db, "quests", q3, 1002.0).await;
     assert_eq!((q1, q2, q3), (1, 2, 3));
 
     // The minimal quest: planet defaults, everything else null,
@@ -215,15 +245,17 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
 #[tokio::test]
 async fn cooldown_derives_from_the_latest_completion() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let q2 = quest_id(&svc.create_quest(&full_quest_payload()).await.unwrap());
 
-    sqlx::query(
-        "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-         VALUES ('sess-1', ?, 1772366400.0)",
-    )
-    .bind(q2)
-    .execute(&pool)
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+             VALUES ('sess-1', ?1, 1772366400.0)",
+            params![q2],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
 
@@ -239,7 +271,7 @@ async fn cooldown_derives_from_the_latest_completion() {
 #[tokio::test]
 async fn updates_merge_and_renormalise_the_markup() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool) = service(dir.path()).await;
+    let (svc, _db) = service(dir.path()).await;
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
@@ -278,15 +310,15 @@ async fn updates_merge_and_renormalise_the_markup() {
 #[tokio::test]
 async fn deletes_are_soft_and_detach_playlist_items() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", q1, 1000.0).await;
+    pin_ts(&db, "quests", q1, 1000.0).await;
     let q2 = quest_id(&svc.create_quest(&full_quest_payload()).await.unwrap());
-    pin_ts(&pool, "quests", q2, 1001.0).await;
+    pin_ts(&db, "quests", q2, 1001.0).await;
     let p1 = quest_id(
         &svc.create_playlist(&json!({"name": "Morning Run", "quest_ids": [q1, q2]}))
             .await
@@ -324,7 +356,7 @@ async fn deletes_are_soft_and_detach_playlist_items() {
 #[tokio::test]
 async fn playlists_classify_items_and_split_groups() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
@@ -339,7 +371,7 @@ async fn playlists_classify_items_and_split_groups() {
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quest_playlists", p1, 2000.0).await;
+    pin_ts(&db, "quest_playlists", p1, 2000.0).await;
     let p1_fresh = svc.get_playlist(p1).await.unwrap().unwrap();
     assert_eq!(
         p1_fresh,
@@ -410,7 +442,7 @@ async fn playlists_classify_items_and_split_groups() {
 #[tokio::test]
 async fn invalid_groups_reject_verbatim_and_leave_no_trace() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool) = service(dir.path()).await;
+    let (svc, _db) = service(dir.path()).await;
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
@@ -456,7 +488,7 @@ async fn invalid_groups_reject_verbatim_and_leave_no_trace() {
 #[tokio::test]
 async fn present_null_lists_refuse_and_leave_state_untouched() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool) = service(dir.path()).await;
+    let (svc, _db) = service(dir.path()).await;
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge", "mobs": ["Atrox"]}))
             .await
@@ -495,7 +527,7 @@ async fn present_null_lists_refuse_and_leave_state_untouched() {
 #[tokio::test]
 async fn soft_deleting_a_quest_keeps_its_mob_rows() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge", "mobs": ["Atrox"]}))
             .await
@@ -506,12 +538,17 @@ async fn soft_deleting_a_quest_keeps_its_mob_rows() {
     // The soft delete detaches playlist items only; the mob rows
     // stay (the autocomplete reader filters by active quests, so
     // they vanish from that surface without being destroyed).
-    let mobs: i64 = sqlx::query("SELECT COUNT(*) FROM quest_mobs WHERE quest_id = ?")
-        .bind(q1)
-        .fetch_one(&pool)
+    let mobs: i64 = db
+        .with_reader(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM quest_mobs WHERE quest_id = ?1",
+                params![q1],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
         .await
-        .unwrap()
-        .get(0);
+        .unwrap();
     assert_eq!(mobs, 1);
     assert_eq!(svc.get_all_mob_names().await.unwrap(), Vec::<String>::new());
 }
@@ -519,7 +556,7 @@ async fn soft_deleting_a_quest_keeps_its_mob_rows() {
 #[tokio::test]
 async fn mob_autocomplete_lists_active_quest_mobs_sorted() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool) = service(dir.path()).await;
+    let (svc, _db) = service(dir.path()).await;
     svc.create_quest(&full_quest_payload()).await.unwrap();
     svc.create_quest(&json!({"name": "Side Hunt", "mobs": ["Snablesnot"]}))
         .await
@@ -533,16 +570,18 @@ async fn mob_autocomplete_lists_active_quest_mobs_sorted() {
 #[tokio::test]
 async fn a_zero_hour_cooldown_never_produces_an_expiry() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let mut payload = full_quest_payload();
     payload["cooldown_hours"] = json!(0);
     let q = quest_id(&svc.create_quest(&payload).await.unwrap());
-    sqlx::query(
-        "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-         VALUES ('sess-1', ?, 1772366400.0)",
-    )
-    .bind(q)
-    .execute(&pool)
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+             VALUES ('sess-1', ?1, 1772366400.0)",
+            params![q],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
 
@@ -558,7 +597,7 @@ async fn a_zero_hour_cooldown_never_produces_an_expiry() {
 #[tokio::test]
 async fn a_null_items_payload_clears_the_playlist() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool) = service(dir.path()).await;
+    let (svc, _db) = service(dir.path()).await;
     let q1 = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
@@ -589,7 +628,7 @@ async fn a_null_items_payload_clears_the_playlist() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_lifecycle_walkthrough_matches_the_original() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool, clock, bus) = service_with_clock(dir.path()).await;
+    let (svc, db, clock, bus) = service_with_clock(dir.path()).await;
 
     let qa = quest_id(
         &svc.create_quest(
@@ -598,26 +637,26 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         .await
         .unwrap(),
     );
-    pin_ts(&pool, "quests", qa, 1000.0).await;
+    pin_ts(&db, "quests", qa, 1000.0).await;
     let qb = quest_id(
         &svc.create_quest(&json!({"name": "Daily Hunt: Atrox", "reward_ped": 5.0,
                                    "reward_is_skill": true, "cooldown_hours": 1}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qb, 1001.0).await;
+    pin_ts(&db, "quests", qb, 1001.0).await;
     let qc = quest_id(
         &svc.create_quest(&json!({"name": "G\u{e9}ologist Survey"}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qc, 1002.0).await;
+    pin_ts(&db, "quests", qc, 1002.0).await;
     let qe = quest_id(
         &svc.create_quest(&json!({"name": "Zero Bounty", "reward_ped": 0}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qe, 1003.0).await;
+    pin_ts(&db, "quests", qe, 1003.0).await;
 
     // Start legs.
     assert_eq!(svc.start_quest(9999).await.unwrap(), None);
@@ -635,23 +674,25 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         json!("2026-03-02T12:01:00+00:00")
     );
     let ledger = |sql: &'static str| {
-        let pool = pool.clone();
+        let db = db.clone();
         async move {
-            sqlx::query(sql)
-                .fetch_all(&pool)
-                .await
-                .unwrap()
-                .iter()
-                .map(|row| {
-                    json!([
-                        row.get::<String, _>(0),
-                        row.get::<String, _>(1),
-                        row.get::<String, _>(2),
-                        row.get::<f64, _>(3),
-                        row.get::<String, _>(4),
-                    ])
-                })
-                .collect::<Vec<_>>()
+            db.with_reader(move |conn| {
+                let mut stmt = conn.prepare(sql)?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        Ok(json!([
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, f64>(3)?,
+                            row.get::<_, String>(4)?,
+                        ]))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap()
         }
     };
     assert_eq!(
@@ -664,25 +705,27 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
             "quest_reward"
         ])]
     );
-    let completions = |pool: SqlitePool| async move {
-        sqlx::query(
-            "SELECT session_id, quest_id, completed_at FROM session_quest_completions ORDER BY id",
-        )
-        .fetch_all(&pool)
+    let completions = |db: Db| async move {
+        db.with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, quest_id, completed_at FROM session_quest_completions ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(json!([
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ]))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
         .await
         .unwrap()
-        .iter()
-        .map(|row| {
-            json!([
-                row.get::<String, _>(0),
-                row.get::<i64, _>(1),
-                row.get::<f64, _>(2)
-            ])
-        })
-        .collect::<Vec<_>>()
     };
     assert_eq!(
-        completions(pool.clone()).await,
+        completions(db.clone()).await,
         vec![json!(["manual-fixed-0002", qa, 1772366460.0])]
     );
 
@@ -696,22 +739,25 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     svc.complete_quest(qb).await.unwrap().unwrap();
     clock.advance(60.0).unwrap();
     svc.complete_quest(qb).await.unwrap().unwrap();
-    let claims = sqlx::query(
-        "SELECT quest_id, quest_name, ped_value, claimed_at FROM quest_claims ORDER BY id",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap()
-    .iter()
-    .map(|row| {
-        json!([
-            row.get::<i64, _>(0),
-            row.get::<String, _>(1),
-            row.get::<f64, _>(2),
-            row.get::<f64, _>(3)
-        ])
-    })
-    .collect::<Vec<_>>();
+    let claims = db
+        .with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT quest_id, quest_name, ped_value, claimed_at FROM quest_claims ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(json!([
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, f64>(2)?,
+                        row.get::<_, f64>(3)?,
+                    ]))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .await
+        .unwrap();
     assert_eq!(
         claims,
         vec![
@@ -720,7 +766,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         ]
     );
     assert_eq!(
-        completions(pool.clone()).await,
+        completions(db.clone()).await,
         vec![
             json!(["manual-fixed-0002", qa, 1772366460.0]),
             json!(["sess-abc", qb, 1772366520.0]),
@@ -737,18 +783,10 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     assert_eq!(passthrough["id"], json!(qc));
     clock.advance(60.0).unwrap();
     svc.cancel_quest(qb, true).await.unwrap().unwrap();
-    let claim_count: i64 = sqlx::query("SELECT COUNT(*) FROM quest_claims")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .get(0);
+    let claim_count = count_rows(&db, "SELECT COUNT(*) FROM quest_claims").await;
     assert_eq!(claim_count, 1, "the newest claim is undone");
     svc.cancel_quest(qa, true).await.unwrap().unwrap();
-    let ledger_count: i64 = sqlx::query("SELECT COUNT(*) FROM ledger_entries")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .get(0);
+    let ledger_count = count_rows(&db, "SELECT COUNT(*) FROM ledger_entries").await;
     assert_eq!(ledger_count, 0, "the reward ledger entry is undone");
 
     // The suggestion tree, reason by reason.
@@ -767,14 +805,14 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         ("sess-two", qa, 5001.0),
         ("sess-two", qb, 5002.0),
     ] {
-        sqlx::query(
-            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(session)
-        .bind(quest)
-        .bind(at)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+                 VALUES (?1, ?2, ?3)",
+                params![session, quest, at],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -820,14 +858,14 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         .await
         .unwrap();
     for (session, quest, at) in [("sess-three", qa, 5003.0), ("sess-three", qc, 5004.0)] {
-        sqlx::query(
-            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(session)
-        .bind(quest)
-        .bind(at)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+                 VALUES (?1, ?2, ?3)",
+                params![session, quest, at],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -840,14 +878,14 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         .await
         .unwrap();
     for (session, quest, at) in [("sess-five", qa, 5005.0), ("sess-five", qb, 5006.0)] {
-        sqlx::query(
-            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(session)
-        .bind(quest)
-        .bind(at)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+                 VALUES (?1, ?2, ?3)",
+                params![session, quest, at],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -856,24 +894,27 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         "none",
         "ambiguous_playlist",
     );
-    let links = sqlx::query(
-        "SELECT session_id, link_type, quest_id, playlist_id, linked_at \
-         FROM session_quest_analytics_links ORDER BY session_id",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap()
-    .iter()
-    .map(|row| {
-        json!([
-            row.get::<String, _>(0),
-            row.get::<String, _>(1),
-            row.get::<Option<i64>, _>(2),
-            row.get::<Option<i64>, _>(3),
-            row.get::<f64, _>(4)
-        ])
-    })
-    .collect::<Vec<_>>();
+    let links = db
+        .with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, link_type, quest_id, playlist_id, linked_at \
+                 FROM session_quest_analytics_links ORDER BY session_id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(json!([
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, f64>(4)?,
+                    ]))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .await
+        .unwrap();
     assert_eq!(
         links,
         vec![
@@ -981,25 +1022,28 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     );
 
     // The overlay trail, exactly as the original recorded it.
-    let events = sqlx::query(
-        "SELECT session_id, kill_id, event_type, mob_or_item, value_ped, timestamp \
-         FROM notable_events ORDER BY id",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap()
-    .iter()
-    .map(|row| {
-        json!([
-            row.get::<String, _>(0),
-            row.get::<Option<String>, _>(1),
-            row.get::<String, _>(2),
-            row.get::<String, _>(3),
-            row.get::<f64, _>(4),
-            row.get::<f64, _>(5)
-        ])
-    })
-    .collect::<Vec<_>>();
+    let events = db
+        .with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, kill_id, event_type, mob_or_item, value_ped, timestamp \
+                 FROM notable_events ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(json!([
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, f64>(4)?,
+                        row.get::<_, f64>(5)?,
+                    ]))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .await
+        .unwrap();
     assert_eq!(
         events,
         vec![
@@ -1056,13 +1100,16 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
 
     // The final ledger carries exactly the two liquid completions
     // the filter recorded; the zero-reward completion wrote none.
-    let final_ledger: Vec<String> = sqlx::query("SELECT id FROM ledger_entries ORDER BY id")
-        .fetch_all(&pool)
+    let final_ledger: Vec<String> = db
+        .with_reader(move |conn| {
+            let mut stmt = conn.prepare("SELECT id FROM ledger_entries ORDER BY id")?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
         .await
-        .unwrap()
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
+        .unwrap();
     assert_eq!(final_ledger, ["fixed-0003", "fixed-0004"]);
 
     // A session stop clears the tracked session: notable events
@@ -1073,18 +1120,14 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     svc.start_quest_from_mission("Geologist Survey")
         .await
         .unwrap();
-    let count: i64 = sqlx::query("SELECT COUNT(*) FROM notable_events")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .get(0);
+    let count = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
     assert_eq!(count, 6, "no session, no overlay event");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_received_mission_event_starts_its_quest() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool, _clock, bus) = service_with_clock(dir.path()).await;
+    let (svc, _db, _clock, bus) = service_with_clock(dir.path()).await;
     let q = quest_id(
         &svc.create_quest(&json!({"name": "Iron Challenge"}))
             .await
@@ -1110,7 +1153,7 @@ async fn a_received_mission_event_starts_its_quest() {
 #[tokio::test]
 async fn starting_an_inactive_quest_returns_none() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool) = service(dir.path()).await;
+    let (svc, _db) = service(dir.path()).await;
     let q = quest_id(&svc.create_quest(&json!({"name": "Dead"})).await.unwrap());
     svc.delete_quest(q).await.unwrap();
     assert_eq!(svc.start_quest(q).await.unwrap(), None);
@@ -1119,19 +1162,19 @@ async fn starting_an_inactive_quest_returns_none() {
 #[tokio::test]
 async fn equal_fuzzy_scores_keep_the_first_quest() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let first = quest_id(
         &svc.create_quest(&json!({"name": "iron chal a"}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", first, 1000.0).await;
+    pin_ts(&db, "quests", first, 1000.0).await;
     let second = quest_id(
         &svc.create_quest(&json!({"name": "iron chal b"}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", second, 1001.0).await;
+    pin_ts(&db, "quests", second, 1001.0).await;
 
     // Both names score 0.9090909090909091 against the mission (the
     // reference's figure); the strictly-greater comparison keeps
@@ -1147,7 +1190,7 @@ async fn equal_fuzzy_scores_keep_the_first_quest() {
 #[tokio::test]
 async fn filter_ties_keep_the_first_item() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _pool) = service(dir.path()).await;
+    let (svc, _db) = service(dir.path()).await;
     svc.create_quest(&json!({"name": "Tie Quest", "reward_ped": 2.5}))
         .await
         .unwrap();
@@ -1189,20 +1232,21 @@ async fn filter_ties_keep_the_first_item() {
 #[tokio::test]
 async fn playlist_matching_requires_completions_within_scope() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let qa = quest_id(&svc.create_quest(&json!({"name": "Alpha"})).await.unwrap());
     let qc = quest_id(&svc.create_quest(&json!({"name": "Gamma"})).await.unwrap());
     svc.create_playlist(&json!({"name": "Solo Run", "quest_ids": [qc]}))
         .await
         .unwrap();
     for (quest, at) in [(qa, 5003.0), (qc, 5004.0)] {
-        sqlx::query(
-            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-             VALUES ('s3', ?, ?)",
-        )
-        .bind(quest)
-        .bind(at)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+                 VALUES ('s3', ?1, ?2)",
+                params![quest, at],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -1217,14 +1261,16 @@ async fn playlist_matching_requires_completions_within_scope() {
 #[tokio::test]
 async fn cancelling_outside_the_cooldown_window_keeps_completions() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
     let qa = quest_id(&svc.create_quest(&json!({"name": "Alpha"})).await.unwrap());
-    sqlx::query(
-        "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-         VALUES ('s4', ?, 1000.0)",
-    )
-    .bind(qa)
-    .execute(&pool)
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+             VALUES ('s4', ?1, 1000.0)",
+            params![qa],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
 
@@ -1240,13 +1286,15 @@ async fn cancelling_outside_the_cooldown_window_keeps_completions() {
             .await
             .unwrap(),
     );
-    sqlx::query(
-        "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-         VALUES ('s5', ?, ?)",
-    )
-    .bind(qe)
-    .bind(1772366400.0 - 3600.0)
-    .execute(&pool)
+    let expires_at = 1772366400.0 - 3600.0;
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+             VALUES ('s5', ?1, ?2)",
+            params![qe, expires_at],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
     let result = svc.cancel_quest(qe, false).await.unwrap().unwrap();
@@ -1256,7 +1304,7 @@ async fn cancelling_outside_the_cooldown_window_keeps_completions() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_empty_session_id_skips_overlay_events() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool, _clock, bus) = service_with_clock(dir.path()).await;
+    let (svc, db, _clock, bus) = service_with_clock(dir.path()).await;
     svc.create_quest(&json!({"name": "Iron Challenge"}))
         .await
         .unwrap();
@@ -1269,11 +1317,7 @@ async fn an_empty_session_id_skips_overlay_events() {
     svc.start_quest_from_mission("Iron Challenge")
         .await
         .unwrap();
-    let count: i64 = sqlx::query("SELECT COUNT(*) FROM notable_events")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .get(0);
+    let count = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
     assert_eq!(count, 0);
 }
 
@@ -1285,7 +1329,7 @@ async fn an_empty_session_id_skips_overlay_events() {
 #[tokio::test]
 async fn analytics_match_the_original_over_a_seeded_economy() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, pool) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
 
     let qa = quest_id(
         &svc.create_quest(&json!({"name": "Alpha", "reward_ped": 2.5,
@@ -1293,22 +1337,22 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qa, 1000.0).await;
+    pin_ts(&db, "quests", qa, 1000.0).await;
     let qb = quest_id(
         &svc.create_quest(&json!({"name": "Beta", "reward_ped": 5.0,
                                    "reward_is_skill": true}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qb, 1001.0).await;
+    pin_ts(&db, "quests", qb, 1001.0).await;
     let qc = quest_id(&svc.create_quest(&json!({"name": "Gamma"})).await.unwrap());
-    pin_ts(&pool, "quests", qc, 1002.0).await;
+    pin_ts(&db, "quests", qc, 1002.0).await;
     let qd = quest_id(
         &svc.create_quest(&json!({"name": "Delta", "reward_ped": 1.25}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qd, 1003.0).await;
+    pin_ts(&db, "quests", qd, 1003.0).await;
 
     let p1 = quest_id(
         &svc.create_playlist(&json!({"name": "Mixed Run", "items": [
@@ -1319,7 +1363,7 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         .await
         .unwrap(),
     );
-    pin_ts(&pool, "quest_playlists", p1, 2000.0).await;
+    pin_ts(&db, "quest_playlists", p1, 2000.0).await;
     let p2 = quest_id(
         &svc.create_playlist(&json!({"name": "Bonus Only", "items": [
             {"quest_id": qc, "group_type": "long_horizon"},
@@ -1327,24 +1371,21 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         .await
         .unwrap(),
     );
-    pin_ts(&pool, "quest_playlists", p2, 2001.0).await;
+    pin_ts(&db, "quest_playlists", p2, 2001.0).await;
 
     for (sid, st, en, active, heal, armour) in [
         ("sess-1", 1000.0, Some(4600.0), 0i64, Some(1.5), Some(0.25)),
         ("sess-2", 5000.0, Some(5030.5), 0, None, Some(0.0)),
         ("sess-3", 6000.0, None, 1, Some(2.0), None),
     ] {
-        sqlx::query(
-            "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(sid)
-        .bind(st)
-        .bind(en)
-        .bind(active)
-        .bind(heal)
-        .bind(armour)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![sid, st, en, active, heal, armour],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -1353,18 +1394,15 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         ("k2", "sess-1", "Atrox", 1200.0, 0.0, 3.0),
         ("k3", "sess-2", "Snable", 5010.0, 0.1, 0.0),
     ] {
-        sqlx::query(
-            "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
-             damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
-             VALUES (?, ?, ?, ?, 10, 100.0, 5.0, 1, 0.3, ?, ?)",
-        )
-        .bind(kid)
-        .bind(sid)
-        .bind(mob)
-        .bind(ts)
-        .bind(enh)
-        .bind(loot)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
+                 damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
+                 VALUES (?1, ?2, ?3, ?4, 10, 100.0, 5.0, 1, 0.3, ?5, ?6)",
+                params![kid, sid, mob, ts, enh, loot],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -1373,27 +1411,26 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         ("k1", "Fap-90", 5, 0.02),
         ("k3", "LR-32", 12, 0.05),
     ] {
-        sqlx::query(
-            "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
-             critical_hits, cost_per_shot) VALUES (?, ?, ?, 50.0, 0, ?)",
-        )
-        .bind(kid)
-        .bind(tool)
-        .bind(shots)
-        .bind(cps)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
+                 critical_hits, cost_per_shot) VALUES (?1, ?2, ?3, 50.0, 0, ?4)",
+                params![kid, tool, shots, cps],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
     for (sid, skill, ped) in [("sess-1", "Rifle", 0.8), ("sess-2", "Anatomy", 0.2)] {
-        sqlx::query(
-            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-             VALUES (?, 1100.0, ?, 1.0, ?)",
-        )
-        .bind(sid)
-        .bind(skill)
-        .bind(ped)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+                 VALUES (?1, 1100.0, ?2, 1.0, ?3)",
+                params![sid, skill, ped],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -1403,61 +1440,59 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         ("sess-1", qd, 1700.0),
         ("sess-2", qa, 5020.0),
     ] {
-        sqlx::query(
-            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(sid)
-        .bind(qid)
-        .bind(at)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+                 VALUES (?1, ?2, ?3)",
+                params![sid, qid, at],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
     let qn = quest_id(&svc.create_quest(&json!({"name": "Nul"})).await.unwrap());
-    pin_ts(&pool, "quests", qn, 1004.0).await;
+    pin_ts(&db, "quests", qn, 1004.0).await;
     let qz = quest_id(
         &svc.create_quest(&json!({"name": "Zed", "reward_ped": 0,
                                    "expected_reward_markup_percent": 120.0}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qz, 1005.0).await;
+    pin_ts(&db, "quests", qz, 1005.0).await;
     let qe2 = quest_id(
         &svc.create_quest(&json!({"name": "Echo", "reward_ped": 3.0}))
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quests", qe2, 1006.0).await;
+    pin_ts(&db, "quests", qe2, 1006.0).await;
     for (sid, st, en, active, heal) in [
         ("sess-n", 7000.0, Some(7050.0), 0i64, Some(0.0)),
         ("sess-z", 7100.0, Some(7160.0), 0, Some(0.0)),
         ("sess-act", 8000.0, None, 1, None),
         ("sess-solo", 8100.0, Some(8200.0), 0, Some(0.5)),
     ] {
-        sqlx::query(
-            "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(sid)
-        .bind(st)
-        .bind(en)
-        .bind(active)
-        .bind(heal)
-        .bind(heal.map(|_| 0.0))
-        .execute(&pool)
+        let armour = heal.map(|_| 0.0);
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![sid, st, en, active, heal, armour],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
     for (sid, qid, at) in [("sess-n", qn, 7040.0), ("sess-z", qz, 7150.0)] {
-        sqlx::query(
-            "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(sid)
-        .bind(qid)
-        .bind(at)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
+                 VALUES (?1, ?2, ?3)",
+                params![sid, qid, at],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
@@ -1466,7 +1501,7 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
             .await
             .unwrap(),
     );
-    pin_ts(&pool, "quest_playlists", p3, 2002.0).await;
+    pin_ts(&db, "quest_playlists", p3, 2002.0).await;
     for (sid, lt, qid, plid) in [
         ("sess-1", "playlist", None::<i64>, Some(p1)),
         ("sess-2", "quest", Some(qa), None),
@@ -1476,16 +1511,15 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         ("sess-act", "quest", Some(qe2), None),
         ("sess-solo", "playlist", None, Some(p3)),
     ] {
-        sqlx::query(
-            "INSERT INTO session_quest_analytics_links \
-             (session_id, link_type, quest_id, playlist_id, linked_at) \
-             VALUES (?, ?, ?, ?, 9000.0)",
-        )
-        .bind(sid)
-        .bind(lt)
-        .bind(qid)
-        .bind(plid)
-        .execute(&pool)
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_analytics_links \
+                 (session_id, link_type, quest_id, playlist_id, linked_at) \
+                 VALUES (?1, ?2, ?3, ?4, 9000.0)",
+                params![sid, lt, qid, plid],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
     }
