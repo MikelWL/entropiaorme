@@ -3,7 +3,6 @@
 
 use chrono::{DateTime, Utc};
 use eo_wire::normalizer::round_half_even;
-use sqlx::Row;
 
 use crate::db::DbError;
 use crate::session_summary::write_session_summary;
@@ -18,20 +17,33 @@ impl TrackerActor {
     /// clear the active flag.
     pub(super) async fn recover_orphaned_sessions(&self) -> Result<(), DbError> {
         {
-            let rows =
-                sqlx::query("SELECT id, started_at FROM tracking_sessions WHERE is_active = 1")
-                    .fetch_all(self.db.read())
-                    .await?;
-            for row in rows {
-                let session_id: String = row.try_get(0)?;
-                let started_at: f64 = row.try_get(1)?;
-                let kill_row = sqlx::query("SELECT MAX(timestamp) FROM kills WHERE session_id = ?")
-                    .bind(&session_id)
-                    .fetch_one(self.db.read())
+            let rows: Vec<(String, f64)> = self
+                .db
+                .with_reader(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, started_at FROM tracking_sessions WHERE is_active = 1",
+                    )?;
+                    let mapped = stmt.query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                    })?;
+                    Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+                })
+                .await?;
+            for (session_id, started_at) in rows {
+                let sid_read = session_id.clone();
+                let latest = self
+                    .db
+                    .with_reader(move |conn| {
+                        Ok(conn.query_row(
+                            "SELECT MAX(timestamp) FROM kills WHERE session_id = ?",
+                            rusqlite::params![sid_read],
+                            |row| row.get::<_, Option<f64>>(0),
+                        )?)
+                    })
                     .await?;
                 // The original's falsy fallback, not a None check: a
                 // zero maximum also falls back to the session start.
-                let ended_at = match kill_row.try_get::<Option<f64>, _>(0)? {
+                let ended_at = match latest {
                     Some(latest) if latest != 0.0 => latest,
                     _ => started_at,
                 };
@@ -66,69 +78,72 @@ impl TrackerActor {
     /// original's insertion-ordered iteration does), and the loot
     /// items, under one commit.
     pub(super) async fn persist_kill(&self, kill: &Kill) {
-        let result: Result<(), sqlx::Error> = async {
-            let mut tx = self.db.write().begin().await?;
-            sqlx::query(
-                "INSERT OR REPLACE INTO kills \
-                 (id, session_id, mob_name, mob_species, mob_maturity, \
-                  timestamp, shots_fired, damage_dealt, damage_taken, \
-                  critical_hits, cost_ped, enhancer_cost, \
-                  loot_total_ped, is_global, is_hof) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&kill.id)
-            .bind(&kill.session_id)
-            .bind(&kill.mob_name)
-            .bind(&kill.mob_species)
-            .bind(&kill.mob_maturity)
-            .bind(kill.timestamp)
-            .bind(kill.shots_fired)
-            .bind(kill.damage_dealt)
-            .bind(kill.damage_taken)
-            .bind(kill.critical_hits)
-            .bind(kill.cost_ped.value())
-            .bind(kill.enhancer_cost.value())
-            .bind(kill.loot_total_ped.value())
-            .bind(i64::from(kill.is_global))
-            .bind(i64::from(kill.is_hof))
-            .execute(&mut *tx)
-            .await?;
+        let kill = kill.clone();
+        let result = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO kills \
+                     (id, session_id, mob_name, mob_species, mob_maturity, \
+                      timestamp, shots_fired, damage_dealt, damage_taken, \
+                      critical_hits, cost_ped, enhancer_cost, \
+                      loot_total_ped, is_global, is_hof) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        kill.id,
+                        kill.session_id,
+                        kill.mob_name,
+                        kill.mob_species,
+                        kill.mob_maturity,
+                        kill.timestamp,
+                        kill.shots_fired,
+                        kill.damage_dealt,
+                        kill.damage_taken,
+                        kill.critical_hits,
+                        kill.cost_ped.value(),
+                        kill.enhancer_cost.value(),
+                        kill.loot_total_ped.value(),
+                        i64::from(kill.is_global),
+                        i64::from(kill.is_hof),
+                    ],
+                )?;
 
-            for (_, stats) in &kill.tool_stats {
-                sqlx::query(
-                    "INSERT OR REPLACE INTO kill_tool_stats \
-                     (kill_id, tool_name, shots_fired, damage_dealt, \
-                      critical_hits, cost_per_shot) \
-                     VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&kill.id)
-                .bind(&stats.tool_name)
-                .bind(stats.shots_fired)
-                .bind(stats.damage_dealt)
-                .bind(stats.critical_hits)
-                .bind(stats.cost_per_shot.value())
-                .execute(&mut *tx)
-                .await?;
-            }
+                for (_, stats) in &kill.tool_stats {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO kill_tool_stats \
+                         (kill_id, tool_name, shots_fired, damage_dealt, \
+                          critical_hits, cost_per_shot) \
+                         VALUES (?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            kill.id,
+                            stats.tool_name,
+                            stats.shots_fired,
+                            stats.damage_dealt,
+                            stats.critical_hits,
+                            stats.cost_per_shot.value(),
+                        ],
+                    )?;
+                }
 
-            for item in &kill.loot_items {
-                sqlx::query(
-                    "INSERT INTO kill_loot_items \
-                     (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) \
-                     VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(&kill.id)
-                .bind(&item.item_name)
-                .bind(item.quantity)
-                .bind(item.value_ped)
-                .bind(i64::from(item.is_enhancer_shrapnel))
-                .execute(&mut *tx)
-                .await?;
-            }
-            tx.commit().await?;
-            Ok(())
-        }
-        .await;
+                for item in &kill.loot_items {
+                    tx.execute(
+                        "INSERT INTO kill_loot_items \
+                         (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) \
+                         VALUES (?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            kill.id,
+                            item.item_name,
+                            item.quantity,
+                            item.value_ped,
+                            i64::from(item.is_enhancer_shrapnel),
+                        ],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await;
         // Contained like the original's handler exception.
         let _ = result;
     }

@@ -17,10 +17,10 @@ use eo_services::cost_engine::{
     is_limited,
 };
 use eo_wire::normalizer::{round_half_even, to_python_json_dumps};
+use rusqlite::OptionalExtension as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use sqlx::Row;
 
 use crate::{Api, ApiError};
 
@@ -538,15 +538,27 @@ impl Api {
 
     /// The stored library, oldest first.
     pub async fn equipment_library(&self) -> Result<Vec<EquipmentSummary>, ApiError> {
-        let rows = sqlx::query(
-            "SELECT id, name, item_type, properties_json FROM equipment_library ORDER BY created_at",
-        )
-        .fetch_all(self.read())
-        .await
-        .map_err(ApiError::internal("equipment library read"))?;
+        let rows: Vec<(i64, String, String, String)> = self
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, item_type, properties_json FROM equipment_library ORDER BY created_at",
+                )?;
+                let mapped = stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?;
+                Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+            })
+            .await
+            .map_err(ApiError::internal("equipment library read"))?;
         let mut results = Vec::with_capacity(rows.len());
-        for row in rows {
-            results.push(summary_from_row(&row)?);
+        for (id, name, item_type, raw_props) in rows {
+            results.push(summary_from_parts(id, &name, &item_type, &raw_props)?);
         }
         Ok(results)
     }
@@ -557,26 +569,41 @@ impl Api {
         req: &EquipmentRequest,
     ) -> Result<EquipmentSummary, ApiError> {
         let built = self.build_props(req)?;
-        let inserted = sqlx::query(
-            "INSERT INTO equipment_library (name, item_type, catalog_id, properties_json) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(&built.name)
-        .bind(req.kind.as_str())
-        .bind(&built.stored_catalog_id)
-        .bind(to_python_json_dumps(&built.props))
-        .execute(self.write())
-        .await
-        .map_err(ApiError::internal("equipment insert"))?
-        .last_insert_rowid();
-        let row = sqlx::query(
-            "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
-        )
-        .bind(inserted)
-        .fetch_one(self.read())
-        .await
-        .map_err(ApiError::internal("inserted equipment read-back"))?;
-        summary_from_row(&row)
+        let name = built.name;
+        let kind_str = req.kind.as_str();
+        let stored_catalog_id = built.stored_catalog_id;
+        let props_json = to_python_json_dumps(&built.props);
+        let inserted = self
+            .db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO equipment_library (name, item_type, catalog_id, properties_json) \
+                     VALUES (?, ?, ?, ?)",
+                    rusqlite::params![name, kind_str, stored_catalog_id, props_json],
+                )?;
+                Ok(conn.last_insert_rowid())
+            })
+            .await
+            .map_err(ApiError::internal("equipment insert"))?;
+        let (id, name, item_type, raw_props) = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
+                    rusqlite::params![inserted],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .map_err(ApiError::internal("inserted equipment read-back"))?;
+        summary_from_parts(id, &name, &item_type, &raw_props)
     }
 
     /// Replace a stored entry's configuration; its class is fixed.
@@ -585,35 +612,60 @@ impl Api {
         item_id: i64,
         req: &EquipmentRequest,
     ) -> Result<EquipmentSummary, ApiError> {
-        let existing = sqlx::query("SELECT id, item_type FROM equipment_library WHERE id = ?")
-            .bind(item_id)
-            .fetch_optional(self.read())
+        let existing_type: Option<String> = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id, item_type FROM equipment_library WHERE id = ?",
+                        rusqlite::params![item_id],
+                        |row| row.get::<_, String>(1),
+                    )
+                    .optional()?)
+            })
             .await
-            .map_err(ApiError::internal("equipment row lookup"))?
-            .ok_or_else(|| ApiError::not_found(format!("Equipment item {item_id} not found")))?;
-        let existing_type: String = existing.get("item_type");
+            .map_err(ApiError::internal("equipment row lookup"))?;
+        let Some(existing_type) = existing_type else {
+            return Err(ApiError::not_found(format!(
+                "Equipment item {item_id} not found"
+            )));
+        };
         if existing_type != req.kind.as_str() {
             return Err(ApiError::bad_request("Cannot change equipment type"));
         }
         let built = self.build_props(req)?;
-        sqlx::query(
-            "UPDATE equipment_library SET name = ?, catalog_id = ?, properties_json = ? WHERE id = ?",
-        )
-        .bind(&built.name)
-        .bind(&built.stored_catalog_id)
-        .bind(to_python_json_dumps(&built.props))
-        .bind(item_id)
-        .execute(self.write())
-        .await
-        .map_err(ApiError::internal("equipment update"))?;
-        let row = sqlx::query(
-            "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
-        )
-        .bind(item_id)
-        .fetch_one(self.read())
-        .await
-        .map_err(ApiError::internal("updated equipment read-back"))?;
-        summary_from_row(&row)
+        let name = built.name;
+        let stored_catalog_id = built.stored_catalog_id;
+        let props_json = to_python_json_dumps(&built.props);
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "UPDATE equipment_library SET name = ?, catalog_id = ?, properties_json = ? WHERE id = ?",
+                    rusqlite::params![name, stored_catalog_id, props_json, item_id],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(ApiError::internal("equipment update"))?;
+        let (id, name, item_type, raw_props) = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
+                    rusqlite::params![item_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .map_err(ApiError::internal("updated equipment read-back"))?;
+        summary_from_parts(id, &name, &item_type, &raw_props)
     }
 
     /// Delete a stored entry; refused while a trifecta preset references
@@ -629,9 +681,14 @@ impl Api {
                 "Cannot remove equipment selected in a trifecta preset",
             ));
         }
-        sqlx::query("DELETE FROM equipment_library WHERE id = ?")
-            .bind(item_id)
-            .execute(self.write())
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "DELETE FROM equipment_library WHERE id = ?",
+                    rusqlite::params![item_id],
+                )?;
+                Ok(())
+            })
             .await
             .map_err(ApiError::internal("equipment delete"))?;
         Ok(())
@@ -639,20 +696,33 @@ impl Api {
 
     /// The expanded detail for a stored entry.
     pub async fn equipment_detail(&self, item_id: i64) -> Result<EquipmentDetail, ApiError> {
-        let row = sqlx::query(
-            "SELECT id, name, item_type, catalog_id, properties_json \
-             FROM equipment_library WHERE id = ?",
-        )
-        .bind(item_id)
-        .fetch_optional(self.read())
-        .await
-        .map_err(ApiError::internal("equipment detail lookup"))?
-        .ok_or_else(|| ApiError::not_found(format!("Equipment item {item_id} not found")))?;
-        let id: i64 = row.get("id");
-        let name: String = row.get("name");
-        let item_type: String = row.get("item_type");
-        let catalog_id: Option<String> = row.get("catalog_id");
-        let raw_props: String = row.get("properties_json");
+        let row = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id, name, item_type, catalog_id, properties_json \
+                         FROM equipment_library WHERE id = ?",
+                        rusqlite::params![item_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, Option<String>>(3)?,
+                                row.get::<_, String>(4)?,
+                            ))
+                        },
+                    )
+                    .optional()?)
+            })
+            .await
+            .map_err(ApiError::internal("equipment detail lookup"))?;
+        let Some((id, name, item_type, catalog_id, raw_props)) = row else {
+            return Err(ApiError::not_found(format!(
+                "Equipment item {item_id} not found"
+            )));
+        };
         let props = serde_json::from_str::<Value>(&raw_props)
             .map_err(ApiError::internal("stored equipment props parse"))?;
         row_to_detail(id, &name, &item_type, catalog_id.as_deref(), &props)
@@ -772,12 +842,13 @@ impl Api {
 
 /// Shape one library row (id, name, item_type, properties_json) to the
 /// list form.
-fn summary_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<EquipmentSummary, ApiError> {
-    let id: i64 = row.get("id");
-    let name: String = row.get("name");
-    let item_type: String = row.get("item_type");
-    let raw_props: String = row.get("properties_json");
-    let props = serde_json::from_str::<Value>(&raw_props)
+fn summary_from_parts(
+    id: i64,
+    name: &str,
+    item_type: &str,
+    raw_props: &str,
+) -> Result<EquipmentSummary, ApiError> {
+    let props = serde_json::from_str::<Value>(raw_props)
         .map_err(ApiError::internal("stored equipment props parse"))?;
-    row_to_summary(id, &name, &item_type, &props)
+    row_to_summary(id, name, item_type, &props)
 }

@@ -1040,6 +1040,7 @@ dependencies = [
  "eo-services",
  "eo-wire",
  "ort",
+ "rusqlite",
  "serde",
  "serde_json",
  "sqlx",

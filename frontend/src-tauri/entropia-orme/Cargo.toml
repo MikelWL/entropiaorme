@@ -39,6 +39,11 @@ eo-services = { workspace = true }
 # The composition root owns the SSE fan-out hub and bridges the producer
 # bus's domain topics onto it (the `/api/events` stream serves over it).
 eo-wire = { workspace = true }
+# The hotbar slot resolver runs on the input listener's plain OS key thread
+# (no async runtime), so it reads the equipment library through the database
+# handle's synchronous reader core rather than bridging an async query onto
+# the runtime.
+rusqlite = { workspace = true }
 # The capture-PNG IPC command base64-encodes the raw image bytes into an
 # `<img>` data URL (the capture returns raw bytes, outside the typed JSON
 # command surface).

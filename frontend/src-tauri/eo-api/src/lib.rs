@@ -145,15 +145,4 @@ impl Api {
             demo: tokio::sync::OnceCell::new(),
         }
     }
-
-    /// The reader pool, for plain reads (dashboard reads run
-    /// concurrently with combat writes).
-    pub(crate) fn read(&self) -> &sqlx::SqlitePool {
-        self.db.read()
-    }
-
-    /// The writer pool, for mutations.
-    pub(crate) fn write(&self) -> &sqlx::SqlitePool {
-        self.db.write()
-    }
 }

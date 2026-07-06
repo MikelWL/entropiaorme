@@ -41,8 +41,8 @@ use eo_services::tracker::{HuntTracker, MobSelection, Providers, TrackingMode};
 use eo_services::tracking_models::{
     Kill, LootItem, ToolStats, TrackingSession as TrackingSessionModel,
 };
+use rusqlite::OptionalExtension as _;
 use serde::Deserialize;
-use sqlx::SqlitePool;
 use tokio::sync::OnceCell;
 
 use crate::analytics::{
@@ -75,8 +75,6 @@ pub enum DemoError {
     Io(#[from] std::io::Error),
     #[error("demo database: {0}")]
     Db(#[from] eo_services::db::DbError),
-    #[error("demo seed write: {0}")]
-    Sql(#[from] sqlx::Error),
     #[error("demo fixture: {0}")]
     Fixture(#[from] serde_json::Error),
     #[error("demo equipment {0:?} is not in the bundled library")]
@@ -94,7 +92,7 @@ struct Fixture {
     notable_events: Vec<FixtureNotable>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct FixtureSession {
     id: String,
     is_active: i64,
@@ -103,7 +101,7 @@ struct FixtureSession {
     dangling_cost: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct FixtureKill {
     id: String,
     mob_name: String,
@@ -123,7 +121,7 @@ struct FixtureKill {
     loot_items: Vec<FixtureLootItem>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct FixtureToolStat {
     tool_name: String,
     shots_fired: i64,
@@ -132,7 +130,7 @@ struct FixtureToolStat {
     cost_per_shot: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct FixtureLootItem {
     item_name: String,
     quantity: i64,
@@ -140,7 +138,7 @@ struct FixtureLootItem {
     is_enhancer_shrapnel: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct FixtureSkillGain {
     ts_offset: f64,
     skill_name: String,
@@ -148,7 +146,7 @@ struct FixtureSkillGain {
     ped_value: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct FixtureNotable {
     kill_id: String,
     event_type: String,
@@ -195,14 +193,6 @@ impl DemoState {
             fixture,
             primed: OnceCell::new(),
         })
-    }
-
-    fn read(&self) -> &SqlitePool {
-        self.db.read()
-    }
-
-    fn write(&self) -> &SqlitePool {
-        self.db.write()
     }
 
     fn now_epoch(&self) -> f64 {
@@ -279,7 +269,7 @@ impl DemoState {
     }
 
     async fn tracking_session_detail(&self, session_id: &str) -> Result<SessionDetail, ApiError> {
-        match get_session_impl(self.read(), session_id, self.now_epoch())
+        match get_session_impl(&self.db, session_id, self.now_epoch())
             .await
             .map_err(ApiError::internal("demo session detail"))?
         {
@@ -323,110 +313,123 @@ impl DemoState {
         let started_epoch = naive_to_epoch(started_naive);
         let session = &self.fixture.session;
 
-        let mut tx = self.write().begin().await?;
-        sqlx::query(
-            "INSERT INTO tracking_sessions \
-             (id, started_at, ended_at, is_active, armour_cost, heal_cost, dangling_cost) \
-             VALUES (?, ?, NULL, ?, ?, ?, ?)",
-        )
-        .bind(&session.id)
-        .bind(started_epoch)
-        .bind(session.is_active)
-        .bind(session.armour_cost)
-        .bind(session.heal_cost)
-        .bind(session.dangling_cost)
-        .execute(&mut *tx)
-        .await?;
+        // The seed writes run as one synchronous transaction on the writer
+        // core: owned clones of the fixture rows move into the closure so it
+        // is `Send + 'static`, and the insert order and values are verbatim,
+        // so the demo DB state (and the frozen demo-body golden) is unchanged.
+        let seed_session = session.clone();
+        let seed_kills = self.fixture.kills.clone();
+        let seed_skill_gains = self.fixture.skill_gains.clone();
+        let seed_notable_events = self.fixture.notable_events.clone();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT INTO tracking_sessions \
+                     (id, started_at, ended_at, is_active, armour_cost, heal_cost, dangling_cost) \
+                     VALUES (?, ?, NULL, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        seed_session.id,
+                        started_epoch,
+                        seed_session.is_active,
+                        seed_session.armour_cost,
+                        seed_session.heal_cost,
+                        seed_session.dangling_cost,
+                    ],
+                )?;
 
-        for kill in &self.fixture.kills {
-            sqlx::query(
-                "INSERT INTO kills \
-                 (id, session_id, mob_name, mob_species, mob_maturity, timestamp, \
-                  shots_fired, damage_dealt, damage_taken, critical_hits, \
-                  cost_ped, enhancer_cost, loot_total_ped, is_global, is_hof) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&kill.id)
-            .bind(&session.id)
-            .bind(&kill.mob_name)
-            .bind(&kill.mob_species)
-            .bind(&kill.mob_maturity)
-            .bind(started_epoch + kill.ts_offset)
-            .bind(kill.shots_fired)
-            .bind(kill.damage_dealt)
-            .bind(kill.damage_taken)
-            .bind(kill.critical_hits)
-            .bind(kill.cost_ped)
-            .bind(kill.enhancer_cost)
-            .bind(kill.loot_total_ped)
-            .bind(kill.is_global)
-            .bind(kill.is_hof)
-            .execute(&mut *tx)
+                for kill in &seed_kills {
+                    tx.execute(
+                        "INSERT INTO kills \
+                         (id, session_id, mob_name, mob_species, mob_maturity, timestamp, \
+                          shots_fired, damage_dealt, damage_taken, critical_hits, \
+                          cost_ped, enhancer_cost, loot_total_ped, is_global, is_hof) \
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            kill.id,
+                            seed_session.id,
+                            kill.mob_name,
+                            kill.mob_species,
+                            kill.mob_maturity,
+                            started_epoch + kill.ts_offset,
+                            kill.shots_fired,
+                            kill.damage_dealt,
+                            kill.damage_taken,
+                            kill.critical_hits,
+                            kill.cost_ped,
+                            kill.enhancer_cost,
+                            kill.loot_total_ped,
+                            kill.is_global,
+                            kill.is_hof,
+                        ],
+                    )?;
+
+                    for tool in &kill.tool_stats {
+                        tx.execute(
+                            "INSERT INTO kill_tool_stats \
+                             (kill_id, tool_name, shots_fired, damage_dealt, critical_hits, cost_per_shot) \
+                             VALUES (?, ?, ?, ?, ?, ?)",
+                            rusqlite::params![
+                                kill.id,
+                                tool.tool_name,
+                                tool.shots_fired,
+                                tool.damage_dealt,
+                                tool.critical_hits,
+                                tool.cost_per_shot,
+                            ],
+                        )?;
+                    }
+
+                    for item in &kill.loot_items {
+                        tx.execute(
+                            "INSERT INTO kill_loot_items \
+                             (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) \
+                             VALUES (?, ?, ?, ?, ?)",
+                            rusqlite::params![
+                                kill.id,
+                                item.item_name,
+                                item.quantity,
+                                item.value_ped,
+                                item.is_enhancer_shrapnel,
+                            ],
+                        )?;
+                    }
+                }
+
+                for gain in &seed_skill_gains {
+                    tx.execute(
+                        "INSERT INTO skill_gains \
+                         (session_id, timestamp, skill_name, amount, ped_value) \
+                         VALUES (?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            seed_session.id,
+                            started_epoch + gain.ts_offset,
+                            gain.skill_name,
+                            gain.amount,
+                            gain.ped_value,
+                        ],
+                    )?;
+                }
+
+                for event in &seed_notable_events {
+                    tx.execute(
+                        "INSERT INTO notable_events \
+                         (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
+                         VALUES (?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            seed_session.id,
+                            event.kill_id,
+                            event.event_type,
+                            event.mob_or_item,
+                            event.value_ped,
+                            started_epoch + event.ts_offset,
+                        ],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
             .await?;
-
-            for tool in &kill.tool_stats {
-                sqlx::query(
-                    "INSERT INTO kill_tool_stats \
-                     (kill_id, tool_name, shots_fired, damage_dealt, critical_hits, cost_per_shot) \
-                     VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&kill.id)
-                .bind(&tool.tool_name)
-                .bind(tool.shots_fired)
-                .bind(tool.damage_dealt)
-                .bind(tool.critical_hits)
-                .bind(tool.cost_per_shot)
-                .execute(&mut *tx)
-                .await?;
-            }
-
-            for item in &kill.loot_items {
-                sqlx::query(
-                    "INSERT INTO kill_loot_items \
-                     (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) \
-                     VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(&kill.id)
-                .bind(&item.item_name)
-                .bind(item.quantity)
-                .bind(item.value_ped)
-                .bind(item.is_enhancer_shrapnel)
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
-
-        for gain in &self.fixture.skill_gains {
-            sqlx::query(
-                "INSERT INTO skill_gains \
-                 (session_id, timestamp, skill_name, amount, ped_value) \
-                 VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(&session.id)
-            .bind(started_epoch + gain.ts_offset)
-            .bind(&gain.skill_name)
-            .bind(gain.amount)
-            .bind(gain.ped_value)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        for event in &self.fixture.notable_events {
-            sqlx::query(
-                "INSERT INTO notable_events \
-                 (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&session.id)
-            .bind(&event.kill_id)
-            .bind(&event.event_type)
-            .bind(&event.mob_or_item)
-            .bind(event.value_ped)
-            .bind(started_epoch + event.ts_offset)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
 
         // Build the in-memory session and prime the parallel tracker (the
         // snapshot reads its computed readout). The kill values match the rows
@@ -527,9 +530,17 @@ impl DemoState {
     }
 
     async fn lookup_equipment_id(&self, name: &str) -> Result<i64, DemoError> {
-        sqlx::query_scalar::<_, i64>("SELECT id FROM equipment_library WHERE name = ?")
-            .bind(name)
-            .fetch_optional(self.read())
+        let lookup = name.to_string();
+        self.db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id FROM equipment_library WHERE name = ?",
+                        rusqlite::params![lookup],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?)
+            })
             .await?
             .ok_or_else(|| DemoError::MissingEquipment(name.to_string()))
     }

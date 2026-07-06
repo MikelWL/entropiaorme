@@ -80,8 +80,7 @@ pub async fn producer_handles(
         data_dir.join("chat.log"),
         None,
     ));
-    let skill_tracker =
-        SkillTracker::new(&bus, db.clone(), handle.clone(), Arc::new(RealClock::new()));
+    let skill_tracker = SkillTracker::new(&bus, db.clone(), Arc::new(RealClock::new()));
     let skill_scan = SkillScanManual::new(
         ScanProviders::default(),
         Arc::new(RealClock::new()),
