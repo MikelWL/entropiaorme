@@ -55,8 +55,8 @@ pub struct ProducerHandles {
 /// Build the write-family producer handles for a facade under test.
 /// `handle` is the runtime the trackers schedule onto (`Handle::current()`
 /// inside a `#[tokio::test]`, or a built runtime's handle in a sync
-/// harness). The trackers read over their own pool handles so the caller's
-/// database is left to move into the facade.
+/// harness). The trackers share the caller's real database handle (clones
+/// of the one core), so their write spine runs on the synchronous core.
 pub async fn producer_handles(
     db: &Db,
     data_dir: &Path,
@@ -68,7 +68,7 @@ pub async fn producer_handles(
     ));
     let tracker = HuntTracker::new(
         bus.clone(),
-        Db::from_pool(db.write().clone()),
+        db.clone(),
         Arc::new(RealClock::new()),
         Providers::default(),
     )
@@ -80,12 +80,7 @@ pub async fn producer_handles(
         data_dir.join("chat.log"),
         None,
     ));
-    let skill_tracker = SkillTracker::new(
-        &bus,
-        Db::from_pool(db.write().clone()),
-        handle.clone(),
-        Arc::new(RealClock::new()),
-    );
+    let skill_tracker = SkillTracker::new(&bus, db.clone(), Arc::new(RealClock::new()));
     let skill_scan = SkillScanManual::new(
         ScanProviders::default(),
         Arc::new(RealClock::new()),
@@ -95,12 +90,7 @@ pub async fn producer_handles(
     );
     let spacebar = SpacebarCaptureListener::new(skill_scan.clone(), None);
     let repair_ocr = Arc::new(RepairOcrService::new(RepairProviders::default()));
-    let quests = QuestService::start(
-        &bus,
-        Db::from_pool(db.write().clone()),
-        Arc::new(RealClock::new()),
-        handle,
-    );
+    let quests = QuestService::start(&bus, db.clone(), Arc::new(RealClock::new()), handle);
     ProducerHandles {
         config_service,
         tracker,

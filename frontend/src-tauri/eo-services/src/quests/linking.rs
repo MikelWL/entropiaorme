@@ -7,8 +7,8 @@
 
 use std::collections::HashSet;
 
+use rusqlite::OptionalExtension as _;
 use serde_json::{json, Value};
-use sqlx::Row;
 
 use super::{QuestError, QuestService};
 
@@ -211,37 +211,51 @@ impl QuestService {
     }
 
     async fn session_completed_quest_ids(&self, session_id: &str) -> Result<Vec<i64>, QuestError> {
-        let rows = sqlx::query(
-            "SELECT DISTINCT quest_id \
-             FROM session_quest_completions \
-             WHERE session_id = ? \
-             ORDER BY quest_id",
-        )
-        .bind(session_id)
-        .fetch_all(self.db.read())
-        .await?;
-        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+        let session_id = session_id.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT quest_id \
+                     FROM session_quest_completions \
+                     WHERE session_id = ? \
+                     ORDER BY quest_id",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![session_id])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(row.get::<_, i64>(0)?);
+                }
+                Ok(out)
+            })
+            .await?)
     }
 
     async fn session_analytics_link(
         &self,
         session_id: &str,
     ) -> Result<Option<(Option<LinkType>, Option<i64>, Option<i64>)>, QuestError> {
-        Ok(sqlx::query(
-            "SELECT session_id, link_type, quest_id, playlist_id \
-             FROM session_quest_analytics_links \
-             WHERE session_id = ?",
-        )
-        .bind(session_id)
-        .fetch_optional(self.db.read())
-        .await?
-        .map(|row| {
-            (
-                LinkType::from_db(row.get::<String, _>(1).as_str()),
-                row.get(2),
-                row.get(3),
-            )
-        }))
+        let session_id = session_id.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT session_id, link_type, quest_id, playlist_id \
+                         FROM session_quest_analytics_links \
+                         WHERE session_id = ?",
+                        rusqlite::params![session_id],
+                        |row| {
+                            Ok((
+                                LinkType::from_db(row.get::<_, String>(1)?.as_str()),
+                                row.get::<_, Option<i64>>(2)?,
+                                row.get::<_, Option<i64>>(3)?,
+                            ))
+                        },
+                    )
+                    .optional()?)
+            })
+            .await?)
     }
 
     async fn set_session_analytics_link(
@@ -251,23 +265,25 @@ impl QuestService {
         quest_id: Option<i64>,
         playlist_id: Option<i64>,
     ) -> Result<(), QuestError> {
-        sqlx::query(
-            "INSERT INTO session_quest_analytics_links \
-             (session_id, link_type, quest_id, playlist_id, linked_at) \
-             VALUES (?, ?, ?, ?, ?) \
-             ON CONFLICT(session_id) DO UPDATE SET \
-                 link_type = excluded.link_type, \
-                 quest_id = excluded.quest_id, \
-                 playlist_id = excluded.playlist_id, \
-                 linked_at = excluded.linked_at",
-        )
-        .bind(session_id)
-        .bind(link_type.as_str())
-        .bind(quest_id)
-        .bind(playlist_id)
-        .bind(self.now_epoch())
-        .execute(self.db.write())
-        .await?;
+        let session_id = session_id.to_string();
+        let link_type = link_type.as_str();
+        let now = self.now_epoch();
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO session_quest_analytics_links \
+                     (session_id, link_type, quest_id, playlist_id, linked_at) \
+                     VALUES (?, ?, ?, ?, ?) \
+                     ON CONFLICT(session_id) DO UPDATE SET \
+                         link_type = excluded.link_type, \
+                         quest_id = excluded.quest_id, \
+                         playlist_id = excluded.playlist_id, \
+                         linked_at = excluded.linked_at",
+                    rusqlite::params![session_id, link_type, quest_id, playlist_id, now],
+                )?;
+                Ok(())
+            })
+            .await?;
         Ok(())
     }
 
@@ -306,21 +322,35 @@ impl QuestService {
         let Some(quest_id) = quest_id else {
             return Ok(None);
         };
-        Ok(sqlx::query("SELECT name FROM quests WHERE id = ?")
-            .bind(quest_id)
-            .fetch_optional(self.db.read())
-            .await?
-            .map(|row| row.get(0)))
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT name FROM quests WHERE id = ?",
+                        rusqlite::params![quest_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?)
+            })
+            .await?)
     }
 
     async fn playlist_name(&self, playlist_id: Option<i64>) -> Result<Option<String>, QuestError> {
         let Some(playlist_id) = playlist_id else {
             return Ok(None);
         };
-        Ok(sqlx::query("SELECT name FROM quest_playlists WHERE id = ?")
-            .bind(playlist_id)
-            .fetch_optional(self.db.read())
-            .await?
-            .map(|row| row.get(0)))
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT name FROM quest_playlists WHERE id = ?",
+                        rusqlite::params![playlist_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?)
+            })
+            .await?)
     }
 }

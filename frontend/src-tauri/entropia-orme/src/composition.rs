@@ -72,7 +72,7 @@ use eo_services::config_service::{
     active_trifecta_preset, load_config_readonly, AppConfig, ConfigReader, ConfigService,
 };
 use eo_services::cost_engine::{cost_per_shot_from_props, heal_cost_per_use, heal_reload_seconds};
-use eo_services::db::{AdoptError, Db};
+use eo_services::db::{AdoptError, Db, DbError};
 use eo_services::eu_window;
 use eo_services::event_bus::{EventBus, Topic};
 use eo_services::game_data_store::GameDataStore;
@@ -840,9 +840,8 @@ async fn compose_scan_services(
 
     // Hydrate the resting status from the persisted calibration history,
     // exactly as the Python reference seeds initial scan time and skill count.
-    let (initial_scan_time, initial_skills_count) = hydrate_skill_scan_state(db.read())
-        .await
-        .unwrap_or((None, 0));
+    let (initial_scan_time, initial_skills_count) =
+        hydrate_skill_scan_state(&db).await.unwrap_or((None, 0));
 
     let skill_scan = SkillScanManual::new(
         scan_providers,
@@ -853,19 +852,19 @@ async fn compose_scan_services(
     );
 
     // The completion callback persists accepted calibrations through the
-    // shared pool, bridging onto the runtime from the scan's worker thread
+    // shared database handle, bridging onto the runtime from the scan's worker thread
     // the same dual way the tracker's providers do; a persist error
     // surfaces on the scan status, exactly as the Python reference's caught
     // exception does.
-    let completion_pool = db.write().clone();
+    let completion_db = db.clone();
     let completion_clock = clock.clone();
     let completion_runtime = runtime;
     skill_scan.set_completion_callback(Arc::new(move |levels: &[(String, f64)]| {
         let scan_time = naive_to_epoch(completion_clock.now());
         let levels = levels.to_vec();
-        let pool = completion_pool.clone();
+        let db = completion_db.clone();
         block_on_pool(&completion_runtime, async move {
-            complete_skill_scan(&pool, &levels, scan_time).await
+            complete_skill_scan(&db, &levels, scan_time).await
         })
         .map(|_drift| ())
         .map_err(Into::into)
@@ -1006,7 +1005,7 @@ fn compose_producers(
         Some(quests.watcher_filter()),
     ));
 
-    let skill_tracker = SkillTracker::new(&bus, db.clone(), runtime.clone(), clock.clone());
+    let skill_tracker = SkillTracker::new(&bus, db.clone(), clock.clone());
 
     // The input listeners share ONE keyboard source (the OS hook is
     // single-instance): a ref-counted wrapper makes the injected source
@@ -1023,7 +1022,7 @@ fn compose_producers(
     let hotbar = HotbarListener::new(
         bus.clone(),
         Some(keystroke_source.clone()),
-        Some(build_hotbar_resolver(db.clone(), data_dir, runtime.clone())),
+        Some(build_hotbar_resolver(db.clone(), data_dir)),
     );
     // Apply the stored toggle; the source still only attaches while a session
     // is active (the listener reconciles on the session bus events).
@@ -1067,19 +1066,23 @@ fn compose_producers(
 /// entity, a consumable's zero-cost one-off, or a weapon's per-shot cost
 /// looked up by name fragment exactly as the cost provider does). An unbound
 /// slot, an absent row, or a read failure yields None (no tool change).
-fn build_hotbar_resolver(
-    db: Db,
-    data_dir: &std::path::Path,
-    runtime: tokio::runtime::Handle,
-) -> HotbarResolver {
+fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
     let data_dir = data_dir.to_path_buf();
     Arc::new(move |slot: &str| {
         let config = load_config_readonly(&data_dir).ok()?;
         let equip_id = config.hotbar.get(slot).and_then(Value::as_i64)?;
         let db = db.clone();
-        block_on_pool(&runtime, async move {
-            let (name, item_type, properties_json) =
-                db.hotbar_equipment_row(equip_id).await.ok().flatten()?;
+        // The hotbar listener runs on the input listener's plain OS key
+        // thread (no async runtime), so the slot lookup reads through the
+        // synchronous reader core rather than bridging an async query onto
+        // the runtime. A read failure yields None (no tool change), exactly
+        // as the swallowed async error did.
+        db.with_reader_blocking(move |conn| {
+            let Some((name, item_type, properties_json)) =
+                hotbar_equipment_row_blocking(conn, equip_id)?
+            else {
+                return Ok(None);
+            };
             let outcome = match item_type.as_str() {
                 "healing" => {
                     let (cost_ped, reload_seconds) = heal_cost_from_props(&properties_json);
@@ -1087,22 +1090,75 @@ fn build_hotbar_resolver(
                 }
                 "consumable" => (name, 0.0, "consumable".to_string(), 0.0),
                 _ => {
-                    let cost = weapon_cost_by_name(&db, &name).await;
+                    let cost = weapon_cost_by_name(conn, &name);
                     (name, cost, "weapon".to_string(), 0.0)
                 }
             };
-            Some(outcome)
+            Ok(Some(outcome))
         })
+        .ok()
+        .flatten()
     })
+}
+
+/// One equipment-library row by id: `(name, item_type, properties JSON)`, or
+/// None when absent. The synchronous reader-core counterpart of
+/// `Db::hotbar_equipment_row`, run on the hotbar listener's plain key thread.
+fn hotbar_equipment_row_blocking(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> Result<Option<(String, String, String)>, DbError> {
+    use rusqlite::OptionalExtension as _;
+    let row = conn
+        .query_row(
+            "SELECT name, item_type, properties_json FROM equipment_library \
+             WHERE id = ?",
+            rusqlite::params![id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    Ok(row)
+}
+
+/// The first weapon-row `properties_json` whose name contains the fragment,
+/// the synchronous reader-core counterpart of
+/// `Db::weapon_properties_by_name_fragment`: a `LIKE '%fragment%'` over weapon
+/// rows with the fragment's own `%` / `_` / `\` escaped under an explicit
+/// `ESCAPE '\'`, and the fragment trimmed exactly as the async path trims it.
+fn weapon_properties_by_name_fragment_blocking(
+    conn: &rusqlite::Connection,
+    fragment: &str,
+) -> Result<Option<String>, DbError> {
+    use rusqlite::OptionalExtension as _;
+    let safe = fragment
+        .trim()
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let row = conn
+        .query_row(
+            "SELECT properties_json FROM equipment_library \
+             WHERE item_type = 'weapon' AND name LIKE ? ESCAPE '\\'",
+            rusqlite::params![format!("%{safe}%")],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(row)
 }
 
 /// The per-shot weapon cost in PED for a tool by name fragment, mirroring the
 /// cost provider's `equipment.cost_per_shot`: `totalCostPerUse / 100`, or 0
-/// when the tool is unknown.
-async fn weapon_cost_by_name(db: &Db, name: &str) -> f64 {
-    match db
-        .weapon_properties_by_name_fragment(name)
-        .await
+/// when the tool is unknown. A read failure degrades to 0 (the tool-unknown
+/// value), exactly as the swallowed async lookup did, so a weapon slot still
+/// resolves rather than dropping the tool change.
+fn weapon_cost_by_name(conn: &rusqlite::Connection, name: &str) -> f64 {
+    match weapon_properties_by_name_fragment_blocking(conn, name)
         .ok()
         .flatten()
     {
@@ -1401,14 +1457,16 @@ mod tests {
         let db_path = data_dir.join(DB_FILE_NAME);
         {
             let db = eo_services::db::Db::open(&db_path).await.unwrap();
-            sqlx::query("UPDATE db_metadata SET value = '28' WHERE key = 'version'")
-                .execute(db.write())
-                .await
-                .unwrap();
-            sqlx::query("DROP TABLE _sqlx_migrations")
-                .execute(db.write())
-                .await
-                .unwrap();
+            db.with_writer(|conn| {
+                conn.execute(
+                    "UPDATE db_metadata SET value = '28' WHERE key = 'version'",
+                    [],
+                )?;
+                conn.execute("DROP TABLE _sqlx_migrations", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
         }
         let composed = compose_with(
             data_dir,
@@ -1727,7 +1785,6 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
         // A frozen, plan-advanced clock, exactly the corpus oracle's
         // protocol: the watcher guards its own drain timeout against a
@@ -1740,12 +1797,8 @@ mod tests {
         let chatlog = data_dir.join("chat_replay.log");
         std::fs::File::create(&chatlog).expect("empty chatlog exists before the watcher starts");
 
-        let producers = compose_producers_for_test(
-            Db::from_pool(pool.clone()),
-            clock.clone(),
-            &data_dir,
-            chatlog.clone(),
-        );
+        let producers =
+            compose_producers_for_test(db.clone(), clock.clone(), &data_dir, chatlog.clone());
         producers
             .tracker()
             .start_session()
@@ -1794,14 +1847,21 @@ mod tests {
         producers.stop();
 
         // The persisted rows match: one session, two kills.
-        let session_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let session_count: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(session_count, 1, "one closed session persisted");
-        let kill_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kills")
-            .fetch_one(&pool)
+        let kill_count: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row("SELECT COUNT(*) FROM kills", [], |row| row.get::<_, i64>(0))?)
+            })
             .await
             .unwrap();
         assert_eq!(kill_count, 2, "two kills persisted by the composed tracker");
@@ -1822,7 +1882,6 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
         let start =
             chrono::NaiveDateTime::parse_from_str("2026-05-19 10:00:00", "%Y-%m-%d %H:%M:%S")
@@ -1832,12 +1891,8 @@ mod tests {
         let chatlog = data_dir.join("chat_replay.log");
         std::fs::File::create(&chatlog).expect("empty chatlog exists before the watcher starts");
 
-        let producers = compose_producers_for_test(
-            Db::from_pool(pool.clone()),
-            clock.clone(),
-            &data_dir,
-            chatlog.clone(),
-        );
+        let producers =
+            compose_producers_for_test(db.clone(), clock.clone(), &data_dir, chatlog.clone());
         producers
             .tracker()
             .start_session()
@@ -1845,11 +1900,16 @@ mod tests {
             .expect("composed session starts");
 
         // Before stop: exactly one active session row exists.
-        let active_before: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let active_before: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(active_before, 1, "a session is open before stop");
         assert!(
             producers.tracker().is_tracking(),
@@ -1861,33 +1921,45 @@ mod tests {
         // session open and fails the assertions below.
         producers.stop();
 
-        let active_after: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let active_after: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(active_after, 0, "stop() ended the open session");
-        let ended_set: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0 AND ended_at IS NOT NULL",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let ended_set: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tracking_sessions WHERE is_active = 0 AND ended_at IS NOT NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(ended_set, 1, "the closed session carries an ended_at stamp");
     }
 
-    /// Seed a weapon row directly through the shared pool, the same shape
-    /// `Db::weapon_properties_by_name_fragment` reads (item_type 'weapon',
-    /// a name carrying the lookup fragment, a JSON-object properties blob).
-    async fn seed_weapon(pool: &sqlx::SqlitePool, id: i64, name: &str, properties_json: &str) {
-        sqlx::query(
-            "INSERT INTO equipment_library (id, name, item_type, properties_json) \
-             VALUES (?, ?, 'weapon', ?)",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(properties_json)
-        .execute(pool)
+    /// Seed a weapon row directly through the shared handle, the same
+    /// shape `Db::weapon_properties_by_name_fragment` reads (item_type
+    /// 'weapon', a name carrying the lookup fragment, a JSON-object
+    /// properties blob).
+    async fn seed_weapon(db: &Db, id: i64, name: &str, properties_json: &str) {
+        let name = name.to_string();
+        let properties_json = properties_json.to_string();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO equipment_library (id, name, item_type, properties_json) \
+                 VALUES (?1, ?2, 'weapon', ?3)",
+                rusqlite::params![id, name, properties_json],
+            )?;
+            Ok(())
+        })
         .await
         .expect("weapon row seeds");
     }
@@ -1926,7 +1998,6 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
         // A weapon whose name carries the fragment "Korss", with a
         // property object whose economy yields a known totalCostPerUse.
@@ -1937,7 +2008,7 @@ mod tests {
             "weapon_markup": 100,
         });
         seed_weapon(
-            &pool,
+            &db,
             1,
             "Korss H400 (L)",
             &serde_json::to_string(&props).unwrap(),
@@ -1955,7 +2026,7 @@ mod tests {
         let config = load_config_readonly(&data_dir).expect("config reads");
         let mut config_service = ConfigService::new(&data_dir).expect("config service");
         let providers = build_providers(
-            Db::from_pool(pool.clone()),
+            db.clone(),
             config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),
@@ -2028,13 +2099,12 @@ mod tests {
         let db = Db::open_adopted(&data_dir.join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
         let props = serde_json::json!({
             "weapon_entity": {"economy": {"decay": 0.0, "ammo_burn": 25000}},
             "weapon_markup": 100,
         });
         seed_weapon(
-            &pool,
+            &db,
             1,
             "Korss H400 (L)",
             &serde_json::to_string(&props).unwrap(),
@@ -2044,7 +2114,7 @@ mod tests {
         let config = load_config_readonly(&data_dir).expect("config reads");
         let config_service = ConfigService::new(&data_dir).expect("config service");
         let providers = build_providers(
-            Db::from_pool(pool),
+            db.clone(),
             config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),
@@ -2071,43 +2141,53 @@ mod tests {
         );
     }
 
-    /// The single-owner pool tolerates an HTTP-shaped read concurrent
+    /// The single-owner core tolerates an HTTP-shaped read concurrent
     /// with a producer-shaped write without deadlock and within a bounded
-    /// latency: sqlx serialises both through the one connection, so the
-    /// read simply queues behind the write rather than locking.
+    /// latency: the writer thread serialises the write, while a reader
+    /// thread serves the concurrent read against the WAL, so the read
+    /// simply queues behind the write rather than locking.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_read_during_a_producer_write_does_not_deadlock() {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open_adopted(&dir.path().join(DB_FILE_NAME))
             .await
             .expect("fresh database adopts");
-        let pool = db.write().clone();
 
-        // A producer-shaped write: a short transaction holding the single
+        // A producer-shaped write: a short transaction holding the writer
         // connection briefly, exactly the shape of a tracker persistence
         // write.
-        let write_pool = pool.clone();
-        let writer = tokio::spawn(async move {
-            let mut tx = write_pool.begin().await.expect("begin");
-            sqlx::query(
-                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES ('cc-test', 0, 0)",
-            )
-            .execute(&mut *tx)
-            .await
-            .expect("insert under tx");
-            // Hold the connection a moment so the read genuinely contends.
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            tx.commit().await.expect("commit");
-        });
+        let writer = {
+            let db = db.clone();
+            tokio::spawn(async move {
+                db.with_writer(|conn| {
+                    let tx = conn.transaction()?;
+                    tx.execute(
+                        "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES ('cc-test', 0, 0)",
+                        [],
+                    )?;
+                    // Hold the writer connection a moment so the read genuinely contends.
+                    std::thread::sleep(Duration::from_millis(50));
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await
+                .expect("write under transaction");
+            })
+        };
 
-        // An HTTP-shaped read on the same pool, bounded by a generous
+        // An HTTP-shaped read on the same handle, bounded by a generous
         // deadline: if the single connection deadlocked, this would
         // time out.
         let read = tokio::time::timeout(Duration::from_secs(5), async {
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tracking_sessions")
-                .fetch_one(&pool)
-                .await
-                .expect("read query")
+            db.with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
+            .await
+            .expect("read query")
         })
         .await;
         assert!(
@@ -2116,8 +2196,14 @@ mod tests {
         );
 
         writer.await.expect("writer task joins");
-        let final_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions")
-            .fetch_one(&pool)
+        let final_count = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(final_count, 1, "the write committed");

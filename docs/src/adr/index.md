@@ -28,3 +28,4 @@ Several of the earlier records predate two later structural decisions: the colla
 | [ADR-0018](0018-daily-rollup-read-model.md) | Daily-rollup read model: the Overview aggregates a rebuildable per-day projection, O(days) not O(rows) |
 | [ADR-0019](0019-typed-command-facade.md) | Typed IPC commands over a service facade; TypeScript generated from the Rust types; the HTTP transport retires family by family |
 | [ADR-0020](0020-tracker-actor-refounding.md) | The tracker as a single-owner actor with a typestate session, named seams, and an instant time basis |
+| [ADR-0021](0021-synchronous-database-core.md) | A synchronous database core on dedicated threads, adopted against a measured null result |

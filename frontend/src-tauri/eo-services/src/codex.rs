@@ -29,8 +29,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use rusqlite::OptionalExtension as _;
 use serde_json::{json, Value};
-use sqlx::Row;
 
 use crate::clock::Clock;
 use crate::codex_categories::{
@@ -64,8 +64,6 @@ pub const META_PED: f64 = 1.0;
 pub enum CodexError {
     #[error("{0}")]
     Invalid(String),
-    #[error(transparent)]
-    Db(#[from] sqlx::Error),
     /// A daily-rollup refresh failure inside a claim write.
     #[error(transparent)]
     Rollup(#[from] crate::db::DbError),
@@ -84,6 +82,27 @@ pub struct CodexService {
     clock: Arc<dyn Clock>,
 }
 
+/// The result of the `unclaim_rank` writer transaction: the validation
+/// branches the original raised as `ValueError`s (surfaced by the caller as
+/// [`CodexError::Invalid`]), or the completed revert carrying the claim's
+/// fields for the response. The transaction runs on the synchronous core, so
+/// its closure returns only [`crate::db::DbError`]; the domain outcome travels
+/// out as this value.
+enum UnclaimOutcome {
+    NoRank,
+    NotClaimed {
+        rank: i64,
+    },
+    AlreadyUnclaimed {
+        rank: i64,
+    },
+    Done {
+        rank: i64,
+        skill_name: String,
+        ped_value: f64,
+    },
+}
+
 impl CodexService {
     pub fn new(db: Db, game_data: Arc<GameDataStore>, clock: Arc<dyn Clock>) -> Self {
         Self {
@@ -91,6 +110,13 @@ impl CodexService {
             game_data,
             clock,
         }
+    }
+
+    /// The database handle, for tests that drive the synchronous core
+    /// (the rollup heal) directly.
+    #[cfg(test)]
+    fn db(&self) -> &Db {
+        &self.db
     }
 
     /// All mob species with a codex base cost, cross-referenced with
@@ -125,14 +151,19 @@ impl CodexService {
             ));
         }
 
-        let rows = sqlx::query("SELECT species_name, current_rank FROM codex_progress")
-            .fetch_all(self.db.read())
-            .await
-            .map_err(CodexError::Db)?;
-        let rank_map: HashMap<String, i64> = rows
-            .into_iter()
-            .map(|row| (row.get(0), row.get(1)))
-            .collect();
+        let rank_map: HashMap<String, i64> = self
+            .db
+            .with_reader(|conn| {
+                let mut stmt =
+                    conn.prepare("SELECT species_name, current_rank FROM codex_progress")?;
+                let mut rows = stmt.query([])?;
+                let mut map: HashMap<String, i64> = HashMap::new();
+                while let Some(row) = rows.next()? {
+                    map.insert(row.get::<_, String>(0)?, row.get::<_, i64>(1)?);
+                }
+                Ok(map)
+            })
+            .await?;
 
         let mut result: Vec<(i64, String, Value)> = Vec::new();
         for (name, base_cost, codex_type) in listed {
@@ -171,20 +202,27 @@ impl CodexService {
         };
         let breakdown = build_rank_breakdown(species.base_cost, species.codex_type.as_deref());
 
-        let claims = sqlx::query(
-            "SELECT rank, skill_name, ped_value, claimed_at FROM codex_claims \
-             WHERE species_name = ? ORDER BY rank",
-        )
-        .bind(species_name)
-        .fetch_all(self.db.read())
-        .await
-        .map_err(CodexError::Db)?;
+        let species_owned = species_name.to_string();
         // Built in query order so a duplicate rank's later row wins,
         // as the original's dict comprehension does.
-        let mut claims_map: HashMap<i64, (String, f64)> = HashMap::new();
-        for row in claims {
-            claims_map.insert(row.get(0), (row.get(1), row.get(2)));
-        }
+        let claims_map: HashMap<i64, (String, f64)> = self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT rank, skill_name, ped_value, claimed_at FROM codex_claims \
+                     WHERE species_name = ? ORDER BY rank",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![species_owned])?;
+                let mut map: HashMap<i64, (String, f64)> = HashMap::new();
+                while let Some(row) = rows.next()? {
+                    map.insert(
+                        row.get::<_, i64>(0)?,
+                        (row.get::<_, String>(1)?, row.get::<_, f64>(2)?),
+                    );
+                }
+                Ok(map)
+            })
+            .await?;
 
         let current_rank = self.current_rank(species_name).await?;
 
@@ -280,72 +318,63 @@ impl CodexService {
         // unchanged. (For the new-species rank-1 claim there is no row
         // yet, so the plain INSERT path applies and a racing second
         // INSERT conflicts onto the now-false guard.)
-        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
-        let advanced = sqlx::query(
-            "INSERT INTO codex_progress (species_name, current_rank, updated_at) VALUES (?, ?, ?) \
-             ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ? \
-             WHERE codex_progress.current_rank = ? - 1",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .bind(now)
-        .bind(rank)
-        .bind(now)
-        .bind(rank)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?
-        .rows_affected();
-        if advanced == 0 {
-            // Another claim advanced this species' rank between our
-            // validation read and this write; abort as the race loser
-            // (the transaction rolls back on drop, so nothing lands).
+        let species_owned = species_name.to_string();
+        let skill_owned = skill_name.to_string();
+        let advanced = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let advanced = tx.execute(
+                    "INSERT INTO codex_progress (species_name, current_rank, updated_at) \
+                     VALUES (?, ?, ?) \
+                     ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ? \
+                     WHERE codex_progress.current_rank = ? - 1",
+                    rusqlite::params![species_owned, rank, now, rank, now, rank],
+                )?;
+                if advanced == 0 {
+                    // Another claim advanced this species' rank between our
+                    // validation read and this write; abort as the race loser
+                    // (the transaction rolls back on drop, so nothing lands).
+                    return Ok(false);
+                }
+
+                tx.execute(
+                    "INSERT INTO codex_claims \
+                     (species_name, rank, skill_name, ped_value, claimed_at, kind) \
+                     VALUES (?, ?, ?, ?, ?, 'rank')",
+                    rusqlite::params![species_owned, rank, skill_owned, ped_value, now],
+                )?;
+                crate::daily_rollup::refresh_days(&tx, [crate::daily_rollup::epoch_day(now)])?;
+
+                let current_level: Option<f64> = tx
+                    .query_row(
+                        "SELECT level FROM skill_calibrations WHERE skill_name = ? \
+                         ORDER BY scanned_at DESC LIMIT 1",
+                        rusqlite::params![skill_owned],
+                        |row| row.get::<_, f64>(0),
+                    )
+                    .optional()?;
+                if let Some(current_level) = current_level {
+                    // The reward's TT value buys levels at the current point on
+                    // the curve. A skill with no calibration history skips this
+                    // entirely (see the module doc).
+                    let levels_gained = levels_for_tt_value(current_level, ped_value);
+                    let new_level = current_level + levels_gained;
+                    tx.execute(
+                        "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                         VALUES (?, ?, 'codex', ?)",
+                        rusqlite::params![skill_owned, new_level, now],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(true)
+            })
+            .await?;
+        if !advanced {
             return Err(CodexError::Invalid(format!(
                 "Rank {rank} for '{species_name}' was already claimed"
             )));
         }
-
-        sqlx::query(
-            "INSERT INTO codex_claims (species_name, rank, skill_name, ped_value, claimed_at, kind) \
-             VALUES (?, ?, ?, ?, ?, 'rank')",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .bind(skill_name)
-        .bind(ped_value)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(now)]).await?;
-
-        let current_level: Option<f64> = sqlx::query(
-            "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-             ORDER BY scanned_at DESC LIMIT 1",
-        )
-        .bind(skill_name)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?
-        .map(|row| row.get(0));
-        if let Some(current_level) = current_level {
-            // The reward's TT value buys levels at the current point on
-            // the curve. A skill with no calibration history skips this
-            // entirely (see the module doc).
-            let levels_gained = levels_for_tt_value(current_level, ped_value);
-            let new_level = current_level + levels_gained;
-            sqlx::query(
-                "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                 VALUES (?, ?, 'codex', ?)",
-            )
-            .bind(skill_name)
-            .bind(new_level)
-            .bind(now)
-            .execute(&mut *tx)
-            .await
-            .map_err(CodexError::Db)?;
-        }
-        tx.commit().await.map_err(CodexError::Db)?;
 
         Ok(json!({
             "speciesName": species_name,
@@ -373,99 +402,108 @@ impl CodexService {
     /// cross-language differential never drove it.
     pub async fn unclaim_rank(&self, species_name: &str) -> Result<Value, CodexError> {
         let now = naive_to_epoch(self.clock.now());
-        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
+        let species_owned = species_name.to_string();
+        let outcome = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
 
-        let current_rank =
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = ?")
-                .bind(species_name)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(CodexError::Db)?
-                .map(|row| row.get::<i64, _>(0))
-                .unwrap_or(0);
-        if current_rank < 1 {
-            return Err(CodexError::Invalid(format!(
-                "No claimed rank to unclaim for '{species_name}'"
-            )));
-        }
-        let rank = current_rank;
+                let current_rank = tx
+                    .query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = ?",
+                        rusqlite::params![species_owned],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?
+                    .unwrap_or(0);
+                if current_rank < 1 {
+                    return Ok(UnclaimOutcome::NoRank);
+                }
+                let rank = current_rank;
 
-        let claim = sqlx::query(
-            "SELECT skill_name, ped_value, claimed_at FROM codex_claims \
-             WHERE species_name = ? AND rank = ? AND kind = 'rank'",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        let Some(claim) = claim else {
-            return Err(CodexError::Invalid(format!(
-                "Rank {rank} for '{species_name}' was not claimed"
-            )));
-        };
-        let skill_name: String = claim.get(0);
-        let ped_value: f64 = claim.get(1);
-        let claimed_at: f64 = claim.get(2);
+                let claim: Option<(String, f64, f64)> = tx
+                    .query_row(
+                        "SELECT skill_name, ped_value, claimed_at FROM codex_claims \
+                         WHERE species_name = ? AND rank = ? AND kind = 'rank'",
+                        rusqlite::params![species_owned, rank],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, f64>(1)?,
+                                row.get::<_, f64>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((skill_name, ped_value, claimed_at)) = claim else {
+                    return Ok(UnclaimOutcome::NotClaimed { rank });
+                };
 
-        // Step the rank back, gated on it still being `rank`, so of two
-        // racing unclaims exactly one steps it and the loser aborts
-        // before deleting anything (the mirror of claim_rank's guard).
-        let stepped = sqlx::query(
-            "UPDATE codex_progress SET current_rank = ?, updated_at = ? \
-             WHERE species_name = ? AND current_rank = ?",
-        )
-        .bind(rank - 1)
-        .bind(now)
-        .bind(species_name)
-        .bind(rank)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?
-        .rows_affected();
-        if stepped == 0 {
-            return Err(CodexError::Invalid(format!(
-                "Rank {rank} for '{species_name}' was already unclaimed"
-            )));
-        }
+                // Step the rank back, gated on it still being `rank`, so of two
+                // racing unclaims exactly one steps it and the loser aborts
+                // before deleting anything (the mirror of claim_rank's guard).
+                let stepped = tx.execute(
+                    "UPDATE codex_progress SET current_rank = ?, updated_at = ? \
+                     WHERE species_name = ? AND current_rank = ?",
+                    rusqlite::params![rank - 1, now, species_owned, rank],
+                )?;
+                if stepped == 0 {
+                    return Ok(UnclaimOutcome::AlreadyUnclaimed { rank });
+                }
 
-        // Remove the codex-sourced calibration this claim wrote, matched
-        // on the instant the claim and calibration inserts share; the
-        // id-subquery removes at most one row, and an uncalibrated-skill
-        // claim (which wrote none) removes nothing here.
-        sqlx::query(
-            "DELETE FROM skill_calibrations WHERE id = ( \
-                SELECT id FROM skill_calibrations \
-                WHERE skill_name = ? AND source = 'codex' AND scanned_at = ? \
-                ORDER BY id DESC LIMIT 1)",
-        )
-        .bind(&skill_name)
-        .bind(claimed_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
+                // Remove the codex-sourced calibration this claim wrote, matched
+                // on the instant the claim and calibration inserts share; the
+                // id-subquery removes at most one row, and an uncalibrated-skill
+                // claim (which wrote none) removes nothing here.
+                tx.execute(
+                    "DELETE FROM skill_calibrations WHERE id = ( \
+                        SELECT id FROM skill_calibrations \
+                        WHERE skill_name = ? AND source = 'codex' AND scanned_at = ? \
+                        ORDER BY id DESC LIMIT 1)",
+                    rusqlite::params![skill_name, claimed_at],
+                )?;
 
-        sqlx::query(
-            "DELETE FROM codex_claims WHERE species_name = ? AND rank = ? AND kind = 'rank'",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        // The unclaimed reward may sit days back; reland its day's
-        // rollup inside the same transaction.
-        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(claimed_at)])
+                tx.execute(
+                    "DELETE FROM codex_claims WHERE species_name = ? AND rank = ? AND kind = 'rank'",
+                    rusqlite::params![species_owned, rank],
+                )?;
+                // The unclaimed reward may sit days back; reland its day's
+                // rollup inside the same transaction.
+                crate::daily_rollup::refresh_days(
+                    &tx,
+                    [crate::daily_rollup::epoch_day(claimed_at)],
+                )?;
+
+                tx.commit()?;
+                Ok(UnclaimOutcome::Done {
+                    rank,
+                    skill_name,
+                    ped_value,
+                })
+            })
             .await?;
 
-        tx.commit().await.map_err(CodexError::Db)?;
-
-        Ok(json!({
-            "speciesName": species_name,
-            "rank": rank,
-            "skillName": skill_name,
-            "pedValue": ped_value,
-        }))
+        match outcome {
+            UnclaimOutcome::NoRank => Err(CodexError::Invalid(format!(
+                "No claimed rank to unclaim for '{species_name}'"
+            ))),
+            UnclaimOutcome::NotClaimed { rank } => Err(CodexError::Invalid(format!(
+                "Rank {rank} for '{species_name}' was not claimed"
+            ))),
+            UnclaimOutcome::AlreadyUnclaimed { rank } => Err(CodexError::Invalid(format!(
+                "Rank {rank} for '{species_name}' was already unclaimed"
+            ))),
+            UnclaimOutcome::Done {
+                rank,
+                skill_name,
+                ped_value,
+            } => Ok(json!({
+                "speciesName": species_name,
+                "rank": rank,
+                "skillName": skill_name,
+                "pedValue": ped_value,
+            })),
+        }
     }
 
     /// Set the codex rank directly, no side effects (manual
@@ -475,18 +513,18 @@ impl CodexService {
             return Err(CodexError::Invalid("Rank must be 0-25".to_string()));
         }
         let now = naive_to_epoch(self.clock.now());
-        sqlx::query(
-            "INSERT INTO codex_progress (species_name, current_rank, updated_at) VALUES (?, ?, ?) \
-             ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ?",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .bind(now)
-        .bind(rank)
-        .bind(now)
-        .execute(self.db.write())
-        .await
-        .map_err(CodexError::Db)?;
+        let species_owned = species_name.to_string();
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO codex_progress (species_name, current_rank, updated_at) \
+                     VALUES (?, ?, ?) \
+                     ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ?",
+                    rusqlite::params![species_owned, rank, now, rank, now],
+                )?;
+                Ok(())
+            })
+            .await?;
         Ok(json!({"speciesName": species_name, "rank": rank}))
     }
 
@@ -672,21 +710,21 @@ impl CodexService {
             )));
         }
         let now = naive_to_epoch(self.clock.now());
-        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
-        sqlx::query(
-            "INSERT INTO codex_claims \
-             (species_name, rank, skill_name, ped_value, claimed_at, kind, attribute_name) \
-             VALUES ('__meta__', 0, ?, ?, ?, 'meta', ?)",
-        )
-        .bind(attribute_name)
-        .bind(META_PED)
-        .bind(now)
-        .bind(attribute_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(now)]).await?;
-        tx.commit().await.map_err(CodexError::Db)?;
+        let attr = attribute_name.to_string();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT INTO codex_claims \
+                     (species_name, rank, skill_name, ped_value, claimed_at, kind, attribute_name) \
+                     VALUES ('__meta__', 0, ?, ?, ?, 'meta', ?)",
+                    rusqlite::params![attr, META_PED, now, attr],
+                )?;
+                crate::daily_rollup::refresh_days(&tx, [crate::daily_rollup::epoch_day(now)])?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
         Ok(json!({
             "attributeName": attribute_name,
             "pedValue": META_PED,
@@ -732,30 +770,40 @@ impl CodexService {
 
     /// The species' current rank, defaulting to 0 when unranked.
     async fn current_rank(&self, species_name: &str) -> Result<i64, CodexError> {
-        Ok(
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = ?")
-                .bind(species_name)
-                .fetch_optional(self.db.read())
-                .await
-                .map_err(CodexError::Db)?
-                .map(|row| row.get(0))
-                .unwrap_or(0),
-        )
+        let species_owned = species_name.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = ?",
+                        rusqlite::params![species_owned],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?
+                    .unwrap_or(0))
+            })
+            .await?)
     }
 
     /// The latest calibrated level for a skill, by scan instant (no
     /// further tiebreak, as the original; both engines resolve equal
     /// instants identically over the same schema and index).
     async fn skill_level(&self, skill_name: &str) -> Result<Option<f64>, CodexError> {
-        Ok(sqlx::query(
-            "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-             ORDER BY scanned_at DESC LIMIT 1",
-        )
-        .bind(skill_name)
-        .fetch_optional(self.db.read())
-        .await
-        .map_err(CodexError::Db)?
-        .map(|row| row.get(0)))
+        let skill_owned = skill_name.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT level FROM skill_calibrations WHERE skill_name = ? \
+                         ORDER BY scanned_at DESC LIMIT 1",
+                        rusqlite::params![skill_owned],
+                        |row| row.get::<_, f64>(0),
+                    )
+                    .optional()?)
+            })
+            .await?)
     }
 }
 
@@ -795,7 +843,6 @@ mod tests {
 
     use super::*;
     use crate::clock::MockClock;
-    use sqlx::SqlitePool;
 
     fn start_instant() -> NaiveDateTime {
         NaiveDateTime::parse_from_str("2026-03-01 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap()
@@ -852,20 +899,19 @@ mod tests {
         .unwrap();
     }
 
-    async fn service(dir: &Path) -> (CodexService, SqlitePool) {
+    async fn service(dir: &Path) -> (CodexService, Db) {
         let snapshot = dir.join("snapshot");
         std::fs::create_dir_all(&snapshot).unwrap();
         write_snapshot(&snapshot);
         let db = Db::open(&dir.join("entropia_orme.db")).await.unwrap();
-        let seed_pool = db.write().clone();
         let game_data = Arc::new(GameDataStore::new(&snapshot).unwrap());
         let clock = Arc::new(MockClock::new(Some(start_instant()), 0.0));
-        (CodexService::new(db, game_data, clock), seed_pool)
+        (CodexService::new(db.clone(), game_data, clock), db)
     }
 
     /// The standard calibration seed: Rifle twice (the newer scan
     /// instant wins), plus Athletics, Dodge, and Agility anchors.
-    async fn seed_calibrations(pool: &SqlitePool) {
+    async fn seed_calibrations(db: &Db) {
         for (name, level, at) in [
             ("Rifle", 90.0, 100.0),
             ("Rifle", 100.0, 200.0),
@@ -873,14 +919,14 @@ mod tests {
             ("Dodge", 30.0, 150.0),
             ("Agility", 32.04, 150.0),
         ] {
-            sqlx::query(
-                "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                 VALUES (?, ?, 'scan', ?)",
-            )
-            .bind(name)
-            .bind(level)
-            .bind(at)
-            .execute(pool)
+            db.with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                     VALUES (?1, ?2, 'scan', ?3)",
+                    rusqlite::params![name, level, at],
+                )?;
+                Ok(())
+            })
             .await
             .unwrap();
         }
@@ -896,7 +942,7 @@ mod tests {
     #[tokio::test]
     async fn species_listing_dedupes_skips_and_sorts() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Unranked: alphabetical (every rank ties at 0); the duplicate
         // Boar keeps its first base cost, the nameless/specieless rows
@@ -943,7 +989,7 @@ mod tests {
     #[tokio::test]
     async fn the_first_catalogue_match_decides_species_lookup() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Ghost's first catalogue entry has no base cost, so the
         // lookup paths miss it even though the listing carries it.
@@ -965,8 +1011,8 @@ mod tests {
     #[tokio::test]
     async fn rank_breakdowns_cross_reference_claims() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
         svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
 
@@ -999,7 +1045,7 @@ mod tests {
     #[tokio::test]
     async fn claims_validate_each_leg_verbatim() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         let cases: [(&str, i64, &str, &str); 4] = [
             (
@@ -1046,8 +1092,8 @@ mod tests {
     #[tokio::test]
     async fn a_claim_records_progress_and_calibration() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         let result = svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
         assert_eq!(
@@ -1056,37 +1102,60 @@ mod tests {
         );
 
         let now = naive_to_epoch(start_instant());
-        let claim = sqlx::query(
-            "SELECT species_name, rank, skill_name, ped_value, claimed_at, kind \
-             FROM codex_claims",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(claim.get::<String, _>(0), "Boar");
-        assert_eq!(claim.get::<i64, _>(1), 1);
-        assert_eq!(claim.get::<String, _>(2), "Rifle");
-        assert_eq!(claim.get::<f64, _>(3), 0.1875);
-        assert_eq!(claim.get::<f64, _>(4), now);
-        assert_eq!(claim.get::<String, _>(5), "rank");
+        let claim = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT species_name, rank, skill_name, ped_value, claimed_at, kind \
+                     FROM codex_claims",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, f64>(3)?,
+                            row.get::<_, f64>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(claim.0, "Boar");
+        assert_eq!(claim.1, 1);
+        assert_eq!(claim.2, "Rifle");
+        assert_eq!(claim.3, 0.1875);
+        assert_eq!(claim.4, now);
+        assert_eq!(claim.5, "rank");
 
-        let progress =
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(progress.get::<i64, _>(0), 1);
+        let progress: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(progress, 1);
 
         // The reward priced onto the curve from the NEWEST calibration
         // (level 100, not the older 90): 100 + levels bought by 0.1875
         // PED, the original's computed 217.745.
-        let calibration =
-            sqlx::query("SELECT level, scanned_at FROM skill_calibrations WHERE source = 'codex'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(calibration.get::<f64, _>(0), 217.745);
-        assert_eq!(calibration.get::<f64, _>(1), now);
+        let calibration = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT level, scanned_at FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(calibration.0, 217.745);
+        assert_eq!(calibration.1, now);
 
         // The next claim builds on the advanced rank.
         let result = svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
@@ -1096,8 +1165,8 @@ mod tests {
     #[tokio::test]
     async fn an_uncalibrated_skill_claim_skips_the_calibration_write() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
         svc.claim_rank("Boar", 2, "Anatomy").await.unwrap();
@@ -1105,24 +1174,34 @@ mod tests {
         // Five seeds plus Rifle's codex row; Anatomy (no calibration
         // history) recorded its claim but wrote no calibration: the
         // reward never reaches the skill curve (see the module doc).
-        let count = sqlx::query("SELECT COUNT(*) FROM skill_calibrations")
-            .fetch_one(&pool)
+        let count: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM skill_calibrations", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get::<i64, _>(0);
+            .unwrap();
         assert_eq!(count, 6);
-        let claims = sqlx::query("SELECT COUNT(*) FROM codex_claims")
-            .fetch_one(&pool)
+        let claims: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM codex_claims", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get::<i64, _>(0);
+            .unwrap();
         assert_eq!(claims, 2);
     }
 
     #[tokio::test]
     async fn cat4_claims_price_through_the_cat4_divisor() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         svc.calibrate("Looter Bird", 4).await.unwrap();
         let result = svc.claim_rank("Looter Bird", 5, "Zoology").await.unwrap();
@@ -1136,7 +1215,7 @@ mod tests {
     #[tokio::test]
     async fn calibrate_bounds_and_upserts() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
+        let (svc, db) = service(dir.path()).await;
 
         for rank in [-1, 26] {
             let error = svc.calibrate("Boar", rank).await.unwrap_err();
@@ -1146,13 +1225,20 @@ mod tests {
         let result = svc.calibrate("Boar", 4).await.unwrap();
         assert_eq!(result, json!({"speciesName": "Boar", "rank": 4}));
         svc.calibrate("Boar", 7).await.unwrap();
-        let rows =
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows: Vec<i64> = db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, i64>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1, "the upsert overwrites in place");
-        assert_eq!(rows[0].get::<i64, _>(0), 7);
+        assert_eq!(rows[0], 7);
 
         // Calibration is catalogue-blind and side-effect-free.
         svc.calibrate("Nessie", 0).await.unwrap();
@@ -1161,8 +1247,8 @@ mod tests {
     #[tokio::test]
     async fn meta_claims_validate_record_and_report() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         let error = svc.meta_claim("Luck").await.unwrap_err();
         assert_eq!(
@@ -1173,18 +1259,31 @@ mod tests {
 
         let result = svc.meta_claim("Agility").await.unwrap();
         assert_eq!(result, json!({"attributeName": "Agility", "pedValue": 1.0}));
-        let row = sqlx::query(
-            "SELECT species_name, rank, skill_name, ped_value, kind, attribute_name \
-             FROM codex_claims WHERE kind = 'meta'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(row.get::<String, _>(0), "__meta__");
-        assert_eq!(row.get::<i64, _>(1), 0);
-        assert_eq!(row.get::<String, _>(2), "Agility");
-        assert_eq!(row.get::<f64, _>(3), 1.0);
-        assert_eq!(row.get::<String, _>(5), "Agility");
+        let row = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT species_name, rank, skill_name, ped_value, kind, attribute_name \
+                     FROM codex_claims WHERE kind = 'meta'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, f64>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.0, "__meta__");
+        assert_eq!(row.1, 0);
+        assert_eq!(row.2, "Agility");
+        assert_eq!(row.3, 1.0);
+        assert_eq!(row.5, "Agility");
 
         // The six attributes in sorted order, levels from the latest
         // calibration rounded to one decimal (32.04 -> 32.0).
@@ -1205,7 +1304,7 @@ mod tests {
     #[tokio::test]
     async fn the_final_rank_claims_at_the_boundary() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Rank 25 itself is claimable; the max-rank guard rejects only
         // beyond the table. Hand-computed reward: multiplier 100 x
@@ -1226,16 +1325,16 @@ mod tests {
             "Maximum rank is 25"
         );
         assert_eq!(
-            CodexError::Db(sqlx::Error::RowNotFound).to_string(),
-            sqlx::Error::RowNotFound.to_string()
+            CodexError::Rollup(crate::db::DbError::CoreClosed).to_string(),
+            crate::db::DbError::CoreClosed.to_string()
         );
     }
 
     #[tokio::test]
     async fn profession_options_rank_by_contribution() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
         // Rifle advances to 217.745 through the claim, matching the
         // original's fixture sequence.
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
@@ -1303,8 +1402,8 @@ mod tests {
     #[tokio::test]
     async fn hp_options_sort_by_gain_then_level_then_name() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         // A MobLooter rank 5 offers cat3 plus the cat4 bonus skills.
         let options = svc
@@ -1374,8 +1473,8 @@ mod tests {
         // double-records and this invariant fails.
         for _ in 0..32 {
             let dir = tempfile::tempdir().unwrap();
-            let (svc, pool) = service(dir.path()).await;
-            seed_calibrations(&pool).await;
+            let (svc, db) = service(dir.path()).await;
+            seed_calibrations(&db).await;
 
             let (a, b) = tokio::join!(
                 svc.claim_rank("Boar", 1, "Rifle"),
@@ -1386,21 +1485,28 @@ mod tests {
                 "exactly one claim must win: a={a:?} b={b:?}"
             );
 
-            let claims: i64 = sqlx::query(
-                "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get(0);
+            let claims: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(claims, 1, "exactly one claim row may be recorded");
 
-            let progress: i64 =
-                sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap()
-                    .get(0);
+            let progress: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(progress, 1, "progress advances exactly once");
         }
     }
@@ -1408,8 +1514,8 @@ mod tests {
     #[tokio::test]
     async fn unclaim_reverts_progress_claim_and_calibration() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         // A claim advances to rank 1, records the claim, and writes a
         // codex calibration on top of Rifle's newest level (100).
@@ -1427,24 +1533,38 @@ mod tests {
         // calibration is removed so Rifle reverts to its scanned 100;
         // the five seed rows are untouched.
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 0);
-        let claims: i64 = sqlx::query("SELECT COUNT(*) FROM codex_claims")
-            .fetch_one(&pool)
+        let claims: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM codex_claims", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get(0);
+            .unwrap();
         assert_eq!(claims, 0);
-        let codex_rows: i64 =
-            sqlx::query("SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'")
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-                .get(0);
-        assert_eq!(codex_rows, 0);
-        let total: i64 = sqlx::query("SELECT COUNT(*) FROM skill_calibrations")
-            .fetch_one(&pool)
+        let codex_rows: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
             .await
-            .unwrap()
-            .get(0);
+            .unwrap();
+        assert_eq!(codex_rows, 0);
+        let total: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM skill_calibrations", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
+            .await
+            .unwrap();
         assert_eq!(total, 5, "the scan-seeded calibrations are untouched");
         assert_eq!(svc.skill_level("Rifle").await.unwrap(), Some(100.0));
     }
@@ -1452,42 +1572,55 @@ mod tests {
     #[tokio::test]
     async fn claim_and_unclaim_reland_the_claim_days_rollup() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
 
         // Two days later the claim day is behind the heal watermark.
         let claim_epoch = crate::time::naive_to_epoch(start_instant());
         let claim_day = crate::daily_rollup::epoch_day(claim_epoch);
-        crate::daily_rollup::heal_rollups(&pool, claim_epoch + 2.0 * 86_400.0)
+        svc.db()
+            .with_writer(move |conn| {
+                crate::daily_rollup::heal_rollups(conn, claim_epoch + 2.0 * 86_400.0)
+            })
             .await
             .unwrap();
-        let codex_pes: Option<f64> =
-            sqlx::query_scalar("SELECT codex_pes FROM daily_rollups WHERE day = ?")
-                .bind(&claim_day)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let day = claim_day.clone();
+        let codex_pes: Option<f64> = db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT codex_pes FROM daily_rollups WHERE day = ?1",
+                    rusqlite::params![day],
+                    |row| row.get::<_, Option<f64>>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(codex_pes, Some(0.1875));
 
         // The unclaim deletes the now-historical claim and relands its
         // day inside the same transaction.
         svc.unclaim_rank("Boar").await.unwrap();
-        let codex_pes: Option<f64> =
-            sqlx::query_scalar("SELECT codex_pes FROM daily_rollups WHERE day = ?")
-                .bind(&claim_day)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let day = claim_day.clone();
+        let codex_pes: Option<f64> = db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT codex_pes FROM daily_rollups WHERE day = ?1",
+                    rusqlite::params![day],
+                    |row| row.get::<_, Option<f64>>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(codex_pes, None, "no claims remain on the day");
     }
 
     #[tokio::test]
     async fn unclaim_of_an_uncalibrated_skill_claim_removes_only_the_claim() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, pool) = service(dir.path()).await;
-        seed_calibrations(&pool).await;
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
 
         // Anatomy has no calibration history, so its claim wrote none
         // (the documented silent skip); unclaiming it must not touch
@@ -1498,25 +1631,34 @@ mod tests {
         svc.unclaim_rank("Boar").await.unwrap();
 
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 1);
-        let claims: i64 = sqlx::query("SELECT COUNT(*) FROM codex_claims")
-            .fetch_one(&pool)
+        let claims: i64 = db
+            .with_reader(|conn| {
+                Ok(
+                    conn.query_row("SELECT COUNT(*) FROM codex_claims", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                )
+            })
             .await
-            .unwrap()
-            .get(0);
+            .unwrap();
         assert_eq!(claims, 1, "only the Anatomy claim is removed");
-        let codex_rows: i64 =
-            sqlx::query("SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'")
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-                .get(0);
+        let codex_rows: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
         assert_eq!(codex_rows, 1, "Rifle's codex calibration survives");
     }
 
     #[tokio::test]
     async fn unclaim_requires_a_claimed_latest_rank() {
         let dir = tempfile::tempdir().unwrap();
-        let (svc, _pool) = service(dir.path()).await;
+        let (svc, _db) = service(dir.path()).await;
 
         // Nothing claimed at all.
         let error = svc.unclaim_rank("Boar").await.unwrap_err();
@@ -1538,8 +1680,8 @@ mod tests {
         // once and never double-stepped.
         for _ in 0..32 {
             let dir = tempfile::tempdir().unwrap();
-            let (svc, pool) = service(dir.path()).await;
-            seed_calibrations(&pool).await;
+            let (svc, db) = service(dir.path()).await;
+            seed_calibrations(&db).await;
             svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
 
             let (a, b) = tokio::join!(svc.unclaim_rank("Boar"), svc.unclaim_rank("Boar"));
@@ -1548,21 +1690,28 @@ mod tests {
                 "exactly one unclaim must win: a={a:?} b={b:?}"
             );
 
-            let claims: i64 = sqlx::query(
-                "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get(0);
+            let claims: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT COUNT(*) FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(claims, 0, "the single claim is reverted exactly once");
 
-            let progress: i64 =
-                sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap()
-                    .get(0);
+            let progress: i64 = db
+                .with_reader(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = 'Boar'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
             assert_eq!(progress, 0, "rank steps back exactly once");
         }
     }

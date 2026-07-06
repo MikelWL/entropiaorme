@@ -3,7 +3,6 @@
 //! types preserved on the wire.
 
 use serde_json::{json, Map, Value};
-use sqlx::Row;
 
 use super::payload::json_truthy;
 use super::{QuestError, QuestService, PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_LONG_HORIZON};
@@ -15,26 +14,42 @@ impl QuestService {
     /// raw totals (the frontend derives averages), only for quests
     /// with at least one curated linked session.
     pub async fn get_quest_analytics(&self) -> Result<Vec<Value>, QuestError> {
-        let quest_rows = sqlx::query(
-            "SELECT q.id, q.name, q.planet, q.category, q.reward_ped, \
-                    q.reward_is_skill, q.expected_reward_markup_percent \
-             FROM quests q \
-             WHERE q.is_active = 1 \
-             ORDER BY q.name",
-        )
-        .fetch_all(self.db.read())
-        .await?;
+        let quest_rows = self
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT q.id, q.name, q.planet, q.category, q.reward_ped, \
+                            q.reward_is_skill, q.expected_reward_markup_percent \
+                     FROM quests q \
+                     WHERE q.is_active = 1 \
+                     ORDER BY q.name",
+                )?;
+                let mut rows = stmt.query([])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<f64>>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, Option<f64>>(6)?,
+                    ));
+                }
+                Ok(out)
+            })
+            .await?;
 
         let mut results = Vec::new();
-        for row in quest_rows {
-            let quest_id = row.get::<i64, _>(0);
+        for (quest_id, quest_name, planet, category, reward_ped, reward_is_skill, markup) in
+            quest_rows
+        {
             let stats = self.compute_quest_session_stats(quest_id).await?;
             if stats["linked_sessions"] == json!(0) {
                 continue;
             }
-            let reward_ped = row.get::<Option<f64>, _>(4);
-            let reward_is_skill = row.get::<i64, _>(5) != 0;
-            let markup = row.get::<Option<f64>, _>(6);
+            let reward_is_skill = reward_is_skill != 0;
             // The original's `or 0` collapses an absent or zero reward
             // to the integer zero.
             let reward_value = match reward_ped {
@@ -44,9 +59,9 @@ impl QuestService {
             let linked_sessions = stats["linked_sessions"].as_i64().expect("session count");
             let mut entry = Map::new();
             entry.insert("quest_id".into(), json!(quest_id));
-            entry.insert("quest_name".into(), json!(row.get::<String, _>(1)));
-            entry.insert("planet".into(), json!(row.get::<String, _>(2)));
-            entry.insert("category".into(), json!(row.get::<Option<String>, _>(3)));
+            entry.insert("quest_name".into(), json!(quest_name));
+            entry.insert("planet".into(), json!(planet));
+            entry.insert("category".into(), json!(category));
             entry.insert("reward_ped".into(), reward_value.clone());
             entry.insert("reward_is_skill".into(), json!(reward_is_skill));
             entry.insert("expected_reward_markup_percent".into(), json!(markup));
@@ -65,14 +80,21 @@ impl QuestService {
     /// Aggregate economics for all sessions where this quest was
     /// completed, via the curated analytics link table.
     async fn compute_quest_session_stats(&self, quest_id: i64) -> Result<Value, QuestError> {
-        let rows = sqlx::query(
-            "SELECT session_id FROM session_quest_analytics_links \
-             WHERE quest_id = ? AND link_type = 'quest'",
-        )
-        .bind(quest_id)
-        .fetch_all(self.db.read())
-        .await?;
-        let session_ids: Vec<String> = rows.into_iter().map(|row| row.get(0)).collect();
+        let session_ids = self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT session_id FROM session_quest_analytics_links \
+                     WHERE quest_id = ? AND link_type = 'quest'",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![quest_id])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(row.get::<_, String>(0)?);
+                }
+                Ok(out)
+            })
+            .await?;
         self.compute_session_set_stats(&session_ids).await
     }
 
@@ -173,14 +195,21 @@ impl QuestService {
         &self,
         playlist_id: i64,
     ) -> Result<Vec<String>, QuestError> {
-        let rows = sqlx::query(
-            "SELECT session_id FROM session_quest_analytics_links \
-             WHERE playlist_id = ? AND link_type = 'playlist'",
-        )
-        .bind(playlist_id)
-        .fetch_all(self.db.read())
-        .await?;
-        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT session_id FROM session_quest_analytics_links \
+                     WHERE playlist_id = ? AND link_type = 'playlist'",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![playlist_id])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(row.get::<_, String>(0)?);
+                }
+                Ok(out)
+            })
+            .await?)
     }
 
     /// Aggregate economics for a set of sessions: completed-session
@@ -201,68 +230,85 @@ impl QuestService {
         }
 
         let placeholders = vec!["?"; session_ids.len()].join(",");
-        let bind_all = |sql: String| {
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-            for session_id in session_ids {
-                query = query.bind(session_id.as_str());
-            }
-            query
-        };
+        let session_ids: Vec<String> = session_ids.to_vec();
+        // Every leg is a plain read, so the whole aggregate runs as one
+        // synchronous unit on a reader-core connection.
+        self.db
+            .with_reader(move |conn| {
+                let (linked_sessions, total_duration, heal_cost, armour_cost) = conn.query_row(
+                    &format!(
+                        "SELECT COUNT(*), \
+                                COALESCE(SUM(s.ended_at - s.started_at), 0), \
+                                COALESCE(SUM(s.heal_cost), 0), \
+                                COALESCE(SUM(s.armour_cost), 0) \
+                         FROM tracking_sessions s \
+                         WHERE s.id IN ({placeholders}) AND s.is_active = 0"
+                    ),
+                    rusqlite::params_from_iter(session_ids.iter()),
+                    |row| {
+                        Ok((
+                            row_i64(row, 0),
+                            sql_number(row, 1),
+                            sql_number(row, 2),
+                            sql_number(row, 3),
+                        ))
+                    },
+                )?;
 
-        let sess_row = bind_all(format!(
-            "SELECT COUNT(*), \
-                    COALESCE(SUM(s.ended_at - s.started_at), 0), \
-                    COALESCE(SUM(s.heal_cost), 0), \
-                    COALESCE(SUM(s.armour_cost), 0) \
-             FROM tracking_sessions s \
-             WHERE s.id IN ({placeholders}) AND s.is_active = 0"
-        ))
-        .fetch_one(self.db.read())
-        .await?;
+                let weapon_cost = conn.query_row(
+                    &format!(
+                        "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
+                         FROM kill_tool_stats ts \
+                         JOIN kills k ON k.id = ts.kill_id \
+                         WHERE k.session_id IN ({placeholders})"
+                    ),
+                    rusqlite::params_from_iter(session_ids.iter()),
+                    |row| Ok(sql_number(row, 0)),
+                )?;
 
-        let weapon_cost = bind_all(format!(
-            "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
-             FROM kill_tool_stats ts \
-             JOIN kills k ON k.id = ts.kill_id \
-             WHERE k.session_id IN ({placeholders})"
-        ))
-        .fetch_one(self.db.read())
-        .await?;
+                let enhancer_cost = conn.query_row(
+                    &format!(
+                        "SELECT COALESCE(SUM(k.enhancer_cost), 0) \
+                         FROM kills k \
+                         WHERE k.session_id IN ({placeholders})"
+                    ),
+                    rusqlite::params_from_iter(session_ids.iter()),
+                    |row| Ok(sql_number(row, 0)),
+                )?;
 
-        let enhancer_cost = bind_all(format!(
-            "SELECT COALESCE(SUM(k.enhancer_cost), 0) \
-             FROM kills k \
-             WHERE k.session_id IN ({placeholders})"
-        ))
-        .fetch_one(self.db.read())
-        .await?;
+                let loot_tt = conn.query_row(
+                    &format!(
+                        "SELECT COALESCE(SUM(k.loot_total_ped), 0) \
+                         FROM kills k \
+                         WHERE k.session_id IN ({placeholders})"
+                    ),
+                    rusqlite::params_from_iter(session_ids.iter()),
+                    |row| Ok(sql_number(row, 0)),
+                )?;
 
-        let loot_tt = bind_all(format!(
-            "SELECT COALESCE(SUM(k.loot_total_ped), 0) \
-             FROM kills k \
-             WHERE k.session_id IN ({placeholders})"
-        ))
-        .fetch_one(self.db.read())
-        .await?;
+                let skill_tt = conn.query_row(
+                    &format!(
+                        "SELECT COALESCE(SUM(sg.ped_value), 0) \
+                         FROM skill_gains sg \
+                         WHERE sg.session_id IN ({placeholders})"
+                    ),
+                    rusqlite::params_from_iter(session_ids.iter()),
+                    |row| Ok(sql_number(row, 0)),
+                )?;
 
-        let skill_tt = bind_all(format!(
-            "SELECT COALESCE(SUM(sg.ped_value), 0) \
-             FROM skill_gains sg \
-             WHERE sg.session_id IN ({placeholders})"
-        ))
-        .fetch_one(self.db.read())
-        .await?;
-
-        Ok(json!({
-            "linked_sessions": row_i64(&sess_row, 0),
-            "total_duration": sql_number(&sess_row, 1),
-            "weapon_cost": sql_number(&weapon_cost, 0),
-            "heal_cost": sql_number(&sess_row, 2),
-            "enhancer_cost": sql_number(&enhancer_cost, 0),
-            "armour_cost": sql_number(&sess_row, 3),
-            "loot_tt": sql_number(&loot_tt, 0),
-            "skill_tt": sql_number(&skill_tt, 0),
-        }))
+                Ok(json!({
+                    "linked_sessions": linked_sessions,
+                    "total_duration": total_duration,
+                    "weapon_cost": weapon_cost,
+                    "heal_cost": heal_cost,
+                    "enhancer_cost": enhancer_cost,
+                    "armour_cost": armour_cost,
+                    "loot_tt": loot_tt,
+                    "skill_tt": skill_tt,
+                }))
+            })
+            .await
+            .map_err(QuestError::from)
     }
 
     async fn compute_playlist_reward_stats(
@@ -355,15 +401,27 @@ impl QuestService {
                AND sqc.quest_id IN ({quest_placeholders}) \
                {skill_filter}"
         );
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-        for session_id in session_ids {
-            query = query.bind(session_id.as_str());
-        }
-        for quest_id in quest_ids {
-            query = query.bind(quest_id);
-        }
-        let row = query.fetch_one(self.db.read()).await?;
-        let value = sql_number(&row, 0);
+        // Session ids bind first, then quest ids, matching the two
+        // placeholder groups' order.
+        let mut params: Vec<rusqlite::types::Value> = session_ids
+            .iter()
+            .map(|session_id| rusqlite::types::Value::Text(session_id.clone()))
+            .collect();
+        params.extend(
+            quest_ids
+                .iter()
+                .map(|&quest_id| rusqlite::types::Value::Integer(quest_id)),
+        );
+        let value = self
+            .db
+            .with_reader(move |conn| {
+                Ok(
+                    conn.query_row(&sql, rusqlite::params_from_iter(params), |row| {
+                        Ok(sql_number(row, 0))
+                    })?,
+                )
+            })
+            .await?;
         Ok(if json_truthy(Some(&value)) {
             value
         } else {
@@ -384,12 +442,24 @@ impl QuestService {
             sql.push_str(" AND group_type = ?");
         }
         sql.push_str(" ORDER BY sort_order");
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(playlist_id);
-        if let Some(group_type) = group_type {
-            query = query.bind(group_type);
-        }
-        let rows = query.fetch_all(self.db.read()).await?;
-        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+        let group_type = group_type.map(str::to_string);
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                let mut params: Vec<rusqlite::types::Value> =
+                    vec![rusqlite::types::Value::Integer(playlist_id)];
+                if let Some(group_type) = &group_type {
+                    params.push(rusqlite::types::Value::Text(group_type.clone()));
+                }
+                let mut stmt = conn.prepare(&sql)?;
+                let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(row.get::<_, i64>(0)?);
+                }
+                Ok(out)
+            })
+            .await?)
     }
 }
 
@@ -419,17 +489,19 @@ fn expected_reward_total(
 }
 
 /// A COUNT column: always an integer.
-fn row_i64(row: &sqlx::sqlite::SqliteRow, index: usize) -> i64 {
-    row.get::<i64, _>(index)
+fn row_i64(row: &rusqlite::Row, index: usize) -> i64 {
+    row.get_unwrap::<_, i64>(index)
 }
 
 /// An aggregate column with the engine's own numeric type: SQLite
 /// returns INTEGER for empty-set COALESCE fallbacks and integer sums,
-/// REAL otherwise, and the original emits whichever arrives.
-fn sql_number(row: &sqlx::sqlite::SqliteRow, index: usize) -> Value {
-    match row.try_get::<f64, _>(index) {
-        Ok(value) => json!(value),
-        Err(_) => json!(row.get::<i64, _>(index)),
+/// REAL otherwise, and the original emits whichever arrives. The stored
+/// value's affinity (`ValueRef`) drives the branch, mirroring the original
+/// typed read.
+fn sql_number(row: &rusqlite::Row, index: usize) -> Value {
+    match row.get_ref_unwrap(index) {
+        rusqlite::types::ValueRef::Real(value) => json!(value),
+        value => json!(value.as_i64().expect("sql_number reads a numeric column")),
     }
 }
 

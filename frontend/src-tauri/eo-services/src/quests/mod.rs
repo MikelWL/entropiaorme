@@ -68,8 +68,6 @@ pub type IdSource = Arc<dyn Fn() -> String + Send + Sync>;
 pub enum QuestError {
     #[error("{0}")]
     Invalid(String),
-    #[error(transparent)]
-    Db(#[from] sqlx::Error),
     /// A daily-rollup refresh failure inside a quest write.
     #[error(transparent)]
     Rollup(#[from] crate::db::DbError),

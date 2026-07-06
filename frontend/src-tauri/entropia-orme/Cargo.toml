@@ -39,6 +39,11 @@ eo-services = { workspace = true }
 # The composition root owns the SSE fan-out hub and bridges the producer
 # bus's domain topics onto it (the `/api/events` stream serves over it).
 eo-wire = { workspace = true }
+# The hotbar slot resolver runs on the input listener's plain OS key thread
+# (no async runtime), so it reads the equipment library through the database
+# handle's synchronous reader core rather than bridging an async query onto
+# the runtime.
+rusqlite = { workspace = true }
 # The capture-PNG IPC command base64-encodes the raw image bytes into an
 # `<img>` data URL (the capture returns raw bytes, outside the typed JSON
 # command surface).
@@ -51,8 +56,9 @@ tokio = { workspace = true }
 # EP-agnostic; the runtime wiring is a composition-root concern.
 ort = { workspace = true }
 # The composition root installs the process-wide tracing subscriber: a fmt
-# layer, an env-filter, and the metrics-aggregating layer that turns sqlx
-# query events into database-latency samples in the in-process registry.
+# layer, an env-filter, and the metrics-aggregating layer that turns the
+# database core's per-job timing events into database-latency samples in the
+# in-process registry.
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
@@ -60,8 +66,8 @@ tracing-appender = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 # Test-only: the composition-integration and concurrency tests assert
-# directly against the substrate's database pool and build a frozen clock.
-sqlx = { workspace = true }
+# directly against the database through its closure API (rusqlite is already
+# a normal dependency) and build a frozen clock.
 chrono = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

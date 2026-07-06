@@ -3,9 +3,8 @@
 //! reward-undo helpers.
 
 use serde_json::Value;
-use sqlx::sqlite::SqliteConnection;
-use sqlx::Row;
 
+use crate::db::DbError;
 use crate::ped::Ped;
 use crate::time::to_iso_utc;
 
@@ -37,13 +36,15 @@ impl QuestService {
     /// Mark a quest as in-progress; `None` when absent or inactive.
     pub async fn start_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
         let now = self.now_epoch();
-        let affected =
-            sqlx::query("UPDATE quests SET started_at = ? WHERE id = ? AND is_active = 1")
-                .bind(now)
-                .bind(quest_id)
-                .execute(self.db.write())
-                .await?
-                .rows_affected();
+        let affected = self
+            .db
+            .with_writer(move |conn| {
+                Ok(conn.execute(
+                    "UPDATE quests SET started_at = ? WHERE id = ? AND is_active = 1",
+                    rusqlite::params![now, quest_id],
+                )?)
+            })
+            .await?;
         if affected > 0 {
             self.get_quest(quest_id).await
         } else {
@@ -61,47 +62,62 @@ impl QuestService {
             return Ok(None);
         };
         let now = self.now_epoch();
-        sqlx::query("UPDATE quests SET started_at = NULL WHERE id = ?")
-            .bind(quest_id)
-            .execute(self.db.write())
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "UPDATE quests SET started_at = NULL WHERE id = ?",
+                    rusqlite::params![quest_id],
+                )?;
+                Ok(())
+            })
             .await?;
 
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
         if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
-            let name = quest["name"].as_str().expect("quest name");
+            let name = quest["name"].as_str().expect("quest name").to_string();
             if json_truthy(quest.get("reward_is_skill")) {
                 // Skill rewards are PES, not PED: a claim row, not a
                 // ledger entry.
-                sqlx::query(
-                    "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
-                     VALUES (?, ?, ?, ?)",
-                )
-                .bind(quest_id)
-                .bind(name)
-                .bind(reward.value())
-                .bind(now)
-                .execute(self.db.write())
-                .await?;
-                let mut conn = self.db.write().acquire().await?;
-                crate::daily_rollup::refresh_days(&mut conn, [crate::daily_rollup::epoch_day(now)])
+                self.db
+                    .with_writer(move |conn| {
+                        conn.execute(
+                            "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
+                             VALUES (?, ?, ?, ?)",
+                            rusqlite::params![quest_id, name, reward.value(), now],
+                        )?;
+                        Ok(())
+                    })
+                    .await?;
+                let day = crate::daily_rollup::epoch_day(now);
+                self.db
+                    .with_writer(move |conn| crate::daily_rollup::refresh_days(conn, [day]))
                     .await?;
             } else {
                 let ledger_id = self.next_id();
                 let date = to_iso_utc(now);
-                sqlx::query(
-                    "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-                     VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&ledger_id)
-                .bind(&date)
-                .bind("markup")
-                .bind(format!("Quest: {name}"))
-                .bind(reward.value())
-                .bind("quest_reward")
-                .execute(self.db.write())
-                .await?;
-                let mut conn = self.db.write().acquire().await?;
-                crate::daily_rollup::refresh_days(&mut conn, [date.as_str()]).await?;
+                let refresh_date = date.clone();
+                self.db
+                    .with_writer(move |conn| {
+                        conn.execute(
+                            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                             VALUES (?, ?, ?, ?, ?, ?)",
+                            rusqlite::params![
+                                ledger_id,
+                                date,
+                                "markup",
+                                format!("Quest: {name}"),
+                                reward.value(),
+                                "quest_reward"
+                            ],
+                        )?;
+                        Ok(())
+                    })
+                    .await?;
+                self.db
+                    .with_writer(move |conn| {
+                        crate::daily_rollup::refresh_days(conn, [refresh_date])
+                    })
+                    .await?;
             }
         }
 
@@ -125,9 +141,14 @@ impl QuestService {
         };
 
         if !quest["started_at"].is_null() {
-            sqlx::query("UPDATE quests SET started_at = NULL WHERE id = ? AND is_active = 1")
-                .bind(quest_id)
-                .execute(self.db.write())
+            self.db
+                .with_writer(move |conn| {
+                    conn.execute(
+                        "UPDATE quests SET started_at = NULL WHERE id = ? AND is_active = 1",
+                        rusqlite::params![quest_id],
+                    )?;
+                    Ok(())
+                })
                 .await?;
             return self.get_quest(quest_id).await;
         }
@@ -138,36 +159,47 @@ impl QuestService {
 
         // The original groups the completion delete and the optional
         // reward undo under one commit.
-        let mut tx = self.db.write().begin().await?;
-        sqlx::query(
-            "DELETE FROM session_quest_completions \
-             WHERE id = ( \
-                 SELECT id FROM session_quest_completions \
-                 WHERE quest_id = ? \
-                 ORDER BY completed_at DESC, id DESC \
-                 LIMIT 1 \
-             )",
-        )
-        .bind(quest_id)
-        .execute(&mut *tx)
-        .await?;
+        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
+        let reward_is_skill = json_truthy(quest.get("reward_is_skill"));
+        // Extracted before the closure so the panic on a missing name fires
+        // in exactly the branch the original's `.expect` did (undo requested,
+        // a positive liquid reward).
+        let undo_name = if undo_reward {
+            quest["name"].as_str().map(str::to_string)
+        } else {
+            None
+        };
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "DELETE FROM session_quest_completions \
+                     WHERE id = ( \
+                         SELECT id FROM session_quest_completions \
+                         WHERE quest_id = ? \
+                         ORDER BY completed_at DESC, id DESC \
+                         LIMIT 1 \
+                     )",
+                    rusqlite::params![quest_id],
+                )?;
 
-        if undo_reward {
-            let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
-            if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
-                if json_truthy(quest.get("reward_is_skill")) {
-                    delete_latest_quest_claim(&mut tx, quest_id).await?;
-                } else {
-                    delete_latest_quest_reward_entry(
-                        &mut tx,
-                        quest["name"].as_str().expect("quest name"),
-                        reward,
-                    )
-                    .await?;
+                if undo_reward {
+                    if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
+                        if reward_is_skill {
+                            delete_latest_quest_claim(&tx, quest_id)?;
+                        } else {
+                            delete_latest_quest_reward_entry(
+                                &tx,
+                                undo_name.as_deref().expect("quest name"),
+                                reward,
+                            )?;
+                        }
+                    }
                 }
-            }
-        }
-        tx.commit().await?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
         self.get_quest(quest_id).await
     }
 
@@ -185,18 +217,21 @@ impl QuestService {
             return;
         };
         let now = self.now_epoch();
-        let _ = sqlx::query(
-            "INSERT INTO notable_events \
-             (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
-             VALUES (?, NULL, ?, ?, ?, ?)",
-        )
-        .bind(&session_id)
-        .bind(kind.as_str())
-        .bind(description)
-        .bind(value.value())
-        .bind(now)
-        .execute(self.db.write())
-        .await;
+        let event_type = kind.as_str();
+        let description = description.to_string();
+        let value = value.value();
+        let _ = self
+            .db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO notable_events \
+                     (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
+                     VALUES (?, NULL, ?, ?, ?, ?)",
+                    rusqlite::params![session_id, event_type, description, value, now],
+                )?;
+                Ok(())
+            })
+            .await;
     }
 
     /// Record a completion for cooldown and analytics: keyed by the
@@ -216,15 +251,16 @@ impl QuestService {
             Some(ts) => ts,
             None => self.now_epoch(),
         };
-        sqlx::query(
-            "INSERT OR IGNORE INTO session_quest_completions \
-             (session_id, quest_id, completed_at) VALUES (?, ?, ?)",
-        )
-        .bind(&key)
-        .bind(quest_id)
-        .bind(ts)
-        .execute(self.db.write())
-        .await?;
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_quest_completions \
+                     (session_id, quest_id, completed_at) VALUES (?, ?, ?)",
+                    rusqlite::params![key, quest_id, ts],
+                )?;
+                Ok(())
+            })
+            .await?;
         Ok(())
     }
 
@@ -244,63 +280,62 @@ impl QuestService {
 }
 
 /// Delete the newest claim for a quest (the cancel flow's undo).
-pub(super) async fn delete_latest_quest_claim(
-    conn: &mut SqliteConnection,
+pub(super) fn delete_latest_quest_claim(
+    conn: &rusqlite::Connection,
     quest_id: i64,
-) -> Result<bool, QuestError> {
-    let Some(row) = sqlx::query(
-        "SELECT id, claimed_at FROM quest_claims \
-         WHERE quest_id = ? \
-         ORDER BY claimed_at DESC, id DESC \
-         LIMIT 1",
-    )
-    .bind(quest_id)
-    .fetch_optional(&mut *conn)
-    .await?
+) -> Result<bool, DbError> {
+    use rusqlite::OptionalExtension as _;
+    let Some((id, claimed_at)) = conn
+        .query_row(
+            "SELECT id, claimed_at FROM quest_claims \
+             WHERE quest_id = ? \
+             ORDER BY claimed_at DESC, id DESC \
+             LIMIT 1",
+            rusqlite::params![quest_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
+        )
+        .optional()?
     else {
         return Ok(false);
     };
-    sqlx::query("DELETE FROM quest_claims WHERE id = ?")
-        .bind(row.get::<i64, _>(0))
-        .execute(&mut *conn)
-        .await?;
+    conn.execute(
+        "DELETE FROM quest_claims WHERE id = ?",
+        rusqlite::params![id],
+    )?;
     // The undone claim may sit days back; reland its day's rollup.
-    crate::daily_rollup::refresh_days(
-        &mut *conn,
-        [crate::daily_rollup::epoch_day(row.get::<f64, _>(1))],
-    )
-    .await?;
+    crate::daily_rollup::refresh_days(conn, [crate::daily_rollup::epoch_day(claimed_at)])?;
     Ok(true)
 }
 
 /// Delete the newest matching quest-reward ledger entry (the cancel
 /// flow's undo for liquid rewards).
-pub(super) async fn delete_latest_quest_reward_entry(
-    conn: &mut SqliteConnection,
+pub(super) fn delete_latest_quest_reward_entry(
+    conn: &rusqlite::Connection,
     quest_name: &str,
     reward_ped: Ped,
-) -> Result<bool, QuestError> {
-    let Some(row) = sqlx::query(
-        "SELECT id, date FROM ledger_entries \
-         WHERE type = 'markup' \
-           AND tag = 'quest_reward' \
-           AND description = ? \
-           AND amount = ? \
-         ORDER BY date DESC, id DESC \
-         LIMIT 1",
-    )
-    .bind(format!("Quest: {quest_name}"))
-    .bind(reward_ped.value())
-    .fetch_optional(&mut *conn)
-    .await?
+) -> Result<bool, DbError> {
+    use rusqlite::OptionalExtension as _;
+    let Some((id, date)) = conn
+        .query_row(
+            "SELECT id, date FROM ledger_entries \
+             WHERE type = 'markup' \
+               AND tag = 'quest_reward' \
+               AND description = ? \
+               AND amount = ? \
+             ORDER BY date DESC, id DESC \
+             LIMIT 1",
+            rusqlite::params![format!("Quest: {quest_name}"), reward_ped.value()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
     else {
         return Ok(false);
     };
-    sqlx::query("DELETE FROM ledger_entries WHERE id = ?")
-        .bind(row.get::<String, _>(0))
-        .execute(&mut *conn)
-        .await?;
+    conn.execute(
+        "DELETE FROM ledger_entries WHERE id = ?",
+        rusqlite::params![id],
+    )?;
     // The undone reward may sit days back; reland its day's rollup.
-    crate::daily_rollup::refresh_days(&mut *conn, [row.get::<String, _>(1)]).await?;
+    crate::daily_rollup::refresh_days(conn, [date])?;
     Ok(true)
 }

@@ -58,27 +58,23 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
 
 /// One ended session (`ended`) with two `Atrox` kills carrying loot.
 async fn seed_ended(db: &Db) {
-    sqlx::query(
-        "INSERT INTO tracking_sessions(id,started_at,ended_at,is_active,armour_cost,heal_cost,\
-         dangling_cost,mob_tracking_mode,updated_at) \
-         VALUES('ended',1000.0,4600.0,0,0,0,0,'mob',4600.0)",
-    )
-    .execute(db.write())
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id,started_at,ended_at,is_active,armour_cost,heal_cost,\
+             dangling_cost,mob_tracking_mode,updated_at) \
+             VALUES('ended',1000.0,4600.0,0,0,0,0,'mob',4600.0)",
+            [],
+        )?;
+        for (id, loot) in [("k1", 10.0), ("k2", 20.0)] {
+            conn.execute(
+                "INSERT INTO kills(id,session_id,mob_name,timestamp,loot_total_ped) VALUES(?1,?2,?3,?4,?5)",
+                rusqlite::params![id, "ended", "Atrox", 1001.0, loot],
+            )?;
+        }
+        Ok(())
+    })
     .await
     .unwrap();
-    for (id, loot) in [("k1", 10.0), ("k2", 20.0)] {
-        sqlx::query(
-            "INSERT INTO kills(id,session_id,mob_name,timestamp,loot_total_ped) VALUES(?,?,?,?,?)",
-        )
-        .bind(id)
-        .bind("ended")
-        .bind("Atrox")
-        .bind(1001.0)
-        .bind(loot)
-        .execute(db.write())
-        .await
-        .unwrap();
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -267,28 +263,27 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
     // One ended session (`ended`) whose kill `k1` fans out into every child
     // table, plus an active session (`live`) that must resist deletion.
     seed_ended(&db).await;
-    sqlx::query("INSERT INTO kill_tool_stats(kill_id,tool_name) VALUES('k1','Weapon')")
-        .execute(db.write())
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO kill_loot_items(kill_id,item_name,value_ped) VALUES('k1','Shrapnel',5.0)",
-    )
-    .execute(db.write())
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount) \
-         VALUES('ended',1001.0,'Rifle',1.0)",
-    )
-    .execute(db.write())
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO notable_events(session_id,event_type,mob_or_item,value_ped,timestamp) \
-         VALUES('ended','global','Atrox',60.0,1001.0)",
-    )
-    .execute(db.write())
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO kill_tool_stats(kill_id,tool_name) VALUES('k1','Weapon')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kill_loot_items(kill_id,item_name,value_ped) VALUES('k1','Shrapnel',5.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO skill_gains(session_id,timestamp,skill_name,amount) \
+             VALUES('ended',1001.0,'Rifle',1.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO notable_events(session_id,event_type,mob_or_item,value_ped,timestamp) \
+             VALUES('ended','global','Atrox',60.0,1001.0)",
+            [],
+        )?;
+        Ok(())
+    })
     .await
     .unwrap();
 
@@ -315,13 +310,17 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
 
     // Insert the active session AFTER composition so the tracker's startup
     // orphan-recovery (which ends dangling active sessions) leaves it active.
-    sqlx::query(
-        "INSERT INTO tracking_sessions(id,started_at,is_active,mob_tracking_mode) \
-         VALUES('live',2000.0,1,'mob')",
-    )
-    .execute(verify.write())
-    .await
-    .unwrap();
+    verify
+        .with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,is_active,mob_tracking_mode) \
+                 VALUES('live',2000.0,1,'mob')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
 
     // An active session is a conflict; an absent one is a not-found.
     let active = api
@@ -366,14 +365,21 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
             "SELECT COUNT(*) FROM kill_loot_items WHERE kill_id='k1'",
         ),
     ] {
-        let count: i64 = sqlx::query_scalar(query)
-            .fetch_one(verify.read())
+        let query = query.to_string();
+        let count: i64 = verify
+            .with_reader(move |conn| Ok(conn.query_row(&query, [], |row| row.get::<_, i64>(0))?))
             .await
             .unwrap();
         assert_eq!(count, 0, "{label} still holds rows for the deleted session");
     }
-    let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracking_sessions WHERE id='live'")
-        .fetch_one(verify.read())
+    let live: i64 = verify
+        .with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM tracking_sessions WHERE id='live'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
         .await
         .unwrap();
     assert_eq!(live, 1, "the active session must survive");

@@ -24,7 +24,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 ort = { workspace = true }
 image = { workspace = true }
-sqlx = { workspace = true }
 tokio = { workspace = true }
 rapidfuzz = "0.5"
 # The analytics ledger's opaque keyset cursor (base64url of the seek key).
@@ -32,6 +31,11 @@ base64 = { workspace = true }
 # Observe-only instrumentation at the event-bus, OCR, and database seams
 # (structured events for the logs; the metrics registry is in eo-wire).
 tracing = { workspace = true }
+# The synchronous SQLite core behind the `db` seam (see the workspace
+# manifest for the libsqlite3-sys pairing constraint).
+rusqlite = { workspace = true }
+# SHA-384 for the migration ledger's checksum accounting.
+sha2 = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [

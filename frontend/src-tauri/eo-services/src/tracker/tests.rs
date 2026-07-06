@@ -16,12 +16,9 @@ use crate::bus_events::{
 use crate::bus_events::{CombatPayload, GlobalPayload};
 use crate::clock::MockClock;
 use crate::cost_engine::cost_per_shot_from_props;
-use crate::db::decoded_f64;
 use crate::ped::Ped;
 use crate::time::{epoch_to_parts, naive_isoformat, naive_to_epoch, to_iso_utc};
 use serde_json::json;
-use sqlx::sqlite::SqlitePool;
-use sqlx::Row;
 use std::sync::Mutex as StdMutex;
 
 type CostScript = Arc<dyn Fn(&str) -> f64 + Send + Sync>;
@@ -98,7 +95,7 @@ struct Rig {
     runtime: tokio::runtime::Runtime,
     bus: Arc<EventBus>,
     clock: Arc<MockClock>,
-    pool: SqlitePool,
+    db: Db,
 }
 
 fn rig() -> Rig {
@@ -111,17 +108,12 @@ fn rig() -> Rig {
     let db = runtime
         .block_on(Db::open(&dir.path().join("entropia_orme.db")))
         .unwrap();
-    // The test rig drives all SQL through the writer pool (a single
-    // connection), reproducing the original pool-of-one semantics; the
-    // reader/writer split is exercised by the perf and integration
-    // harnesses, not these unit tests.
-    let pool = db.write().clone();
     Rig {
         _dir: dir,
         runtime,
         bus: Arc::new(EventBus::new()),
         clock: Arc::new(MockClock::new(None, 0.0)),
-        pool,
+        db,
     }
 }
 
@@ -130,7 +122,7 @@ impl Rig {
         self.runtime
             .block_on(HuntTracker::new(
                 self.bus.clone(),
-                Db::from_pool(self.pool.clone()),
+                self.db.clone(),
                 self.clock.clone(),
                 providers,
             ))
@@ -165,32 +157,34 @@ impl Rig {
 
     fn scalar_f64(&self, sql: &'static str, binds: &[&str]) -> f64 {
         let binds: Vec<String> = binds.iter().map(|bind| bind.to_string()).collect();
-        self.runtime.block_on(async {
-            let mut query = sqlx::query(sql);
-            for bind in binds {
-                query = query.bind(bind);
-            }
-            let row = query.fetch_one(&self.pool).await.unwrap();
-            decoded_f64(&row, 0)
-        })
+        self.wait(self.db.with_reader(move |conn| {
+            Ok(
+                conn.query_row(sql, rusqlite::params_from_iter(binds.iter()), |row| {
+                    row.get::<_, f64>(0)
+                })?,
+            )
+        }))
+        .unwrap()
     }
 
     fn scalar_i64(&self, sql: &'static str, binds: &[&str]) -> i64 {
         let binds: Vec<String> = binds.iter().map(|bind| bind.to_string()).collect();
-        self.runtime.block_on(async {
-            let mut query = sqlx::query(sql);
-            for bind in binds {
-                query = query.bind(bind);
-            }
-            let row = query.fetch_one(&self.pool).await.unwrap();
-            row.try_get::<i64, _>(0).unwrap()
-        })
+        self.wait(self.db.with_reader(move |conn| {
+            Ok(
+                conn.query_row(sql, rusqlite::params_from_iter(binds.iter()), |row| {
+                    row.get::<_, i64>(0)
+                })?,
+            )
+        }))
+        .unwrap()
     }
 
     fn execute(&self, sql: &'static str) {
-        self.runtime.block_on(async {
-            sqlx::query(sql).execute(&self.pool).await.unwrap();
-        });
+        self.wait(self.db.with_writer(move |conn| {
+            conn.execute(sql, [])?;
+            Ok(())
+        }))
+        .unwrap();
     }
 }
 
@@ -287,16 +281,18 @@ fn session_lifecycle_round_trip() {
         }));
 
     // A skill gain qualifies the session for a summary.
-    rig.runtime.block_on(async {
-        sqlx::query(
-            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-                 VALUES (?, 1.0, 'Rifle', 1.0, 0.5)",
-        )
-        .bind(&session.id)
-        .execute(&rig.pool)
-        .await
+    {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+                     VALUES (?, 1.0, 'Rifle', 1.0, 0.5)",
+                rusqlite::params![session_id],
+            )?;
+            Ok(())
+        }))
         .unwrap();
-    });
+    }
 
     rig.clock.advance(10.0).unwrap();
     let stopped = rig.wait(tracker.stop_session()).unwrap().unwrap();
@@ -489,14 +485,15 @@ fn recovery_closes_crash_orphaned_sessions() {
         30.0
     );
     let expected_date = naive_isoformat(epoch_to_naive(1500.0));
-    let date: String = rig.runtime.block_on(async {
-        sqlx::query("SELECT date FROM ledger_entries WHERE tag = 'convert'")
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-            .try_get(0)
-            .unwrap()
-    });
+    let date: String = rig
+        .wait(rig.db.with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT date FROM ledger_entries WHERE tag = 'convert'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?)
+        }))
+        .unwrap();
     assert_eq!(date, expected_date);
     assert_eq!(
         rig.scalar_i64(
@@ -551,31 +548,40 @@ fn stopping_a_session_relands_its_days_rollups() {
     rig.clock.advance(2.0 * 86_400.0).unwrap();
     let now = naive_to_epoch(rig.clock.now());
     rig.runtime.block_on(async {
-        crate::daily_rollup::heal_rollups(&rig.pool, now)
+        rig.db
+            .with_writer(move |conn| crate::daily_rollup::heal_rollups(conn, now))
             .await
             .unwrap();
     });
     let start_day = crate::daily_rollup::epoch_day(naive_to_epoch(naive("2026-01-01T00:00:00")));
-    let pre_stop: Option<f64> = rig.runtime.block_on(async {
-        sqlx::query_scalar("SELECT dangling_cost FROM daily_rollups WHERE day = ?")
-            .bind(&start_day)
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-    });
+    let pre_stop: Option<f64> = {
+        let start_day = start_day.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT dangling_cost FROM daily_rollups WHERE day = ?",
+                rusqlite::params![start_day],
+                |row| row.get::<_, Option<f64>>(0),
+            )?)
+        }))
+        .unwrap()
+    };
     assert_eq!(pre_stop, Some(0.0), "pre-stop: the column default");
 
     // The stop transaction persists the dangling cost and relands
     // the session's days in the same commit.
     let stopped = rig.wait(tracker.stop_session()).unwrap().unwrap();
     assert_eq!(stopped.id, session.id);
-    let post_stop: Option<f64> = rig.runtime.block_on(async {
-        sqlx::query_scalar("SELECT dangling_cost FROM daily_rollups WHERE day = ?")
-            .bind(&start_day)
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-    });
+    let post_stop: Option<f64> = {
+        let start_day = start_day.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT dangling_cost FROM daily_rollups WHERE day = ?",
+                rusqlite::params![start_day],
+                |row| row.get::<_, Option<f64>>(0),
+            )?)
+        }))
+        .unwrap()
+    };
     assert_eq!(post_stop, Some(0.05), "the stop hook relanded the day");
     // The stop day itself (today) stays raw.
     let today = crate::daily_rollup::epoch_day(now);
@@ -593,27 +599,23 @@ fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
     let rig = rig();
     let start_epoch = naive_to_epoch(naive("2025-12-30T10:00:00"));
     let kill_epoch = naive_to_epoch(naive("2025-12-30T11:00:00"));
-    rig.runtime.block_on(async {
-        sqlx::query(
+    rig.wait(rig.db.with_writer(move |conn| {
+        conn.execute(
             "INSERT INTO tracking_sessions (id, started_at, is_active, mob_tracking_mode) \
                  VALUES ('orphan', ?, 1, 'mob')",
-        )
-        .bind(start_epoch)
-        .execute(&rig.pool)
-        .await
-        .unwrap();
-        sqlx::query(
+            rusqlite::params![start_epoch],
+        )?;
+        conn.execute(
             "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
                  timestamp, shots_fired, damage_dealt, damage_taken, critical_hits, \
                  cost_ped, enhancer_cost, loot_total_ped, is_global, is_hof) \
                  VALUES ('k1', 'orphan', 'Atrox', '', '', ?, 3, 30.0, 0.0, 0, \
                  0.15, 0.0, 80.0, 0, 0)",
-        )
-        .bind(kill_epoch)
-        .execute(&rig.pool)
-        .await
-        .unwrap();
-    });
+            rusqlite::params![kill_epoch],
+        )?;
+        Ok(())
+    }))
+    .unwrap();
     rig.execute(
         "INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, \
              is_enhancer_shrapnel) VALUES ('k1', 'Shrapnel', 500, 50.0, 0)",
@@ -627,7 +629,8 @@ fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
     // below the watermark when recovery closes it.
     let now = naive_to_epoch(rig.clock.now());
     rig.runtime.block_on(async {
-        crate::daily_rollup::heal_rollups(&rig.pool, now)
+        rig.db
+            .with_writer(move |conn| crate::daily_rollup::heal_rollups(conn, now))
             .await
             .unwrap();
     });
@@ -636,27 +639,33 @@ fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
 
     // Recovery relanded the kill day's families.
     let kill_day = crate::daily_rollup::epoch_day(kill_epoch);
-    let loot: Option<f64> = rig.runtime.block_on(async {
-        sqlx::query_scalar("SELECT loot_tt FROM daily_rollups WHERE day = ?")
-            .bind(&kill_day)
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-    });
+    let loot: Option<f64> = {
+        let kill_day = kill_day.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT loot_tt FROM daily_rollups WHERE day = ?",
+                rusqlite::params![kill_day],
+                |row| row.get::<_, Option<f64>>(0),
+            )?)
+        }))
+        .unwrap()
+    };
     assert_eq!(loot, Some(80.0));
 
     // The backdated shrapnel-conversion ledger entry (a datetime
     // key at the crashed session's end) rolled up eagerly too.
     let ledger_key = naive_isoformat(epoch_to_naive(kill_epoch));
-    let (kind, amount): (String, f64) = rig.runtime.block_on(async {
-        sqlx::query_as(
-            "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ? AND tag = 'convert'",
-        )
-        .bind(&ledger_key)
-        .fetch_one(&rig.pool)
-        .await
+    let (kind, amount): (String, f64) = {
+        let ledger_key = ledger_key.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ? AND tag = 'convert'",
+                rusqlite::params![ledger_key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+            )?)
+        }))
         .unwrap()
-    });
+    };
     assert_eq!((kind.as_str(), amount), ("markup", 0.5));
 }
 
@@ -772,15 +781,17 @@ fn loot_creates_and_persists_kills_with_filtering() {
         total_ped: 4.8,
     }));
 
-    let kill_id: String = rig.runtime.block_on(async {
-        sqlx::query("SELECT id FROM kills WHERE session_id = ?")
-            .bind(&session.id)
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-            .try_get(0)
-            .unwrap()
-    });
+    let kill_id: String = {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT id FROM kills WHERE session_id = ?",
+                rusqlite::params![session_id],
+                |row| row.get::<_, String>(0),
+            )?)
+        }))
+        .unwrap()
+    };
     assert_eq!(
         rig.scalar_i64("SELECT shots_fired FROM kills WHERE id = ?", &[&kill_id]),
         3
@@ -814,15 +825,17 @@ fn loot_creates_and_persists_kills_with_filtering() {
         ),
         2
     );
-    let mob: String = rig.runtime.block_on(async {
-        sqlx::query("SELECT mob_name FROM kills WHERE id = ?")
-            .bind(&kill_id)
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-            .try_get(0)
-            .unwrap()
-    });
+    let mob: String = {
+        let kill_id = kill_id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT mob_name FROM kills WHERE id = ?",
+                rusqlite::params![kill_id],
+                |row| row.get::<_, String>(0),
+            )?)
+        }))
+        .unwrap()
+    };
     assert_eq!(mob, "Unknown");
     assert_eq!(
         rig.scalar_i64(
@@ -994,17 +1007,18 @@ fn snapshot_aggregates_and_rounds_the_readout() {
             creature: "Atrox".into(),
             value: 12.0,
         }));
-    rig.runtime.block_on(async {
-        sqlx::query(
-            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-                 VALUES (?, 1.0, 'Rifle', 1.0, 1.0), (?, 2.0, 'Rifle', 1.0, 0.25)",
-        )
-        .bind(&session.id)
-        .bind(&session.id)
-        .execute(&rig.pool)
-        .await
+    {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+                     VALUES (?, 1.0, 'Rifle', 1.0, 1.0), (?, 2.0, 'Rifle', 1.0, 0.25)",
+                rusqlite::params![session_id.clone(), session_id],
+            )?;
+            Ok(())
+        }))
         .unwrap();
-    });
+    }
 
     rig.clock.advance(60.0).unwrap();
     let readout = rig.wait(tracker.snapshot()).unwrap();
@@ -1095,26 +1109,24 @@ fn unknown_tool_stats_merge_on_identification() {
         total_ped: 0.0,
     }));
 
-    let rows: Vec<(String, i64, f64, i64, f64)> = rig.runtime.block_on(async {
-        sqlx::query(
-            "SELECT tool_name, shots_fired, damage_dealt, critical_hits, cost_per_shot \
-                 FROM kill_tool_stats",
-        )
-        .fetch_all(&rig.pool)
-        .await
-        .unwrap()
-        .iter()
-        .map(|row| {
-            (
-                row.try_get(0).unwrap(),
-                row.try_get(1).unwrap(),
-                decoded_f64(row, 2),
-                row.try_get(3).unwrap(),
-                decoded_f64(row, 4),
-            )
-        })
-        .collect()
-    });
+    let rows: Vec<(String, i64, f64, i64, f64)> = rig
+        .wait(rig.db.with_reader(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT tool_name, shots_fired, damage_dealt, critical_hits, cost_per_shot \
+                     FROM kill_tool_stats",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, f64>(4)?,
+                ))
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        }))
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0], ("Pistol".to_string(), 3, 19.0, 1, 0.02));
 }
@@ -1595,15 +1607,17 @@ fn tag_and_manual_mob_rules() {
         items: vec![],
         total_ped: 0.0,
     }));
-    let mob: String = rig.runtime.block_on(async {
-        sqlx::query("SELECT mob_name FROM kills WHERE session_id = ?")
-            .bind(&session.id)
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-            .try_get(0)
-            .unwrap()
-    });
+    let mob: String = {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT mob_name FROM kills WHERE session_id = ?",
+                rusqlite::params![session_id],
+                |row| row.get::<_, String>(0),
+            )?)
+        }))
+        .unwrap()
+    };
     assert_eq!(mob, "Team Hunt");
     assert_eq!(
         rig.wait(tagged.set_manual_mob("Atrox", "Atrox", "Young")),
@@ -2140,14 +2154,11 @@ fn the_unknown_entry_backfills_its_cost_once() {
         items: vec![],
         total_ped: 0.0,
     }));
-    let kill_id: String = rig.runtime.block_on(async {
-        sqlx::query("SELECT id FROM kills")
-            .fetch_one(&rig.pool)
-            .await
-            .unwrap()
-            .try_get(0)
-            .unwrap()
-    });
+    let kill_id: String = rig
+        .wait(rig.db.with_reader(|conn| {
+            Ok(conn.query_row("SELECT id FROM kills", [], |row| row.get::<_, String>(0))?)
+        }))
+        .unwrap();
     assert_eq!(
         rig.scalar_f64("SELECT cost_ped FROM kills WHERE id = ?", &[&kill_id]),
         1.4
@@ -2188,21 +2199,20 @@ fn a_costless_tool_merges_unknown_into_its_bare_entry() {
         items: vec![],
         total_ped: 0.0,
     }));
-    let rows: Vec<(String, i64, f64)> = rig.runtime.block_on(async {
-        sqlx::query("SELECT tool_name, shots_fired, damage_dealt FROM kill_tool_stats")
-            .fetch_all(&rig.pool)
-            .await
-            .unwrap()
-            .iter()
-            .map(|row| {
-                (
-                    row.try_get(0).unwrap(),
-                    row.try_get(1).unwrap(),
-                    decoded_f64(row, 2),
-                )
-            })
-            .collect()
-    });
+    let rows: Vec<(String, i64, f64)> = rig
+        .wait(rig.db.with_reader(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT tool_name, shots_fired, damage_dealt FROM kill_tool_stats")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        }))
+        .unwrap();
     assert_eq!(rows, vec![("Stick".to_string(), 2, 15.0)]);
 }
 

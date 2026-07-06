@@ -21,9 +21,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use sqlx::Row;
-use tokio::runtime::Handle;
-
 use crate::bus_events::BusEvent;
 use crate::character_calc::ATTRIBUTE_SKILLS;
 use crate::clock::Clock;
@@ -49,7 +46,6 @@ struct SkillState {
 
 pub struct SkillTracker {
     db: Db,
-    runtime: Handle,
     clock: Arc<dyn Clock>,
     state: Mutex<SkillState>,
     /// Held for the lifetime of the tracker: the subscriptions are
@@ -59,10 +55,9 @@ pub struct SkillTracker {
 }
 
 impl SkillTracker {
-    pub fn new(bus: &Arc<EventBus>, db: Db, runtime: Handle, clock: Arc<dyn Clock>) -> Arc<Self> {
+    pub fn new(bus: &Arc<EventBus>, db: Db, clock: Arc<dyn Clock>) -> Arc<Self> {
         let tracker = Arc::new(Self {
             db,
-            runtime,
             clock,
             state: Mutex::new(SkillState::default()),
             _subscriptions: Mutex::new(Vec::new()),
@@ -90,16 +85,6 @@ impl SkillTracker {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Bridge a database future from either calling context (the
-    /// hunt tracker's dual shape).
-    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        if Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| self.runtime.block_on(future))
-        } else {
-            self.runtime.block_on(future)
-        }
     }
 
     /// Register a pending codex claim: suppress the next matching
@@ -170,18 +155,23 @@ impl SkillTracker {
             (session_id, skill_name, amount, ts_epoch)
         };
 
-        let old_level = self.block_on(async {
-            sqlx::query(
-                "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-                 ORDER BY scanned_at DESC LIMIT 1",
-            )
-            .bind(&skill_name)
-            .fetch_optional(self.db.read())
-            .await
-            .ok()
-            .flatten()
-            .and_then(|row| row.try_get::<f64, _>(0).ok())
-        });
+        let old_level = {
+            let skill_name = skill_name.clone();
+            self.db
+                .with_reader_blocking(move |conn| {
+                    use rusqlite::OptionalExtension as _;
+                    Ok(conn
+                        .query_row(
+                            "SELECT level FROM skill_calibrations WHERE skill_name = ? \
+                             ORDER BY scanned_at DESC LIMIT 1",
+                            rusqlite::params![skill_name],
+                            |row| row.get::<_, f64>(0),
+                        )
+                        .optional()?)
+                })
+                .ok()
+                .flatten()
+        };
 
         let is_attribute = ATTRIBUTE_SKILLS.contains(&skill_name.as_str());
         let mut ped_value: Option<f64> = None;
@@ -192,17 +182,17 @@ impl SkillTracker {
             if !is_attribute {
                 ped_value = Some(tt_value_of_gain(old_level, new_level));
             }
-            let result = self.block_on(async {
-                sqlx::query(
-                    "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                     VALUES (?, ?, 'chatlog', ?)",
-                )
-                .bind(&skill_name)
-                .bind(new_level)
-                .bind(ts_epoch)
-                .execute(self.db.write())
-                .await
-            });
+            let result = {
+                let skill_name = skill_name.clone();
+                self.db.with_writer_blocking(move |conn| {
+                    conn.execute(
+                        "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                         VALUES (?, ?, 'chatlog', ?)",
+                        rusqlite::params![skill_name, new_level, ts_epoch],
+                    )?;
+                    Ok(())
+                })
+            };
             // The original's raise aborts the rest of the handler
             // (contained by the bus): no gain row, no totals.
             if result.is_err() {
@@ -210,19 +200,17 @@ impl SkillTracker {
             }
         }
 
-        let result = self.block_on(async {
-            sqlx::query(
-                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-                 VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(&session_id)
-            .bind(ts_epoch)
-            .bind(&skill_name)
-            .bind(amount)
-            .bind(ped_value)
-            .execute(self.db.write())
-            .await
-        });
+        let result = {
+            let skill_name = skill_name.clone();
+            self.db.with_writer_blocking(move |conn| {
+                conn.execute(
+                    "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+                     VALUES (?, ?, ?, ?, ?)",
+                    rusqlite::params![session_id, ts_epoch, skill_name, amount, ped_value],
+                )?;
+                Ok(())
+            })
+        };
         if result.is_err() {
             return;
         }
@@ -241,9 +229,10 @@ impl SkillTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::bus_events::{SessionLifecyclePayload, SkillGainPayload, SkillGainTag};
     use crate::clock::MockClock;
-    use crate::db::{decoded_f64, Db};
+    use crate::db::Db;
 
     struct Rig {
         _dir: tempfile::TempDir,
@@ -266,7 +255,7 @@ mod tests {
             .unwrap();
         let bus = Arc::new(EventBus::new());
         let clock = Arc::new(MockClock::new(None, 0.0));
-        let tracker = SkillTracker::new(&bus, db.clone(), runtime.handle().clone(), clock.clone());
+        let tracker = SkillTracker::new(&bus, db.clone(), clock.clone());
         Rig {
             _dir: dir,
             runtime,
@@ -296,61 +285,75 @@ mod tests {
 
         fn gains_count(&self) -> i64 {
             self.runtime.block_on(async {
-                sqlx::query("SELECT COUNT(*) FROM skill_gains")
-                    .fetch_one(self.db.read())
+                self.db
+                    .with_reader(|conn| {
+                        Ok(
+                            conn.query_row("SELECT COUNT(*) FROM skill_gains", [], |row| {
+                                row.get::<_, i64>(0)
+                            })?,
+                        )
+                    })
                     .await
-                    .unwrap()
-                    .try_get(0)
                     .unwrap()
             })
         }
 
         fn calibrations(&self, name: &str) -> Vec<(f64, String)> {
+            let name = name.to_string();
             self.runtime.block_on(async {
-                sqlx::query(
-                    "SELECT level, source FROM skill_calibrations WHERE skill_name = ? \
-                     ORDER BY id",
-                )
-                .bind(name)
-                .fetch_all(self.db.read())
-                .await
-                .unwrap()
-                .iter()
-                .map(|row| (decoded_f64(row, 0), row.try_get(1).unwrap()))
-                .collect()
+                self.db
+                    .with_reader(move |conn| {
+                        let mut stmt = conn.prepare(
+                            "SELECT level, source FROM skill_calibrations WHERE skill_name = ? \
+                             ORDER BY id",
+                        )?;
+                        let rows = stmt.query_map(rusqlite::params![name], |row| {
+                            Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+                        })?;
+                        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+                    })
+                    .await
+                    .unwrap()
             })
         }
 
         fn seed_calibration(&self, name: &str, level: f64, scanned_at: f64) {
+            let name = name.to_string();
             self.runtime.block_on(async {
-                sqlx::query(
-                    "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                     VALUES (?, ?, 'scan', ?)",
-                )
-                .bind(name)
-                .bind(level)
-                .bind(scanned_at)
-                .execute(self.db.write())
-                .await
-                .unwrap();
+                self.db
+                    .with_writer(move |conn| {
+                        conn.execute(
+                            "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                             VALUES (?, ?, 'scan', ?)",
+                            rusqlite::params![name, level, scanned_at],
+                        )?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
             });
         }
 
         fn last_gain(&self) -> (String, f64, Option<f64>, f64) {
             self.runtime.block_on(async {
-                let row = sqlx::query(
-                    "SELECT skill_name, amount, ped_value, timestamp FROM skill_gains \
-                     ORDER BY id DESC LIMIT 1",
-                )
-                .fetch_one(self.db.read())
-                .await
-                .unwrap();
-                (
-                    row.try_get(0).unwrap(),
-                    decoded_f64(&row, 1),
-                    row.try_get(2).unwrap(),
-                    decoded_f64(&row, 3),
-                )
+                self.db
+                    .with_reader(|conn| {
+                        Ok(conn.query_row(
+                            "SELECT skill_name, amount, ped_value, timestamp FROM skill_gains \
+                             ORDER BY id DESC LIMIT 1",
+                            [],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, f64>(1)?,
+                                    row.get::<_, Option<f64>>(2)?,
+                                    row.get::<_, f64>(3)?,
+                                ))
+                            },
+                        )?)
+                    })
+                    .await
+                    .unwrap()
             })
         }
     }

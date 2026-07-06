@@ -5,10 +5,9 @@
 use chrono::{DateTime, Utc};
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 use eo_wire::normalizer::round_half_even;
-use sqlx::Row;
 
 use crate::bus_events::{BusEvent, SessionLifecyclePayload};
-use crate::db::{decoded_f64, DbError};
+use crate::db::DbError;
 use crate::mob_lookup_service::python_whitespace;
 use crate::ped::Ped;
 use crate::tracking_models::{ActiveSessionView, TrackingReadout, TrackingSession};
@@ -337,16 +336,19 @@ impl TrackerActor {
         // input mode the session was captured under so post-hoc UI
         // surfaces can choose label vocabulary; the value never mutates
         // after session start.
-        sqlx::query(
-            "INSERT INTO tracking_sessions \
-             (id, started_at, is_active, mob_tracking_mode) \
-             VALUES (?, ?, 1, ?)",
-        )
-        .bind(&session_id)
-        .bind(start_ts)
-        .bind(mode.as_str())
-        .execute(self.db.write())
-        .await?;
+        let insert_id = session_id.clone();
+        let mode_str = mode.as_str().to_string();
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO tracking_sessions \
+                     (id, started_at, is_active, mob_tracking_mode) \
+                     VALUES (?, ?, 1, ?)",
+                    rusqlite::params![insert_id, start_ts, mode_str],
+                )?;
+                Ok(())
+            })
+            .await?;
 
         // The fresh ActiveSession IS the session reset: every
         // session-scoped field starts at its documented initial
@@ -413,23 +415,27 @@ impl TrackerActor {
         // leaves the session fully live (still tracking, still hearing
         // events) rather than active-but-deaf; no event can interleave
         // meanwhile because the actor processes one message at a time.
-        let mut tx = self.db.write().begin().await?;
-        sqlx::query(
-            "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
-             heal_cost = ?, dangling_cost = ? WHERE id = ?",
-        )
-        .bind(instant_to_epoch(end_time))
-        .bind(heal_cost.value())
-        .bind(dangling_cost.value())
-        .bind(&session_id)
-        .execute(&mut *tx)
-        .await?;
-        // Auto-generate ledger gains derived from persisted loot rows.
-        Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_time).await?;
-        Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_time).await?;
-        crate::session_summary::write_session_summary(&mut tx, &session_id).await?;
-        crate::daily_rollup::refresh_session_days(&mut tx, &session_id).await?;
-        tx.commit().await?;
+        let sid = session_id.clone();
+        let end_epoch = instant_to_epoch(end_time);
+        let heal_value = heal_cost.value();
+        let dangling_value = dangling_cost.value();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
+                     heal_cost = ?, dangling_cost = ? WHERE id = ?",
+                    rusqlite::params![end_epoch, heal_value, dangling_value, sid],
+                )?;
+                // Auto-generate ledger gains derived from persisted loot rows.
+                Self::create_enhancer_rebate_ledger_entry(&tx, &sid, end_time)?;
+                Self::create_shrapnel_ledger_entry(&tx, &sid, end_time)?;
+                crate::session_summary::write_session_summary(&tx, &sid)?;
+                crate::daily_rollup::refresh_session_days(&tx, &sid)?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
         self.unsubscribe_handlers();
 
         // Session end is a quiescent boundary: checkpoint and truncate the WAL
@@ -527,33 +533,41 @@ impl HuntTracker {
             });
         };
 
-        let skill_row =
-            sqlx::query("SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains WHERE session_id = ?")
-                .bind(&aggregated.session_id)
-                .fetch_one(self.db.read())
-                .await?;
-        let skill_tt = decoded_f64(&skill_row, 0);
+        let skill_session_id = aggregated.session_id.clone();
+        let skill_tt = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains WHERE session_id = ?",
+                    rusqlite::params![skill_session_id],
+                    |row| row.get::<_, f64>(0),
+                )?)
+            })
+            .await?;
 
         // Latest-session notable-event feed (top 20). The live
         // session is the latest session, so this single read
         // serves the activity feed.
-        let rows = sqlx::query(
-            "SELECT event_type, mob_or_item, value_ped, timestamp \
-             FROM notable_events WHERE session_id = ? \
-             ORDER BY timestamp DESC LIMIT 20",
-        )
-        .bind(&aggregated.session_id)
-        .fetch_all(self.db.read())
-        .await?;
-        let mut notable_rows = Vec::new();
-        for row in rows {
-            notable_rows.push((
-                row.try_get::<String, _>(0)?,
-                row.try_get::<String, _>(1)?,
-                decoded_f64(&row, 2),
-                row.try_get::<Option<f64>, _>(3)?,
-            ));
-        }
+        let feed_session_id = aggregated.session_id.clone();
+        let notable_rows: Vec<(String, String, f64, Option<f64>)> = self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT event_type, mob_or_item, value_ped, timestamp \
+                     FROM notable_events WHERE session_id = ? \
+                     ORDER BY timestamp DESC LIMIT 20",
+                )?;
+                let mapped = stmt.query_map(rusqlite::params![feed_session_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
+                        row.get::<_, Option<f64>>(3)?,
+                    ))
+                })?;
+                Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+            })
+            .await?;
 
         let round_opt =
             |value: Option<f64>, places: usize| value.map(|inner| round_half_even(inner, places));
