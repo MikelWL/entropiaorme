@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
+#[cfg(test)]
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -67,13 +68,6 @@ pub enum AnalyticsError {
 impl AnalyticsService {
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self { db, clock }
-    }
-
-    /// The writer pool, for the rollup-coupled ledger / inventory mutations
-    /// that stay on a single sqlx transaction (the raw write and its rollup
-    /// refresh must commit together).
-    fn write(&self) -> &SqlitePool {
-        self.db.write()
     }
 }
 
@@ -717,7 +711,9 @@ async fn overview_impl(db: &Db, now: f64, period: &str) -> Result<Value, DbError
     // The lazy rollup heal is a write (route it to the writer, never a
     // reader-held connection); every subsequent aggregate is a plain read,
     // run as one synchronous unit on a reader-core connection.
-    let watermark = daily_rollup::heal_rollups(db.write(), now).await?;
+    let watermark = db
+        .with_writer(move |conn| daily_rollup::heal_rollups(conn, now))
+        .await?;
     let epoch_start = period_epoch(period, now);
     db.with_reader(move |conn| overview_read(conn, now, epoch_start, &watermark))
         .await
@@ -1120,7 +1116,8 @@ async fn load_activity_sessions(db: &Db) -> Result<Vec<SessionAgg>, DbError> {
     // routed to the writer) so a read after a summary-version bump (or on a
     // fresh install) sees current rows; the read itself runs as one
     // synchronous unit on a reader-core connection.
-    crate::session_summary::heal_summaries(db.write()).await?;
+    db.with_writer(|conn| crate::session_summary::heal_summaries(conn))
+        .await?;
     db.with_reader(activity_sessions_read).await
 }
 
@@ -1594,21 +1591,26 @@ impl AnalyticsService {
         let id = Uuid::new_v4().to_string();
         // One transaction over the insert and the rollup refresh: a
         // backdated entry relands its day's rollup with the write.
-        let mut tx = self.write().begin().await?;
-        sqlx::query(
-            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(date)
-        .bind(kind)
-        .bind(description)
-        .bind(amount)
-        .bind(tag)
-        .execute(&mut *tx)
-        .await?;
-        daily_rollup::refresh_days(&mut tx, [date]).await?;
-        tx.commit().await?;
+        let (id_c, date_c, kind_c, desc_c, tag_c) = (
+            id.clone(),
+            date.to_string(),
+            kind.to_string(),
+            description.to_string(),
+            tag.to_string(),
+        );
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![id_c, date_c, kind_c, desc_c, amount, tag_c],
+                )?;
+                daily_rollup::refresh_days(&tx, [date_c.as_str()])?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
         Ok(json!({
             "id": id, "date": date, "type": kind,
             "description": description, "amount": amount, "tag": tag,
@@ -1620,22 +1622,32 @@ impl AnalyticsService {
     pub async fn delete_ledger_entry(&self, entry_id: &str) -> Result<bool, AnalyticsError> {
         // Capture the entry's day before deleting so its rollup relands
         // in the same transaction; a vanished entry reports not-found.
-        let mut tx = self.write().begin().await?;
-        let date: Option<String> =
-            sqlx::query_scalar("SELECT date FROM ledger_entries WHERE id = ?")
-                .bind(entry_id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let Some(date) = date else {
-            return Ok(false);
-        };
-        sqlx::query("DELETE FROM ledger_entries WHERE id = ?")
-            .bind(entry_id)
-            .execute(&mut *tx)
+        let entry_id = entry_id.to_string();
+        let existed = self
+            .db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let date: Option<String> = tx
+                    .query_row(
+                        "SELECT date FROM ledger_entries WHERE id = ?",
+                        rusqlite::params![entry_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let Some(date) = date else {
+                    return Ok(false);
+                };
+                tx.execute(
+                    "DELETE FROM ledger_entries WHERE id = ?",
+                    rusqlite::params![entry_id],
+                )?;
+                daily_rollup::refresh_days(&tx, [date])?;
+                tx.commit()?;
+                Ok(true)
+            })
             .await?;
-        daily_rollup::refresh_days(&mut tx, [date]).await?;
-        tx.commit().await?;
-        Ok(true)
+        Ok(existed)
     }
 
     /// The ledger presets, in creation order.
@@ -1925,8 +1937,10 @@ impl AnalyticsService {
             .map(str::to_string)
             .unwrap_or_else(|| self.default_date());
 
-        let mut tx = self.write().begin().await?;
-        let ledger_entry = if delta != 0.0 {
+        // The realised sale writes its ledger row (when non-zero) and removes
+        // the item in one writer-core transaction; the rollup refresh commits
+        // atomically with the ledger insert.
+        let ledger_write: Option<(String, String, &'static str, String, f64)> = if delta != 0.0 {
             let entry_id = Uuid::new_v4().to_string();
             let entry_type = if delta > 0.0 { "markup" } else { "expense" };
             let amount = delta.abs();
@@ -1935,31 +1949,47 @@ impl AnalyticsService {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("Inventory Sale: {name}"));
-            sqlx::query(
-                "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&entry_id)
-            .bind(&sold_at)
-            .bind(entry_type)
-            .bind(&description)
-            .bind(amount)
-            .bind(INVENTORY_SALE_TAG)
-            .execute(&mut *tx)
+            Some((entry_id, sold_at, entry_type, description, amount))
+        } else {
+            None
+        };
+        let item_id_owned = item_id.to_string();
+        let ledger_for_closure = ledger_write.clone();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                if let Some((entry_id, sold_at, entry_type, description, amount)) =
+                    &ledger_for_closure
+                {
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            entry_id,
+                            sold_at,
+                            entry_type,
+                            description,
+                            amount,
+                            INVENTORY_SALE_TAG
+                        ],
+                    )?;
+                    daily_rollup::refresh_days(&tx, [sold_at.as_str()])?;
+                }
+                tx.execute(
+                    "DELETE FROM inventory_items WHERE id = ?",
+                    rusqlite::params![item_id_owned],
+                )?;
+                tx.commit()?;
+                Ok(())
+            })
             .await?;
-            daily_rollup::refresh_days(&mut tx, [&sold_at]).await?;
-            json!({
+        let ledger_entry = match ledger_write {
+            Some((entry_id, sold_at, entry_type, description, amount)) => json!({
                 "id": entry_id, "date": sold_at, "type": entry_type,
                 "description": description, "amount": amount, "tag": INVENTORY_SALE_TAG,
-            })
-        } else {
-            Value::Null
+            }),
+            None => Value::Null,
         };
-        sqlx::query("DELETE FROM inventory_items WHERE id = ?")
-            .bind(item_id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
         Ok(Some(
             json!({"ledgerEntry": ledger_entry, "soldItem": sold_item}),
         ))
@@ -1971,6 +2001,17 @@ impl AnalyticsService {
     /// The reader pool, for tests that inspect projection state directly.
     fn read(&self) -> &SqlitePool {
         self.db.read()
+    }
+
+    /// The writer pool, for the sqlx-side seeding the write-handler tests do.
+    fn write(&self) -> &SqlitePool {
+        self.db.write()
+    }
+
+    /// The database handle, for tests that drive the synchronous core
+    /// (the rollup heal) directly.
+    fn db(&self) -> &Db {
+        &self.db
     }
 }
 
@@ -2012,8 +2053,8 @@ mod tests {
     /// 2026-06-05T00:00:00Z: heals the rollup watermark past the
     /// backdated days these tests write to, so the write hooks are
     /// observable.
-    async fn heal_to_june_fifth(pool: &SqlitePool) {
-        daily_rollup::heal_rollups(pool, 1_780_617_600.0)
+    async fn heal_to_june_fifth(db: &Db) {
+        db.with_writer(move |conn| daily_rollup::heal_rollups(conn, 1_780_617_600.0))
             .await
             .unwrap();
     }
@@ -2032,7 +2073,7 @@ mod tests {
     #[tokio::test]
     async fn ledger_create_and_delete_reland_their_days_rollups() {
         let (_dir, service) = write_service().await;
-        heal_to_june_fifth(service.write()).await;
+        heal_to_june_fifth(service.db()).await;
 
         // A backdated create lands its day's rollup with the insert.
         let body = service
@@ -2057,7 +2098,7 @@ mod tests {
     #[tokio::test]
     async fn inventory_sale_relands_the_sold_days_rollup() {
         let (_dir, service) = write_service().await;
-        heal_to_june_fifth(service.write()).await;
+        heal_to_june_fifth(service.db()).await;
         sqlx::query(
             "INSERT INTO inventory_items (id, name, tt_value, markup_paid, notes, acquired_at) \
              VALUES ('i1', 'Gun', 10.0, 2.0, NULL, '2026-05-01')",

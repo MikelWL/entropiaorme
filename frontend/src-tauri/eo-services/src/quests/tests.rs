@@ -43,7 +43,7 @@ async fn service_with_clock(dir: &std::path::Path) -> ServiceRig {
     let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let svc = QuestService::start_with_id_source(
         &bus,
-        Db::from_pool(pool.clone()),
+        db.clone(),
         clock.clone(),
         Handle::current(),
         Arc::new(move || {
@@ -89,7 +89,10 @@ fn full_quest_payload() -> Value {
 #[tokio::test]
 async fn quest_claim_undo_relands_the_days_rollups() {
     let dir = tempfile::tempdir().unwrap();
-    let (_svc, pool) = service(dir.path()).await;
+    let db = Db::open(&dir.path().join("entropia_orme.db"))
+        .await
+        .unwrap();
+    let pool = db.write().clone();
 
     // A historical skill-reward claim and a liquid-reward ledger
     // entry, both two days behind the heal watermark.
@@ -109,9 +112,11 @@ async fn quest_claim_undo_relands_the_days_rollups() {
     .execute(&pool)
     .await
     .unwrap();
-    crate::daily_rollup::heal_rollups(&pool, claimed_at + 3.0 * 86_400.0)
-        .await
-        .unwrap();
+    db.with_writer(move |conn| {
+        crate::daily_rollup::heal_rollups(conn, claimed_at + 3.0 * 86_400.0)
+    })
+    .await
+    .unwrap();
     let day = crate::daily_rollup::epoch_day(claimed_at);
     let quest_pes: Option<f64> =
         sqlx::query_scalar("SELECT quest_pes FROM daily_rollups WHERE day = ?")
@@ -123,14 +128,16 @@ async fn quest_claim_undo_relands_the_days_rollups() {
 
     // Both undo paths reland their day inside the caller's commit
     // semantics.
-    let mut conn = pool.acquire().await.unwrap();
-    assert!(delete_latest_quest_claim(&mut conn, 7).await.unwrap());
-    assert!(
-        delete_latest_quest_reward_entry(&mut conn, "Daily Feffoid", Ped(4.0))
-            .await
-            .unwrap()
-    );
-    drop(conn);
+    let (claim_undone, reward_undone) = db
+        .with_writer(move |conn| {
+            let claim_undone = delete_latest_quest_claim(conn, 7)?;
+            let reward_undone = delete_latest_quest_reward_entry(conn, "Daily Feffoid", Ped(4.0))?;
+            Ok((claim_undone, reward_undone))
+        })
+        .await
+        .unwrap();
+    assert!(claim_undone);
+    assert!(reward_undone);
     let quest_pes: Option<f64> =
         sqlx::query_scalar("SELECT quest_pes FROM daily_rollups WHERE day = ?")
             .bind(&day)

@@ -17,10 +17,9 @@
 //! rebuild; it is excluded from the comparison. Every column that carries
 //! meaning is included.
 
-use serde_json::Value;
-use sqlx::SqlitePool;
+use serde_json::{Map, Value};
 
-use crate::db::{row_to_json, Db, DbError};
+use crate::db::{Db, DbError};
 use crate::{daily_rollup, session_summary};
 
 /// A projection table and the deterministic, `computed_at`-excluding
@@ -85,11 +84,46 @@ impl RebuildReport {
     }
 }
 
+/// One rusqlite row to the same canonical, stored-value-typed JSON the
+/// snapshot catalogue's [`crate::db::row_to_json`] produces: integer,
+/// real, text, or null keyed by column name. Both the incremental and the
+/// rebuilt snapshots pass through this one shaper, so the equality proof
+/// compares like with like.
+fn row_to_json_sync(row: &rusqlite::Row, columns: &[String]) -> Result<Value, DbError> {
+    let mut object = Map::new();
+    for (index, name) in columns.iter().enumerate() {
+        let value = match row.get_ref(index)? {
+            rusqlite::types::ValueRef::Null => Value::Null,
+            rusqlite::types::ValueRef::Integer(value) => Value::from(value),
+            rusqlite::types::ValueRef::Real(value) => Value::from(value),
+            rusqlite::types::ValueRef::Text(text) => {
+                Value::from(String::from_utf8(text.to_vec()).expect("snapshot text is UTF-8"))
+            }
+            rusqlite::types::ValueRef::Blob(_) => {
+                return Err(DbError::UnsupportedValueType {
+                    type_name: "BLOB".to_string(),
+                    column: name.clone(),
+                })
+            }
+        };
+        object.insert(name.clone(), value);
+    }
+    Ok(Value::Object(object))
+}
+
 /// Snapshot one projection's rows in its deterministic order, each row
 /// canonically serialised (typed by its stored value) for comparison.
-async fn snapshot(pool: &SqlitePool, sql: &'static str) -> Result<Vec<Value>, DbError> {
-    let rows = sqlx::query(sql).fetch_all(pool).await?;
-    rows.iter().map(row_to_json).collect()
+fn snapshot(conn: &rusqlite::Connection, sql: &'static str) -> Result<Vec<Value>, DbError> {
+    let mut stmt = conn.prepare(sql)?;
+    let columns: Vec<String> = stmt
+        .column_names()
+        .iter()
+        .map(|&name| name.to_string())
+        .collect();
+    let rows = stmt
+        .query_map([], |row| Ok(row_to_json_sync(row, &columns)))?
+        .collect::<rusqlite::Result<Vec<Result<Value, DbError>>>>()?;
+    rows.into_iter().collect()
 }
 
 /// Heal the read models current, then drop and rebuild every one of them
@@ -104,32 +138,33 @@ async fn snapshot(pool: &SqlitePool, sql: &'static str) -> Result<Vec<Value>, Db
 /// reads back its own committed writes on the same serialised connection,
 /// so there is no cross-connection visibility window. Off the hot path.
 pub async fn rebuild_and_verify(db: &Db, now: f64) -> Result<RebuildReport, DbError> {
-    let pool = db.write();
+    db.with_writer(move |conn| {
+        // Bring the incremental projections fully current, so the comparison is
+        // against an up-to-date maintained state rather than a mid-heal one.
+        daily_rollup::heal_rollups(conn, now)?;
+        session_summary::heal_summaries(conn)?;
 
-    // Bring the incremental projections fully current, so the comparison is
-    // against an up-to-date maintained state rather than a mid-heal one.
-    daily_rollup::heal_rollups(pool, now).await?;
-    session_summary::heal_summaries(pool).await?;
+        let mut incremental = Vec::with_capacity(PROJECTIONS.len());
+        for projection in &PROJECTIONS {
+            incremental.push(snapshot(conn, projection.snapshot_sql)?);
+        }
 
-    let mut incremental = Vec::with_capacity(PROJECTIONS.len());
-    for projection in &PROJECTIONS {
-        incremental.push(snapshot(pool, projection.snapshot_sql).await?);
-    }
+        // Rebuild every read model from the raw tables alone.
+        daily_rollup::rebuild_rollups(conn, now)?;
+        session_summary::rebuild_summaries(conn)?;
 
-    // Rebuild every read model from the raw tables alone.
-    daily_rollup::rebuild_rollups(pool, now).await?;
-    session_summary::rebuild_summaries(pool).await?;
-
-    let mut tables = Vec::with_capacity(PROJECTIONS.len());
-    for (projection, maintained) in PROJECTIONS.iter().zip(incremental) {
-        let rebuilt = snapshot(pool, projection.snapshot_sql).await?;
-        tables.push(TableVerdict {
-            table: projection.table,
-            matched: rebuilt == maintained,
-            row_count: rebuilt.len(),
-        });
-    }
-    Ok(RebuildReport { tables })
+        let mut tables = Vec::with_capacity(PROJECTIONS.len());
+        for (projection, maintained) in PROJECTIONS.iter().zip(incremental) {
+            let rebuilt = snapshot(conn, projection.snapshot_sql)?;
+            tables.push(TableVerdict {
+                table: projection.table,
+                matched: rebuilt == maintained,
+                row_count: rebuilt.len(),
+            });
+        }
+        Ok(RebuildReport { tables })
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -226,7 +261,9 @@ mod tests {
         seed(&db).await;
         // Heal so the incremental rows exist, then poison one: this is the
         // projection-staleness class the verifier exists to catch.
-        daily_rollup::heal_rollups(db.write(), NOW).await.unwrap();
+        db.with_writer(move |conn| daily_rollup::heal_rollups(conn, NOW))
+            .await
+            .unwrap();
         run(
             &db,
             "UPDATE daily_rollups SET loot_tt = 999.0 WHERE day = '2001-09-05'",
