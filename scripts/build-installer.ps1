@@ -15,7 +15,7 @@
        (themed WixStdBA wrapping the MSI + bafunctions into one setup.exe.)
 
   Output:
-    frontend/src-tauri/target/release/bundle/burn/EntropiaOrme-<version>-x64-setup.exe
+    app/src-tauri/target/release/bundle/burn/EntropiaOrme-<version>-x64-setup.exe
 
   The release binary and its bundled resources are produced as a side effect of
   stage 1 (under target/release), which is what the portable ZIP is staged from.
@@ -29,13 +29,13 @@ param()
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$conf     = Join-Path $repoRoot "frontend\src-tauri\entropia-orme\tauri.conf.json"
-$burnDir  = Join-Path $repoRoot "frontend\src-tauri\entropia-orme\installer\burn"
+$conf     = Join-Path $repoRoot "app\src-tauri\entropia-orme\tauri.conf.json"
+$burnDir  = Join-Path $repoRoot "app\src-tauri\entropia-orme\installer\burn"
 $bafDir   = Join-Path $burnDir "bafunctions"
 $version  = (Get-Content $conf -Raw | ConvertFrom-Json).version
 
-$msi    = Join-Path $repoRoot "frontend\src-tauri\target\release\bundle\msi\EntropiaOrme_${version}_x64_en-US.msi"
-$outDir = Join-Path $repoRoot "frontend\src-tauri\target\release\bundle\burn"
+$msi    = Join-Path $repoRoot "app\src-tauri\target\release\bundle\msi\EntropiaOrme_${version}_x64_en-US.msi"
+$outDir = Join-Path $repoRoot "app\src-tauri\target\release\bundle\burn"
 $setup  = Join-Path $outDir "EntropiaOrme-${version}-x64-setup.exe"
 $wixExt = "WixToolset.BootstrapperApplications.wixext"
 
@@ -57,7 +57,7 @@ if ($env:TAURI_SIGNING_PRIVATE_KEY) {
     # / TAURI_SIGNING_PRIVATE_KEY_PASSWORD in the environment (the release
     # pipeline maps both as secrets scoped to this step), so the private key
     # never reaches the command line or the filesystem here.
-    Push-Location (Join-Path $repoRoot "frontend")
+    Push-Location (Join-Path $repoRoot "app")
     try {
         & npx tauri signer sign $msi | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "tauri signer sign failed (exit $LASTEXITCODE)" }

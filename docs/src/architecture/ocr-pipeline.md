@@ -25,7 +25,7 @@ diff-review screen where the user accepts (persisting the values) or rejects
 The recogniser is an ONNX model. Specifically it is the SVTRv2-mobile text
 recogniser, distributed as an ONNX graph and executed through ONNX Runtime.
 The engine loads the bundled model
-(`frontend/src-tauri/entropia-orme/resources/models/svtrv2_rec.onnx`) through
+(`app/src-tauri/entropia-orme/resources/models/svtrv2_rec.onnx`) through
 the `ort` crate. On Windows with a DirectX 12 GPU the session runs under the
 **DirectML** execution provider; otherwise it falls back to the **CPU**
 execution provider. The engine records which provider was actually committed.
@@ -42,21 +42,21 @@ Two consumers share the recogniser:
 | Repair-cost read | A single small numeric region on the repair terminal | A parsed PED cost |
 
 This page focuses on the skill-panel scan; the repair-cost read
-(`frontend/src-tauri/eo-services/src/repair_ocr.rs`) reuses the same recogniser
+(`app/src-tauri/eo-services/src/repair_ocr.rs`) reuses the same recogniser
 for a single on-demand number and is summarised under
 [The shared repair-cost read](#the-shared-repair-cost-read).
 
 ## The stages in order
 
 A captured page travels through a fixed sequence. The orchestration lives in
-`read_skill_panel` (`frontend/src-tauri/eo-services/src/skill_panel.rs`); the
+`read_skill_panel` (`app/src-tauri/eo-services/src/skill_panel.rs`); the
 device-free post-processing is factored into the same module so it can be
 unit-tested without the engine, file IO, or screen-capture glue.
 
 ### 1. Screen capture
 
 `capture_region_png`
-(`frontend/src-tauri/eo-services/src/screen_capture.rs`) is the single capture
+(`app/src-tauri/eo-services/src/screen_capture.rs`) is the single capture
 path. It takes a screen rectangle (`x`, `y`, `width`, `height`) and returns
 PNG-encoded bytes, so each page is stored as a self-contained PNG for preview
 and persistence; the bytes decode back to BGR, keeping the preview and
@@ -67,7 +67,7 @@ logic stays independent of the platform capture mechanism.
 ### 2. Image decode and preprocess
 
 When recognition runs, the stored PNG is decoded lazily. `load_bgr_png`
-(`frontend/src-tauri/eo-services/src/ocr_engine.rs`) turns the PNG byte-string
+(`app/src-tauri/eo-services/src/ocr_engine.rs`) turns the PNG byte-string
 into a BGR HWC `uint8` array.
 
 Each per-cell crop is then shaped for the model. The recogniser's preprocess
@@ -76,7 +76,7 @@ resizes the crop to a fixed height of 48 pixels, normalises pixel values as
 the width. The padded width is `int(48 * max(w / h, 320 / 48))`: a crop wider
 than the `320 / 48` aspect floor pads to track its own aspect ratio, while
 narrower crops pad out to the floor width. `preprocess`
-(`frontend/src-tauri/eo-services/src/ocr_engine.rs`) implements this
+(`app/src-tauri/eo-services/src/ocr_engine.rs`) implements this
 resize-normalise-pad shape, with its bilinear resize written as a byte-for-byte
 match of OpenCV's fixed-point `INTER_LINEAR` path so the input tensor is exact.
 
@@ -89,7 +89,7 @@ logits. The engine decodes those logits and produces a `(text, score)` pair:
   wins a tie), consecutive-duplicate timesteps collapsed against the previous
   timestep, and the blank class dropped. The decode alphabet is the PaddleOCR v1
   key set with the CTC blank prepended and the space character appended
-  (`load_dict` in `frontend/src-tauri/eo-services/src/ocr_engine.rs`).
+  (`load_dict` in `app/src-tauri/eo-services/src/ocr_engine.rs`).
 * **Score** is the mean of the kept timesteps' probabilities, or `0.0` when no
   characters survive.
 
@@ -114,7 +114,7 @@ and cell name. Each cell type is parsed differently:
 | `level` | First integer run of the OCR text (`parse_level`) | An integer, or `None` |
 | `bar` | Fill-ratio estimate over the bar pixels (`parse_bar_fill`); no OCR | A fraction in `[0, 1)` |
 
-`parse_level` (`frontend/src-tauri/eo-services/src/skill_panel.rs`) reads the
+`parse_level` (`app/src-tauri/eo-services/src/skill_panel.rs`) reads the
 first run of digits from the level cell's recognised text. `parse_bar_fill`
 (same module) estimates the fractional progress within the current level
 directly from the bar crop's pixels: it takes the per-column mean luminance,
@@ -128,7 +128,7 @@ and flipped to `0.0`. The grey conversion is a fixed-point BGR-to-grey path.
 ### 5. Fuzzy skill-name resolution
 
 The recognised name text is a lookup key, not display text. `fuzzy_resolve`
-(`frontend/src-tauri/eo-services/src/skill_panel.rs`) resolves it against the
+(`app/src-tauri/eo-services/src/skill_panel.rs`) resolves it against the
 canonical skill vocabulary snapshot, returning the chosen canonical entry, a
 score, and the top candidates. Resolution proceeds in tiers and stops at the
 first that matches:
@@ -144,7 +144,7 @@ first that matches:
    best-scoring vocabulary entry is selected as the canonical name.
 
 The canonical entry is what gets persisted. `extract_top`
-(`frontend/src-tauri/eo-services/src/fuzzy_match.rs`) implements the WRatio
+(`app/src-tauri/eo-services/src/fuzzy_match.rs`) implements the WRatio
 scoring that drives the fuzzy tier.
 
 ### 6. Aggregation into a name-to-level map
@@ -155,14 +155,14 @@ value (`int_level + bar_fill`); a row whose level cell yielded no integer has a
 `None` level even when a bar was read. Rows whose name does not resolve are
 still emitted (with `name = None`) and the caller decides their fate. The
 per-page extractor wired in the composition root
-(`frontend/src-tauri/entropia-orme/src/composition.rs`) then filters to rows
+(`app/src-tauri/entropia-orme/src/composition.rs`) then filters to rows
 that have both a resolved name and a non-`None` level, yielding a
 `{canonical_name: level}` map for the page.
 
 Across a multi-page scan the per-page maps merge in page order, with later
 pages overwriting earlier entries for a duplicated name. First-seen ordering is
 preserved while the same later-page-wins overwrite applies (`extract_levels` in
-`frontend/src-tauri/eo-services/src/skill_scan_manual.rs`).
+`app/src-tauri/eo-services/src/skill_scan_manual.rs`).
 
 ### 7. Persistence via the completion callback
 
@@ -178,10 +178,10 @@ concern.
 
 The user-driven flow is a small state machine over an owned scan state. It is
 implemented by `SkillScanManual`
-(`frontend/src-tauri/eo-services/src/skill_scan_manual.rs`) and exposed over
+(`app/src-tauri/eo-services/src/skill_scan_manual.rs`) and exposed over
 typed Tauri commands by the scan and tracking facades
-(`frontend/src-tauri/eo-api/src/scan.rs` and
-`frontend/src-tauri/eo-api/src/tracking.rs`).
+(`app/src-tauri/eo-api/src/scan.rs` and
+`app/src-tauri/eo-api/src/tracking.rs`).
 
 ### Phases
 
@@ -248,7 +248,7 @@ rest of the application's eventing.
 Two committed data files drive the parse:
 
 * **Panel geometry**
-  (`frontend/src-tauri/entropia-orme/resources/panel_geometry.json`) defines
+  (`app/src-tauri/entropia-orme/resources/panel_geometry.json`) defines
   the per-cell grid for each panel. The `skill` entry declares the row count
   (`n_rows`) and, per cell (`name`, `level`, `bar`), the left/right x bounds,
   the y-offset of the first and last row's top, and the cell height. Row tops
@@ -259,7 +259,7 @@ Two committed data files drive the parse:
   makes the slicer panel-shape-agnostic: a recalibration changes the file, not
   the code.
 * **Skill vocabulary snapshot**
-  (`frontend/src-tauri/entropia-orme/resources/snapshot/skills.json`) is the
+  (`app/src-tauri/entropia-orme/resources/snapshot/skills.json`) is the
   canonical list of skill names that fuzzy resolution matches against. Each
   entry carries a `name` (plus auxiliary fields such as category and HP
   increase); the OCR path reads the `name` values to form the vocabulary. The
@@ -276,7 +276,7 @@ run over every graded cell and its raw exact-match count is held to a committed
 ground-truth figure; the engine must not fall below it.
 
 The bench is implemented in
-`frontend/src-tauri/eo-services/tests/ocr_bench_differential.rs`. It grades 594
+`app/src-tauri/eo-services/tests/ocr_bench_differential.rs`. It grades 594
 data cells and asserts the engine's raw-exact count is at least the committed
 figure of 262 over the same cells. The raw exact count is strict against
 screen-verbatim grading: spacing and case drift in the raw model text is
@@ -288,7 +288,7 @@ are held locally and kept out of the public tree, so the test runs only when
 `EO_OCR_BENCH_DIR` points at the corpus and the ONNX Runtime library is
 loadable; otherwise it skips with its reason stated rather than passing
 vacuously. The same host-gating applies to the provider-selection tests in
-`frontend/src-tauri/eo-services/src/ocr_engine.rs`, which additionally run only
+`app/src-tauri/eo-services/src/ocr_engine.rs`, which additionally run only
 on Windows, where the bundled Windows ONNX Runtime build is present.
 
 The rationale for pinning equivalence to this recorded corpus, rather than
@@ -302,7 +302,7 @@ panel. Given the repair terminal's region (derived from the live game window),
 it captures one frame, recognises the cost text, and parses it into a PED value:
 commas are read as decimal points, spaces are dropped, and the first digit run
 with an optional single fraction is taken (`parse_cost` in
-`frontend/src-tauri/eo-services/src/repair_ocr.rs`). Each failure leg (window
+`app/src-tauri/eo-services/src/repair_ocr.rs`). Each failure leg (window
 not found, invalid region, capture failure, engine unavailable) surfaces a
 distinct error while still returning a zeroed cost, so the caller's contract is
 preserved. It shares the capture and recognition seams with the skill scan but

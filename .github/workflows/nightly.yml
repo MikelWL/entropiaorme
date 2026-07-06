@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -38,7 +38,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6190aa5fb88a88ee71c12769924bbe63a9ab152e # 1.96.0 (branch SHA; dtolnay has no semver release tags)
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline; PR and merge-queue
           # runs restore read-only so a branch cannot seed or poison the cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -51,7 +51,7 @@ jobs:
       # to the backend members, keeping the Tauri-coupled shell out of the
       # build graph entirely. --in-place because member tests read committed
       # fixtures from the repo outside this cargo workspace (for example the
-      # relocated corpus under frontend/src-tauri/fixtures/), which
+      # relocated corpus under app/src-tauri/fixtures/), which
       # cargo-mutants' default copied build tree does not contain. Exit codes 2
       # (missed mutants) and 3 (timed-out mutants) are outcome reports, tolerated
       # here because the floors step below is the acceptance bar (it counts a
@@ -73,7 +73,7 @@ jobs:
         with:
           name: mutation-badge
           # Repo-root relative: upload-artifact ignores the job's working-directory.
-          path: frontend/src-tauri/mutation.json
+          path: app/src-tauri/mutation.json
           if-no-files-found: error
           retention-days: 1
       # The acceptance gate: enforce the per-file floors (no --badge-out, so this
@@ -94,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

@@ -6,8 +6,8 @@ forward-only migration mechanism, and the bundled game-data snapshot that lives
 outside SQLite entirely.
 
 The authoritative schema is the migration set under
-`frontend/src-tauri/eo-services/migrations/`, applied by the embedded runner in
-`frontend/src-tauri/eo-services/src/db/`. The set holds a version-33 baseline
+`app/src-tauri/eo-services/migrations/`, applied by the embedded runner in
+`app/src-tauri/eo-services/src/db/`. The set holds a version-33 baseline
 migration, `0001_schema_baseline.sql`, which creates the complete base schema
 (tables, indexes, and the timestamp-back-fill triggers) and stamps the
 schema-version row, followed by forward-only additions:
@@ -594,7 +594,7 @@ The game-fact data the application reasons over (weapons, mobs, skills,
 professions, and the rest) ships as a snapshot that is **not** stored in SQLite.
 `GameDataStore` (`eo-services/src/game_data_store.rs`) loads it once at startup
 from per-endpoint JSON files under
-`frontend/src-tauri/entropia-orme/resources/snapshot/` and serves all queries
+`app/src-tauri/entropia-orme/resources/snapshot/` and serves all queries
 from memory. Each file is named for its endpoint (the file stem becomes the
 endpoint key); most files hold a JSON list, while `skill_ranks` holds a single
 object that the store wraps in a one-element list.

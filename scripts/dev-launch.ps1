@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 # Resolve the repo root from this script's location (scripts/ subdir).
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$frontendDir = Join-Path $repoRoot "frontend"
+$appDir = Join-Path $repoRoot "app"
 
 # The app is a single binary: the backend runs in-process inside the Tauri
 # shell in every mode, including `tauri dev`, and the webview reaches it over
@@ -15,12 +15,12 @@ $frontendDir = Join-Path $repoRoot "frontend"
 # points the in-process backend at a per-checkout data directory. Parallel
 # checkouts coexist by giving each its own values in its own .env.local.
 
-if (-not (Test-Path $frontendDir)) {
-    Write-Error "Missing frontend directory at $frontendDir."
+if (-not (Test-Path $appDir)) {
+    Write-Error "Missing app directory at $appDir."
 }
 
 # Launch the single dev process in the foreground. `tauri:dev` runs
 # build-dev-config.mjs (which writes the env-driven devUrl overlay) and then
 # `tauri dev`, which builds and runs the shell with the backend in-process and
 # spawns Vite as a child, tailing both. Ctrl+C tears the whole stack down.
-npm --prefix $frontendDir run tauri:dev
+npm --prefix $appDir run tauri:dev

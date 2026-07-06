@@ -1,0 +1,66 @@
+{
+	"name": "entropia-orme-app",
+	"private": true,
+	"version": "0.2.1",
+	"description": "Tauri shell + Svelte frontend for EntropiaOrme, an analytical desktop tool for Entropia Universe.",
+	"type": "module",
+	"license": "MIT",
+	"author": "Mikel Williams-Lekuona <MikelWL@protonmail.com>",
+	"engines": {
+		"node": ">=20.19.0"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "svelte-kit sync && vite build",
+		"preview": "vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"tauri": "tauri",
+		"tauri:dev": "node src-tauri/entropia-orme/build-dev-config.mjs && tauri dev --config src-tauri/entropia-orme/tauri.dev.conf.json --config src-tauri/entropia-orme/tauri.dev.local.json",
+		"tauri:build": "tauri build --no-bundle",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"test:e2e": "wdio run e2e/wdio.conf.mjs",
+		"test:visual": "wdio run e2e/wdio.conf.mjs --suite visual",
+		"test:visual:update": "wdio run e2e/wdio.conf.mjs --suite visual --update-visual-baseline",
+		"lint": "biome check .",
+		"format": "biome format --write ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.16",
+		"@sveltejs/adapter-static": "^3.0.10",
+		"@sveltejs/kit": "^2.50.2",
+		"@sveltejs/vite-plugin-svelte": "^6.2.4",
+		"@tailwindcss/vite": "^4.2.2",
+		"@tauri-apps/cli": "^2.10.1",
+		"@testing-library/svelte": "^5.3.1",
+		"@types/node": "^25.9.0",
+		"@vitest/coverage-v8": "^3.2.6",
+		"@wdio/cli": "^9.28.0",
+		"@wdio/local-runner": "^9.28.0",
+		"@wdio/mocha-framework": "^9.28.0",
+		"@wdio/spec-reporter": "^9.28.0",
+		"@wdio/visual-service": "^9.2.3",
+		"expect-webdriverio": "^5.6.8",
+		"happy-dom": "^20.9.0",
+		"svelte": "^5.51.0",
+		"svelte-check": "^4.4.2",
+		"tailwindcss": "^4.2.2",
+		"typescript": "^5.9.3",
+		"vite": "^7.3.1",
+		"vitest": "^3.2.6",
+		"webdriverio": "^9.28.0"
+	},
+	"dependencies": {
+		"@tauri-apps/api": "^2.10.1",
+		"@tauri-apps/plugin-shell": "^2.3.5",
+		"@tauri-apps/plugin-store": "^2.4.3",
+		"marked": "^15.0.0",
+		"motion": "^12.38.0"
+	},
+	"overrides": {
+		"cookie": "^0.7.0"
+	}
+}

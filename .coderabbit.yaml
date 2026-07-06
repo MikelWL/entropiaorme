@@ -23,21 +23,21 @@ reviews:
     - "!**/package-lock.json"
     - "!**/Cargo.lock"
     - "!data/demo/entropia_orme.db"
-    - "!frontend/src-tauri/entropia-orme/resources/models/*.onnx"
-    - "!frontend/src-tauri/entropia-orme/resources/snapshot/*.json"
-    - "!frontend/src-tauri/eo-services/src/data/*.csv"
+    - "!app/src-tauri/entropia-orme/resources/models/*.onnx"
+    - "!app/src-tauri/entropia-orme/resources/snapshot/*.json"
+    - "!app/src-tauri/eo-services/src/data/*.csv"
     # The frozen equivalence goldens and ratified contract snapshots: large,
     # mechanically-generated, and guarded by the golden-ratification gate, so
     # they are kept out of the line-by-line review surface.
-    - "!frontend/src-tauri/fixtures/**"
-    - "!frontend/src-tauri/contracts/*.snapshot.json"
-    - "!frontend/src-tauri/eo-wire/tests/fixtures/**"
+    - "!app/src-tauri/fixtures/**"
+    - "!app/src-tauri/contracts/*.snapshot.json"
+    - "!app/src-tauri/eo-wire/tests/fixtures/**"
     - "!assets/**"
-    - "!frontend/static/**"
-    - "!frontend/src-tauri/entropia-orme/icons/**"
+    - "!app/static/**"
+    - "!app/src-tauri/entropia-orme/icons/**"
     - "!THIRD-PARTY-NOTICES.md"
   path_instructions:
-    - path: "frontend/src/**/*.{svelte,ts}"
+    - path: "app/src/**/*.{svelte,ts}"
       instructions: |
         Conventions for newly authored content (not drive-by renames of pre-existing content):
         - UK spelling (customise, colour, behaviour, normalise, initialise, organise).
@@ -54,7 +54,7 @@ reviews:
         - Prefer $state / $derived / $effect over legacy stores where the surrounding code uses runes.
         - Don't wipe local state to a placeholder on transient fetch errors; preserve last-good state and let the next poll restore live state.
 
-    - path: "frontend/src-tauri/**/*.rs"
+    - path: "app/src-tauri/**/*.rs"
       instructions: |
         Conventions for newly authored content (not drive-by renames):
         - UK spelling on doc comments and user-visible strings.
@@ -75,13 +75,13 @@ reviews:
         Boundaries:
         - User-visible strings returned from API endpoints flow to UI. Stylistic norms (UK / no emdash) apply.
 
-    - path: "frontend/src-tauri/entropia-orme/tauri.conf.json"
+    - path: "app/src-tauri/entropia-orme/tauri.conf.json"
       instructions: |
         Security posture for changes to the Tauri config:
         - CSP changes must be narrowly scoped. Don't introduce wildcards. Any new connect-src / img-src / script-src host must have a corresponding code consumer (a fetch or img tag against that host); flag changes that loosen scope without an identifiable consumer.
         - Bundle resources must be attributed in THIRD-PARTY-NOTICES.md if they originate from a third party.
 
-    - path: "frontend/src-tauri/entropia-orme/capabilities/*.json"
+    - path: "app/src-tauri/entropia-orme/capabilities/*.json"
       instructions: |
         Capability scoping:
         - Prefer scope-restricted permission variants (with `validate` regex / URL allowlists) over blanket grants where the upstream schema supports it.

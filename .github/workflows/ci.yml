@@ -99,7 +99,7 @@ jobs:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline; PR and merge-queue
           # runs restore read-only so a branch cannot seed or poison the cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -109,7 +109,7 @@ jobs:
       # commit-message marker AND a recorded adversarial ratification verdict. The
       # marker proves the regeneration was conscious; the verdict supplies the
       # correctness sign-off the marker cannot. The verdict is a report committed
-      # to frontend/src-tauri/ratifications/<slug>.md in this same PR range,
+      # to app/src-tauri/ratifications/<slug>.md in this same PR range,
       # carrying an 'ORACLE-RATIFICATION ... VERDICT: ratification-sound' block
       # that names the changed sets, so a recorded adversarial verdict stands
       # behind the diff and a stale verdict from a prior regeneration cannot bless
@@ -120,7 +120,7 @@ jobs:
       # main. The guard is a subcommand of the in-tree cargo xtask, so it
       # fails closed on any range it cannot resolve.
       - name: Guard golden ratification
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
         # On a pull request the range is the PR's base..head; on the merge queue
         # it is the integrated commit's base..head (the queued change merged onto
         # main), which carries the same commits, golden edits, and ratification
@@ -152,7 +152,7 @@ jobs:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline; PR and merge-queue
           # runs restore read-only so a branch cannot seed or poison the cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -162,7 +162,7 @@ jobs:
       # without forcing a drive-by sweep of the old. A subcommand of the in-tree
       # cargo xtask.
       - name: Lint newly authored lines
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
         # PR base..head on a pull request; the integrated commit's base..head on
         # the merge queue (the same added lines, merged onto main).
         env:
@@ -171,7 +171,7 @@ jobs:
         run: cargo run -q -p xtask -- authoring-lint --range "$RANGE_BASE..$RANGE_HEAD"
 
       - name: Check version-stamp parity
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
         # Whole-tree, not diff-scoped: the three version stamps (frontend
         # package.json, the Cargo workspace package, tauri.conf.json) must agree.
         # authoring-lint is a required input of the ci-gate aggregator, so this
@@ -187,7 +187,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     defaults:
       run:
-        working-directory: frontend
+        working-directory: app
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -196,7 +196,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: app/package-lock.json
       - run: npm ci
       - run: npm run build
       - run: npm run check
@@ -223,7 +223,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     defaults:
       run:
-        working-directory: frontend
+        working-directory: app
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -232,13 +232,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: app/package-lock.json
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (branch SHA; dtolnay has no semver tags)
         with:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline; PR and merge-queue
           # runs restore read-only so a branch cannot seed or poison the cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -284,7 +284,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: visual-diff-${{ github.run_id }}-${{ github.run_attempt }}
-          path: frontend/e2e/.visual-output
+          path: app/e2e/.visual-output
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
@@ -299,7 +299,7 @@ jobs:
     # none of them compile anything and an ubuntu runner is sufficient and fast.
     defaults:
       run:
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -337,7 +337,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     defaults:
       run:
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -348,7 +348,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline; PR and merge-queue
           # runs restore read-only so a branch cannot seed or poison the cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -394,7 +394,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     defaults:
       run:
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -404,7 +404,7 @@ jobs:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline; PR and merge-queue
           # runs restore read-only so a branch cannot seed or poison the cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -443,7 +443,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     defaults:
       run:
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -458,7 +458,7 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline; PR and merge-queue
           # runs restore read-only so a branch cannot seed or poison the cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -490,7 +490,7 @@ jobs:
         with:
           name: coverage-badge
           # Repo-root relative: upload-artifact ignores the job's working-directory.
-          path: frontend/src-tauri/coverage.json
+          path: app/src-tauri/coverage.json
           if-no-files-found: error
           retention-days: 1
 

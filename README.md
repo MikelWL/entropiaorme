@@ -4,67 +4,41 @@
 [![Branch coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/entropiaorme/entropiaorme/badges/coverage.json)](https://github.com/entropiaorme/entropiaorme/actions/workflows/ci.yml)
 [![Mutation score](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/entropiaorme/entropiaorme/badges/mutation.json)](https://github.com/entropiaorme/entropiaorme/actions/workflows/nightly.yml)
 
-An analytical desktop tool for Entropia Universe.
+An analytical desktop tool for Entropia Universe. Overview and installer downloads: **[entropiaorme.com](https://entropiaorme.com)**.
 
-For an overview, installer downloads, and usage guides → **[entropiaorme.com](https://entropiaorme.com)**.
+A Tauri 2 shell hosting a Svelte 5 frontend over a pure-Rust in-process backend. Windows-only for now. The rest of this README covers building from source.
 
-The rest of this README is for developers building from source. Windows-only for now; other platforms may follow.
+## Repository map
 
----
+- `app/`: the application (SvelteKit frontend + the `src-tauri` Rust workspace)
+- `docs/`: the mdBook architecture handbook and ADRs, published to GitHub Pages
+- `scripts/`: build and launch scripts driven by the `justfile`
+- `data/demo/`: the bundled demo database
+- `assets/`: repository art
 
-## Build from source (Windows)
+## Build (Windows)
 
-### Prerequisites
-
-- Node.js ≥ 20.19
-- Rust (`rustup`): for the Tauri shell and the native backend
-- Visual Studio Build Tools (MSVC C++ workload): required by Tauri on Windows
-- Windows Terminal (`wt.exe`): used by the launcher
-- [`just`](https://just.systems/) ≥ 1.34: task runner driving `just dev` etc. (Windows: `scoop install just`).
-
-### Setup
-
-From the repo root:
+Prerequisites: Node.js ≥ 20.19, Rust (`rustup`), Visual Studio Build Tools (MSVC C++ workload), Windows Terminal, [`just`](https://just.systems/) ≥ 1.34.
 
 ```bash
-cd frontend
-npm install
-cd ..
-
+cd app && npm install && cd ..
 pre-commit install   # local hooks mirroring the CI gates (see TESTING.md)
+just dev             # hot-reload dev shell
+just installer       # WiX Burn installer -> app/src-tauri/target/release/bundle/burn/
 ```
 
-### Run
+`just --list` shows the remaining recipes (`just check`, `just test-rust`, `just gen-ts`). The installer build additionally needs WiX 6 (the `wix` dotnet tool) and the MSVC x86 toolset; installer sources live under `app/src-tauri/entropia-orme/installer/`.
 
-```bash
-just dev
-```
+## Parallel checkouts
 
-`just dev` builds the frontend with hot reload and launches the Tauri dev shell. The backend is a native-Rust spine composed into the shell and run in-process, exactly as in a release build; there is no separate backend HTTP server to run, and no Python anywhere in the build or the shipped application.
+Give each checkout its own `.env.local` with a distinct `ENTROPIAORME_FRONTEND_PORT` and `ENTROPIAORME_DATA_DIR`; `just` loads it before every recipe. Optionally, [`direnv`](https://direnv.net/) activates it for ad-hoc shells (`direnv allow .` once per checkout).
 
-Run `just --list` to see other recipes (`just check` for frontend type-check + build, `just test-rust` for the native backend test suite).
+## Documentation
 
-### Build installer
-
-```bash
-just installer
-```
-
-Builds the bespoke WiX Burn installer end to end (the per-user MSI payload, the native x86 bootstrapper helper, and the themed Burn bundle) and writes `EntropiaOrme-<version>-x64-setup.exe` to `frontend/src-tauri/target/release/bundle/burn/`. This is equivalent to running `scripts/build-installer.ps1` directly, and needs WiX 6 (the `wix` dotnet tool), the MSVC x86 toolset, and the Tauri build chain. The installer wraps the single Rust binary together with its data, model, and ONNX Runtime assets; there is no separate backend process inside it.
-
-Installer sources (the WiX template, the Burn bundle, the themed bootstrapper, and the native helper) live under `frontend/src-tauri/entropia-orme/installer/`; the branded art for the Burn theme is committed alongside it as pre-generated PNG assets.
-
-## Optional dev environment
-
-- **Parallel checkouts**: multiple checkouts of this repo coexist on one machine by giving each its own `.env.local` with a distinct `ENTROPIAORME_FRONTEND_PORT` (the Vite dev-server port; the single network listener in dev) and `ENTROPIAORME_DATA_DIR` (a per-checkout data directory). `just` loads the file automatically before every recipe.
-- [`direnv`](https://direnv.net/): activates env vars from `.env.local` on `cd`-in so ad-hoc shell commands (`just test-rust`, `npm run ...`) honour the local env. (Windows: `scoop install direnv`; run `direnv allow .` once per checkout to whitelist the `.envrc`.)
-
-## Further documentation
-
-- The [architecture handbook](docs/): an mdBook covering the system overview, the service and crate map, the event taxonomy, the OCR pipeline, and the database schema reference, with the [architecture decision records](docs/src/adr/) alongside. It is published to GitHub Pages from `main`, tracking the latest landed state, together with the generated `cargo doc` API reference. Build it locally with `mdbook build docs`.
-- [`TESTING.md`](TESTING.md): the test suite, the preserved equivalence evidence, and the CI gates.
-- [`SECURITY.md`](SECURITY.md): the security policy, including the supply-chain review gates over dependencies and bundled assets, and the SBOM, checksums, and build-provenance attestation the release pipeline attaches to each release.
+- [Architecture handbook](docs/) and [ADRs](docs/src/adr/): published to GitHub Pages from `main` alongside the generated `cargo doc` API reference; `mdbook build docs` locally.
+- [TESTING.md](TESTING.md): the test suite, the preserved equivalence evidence, and the CI gates.
+- [SECURITY.md](SECURITY.md): the security policy, supply-chain review gates, and the release attestations (SBOM, checksums, build provenance).
 
 ## License
 
-[MIT](LICENSE). Third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE). Third-party components and their licenses: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
