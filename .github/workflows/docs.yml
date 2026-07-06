@@ -14,12 +14,12 @@ on:
       - main
     paths:
       - "docs/**"
-      - "frontend/src-tauri/**"
+      - "app/src-tauri/**"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
-      - "frontend/src-tauri/**"
+      - "app/src-tauri/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -48,7 +48,7 @@ jobs:
       - name: Cache the cargo build
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline (parity with ci.yml / release.yml).
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -68,7 +68,7 @@ jobs:
         # contributor reads. The Tauri shell crate (entropia-orme) is a Windows
         # host with platform-specific build inputs and is documented from the
         # Windows build, so it is excluded here to keep this job runner-portable.
-        working-directory: frontend/src-tauri
+        working-directory: app/src-tauri
         run: cargo doc --no-deps -p eo-wire -p eo-api -p eo-services
 
       - name: Assemble the published site
@@ -77,7 +77,7 @@ jobs:
           site="$(mktemp -d)"
           cp -r docs/book/. "$site/"
           mkdir -p "$site/api"
-          cp -r frontend/src-tauri/target/doc/. "$site/api/"
+          cp -r app/src-tauri/target/doc/. "$site/api/"
           # Redirect /api to a crate root so the API reference has a landing page.
           printf '%s\n' '<!doctype html><meta http-equiv="refresh" content="0; url=eo_api/index.html">' > "$site/api/index.html"
           echo "SITE_DIR=$site" >> "$GITHUB_ENV"

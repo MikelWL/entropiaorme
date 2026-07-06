@@ -2,9 +2,9 @@
 
 EntropiaOrme ships as a single pure-Rust binary: a Tauri desktop shell hosting the application backend in-process, with a Svelte frontend. Testing follows that shape in three tracks:
 
-- **The cargo workspace** (`frontend/src-tauri/`): the native backend members and the Tauri shell, run under `cargo nextest`. This is the primary gate on the shipped binary.
-- **The frontend track** (`frontend/`): the pure-TypeScript logic layer and the high-logic Svelte components under Vitest and Testing-Library, with Biome owning lint and format.
-- **The native-shell end-to-end suite** (`frontend/e2e/`): the real Tauri WebView2 window driven through `tauri-driver`, exercising the desktop IPC boundary and pinning per-surface visual baselines.
+- **The cargo workspace** (`app/src-tauri/`): the native backend members and the Tauri shell, run under `cargo nextest`. This is the primary gate on the shipped binary.
+- **The frontend track** (`app/`): the pure-TypeScript logic layer and the high-logic Svelte components under Vitest and Testing-Library, with Biome owning lint and format.
+- **The native-shell end-to-end suite** (`app/e2e/`): the real Tauri WebView2 window driven through `tauri-driver`, exercising the desktop IPC boundary and pinning per-surface visual baselines.
 
 This document is the command-level reference; specific counts, coverage percentages, and mutation scores live in the badges and a live run, not in this prose, because they move with every change.
 
@@ -12,7 +12,7 @@ This document is the command-level reference; specific counts, coverage percenta
 
 The application was originally a Python (FastAPI) backend. It was ported to Rust, and the port was proven by a behavioural-equivalence oracle: for a given scenario's declared inputs, the Python implementation produced a fixed, normalised set of observable outputs (domain events, database state, HTTP responses), pinned as golden files, and the Rust implementation was graded byte-for-byte against them. With the port complete, the Python tree has been retired entirely; the shipped app is the single Rust binary.
 
-The proof survives the retirement. The frozen goldens the port was graded against are committed Rust-side, and a family of hermetic tests re-asserts them on every run **with no second implementation present**: a byte-identical native result is the equivalence evidence, banked permanently. The goldens fall into three groups, all under `frontend/src-tauri/`:
+The proof survives the retirement. The frozen goldens the port was graded against are committed Rust-side, and a family of hermetic tests re-asserts them on every run **with no second implementation present**: a byte-identical native result is the equivalence evidence, banked permanently. The goldens fall into three groups, all under `app/src-tauri/`:
 
 - **The replay corpus** (`fixtures/corpus/`): per-scenario event-stream fingerprints (`expected/fingerprint.jsonl`), database-state snapshots (`expected/db_state.json`), and per-endpoint HTTP-response goldens (`expected/http_responses/`).
 - **The contract snapshot** (`contracts/`): the frontend-facing domain-event schema snapshot (`event_schemas.snapshot.json`).
@@ -31,12 +31,12 @@ A test that runs code but asserts nothing about the result undermines both: it s
 
 ## Running the Rust suite
 
-The workspace lives at `frontend/src-tauri/`: the Tauri shell (`entropia-orme`, window orchestration and hosting the backend in-process) plus the native-backend members (`eo-wire`, `eo-services`, `eo-api`) that implement the application logic. The backend members carry the equivalence tests and the bulk of the unit coverage; they build and test without the Tauri system toolchain.
+The workspace lives at `app/src-tauri/`: the Tauri shell (`entropia-orme`, window orchestration and hosting the backend in-process) plus the native-backend members (`eo-wire`, `eo-services`, `eo-api`) that implement the application logic. The backend members carry the equivalence tests and the bulk of the unit coverage; they build and test without the Tauri system toolchain.
 
 Run the backend members alone (no Tauri toolchain required):
 
 ```sh
-cd frontend/src-tauri
+cd app/src-tauri
 cargo nextest run -p eo-wire -p eo-services -p eo-api
 ```
 
@@ -49,12 +49,12 @@ just test-rust
 To exercise the whole workspace, the Tauri shell included (needs the platform toolchain, so this is the Windows path):
 
 ```sh
-cd frontend/src-tauri
+cd app/src-tauri
 cargo nextest run --workspace
 cargo test --workspace --doc      # nextest does not run doctests; this leg keeps them covered
 ```
 
-`cargo nextest` applies a committed per-test terminating timeout (`frontend/src-tauri/.config/nextest.toml`: a 60-second slow period, terminating after two, so a hard 120-second ceiling per test). A subset of the heavy substrate-composition tests stand up the full native spine and install the shared OS keyboard hook, whose attach/detach lifecycle can intermittently block in some headless contexts; the timeout kills and reports such a test rather than stalling the run. The ceiling sits well above any legitimate test (the heaviest, an OCR warm-engine composition, completes well under a minute) and far below the stalls a hung hook produces. CI invokes the workspace through nextest for the same reason.
+`cargo nextest` applies a committed per-test terminating timeout (`app/src-tauri/.config/nextest.toml`: a 60-second slow period, terminating after two, so a hard 120-second ceiling per test). A subset of the heavy substrate-composition tests stand up the full native spine and install the shared OS keyboard hook, whose attach/detach lifecycle can intermittently block in some headless contexts; the timeout kills and reports such a test rather than stalling the run. The ceiling sits well above any legitimate test (the heaviest, an OCR warm-engine composition, completes well under a minute) and far below the stalls a hung hook produces. CI invokes the workspace through nextest for the same reason.
 
 A `.cargo/config.toml` under the workspace redirects test temporary directories into `target/`, so an interrupted run does not accumulate scratch directories in the OS temp area; reclaim any leftovers with `cargo clean`.
 
@@ -89,7 +89,7 @@ Coverage proves a line ran; it cannot prove a test would notice if that line wer
 The campaign targets the backend members; the Tauri shell stays out (its logic is OS-window plumbing behind `cfg(windows)`, and building it needs the Tauri system toolchain). Because a campaign re-runs the tests once per mutant, it is heavy and runs nightly rather than per-change (`.github/workflows/nightly.yml`), on a Linux runner. Run one locally on a POSIX environment with:
 
 ```sh
-cd frontend/src-tauri
+cd app/src-tauri
 cargo mutants --package eo-wire --package eo-services --in-place
 ```
 
@@ -124,7 +124,7 @@ goldens: <comma-separated sets reviewed>
 VERDICT: ratification-sound | regression-suspected | needs-user-judgement
 ```
 
-Commit that report to `frontend/src-tauri/ratifications/<slug>.md` alongside the golden change, naming the changed sets in its `goldens:` field. It lives outside any `expected/` directory so the guard never treats the report itself as a golden. Proceed only on `ratification-sound`; a `regression-suspected` or `needs-user-judgement` verdict means fix the code (or settle the product question) rather than pin the diff. A committed report is required rather than a bare commit trailer on purpose: fabricating a plausible adversarial report that cites real diff elements is a high bar and is reviewer-visible, where a trailer is not.
+Commit that report to `app/src-tauri/ratifications/<slug>.md` alongside the golden change, naming the changed sets in its `goldens:` field. It lives outside any `expected/` directory so the guard never treats the report itself as a golden. Proceed only on `ratification-sound`; a `regression-suspected` or `needs-user-judgement` verdict means fix the code (or settle the product question) rather than pin the diff. A committed report is required rather than a bare commit trailer on purpose: fabricating a plausible adversarial report that cites real diff elements is a high bar and is reviewer-visible, where a trailer is not.
 
 ### Commit-message convention
 
@@ -151,10 +151,10 @@ Three properties make the verdict hard to satisfy by accident. Tying the report 
 
 ## Frontend tests
 
-The Svelte frontend has its own unit track, run with Vitest from the `frontend/` directory and gated by the `frontend` CI job alongside the production build, the type-check, and the Biome lint:
+The Svelte frontend has its own unit track, run with Vitest from the `app/` directory and gated by the `frontend` CI job alongside the production build, the type-check, and the Biome lint:
 
 ```sh
-cd frontend
+cd app
 npm run test            # run the suites once (CI mode)
 npm run test:watch      # re-run on change during development
 npm run test:coverage   # run with a v8 coverage report
@@ -169,19 +169,19 @@ Tests assert the code's actual behaviour; where a module diverges from what a re
 
 ### Frontend lint and format (Biome)
 
-Biome owns linting and formatting for the frontend's TypeScript, JavaScript, and JSON (Svelte components stay under `svelte-check`). The configuration is `frontend/biome.json`; the generated `src/lib/api/commands.gen.ts` and the lockfile are excluded.
+Biome owns linting and formatting for the frontend's TypeScript, JavaScript, and JSON (Svelte components stay under `svelte-check`). The configuration is `app/biome.json`; the generated `src/lib/api/commands.gen.ts` and the lockfile are excluded.
 
 ```sh
-cd frontend
+cd app
 npm run lint     # biome check: lint + format verification (the CI gate)
 npm run format   # biome format --write: apply formatting
 ```
 
-The `frontend` CI job runs `npm run lint` on every change, and a pre-commit hook mirrors it locally through the lockfile-pinned Biome (run `npm ci` in `frontend/` once so the hook can resolve it).
+The `frontend` CI job runs `npm run lint` on every change, and a pre-commit hook mirrors it locally through the lockfile-pinned Biome (run `npm ci` in `app/` once so the hook can resolve it).
 
 ### Generated API client
 
-The typed frontend API client is generated from the Rust DTOs: the command bindings live in `frontend/src/lib/api/commands.gen.ts`, emitted by `cargo xtask gen-ts` from the `eo-api` command manifest. The Linux backend-members CI job runs `cargo xtask gen-ts --check`, which fails if the committed bindings drift from the manifest. Regenerate them with `just gen-ts` after a change that moves an `eo-api` DTO or the manifest.
+The typed frontend API client is generated from the Rust DTOs: the command bindings live in `app/src/lib/api/commands.gen.ts`, emitted by `cargo xtask gen-ts` from the `eo-api` command manifest. The Linux backend-members CI job runs `cargo xtask gen-ts --check`, which fails if the committed bindings drift from the manifest. Regenerate them with `just gen-ts` after a change that moves an `eo-api` DTO or the manifest.
 
 ### Runes-native frontend
 
@@ -189,10 +189,10 @@ The Svelte frontend is runes-native: `svelte.config.js` forces runes mode for ev
 
 ### Frontend end-to-end tests (native shell)
 
-The end-to-end layer drives the **real desktop shell** (the Tauri WebView2 window), not a browser tab, through [WebdriverIO](https://webdriver.io) and [`tauri-driver`](https://v2.tauri.app/develop/tests/webdriver/). Driving the real shell is the point: only there does the desktop IPC bridge exist, so the suite can assert the panels render and the IPC surface is live across the boundary a browser-served harness is structurally blind to. The suite lives under `frontend/e2e/`.
+The end-to-end layer drives the **real desktop shell** (the Tauri WebView2 window), not a browser tab, through [WebdriverIO](https://webdriver.io) and [`tauri-driver`](https://v2.tauri.app/develop/tests/webdriver/). Driving the real shell is the point: only there does the desktop IPC bridge exist, so the suite can assert the panels render and the IPC surface is live across the boundary a browser-served harness is structurally blind to. The suite lives under `app/e2e/`.
 
 ```sh
-cd frontend
+cd app
 npm run test:e2e          # functional panel flows against the native shell
 npm run test:visual       # diff every visual spec against its committed baseline
 npm run test:visual:update # regenerate the baselines after an intended UI change
@@ -248,7 +248,7 @@ pre-commit run --all-files
 
 The configured hooks are:
 
-- **Biome** (lint + format) over the frontend, mirroring the CI `npm run lint` step through the lockfile-pinned binary (run `npm ci` in `frontend/` once so the hook can resolve it).
+- **Biome** (lint + format) over the frontend, mirroring the CI `npm run lint` step through the lockfile-pinned binary (run `npm ci` in `app/` once so the hook can resolve it).
 - **`no-bare-setinterval`**: the frontend polling-discipline guard (a `cargo xtask` subcommand), forbidding a bare `setInterval` outside the visibility-gated helper and any reference to the retired tracking event.
 - **authoring lint** (em dash + UK spelling), diff-scoped against the staged change, and **version-stamp parity**, both `cargo xtask` subcommands (see "Authoring lint" below).
 - general hygiene: end-of-file and trailing-whitespace fixers, YAML and TOML validity, merge-conflict markers, and a mixed-line-ending check (line-ending policy itself is set per file type in `.gitattributes`).
@@ -264,14 +264,14 @@ They are **diff-scoped**: they inspect only the lines a change adds, never the w
 - The **em-dash ban** applies to every added line in a non-exempt file (licence texts, third-party notices, vendored trees and lockfiles, binaries, and generated artefacts are exempt). U+2014 is never code syntax, so an added em dash is always authored content.
 - The **UK-spelling check** applies only to added lines in prose contexts (Markdown / plain-text docs, and comment-only lines in code), because tokens like `color` (CSS), `behavior` (DOM API), `center` (a CSS value), and `serialize` (an identifier) are legitimate US-spelled code, not authoring slips. The US-to-UK map is a curated floor, extended as real slips appear.
 
-A companion check, `cargo xtask version-stamps`, asserts the three application version stamps (`frontend/package.json`, the `[workspace.package]` version in `frontend/src-tauri/Cargo.toml`, and `frontend/src-tauri/entropia-orme/tauri.conf.json`) carry an identical version, so a release bump cannot update some and miss others. It is whole-tree rather than diff-scoped (the invariant holds over the current tree at all times). `cargo xtask bump-version <VERSION>` rewrites all three in lock-step.
+A companion check, `cargo xtask version-stamps`, asserts the three application version stamps (`app/package.json`, the `[workspace.package]` version in `app/src-tauri/Cargo.toml`, and `app/src-tauri/entropia-orme/tauri.conf.json`) carry an identical version, so a release bump cannot update some and miss others. It is whole-tree rather than diff-scoped (the invariant holds over the current tree at all times). `cargo xtask bump-version <VERSION>` rewrites all three in lock-step.
 
 ## Rust workspace checks
 
-The Rust side is the cargo workspace at `frontend/src-tauri/`. All of the commands below run from the workspace root:
+The Rust side is the cargo workspace at `app/src-tauri/`. All of the commands below run from the workspace root:
 
 ```sh
-cd frontend/src-tauri
+cd app/src-tauri
 cargo fmt --check                                       # formatting, all members (apply with `cargo fmt`)
 cargo clippy --workspace --all-targets -- -D warnings   # lints, warnings promoted to errors
 cargo build                                             # compile check, all members (debug profile)

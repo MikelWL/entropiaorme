@@ -4,7 +4,7 @@
 # and exposes no light/ICE knob (tauri-apps/tauri#13792). EntropiaOrme installs
 # per-user (no UAC, into %LOCALAPPDATA%\Programs), so the install scope and
 # directory are set in the custom WiX template at
-# frontend/src-tauri/entropia-orme/installer/main.wxs. A per-user install trips
+# app/src-tauri/entropia-orme/installer/main.wxs. A per-user install trips
 # the ICE38/ICE64 validations because the resource components Tauri generates use
 # file keypaths (valid for a single-user install, but ICE is conservative), so we
 # own the final link: Tauri renders the template and compiles it (candle), then
@@ -13,17 +13,17 @@
 # success is defined by this script producing the MSI, not by Tauri's exit code.
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$frontend = Join-Path $repoRoot "frontend"
-$wixDir = Join-Path $repoRoot "frontend\src-tauri\target\release\wix\x64"
-$bundleDir = Join-Path $repoRoot "frontend\src-tauri\target\release\bundle\msi"
-$conf = Join-Path $repoRoot "frontend\src-tauri\entropia-orme\tauri.conf.json"
+$appDir = Join-Path $repoRoot "app"
+$wixDir = Join-Path $repoRoot "app\src-tauri\target\release\wix\x64"
+$bundleDir = Join-Path $repoRoot "app\src-tauri\target\release\bundle\msi"
+$conf = Join-Path $repoRoot "app\src-tauri\entropia-orme\tauri.conf.json"
 
 # 1. Build the app and render + compile the installer. Tauri's own light step
 #    fails the per-user ICEs; its exit code is deliberately ignored here, and the
 #    compiled object is verified below instead.
 Write-Host "==> tauri build --bundles msi (its light step is expected to fail the per-user ICEs)"
 $buildStartUtc = [DateTime]::UtcNow
-Push-Location $frontend
+Push-Location $appDir
 & npx tauri build --bundles msi
 Pop-Location
 

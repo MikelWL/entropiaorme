@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: app/package-lock.json
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (branch SHA; dtolnay has no semver tags)
         with:
@@ -44,7 +44,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: frontend/src-tauri
+          workspaces: app/src-tauri
           # Restrict cache writes to the trusted main timeline (parity with ci.yml).
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          stamped="$(node -p "require('./frontend/src-tauri/entropia-orme/tauri.conf.json').version")"
+          stamped="$(node -p "require('./app/src-tauri/entropia-orme/tauri.conf.json').version")"
           tag="${GITHUB_REF_NAME#v}"
           if [ "$stamped" != "$tag" ]; then
             echo "::error::stamped version ($stamped) does not match release tag ($tag)"
@@ -72,7 +72,7 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
-        working-directory: frontend
+        working-directory: app
 
       - name: Build the bespoke installer
         # build-installer.ps1 produces the per-user MSI payload, the native x86
@@ -104,8 +104,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(node -p "require('./frontend/src-tauri/entropia-orme/tauri.conf.json').version")"
-          release="frontend/src-tauri/target/release"
+          version="$(node -p "require('./app/src-tauri/entropia-orme/tauri.conf.json').version")"
+          release="app/src-tauri/target/release"
           mkdir -p dist
 
           # Installer: the bespoke WiX Burn bundle, renamed to the brand form.
@@ -174,8 +174,8 @@ jobs:
         # SBOM.json alongside the release assets.
         shell: bash
         run: |
-          cargo cyclonedx --manifest-path frontend/src-tauri/entropia-orme/Cargo.toml -f json -q
-          cp frontend/src-tauri/entropia-orme/entropia-orme.cdx.json dist/SBOM.json
+          cargo cyclonedx --manifest-path app/src-tauri/entropia-orme/Cargo.toml -f json -q
+          cp app/src-tauri/entropia-orme/entropia-orme.cdx.json dist/SBOM.json
 
       - name: Compute checksums
         # A single checksums manifest over every published asset, alongside the

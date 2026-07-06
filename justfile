@@ -34,17 +34,17 @@ dev:
     @exit 1
 
 # Run the native backend (Rust) test suite. Invoked from the workspace so
-# frontend/src-tauri/.cargo/config.toml is discovered: it redirects test temp
+# app/src-tauri/.cargo/config.toml is discovered: it redirects test temp
 # into target/, keeping an interrupted run from accumulating scratch dirs in
 # the OS temp directory. Reclaim any leftovers from a prior interrupted run
 # with `cargo clean`.
 [windows]
 test-rust:
-    cd frontend/src-tauri; cargo nextest run -p eo-wire -p eo-services -p eo-api
+    cd app/src-tauri; cargo nextest run -p eo-wire -p eo-services -p eo-api
 
 [unix]
 test-rust:
-    cd frontend/src-tauri && cargo nextest run -p eo-wire -p eo-services -p eo-api
+    cd app/src-tauri && cargo nextest run -p eo-wire -p eo-services -p eo-api
 
 # Each step is its own recipe line (just stops on the first non-zero exit)
 # rather than an `&&` chain, so the body runs under any shell, including
@@ -52,8 +52,8 @@ test-rust:
 # script from the frontend package without a shell-specific `cd`.
 # Frontend type-check + production build (matches the CI `Frontend (build + check)` job).
 check:
-    npm --prefix frontend run check
-    npm --prefix frontend run build
+    npm --prefix app run check
+    npm --prefix app run build
 
 # Build the bespoke WiX Burn installer end to end (per-user MSI -> native x86
 # bafunctions helper -> themed Burn bundle). Windows-only: needs WiX 6, the MSVC
@@ -75,9 +75,9 @@ smoke:
 # Regenerate the TypeScript bindings for the typed IPC commands from the
 # eo-api command manifest.
 gen-ts:
-    cd frontend/src-tauri && cargo run -q -p xtask -- gen-ts
+    cd app/src-tauri && cargo run -q -p xtask -- gen-ts
 
 # Fail when the committed typed-command bindings drift from the manifest
 # (the CI drift gate, runnable locally).
 gen-ts-check:
-    cd frontend/src-tauri && cargo run -q -p xtask -- gen-ts --check
+    cd app/src-tauri && cargo run -q -p xtask -- gen-ts --check

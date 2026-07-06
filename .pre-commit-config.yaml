@@ -6,7 +6,7 @@
 # The hygiene hooks run in pre-commit's own isolated environments. The xtask
 # guards and Biome run as system hooks: the guards compile the in-tree xtask
 # crate (cached after the first build) and Biome runs the lockfile-pinned binary
-# from frontend/node_modules, so each agrees with the version CI uses. Run
+# from app/node_modules, so each agrees with the version CI uses. Run
 # `pre-commit install` once. See TESTING.md for the full description.
 minimum_pre_commit_version: "3.8.0"
 
@@ -22,10 +22,10 @@ repos:
         # The OCR decode alphabet is a byte-verbatim third-party
         # asset (SHA-pinned in THIRD-PARTY-NOTICES.md); fixers must
         # not rewrite it.
-        exclude: ^frontend/src-tauri/entropia-orme/resources/models/
+        exclude: ^app/src-tauri/entropia-orme/resources/models/
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
-        exclude: ^frontend/src-tauri/entropia-orme/resources/models/
+        exclude: ^app/src-tauri/entropia-orme/resources/models/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
@@ -37,21 +37,21 @@ repos:
     hooks:
       # Frontend lint + format gate, mirroring the CI frontend job's
       # `npm run lint` step. Runs the lockfile-pinned Biome from
-      # frontend/node_modules so the hook and CI agree on the version; needs
-      # `npm ci` run once in frontend/. The CI pre-commit job SKIPs it (no
+      # app/node_modules so the hook and CI agree on the version; needs
+      # `npm ci` run once in app/. The CI pre-commit job SKIPs it (no
       # node_modules there); the dedicated frontend job is the enforcing gate.
       - id: biome
         name: biome check (frontend)
-        entry: bash -c 'cd frontend && npx --no-install biome check .'
+        entry: bash -c 'cd app && npx --no-install biome check .'
         language: system
         pass_filenames: false
-        files: ^frontend/
+        files: ^app/
       # Frontend polling discipline: forbids a bare setInterval outside the
       # visibility-gated helper, and any reference to the retired
       # tracking-state-changed event. A whole-tree cargo xtask guard.
       - id: no-bare-setinterval
         name: no bare setInterval (frontend)
-        entry: bash -c 'cd frontend/src-tauri && cargo run -q -p xtask -- no-bare-setinterval'
+        entry: bash -c 'cd app/src-tauri && cargo run -q -p xtask -- no-bare-setinterval'
         language: system
         pass_filenames: false
         always_run: true
@@ -60,14 +60,14 @@ repos:
       # whole, so both always_run. Both are cargo xtask subcommands.
       - id: authoring-lint
         name: authoring lint (em dash + UK spelling, diff-scoped)
-        entry: bash -c 'cd frontend/src-tauri && cargo run -q -p xtask -- authoring-lint'
+        entry: bash -c 'cd app/src-tauri && cargo run -q -p xtask -- authoring-lint'
         language: system
         pass_filenames: false
         always_run: true
         require_serial: true
       - id: version-stamp-parity
         name: version-stamp parity
-        entry: bash -c 'cd frontend/src-tauri && cargo run -q -p xtask -- version-stamps'
+        entry: bash -c 'cd app/src-tauri && cargo run -q -p xtask -- version-stamps'
         language: system
         pass_filenames: false
         always_run: true
