@@ -120,7 +120,15 @@ impl Drop for CoreInner {
         drop(std::mem::replace(&mut self.writer, dead_writer));
         drop(std::mem::replace(&mut self.readers, dead_readers));
         let threads = std::mem::take(&mut *self.threads.lock().expect("thread handles"));
+        let current = std::thread::current().id();
         for handle in threads {
+            // A job closure can own the last handle, putting this drop on a
+            // worker thread; joining that thread from itself would deadlock,
+            // so it detaches instead (it exits on its own once the closed
+            // channel drains).
+            if handle.thread().id() == current {
+                continue;
+            }
             let _ = handle.join();
         }
     }

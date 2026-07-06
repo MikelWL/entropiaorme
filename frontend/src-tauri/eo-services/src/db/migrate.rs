@@ -74,23 +74,37 @@ const LEDGER_DDL: &str = "CREATE TABLE IF NOT EXISTS _sqlx_migrations (\
 pub(super) fn run(connection: &mut Connection) -> Result<(), DbError> {
     connection.execute_batch(LEDGER_DDL)?;
 
-    // Validate every applied row: version known, checksum identical,
-    // application recorded as successful.
-    let applied: Vec<(i64, Vec<u8>, bool)> = connection
-        .prepare("SELECT version, checksum, success FROM _sqlx_migrations ORDER BY version")?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+    // Validate the applied ledger as a contiguous prefix of the embedded
+    // chain: same versions in the same positions (which refuses both
+    // unknown versions and holes that would otherwise apply out of
+    // order), descriptions and checksums identical, every application
+    // recorded as successful.
+    let applied: Vec<(i64, String, Vec<u8>, bool)> = connection
+        .prepare(
+            "SELECT version, description, checksum, success FROM _sqlx_migrations \
+             ORDER BY version",
+        )?
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
         .collect::<Result<_, _>>()?;
-    for (version, checksum, success) in &applied {
-        let Some(known) = MIGRATIONS.iter().find(|m| m.version == *version) else {
+    for (index, (version, description, checksum, success)) in applied.iter().enumerate() {
+        let Some(known) = MIGRATIONS.get(index).filter(|m| m.version == *version) else {
             return Err(DbError::MigrationValidation {
                 version: *version,
-                problem: "applied migration is absent from the embedded chain",
+                problem: "the applied ledger is not a contiguous prefix of the embedded chain",
             });
         };
         if !success {
             return Err(DbError::MigrationValidation {
                 version: *version,
                 problem: "a previous application of this migration failed",
+            });
+        }
+        if known.description != description {
+            return Err(DbError::MigrationValidation {
+                version: *version,
+                problem: "applied description does not match the embedded migration",
             });
         }
         if known.checksum() != *checksum {
@@ -101,12 +115,9 @@ pub(super) fn run(connection: &mut Connection) -> Result<(), DbError> {
         }
     }
 
-    // Apply the missing tail, each migration and its ledger row in one
-    // transaction, in version order.
-    for migration in MIGRATIONS {
-        if applied.iter().any(|(v, _, _)| *v == migration.version) {
-            continue;
-        }
+    // Apply the missing tail (everything past the validated prefix),
+    // each migration and its ledger row in one transaction, in order.
+    for migration in &MIGRATIONS[applied.len()..] {
         let started = std::time::Instant::now();
         let tx = connection.transaction()?;
         tx.execute_batch(migration.sql)?;
@@ -171,6 +182,44 @@ mod tests {
                 "{stem}: embedded bytes match the file"
             );
         }
+    }
+
+    /// A drifted ledger fails validation loudly: a description edit, a
+    /// hole in the applied sequence, and an unknown version each refuse
+    /// before any migration applies.
+    #[test]
+    fn drifted_ledgers_are_refused() {
+        let assert_refused = |mutation: &str, expected_problem: &str| {
+            let mut connection = Connection::open_in_memory().expect("memory database");
+            run(&mut connection).expect("fresh chain applies");
+            connection.execute_batch(mutation).expect("ledger mutation");
+            match run(&mut connection) {
+                Err(DbError::MigrationValidation { problem, .. }) => {
+                    assert_eq!(problem, expected_problem, "for mutation: {mutation}")
+                }
+                other => panic!("expected a validation refusal for {mutation}, got {other:?}"),
+            }
+        };
+        assert_refused(
+            "UPDATE _sqlx_migrations SET description = 'edited' WHERE version = 2",
+            "applied description does not match the embedded migration",
+        );
+        assert_refused(
+            "DELETE FROM _sqlx_migrations WHERE version = 2",
+            "the applied ledger is not a contiguous prefix of the embedded chain",
+        );
+        assert_refused(
+            "UPDATE _sqlx_migrations SET version = 99 WHERE version = 4",
+            "the applied ledger is not a contiguous prefix of the embedded chain",
+        );
+        assert_refused(
+            "UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 3",
+            "applied checksum does not match the embedded migration",
+        );
+        assert_refused(
+            "UPDATE _sqlx_migrations SET success = FALSE WHERE version = 1",
+            "a previous application of this migration failed",
+        );
     }
 
     /// The checksum discipline is SHA-384 over the raw file bytes: the
