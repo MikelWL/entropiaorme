@@ -20,6 +20,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -37,12 +38,56 @@ pub struct AnalyticsService {
 }
 
 /// A page of ledger entries (newest first) plus the opaque cursor for the
-/// following page (`None` on the last page). The entries carry their wire
-/// shape as `Value` (the caller projects them to its own type); the cursor
-/// is the base64url keyset token.
+/// following page (`None` on the last page); the cursor is the base64url
+/// keyset token.
 pub struct LedgerPage {
-    pub entries: Vec<Value>,
+    pub entries: Vec<LedgerRow>,
     pub next_cursor: Option<String>,
+}
+
+/// One ledger entry, in wire shape (`type` is the stored kind).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LedgerRow {
+    pub id: String,
+    pub date: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub description: String,
+    pub amount: f64,
+    pub tag: String,
+}
+
+/// One ledger preset, in wire shape.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PresetRow {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub description: String,
+    pub amount: f64,
+    pub tag: String,
+}
+
+/// One inventory item, in wire shape.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryRow {
+    pub id: String,
+    pub name: String,
+    pub tt_value: f64,
+    pub markup_paid: f64,
+    pub notes: Option<String>,
+    pub acquired_at: String,
+}
+
+/// A realised inventory sale: the ledger entry it wrote (`None` for a
+/// zero-delta sale) and the sold item.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventorySale {
+    pub ledger_entry: Option<LedgerRow>,
+    pub sold_item: InventoryRow,
 }
 
 /// The analytics service's error surface. The two validation variants (a
@@ -1427,28 +1472,29 @@ impl AnalyticsService {
 
 const INVENTORY_SALE_TAG: &str = "inventory_sale";
 
-/// `LedgerItem` / `LedgerPresetItem` share a shape; both select
-/// (id, name-or-date, type, description, amount, tag).
-fn ledger_item(row: &rusqlite::Row) -> Value {
-    json!({
-        "id": row.get_unwrap::<_, String>(0),
-        "date": row.get_unwrap::<_, String>(1),
-        "type": row.get_unwrap::<_, String>(2),
-        "description": row.get_unwrap::<_, String>(3),
-        "amount": float_field(sql_number(row, 4)),
-        "tag": row.get_unwrap::<_, String>(5),
-    })
+/// The ledger and preset rows both select
+/// (id, name-or-date, type, description, amount, tag); the amount reads
+/// with float coercion (an INTEGER-affinity amount leaves as its float).
+fn ledger_item(row: &rusqlite::Row) -> LedgerRow {
+    LedgerRow {
+        id: row.get_unwrap::<_, String>(0),
+        date: row.get_unwrap::<_, String>(1),
+        kind: row.get_unwrap::<_, String>(2),
+        description: row.get_unwrap::<_, String>(3),
+        amount: row.get_unwrap::<_, f64>(4),
+        tag: row.get_unwrap::<_, String>(5),
+    }
 }
 
-fn preset_item(row: &rusqlite::Row) -> Value {
-    json!({
-        "id": row.get_unwrap::<_, String>(0),
-        "name": row.get_unwrap::<_, String>(1),
-        "type": row.get_unwrap::<_, String>(2),
-        "description": row.get_unwrap::<_, String>(3),
-        "amount": float_field(sql_number(row, 4)),
-        "tag": row.get_unwrap::<_, String>(5),
-    })
+fn preset_item(row: &rusqlite::Row) -> PresetRow {
+    PresetRow {
+        id: row.get_unwrap::<_, String>(0),
+        name: row.get_unwrap::<_, String>(1),
+        kind: row.get_unwrap::<_, String>(2),
+        description: row.get_unwrap::<_, String>(3),
+        amount: row.get_unwrap::<_, f64>(4),
+        tag: row.get_unwrap::<_, String>(5),
+    }
 }
 
 /// The default ledger page size when the client names no `limit`.
@@ -1477,16 +1523,16 @@ fn decode_ledger_cursor(token: &str) -> Option<(String, String)> {
     Some((date, id))
 }
 
-/// The inventory row's wire shape: (id, name, tt_value, markup_paid, notes, acquired_at).
-fn inventory_item(row: &rusqlite::Row) -> Value {
-    json!({
-        "id": row.get_unwrap::<_, String>(0),
-        "name": row.get_unwrap::<_, String>(1),
-        "ttValue": float_field(sql_number(row, 2)),
-        "markupPaid": float_field(sql_number(row, 3)),
-        "notes": row.get_unwrap::<_, Option<String>>(4),
-        "acquiredAt": row.get_unwrap::<_, String>(5),
-    })
+/// The inventory row: (id, name, tt_value, markup_paid, notes, acquired_at).
+fn inventory_item(row: &rusqlite::Row) -> InventoryRow {
+    InventoryRow {
+        id: row.get_unwrap::<_, String>(0),
+        name: row.get_unwrap::<_, String>(1),
+        tt_value: row.get_unwrap::<_, f64>(2),
+        markup_paid: row.get_unwrap::<_, f64>(3),
+        notes: row.get_unwrap::<_, Option<String>>(4),
+        acquired_at: row.get_unwrap::<_, String>(5),
+    }
 }
 
 impl AnalyticsService {
@@ -1530,17 +1576,18 @@ impl AnalyticsService {
 
         // Each fetched row as (date, id, wire shape); the cursor is cut from
         // the last kept row's (date, id).
-        let rows: Vec<(String, String, Value)> = self
+        let rows: Vec<(String, String, LedgerRow)> = self
             .db
             .with_reader(move |conn| {
                 let mut stmt = conn.prepare(&sql)?;
-                let map_row = |row: &rusqlite::Row| -> rusqlite::Result<(String, String, Value)> {
-                    Ok((
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(0)?,
-                        ledger_item(row),
-                    ))
-                };
+                let map_row =
+                    |row: &rusqlite::Row| -> rusqlite::Result<(String, String, LedgerRow)> {
+                        Ok((
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(0)?,
+                            ledger_item(row),
+                        ))
+                    };
                 let rows = match &seek {
                     Some((date, id)) => stmt
                         .query_map(rusqlite::params![date, date, id, page + 1], map_row)?
@@ -1561,7 +1608,7 @@ impl AnalyticsService {
         } else {
             &rows[..]
         };
-        let entries: Vec<Value> = kept.iter().map(|(_, _, item)| item.clone()).collect();
+        let entries: Vec<LedgerRow> = kept.iter().map(|(_, _, item)| item.clone()).collect();
         let next_cursor = has_more
             .then(|| kept.last())
             .flatten()
@@ -1582,7 +1629,7 @@ impl AnalyticsService {
         description: &str,
         amount: f64,
         tag: &str,
-    ) -> Result<Value, AnalyticsError> {
+    ) -> Result<LedgerRow, AnalyticsError> {
         let id = Uuid::new_v4().to_string();
         // One transaction over the insert and the rollup refresh: a
         // backdated entry relands its day's rollup with the write.
@@ -1606,10 +1653,14 @@ impl AnalyticsService {
                 Ok(())
             })
             .await?;
-        Ok(json!({
-            "id": id, "date": date, "type": kind,
-            "description": description, "amount": amount, "tag": tag,
-        }))
+        Ok(LedgerRow {
+            id,
+            date: date.to_string(),
+            kind: kind.to_string(),
+            description: description.to_string(),
+            amount,
+            tag: tag.to_string(),
+        })
     }
 
     /// Delete a ledger entry, relanding its day's rollup in the same
@@ -1646,7 +1697,7 @@ impl AnalyticsService {
     }
 
     /// The ledger presets, in creation order.
-    pub async fn list_ledger_presets(&self) -> Result<Vec<Value>, AnalyticsError> {
+    pub async fn list_ledger_presets(&self) -> Result<Vec<PresetRow>, AnalyticsError> {
         Ok(self
             .db
             .with_reader(|conn| {
@@ -1672,7 +1723,7 @@ impl AnalyticsService {
         description: &str,
         amount: f64,
         tag: &str,
-    ) -> Result<Value, AnalyticsError> {
+    ) -> Result<PresetRow, AnalyticsError> {
         if kind != "expense" && kind != "markup" {
             return Err(AnalyticsError::InvalidPresetType);
         }
@@ -1696,10 +1747,14 @@ impl AnalyticsService {
                 })
                 .await?;
         }
-        Ok(json!({
-            "id": id, "name": name, "type": kind,
-            "description": description, "amount": amount, "tag": tag,
-        }))
+        Ok(PresetRow {
+            id,
+            name: name.to_string(),
+            kind: kind.to_string(),
+            description: description.to_string(),
+            amount,
+            tag: tag.to_string(),
+        })
     }
 
     /// Delete a ledger preset. Returns whether a row existed.
@@ -1718,7 +1773,7 @@ impl AnalyticsService {
     }
 
     /// The inventory items, newest acquisition first.
-    pub async fn list_inventory(&self) -> Result<Vec<Value>, AnalyticsError> {
+    pub async fn list_inventory(&self) -> Result<Vec<InventoryRow>, AnalyticsError> {
         Ok(self
             .db
             .with_reader(|conn| {
@@ -1737,7 +1792,7 @@ impl AnalyticsService {
     /// The stored inventory row re-read and shaped (the create / patch
     /// reply). A row that has vanished since the write is a driver-level
     /// invariant break, surfaced as [`AnalyticsError::Storage`].
-    async fn inventory_row(&self, item_id: &str) -> Result<Value, AnalyticsError> {
+    async fn inventory_row(&self, item_id: &str) -> Result<InventoryRow, AnalyticsError> {
         let item_id = item_id.to_string();
         Ok(self
             .db
@@ -1762,7 +1817,7 @@ impl AnalyticsService {
         markup_paid: f64,
         notes: Option<&str>,
         acquired_at: Option<&str>,
-    ) -> Result<Value, AnalyticsError> {
+    ) -> Result<InventoryRow, AnalyticsError> {
         let id = Uuid::new_v4().to_string();
         // acquired_at falls back to today's UTC date: the original's `or`
         // treats an empty string as falsy, so "" defaults to the clock date.
@@ -1802,7 +1857,7 @@ impl AnalyticsService {
         tt_value: Option<f64>,
         markup_paid: Option<f64>,
         notes: Option<&str>,
-    ) -> Result<Option<Value>, AnalyticsError> {
+    ) -> Result<Option<InventoryRow>, AnalyticsError> {
         // The existence check and the (possibly empty) update run together on
         // the writer connection, which reads as well as writes.
         let updated = {
@@ -1893,7 +1948,7 @@ impl AnalyticsService {
         sale_price: f64,
         description: Option<&str>,
         sold_at: Option<&str>,
-    ) -> Result<Option<Value>, AnalyticsError> {
+    ) -> Result<Option<InventorySale>, AnalyticsError> {
         // The item is read on a reader-core connection; the realised sale then
         // writes its ledger row and removes the item in one writer transaction
         // (the rollup refresh must commit atomically with the ledger insert).
@@ -1909,8 +1964,8 @@ impl AnalyticsService {
                         |row| {
                             Ok((
                                 row.get::<_, String>(1)?,
-                                sql_number(row, 2).as_f64().unwrap_or(0.0),
-                                sql_number(row, 3).as_f64().unwrap_or(0.0),
+                                row.get::<_, f64>(2)?,
+                                row.get::<_, f64>(3)?,
                                 inventory_item(row),
                             ))
                         },
@@ -1978,16 +2033,20 @@ impl AnalyticsService {
                 Ok(())
             })
             .await?;
-        let ledger_entry = match ledger_write {
-            Some((entry_id, sold_at, entry_type, description, amount)) => json!({
-                "id": entry_id, "date": sold_at, "type": entry_type,
-                "description": description, "amount": amount, "tag": INVENTORY_SALE_TAG,
-            }),
-            None => Value::Null,
-        };
-        Ok(Some(
-            json!({"ledgerEntry": ledger_entry, "soldItem": sold_item}),
-        ))
+        let ledger_entry = ledger_write.map(
+            |(entry_id, sold_at, entry_type, description, amount)| LedgerRow {
+                id: entry_id,
+                date: sold_at,
+                kind: entry_type.to_string(),
+                description,
+                amount,
+                tag: INVENTORY_SALE_TAG.to_string(),
+            },
+        );
+        Ok(Some(InventorySale {
+            ledger_entry,
+            sold_item,
+        }))
     }
 }
 
@@ -2003,6 +2062,11 @@ impl AnalyticsService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The wire shape of a typed row, for byte-shape assertions.
+    fn to_json<T: Serialize>(value: T) -> Value {
+        serde_json::to_value(value).expect("analytics row serialises")
+    }
     use eo_wire::normalizer::to_wire_json;
 
     /// A real database (the synchronous core) over a temp file. A temp file
@@ -2065,10 +2129,12 @@ mod tests {
         heal_to_june_fifth(service.db()).await;
 
         // A backdated create lands its day's rollup with the insert.
-        let body = service
-            .create_ledger_entry("2026-06-02", "expense", "ammo restock", 12.5, "manual")
-            .await
-            .unwrap();
+        let body = to_json(
+            service
+                .create_ledger_entry("2026-06-02", "expense", "ammo restock", 12.5, "manual")
+                .await
+                .unwrap(),
+        );
         assert_eq!(
             ledger_rollup(service.db(), "2026-06-02", "manual").await,
             Some(("expense".into(), 12.5))
@@ -2550,10 +2616,12 @@ mod tests {
     #[tokio::test]
     async fn ledger_create_and_list_round_trip() {
         let (_dir, service) = write_service().await;
-        let body = service
-            .create_ledger_entry("2026-05-01", "expense", "Ammo", 12.5, "ammo")
-            .await
-            .unwrap();
+        let body = to_json(
+            service
+                .create_ledger_entry("2026-05-01", "expense", "Ammo", 12.5, "ammo")
+                .await
+                .unwrap(),
+        );
         assert_eq!(body["date"], json!("2026-05-01"));
         assert_eq!(body["type"], json!("expense"));
         assert_eq!(body["amount"], json!(12.5));
@@ -2562,8 +2630,8 @@ mod tests {
 
         let page = service.list_ledger(None, None).await.unwrap();
         assert_eq!(page.entries.len(), 1);
-        assert_eq!(page.entries[0]["description"], json!("Ammo"));
-        assert_eq!(page.entries[0]["id"], body["id"]);
+        assert_eq!(page.entries[0].description, "Ammo");
+        assert_eq!(json!(page.entries[0].id), body["id"]);
     }
 
     /// Keyset pagination walks the whole ledger newest-first, one bounded
@@ -2596,7 +2664,7 @@ mod tests {
                 .unwrap();
             assert!(page.entries.len() <= 2, "the page is bounded by the limit");
             for row in &page.entries {
-                seen.push(row["description"].as_str().unwrap().to_string());
+                seen.push(row.description.clone());
             }
             match page.next_cursor {
                 Some(token) => cursor = Some(token),
@@ -2645,10 +2713,12 @@ mod tests {
     #[tokio::test]
     async fn inventory_create_defaults_date_and_notes() {
         let (_dir, service) = write_service().await;
-        let body = service
-            .create_inventory_item("Imk2", 50.0, 5.0, None, None)
-            .await
-            .unwrap();
+        let body = to_json(
+            service
+                .create_inventory_item("Imk2", 50.0, 5.0, None, None)
+                .await
+                .unwrap(),
+        );
         // Response is camelCase even though the request is snake_case.
         assert_eq!(body["ttValue"], json!(50.0));
         assert_eq!(body["markupPaid"], json!(5.0));
@@ -2656,10 +2726,12 @@ mod tests {
         assert_eq!(body["acquiredAt"], json!("2026-06-01"));
 
         // An explicit acquired_at / notes are honoured.
-        let body = service
-            .create_inventory_item("X", 1.0, 0.0, Some("spare"), Some("2026-01-02"))
-            .await
-            .unwrap();
+        let body = to_json(
+            service
+                .create_inventory_item("X", 1.0, 0.0, Some("spare"), Some("2026-01-02"))
+                .await
+                .unwrap(),
+        );
         assert_eq!(body["notes"], json!("spare"));
         assert_eq!(body["acquiredAt"], json!("2026-01-02"));
     }
@@ -2670,29 +2742,35 @@ mod tests {
     #[tokio::test]
     async fn inventory_patch_updates_only_provided_fields() {
         let (_dir, service) = write_service().await;
-        let created = service
-            .create_inventory_item("Orig", 20.0, 3.0, Some("keep"), Some("2026-03-01"))
-            .await
-            .unwrap();
+        let created = to_json(
+            service
+                .create_inventory_item("Orig", 20.0, 3.0, Some("keep"), Some("2026-03-01"))
+                .await
+                .unwrap(),
+        );
         let id = created["id"].as_str().unwrap().to_string();
 
         // Provide name + tt_value only: markup_paid and notes stay.
-        let patched = service
-            .update_inventory_item(&id, Some("Renamed"), Some(25.0), None, None)
-            .await
-            .unwrap()
-            .expect("the item exists");
+        let patched = to_json(
+            service
+                .update_inventory_item(&id, Some("Renamed"), Some(25.0), None, None)
+                .await
+                .unwrap()
+                .expect("the item exists"),
+        );
         assert_eq!(patched["name"], json!("Renamed"));
         assert_eq!(patched["ttValue"], json!(25.0));
         assert_eq!(patched["markupPaid"], json!(3.0), "untouched");
         assert_eq!(patched["notes"], json!("keep"), "untouched");
 
         // An all-None patch re-reads and returns the row unchanged.
-        let same = service
-            .update_inventory_item(&id, None, None, None, None)
-            .await
-            .unwrap()
-            .expect("the item exists");
+        let same = to_json(
+            service
+                .update_inventory_item(&id, None, None, None, None)
+                .await
+                .unwrap()
+                .expect("the item exists"),
+        );
         assert_eq!(same, patched);
 
         // Patch a missing id -> not found.
@@ -2709,16 +2787,20 @@ mod tests {
     async fn sell_emits_the_right_delta_branch() {
         // PROFIT: sale 20 over cost 12 -> markup 8.0; default description.
         let (_dir, service) = write_service().await;
-        let item = service
-            .create_inventory_item("Sword", 10.0, 2.0, None, Some("2026-02-01"))
-            .await
-            .unwrap();
+        let item = to_json(
+            service
+                .create_inventory_item("Sword", 10.0, 2.0, None, Some("2026-02-01"))
+                .await
+                .unwrap(),
+        );
         let id = item["id"].as_str().unwrap().to_string();
-        let body = service
-            .sell_inventory_item(&id, 20.0, None, Some("2026-05-10"))
-            .await
-            .unwrap()
-            .expect("the item exists");
+        let body = to_json(
+            service
+                .sell_inventory_item(&id, 20.0, None, Some("2026-05-10"))
+                .await
+                .unwrap()
+                .expect("the item exists"),
+        );
         let entry = &body["ledgerEntry"];
         assert_eq!(entry["type"], json!("markup"));
         assert_eq!(entry["amount"], json!(8.0));
@@ -2739,16 +2821,20 @@ mod tests {
 
         // LOSS: sale 5 under cost 12 -> expense 7.0; explicit description.
         let (_dir, service) = write_service().await;
-        let item = service
-            .create_inventory_item("Shield", 10.0, 2.0, None, Some("2026-02-01"))
-            .await
-            .unwrap();
+        let item = to_json(
+            service
+                .create_inventory_item("Shield", 10.0, 2.0, None, Some("2026-02-01"))
+                .await
+                .unwrap(),
+        );
         let id = item["id"].as_str().unwrap().to_string();
-        let body = service
-            .sell_inventory_item(&id, 5.0, Some("Dumped it"), None)
-            .await
-            .unwrap()
-            .expect("the item exists");
+        let body = to_json(
+            service
+                .sell_inventory_item(&id, 5.0, Some("Dumped it"), None)
+                .await
+                .unwrap()
+                .expect("the item exists"),
+        );
         let entry = &body["ledgerEntry"];
         assert_eq!(entry["type"], json!("expense"));
         assert_eq!(entry["amount"], json!(7.0));
@@ -2758,16 +2844,20 @@ mod tests {
 
         // ZERO-DELTA: sale == cost -> no ledger entry, item still removed.
         let (_dir, service) = write_service().await;
-        let item = service
-            .create_inventory_item("Even", 8.0, 2.0, None, Some("2026-02-01"))
-            .await
-            .unwrap();
+        let item = to_json(
+            service
+                .create_inventory_item("Even", 8.0, 2.0, None, Some("2026-02-01"))
+                .await
+                .unwrap(),
+        );
         let id = item["id"].as_str().unwrap().to_string();
-        let body = service
-            .sell_inventory_item(&id, 10.0, None, None)
-            .await
-            .unwrap()
-            .expect("the item exists");
+        let body = to_json(
+            service
+                .sell_inventory_item(&id, 10.0, None, None)
+                .await
+                .unwrap()
+                .expect("the item exists"),
+        );
         assert_eq!(body["ledgerEntry"], Value::Null);
         assert_eq!(body["soldItem"]["name"], json!("Even"));
         assert_eq!(
@@ -2793,10 +2883,12 @@ mod tests {
     #[tokio::test]
     async fn ledger_delete_removes_then_reports_missing() {
         let (_dir, service) = write_service().await;
-        let created = service
-            .create_ledger_entry("2026-05-01", "expense", "Ammo", 12.5, "ammo")
-            .await
-            .unwrap();
+        let created = to_json(
+            service
+                .create_ledger_entry("2026-05-01", "expense", "Ammo", 12.5, "ammo")
+                .await
+                .unwrap(),
+        );
         let id = created["id"].as_str().unwrap().to_string();
         // A successful delete reports true (the row existed); a second delete
         // reports false (nothing to remove).
@@ -2807,14 +2899,16 @@ mod tests {
     #[tokio::test]
     async fn preset_list_shapes_rows_then_delete_removes() {
         let (_dir, service) = write_service().await;
-        let created = service
-            .create_ledger_preset("Decay", "expense", "d", 0.5, "decay")
-            .await
-            .unwrap();
+        let created = to_json(
+            service
+                .create_ledger_preset("Decay", "expense", "d", 0.5, "decay")
+                .await
+                .unwrap(),
+        );
         let id = created["id"].as_str().unwrap().to_string();
         // The list shapes the row via preset_item (not an empty default).
-        let rows = service.list_ledger_presets().await.unwrap();
-        assert_eq!(rows.len(), 1);
+        let rows = to_json(service.list_ledger_presets().await.unwrap());
+        assert_eq!(rows.as_array().unwrap().len(), 1);
         assert_eq!(rows[0]["name"], json!("Decay"));
         assert_eq!(rows[0]["amount"], json!(0.5));
         assert_eq!(rows[0]["tag"], json!("decay"));
@@ -2825,10 +2919,12 @@ mod tests {
     #[tokio::test]
     async fn inventory_delete_removes_then_reports_missing() {
         let (_dir, service) = write_service().await;
-        let created = service
-            .create_inventory_item("Sword", 10.0, 2.0, None, None)
-            .await
-            .unwrap();
+        let created = to_json(
+            service
+                .create_inventory_item("Sword", 10.0, 2.0, None, None)
+                .await
+                .unwrap(),
+        );
         let id = created["id"].as_str().unwrap().to_string();
         assert!(service.delete_inventory_item(&id).await.unwrap());
         assert!(!service.delete_inventory_item(&id).await.unwrap());
