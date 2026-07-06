@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { FakeApiError, guideState, tauriInvoke } = vi.hoisted(() => {
 	class FakeApiError extends Error {
 		constructor(
-			public status: number,
+			public kind: string,
 			message: string,
 		) {
 			super(message);
@@ -314,7 +314,7 @@ describe('equipment wrappers dispatch typed commands', () => {
 		const failure = api.getEquipmentDetail('9');
 		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
 		await expect(failure).rejects.toMatchObject({
-			status: 404,
+			kind: 'notFound',
 			message: 'Equipment item 9 not found',
 		});
 	});
@@ -322,7 +322,7 @@ describe('equipment wrappers dispatch typed commands', () => {
 	it('maps a message-less kind onto its fixed message', async () => {
 		tauriInvoke.mockRejectedValue({ kind: 'unavailable' });
 		await expect(api.getEquipmentLibrary()).rejects.toMatchObject({
-			status: 503,
+			kind: 'unavailable',
 			message: 'backend substrate not ready',
 		});
 	});
@@ -330,7 +330,7 @@ describe('equipment wrappers dispatch typed commands', () => {
 	it('surfaces an out-of-contract rejection verbatim', async () => {
 		tauriInvoke.mockRejectedValue('command equipment_detail not found');
 		await expect(api.getEquipmentDetail('7')).rejects.toMatchObject({
-			status: 500,
+			kind: 'unknown',
 			message: 'command equipment_detail not found',
 		});
 	});
@@ -363,7 +363,10 @@ describe('settings wrappers dispatch typed commands', () => {
 		tauriInvoke.mockRejectedValue({ kind: 'badRequest', message: 'No fields to update' });
 		const failure = api.updateSettings({});
 		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
-		await expect(failure).rejects.toMatchObject({ status: 400, message: 'No fields to update' });
+		await expect(failure).rejects.toMatchObject({
+			kind: 'badRequest',
+			message: 'No fields to update',
+		});
 	});
 });
 
@@ -425,7 +428,7 @@ describe('codex wrappers dispatch typed commands', () => {
 		const failure = api.getCodexSpeciesRanks('No Such');
 		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
 		await expect(failure).rejects.toMatchObject({
-			status: 404,
+			kind: 'notFound',
 			message: "Species 'No Such' not found",
 		});
 	});
@@ -593,7 +596,7 @@ describe('character wrappers dispatch typed commands', () => {
 	it('maps a typed error payload onto the thrown ApiError contract', async () => {
 		tauriInvoke.mockRejectedValue({ kind: 'internal' });
 		await expect(api.getCharacterStats()).rejects.toMatchObject({
-			status: 500,
+			kind: 'internal',
 			message: 'Internal Server Error',
 		});
 	});

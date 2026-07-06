@@ -1,6 +1,5 @@
-//! Mob-name lookup against the bundled mobs catalogue, ported from
-//! the original Python implementation. Used by manual-mob
-//! tracking flows for autocomplete and validation.
+//! Mob-name lookup against the bundled mobs catalogue, used by
+//! manual-mob tracking flows for autocomplete and validation.
 
 use serde_json::{Map, Value};
 

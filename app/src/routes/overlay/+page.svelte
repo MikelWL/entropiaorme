@@ -1024,7 +1024,7 @@
 			await startTracking();
 			await hydrate();
 		} catch (error) {
-			if (error instanceof ApiError && error.status === 400) {
+			if (error instanceof ApiError && error.kind === 'badRequest') {
 				attributionWarning = error.message;
 			}
 		}

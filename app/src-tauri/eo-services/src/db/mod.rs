@@ -18,24 +18,23 @@
 //!   no longer stalls dashboard reads. Callers pick the role by intent
 //!   ([`Db::with_reader`] for `SELECT`, [`Db::with_writer`] for mutations); no
 //!   other module reaches a raw connection. (The original single-owner
-//!   connection, a faithful transcription of the backend's shared connection,
-//!   was the benchmark-justified renovation point once real databases outgrew
+//!   connection was the benchmark-justified renovation point once real databases outgrew
 //!   it; the split is response-invariant, re-validated against the DB-state
 //!   goldens.)
 //! - **Session configuration**: WAL journal, NORMAL synchronous, a
-//!   five-second busy timeout, foreign keys off (matching the backend's
-//!   effective pragma surface, where `REFERENCES` clauses are declarative),
+//!   five-second busy timeout, foreign keys off (the pragma surface the
+//!   schema has always run under: `REFERENCES` clauses are declarative),
 //!   and a 64 MB page cache per connection.
 //! - **Schema baseline**: the migration chain (an embedded runner with the
-//!   inherited ledger accounting, see [`migrate`]) starts at the schema the
-//!   backend creates on a fresh install (version 33), statement text verbatim,
-//!   so a freshly-migrated native database is `sqlite_master`-identical to a
-//!   freshly-created backend one.
-//! - **Adoption over re-creation**: opening an existing database that the
-//!   backend has already migrated to version 33 marks the baseline as applied
-//!   without running any DDL. Databases on older schema versions are refused:
-//!   the backend process owns their upgrade for as long as it ships, and the
-//!   pre-baseline upgrade chain moves natively only when that ownership ends.
+//!   inherited ledger accounting, see [`migrate`]) starts at the version-33
+//!   baseline, statement text carried verbatim, so a freshly-migrated
+//!   database is `sqlite_master`-identical to one created before the
+//!   runner existed.
+//! - **Adoption over re-creation**: opening an existing database already at
+//!   version 33 marks the baseline as applied without running any DDL.
+//!   Databases on older schema versions are refused: the pre-baseline
+//!   upgrade chain was never carried across (the retired implementation
+//!   owned those upgrades), so composition declines such a database loudly.
 
 mod migrate;
 mod pool;
@@ -52,8 +51,8 @@ const BASELINE_SCHEMA_VERSION: i64 = 33;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
-    /// The on-disk schema predates the supported baseline; the backend
-    /// process upgrades it on its own launch.
+    /// The on-disk schema predates the supported baseline (the pre-baseline
+    /// upgrade chain was never carried across); composition refuses it.
     #[error("database schema version {found} predates the supported baseline {supported}")]
     UnsupportedSchemaVersion { found: i64, supported: i64 },
     /// Any driver failure from the synchronous core.
@@ -380,7 +379,7 @@ impl Db {
 
     /// One equipment-library row by id alone: `(name, item_type, properties
     /// JSON)`, or None when absent. The hotbar resolver reads it to branch on
-    /// the item type the slot's bound id resolves to (mirroring the backend's
+    /// the item type the slot's bound id resolves to (a
     /// `SELECT id, name, item_type FROM equipment_library WHERE id = ?`, with
     /// the properties carried so the healing branch reads them without a
     /// second query).
@@ -403,12 +402,10 @@ impl Db {
     }
 
     /// The first weapon-row `properties_json` whose name contains the
-    /// supplied fragment, ported from the backend's
-    /// `_equipment_profile_lookup`: a `LIKE '%fragment%'` over weapon
+    /// supplied fragment: a `LIKE '%fragment%'` over weapon
     /// rows, with the fragment's own `%` / `_` / `\` escaped (so an
     /// embedded wildcard cannot widen the match) under an explicit
-    /// `ESCAPE '\'`. The fragment is trimmed exactly as the backend
-    /// trims it before the query.
+    /// `ESCAPE '\'`. The fragment is trimmed before the query.
     pub async fn weapon_properties_by_name_fragment(
         &self,
         fragment: &str,
@@ -503,8 +500,8 @@ fn run_quick_check(connection: &rusqlite::Connection) -> QuickCheckOutcome {
     }
 }
 
-/// Mark the baseline as applied on a database the backend has already
-/// created at the baseline version; refuse older schemas.
+/// Mark the baseline as applied on a pre-existing database already at
+/// the baseline version; refuse older schemas.
 fn adopt_or_refuse(connection: &mut rusqlite::Connection) -> Result<(), DbError> {
     if !table_exists_sync(connection, "db_metadata")? {
         // A fresh (or empty) database: the migration chain owns it.
@@ -534,9 +531,9 @@ fn adopt_or_refuse(connection: &mut rusqlite::Connection) -> Result<(), DbError>
     // after the bridge mutated the file would leave a half-upgraded database.
     let tx = connection.transaction()?;
     if version < BASELINE_SCHEMA_VERSION {
-        // A below-baseline database the backend process now owns: the
-        // co-bundled Python sidecar that used to migrate it forward to the
-        // baseline on the first launch after an upgrade is gone, so the
+        // A below-baseline database: the retired sidecar that used to
+        // migrate it forward to the baseline on the first launch after
+        // an upgrade is gone, so the
         // upgrade runs natively here, in place, before the baseline is
         // stamped. Only the single rung an in-the-wild v0.1.0-lineage
         // database occupies is bridged; older schemas stay a refusal.

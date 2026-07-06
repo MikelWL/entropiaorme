@@ -1,5 +1,4 @@
-//! Chat.log file watcher, ported from
-//! the original Python implementation: tails the log and publishes
+//! Chat.log file watcher: tails the log and publishes
 //! parsed events on the in-process bus for the tracker to consume.
 //!
 //! The tail is a deliberate 100ms polling loop (part of the recorded
@@ -10,11 +9,10 @@
 //! event, a completed mission may invoke the quest-reward filter to
 //! suppress one loot item or skill gain, enhancer breaks match
 //! same-tick shrapnel refunds, and a tick-flushed signal lands last.
-//! Payload timestamps travel as the backend's string form of the
-//! parsed instant, so the recorder's symbol numbering keys
-//! identically. The original's debug-only performance counters are
-//! omitted (this crate has no logging surface); the drain counters
-//! they sat beside are load-bearing and fully ported.
+//! Payload timestamps travel as the string form of the parsed
+//! instant, the shape the recorder's symbol numbering keys on. The
+//! drain counters are load-bearing (the replay corpus asserts them);
+//! this crate has no logging surface.
 
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;

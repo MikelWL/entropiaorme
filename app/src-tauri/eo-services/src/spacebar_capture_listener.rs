@@ -1,5 +1,4 @@
-//! Spacebar-capture listener, ported from
-//! the original Python implementation: an optional hook for
+//! Spacebar-capture listener: an optional hook for
 //! hands-free capture during a manual skill scan.
 //!
 //! When enabled (the scan-overlay toggle), the listener consumes a

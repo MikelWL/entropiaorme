@@ -1,8 +1,7 @@
-//! Character calculation service, ported from
-//! the original Python implementation: profession levels, skill
+//! Character calculation service: profession levels, skill
 //! ranks, HP, codex prediction. Pure functions; no I/O. Inputs arrive
 //! in the catalogue's nested JSON shape, and two adapter helpers hide
-//! that shape from the maths exactly as the backend's iterators do.
+//! that shape from the maths.
 
 use serde_json::{Map, Value};
 

@@ -1,16 +1,15 @@
 //! The native-services composition root.
 //!
-//! Mirrors the original Python startup composition:
-//! resolve the data directory, open the application database, load the
-//! game-data snapshot, and construct the ported services over the real
-//! clock. The substrate serves every route natively through the state
-//! composed here; when any step declines, composition is terminal and the
+//! Startup composition: resolve the data directory, open the
+//! application database, load the game-data snapshot, and construct
+//! the services over the real clock. The facade serves every typed
+//! command through the state composed here; when any step declines, composition is terminal and the
 //! backend does not come up for the session (there is no upstream to fall
 //! back to).
 //!
 //! Composition assembles the full native surface: the hydration read
 //! surface, the producer spine, and the OCR recogniser with its ONNX
-//! Runtime obligations, all built here ahead of the routes that consume
+//! Runtime obligations, all built here ahead of the operations that consume
 //! them.
 //!
 //! ## The ONNX Runtime obligations
@@ -60,7 +59,7 @@
 //! one optional faculty, so the read surface and producer spine compose
 //! regardless and the engine sits `None` (exactly as
 //! `local_ocr.get_engine()` returns `None`, with the consumer seams
-//! defaulting to unavailable until the scan routes flip).
+//! defaulting to unavailable until a rebuilt engine flips them).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -109,9 +108,9 @@ fn dev_project_root() -> PathBuf {
         .join("..")
 }
 
-/// Where the user's data lives, by the backend's own rules. Release
-/// builds are "frozen" in the backend's sense (the installed app);
-/// dev builds honour `ENTROPIAORME_DATA_DIR` and the repo default.
+/// Where the user's data lives (see `eo_services::paths`). Release
+/// builds resolve the installed app's per-user data directory; dev
+/// builds honour `ENTROPIAORME_DATA_DIR` and the repo default.
 pub(crate) fn data_dir() -> PathBuf {
     let override_value = std::env::var("ENTROPIAORME_DATA_DIR").ok();
     let frozen = !cfg!(debug_assertions);
@@ -283,7 +282,7 @@ fn init_ort_runtime(resource_dir: Option<&PathBuf>) {
 /// process-exit teardown.
 pub struct ProducerState {
     // The chat-log watcher (tailing in its own thread). Held as an `Arc` so a
-    // clone reaches the HTTP layer: the settings-write route restarts it when
+    // clone reaches the facade: the settings-write operation restarts it when
     // the watched `chatlog_path` changes. The exit seam still stops it via
     // [`ProducerState::stop`]; `restart`/`stop` take `&self`, so sharing is safe.
     watcher: Arc<ChatlogWatcher>,
@@ -297,13 +296,13 @@ pub struct ProducerState {
     // state moves into the Tauri holder, so the publisher side and the
     // emit side share one channel.
     domain_bus: Arc<DomainBus>,
-    // The settings writer. Held here so the producer spine and the HTTP
-    // write path share one service; a clone is handed to the app state at
-    // composition. Mutex-guarded because `update`/`reset` take `&mut self`.
+    // The settings writer. Held here so the producer spine and the
+    // facade's write path share one service; a clone is handed to the
+    // facade at composition. Mutex-guarded because `update`/`reset` take `&mut self`.
     config_service: Arc<Mutex<ConfigService>>,
     // The skill tracker. Held to keep its permanent bus subscription alive
-    // for the substrate's lifetime, and exposed: the codex claim routes
-    // call `suppress_next` on it.
+    // for the substrate's lifetime, and exposed: the codex claim
+    // operations call `suppress_next` on it.
     skill_tracker: Arc<SkillTracker>,
     // The in-process event bus the whole spine publishes on. Stored (rather
     // than left implicit on the subscriber handles) so the scan services
@@ -313,7 +312,7 @@ pub struct ProducerState {
     bus: Arc<EventBus>,
     // The hotbar key listener. A producer (it publishes tool-change events on
     // the bus), gated on the hotbar-hooks toggle and an active session; held
-    // here so the snapshot route can read whether it is running and so the
+    // here so the snapshot read can see whether it is running and so the
     // exit seam stops it. Shares the one keystroke source below.
     hotbar: Arc<HotbarListener>,
     // The one OS keyboard hook the input listeners share (the hotbar listener
@@ -352,10 +351,10 @@ impl ProducerState {
         self.watcher.as_ref()
     }
 
-    /// A handle to the composed chat-log watcher. The settings-write route
-    /// restarts it on a `chatlog_path` change; cloned into the app state at
-    /// the composition handoff so the route side and the producer-spine side
-    /// share one watcher.
+    /// A handle to the composed chat-log watcher. The settings-write
+    /// operation restarts it on a `chatlog_path` change; cloned into the
+    /// facade at the composition handoff so the facade side and the
+    /// producer-spine side share one watcher.
     pub fn watcher_handle(&self) -> Arc<ChatlogWatcher> {
         self.watcher.clone()
     }
@@ -366,10 +365,10 @@ impl ProducerState {
         &self.tracker
     }
 
-    /// A handle to the composed tracker. The producer routes serve over
+    /// A handle to the composed tracker. The tracking operations serve over
     /// this same `Arc<HuntTracker>`: the composition handoff clones it into
-    /// the HTTP app state before this `ProducerState` moves into the
-    /// Tauri-managed producer holder, so the routes and the exit-seam
+    /// the facade before this `ProducerState` moves into the
+    /// Tauri-managed producer holder, so the facade and the exit-seam
     /// teardown share one tracker.
     pub fn tracker_handle(&self) -> Arc<HuntTracker> {
         self.tracker.clone()
@@ -384,9 +383,10 @@ impl ProducerState {
         self.domain_bus.clone()
     }
 
-    /// A handle to the composed settings writer. The settings-write routes
-    /// serve over this same `Arc<Mutex<ConfigService>>`: the composition
-    /// handoff clones it into the HTTP app state before this `ProducerState`
+    /// A handle to the composed settings writer. The settings-write
+    /// operations serve over this same `Arc<Mutex<ConfigService>>`: the
+    /// composition handoff clones it into the facade before this
+    /// `ProducerState`
     /// moves into the Tauri-managed holder, so the write path and the spine
     /// share one service (reads elsewhere stay file-based, coherent because
     /// every save reads-merges-before-write).
@@ -394,9 +394,9 @@ impl ProducerState {
         self.config_service.clone()
     }
 
-    /// A handle to the composed skill tracker. The codex claim routes call
-    /// `suppress_next` on this same `Arc<SkillTracker>`: cloned into the app
-    /// state at the handoff, so the route side and the producer-bus
+    /// A handle to the composed skill tracker. The codex claim operations
+    /// call `suppress_next` on this same `Arc<SkillTracker>`: cloned into
+    /// the facade at the handoff, so the facade side and the producer-bus
     /// subscription side share one tracker.
     pub fn skill_tracker_handle(&self) -> Arc<SkillTracker> {
         self.skill_tracker.clone()
@@ -420,9 +420,9 @@ impl ProducerState {
         self.bus.clone()
     }
 
-    /// A handle to the composed hotbar listener. The snapshot route reads its
-    /// `is_running` flag; cloned into the app state at the handoff so the
-    /// route side and the producer-spine side share one listener.
+    /// A handle to the composed hotbar listener. The tracking snapshot reads
+    /// its `is_running` flag; cloned into the facade at the handoff so the
+    /// facade side and the producer-spine side share one listener.
     pub fn hotbar_handle(&self) -> Arc<HotbarListener> {
         self.hotbar.clone()
     }
@@ -460,13 +460,14 @@ pub struct Composed {
     pub producers: ProducerState,
     pub ocr_engine: Option<Arc<OcrEngine>>,
     /// The manual skill-scan state machine, composed on the spine bus (its
-    /// `scan.status.changed` envelopes reach the SSE stream) over the OCR
-    /// extraction providers. Always constructed so the scan routes serve;
+    /// `scan.status.changed` envelopes reach the shell's event bridge) over
+    /// the OCR extraction providers. Always constructed so the scan
+    /// operations serve;
     /// its capture and extraction seams stand down to "engine unavailable"
     /// when the OCR runtime is absent (a golden-pinned reply).
     pub skill_scan: Arc<SkillScanManual>,
     /// The spacebar-capture listener, composed over the scan and the shared
-    /// OS hook. Held for the spacebar-capture route (its toggle) and the exit
+    /// OS hook. Held for the spacebar-capture toggle and the exit
     /// seam (its teardown).
     pub spacebar_listener: Arc<SpacebarCaptureListener>,
 }
@@ -611,8 +612,7 @@ async fn compose_with(
             return Composition::Declined;
         }
     };
-    // The store tolerates a missing directory (the backend's
-    // warn-and-continue, sensible for its own embedded copy), but an
+    // The store tolerates a missing directory (warn-and-continue), but an
     // empty store here means the bundled resources are absent or
     // broken: serving game-data-derived responses from it would
     // silently diverge from the reference's embedded copy. Stand down
@@ -630,7 +630,7 @@ async fn compose_with(
     // The producer spine shares the substrate's single-owner pool with
     // the read surface: one connection, one owner, serialised access
     // (WAL + busy_timeout, max_connections(1)), so producer writes and
-    // HTTP reads queue through the single connection without deadlock.
+    // facade reads queue through the single connection without deadlock.
     // A second handle over the SAME pool: `Db` is a thin clonable handle
     // around the connection pool, so the producers and the read surface
     // share one connection (one owner, serialised access) rather than
@@ -662,7 +662,8 @@ async fn compose_with(
     let ocr_engine = build_ocr_engine(models).await;
 
     // The scan services compose on the spine bus (so their status frames
-    // reach the SSE stream) over the OCR extraction providers and the
+    // reach the shell's event bridge) over the OCR extraction providers
+    // and the
     // shared single-owner pool, before the read surface takes ownership of
     // `db`/`game_data`/`clock`/`data_dir`. The calibration artefact sits
     // beside the snapshot dir in both the dev and installed layouts, so it
@@ -683,12 +684,11 @@ async fn compose_with(
     .await;
 
     // The typed-command facade shares the read surface's handles plus the
-    // producers the migrated write families signal (the config writer, the
-    // hunt tracker, the hotbar gate, the chat-log watcher, the skill
-    // tracker a codex claim suppresses on, and the manual-scan state
-    // machine + spacebar listener the scan family drives); families migrate
-    // onto it from the in-process HTTP router one by one, and both serve
-    // over the same handles during the migration.
+    // producers the write families signal (the config writer, the hunt
+    // tracker, the hotbar gate, the chat-log watcher, the skill tracker
+    // a codex claim suppresses on, and the manual-scan state machine +
+    // spacebar listener the scan family drives), so the facade and the
+    // producer spine serve over the same live instances.
     let api = Arc::new(eo_api::Api::new(
         db.clone(),
         game_data.clone(),
@@ -771,12 +771,13 @@ async fn build_ocr_engine(models: PathBuf) -> Option<Arc<OcrEngine>> {
 /// Compose the manual skill scan and the repair-cost OCR over the OCR
 /// engine, the live game-window region lookups, and the on-demand screen
 /// capturer. The scan publishes `scan.status.changed` on the spine `bus`
-/// (so its frames reach the SSE stream), persists accepted calibrations
+/// (so its frames reach the shell's event bridge), persists accepted
+/// calibrations
 /// through the shared `pool`, and hydrates its resting status from the
 /// same. When the OCR runtime is absent the providers stand down to
-/// "engine unavailable" rather than declining composition, so the routes
-/// still serve (the scan reports offline), exactly as the Python reference
-/// does without a loadable engine. Both services are always constructed.
+/// "engine unavailable" rather than declining composition, so the scan
+/// operations still serve (the scan reports offline, a golden-pinned
+/// reply). Both services are always constructed.
 async fn compose_scan_services(
     bus: Arc<EventBus>,
     ocr_engine: Option<Arc<OcrEngine>>,
@@ -838,8 +839,8 @@ async fn compose_scan_services(
         extract_page_levels,
     };
 
-    // Hydrate the resting status from the persisted calibration history,
-    // exactly as the Python reference seeds initial scan time and skill count.
+    // Hydrate the resting status (last scan time, skills count) from the
+    // persisted calibration history.
     let (initial_scan_time, initial_skills_count) =
         hydrate_skill_scan_state(&db).await.unwrap_or((None, 0));
 
@@ -852,10 +853,9 @@ async fn compose_scan_services(
     );
 
     // The completion callback persists accepted calibrations through the
-    // shared database handle, bridging onto the runtime from the scan's worker thread
-    // the same dual way the tracker's providers do; a persist error
-    // surfaces on the scan status, exactly as the Python reference's caught
-    // exception does.
+    // shared database handle, bridging onto the runtime from the scan's
+    // worker thread the same dual way the tracker's providers do; a
+    // persist error surfaces on the scan status rather than panicking.
     let completion_db = db.clone();
     let completion_clock = clock.clone();
     let completion_runtime = runtime;
@@ -888,7 +888,7 @@ async fn compose_scan_services(
     // The spacebar-capture listener fires a manual-scan capture on a space
     // press while the scan is capturing, over the SAME OS hook the hotbar
     // listener rides (the hook is single-instance). Off until the overlay
-    // toggle enables it through the spacebar-capture route.
+    // toggle enables it through the spacebar-capture command.
     let spacebar = SpacebarCaptureListener::new(skill_scan.clone(), Some(keystroke_source));
 
     (skill_scan, repair_ocr, spacebar)
@@ -950,10 +950,8 @@ enum ComposeError {
 }
 
 /// Build and start the producer spine over the shared pool and clock.
-/// The providers are wired faithfully to the original Python composition:
-/// every lookup the tracker consults reads through
-/// the same database or the same config read-through the native
-/// `ConfigService` writes.
+/// Every lookup the tracker consults reads through the same database or
+/// the same config read-through the `ConfigService` writes.
 fn compose_producers(
     db: Db,
     clock: Arc<dyn Clock>,
@@ -963,8 +961,7 @@ fn compose_producers(
 ) -> Result<ProducerState, ComposeError> {
     // The producers run on the substrate's tokio runtime; the trackers
     // bridge their database work onto this handle from their own
-    // (non-runtime) producer threads, exactly as the Python reference's
-    // tracker bridges onto its event loop.
+    // (non-runtime) producer threads.
     let runtime = tokio::runtime::Handle::current();
     let bus = Arc::new(EventBus::new());
 
@@ -982,19 +979,18 @@ fn compose_producers(
     // way the read surface does (`settings.json`, now written solely by
     // the native `ConfigService`), so a wrong default never silently
     // corrupts tracker DB state. A read failure falls back to the typed
-    // defaults, exactly as the backend's loader does.
+    // defaults.
     let config = load_config_readonly(data_dir).unwrap_or_default();
 
-    // The settings writer the write routes serve over. A corrupt or
+    // The settings writer the write operations serve over. A corrupt or
     // wrong-shape settings file fails composition loudly (a terminal
-    // decline), exactly as the reference's loader
-    // would crash rather than silently reset user settings.
+    // decline) rather than silently resetting user settings.
     let config_service = Arc::new(Mutex::new(ConfigService::new(data_dir)?));
 
     // The quest service is bus-subscribed (session tracking + mission
     // auto-start) and supplies the watcher's quest-reward filter, so a
-    // mission completion can suppress its reward echo just as the
-    // Python reference's does. Its owning task serialises those flows;
+    // mission completion can suppress its reward echo. Its owning task
+    // serialises those flows;
     // the filter closure is a rendezvous into it.
     let quests = QuestService::start(&bus, db.clone(), clock.clone(), runtime.clone());
 
@@ -1060,7 +1056,7 @@ fn compose_producers(
     })
 }
 
-/// The hotbar slot resolver, mirroring the backend's `_hotbar_resolver`: the
+/// The hotbar slot resolver: the
 /// live config maps the slot key to an equipment-library id; the row's item
 /// type selects the outcome (a healing tool's per-use cost and reload from its
 /// entity, a consumable's zero-cost one-off, or a weapon's per-shot cost
@@ -1317,8 +1313,8 @@ impl TrackingConfig for LiveTrackingConfig {
     }
 }
 
-/// Wire the hunt-tracker seams to the same sources the backend's
-/// composition uses: the equipment library over the database, and the
+/// Wire the hunt-tracker seams to their live sources: the equipment
+/// library over the database, and the
 /// session-capture config over the config service's live snapshot.
 fn build_providers(
     db: Db,
@@ -1338,14 +1334,14 @@ fn build_providers(
 }
 
 /// Run a database future from inside a synchronous provider callback,
-/// from either calling context: a runtime worker thread (an HTTP-driven
+/// from either calling context: a runtime worker thread (a facade-driven
 /// reload) yields its slot, while a plain producer thread parks. The
 /// tracker's own `block_on` uses this exact dual shape.
 fn block_on_pool<F: std::future::Future>(handle: &tokio::runtime::Handle, future: F) -> F::Output {
     // Never `Handle::current()`: the provider callbacks run on the
     // chat-log watcher's plain OS thread (no current runtime), so the
     // handle is the one captured at composition time. A runtime worker
-    // thread (an HTTP-driven reload) yields its slot via `block_in_place`;
+    // thread (a facade-driven reload) yields its slot via `block_in_place`;
     // a plain producer thread parks directly. The tracker's and quest
     // service's bus forwarders wait on their reply channels in this same
     // dual shape.
@@ -1704,7 +1700,8 @@ mod tests {
     /// host where the engine loads proves the real provider), and the repair
     /// reader runs its provider chain to the window-not-found leg. The scan
     /// also publishes onto the spine bus: a status-moving verb dispatches one
-    /// `scan.status.changed` frame through the SSE bridge composed alongside.
+    /// `scan.status.changed` frame through the domain bridge composed
+    /// alongside.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn composes_the_scan_services_over_live_providers() {
         let _ort = ORT_TEST_LOCK.lock().await;
@@ -1736,8 +1733,9 @@ mod tests {
         // the game window is never present on a headless host.
         assert_eq!(status["configured"], composed.ocr_engine.is_some());
         assert_eq!(status["game_window_present"], false);
-        // The scan composed on the spine bus (its status frames reach the SSE
-        // stream); the bridge forwarding is covered by `sse_bridge_*`. The
+        // The scan composed on the spine bus (its status frames reach the
+        // domain bridge); the forwarding is covered by
+        // `the_domain_bridge_forwards_typed_envelopes_to_a_subscriber`. The
         // repair reader's no-window leg is covered by the facade test
         // `tracking_facade::repair_scan_soft_error_rides_the_body`.
 
@@ -2141,7 +2139,7 @@ mod tests {
         );
     }
 
-    /// The single-owner core tolerates an HTTP-shaped read concurrent
+    /// The single-owner core tolerates a facade-shaped read concurrent
     /// with a producer-shaped write without deadlock and within a bounded
     /// latency: the writer thread serialises the write, while a reader
     /// thread serves the concurrent read against the WAL, so the read
@@ -2175,7 +2173,7 @@ mod tests {
             })
         };
 
-        // An HTTP-shaped read on the same handle, bounded by a generous
+        // A facade-shaped read on the same handle, bounded by a generous
         // deadline: if the single connection deadlocked, this would
         // time out.
         let read = tokio::time::timeout(Duration::from_secs(5), async {

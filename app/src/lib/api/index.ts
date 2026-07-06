@@ -472,10 +472,10 @@ export interface TrackingLive {
 }
 
 /**
- * The consolidated tracking readout: one hydration-only endpoint that unions the
- * legacy status, live, and recent-events shapes (the polled trio it replaces).
- * The dashboard reads its render shape from here and re-reads it on a backend
- * tracking event, rather than polling the three endpoints.
+ * The consolidated tracking readout: one hydration-only read unioning the
+ * status, live, and recent-events shapes. The dashboard reads its render
+ * shape from here and re-reads it on a backend tracking event, rather
+ * than polling.
  *
  * Shape is the status superset (snake `session_id` / `started_at` / `kill_count`,
  * camelCase headline numbers, the shared config fields) plus the live-only

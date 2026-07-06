@@ -270,9 +270,9 @@
 
 	function errorMessage(e: unknown, fallback: string): string {
 		if (e instanceof ApiError) {
-			// Ambiguous-restore 409 carries a structural marker in the
-			// detail string; surface a friendlier message in that case.
-			if (e.status === 409 && /Ambiguous restore/i.test(e.message)) {
+			// An ambiguous-restore conflict carries a structural marker in
+			// the detail string; surface a friendlier message in that case.
+			if (e.kind === 'conflict' && /Ambiguous restore/i.test(e.message)) {
 				return "Can't auto-restore: this name was merged from multiple originals.";
 			}
 			return e.message || fallback;

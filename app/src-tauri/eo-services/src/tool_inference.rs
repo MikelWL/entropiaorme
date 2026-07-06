@@ -1,5 +1,4 @@
-//! Damage-based weapon attribution for configured trifecta profiles,
-//! ported from the original Python implementation.
+//! Damage-based weapon attribution for configured trifecta profiles.
 //!
 //! Each configured weapon carries a damage band; a combat hit
 //! attributes to the narrowest band containing its amount (name as the

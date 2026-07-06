@@ -1,16 +1,15 @@
-//! Configuration service, ported from the original Python implementation:
-//! typed settings with atomic persistence.
+//! Configuration service: typed settings with atomic persistence.
 //!
 //! Settings live as JSON in `data/settings.json`. Saves are atomic
 //! (write `.tmp`, swap into place, keep `.bak`) and merge with whatever
 //! is on disk at save time, so keys written by other tooling survive a
 //! save by a process that does not know them; the unknown keys are also
 //! carried as a typed catch-all on the loaded config, making the
-//! carry-forward contract visible. The on-disk byte shape matches the
-//! backend's writer: ASCII-escaped JSON, two-space indent, stored key
+//! carry-forward contract visible. The on-disk byte shape is the owned
+//! canonical format: ASCII-escaped JSON, two-space indent, stored key
 //! positions preserved on merge, platform line endings.
 //!
-//! Update semantics mirror the backend service: unknown update keys are
+//! Update semantics: unknown update keys are
 //! ignored; the hotbar always re-normalises to its full slot shape; the
 //! trifecta preset list re-validates its active id. Where a stored or
 //! submitted value does not fit its typed field, this implementation

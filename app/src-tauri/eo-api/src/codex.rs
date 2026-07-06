@@ -2,17 +2,15 @@
 //! the skill-recommendation read, the six meta attributes, and the
 //! claim / unclaim / calibrate / meta-claim writes.
 //!
-//! Ported from the HTTP route handlers onto typed DTOs. The computation
-//! stays in `eo_services::codex::CodexService` (which returns
-//! `serde_json::Value`); the facade types the boundary by shaping each
-//! response into a declared DTO (`serde_json::from_value`, the character
-//! family's Value-bridge pattern), so no stored bytes change and the wire
-//! shape is single-sourced in Rust. The response DTOs' field order is the
-//! wire order the service's `json!` bodies carried, so a shaped DTO
-//! serialises byte-identical to the HTTP-era body.
+//! The computation stays in `eo_services::codex::CodexService` (which
+//! returns `serde_json::Value`); the facade types the boundary by shaping
+//! each response into a declared DTO (`serde_json::from_value`, the
+//! character family's Value-bridge pattern), so no stored bytes change
+//! and the wire shape is single-sourced in Rust. The response DTOs'
+//! field order is the golden-pinned wire order.
 //!
-//! Several transport-era behaviours retire with the migration, ratified
-//! under ADR-0017/0019. The conditional-GET (ETag) contract retires with
+//! Contract lineage (ADR-0017/0019): several transport-era behaviours
+//! retired at the typed-command crossing. The conditional-GET (ETag) contract retires with
 //! the transport (the reads answer their body directly). The recommend
 //! route's rank 422 envelope becomes a typed `bad_request` (the bound is
 //! now checked on the `i64` argument, not a pydantic query model), its
@@ -33,8 +31,7 @@ use crate::{Api, ApiError};
 // ── Request arguments ───────────────────────────────────────────────
 
 /// What a codex recommendation ranks by. A closed vocabulary: the
-/// bindings expose only these two, so the HTTP route's out-of-vocabulary
-/// 422 (it defaulted an unknown `target` to `profession`) is
+/// bindings expose only these two, so an out-of-vocabulary `target` is
 /// unrepresentable rather than validated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -190,9 +187,9 @@ impl Api {
 
     /// The skill options for a rank, ranked by profession contribution or
     /// HP gain. An empty list when the species is not in the catalogue
-    /// (the HTTP route's empty-200). The rank is bound to the codex
-    /// table's 1..=25 domain, the query 422 the route validated now a
-    /// typed `bad_request`.
+    /// (the pinned soft-miss shape). The rank is bound to the codex
+    /// table's 1..=25 domain; an out-of-domain rank is a typed
+    /// `bad_request`.
     pub async fn codex_recommend(
         &self,
         species_name: &str,
@@ -239,8 +236,8 @@ impl Api {
     }
 
     /// Claim a codex rank reward. On success, an active session suppresses
-    /// the claimed skill's next gain from dedup (`suppress_next`), exactly
-    /// as the HTTP route did and only after the claim succeeds.
+    /// the claimed skill's next gain from dedup (`suppress_next`), only
+    /// after the claim succeeds.
     pub async fn codex_claim(
         &self,
         species_name: &str,
@@ -290,8 +287,7 @@ impl Api {
 }
 
 /// The codex writes' error mapping: the service's invalid-input errors
-/// carry a user-facing message the HTTP route answered as a 400, so they
-/// map to `bad_request`; a driver or rollup failure is an internal error
+/// carry a user-facing message, so they map to `bad_request`; a driver or rollup failure is an internal error
 /// whose detail stays server-side.
 fn codex_write_error(context: &'static str) -> impl FnOnce(CodexError) -> ApiError {
     move |err| match err {

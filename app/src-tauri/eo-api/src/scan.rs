@@ -3,12 +3,11 @@
 //! the held pending result, and the per-page capture preview) plus the
 //! hands-free spacebar-capture toggle.
 //!
-//! Ported from the HTTP route handlers onto typed DTOs over the composed
-//! [`SkillScanManual`] / [`SpacebarCaptureListener`]. The scanner never
-//! raises for a logical refusal: it returns a `{"error": ...}` value on a
-//! plain 200, and the HTTP layer projected that through each verb's
-//! response-model field order (Pydantic `exclude_unset`). Two shapes are
-//! preserved here:
+//! Typed DTOs over the composed [`SkillScanManual`] /
+//! [`SpacebarCaptureListener`]. The scanner never raises for a logical
+//! refusal: it reports the refusal in-band on its status value, and each
+//! verb projects that through its response DTO's declared field order.
+//! Two golden-pinned shapes hold:
 //!
 //! * The **status-shaped verbs** (`status`, `start`, `cancel`, `process`,
 //!   and the status-carrying `capture` / `undo`) return the full

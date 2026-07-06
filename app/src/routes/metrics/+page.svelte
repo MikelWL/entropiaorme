@@ -22,7 +22,7 @@
 			developerModeOff = false;
 			errorMessage = null;
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 404) {
+			if (err instanceof ApiError && err.kind === 'notFound') {
 				developerModeOff = true;
 				snapshot = null;
 			} else {

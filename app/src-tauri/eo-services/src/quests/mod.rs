@@ -1,6 +1,5 @@
-//! Quest service, ported from the original Python implementation:
-//! the quest and playlist CRUD surface with its shared helper layer
-//! (row shaping, cooldown derivation, reward-markup normalisation,
+//! Quest service: the quest and playlist CRUD surface with its shared
+//! helper layer (row shaping, cooldown derivation, reward-markup normalisation,
 //! mob and playlist-item management), plus the lifecycle actions
 //! (start/complete/cancel with ledger and claim integration), the
 //! curated session-link suggestions, and the chat-log mission
@@ -8,17 +7,15 @@
 //! and the analytics readers (per-quest and per-playlist
 //! sustainability metrics over curated session links).
 //!
-//! Payload semantics mirror the original's `dict.get` rules exactly: a
-//! key that is ABSENT takes the documented default, while a key that is
-//! PRESENT binds its value even when null (the original passes the
-//! explicit `None` through). Truthiness gates (`reward_is_skill`, the
-//! mobs list) follow Python falsiness: null, false, zero, and empty
-//! strings/arrays/objects all read as false.
+//! Payload semantics are an owned contract, pinned by the frozen goldens
+//! (ADR-0017): a key that is ABSENT takes the documented default, while a
+//! key that is PRESENT binds its value even when null. Truthiness gates
+//! (`reward_is_skill`, the mobs list) follow Python falsiness: null,
+//! false, zero, and empty strings/arrays/objects all read as false.
 //!
 //! Row values surface with their stored types (`reward_is_skill` and
-//! `is_active` as 0/1 integers, ids as integers), exactly as the
-//! original's `dict(row)` does; the camelCase wire shaping lives in the
-//! router layer, not here.
+//! `is_active` as 0/1 integers, ids as integers); the camelCase wire
+//! shaping lives in the facade (`eo-api`), not here.
 //!
 //! One `QuestService` exists per composition, started with [`start`]
 //! (`QuestService::start`): the bus-fed flows (session tracking,

@@ -1,5 +1,4 @@
-//! Synchronous in-process event dispatch, ported from
-//! the original Python implementation.
+//! Synchronous in-process event dispatch.
 //!
 //! Thread-safe pub/sub for services sharing process memory: per-topic
 //! subscribers, plus full-stream taps that observe every publish (the

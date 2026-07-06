@@ -7,9 +7,15 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+/**
+ * The typed error kinds the backend serialises across the command
+ * boundary (`badRequest` | `notFound` | `conflict` | `internal` |
+ * `unavailable`), plus `unknown` for a rejection outside the typed
+ * contract.
+ */
 export class ApiError extends Error {
 	constructor(
-		public status: number,
+		public kind: string,
 		message: string,
 	) {
 		super(message);

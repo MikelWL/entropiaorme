@@ -20,11 +20,11 @@ beforeEach(() => {
 });
 
 describe('ApiError', () => {
-	it('carries status, message, and a distinguishing name', async () => {
+	it('carries kind, message, and a distinguishing name', async () => {
 		const { ApiError } = await loadModule();
-		const err = new ApiError(418, 'teapot');
+		const err = new ApiError('conflict', 'teapot');
 		expect(err).toBeInstanceOf(Error);
-		expect(err.status).toBe(418);
+		expect(err.kind).toBe('conflict');
 		expect(err.message).toBe('teapot');
 		expect(err.name).toBe('ApiError');
 	});

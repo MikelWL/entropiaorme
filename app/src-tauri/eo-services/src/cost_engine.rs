@@ -1,13 +1,13 @@
-//! Cost formula engine: ported from the original Python implementation.
+//! Cost formula engine.
 //!
 //! Per-use cost (decay + ammo + markups) and reference damage / heal ranges
 //! from equipment-catalogue payloads, at maxed skill. Pure arithmetic, no
 //! clock, no DB, no events: the canonical leaf and the runner's per-unit
 //! `cargo test` proving target. The engine operates on `serde_json::Value`
-//! equipment dicts so the inputs are the same payloads the Python service
-//! consumes, and rounds every intermediate figure through the shared
-//! Python-faithful `round_half_even` so the figures stay bit-identical to the
-//! oracle. These figures carry no own fingerprint golden of their own; their
+//! equipment dicts (the stored catalogue payload shape) and rounds every
+//! intermediate figure through the shared `round_half_even` banker's
+//! rounding, keeping the figures bit-identical to the frozen goldens that
+//! pin them. These figures carry no own fingerprint golden of their own; their
 //! byte-equality is asserted where they fold into a downstream service's
 //! tracker fingerprint, so it is proven there rather than here.
 

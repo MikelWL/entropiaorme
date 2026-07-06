@@ -1,5 +1,4 @@
-//! Loot-item include/exclude decisions for tracking, ported from
-//! the original Python implementation.
+//! Loot-item include/exclude decisions for tracking.
 //!
 //! Keys casefold and collapse internal whitespace before comparison.
 //! (The original casefolds; this lowercases, which agrees over every

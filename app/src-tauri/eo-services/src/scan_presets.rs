@@ -1,5 +1,4 @@
-//! Capture regions for skill / profession scans, ported from
-//! the original Python implementation: the pure geometry core.
+//! Capture regions for skill / profession scans: the pure geometry core.
 //!
 //! The user docks the relevant in-game panel in the bottom-right
 //! corner at default UI scale; the panel pixel size is fixed by the

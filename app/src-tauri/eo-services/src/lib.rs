@@ -1,8 +1,8 @@
 //! Domain services for the EntropiaOrme backend.
 //!
-//! This crate carries the backend's service layer (cost accounting,
-//! tracking, scans, quests, and the rest), each a byte-exact port of its
-//! original Python service.
+//! This crate is the backend's service layer (cost accounting,
+//! tracking, scans, quests, and the rest): all domain logic and all
+//! SQL, behind seams the replay corpus drives deterministically.
 //!
 //! [`cost_engine`] is the pure-arithmetic leaf its per-unit `cargo test`
 //! loop runs on.

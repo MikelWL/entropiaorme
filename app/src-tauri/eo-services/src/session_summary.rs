@@ -1,8 +1,7 @@
-//! Materialised per-session summaries, ported from
-//! the original Python implementation: a cache of derived state
+//! Materialised per-session summaries: a cache of derived state
 //! whose source of truth is the tracking tables. Summaries write
 //! eagerly when a session ends and clear when a session stops
-//! qualifying; the lazy rebuild-on-read path lands with its reader.
+//! qualifying; a stale or missing summary rebuilds lazily on read.
 //! (The summary table sits outside the snapshot catalogue, so parity
 //! here surfaces through the prospect reads rather than the goldens.)
 
@@ -15,7 +14,7 @@ use eo_wire::normalizer::{round_half_even, to_python_json};
 
 /// Whether a rusqlite error is SQLite's "no such table" report: the
 /// summary computation tolerates the `skill_gains` table being absent
-/// entirely (the original's operational-error catch), returning no
+/// entirely (an inherited tolerance the goldens exercise), returning no
 /// summary rather than propagating.
 fn is_missing_table(error: &rusqlite::Error) -> bool {
     matches!(

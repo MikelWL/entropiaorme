@@ -1,19 +1,16 @@
 //! The character family: calibration status, stats, skills, professions,
 //! the Prospect forecast family, and the profession / path / HP
 //! optimizers, all computed from the calibrated skill levels plus the
-//! bundled game-data catalogue through the already-ported calculation
-//! services (`eo-services`).
+//! bundled game-data catalogue through the calculation services
+//! (`eo-services`).
 //!
-//! Ported from the HTTP route handlers onto typed DTOs. The family is
-//! read-only: no stored bytes change. The response shapes match the
-//! frontend's hand-written contract (`$lib/types/analytics.ts`) field for
-//! field; the pydantic-era `exclude-unset` projection ordering and the
-//! `float | None` coercions the HTTP layer reproduced are now expressed
-//! by the DTOs' field order and `f64` typing, so no projection pass
-//! survives the migration.
+//! The family is read-only: no stored bytes change. The response shapes
+//! match the frontend's hand-written contract (`$lib/types/analytics.ts`)
+//! field for field, expressed directly by the DTOs' declared field order
+//! and `f64` typing; no separate projection pass exists.
 //!
-//! Two response shapes move deliberately with the migration, ratified
-//! under ADR-0017/0019: the Prospect and path-optimizer *not-found* soft
+//! Contract lineage (ADR-0017/0019): two response shapes moved
+//! deliberately at the typed-command crossing: the Prospect and path-optimizer *not-found* soft
 //! errors converge on their families' full error shape (they were a
 //! minimal three-key body), and the Prospect `sample` drops the internal
 //! `skillShares` / `attributeRates` maps it leaked (computation
@@ -527,9 +524,9 @@ impl Api {
         &self,
         query: &ProspectQuery,
     ) -> Result<ProspectResult, ApiError> {
-        // The value validations the HTTP route performed before dispatch;
-        // the slice-type vocabulary is a closed enum now, so its old 422
-        // is unrepresentable rather than checked.
+        // The value validations performed before dispatch; the slice-type
+        // vocabulary is a closed enum, so an out-of-vocabulary slice is
+        // unrepresentable rather than checked.
         if query.target_level <= 0.0 {
             return Err(ApiError::bad_request("target_level must be positive"));
         }
@@ -635,7 +632,7 @@ impl Api {
         target_level: Option<f64>,
         ped_budget: Option<f64>,
     ) -> Result<PathOptimizerResult, ApiError> {
-        // The mode contract the HTTP route validated before dispatch.
+        // The mode contract, validated before dispatch.
         if target_level.is_none() == ped_budget.is_none() {
             return Err(ApiError::bad_request(
                 "Exactly one of target_level or ped_budget must be provided",

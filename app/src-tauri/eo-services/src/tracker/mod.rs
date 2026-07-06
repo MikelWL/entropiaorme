@@ -1,7 +1,6 @@
 //! The hunt tracker: the central coordinator that subscribes to the
 //! bus, accumulates combat stats, creates kill records on loot events,
-//! and persists to the database. Ported from the original Python
-//! implementation, then re-founded: the session state is a typestate
+//! and persists to the database. The session state is a typestate
 //! (`Idle | Active(ActiveSession)`), and the state is owned by a
 //! single actor task fed over a typed message channel (see `actor`)
 //! rather than shared behind a mutex. `HuntTracker` is the handle:

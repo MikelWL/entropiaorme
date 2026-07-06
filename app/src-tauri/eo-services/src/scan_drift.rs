@@ -1,5 +1,4 @@
-//! Drift comparison between tracked levels and fresh scan results,
-//! ported from the original Python implementation.
+//! Drift comparison between tracked levels and fresh scan results.
 
 use serde_json::{Map, Value};
 
