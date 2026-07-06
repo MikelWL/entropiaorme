@@ -62,7 +62,7 @@ pub type IdSource = Arc<dyn Fn() -> String + Send + Sync>;
 /// messages verbatim as the frozen goldens pin them (including the
 /// null-list refusal texts the original implementation left unworded).
 /// By owned contract, the typed facade maps every `QuestError` variant
-/// (`Invalid` and `Db` alike) to its internal-error reply; this family
+/// (`Invalid` and `Rollup` alike) to its internal-error reply; this family
 /// deliberately has no bad-request arm (see `eo-api`'s quests module).
 #[derive(Debug, thiserror::Error)]
 pub enum QuestError {
