@@ -221,8 +221,6 @@ jobs:
     # PNGs for inspection.
     needs: [changes]
     if: needs.changes.outputs.code == 'true'
-    env:
-      SQLX_OFFLINE: "true"
     defaults:
       run:
         working-directory: frontend
@@ -340,12 +338,6 @@ jobs:
     defaults:
       run:
         working-directory: frontend/src-tauri
-    env:
-      # Compile-time-checked SQL resolves against the committed .sqlx offline
-      # cache rather than a live database. The cache is empty until persistence
-      # code lands; once it holds query metadata, a stale cache fails the build
-      # loudly (regenerate with `cargo sqlx prepare`).
-      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -403,10 +395,6 @@ jobs:
     defaults:
       run:
         working-directory: frontend/src-tauri
-    env:
-      # See the Windows workspace job: the committed .sqlx offline cache backs
-      # compile-time-checked SQL; empty until persistence code lands.
-      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -456,8 +444,6 @@ jobs:
     defaults:
       run:
         working-directory: frontend/src-tauri
-    env:
-      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

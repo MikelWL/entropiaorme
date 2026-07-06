@@ -58,12 +58,12 @@ use actor::QuestMsg;
 /// goldens stamp the same identifiers).
 pub type IdSource = Arc<dyn Fn() -> String + Send + Sync>;
 
-/// The service's error surface: `Invalid` carries the original's
-/// raised-exception messages (its `ValueError` texts verbatim; the
-/// null-list refusals name crashes the original leaves unworded). The
-/// quest router leaves these unhandled, so they surface as 500s, not
-/// 400s; the future router slice must preserve that. `Db` is a
-/// database failure (also 500).
+/// The service's error surface: `Invalid` carries the rejection
+/// messages verbatim as the frozen goldens pin them (including the
+/// null-list refusal texts the original implementation left unworded).
+/// By owned contract, the typed facade maps every `QuestError` variant
+/// (`Invalid` and `Rollup` alike) to its internal-error reply; this family
+/// deliberately has no bad-request arm (see `eo-api`'s quests module).
 #[derive(Debug, thiserror::Error)]
 pub enum QuestError {
     #[error("{0}")]

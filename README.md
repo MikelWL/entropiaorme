@@ -56,19 +56,8 @@ Installer sources (the WiX template, the Burn bundle, the themed bootstrapper, a
 
 ## Optional dev environment
 
-Beyond the core `just dev` flow, two optional capabilities are available: stable `https://entropiaorme.localhost` URLs via a reverse-proxy + DNS layer (useful for browser bookmarks, DevTools, screenshots, and running multiple checkouts of this repo on the same machine), and per-checkout env-var activation in ad-hoc shells. Skip this section to keep the basic flow unchanged.
-
-- [`caddy`](https://caddyserver.com/): reverse proxy fronting the dev stack on a stable `https://entropiaorme.localhost` hostname instead of a port number. Run `caddy trust` once after install (elevated on Windows, `sudo` on macOS/Linux) to install Caddy's local CA root into the OS trust store. Start via `just proxy-up`. (Windows: `winget install CaddyServer.Caddy`.)
-- [`coredns`](https://coredns.io/) (pairs with `caddy`): local DNS resolver answering `*.localhost` → `127.0.0.1`. CoreDNS only answers queries that reach it, and Windows does not route `.localhost` lookups to a configured resolver by default, so the hostname path also needs a one-time Name Resolution Policy rule (below) to direct the `.localhost` namespace at CoreDNS. Start via `just dns-up`. (Windows: `scoop install coredns`.)
+- **Parallel checkouts**: multiple checkouts of this repo coexist on one machine by giving each its own `.env.local` with a distinct `ENTROPIAORME_FRONTEND_PORT` (the Vite dev-server port; the single network listener in dev) and `ENTROPIAORME_DATA_DIR` (a per-checkout data directory). `just` loads the file automatically before every recipe.
 - [`direnv`](https://direnv.net/): activates env vars from `.env.local` on `cd`-in so ad-hoc shell commands (`just test-rust`, `npm run ...`) honour the local env. (Windows: `scoop install direnv`; run `direnv allow .` once per checkout to whitelist the `.envrc`.)
-
-Once per machine, route the `.localhost` namespace to CoreDNS with a Name Resolution Policy Table (NRPT) rule (elevated PowerShell). This is namespace-scoped: only `.localhost` names resolve through CoreDNS, so all other resolution stays on your normal adapter resolvers.
-
-```powershell
-Add-DnsClientNrptRule -Namespace ".localhost" -NameServers "127.0.0.1"
-```
-
-Revert with `Get-DnsClientNrptRule | Where-Object { $_.Namespace -contains '.localhost' } | Remove-DnsClientNrptRule -Force`. Without this rule the OS returns NXDOMAIN for `entropiaorme.localhost`, and `just dev` serves the stack on `http://localhost:<port>` instead (a working plain-HTTP session; the rule is what unlocks the HTTPS hostname).
 
 ## Further documentation
 

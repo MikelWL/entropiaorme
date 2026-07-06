@@ -71,20 +71,20 @@ struct Producers(Mutex<Option<composition::ProducerState>>);
 
 // Holds the substrate's warmed OCR engine for the app's lifetime. The
 // composition root constructs and warms it (binding the bundled ONNX
-// Runtime), then hands it here so it outlives composition and is reachable
-// when the scan consumer routes flip to it. Unlike `Producers`, there is
-// no exit-seam stop: the engine owns no thread and no subscription, its
-// ONNX session drops with this managed state, and the ORT environment
-// self-releases via its own process-exit hook. `None` when the runtime or
-// model was unavailable (OCR is an optional faculty).
+// Runtime) and the scan services capture their own clones at compose
+// time; this managed handle is the lifetime anchor that keeps the warmed
+// engine pinned for the whole substrate regardless of consumer teardown
+// order. Unlike `Producers`, there is no exit-seam stop: the engine owns
+// no thread and no subscription, its ONNX session drops with this managed
+// state, and the ORT environment self-releases via its own process-exit
+// hook. `None` when the runtime or model was unavailable (OCR is an
+// optional faculty).
 //
-// The handle is held to keep the warmed engine (and its ONNX session)
-// alive for the substrate's lifetime; the scan routes that read it flip
-// in a later cutover, so it is not read directly yet. The `dead_code`
-// allow is scoped to this one field (not the struct, not the module) and
-// justified by that held-not-read intent, the same shape the producer
-// spine documents for its kept-alive bus subscriptions; it is removed
-// when the scan routes start reading the handle.
+// The handle is held, never read: the scan services reach the engine
+// through their own clones. The `dead_code` allow is scoped to this one
+// field (not the struct, not the module) and justified by that
+// held-not-read intent, the same shape the producer spine documents for
+// its kept-alive bus subscriptions.
 struct OcrEngineState(#[allow(dead_code)] Mutex<Option<std::sync::Arc<composition::OcrEngine>>>);
 
 // Holds the manual-scan input listener and the scan state machine so the exit
