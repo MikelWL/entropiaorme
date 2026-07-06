@@ -1740,12 +1740,8 @@ mod tests {
         let chatlog = data_dir.join("chat_replay.log");
         std::fs::File::create(&chatlog).expect("empty chatlog exists before the watcher starts");
 
-        let producers = compose_producers_for_test(
-            Db::from_pool(pool.clone()),
-            clock.clone(),
-            &data_dir,
-            chatlog.clone(),
-        );
+        let producers =
+            compose_producers_for_test(db.clone(), clock.clone(), &data_dir, chatlog.clone());
         producers
             .tracker()
             .start_session()
@@ -1832,12 +1828,8 @@ mod tests {
         let chatlog = data_dir.join("chat_replay.log");
         std::fs::File::create(&chatlog).expect("empty chatlog exists before the watcher starts");
 
-        let producers = compose_producers_for_test(
-            Db::from_pool(pool.clone()),
-            clock.clone(),
-            &data_dir,
-            chatlog.clone(),
-        );
+        let producers =
+            compose_producers_for_test(db.clone(), clock.clone(), &data_dir, chatlog.clone());
         producers
             .tracker()
             .start_session()
@@ -1955,7 +1947,7 @@ mod tests {
         let config = load_config_readonly(&data_dir).expect("config reads");
         let mut config_service = ConfigService::new(&data_dir).expect("config service");
         let providers = build_providers(
-            Db::from_pool(pool.clone()),
+            db.clone(),
             config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),
@@ -2044,7 +2036,7 @@ mod tests {
         let config = load_config_readonly(&data_dir).expect("config reads");
         let config_service = ConfigService::new(&data_dir).expect("config service");
         let providers = build_providers(
-            Db::from_pool(pool),
+            db.clone(),
             config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),

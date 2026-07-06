@@ -98,6 +98,7 @@ struct Rig {
     runtime: tokio::runtime::Runtime,
     bus: Arc<EventBus>,
     clock: Arc<MockClock>,
+    db: Db,
     pool: SqlitePool,
 }
 
@@ -121,6 +122,7 @@ fn rig() -> Rig {
         runtime,
         bus: Arc::new(EventBus::new()),
         clock: Arc::new(MockClock::new(None, 0.0)),
+        db,
         pool,
     }
 }
@@ -130,7 +132,7 @@ impl Rig {
         self.runtime
             .block_on(HuntTracker::new(
                 self.bus.clone(),
-                Db::from_pool(self.pool.clone()),
+                self.db.clone(),
                 self.clock.clone(),
                 providers,
             ))
@@ -551,7 +553,8 @@ fn stopping_a_session_relands_its_days_rollups() {
     rig.clock.advance(2.0 * 86_400.0).unwrap();
     let now = naive_to_epoch(rig.clock.now());
     rig.runtime.block_on(async {
-        crate::daily_rollup::heal_rollups(&rig.pool, now)
+        rig.db
+            .with_writer(move |conn| crate::daily_rollup::heal_rollups(conn, now))
             .await
             .unwrap();
     });
@@ -627,7 +630,8 @@ fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
     // below the watermark when recovery closes it.
     let now = naive_to_epoch(rig.clock.now());
     rig.runtime.block_on(async {
-        crate::daily_rollup::heal_rollups(&rig.pool, now)
+        rig.db
+            .with_writer(move |conn| crate::daily_rollup::heal_rollups(conn, now))
             .await
             .unwrap();
     });

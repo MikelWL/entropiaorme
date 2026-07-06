@@ -29,6 +29,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use rusqlite::OptionalExtension as _;
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -84,6 +85,27 @@ pub struct CodexService {
     clock: Arc<dyn Clock>,
 }
 
+/// The result of the `unclaim_rank` writer transaction: the validation
+/// branches the original raised as `ValueError`s (surfaced by the caller as
+/// [`CodexError::Invalid`]), or the completed revert carrying the claim's
+/// fields for the response. The transaction runs on the synchronous core, so
+/// its closure returns only [`crate::db::DbError`]; the domain outcome travels
+/// out as this value.
+enum UnclaimOutcome {
+    NoRank,
+    NotClaimed {
+        rank: i64,
+    },
+    AlreadyUnclaimed {
+        rank: i64,
+    },
+    Done {
+        rank: i64,
+        skill_name: String,
+        ped_value: f64,
+    },
+}
+
 impl CodexService {
     pub fn new(db: Db, game_data: Arc<GameDataStore>, clock: Arc<dyn Clock>) -> Self {
         Self {
@@ -91,6 +113,13 @@ impl CodexService {
             game_data,
             clock,
         }
+    }
+
+    /// The database handle, for tests that drive the synchronous core
+    /// (the rollup heal) directly.
+    #[cfg(test)]
+    fn db(&self) -> &Db {
+        &self.db
     }
 
     /// All mob species with a codex base cost, cross-referenced with
@@ -280,72 +309,63 @@ impl CodexService {
         // unchanged. (For the new-species rank-1 claim there is no row
         // yet, so the plain INSERT path applies and a racing second
         // INSERT conflicts onto the now-false guard.)
-        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
-        let advanced = sqlx::query(
-            "INSERT INTO codex_progress (species_name, current_rank, updated_at) VALUES (?, ?, ?) \
-             ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ? \
-             WHERE codex_progress.current_rank = ? - 1",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .bind(now)
-        .bind(rank)
-        .bind(now)
-        .bind(rank)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?
-        .rows_affected();
-        if advanced == 0 {
-            // Another claim advanced this species' rank between our
-            // validation read and this write; abort as the race loser
-            // (the transaction rolls back on drop, so nothing lands).
+        let species_owned = species_name.to_string();
+        let skill_owned = skill_name.to_string();
+        let advanced = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let advanced = tx.execute(
+                    "INSERT INTO codex_progress (species_name, current_rank, updated_at) \
+                     VALUES (?, ?, ?) \
+                     ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ? \
+                     WHERE codex_progress.current_rank = ? - 1",
+                    rusqlite::params![species_owned, rank, now, rank, now, rank],
+                )?;
+                if advanced == 0 {
+                    // Another claim advanced this species' rank between our
+                    // validation read and this write; abort as the race loser
+                    // (the transaction rolls back on drop, so nothing lands).
+                    return Ok(false);
+                }
+
+                tx.execute(
+                    "INSERT INTO codex_claims \
+                     (species_name, rank, skill_name, ped_value, claimed_at, kind) \
+                     VALUES (?, ?, ?, ?, ?, 'rank')",
+                    rusqlite::params![species_owned, rank, skill_owned, ped_value, now],
+                )?;
+                crate::daily_rollup::refresh_days(&tx, [crate::daily_rollup::epoch_day(now)])?;
+
+                let current_level: Option<f64> = tx
+                    .query_row(
+                        "SELECT level FROM skill_calibrations WHERE skill_name = ? \
+                         ORDER BY scanned_at DESC LIMIT 1",
+                        rusqlite::params![skill_owned],
+                        |row| row.get::<_, f64>(0),
+                    )
+                    .optional()?;
+                if let Some(current_level) = current_level {
+                    // The reward's TT value buys levels at the current point on
+                    // the curve. A skill with no calibration history skips this
+                    // entirely (see the module doc).
+                    let levels_gained = levels_for_tt_value(current_level, ped_value);
+                    let new_level = current_level + levels_gained;
+                    tx.execute(
+                        "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+                         VALUES (?, ?, 'codex', ?)",
+                        rusqlite::params![skill_owned, new_level, now],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(true)
+            })
+            .await?;
+        if !advanced {
             return Err(CodexError::Invalid(format!(
                 "Rank {rank} for '{species_name}' was already claimed"
             )));
         }
-
-        sqlx::query(
-            "INSERT INTO codex_claims (species_name, rank, skill_name, ped_value, claimed_at, kind) \
-             VALUES (?, ?, ?, ?, ?, 'rank')",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .bind(skill_name)
-        .bind(ped_value)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(now)]).await?;
-
-        let current_level: Option<f64> = sqlx::query(
-            "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-             ORDER BY scanned_at DESC LIMIT 1",
-        )
-        .bind(skill_name)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?
-        .map(|row| row.get(0));
-        if let Some(current_level) = current_level {
-            // The reward's TT value buys levels at the current point on
-            // the curve. A skill with no calibration history skips this
-            // entirely (see the module doc).
-            let levels_gained = levels_for_tt_value(current_level, ped_value);
-            let new_level = current_level + levels_gained;
-            sqlx::query(
-                "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                 VALUES (?, ?, 'codex', ?)",
-            )
-            .bind(skill_name)
-            .bind(new_level)
-            .bind(now)
-            .execute(&mut *tx)
-            .await
-            .map_err(CodexError::Db)?;
-        }
-        tx.commit().await.map_err(CodexError::Db)?;
 
         Ok(json!({
             "speciesName": species_name,
@@ -373,99 +393,108 @@ impl CodexService {
     /// cross-language differential never drove it.
     pub async fn unclaim_rank(&self, species_name: &str) -> Result<Value, CodexError> {
         let now = naive_to_epoch(self.clock.now());
-        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
+        let species_owned = species_name.to_string();
+        let outcome = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
 
-        let current_rank =
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = ?")
-                .bind(species_name)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(CodexError::Db)?
-                .map(|row| row.get::<i64, _>(0))
-                .unwrap_or(0);
-        if current_rank < 1 {
-            return Err(CodexError::Invalid(format!(
-                "No claimed rank to unclaim for '{species_name}'"
-            )));
-        }
-        let rank = current_rank;
+                let current_rank = tx
+                    .query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = ?",
+                        rusqlite::params![species_owned],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?
+                    .unwrap_or(0);
+                if current_rank < 1 {
+                    return Ok(UnclaimOutcome::NoRank);
+                }
+                let rank = current_rank;
 
-        let claim = sqlx::query(
-            "SELECT skill_name, ped_value, claimed_at FROM codex_claims \
-             WHERE species_name = ? AND rank = ? AND kind = 'rank'",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        let Some(claim) = claim else {
-            return Err(CodexError::Invalid(format!(
-                "Rank {rank} for '{species_name}' was not claimed"
-            )));
-        };
-        let skill_name: String = claim.get(0);
-        let ped_value: f64 = claim.get(1);
-        let claimed_at: f64 = claim.get(2);
+                let claim: Option<(String, f64, f64)> = tx
+                    .query_row(
+                        "SELECT skill_name, ped_value, claimed_at FROM codex_claims \
+                         WHERE species_name = ? AND rank = ? AND kind = 'rank'",
+                        rusqlite::params![species_owned, rank],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, f64>(1)?,
+                                row.get::<_, f64>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((skill_name, ped_value, claimed_at)) = claim else {
+                    return Ok(UnclaimOutcome::NotClaimed { rank });
+                };
 
-        // Step the rank back, gated on it still being `rank`, so of two
-        // racing unclaims exactly one steps it and the loser aborts
-        // before deleting anything (the mirror of claim_rank's guard).
-        let stepped = sqlx::query(
-            "UPDATE codex_progress SET current_rank = ?, updated_at = ? \
-             WHERE species_name = ? AND current_rank = ?",
-        )
-        .bind(rank - 1)
-        .bind(now)
-        .bind(species_name)
-        .bind(rank)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?
-        .rows_affected();
-        if stepped == 0 {
-            return Err(CodexError::Invalid(format!(
-                "Rank {rank} for '{species_name}' was already unclaimed"
-            )));
-        }
+                // Step the rank back, gated on it still being `rank`, so of two
+                // racing unclaims exactly one steps it and the loser aborts
+                // before deleting anything (the mirror of claim_rank's guard).
+                let stepped = tx.execute(
+                    "UPDATE codex_progress SET current_rank = ?, updated_at = ? \
+                     WHERE species_name = ? AND current_rank = ?",
+                    rusqlite::params![rank - 1, now, species_owned, rank],
+                )?;
+                if stepped == 0 {
+                    return Ok(UnclaimOutcome::AlreadyUnclaimed { rank });
+                }
 
-        // Remove the codex-sourced calibration this claim wrote, matched
-        // on the instant the claim and calibration inserts share; the
-        // id-subquery removes at most one row, and an uncalibrated-skill
-        // claim (which wrote none) removes nothing here.
-        sqlx::query(
-            "DELETE FROM skill_calibrations WHERE id = ( \
-                SELECT id FROM skill_calibrations \
-                WHERE skill_name = ? AND source = 'codex' AND scanned_at = ? \
-                ORDER BY id DESC LIMIT 1)",
-        )
-        .bind(&skill_name)
-        .bind(claimed_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
+                // Remove the codex-sourced calibration this claim wrote, matched
+                // on the instant the claim and calibration inserts share; the
+                // id-subquery removes at most one row, and an uncalibrated-skill
+                // claim (which wrote none) removes nothing here.
+                tx.execute(
+                    "DELETE FROM skill_calibrations WHERE id = ( \
+                        SELECT id FROM skill_calibrations \
+                        WHERE skill_name = ? AND source = 'codex' AND scanned_at = ? \
+                        ORDER BY id DESC LIMIT 1)",
+                    rusqlite::params![skill_name, claimed_at],
+                )?;
 
-        sqlx::query(
-            "DELETE FROM codex_claims WHERE species_name = ? AND rank = ? AND kind = 'rank'",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        // The unclaimed reward may sit days back; reland its day's
-        // rollup inside the same transaction.
-        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(claimed_at)])
+                tx.execute(
+                    "DELETE FROM codex_claims WHERE species_name = ? AND rank = ? AND kind = 'rank'",
+                    rusqlite::params![species_owned, rank],
+                )?;
+                // The unclaimed reward may sit days back; reland its day's
+                // rollup inside the same transaction.
+                crate::daily_rollup::refresh_days(
+                    &tx,
+                    [crate::daily_rollup::epoch_day(claimed_at)],
+                )?;
+
+                tx.commit()?;
+                Ok(UnclaimOutcome::Done {
+                    rank,
+                    skill_name,
+                    ped_value,
+                })
+            })
             .await?;
 
-        tx.commit().await.map_err(CodexError::Db)?;
-
-        Ok(json!({
-            "speciesName": species_name,
-            "rank": rank,
-            "skillName": skill_name,
-            "pedValue": ped_value,
-        }))
+        match outcome {
+            UnclaimOutcome::NoRank => Err(CodexError::Invalid(format!(
+                "No claimed rank to unclaim for '{species_name}'"
+            ))),
+            UnclaimOutcome::NotClaimed { rank } => Err(CodexError::Invalid(format!(
+                "Rank {rank} for '{species_name}' was not claimed"
+            ))),
+            UnclaimOutcome::AlreadyUnclaimed { rank } => Err(CodexError::Invalid(format!(
+                "Rank {rank} for '{species_name}' was already unclaimed"
+            ))),
+            UnclaimOutcome::Done {
+                rank,
+                skill_name,
+                ped_value,
+            } => Ok(json!({
+                "speciesName": species_name,
+                "rank": rank,
+                "skillName": skill_name,
+                "pedValue": ped_value,
+            })),
+        }
     }
 
     /// Set the codex rank directly, no side effects (manual
@@ -672,21 +701,21 @@ impl CodexService {
             )));
         }
         let now = naive_to_epoch(self.clock.now());
-        let mut tx = self.db.write().begin().await.map_err(CodexError::Db)?;
-        sqlx::query(
-            "INSERT INTO codex_claims \
-             (species_name, rank, skill_name, ped_value, claimed_at, kind, attribute_name) \
-             VALUES ('__meta__', 0, ?, ?, ?, 'meta', ?)",
-        )
-        .bind(attribute_name)
-        .bind(META_PED)
-        .bind(now)
-        .bind(attribute_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(CodexError::Db)?;
-        crate::daily_rollup::refresh_days(&mut tx, [crate::daily_rollup::epoch_day(now)]).await?;
-        tx.commit().await.map_err(CodexError::Db)?;
+        let attr = attribute_name.to_string();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT INTO codex_claims \
+                     (species_name, rank, skill_name, ped_value, claimed_at, kind, attribute_name) \
+                     VALUES ('__meta__', 0, ?, ?, ?, 'meta', ?)",
+                    rusqlite::params![attr, META_PED, now, attr],
+                )?;
+                crate::daily_rollup::refresh_days(&tx, [crate::daily_rollup::epoch_day(now)])?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
         Ok(json!({
             "attributeName": attribute_name,
             "pedValue": META_PED,
@@ -1460,7 +1489,10 @@ mod tests {
         // Two days later the claim day is behind the heal watermark.
         let claim_epoch = crate::time::naive_to_epoch(start_instant());
         let claim_day = crate::daily_rollup::epoch_day(claim_epoch);
-        crate::daily_rollup::heal_rollups(&pool, claim_epoch + 2.0 * 86_400.0)
+        svc.db()
+            .with_writer(move |conn| {
+                crate::daily_rollup::heal_rollups(conn, claim_epoch + 2.0 * 86_400.0)
+            })
             .await
             .unwrap();
         let codex_pes: Option<f64> =

@@ -226,7 +226,8 @@ struct ListSummary {
 pub(crate) async fn list_sessions_impl(db: &Db, now: f64) -> Result<Value, DbError> {
     // Heal so ended sessions carry current summaries (a write on the read
     // path, preserved), then read each recent session's row.
-    eo_services::session_summary::heal_summaries(db.write()).await?;
+    db.with_writer(|conn| eo_services::session_summary::heal_summaries(conn))
+        .await?;
     let pool = db.read();
 
     let rows = sqlx::query(
@@ -977,12 +978,12 @@ async fn restore_session_mob_impl(
 }
 
 async fn bulk_flip_loot_item(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     item_name: &str,
     to_state: &str,
 ) -> Result<Value, EditError> {
-    validate_session_exists(pool, session_id).await?;
+    validate_session_exists(db.read(), session_id).await?;
     let item_name = item_name.trim();
     if item_name.is_empty() {
         return Err(EditError::BadRequest(
@@ -996,7 +997,15 @@ async fn bulk_flip_loot_item(
         other => panic!("unsupported to_state: {other:?}"),
     };
 
-    let mut tx = pool.begin().await?;
+    // The domain outcome of the writer-core transaction: the two "nothing
+    // flipped" branches the original raised as edit errors, or the flip's
+    // affected-row count and net delta for the response.
+    enum FlipOutcome {
+        NoLoot,
+        AllAlready,
+        Flipped { affected: i64, total_delta: f64 },
+    }
+
     let flip_sql = format!(
         "UPDATE kill_loot_items \
          SET deactivated_at = {new_flag_sql} \
@@ -1008,99 +1017,121 @@ async fn bulk_flip_loot_item(
          ) \
          RETURNING kill_id, value_ped"
     );
-    let flipped = sqlx::query(sqlx::AssertSqlSafe(flip_sql))
-        .bind(session_id)
-        .bind(item_name)
-        .fetch_all(&mut *tx)
+    let sid = session_id.to_string();
+    let item = item_name.to_string();
+    let outcome = db
+        .with_writer(move |conn| {
+            use rusqlite::OptionalExtension as _;
+            let tx = conn.transaction()?;
+            let flipped: Vec<(String, f64)> = {
+                let mut stmt = tx.prepare(&flip_sql)?;
+                let rows = stmt.query_map(rusqlite::params![sid, item], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            if flipped.is_empty() {
+                let any_row: Option<i64> = tx
+                    .query_row(
+                        "SELECT 1 FROM kill_loot_items l \
+                         JOIN kills k ON k.id = l.kill_id \
+                         WHERE k.session_id = ? AND l.item_name = ? \
+                         LIMIT 1",
+                        rusqlite::params![sid, item],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                if any_row.is_none() {
+                    return Ok(FlipOutcome::NoLoot);
+                }
+                return Ok(FlipOutcome::AllAlready);
+            }
+
+            let mut order: Vec<String> = Vec::new();
+            let mut per_kill: BTreeMap<String, f64> = BTreeMap::new();
+            let mut total_delta = 0.0;
+            for (kill_id, value) in &flipped {
+                if !per_kill.contains_key(kill_id) {
+                    order.push(kill_id.clone());
+                }
+                *per_kill.entry(kill_id.clone()).or_insert(0.0) += value;
+                total_delta += value;
+            }
+            for kill_id in &order {
+                let kill_delta = per_kill[kill_id];
+                tx.execute(
+                    "UPDATE kills SET loot_total_ped = loot_total_ped + ? WHERE id = ?",
+                    rusqlite::params![delta_sign * kill_delta, kill_id],
+                )?;
+            }
+            tx.execute(
+                "DELETE FROM session_summaries WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            eo_services::daily_rollup::refresh_session_days(&tx, &sid)?;
+            tx.commit()?;
+
+            Ok(FlipOutcome::Flipped {
+                affected: flipped.len() as i64,
+                total_delta: delta_sign * total_delta,
+            })
+        })
         .await?;
 
-    if flipped.is_empty() {
-        let any_row = sqlx::query(
-            "SELECT 1 FROM kill_loot_items l \
-             JOIN kills k ON k.id = l.kill_id \
-             WHERE k.session_id = ? AND l.item_name = ? \
-             LIMIT 1",
-        )
-        .bind(session_id)
-        .bind(item_name)
-        .fetch_optional(&mut *tx)
-        .await?;
-        drop(tx);
-        if any_row.is_none() {
-            return Err(EditError::NotFound(format!(
-                "No loot named '{item_name}' in this session"
-            )));
-        }
-        return Err(EditError::Conflict(format!(
+    match outcome {
+        FlipOutcome::NoLoot => Err(EditError::NotFound(format!(
+            "No loot named '{item_name}' in this session"
+        ))),
+        FlipOutcome::AllAlready => Err(EditError::Conflict(format!(
             "All '{item_name}' rows in this session are already {to_state}"
-        )));
-    }
-
-    let mut order: Vec<String> = Vec::new();
-    let mut per_kill: BTreeMap<String, f64> = BTreeMap::new();
-    let mut total_delta = 0.0;
-    for row in &flipped {
-        let kill_id = row.get::<String, _>(0);
-        let value = as_f64(&sql_number(row, 1));
-        if !per_kill.contains_key(&kill_id) {
-            order.push(kill_id.clone());
+        ))),
+        FlipOutcome::Flipped {
+            affected,
+            total_delta,
+        } => {
+            build_loot_item_edit_response(db.read(), session_id, item_name, affected, total_delta)
+                .await
         }
-        *per_kill.entry(kill_id).or_insert(0.0) += value;
-        total_delta += value;
     }
-    for kill_id in &order {
-        let kill_delta = per_kill[kill_id];
-        sqlx::query("UPDATE kills SET loot_total_ped = loot_total_ped + ? WHERE id = ?")
-            .bind(delta_sign * kill_delta)
-            .bind(kill_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    sqlx::query("DELETE FROM session_summaries WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    eo_services::daily_rollup::refresh_session_days(&mut tx, session_id).await?;
-    tx.commit().await?;
-
-    build_loot_item_edit_response(
-        pool,
-        session_id,
-        item_name,
-        flipped.len() as i64,
-        delta_sign * total_delta,
-    )
-    .await
 }
 
-async fn set_armour_cost_impl(
-    pool: &SqlitePool,
-    session_id: &str,
-    cost: f64,
-) -> Result<Value, EditError> {
-    let row = sqlx::query("SELECT started_at FROM tracking_sessions WHERE id = ?")
-        .bind(session_id)
-        .fetch_optional(pool)
+async fn set_armour_cost_impl(db: &Db, session_id: &str, cost: f64) -> Result<Value, EditError> {
+    // The existence check, the update, and its projection hooks run together on
+    // the writer core connection: the read sees the not-yet-committed guard row
+    // and the write commits atomically with the rollup and summary refresh.
+    let sid = session_id.to_string();
+    let found = db
+        .with_writer(move |conn| {
+            use rusqlite::OptionalExtension as _;
+            let started_at: Option<f64> = conn
+                .query_row(
+                    "SELECT started_at FROM tracking_sessions WHERE id = ?",
+                    rusqlite::params![sid],
+                    |row| row.get::<_, f64>(0),
+                )
+                .optional()?;
+            let Some(started_at) = started_at else {
+                return Ok(false);
+            };
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE tracking_sessions SET armour_cost = COALESCE(armour_cost, 0) + ? \
+                 WHERE id = ?",
+                rusqlite::params![cost, sid],
+            )?;
+            eo_services::daily_rollup::refresh_days(
+                &tx,
+                [eo_services::daily_rollup::epoch_day(started_at)],
+            )?;
+            eo_services::session_summary::write_session_summary(&tx, &sid)?;
+            tx.commit()?;
+            Ok(true)
+        })
         .await?;
-    let Some(row) = row else {
+    if !found {
         return Err(EditError::NotFound("Session not found".to_string()));
-    };
-    let started_at: f64 = row.try_get(0)?;
-    let mut tx = pool.begin().await?;
-    sqlx::query(
-        "UPDATE tracking_sessions SET armour_cost = COALESCE(armour_cost, 0) + ? WHERE id = ?",
-    )
-    .bind(cost)
-    .bind(session_id)
-    .execute(&mut *tx)
-    .await?;
-    eo_services::daily_rollup::refresh_days(
-        &mut tx,
-        [eo_services::daily_rollup::epoch_day(started_at)],
-    )
-    .await?;
-    eo_services::session_summary::write_session_summary(&mut tx, session_id).await?;
-    tx.commit().await?;
+    }
     Ok(json!({
         "sessionId": session_id,
         "armourCost": round(cost, 2),
@@ -1112,83 +1143,102 @@ async fn set_armour_cost_impl(
 /// is a not-found. The cascade runs in one transaction, child-scoped rows
 /// first, and repairs the daily rollups for exactly the calendar days the
 /// session touched (captured before the deletes empty those tables).
-async fn delete_session_impl(pool: &SqlitePool, session_id: &str) -> Result<(), EditError> {
-    let mut tx = pool.begin().await?;
-
-    // Read the existence-and-active guard inside the transaction, so the check
-    // and the cascade are one atomic unit (a separate pool acquisition for the
-    // check could interleave with another write between the read and the
-    // delete).
-    let row = sqlx::query("SELECT is_active FROM tracking_sessions WHERE id = ?")
-        .bind(session_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let Some(row) = row else {
-        return Err(EditError::NotFound("Session not found".to_string()));
-    };
-    if row.get::<i64, _>(0) != 0 {
-        return Err(EditError::Conflict(
-            "Cannot delete an active session".to_string(),
-        ));
+async fn delete_session_impl(db: &Db, session_id: &str) -> Result<(), EditError> {
+    // The domain outcome of the writer-core transaction: the guard branches the
+    // original raised as edit errors, or the completed cascade.
+    enum DeleteOutcome {
+        NotFound,
+        Active,
+        Deleted,
     }
 
-    // Capture the days this session touches before its rows are deleted, so
-    // the rollup repair below recomputes exactly those days.
-    let day_rows = sqlx::query(
-        "SELECT DISTINCT date(timestamp, 'unixepoch') FROM kills WHERE session_id = ? \
-         UNION SELECT DISTINCT date(timestamp, 'unixepoch') FROM skill_gains WHERE session_id = ? \
-         UNION SELECT date(started_at, 'unixepoch') FROM tracking_sessions WHERE id = ? \
-         UNION SELECT date(ended_at, 'unixepoch') FROM tracking_sessions \
-               WHERE id = ? AND ended_at IS NOT NULL",
-    )
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .fetch_all(&mut *tx)
-    .await?;
-    let days: Vec<String> = day_rows.iter().map(|row| row.get(0)).collect();
+    let sid = session_id.to_string();
+    let outcome = db
+        .with_writer(move |conn| {
+            use rusqlite::OptionalExtension as _;
+            let tx = conn.transaction()?;
 
-    // Child-scoped rows first (the kill-scoped tables have no ON DELETE
-    // cascade), then the kills, the session-scoped rows, and the session.
-    sqlx::query(
-        "DELETE FROM kill_tool_stats \
-         WHERE kill_id IN (SELECT id FROM kills WHERE session_id = ?)",
-    )
-    .bind(session_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM kill_loot_items \
-         WHERE kill_id IN (SELECT id FROM kills WHERE session_id = ?)",
-    )
-    .bind(session_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("DELETE FROM kills WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM skill_gains WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM notable_events WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM session_summaries WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM tracking_sessions WHERE id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
+            // Read the existence-and-active guard inside the transaction, so the
+            // check and the cascade are one atomic unit (a separate acquisition
+            // for the check could interleave with another write between the read
+            // and the delete).
+            let is_active: Option<i64> = tx
+                .query_row(
+                    "SELECT is_active FROM tracking_sessions WHERE id = ?",
+                    rusqlite::params![sid],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            let Some(is_active) = is_active else {
+                return Ok(DeleteOutcome::NotFound);
+            };
+            if is_active != 0 {
+                return Ok(DeleteOutcome::Active);
+            }
 
-    eo_services::daily_rollup::refresh_days(&mut tx, days).await?;
-    tx.commit().await?;
-    Ok(())
+            // Capture the days this session touches before its rows are deleted,
+            // so the rollup repair below recomputes exactly those days.
+            let days: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT DISTINCT date(timestamp, 'unixepoch') FROM kills WHERE session_id = ? \
+                     UNION SELECT DISTINCT date(timestamp, 'unixepoch') FROM skill_gains \
+                           WHERE session_id = ? \
+                     UNION SELECT date(started_at, 'unixepoch') FROM tracking_sessions WHERE id = ? \
+                     UNION SELECT date(ended_at, 'unixepoch') FROM tracking_sessions \
+                           WHERE id = ? AND ended_at IS NOT NULL",
+                )?;
+                let rows = stmt.query_map(
+                    rusqlite::params![sid, sid, sid, sid],
+                    |row| row.get::<_, String>(0),
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            // Child-scoped rows first (the kill-scoped tables have no ON DELETE
+            // cascade), then the kills, the session-scoped rows, and the session.
+            tx.execute(
+                "DELETE FROM kill_tool_stats \
+                 WHERE kill_id IN (SELECT id FROM kills WHERE session_id = ?)",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM kill_loot_items \
+                 WHERE kill_id IN (SELECT id FROM kills WHERE session_id = ?)",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM kills WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM skill_gains WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM notable_events WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM session_summaries WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM tracking_sessions WHERE id = ?",
+                rusqlite::params![sid],
+            )?;
+
+            eo_services::daily_rollup::refresh_days(&tx, days)?;
+            tx.commit()?;
+            Ok(DeleteOutcome::Deleted)
+        })
+        .await?;
+    match outcome {
+        DeleteOutcome::NotFound => Err(EditError::NotFound("Session not found".to_string())),
+        DeleteOutcome::Active => Err(EditError::Conflict(
+            "Cannot delete an active session".to_string(),
+        )),
+        DeleteOutcome::Deleted => Ok(()),
+    }
 }
 
 // ── Producer helpers ────────────────────────────────────────────────
@@ -2060,7 +2110,7 @@ impl Api {
         session_id: String,
         item_name: String,
     ) -> Result<LootItemEditResult, ApiError> {
-        let value = bulk_flip_loot_item(self.write(), &session_id, &item_name, "active")
+        let value = bulk_flip_loot_item(&self.db, &session_id, &item_name, "active")
             .await
             .map_err(edit_error("tracking loot item activate"))?;
         serde_json::from_value(value)
@@ -2073,7 +2123,7 @@ impl Api {
         session_id: String,
         item_name: String,
     ) -> Result<LootItemEditResult, ApiError> {
-        let value = bulk_flip_loot_item(self.write(), &session_id, &item_name, "deactivated")
+        let value = bulk_flip_loot_item(&self.db, &session_id, &item_name, "deactivated")
             .await
             .map_err(edit_error("tracking loot item deactivate"))?;
         serde_json::from_value(value)
@@ -2087,7 +2137,7 @@ impl Api {
         session_id: String,
         cost: f64,
     ) -> Result<ArmourCostResult, ApiError> {
-        let value = set_armour_cost_impl(self.write(), &session_id, cost)
+        let value = set_armour_cost_impl(&self.db, &session_id, cost)
             .await
             .map_err(edit_error("tracking armour cost"))?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking armour cost shaping"))
@@ -2162,7 +2212,7 @@ impl Api {
     /// deleted; a missing one is a not-found). The rollups are repaired for
     /// the days it touched.
     pub async fn tracking_session_delete(&self, session_id: String) -> Result<(), ApiError> {
-        delete_session_impl(self.write(), &session_id)
+        delete_session_impl(&self.db, &session_id)
             .await
             .map_err(edit_error("tracking session delete"))
     }

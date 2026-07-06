@@ -3,10 +3,9 @@
 
 use chrono::{DateTime, Utc};
 use eo_wire::normalizer::round_half_even;
-use sqlx::sqlite::SqliteConnection;
 use sqlx::Row;
 
-use crate::db::{decoded_f64, DbError};
+use crate::db::DbError;
 use crate::session_summary::write_session_summary;
 use crate::tracking_models::Kill;
 
@@ -39,21 +38,24 @@ impl TrackerActor {
                 // Each orphan closes atomically: the same one-commit
                 // grouping the stop path uses, so a failure mid-recovery
                 // leaves that session untouched and still recoverable.
-                let mut tx = self.db.write().begin().await?;
-                sqlx::query(
-                    "UPDATE tracking_sessions SET ended_at = ?, is_active = 0 WHERE id = ?",
-                )
-                .bind(ended_at)
-                .bind(&session_id)
-                .execute(&mut *tx)
-                .await?;
+                let sid = session_id.clone();
+                self.db
+                    .with_writer(move |conn| {
+                        let tx = conn.transaction()?;
+                        tx.execute(
+                            "UPDATE tracking_sessions SET ended_at = ?, is_active = 0 WHERE id = ?",
+                            rusqlite::params![ended_at, sid],
+                        )?;
 
-                let end_dt = epoch_to_instant(ended_at);
-                Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_dt).await?;
-                Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_dt).await?;
-                write_session_summary(&mut tx, &session_id).await?;
-                crate::daily_rollup::refresh_session_days(&mut tx, &session_id).await?;
-                tx.commit().await?;
+                        let end_dt = epoch_to_instant(ended_at);
+                        Self::create_enhancer_rebate_ledger_entry(&tx, &sid, end_dt)?;
+                        Self::create_shrapnel_ledger_entry(&tx, &sid, end_dt)?;
+                        write_session_summary(&tx, &sid)?;
+                        crate::daily_rollup::refresh_session_days(&tx, &sid)?;
+                        tx.commit()?;
+                        Ok(())
+                    })
+                    .await?;
             }
             Ok(())
         }
@@ -134,84 +136,80 @@ impl TrackerActor {
     /// Session-end margin on non-enhancer Shrapnel loot (1%, the
     /// trade-terminal conversion premium), recorded as a markup
     /// ledger gain.
-    pub(super) async fn create_shrapnel_ledger_entry(
-        conn: &mut SqliteConnection,
+    pub(super) fn create_shrapnel_ledger_entry(
+        conn: &rusqlite::Connection,
         session_id: &str,
         end_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
-        let row = sqlx::query(
+        let shrapnel_ped: f64 = conn.query_row(
             "SELECT COALESCE(SUM(kli.value_ped), 0) \
              FROM kill_loot_items kli \
              JOIN kills k ON kli.kill_id = k.id \
              WHERE k.session_id = ? AND kli.item_name = 'Shrapnel' \
              AND COALESCE(kli.is_enhancer_shrapnel, 0) = 0 \
              AND kli.deactivated_at IS NULL",
-        )
-        .bind(session_id)
-        .fetch_one(&mut *conn)
-        .await?;
-        let shrapnel_ped = decoded_f64(&row, 0);
+            rusqlite::params![session_id],
+            |row| row.get::<_, f64>(0),
+        )?;
         if shrapnel_ped <= 0.0 {
             return Ok(());
         }
         let margin = round_half_even(shrapnel_ped * 0.01, 4);
         let date = local_isoformat(end_time);
-        sqlx::query(
+        conn.execute(
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
              VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&date)
-        .bind("markup")
-        .bind("Shrapnel Conversion")
-        .bind(margin)
-        .bind("convert")
-        .execute(&mut *conn)
-        .await?;
+            rusqlite::params![
+                uuid::Uuid::new_v4().to_string(),
+                date,
+                "markup",
+                "Shrapnel Conversion",
+                margin,
+                "convert",
+            ],
+        )?;
         // A live stop dates this "now" (past the rollup watermark), but
         // orphan recovery backdates it to the crashed session's end, so
         // the entry's day must reland with the write.
-        crate::daily_rollup::refresh_days(&mut *conn, [date]).await?;
+        crate::daily_rollup::refresh_days(conn, [date])?;
         Ok(())
     }
 
     /// Session-end rebate on enhancer-break Shrapnel (full TT value
     /// returned by breaks), recorded as a markup ledger gain.
-    pub(super) async fn create_enhancer_rebate_ledger_entry(
-        conn: &mut SqliteConnection,
+    pub(super) fn create_enhancer_rebate_ledger_entry(
+        conn: &rusqlite::Connection,
         session_id: &str,
         end_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
-        let row = sqlx::query(
+        let rebate: f64 = conn.query_row(
             "SELECT COALESCE(SUM(kli.value_ped), 0) \
              FROM kill_loot_items kli \
              JOIN kills k ON kli.kill_id = k.id \
              WHERE k.session_id = ? AND COALESCE(kli.is_enhancer_shrapnel, 0) = 1 \
              AND kli.deactivated_at IS NULL",
-        )
-        .bind(session_id)
-        .fetch_one(&mut *conn)
-        .await?;
-        let rebate = decoded_f64(&row, 0);
+            rusqlite::params![session_id],
+            |row| row.get::<_, f64>(0),
+        )?;
         if rebate <= 0.0 {
             return Ok(());
         }
         let date = local_isoformat(end_time);
-        sqlx::query(
+        conn.execute(
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
              VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&date)
-        .bind("markup")
-        .bind("Enhancer Shrapnel Rebate")
-        .bind(round_half_even(rebate, 4))
-        .bind("enhancer")
-        .execute(&mut *conn)
-        .await?;
+            rusqlite::params![
+                uuid::Uuid::new_v4().to_string(),
+                date,
+                "markup",
+                "Enhancer Shrapnel Rebate",
+                round_half_even(rebate, 4),
+                "enhancer",
+            ],
+        )?;
         // Same watermark reasoning as the shrapnel-conversion entry:
         // orphan recovery can backdate this day.
-        crate::daily_rollup::refresh_days(&mut *conn, [date]).await?;
+        crate::daily_rollup::refresh_days(conn, [date])?;
         Ok(())
     }
 }

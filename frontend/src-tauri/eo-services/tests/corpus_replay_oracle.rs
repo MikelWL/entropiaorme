@@ -210,7 +210,7 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
     let tracker = runtime
         .block_on(HuntTracker::new(
             bus.clone(),
-            Db::from_pool(pool.clone()),
+            db.clone(),
             clock.clone(),
             Providers {
                 player_name: player_name.to_string(),

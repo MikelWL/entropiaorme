@@ -413,23 +413,27 @@ impl TrackerActor {
         // leaves the session fully live (still tracking, still hearing
         // events) rather than active-but-deaf; no event can interleave
         // meanwhile because the actor processes one message at a time.
-        let mut tx = self.db.write().begin().await?;
-        sqlx::query(
-            "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
-             heal_cost = ?, dangling_cost = ? WHERE id = ?",
-        )
-        .bind(instant_to_epoch(end_time))
-        .bind(heal_cost.value())
-        .bind(dangling_cost.value())
-        .bind(&session_id)
-        .execute(&mut *tx)
-        .await?;
-        // Auto-generate ledger gains derived from persisted loot rows.
-        Self::create_enhancer_rebate_ledger_entry(&mut tx, &session_id, end_time).await?;
-        Self::create_shrapnel_ledger_entry(&mut tx, &session_id, end_time).await?;
-        crate::session_summary::write_session_summary(&mut tx, &session_id).await?;
-        crate::daily_rollup::refresh_session_days(&mut tx, &session_id).await?;
-        tx.commit().await?;
+        let sid = session_id.clone();
+        let end_epoch = instant_to_epoch(end_time);
+        let heal_value = heal_cost.value();
+        let dangling_value = dangling_cost.value();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
+                     heal_cost = ?, dangling_cost = ? WHERE id = ?",
+                    rusqlite::params![end_epoch, heal_value, dangling_value, sid],
+                )?;
+                // Auto-generate ledger gains derived from persisted loot rows.
+                Self::create_enhancer_rebate_ledger_entry(&tx, &sid, end_time)?;
+                Self::create_shrapnel_ledger_entry(&tx, &sid, end_time)?;
+                crate::session_summary::write_session_summary(&tx, &sid)?;
+                crate::daily_rollup::refresh_session_days(&tx, &sid)?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
         self.unsubscribe_handlers();
 
         // Session end is a quiescent boundary: checkpoint and truncate the WAL
