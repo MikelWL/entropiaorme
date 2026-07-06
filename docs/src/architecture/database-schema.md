@@ -5,9 +5,9 @@ database, the storage configuration applied to its connections, its tables, the
 forward-only migration mechanism, and the bundled game-data snapshot that lives
 outside SQLite entirely.
 
-The authoritative schema is the sqlx migration set under
-`frontend/src-tauri/eo-services/migrations/`, applied by the migrator in
-`frontend/src-tauri/eo-services/src/db.rs`. The set holds a version-33 baseline
+The authoritative schema is the migration set under
+`frontend/src-tauri/eo-services/migrations/`, applied by the embedded runner in
+`frontend/src-tauri/eo-services/src/db/`. The set holds a version-33 baseline
 migration, `0001_schema_baseline.sql`, which creates the complete base schema
 (tables, indexes, and the timestamp-back-fill triggers) and stamps the
 schema-version row, followed by forward-only additions:
@@ -537,16 +537,21 @@ tables and every day is re-verified once after it completes.
 
 ## Migration mechanism
 
-Schema application is handled by the sqlx migrator (`MIGRATOR` in
-`eo-services/src/db.rs`) over the migration set in `eo-services/migrations/`.
-The set carries the version-33 baseline (`0001_schema_baseline.sql`) followed by
-forward-only additions (`0002_analytical_indexes.sql`,
-`0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`); sqlx records
-applied migrations in its own `_sqlx_migrations` ledger and never runs a
-down-migration. The version the
-baseline reproduces is pinned in `db.rs` by the `BASELINE_SCHEMA_VERSION`
-constant (33); the post-baseline migrations extend the schema in place and do
-not change that version row.
+Schema application is handled by the embedded migration runner (`MIGRATIONS`
+in `eo-services/src/db/migrate.rs`) over the migration set in
+`eo-services/migrations/`, whose files are compiled into the binary (a unit
+test pins the embedded chain to the directory's contents). The set carries the
+version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
+additions (`0002_analytical_indexes.sql`,
+`0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`); the runner
+records applied migrations in the `_sqlx_migrations` ledger (the table name,
+column shapes, and SHA-384 checksum accounting are inherited unchanged from
+the previous runner, so existing databases reconcile byte for byte) and never
+runs a down-migration. Applied rows must form a contiguous, checksum-identical
+prefix of the embedded chain; any drift refuses loudly before anything
+applies. The version the baseline reproduces is pinned by the
+`BASELINE_SCHEMA_VERSION` constant (33); the post-baseline migrations extend
+the schema in place and do not change that version row.
 
 ### The version-33 baseline
 
@@ -560,15 +565,15 @@ migrated database lands directly on the current surface.
 ### Open paths: fresh, adoption, and first-launch upgrade
 
 On open, `Db::open` configures the connection, then calls `adopt_or_refuse`
-before running the migrator. This reconciles the on-disk schema with the
+before running the migration chain. This reconciles the on-disk schema with the
 baseline and takes one of these paths:
 
-- **Fresh:** an empty (or absent) database is created and the migrator applies
+- **Fresh:** an empty (or absent) database is created and the runner applies
   the baseline directly, landing it at version 33.
-- **Adoption:** a database already at version 33 that carries no sqlx ledger is
-  adopted in place. The baseline is marked applied (the ledger row is written
-  with the baseline's own checksum) without re-running any DDL, and the
-  post-adoption migrator run then validates that row.
+- **Adoption:** a database already at version 33 that carries no migration
+  ledger is adopted in place. The baseline is marked applied (the ledger row is
+  written with the baseline's own checksum) without re-running any DDL, and the
+  post-adoption runner pass then validates that row.
 - **Native first-launch upgrade:** a database at **version 32**, the version an
   installed v0.1.0-lineage database occupies, is upgraded in place by
   `upgrade_to_baseline` (dropping the retired write-only `tt_curve_observations`
