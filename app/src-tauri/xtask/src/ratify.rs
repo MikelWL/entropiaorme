@@ -220,12 +220,42 @@ fn range_tip(commit_range: &str) -> String {
 }
 
 fn changed_paths(repo_root: &Path, commit_range: &str) -> Result<Vec<String>, String> {
-    let out = git::run(&["diff", "--name-only", commit_range], repo_root)?;
-    Ok(out
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.to_string())
-        .collect())
+    let out = git::run(
+        &["diff", "--name-status", "-M100%", commit_range],
+        repo_root,
+    )?;
+    Ok(paths_from_name_status(&out))
+}
+
+/// Parse `git diff --name-status -M100%` output into the changed paths.
+///
+/// A pure rename (`R100`: byte-identical content at a new path) is a path move,
+/// not a content change, so neither side counts as changed: the golden bytes
+/// the guard protects are untouched. A rename that also edits content falls
+/// below the 100% similarity threshold and is not detected as a rename at all
+/// (it surfaces as an ordinary delete + add pair), so it still trips the guard.
+/// Any explicitly-scored rename other than `R100` is treated as changed on
+/// every listed side (fail-closed; `-M100%` should never emit one).
+fn paths_from_name_status(out: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in out.lines() {
+        let mut fields = line.split('\t').map(str::trim);
+        let Some(status) = fields.next() else {
+            continue;
+        };
+        if status.is_empty() {
+            continue;
+        }
+        if status == "R100" {
+            continue;
+        }
+        for p in fields {
+            if !p.is_empty() {
+                paths.push(p.to_string());
+            }
+        }
+    }
+    paths
 }
 
 fn commit_messages(repo_root: &Path, commit_range: &str) -> Result<Vec<String>, String> {
@@ -631,6 +661,33 @@ VERDICT: ratification-sound | regression-suspected | needs-user-judgement\n```";
             range: None,
         };
         assert!(verdict_covers(&oa, "event_schemas"));
+    }
+
+    #[test]
+    fn name_status_pure_renames_are_not_changes() {
+        let out = "R100\tfrontend/src-tauri/fixtures/corpus/scripted/basic_hunt_10_events/expected/fingerprint.jsonl\tapp/src-tauri/fixtures/corpus/scripted/basic_hunt_10_events/expected/fingerprint.jsonl\n\
+M\tapp/src-tauri/contracts/event_schemas.snapshot.json\n\
+A\tapp/src-tauri/eo-wire/tests/fixtures/yml_family/new_case.json\n\
+D\tapp/src-tauri/eo-wire/tests/fixtures/normalizer_conformance.json\n";
+        assert_eq!(
+            paths_from_name_status(out),
+            vec![
+                "app/src-tauri/contracts/event_schemas.snapshot.json",
+                "app/src-tauri/eo-wire/tests/fixtures/yml_family/new_case.json",
+                "app/src-tauri/eo-wire/tests/fixtures/normalizer_conformance.json",
+            ]
+        );
+    }
+
+    #[test]
+    fn name_status_scored_rename_below_exact_stays_changed() {
+        // -M100% should never emit one, but an R-with-edits entry must stay
+        // changed on every listed side (fail-closed).
+        let out = "R097\told/path.json\tnew/path.json\n";
+        assert_eq!(
+            paths_from_name_status(out),
+            vec!["old/path.json", "new/path.json"]
+        );
     }
 
     #[test]
