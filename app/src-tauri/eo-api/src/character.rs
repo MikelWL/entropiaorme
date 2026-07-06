@@ -512,9 +512,9 @@ impl Api {
             .await
             .map_err(ApiError::internal("prospect-options sessions load"))?;
         Ok(CharacterProspectOptions {
-            tags: prospect_options(&sessions, "dominantTag")?,
-            mobs: prospect_options(&sessions, "dominantMob")?,
-            weapons: prospect_options(&sessions, "dominantWeapon")?,
+            tags: prospect_option_list(&sessions, "dominantTag"),
+            mobs: prospect_option_list(&sessions, "dominantMob"),
+            weapons: prospect_option_list(&sessions, "dominantWeapon"),
         })
     }
 
@@ -555,7 +555,7 @@ impl Api {
         let Some(profession_entity) = profession_entity else {
             // A missing profession converges on the full error shape
             // (was a minimal {error, rows, warnings}); ratified.
-            let shape = prospect_error_shape(
+            return Ok(prospect_error_result(
                 &query.profession,
                 slice_type,
                 &query.slice_value,
@@ -564,9 +564,7 @@ impl Api {
                 query.target_level,
                 prospect_sample(&[]),
                 &format!("Profession '{}' not found", query.profession),
-            );
-            return serde_json::from_value(shape)
-                .map_err(ApiError::internal("prospect not-found shaping"));
+            ));
         };
         let skill_levels = self
             .skill_calibrations(None)
@@ -577,7 +575,7 @@ impl Api {
             .map_err(ApiError::internal("prospect sessions load"))?;
         let matched = match_prospect_sessions(&sessions, slice_type, &query.slice_value);
         let sample = prospect_sample(&matched);
-        let result = build_prospect_result(
+        Ok(build_prospect_result(
             &query.profession,
             &profession_entity,
             &skill_levels,
@@ -586,8 +584,7 @@ impl Api {
             slice_type,
             &query.slice_value,
             query.markup_uplift,
-        );
-        serde_json::from_value(result).map_err(ApiError::internal("prospect shaping"))
+        ))
     }
 
     /// The profession optimizer: cheapest skill allocation to the next
@@ -617,11 +614,20 @@ impl Api {
             .skill_calibrations(None)
             .await
             .map_err(ApiError::internal("optimizer skill calibrations"))?;
-        let mut result = profession_skill_optimizer(&skill_levels, &prof_entity);
-        if let Some(map) = result.as_object_mut() {
-            map.insert("profession".into(), json!(profession));
-        }
-        serde_json::from_value(result).map_err(ApiError::internal("optimizer shaping"))
+        let result = profession_skill_optimizer(&skill_levels, &prof_entity);
+        Ok(ProfessionOptimizerResult {
+            skills: result.skills.into_iter().map(optimizer_skill_dto).collect(),
+            attributes: result
+                .attributes
+                .into_iter()
+                .map(optimizer_attribute_dto)
+                .collect(),
+            profession: Some(profession.to_string()),
+            current_level: Some(result.current_level),
+            next_level: Some(result.next_level as f64),
+            gap: Some(result.gap),
+            error: None,
+        })
     }
 
     /// The path optimizer: greedy allocation for a target level or a PED
@@ -652,22 +658,20 @@ impl Api {
             } else {
                 "budget"
             };
-            let shape = json!({
-                "allocations": [],
-                "attributes": [],
-                "profession": profession,
-                "mode": mode,
-                "inputTargetLevel": target_level,
-                "inputPedBudget": ped_budget,
-                "currentLevel": 0.0,
-                "endLevel": 0.0,
-                "professionLevelsGained": 0.0,
-                "totalPed": 0.0,
-                "excluded": [],
-                "error": format!("Profession '{profession}' not found"),
+            return Ok(PathOptimizerResult {
+                allocations: Vec::new(),
+                attributes: Vec::new(),
+                profession: profession.to_string(),
+                mode: mode.to_string(),
+                input_target_level: target_level,
+                input_ped_budget: ped_budget,
+                current_level: 0.0,
+                end_level: 0.0,
+                profession_levels_gained: 0.0,
+                total_ped: 0.0,
+                excluded: Vec::new(),
+                error: Some(format!("Profession '{profession}' not found")),
             });
-            return serde_json::from_value(shape)
-                .map_err(ApiError::internal("path optimizer not-found shaping"));
         };
         let skill_levels = self
             .skill_calibrations(None)
@@ -675,13 +679,39 @@ impl Api {
             .map_err(ApiError::internal("path optimizer skill calibrations"))?;
         // The mode contract is validated above; a service-level rejection
         // here is unreachable.
-        let mut result =
+        let result =
             profession_path_optimizer(&skill_levels, &prof_entity, target_level, ped_budget)
                 .map_err(|_| ApiError::Internal)?;
-        if let Some(map) = result.as_object_mut() {
-            map.insert("profession".into(), json!(profession));
-        }
-        serde_json::from_value(result).map_err(ApiError::internal("path optimizer shaping"))
+        Ok(PathOptimizerResult {
+            allocations: result
+                .allocations
+                .into_iter()
+                .map(path_allocation_dto)
+                .collect(),
+            attributes: result
+                .attributes
+                .into_iter()
+                .map(optimizer_attribute_dto)
+                .collect(),
+            profession: profession.to_string(),
+            mode: result.mode.to_string(),
+            input_target_level: result.input_target_level,
+            input_ped_budget: result.input_ped_budget,
+            current_level: result.current_level,
+            end_level: result.end_level,
+            profession_levels_gained: result.profession_levels_gained,
+            total_ped: result.total_ped,
+            excluded: result
+                .excluded
+                .into_iter()
+                .map(|row| ExcludedSkill {
+                    name: row.name,
+                    weight: row.weight,
+                    reason: row.reason.to_string(),
+                })
+                .collect(),
+            error: None,
+        })
     }
 
     /// The HP optimizer: HP-per-PED across contributing skills and
@@ -693,7 +723,33 @@ impl Api {
             .map_err(ApiError::internal("hp optimizer skill calibrations"))?;
         let skills_data = self.game_data.get_entities("skills");
         let result = hp_skill_optimizer(&skill_levels, skills_data);
-        serde_json::from_value(result).map_err(ApiError::internal("hp optimizer shaping"))
+        Ok(HpOptimizerResult {
+            current_hp: result.current_hp,
+            skills: result
+                .skills
+                .into_iter()
+                .map(|row| HpOptimizerSkill {
+                    name: row.name,
+                    hp_increase: row.hp_increase,
+                    current_level: row.current_level,
+                    levels_per_hp: row.levels_per_hp,
+                    ped_per_hp: row.ped_per_hp,
+                    hp_per_ped: row.hp_per_ped,
+                    codex_category: row.codex_category.map(str::to_string),
+                    codex_divisor: row.codex_divisor.map(|divisor| divisor as f64),
+                })
+                .collect(),
+            attributes: result
+                .attributes
+                .into_iter()
+                .map(|row| HpOptimizerAttribute {
+                    name: row.name,
+                    hp_increase: row.hp_increase,
+                    current_level: row.current_level,
+                    levels_per_hp: row.levels_per_hp,
+                })
+                .collect(),
+        })
     }
 
     /// Latest calibrated level per skill: believed-current when `source`
@@ -751,10 +807,40 @@ impl Api {
 
 // ── Shaping helpers ─────────────────────────────────────────────────
 
-/// The grouped slice options for one dominant-value key, as typed rows.
-fn prospect_options(sessions: &[Value], key: &str) -> Result<Vec<ProspectOption>, ApiError> {
-    serde_json::from_value(Value::Array(prospect_option_list(sessions, key)))
-        .map_err(ApiError::internal("prospect options shaping"))
+fn optimizer_skill_dto(row: eo_services::character_calc::OptimizerSkillRow) -> OptimizerSkill {
+    OptimizerSkill {
+        name: row.name,
+        weight: row.weight,
+        current_level: row.current_level,
+        levels_needed: row.levels_needed,
+        ped_to_next_level: row.ped_to_next_level,
+        codex_category: row.codex_category.map(str::to_string),
+        codex_divisor: row.codex_divisor.map(|divisor| divisor as f64),
+    }
+}
+
+fn optimizer_attribute_dto(
+    row: eo_services::character_calc::OptimizerAttributeRow,
+) -> OptimizerAttribute {
+    OptimizerAttribute {
+        name: row.name,
+        weight: row.weight,
+        current_level: row.current_level,
+        contribution_factor: row.contribution_factor,
+    }
+}
+
+fn path_allocation_dto(row: eo_services::character_calc::PathAllocationRow) -> PathAllocation {
+    PathAllocation {
+        name: row.name,
+        weight: row.weight,
+        current_level: row.current_level,
+        levels_to_gain: row.levels_to_gain,
+        ped_cost: row.ped_cost,
+        new_level: row.new_level,
+        codex_category: row.codex_category.map(str::to_string),
+        codex_divisor: row.codex_divisor.map(|divisor| divisor as f64),
+    }
 }
 
 /// Stable descending sort by a float key (Python `sort(reverse=True)`).
@@ -804,136 +890,157 @@ fn get_ranks(game_data: &eo_services::game_data_store::GameDataStore) -> Vec<Val
     valid
 }
 
-// ── Prospect (ported helpers, Value-producing) ──────────────────────
+// ── Prospect helpers ────────────────────────────────────────────────
 
-/// Aggregate a session group into the Prospect sample shape. The
-/// `skillShares` / `attributeRates` maps are kept for the forecast's own
-/// use; the response DTO drops them.
-fn prospect_sample(sessions: &[&Value]) -> Map<String, Value> {
-    let mut regular_skill_ped: Map<String, Value> = Map::new();
-    let mut attribute_levels: Map<String, Value> = Map::new();
+/// The aggregated Prospect sample, carrying the internal share / rate
+/// maps the forecast projects with (accumulation order preserved); the
+/// response DTO surfaces only the aggregates.
+struct SampleData {
+    sessions: i64,
+    kills: i64,
+    hours: f64,
+    cycled_ped: f64,
+    loot_tt: f64,
+    pes: f64,
+    attribute_levels: f64,
+    cycled_per_hour: f64,
+    loot_per_hour: f64,
+    return_rate: f64,
+    pes_per_ped: f64,
+    loot_tt_per_ped: f64,
+    skill_shares: Vec<(String, f64)>,
+    attribute_rates: Vec<(String, f64)>,
+}
 
-    // Python's `sum(())` is the INTEGER zero (rendered `0`), and a
-    // non-empty sum starts from it, so the float result carries IEEE
-    // positive zero; Rust's empty f64 sum folds from -0.0 instead, so
-    // the empty case takes the integer literally.
-    let sum_of = |key: &str| -> Value {
+impl SampleData {
+    fn dto(&self) -> ProspectSample {
+        ProspectSample {
+            sessions: self.sessions,
+            kills: self.kills,
+            hours: self.hours,
+            cycled_ped: self.cycled_ped,
+            loot_tt: self.loot_tt,
+            pes: self.pes,
+            attribute_levels: self.attribute_levels,
+            cycled_per_hour: self.cycled_per_hour,
+            loot_per_hour: self.loot_per_hour,
+            return_rate: self.return_rate,
+            pes_per_ped: self.pes_per_ped,
+            loot_tt_per_ped: self.loot_tt_per_ped,
+        }
+    }
+}
+
+/// A first-match lookup over an insertion-ordered `(name, value)` list.
+fn lookup(entries: &[(String, f64)], name: &str) -> Option<f64> {
+    entries
+        .iter()
+        .find(|(entry, _)| entry == name)
+        .map(|&(_, value)| value)
+}
+
+/// Aggregate a session group into the Prospect sample.
+fn prospect_sample(sessions: &[&Value]) -> SampleData {
+    let mut regular_skill_ped: Vec<(String, f64)> = Vec::new();
+    let mut attribute_level_sums: Vec<(String, f64)> = Vec::new();
+
+    let sum_of = |key: &str| -> f64 {
         if sessions.is_empty() {
-            return json!(0);
+            return 0.0;
         }
         let total: f64 = sessions
             .iter()
             .map(|s| s.get(key).and_then(Value::as_f64).unwrap_or(0.0))
             .sum();
-        json!(round_half_even(total, 4))
+        round_half_even(total, 4)
     };
     let kills: i64 = sessions
         .iter()
         .map(|s| s.get("kills").and_then(Value::as_i64).unwrap_or(0))
         .sum();
 
-    let mut sample = Map::new();
-    sample.insert("sessions".into(), json!(sessions.len()));
-    sample.insert("kills".into(), json!(kills));
-    sample.insert("hours".into(), sum_of("durationHours"));
-    sample.insert("cycledPed".into(), sum_of("cycledPed"));
-    sample.insert("lootTt".into(), sum_of("lootTt"));
-    sample.insert("pes".into(), sum_of("regularSkillTt"));
-    sample.insert("attributeLevels".into(), sum_of("attributeLevelsTotal"));
+    let hours = sum_of("durationHours");
+    let cycled = sum_of("cycledPed");
+    let loot_tt = sum_of("lootTt");
+    let pes = sum_of("regularSkillTt");
+    let attribute_levels = sum_of("attributeLevelsTotal");
 
+    let accumulate = |entries: &mut Vec<(String, f64)>, name: &str, amount: f64| match entries
+        .iter_mut()
+        .find(|(entry, _)| entry == name)
+    {
+        Some((_, value)) => *value += amount,
+        None => entries.push((name.to_string(), amount)),
+    };
     for session in sessions {
         if let Some(map) = session.get("regularSkillPed").and_then(Value::as_object) {
             for (name, ped) in map {
-                let current = regular_skill_ped
-                    .get(name)
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
-                regular_skill_ped
-                    .insert(name.clone(), json!(current + ped.as_f64().unwrap_or(0.0)));
+                accumulate(&mut regular_skill_ped, name, ped.as_f64().unwrap_or(0.0));
             }
         }
         if let Some(map) = session.get("attributeLevels").and_then(Value::as_object) {
             for (name, amount) in map {
-                let current = attribute_levels
-                    .get(name)
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
-                attribute_levels.insert(
-                    name.clone(),
-                    json!(current + amount.as_f64().unwrap_or(0.0)),
+                accumulate(
+                    &mut attribute_level_sums,
+                    name,
+                    amount.as_f64().unwrap_or(0.0),
                 );
             }
         }
     }
 
-    let hours = sample["hours"].as_f64().unwrap_or(0.0);
-    let cycled = sample["cycledPed"].as_f64().unwrap_or(0.0);
-    let loot_tt = sample["lootTt"].as_f64().unwrap_or(0.0);
-    let pes = sample["pes"].as_f64().unwrap_or(0.0);
-    sample.insert(
-        "cycledPerHour".into(),
-        json!(if hours > 0.0 {
+    let skill_shares: Vec<(String, f64)> = regular_skill_ped
+        .into_iter()
+        .filter(|&(_, ped)| pes > 0.0 && ped > 0.0)
+        .map(|(name, ped)| (name, ped / pes))
+        .collect();
+    let attribute_rates: Vec<(String, f64)> = attribute_level_sums
+        .into_iter()
+        .filter(|&(_, amount)| cycled > 0.0 && amount > 0.0)
+        .map(|(name, amount)| (name, amount / cycled))
+        .collect();
+
+    SampleData {
+        sessions: sessions.len() as i64,
+        kills,
+        hours,
+        cycled_ped: cycled,
+        loot_tt,
+        pes,
+        attribute_levels,
+        cycled_per_hour: if hours > 0.0 {
             round_half_even(cycled / hours, 4)
         } else {
             0.0
-        }),
-    );
-    sample.insert(
-        "lootPerHour".into(),
-        json!(if hours > 0.0 {
+        },
+        loot_per_hour: if hours > 0.0 {
             round_half_even(loot_tt / hours, 4)
         } else {
             0.0
-        }),
-    );
-    sample.insert(
-        "returnRate".into(),
-        json!(if cycled > 0.0 {
+        },
+        return_rate: if cycled > 0.0 {
             round_half_even(loot_tt / cycled, 4)
         } else {
             0.0
-        }),
-    );
-    sample.insert(
-        "pesPerPed".into(),
-        json!(if cycled > 0.0 {
+        },
+        pes_per_ped: if cycled > 0.0 {
             round_half_even(pes / cycled, 6)
         } else {
             0.0
-        }),
-    );
-    sample.insert(
-        "lootTtPerPed".into(),
-        json!(if cycled > 0.0 {
+        },
+        loot_tt_per_ped: if cycled > 0.0 {
             round_half_even(loot_tt / cycled, 6)
         } else {
             0.0
-        }),
-    );
-
-    let mut skill_shares = Map::new();
-    for (name, ped) in &regular_skill_ped {
-        let ped = ped.as_f64().unwrap_or(0.0);
-        if pes > 0.0 && ped > 0.0 {
-            skill_shares.insert(name.clone(), json!(ped / pes));
-        }
+        },
+        skill_shares,
+        attribute_rates,
     }
-    sample.insert("skillShares".into(), Value::Object(skill_shares));
-
-    let mut attribute_rates = Map::new();
-    for (name, amount) in &attribute_levels {
-        let amount = amount.as_f64().unwrap_or(0.0);
-        if cycled > 0.0 && amount > 0.0 {
-            attribute_rates.insert(name.clone(), json!(amount / cycled));
-        }
-    }
-    sample.insert("attributeRates".into(), Value::Object(attribute_rates));
-    sample
 }
 
 /// The grouped option list for one dominant-value key.
-fn prospect_option_list(sessions: &[Value], key: &str) -> Vec<Value> {
-    let mut grouped: Map<String, Value> = Map::new();
+fn prospect_option_list(sessions: &[Value], key: &str) -> Vec<ProspectOption> {
+    let mut grouped: Vec<(String, Vec<&Value>)> = Vec::new();
     for session in sessions {
         let Some(value) = session
             .get(key)
@@ -942,41 +1049,34 @@ fn prospect_option_list(sessions: &[Value], key: &str) -> Vec<Value> {
         else {
             continue;
         };
-        grouped
-            .entry(value.to_string())
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
-            .expect("group lists are arrays")
-            .push(session.clone());
+        match grouped.iter_mut().find(|(group, _)| group == value) {
+            Some((_, members)) => members.push(session),
+            None => grouped.push((value.to_string(), vec![session])),
+        }
     }
 
-    let mut options: Vec<Value> = Vec::new();
-    for (value, group) in &grouped {
-        let members: Vec<&Value> = group.as_array().expect("array").iter().collect();
-        let sample = prospect_sample(&members);
-        options.push(json!({
-            "value": value,
-            "label": value,
-            "sessions": sample["sessions"],
-            "kills": sample["kills"],
-            "hours": round_half_even(sample["hours"].as_f64().unwrap_or(0.0), 2),
-            "cycledPed": round_half_even(sample["cycledPed"].as_f64().unwrap_or(0.0), 2),
-        }));
+    let mut options: Vec<ProspectOption> = Vec::new();
+    for (value, members) in &grouped {
+        let sample = prospect_sample(members);
+        options.push(ProspectOption {
+            value: value.clone(),
+            label: value.clone(),
+            sessions: sample.sessions,
+            kills: sample.kills,
+            hours: round_half_even(sample.hours, 2),
+            cycled_ped: round_half_even(sample.cycled_ped, 2),
+        });
     }
 
     options.sort_by(|a, b| {
-        let sessions_cmp = b["sessions"].as_i64().cmp(&a["sessions"].as_i64());
-        if sessions_cmp != std::cmp::Ordering::Equal {
-            return sessions_cmp;
-        }
-        let cycled_cmp = b["cycledPed"]
-            .as_f64()
-            .partial_cmp(&a["cycledPed"].as_f64())
-            .expect("cycled values are finite");
-        if cycled_cmp != std::cmp::Ordering::Equal {
-            return cycled_cmp;
-        }
-        a["label"].as_str().cmp(&b["label"].as_str())
+        b.sessions
+            .cmp(&a.sessions)
+            .then_with(|| {
+                b.cycled_ped
+                    .partial_cmp(&a.cycled_ped)
+                    .expect("cycled values are finite")
+            })
+            .then_with(|| a.label.cmp(&b.label))
     });
     options
 }
@@ -1005,22 +1105,21 @@ fn match_prospect_sessions<'s>(
         .collect()
 }
 
-fn build_prospect_warnings(sample: &Map<String, Value>, projected_cycled_ped: f64) -> Vec<Value> {
+fn build_prospect_warnings(sample: &SampleData, projected_cycled_ped: f64) -> Vec<String> {
     let mut warnings = Vec::new();
-    if sample["sessions"].as_i64().unwrap_or(0) < PROSPECT_SAMPLE_WARN_SESSIONS {
-        warnings.push(json!("Thin sample: fewer than 3 matching sessions."));
+    if sample.sessions < PROSPECT_SAMPLE_WARN_SESSIONS {
+        warnings.push("Thin sample: fewer than 3 matching sessions.".to_string());
     }
-    if sample["hours"].as_f64().unwrap_or(0.0) < PROSPECT_SAMPLE_WARN_HOURS {
-        warnings.push(json!("Thin sample: less than 2 hours of matching play."));
+    if sample.hours < PROSPECT_SAMPLE_WARN_HOURS {
+        warnings.push("Thin sample: less than 2 hours of matching play.".to_string());
     }
-    let cycled = sample["cycledPed"].as_f64().unwrap_or(0.0);
-    if cycled < PROSPECT_SAMPLE_WARN_CYCLED_PED {
-        warnings.push(json!("Thin sample: less than 50 PED of matching cycling."));
+    if sample.cycled_ped < PROSPECT_SAMPLE_WARN_CYCLED_PED {
+        warnings.push("Thin sample: less than 50 PED of matching cycling.".to_string());
     }
-    if cycled > 0.0 && projected_cycled_ped > cycled * 20.0 {
-        warnings.push(json!(
-            "Long extrapolation: forecast extends far beyond the observed sample."
-        ));
+    if sample.cycled_ped > 0.0 && projected_cycled_ped > sample.cycled_ped * 20.0 {
+        warnings.push(
+            "Long extrapolation: forecast extends far beyond the observed sample.".to_string(),
+        );
     }
     warnings
 }
@@ -1029,53 +1128,52 @@ fn build_prospect_warnings(sample: &Map<String, Value>, projected_cycled_ped: f6
 /// observed composition: (projected levels, projected gains).
 fn project_prospect_levels(
     skill_levels: &Map<String, Value>,
-    sample: &Map<String, Value>,
+    sample: &SampleData,
     total_ped: f64,
-) -> (Map<String, Value>, Map<String, Value>) {
+) -> (Map<String, Value>, Vec<(String, f64)>) {
     let mut projected_levels: Map<String, Value> = skill_levels
         .iter()
         .map(|(name, level)| (name.clone(), json!(level.as_f64().unwrap_or(0.0))))
         .collect();
-    let mut projected_gains: Map<String, Value> = Map::new();
+    let mut projected_gains: Vec<(String, f64)> = Vec::new();
 
-    let pes_per_ped = sample["pesPerPed"].as_f64().unwrap_or(0.0);
-    let skill_tt_budget = total_ped * pes_per_ped;
-    if let Some(shares) = sample["skillShares"].as_object() {
-        for (skill_name, share) in shares {
-            let current = projected_levels
-                .get(skill_name)
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            let allocated_tt = skill_tt_budget * share.as_f64().unwrap_or(0.0);
-            let gained = levels_for_tt_value(current, allocated_tt);
-            projected_levels.insert(
-                skill_name.clone(),
-                json!(round_half_even(current + gained, 4)),
-            );
-            projected_gains.insert(skill_name.clone(), json!(round_half_even(gained, 4)));
-        }
+    let skill_tt_budget = total_ped * sample.pes_per_ped;
+    for (skill_name, share) in &sample.skill_shares {
+        let current = projected_levels
+            .get(skill_name)
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let allocated_tt = skill_tt_budget * share;
+        let gained = levels_for_tt_value(current, allocated_tt);
+        projected_levels.insert(
+            skill_name.clone(),
+            json!(round_half_even(current + gained, 4)),
+        );
+        projected_gains.push((skill_name.clone(), round_half_even(gained, 4)));
     }
-    if let Some(rates) = sample["attributeRates"].as_object() {
-        for (skill_name, rate) in rates {
-            let current = projected_levels
-                .get(skill_name)
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            let gained = total_ped * rate.as_f64().unwrap_or(0.0);
-            projected_levels.insert(
-                skill_name.clone(),
-                json!(round_half_even(current + gained, 4)),
-            );
-            projected_gains.insert(skill_name.clone(), json!(round_half_even(gained, 4)));
+    for (skill_name, rate) in &sample.attribute_rates {
+        let current = projected_levels
+            .get(skill_name)
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let gained = total_ped * rate;
+        projected_levels.insert(
+            skill_name.clone(),
+            json!(round_half_even(current + gained, 4)),
+        );
+        match projected_gains
+            .iter_mut()
+            .find(|(name, _)| name == skill_name)
+        {
+            Some((_, value)) => *value = round_half_even(gained, 4),
+            None => projected_gains.push((skill_name.clone(), round_half_even(gained, 4))),
         }
     }
     (projected_levels, projected_gains)
 }
 
 /// Whether the observed sample contains gains that move the profession.
-fn relevant_prospect_progress(sample: &Map<String, Value>, profession: &Value) -> bool {
-    let observed_regular = sample["skillShares"].as_object();
-    let observed_attrs = sample["attributeRates"].as_object();
+fn relevant_prospect_progress(sample: &SampleData, profession: &Value) -> bool {
     let skills = profession
         .get("skills")
         .and_then(Value::as_array)
@@ -1091,8 +1189,8 @@ fn relevant_prospect_progress(sample: &Map<String, Value>, profession: &Value) -
         if name.is_empty() || weight <= 0.0 {
             continue;
         }
-        if observed_regular.is_some_and(|m| m.contains_key(name))
-            || observed_attrs.is_some_and(|m| m.contains_key(name))
+        if lookup(&sample.skill_shares, name).is_some()
+            || lookup(&sample.attribute_rates, name).is_some()
         {
             return true;
         }
@@ -1100,36 +1198,36 @@ fn relevant_prospect_progress(sample: &Map<String, Value>, profession: &Value) -
     false
 }
 
-/// An early-return prospect shape (error before any forecast values).
+/// An early-return prospect result (error before any forecast values).
 #[allow(clippy::too_many_arguments)]
-fn prospect_error_shape(
+fn prospect_error_result(
     profession_name: &str,
     slice_type: &str,
     slice_value: &Option<String>,
     markup_uplift: f64,
     current_level: f64,
     target_level: f64,
-    sample: Map<String, Value>,
+    sample: SampleData,
     error: &str,
-) -> Value {
-    json!({
-        "profession": profession_name,
-        "sliceType": slice_type,
-        "sliceValue": slice_value,
-        "markupUplift": markup_uplift,
-        "currentLevel": round_half_even(current_level, 2),
-        "targetLevel": round_half_even(target_level, 2),
-        "projectedCycledPed": 0.0,
-        "projectedHours": 0.0,
-        "expectedLootTt": 0.0,
-        "expectedNetTtBurn": 0.0,
-        "speculativeLootTt": null,
-        "speculativeNetTtBurn": null,
-        "sample": sample,
-        "rows": [],
-        "warnings": [],
-        "error": error,
-    })
+) -> ProspectResult {
+    ProspectResult {
+        error: Some(error.to_string()),
+        rows: Vec::new(),
+        warnings: Vec::new(),
+        profession: profession_name.to_string(),
+        slice_type: slice_type.to_string(),
+        slice_value: slice_value.clone(),
+        markup_uplift,
+        current_level: round_half_even(current_level, 2),
+        target_level: round_half_even(target_level, 2),
+        projected_cycled_ped: 0.0,
+        projected_hours: 0.0,
+        expected_loot_tt: 0.0,
+        expected_net_tt_burn: 0.0,
+        speculative_loot_tt: None,
+        speculative_net_tt_burn: None,
+        sample: sample.dto(),
+    }
 }
 
 /// The full forecast, mirroring `_build_prospect_result` (including the
@@ -1140,15 +1238,15 @@ fn build_prospect_result(
     profession: &Value,
     skill_levels: &Map<String, Value>,
     target_level: f64,
-    sample: Map<String, Value>,
+    sample: SampleData,
     slice_type: &str,
     slice_value: &Option<String>,
     markup_uplift: f64,
-) -> Value {
+) -> ProspectResult {
     let current_level = profession_level(skill_levels, profession);
 
     let projected_levels: Map<String, Value>;
-    let mut projected_gains: Map<String, Value> = Map::new();
+    let mut projected_gains: Vec<(String, f64)> = Vec::new();
     let projected_cycled_ped: f64;
 
     if target_level <= current_level {
@@ -1158,10 +1256,10 @@ fn build_prospect_result(
             .collect();
         projected_cycled_ped = 0.0;
     } else {
-        let cycled = sample["cycledPed"].as_f64().unwrap_or(0.0);
-        let hours = sample["hours"].as_f64().unwrap_or(0.0);
+        let cycled = sample.cycled_ped;
+        let hours = sample.hours;
         if cycled <= 0.0 || hours <= 0.0 {
-            return prospect_error_shape(
+            return prospect_error_result(
                 profession_name,
                 slice_type,
                 slice_value,
@@ -1173,7 +1271,7 @@ fn build_prospect_result(
             );
         }
         if !relevant_prospect_progress(&sample, profession) {
-            return prospect_error_shape(
+            return prospect_error_result(
                 profession_name,
                 slice_type,
                 slice_value,
@@ -1200,7 +1298,7 @@ fn build_prospect_result(
             );
         }
         if upper_level < target_level {
-            return prospect_error_shape(
+            return prospect_error_result(
                 profession_name,
                 slice_type,
                 slice_value,
@@ -1226,13 +1324,10 @@ fn build_prospect_result(
         projected_gains = projected.1;
     }
 
-    let loot_tt_per_ped = sample["lootTtPerPed"].as_f64().unwrap_or(0.0);
-    let expected_loot_tt = round_half_even(projected_cycled_ped * loot_tt_per_ped, 2);
+    let expected_loot_tt = round_half_even(projected_cycled_ped * sample.loot_tt_per_ped, 2);
     let expected_net_tt_burn = round_half_even(projected_cycled_ped - expected_loot_tt, 2);
-    let cycled = sample["cycledPed"].as_f64().unwrap_or(0.0);
-    let hours = sample["hours"].as_f64().unwrap_or(0.0);
-    let projected_hours = if cycled > 0.0 {
-        round_half_even(projected_cycled_ped * (hours / cycled), 2)
+    let projected_hours = if sample.cycled_ped > 0.0 {
+        round_half_even(projected_cycled_ped * (sample.hours / sample.cycled_ped), 2)
     } else {
         0.0
     };
@@ -1240,14 +1335,14 @@ fn build_prospect_result(
     let (speculative_loot_tt, speculative_net_tt_burn) = if markup_uplift > 0.0 {
         let loot = round_half_even(expected_loot_tt * (1.0 + markup_uplift), 2);
         (
-            json!(loot),
-            json!(round_half_even(projected_cycled_ped - loot, 2)),
+            Some(loot),
+            Some(round_half_even(projected_cycled_ped - loot, 2)),
         )
     } else {
-        (Value::Null, Value::Null)
+        (None, None)
     };
 
-    let mut weights: Map<String, Value> = Map::new();
+    let mut weights: Vec<(String, f64)> = Vec::new();
     if let Some(skills) = profession.get("skills").and_then(Value::as_array) {
         for entry in skills {
             let name = entry
@@ -1257,98 +1352,84 @@ fn build_prospect_result(
                 .unwrap_or("")
                 .to_string();
             let weight = entry.get("weight").and_then(Value::as_f64).unwrap_or(0.0);
-            weights.insert(name, json!(weight));
-        }
-    }
-
-    // `set(skillShares) | set(attributeRates)`: Python set union order
-    // is arbitrary, and the rows sort below is total (contribution,
-    // attribute flag, then the unique name), so insertion order here
-    // never reaches the wire.
-    let mut row_names: Vec<String> = Vec::new();
-    if let Some(shares) = sample["skillShares"].as_object() {
-        row_names.extend(shares.keys().cloned());
-    }
-    if let Some(rates) = sample["attributeRates"].as_object() {
-        for name in rates.keys() {
-            if !row_names.contains(name) {
-                row_names.push(name.clone());
+            match weights.iter_mut().find(|(entry, _)| *entry == name) {
+                Some((_, value)) => *value = weight,
+                None => weights.push((name, weight)),
             }
         }
     }
 
-    let mut rows: Vec<Value> = Vec::new();
+    // The union of observed shares and rates; union order is free (the
+    // rows sort below is total: contribution, attribute flag, then the
+    // unique name), so insertion order here never reaches the wire.
+    let mut row_names: Vec<String> = sample
+        .skill_shares
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    for (name, _) in &sample.attribute_rates {
+        if !row_names.contains(name) {
+            row_names.push(name.clone());
+        }
+    }
+
+    let mut rows: Vec<ProspectRow> = Vec::new();
     for name in &row_names {
         let current_skill_level = skill_levels
             .get(name)
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
-        let projected_gain = projected_gains
-            .get(name)
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+        let projected_gain = lookup(&projected_gains, name).unwrap_or(0.0);
         let projected_end_level = projected_levels
             .get(name)
             .and_then(Value::as_f64)
             .unwrap_or(current_skill_level);
-        let weight = weights.get(name).and_then(Value::as_f64).unwrap_or(0.0);
+        let weight = lookup(&weights, name).unwrap_or(0.0);
         let contribution = if weight > 0.0 {
             (effective_points(name, projected_gain) * weight) / 10000.0
         } else {
             0.0
         };
-        let observed_share = sample["skillShares"]
-            .get(name)
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let observed_rate = sample["attributeRates"]
-            .get(name)
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        rows.push(json!({
-            "name": name,
-            "isAttribute": is_attribute(name),
-            "weight": weight,
-            "currentLevel": round_half_even(current_skill_level, 2),
-            "observedShare": round_half_even(observed_share, 4),
-            "observedRate": round_half_even(observed_rate, 6),
-            "projectedGain": round_half_even(projected_gain, 2),
-            "projectedEndLevel": round_half_even(projected_end_level, 2),
-            "professionContribution": round_half_even(contribution, 4),
-            "relevant": weight > 0.0,
-        }));
+        let observed_share = lookup(&sample.skill_shares, name).unwrap_or(0.0);
+        let observed_rate = lookup(&sample.attribute_rates, name).unwrap_or(0.0);
+        rows.push(ProspectRow {
+            name: name.clone(),
+            is_attribute: is_attribute(name),
+            weight,
+            current_level: round_half_even(current_skill_level, 2),
+            observed_share: round_half_even(observed_share, 4),
+            observed_rate: round_half_even(observed_rate, 6),
+            projected_gain: round_half_even(projected_gain, 2),
+            projected_end_level: round_half_even(projected_end_level, 2),
+            profession_contribution: round_half_even(contribution, 4),
+            relevant: weight > 0.0,
+        });
     }
     rows.sort_by(|a, b| {
-        let contribution = b["professionContribution"]
-            .as_f64()
-            .partial_cmp(&a["professionContribution"].as_f64())
-            .expect("contributions are finite");
-        if contribution != std::cmp::Ordering::Equal {
-            return contribution;
-        }
-        let attribute = a["isAttribute"].as_bool().cmp(&b["isAttribute"].as_bool());
-        if attribute != std::cmp::Ordering::Equal {
-            return attribute;
-        }
-        a["name"].as_str().cmp(&b["name"].as_str())
+        b.profession_contribution
+            .partial_cmp(&a.profession_contribution)
+            .expect("contributions are finite")
+            .then_with(|| a.is_attribute.cmp(&b.is_attribute))
+            .then_with(|| a.name.cmp(&b.name))
     });
 
     let warnings = build_prospect_warnings(&sample, projected_cycled_ped);
-    json!({
-        "profession": profession_name,
-        "sliceType": slice_type,
-        "sliceValue": slice_value,
-        "markupUplift": markup_uplift,
-        "currentLevel": round_half_even(current_level, 2),
-        "targetLevel": round_half_even(target_level, 2),
-        "projectedCycledPed": projected_cycled_ped,
-        "projectedHours": projected_hours,
-        "expectedLootTt": expected_loot_tt,
-        "expectedNetTtBurn": expected_net_tt_burn,
-        "speculativeLootTt": speculative_loot_tt,
-        "speculativeNetTtBurn": speculative_net_tt_burn,
-        "sample": sample,
-        "rows": rows,
-        "warnings": warnings,
-    })
+    ProspectResult {
+        error: None,
+        rows,
+        warnings,
+        profession: profession_name.to_string(),
+        slice_type: slice_type.to_string(),
+        slice_value: slice_value.clone(),
+        markup_uplift,
+        current_level: round_half_even(current_level, 2),
+        target_level: round_half_even(target_level, 2),
+        projected_cycled_ped,
+        projected_hours,
+        expected_loot_tt,
+        expected_net_tt_burn,
+        speculative_loot_tt,
+        speculative_net_tt_burn,
+        sample: sample.dto(),
+    }
 }
