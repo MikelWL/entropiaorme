@@ -192,8 +192,7 @@ export interface CodexRank {
 
 /**
  * What a codex recommendation ranks by. A closed vocabulary: the
- * bindings expose only these two, so the HTTP route's out-of-vocabulary
- * 422 (it defaulted an unknown `target` to `profession`) is
+ * bindings expose only these two, so an out-of-vocabulary `target` is
  * unrepresentable rather than validated.
  */
 export type CodexRecommendTarget = 'profession' | 'hp';
@@ -281,8 +280,7 @@ export interface CostBreakdownLine {
 }
 
 /**
- * The crash-reporting opt-in state, in the one-key body the HTTP route
- * returned.
+ * The crash-reporting opt-in state, a one-key body.
  */
 export interface CrashReportingStatus {
 	crash_reporting_enabled: boolean;

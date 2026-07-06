@@ -363,7 +363,10 @@ describe('settings wrappers dispatch typed commands', () => {
 		tauriInvoke.mockRejectedValue({ kind: 'badRequest', message: 'No fields to update' });
 		const failure = api.updateSettings({});
 		await expect(failure).rejects.toBeInstanceOf(FakeApiError);
-		await expect(failure).rejects.toMatchObject({ kind: 'badRequest', message: 'No fields to update' });
+		await expect(failure).rejects.toMatchObject({
+			kind: 'badRequest',
+			message: 'No fields to update',
+		});
 	});
 });
 
