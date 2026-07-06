@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 use rusqlite::OptionalExtension as _;
 use serde_json::{json, Value};
+#[cfg(test)]
 use sqlx::Row;
 
 use crate::clock::Clock;
@@ -154,14 +155,19 @@ impl CodexService {
             ));
         }
 
-        let rows = sqlx::query("SELECT species_name, current_rank FROM codex_progress")
-            .fetch_all(self.db.read())
-            .await
-            .map_err(CodexError::Db)?;
-        let rank_map: HashMap<String, i64> = rows
-            .into_iter()
-            .map(|row| (row.get(0), row.get(1)))
-            .collect();
+        let rank_map: HashMap<String, i64> = self
+            .db
+            .with_reader(|conn| {
+                let mut stmt =
+                    conn.prepare("SELECT species_name, current_rank FROM codex_progress")?;
+                let mut rows = stmt.query([])?;
+                let mut map: HashMap<String, i64> = HashMap::new();
+                while let Some(row) = rows.next()? {
+                    map.insert(row.get::<_, String>(0)?, row.get::<_, i64>(1)?);
+                }
+                Ok(map)
+            })
+            .await?;
 
         let mut result: Vec<(i64, String, Value)> = Vec::new();
         for (name, base_cost, codex_type) in listed {
@@ -200,20 +206,27 @@ impl CodexService {
         };
         let breakdown = build_rank_breakdown(species.base_cost, species.codex_type.as_deref());
 
-        let claims = sqlx::query(
-            "SELECT rank, skill_name, ped_value, claimed_at FROM codex_claims \
-             WHERE species_name = ? ORDER BY rank",
-        )
-        .bind(species_name)
-        .fetch_all(self.db.read())
-        .await
-        .map_err(CodexError::Db)?;
+        let species_owned = species_name.to_string();
         // Built in query order so a duplicate rank's later row wins,
         // as the original's dict comprehension does.
-        let mut claims_map: HashMap<i64, (String, f64)> = HashMap::new();
-        for row in claims {
-            claims_map.insert(row.get(0), (row.get(1), row.get(2)));
-        }
+        let claims_map: HashMap<i64, (String, f64)> = self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT rank, skill_name, ped_value, claimed_at FROM codex_claims \
+                     WHERE species_name = ? ORDER BY rank",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![species_owned])?;
+                let mut map: HashMap<i64, (String, f64)> = HashMap::new();
+                while let Some(row) = rows.next()? {
+                    map.insert(
+                        row.get::<_, i64>(0)?,
+                        (row.get::<_, String>(1)?, row.get::<_, f64>(2)?),
+                    );
+                }
+                Ok(map)
+            })
+            .await?;
 
         let current_rank = self.current_rank(species_name).await?;
 
@@ -504,18 +517,18 @@ impl CodexService {
             return Err(CodexError::Invalid("Rank must be 0-25".to_string()));
         }
         let now = naive_to_epoch(self.clock.now());
-        sqlx::query(
-            "INSERT INTO codex_progress (species_name, current_rank, updated_at) VALUES (?, ?, ?) \
-             ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ?",
-        )
-        .bind(species_name)
-        .bind(rank)
-        .bind(now)
-        .bind(rank)
-        .bind(now)
-        .execute(self.db.write())
-        .await
-        .map_err(CodexError::Db)?;
+        let species_owned = species_name.to_string();
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO codex_progress (species_name, current_rank, updated_at) \
+                     VALUES (?, ?, ?) \
+                     ON CONFLICT(species_name) DO UPDATE SET current_rank = ?, updated_at = ?",
+                    rusqlite::params![species_owned, rank, now, rank, now],
+                )?;
+                Ok(())
+            })
+            .await?;
         Ok(json!({"speciesName": species_name, "rank": rank}))
     }
 
@@ -761,30 +774,40 @@ impl CodexService {
 
     /// The species' current rank, defaulting to 0 when unranked.
     async fn current_rank(&self, species_name: &str) -> Result<i64, CodexError> {
-        Ok(
-            sqlx::query("SELECT current_rank FROM codex_progress WHERE species_name = ?")
-                .bind(species_name)
-                .fetch_optional(self.db.read())
-                .await
-                .map_err(CodexError::Db)?
-                .map(|row| row.get(0))
-                .unwrap_or(0),
-        )
+        let species_owned = species_name.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = ?",
+                        rusqlite::params![species_owned],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?
+                    .unwrap_or(0))
+            })
+            .await?)
     }
 
     /// The latest calibrated level for a skill, by scan instant (no
     /// further tiebreak, as the original; both engines resolve equal
     /// instants identically over the same schema and index).
     async fn skill_level(&self, skill_name: &str) -> Result<Option<f64>, CodexError> {
-        Ok(sqlx::query(
-            "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-             ORDER BY scanned_at DESC LIMIT 1",
-        )
-        .bind(skill_name)
-        .fetch_optional(self.db.read())
-        .await
-        .map_err(CodexError::Db)?
-        .map(|row| row.get(0)))
+        let skill_owned = skill_name.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT level FROM skill_calibrations WHERE skill_name = ? \
+                         ORDER BY scanned_at DESC LIMIT 1",
+                        rusqlite::params![skill_owned],
+                        |row| row.get::<_, f64>(0),
+                    )
+                    .optional()?)
+            })
+            .await?)
     }
 }
 

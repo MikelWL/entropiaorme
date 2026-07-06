@@ -8,11 +8,12 @@
 //! defensive re-validation and bare-id fallbacks the loop used to
 //! carry are unrepresentable now).
 
+use rusqlite::OptionalExtension as _;
 use serde_json::{json, Map, Value};
-use sqlx::sqlite::SqliteConnection;
-use sqlx::Row;
 
-use super::payload::{bind_json, python_str};
+use crate::db::DbError;
+
+use super::payload::{python_str, value_to_sql};
 use super::{QuestError, QuestService};
 
 pub const PLAYLIST_GROUP_IMMEDIATE: &str = "immediate";
@@ -73,36 +74,50 @@ impl QuestService {
             "SELECT id, name, planet, estimated_minutes, is_active, created_at, updated_at \
              FROM quest_playlists {where_clause} ORDER BY created_at ASC"
         );
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(self.db.read())
+        let bases = self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(&sql)?;
+                let mut rows = stmt.query([])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(row_to_playlist(row));
+                }
+                Ok(out)
+            })
             .await?;
-        let mut playlists = Vec::with_capacity(rows.len());
-        for row in rows {
-            playlists.push(Value::Object(self.shape_playlist(&row).await?));
+        let mut playlists = Vec::with_capacity(bases.len());
+        for base in bases {
+            playlists.push(Value::Object(self.shape_playlist(base).await?));
         }
         Ok(playlists)
     }
 
     /// A single playlist by ID; `None` when absent.
     pub async fn get_playlist(&self, playlist_id: i64) -> Result<Option<Value>, QuestError> {
-        let Some(row) = sqlx::query(
-            "SELECT id, name, planet, estimated_minutes, is_active, created_at, updated_at \
-             FROM quest_playlists WHERE id = ?",
-        )
-        .bind(playlist_id)
-        .fetch_optional(self.db.read())
-        .await?
+        let Some(base) = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id, name, planet, estimated_minutes, is_active, created_at, updated_at \
+                         FROM quest_playlists WHERE id = ?",
+                        rusqlite::params![playlist_id],
+                        |row| Ok(row_to_playlist(row)),
+                    )
+                    .optional()?)
+            })
+            .await?
         else {
             return Ok(None);
         };
-        Ok(Some(Value::Object(self.shape_playlist(&row).await?)))
+        Ok(Some(Value::Object(self.shape_playlist(base).await?)))
     }
 
     async fn shape_playlist(
         &self,
-        row: &sqlx::sqlite::SqliteRow,
+        mut playlist: Map<String, Value>,
     ) -> Result<Map<String, Value>, QuestError> {
-        let mut playlist = row_to_playlist(row);
         let playlist_id = playlist["id"].as_i64().expect("integer playlist id");
         let items = self.playlist_items(playlist_id).await?;
         let (immediate_ids, long_horizon_ids) = split_playlist_item_groups(&items);
@@ -122,10 +137,6 @@ impl QuestService {
     /// Create a playlist with classified items.
     pub async fn create_playlist(&self, data: &Value) -> Result<Value, QuestError> {
         let items = normalize_playlist_items(data)?;
-        let mut tx = self.db.write().begin().await?;
-        let query = sqlx::query(
-            "INSERT INTO quest_playlists (name, planet, estimated_minutes) VALUES (?, ?, ?)",
-        );
         let planet = match data.get("planet") {
             None => json!("Calypso"),
             Some(value) => value.clone(),
@@ -134,15 +145,25 @@ impl QuestService {
             None => json!(30),
             Some(value) => value.clone(),
         };
-        let query = bind_json(
-            query,
-            data.get("name").expect("playlist payload carries name"),
-        );
-        let query = bind_json(query, &planet);
-        let query = bind_json(query, &estimated);
-        let playlist_id = query.execute(&mut *tx).await?.last_insert_rowid();
-        set_playlist_items(&mut tx, playlist_id, &items).await?;
-        tx.commit().await?;
+        let params: Vec<rusqlite::types::Value> = vec![
+            value_to_sql(data.get("name").expect("playlist payload carries name")),
+            value_to_sql(&planet),
+            value_to_sql(&estimated),
+        ];
+        let playlist_id = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT INTO quest_playlists (name, planet, estimated_minutes) VALUES (?, ?, ?)",
+                    rusqlite::params_from_iter(params),
+                )?;
+                let playlist_id = tx.last_insert_rowid();
+                set_playlist_items(&tx, playlist_id, &items)?;
+                tx.commit()?;
+                Ok(playlist_id)
+            })
+            .await?;
 
         Ok(self
             .get_playlist(playlist_id)
@@ -174,40 +195,58 @@ impl QuestService {
             None
         };
 
-        let mut tx = self.db.write().begin().await?;
-        if !updates.is_empty() {
+        let update = (!updates.is_empty()).then(|| {
             let set_clause = updates
                 .iter()
                 .map(|(key, _)| format!("{key} = ?"))
                 .collect::<Vec<_>>()
                 .join(", ");
             let sql = format!("UPDATE quest_playlists SET {set_clause} WHERE id = ?");
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-            for (_, value) in &updates {
-                query = bind_json(query, value);
-            }
-            query.bind(playlist_id).execute(&mut *tx).await?;
-        }
-        if let Some(items) = items {
-            set_playlist_items(&mut tx, playlist_id, &items).await?;
-        }
-        tx.commit().await?;
+            let mut params: Vec<rusqlite::types::Value> = updates
+                .iter()
+                .map(|(_, value)| value_to_sql(value))
+                .collect();
+            params.push(rusqlite::types::Value::Integer(playlist_id));
+            (sql, params)
+        });
+
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                if let Some((sql, params)) = update {
+                    tx.execute(&sql, rusqlite::params_from_iter(params))?;
+                }
+                if let Some(items) = &items {
+                    set_playlist_items(&tx, playlist_id, items)?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
 
         self.get_playlist(playlist_id).await
     }
 
     /// Soft-delete a playlist and clear its items.
     pub async fn delete_playlist(&self, playlist_id: i64) -> Result<bool, QuestError> {
-        let affected =
-            sqlx::query("UPDATE quest_playlists SET is_active = 0 WHERE id = ? AND is_active = 1")
-                .bind(playlist_id)
-                .execute(self.db.write())
-                .await?
-                .rows_affected();
+        let affected = self
+            .db
+            .with_writer(move |conn| {
+                Ok(conn.execute(
+                    "UPDATE quest_playlists SET is_active = 0 WHERE id = ? AND is_active = 1",
+                    rusqlite::params![playlist_id],
+                )?)
+            })
+            .await?;
         if affected > 0 {
-            sqlx::query("DELETE FROM quest_playlist_items WHERE playlist_id = ?")
-                .bind(playlist_id)
-                .execute(self.db.write())
+            self.db
+                .with_writer(move |conn| {
+                    conn.execute(
+                        "DELETE FROM quest_playlist_items WHERE playlist_id = ?",
+                        rusqlite::params![playlist_id],
+                    )?;
+                    Ok(())
+                })
                 .await?;
             return Ok(true);
         }
@@ -215,57 +254,75 @@ impl QuestService {
     }
 
     pub(super) async fn quest_playlist_ids(&self, quest_id: i64) -> Result<Vec<i64>, QuestError> {
-        let rows = sqlx::query(
-            "SELECT DISTINCT qpi.playlist_id FROM quest_playlist_items qpi \
-             JOIN quest_playlists qp ON qp.id = qpi.playlist_id \
-             WHERE qpi.quest_id = ? AND qp.is_active = 1",
-        )
-        .bind(quest_id)
-        .fetch_all(self.db.read())
-        .await?;
-        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT qpi.playlist_id FROM quest_playlist_items qpi \
+                     JOIN quest_playlists qp ON qp.id = qpi.playlist_id \
+                     WHERE qpi.quest_id = ? AND qp.is_active = 1",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![quest_id])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(row.get::<_, i64>(0)?);
+                }
+                Ok(out)
+            })
+            .await?)
     }
 
     async fn playlist_items(&self, playlist_id: i64) -> Result<Vec<Value>, QuestError> {
-        // Immediate items sort ahead of long-horizon ones (the boolean
-        // expression), then by their explicit order.
-        let rows = sqlx::query(
-            "SELECT quest_id, description, group_type \
-             FROM quest_playlist_items \
-             WHERE playlist_id = ? \
-             ORDER BY group_type = ?, sort_order",
-        )
-        .bind(playlist_id)
-        .bind(PLAYLIST_GROUP_LONG_HORIZON)
-        .fetch_all(self.db.read())
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| {
-                json!({
-                    "quest_id": row.get::<i64, _>(0),
-                    "description": row.get::<Option<String>, _>(1),
-                    "group_type": row.get::<String, _>(2),
-                })
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                // Immediate items sort ahead of long-horizon ones (the
+                // boolean expression), then by their explicit order.
+                let mut stmt = conn.prepare(
+                    "SELECT quest_id, description, group_type \
+                     FROM quest_playlist_items \
+                     WHERE playlist_id = ? \
+                     ORDER BY group_type = ?, sort_order",
+                )?;
+                let mut rows =
+                    stmt.query(rusqlite::params![playlist_id, PLAYLIST_GROUP_LONG_HORIZON])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(json!({
+                        "quest_id": row.get::<_, i64>(0)?,
+                        "description": row.get::<_, Option<String>>(1)?,
+                        "group_type": row.get::<_, String>(2)?,
+                    }));
+                }
+                Ok(out)
             })
-            .collect())
+            .await?)
     }
 }
 
-fn row_to_playlist(row: &sqlx::sqlite::SqliteRow) -> Map<String, Value> {
+fn row_to_playlist(row: &rusqlite::Row) -> Map<String, Value> {
     let mut playlist = Map::new();
-    playlist.insert("id".into(), json!(row.get::<i64, _>("id")));
-    playlist.insert("name".into(), json!(row.get::<String, _>("name")));
-    playlist.insert("planet".into(), json!(row.get::<String, _>("planet")));
+    playlist.insert("id".into(), json!(row.get_unwrap::<_, i64>("id")));
+    playlist.insert("name".into(), json!(row.get_unwrap::<_, String>("name")));
+    playlist.insert(
+        "planet".into(),
+        json!(row.get_unwrap::<_, String>("planet")),
+    );
     playlist.insert(
         "estimated_minutes".into(),
-        json!(row.get::<i64, _>("estimated_minutes")),
+        json!(row.get_unwrap::<_, i64>("estimated_minutes")),
     );
-    playlist.insert("is_active".into(), json!(row.get::<i64, _>("is_active")));
-    playlist.insert("created_at".into(), json!(row.get::<f64, _>("created_at")));
+    playlist.insert(
+        "is_active".into(),
+        json!(row.get_unwrap::<_, i64>("is_active")),
+    );
+    playlist.insert(
+        "created_at".into(),
+        json!(row.get_unwrap::<_, f64>("created_at")),
+    );
     playlist.insert(
         "updated_at".into(),
-        json!(row.get::<Option<f64>, _>("updated_at")),
+        json!(row.get_unwrap::<_, Option<f64>>("updated_at")),
     );
     playlist
 }
@@ -275,27 +332,28 @@ fn row_to_playlist(row: &sqlx::sqlite::SqliteRow) -> Map<String, Value> {
 /// boundary); the caller's enclosing transaction rolls the rewrite
 /// back whole on any error, preserving the original's
 /// nothing-committed refusal shape.
-async fn set_playlist_items(
-    conn: &mut SqliteConnection,
+fn set_playlist_items(
+    conn: &rusqlite::Connection,
     playlist_id: i64,
     items: &[PlaylistItemPayload],
-) -> Result<(), QuestError> {
-    sqlx::query("DELETE FROM quest_playlist_items WHERE playlist_id = ?")
-        .bind(playlist_id)
-        .execute(&mut *conn)
-        .await?;
+) -> Result<(), DbError> {
+    conn.execute(
+        "DELETE FROM quest_playlist_items WHERE playlist_id = ?",
+        rusqlite::params![playlist_id],
+    )?;
     for (index, item) in items.iter().enumerate() {
-        let query = sqlx::query(
+        conn.execute(
             "INSERT INTO quest_playlist_items \
              (playlist_id, quest_id, sort_order, description, group_type) \
              VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(playlist_id);
-        let query = bind_json(query, &item.quest_id);
-        let query = query.bind(index as i64);
-        let query = bind_json(query, &item.description);
-        let query = query.bind(item.group.as_str());
-        query.execute(&mut *conn).await?;
+            rusqlite::params![
+                playlist_id,
+                value_to_sql(&item.quest_id),
+                index as i64,
+                value_to_sql(&item.description),
+                item.group.as_str()
+            ],
+        )?;
     }
     Ok(())
 }

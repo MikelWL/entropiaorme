@@ -316,8 +316,7 @@ fn event_path_bench() {
         0.0,
     ));
     let _quests = QuestService::start(&bus, db.clone(), clock.clone(), runtime.handle().clone());
-    let _skill_tracker =
-        SkillTracker::new(&bus, db.clone(), runtime.handle().clone(), clock.clone());
+    let _skill_tracker = SkillTracker::new(&bus, db.clone(), clock.clone());
     let tracker = runtime
         .block_on(HuntTracker::new(
             bus.clone(),

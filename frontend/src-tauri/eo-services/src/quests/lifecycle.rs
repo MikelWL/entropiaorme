@@ -36,13 +36,15 @@ impl QuestService {
     /// Mark a quest as in-progress; `None` when absent or inactive.
     pub async fn start_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
         let now = self.now_epoch();
-        let affected =
-            sqlx::query("UPDATE quests SET started_at = ? WHERE id = ? AND is_active = 1")
-                .bind(now)
-                .bind(quest_id)
-                .execute(self.db.write())
-                .await?
-                .rows_affected();
+        let affected = self
+            .db
+            .with_writer(move |conn| {
+                Ok(conn.execute(
+                    "UPDATE quests SET started_at = ? WHERE id = ? AND is_active = 1",
+                    rusqlite::params![now, quest_id],
+                )?)
+            })
+            .await?;
         if affected > 0 {
             self.get_quest(quest_id).await
         } else {
@@ -60,27 +62,32 @@ impl QuestService {
             return Ok(None);
         };
         let now = self.now_epoch();
-        sqlx::query("UPDATE quests SET started_at = NULL WHERE id = ?")
-            .bind(quest_id)
-            .execute(self.db.write())
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "UPDATE quests SET started_at = NULL WHERE id = ?",
+                    rusqlite::params![quest_id],
+                )?;
+                Ok(())
+            })
             .await?;
 
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
         if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
-            let name = quest["name"].as_str().expect("quest name");
+            let name = quest["name"].as_str().expect("quest name").to_string();
             if json_truthy(quest.get("reward_is_skill")) {
                 // Skill rewards are PES, not PED: a claim row, not a
                 // ledger entry.
-                sqlx::query(
-                    "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
-                     VALUES (?, ?, ?, ?)",
-                )
-                .bind(quest_id)
-                .bind(name)
-                .bind(reward.value())
-                .bind(now)
-                .execute(self.db.write())
-                .await?;
+                self.db
+                    .with_writer(move |conn| {
+                        conn.execute(
+                            "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
+                             VALUES (?, ?, ?, ?)",
+                            rusqlite::params![quest_id, name, reward.value(), now],
+                        )?;
+                        Ok(())
+                    })
+                    .await?;
                 let day = crate::daily_rollup::epoch_day(now);
                 self.db
                     .with_writer(move |conn| crate::daily_rollup::refresh_days(conn, [day]))
@@ -88,20 +95,28 @@ impl QuestService {
             } else {
                 let ledger_id = self.next_id();
                 let date = to_iso_utc(now);
-                sqlx::query(
-                    "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-                     VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&ledger_id)
-                .bind(&date)
-                .bind("markup")
-                .bind(format!("Quest: {name}"))
-                .bind(reward.value())
-                .bind("quest_reward")
-                .execute(self.db.write())
-                .await?;
+                let refresh_date = date.clone();
                 self.db
-                    .with_writer(move |conn| crate::daily_rollup::refresh_days(conn, [date]))
+                    .with_writer(move |conn| {
+                        conn.execute(
+                            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                             VALUES (?, ?, ?, ?, ?, ?)",
+                            rusqlite::params![
+                                ledger_id,
+                                date,
+                                "markup",
+                                format!("Quest: {name}"),
+                                reward.value(),
+                                "quest_reward"
+                            ],
+                        )?;
+                        Ok(())
+                    })
+                    .await?;
+                self.db
+                    .with_writer(move |conn| {
+                        crate::daily_rollup::refresh_days(conn, [refresh_date])
+                    })
                     .await?;
             }
         }
@@ -126,9 +141,14 @@ impl QuestService {
         };
 
         if !quest["started_at"].is_null() {
-            sqlx::query("UPDATE quests SET started_at = NULL WHERE id = ? AND is_active = 1")
-                .bind(quest_id)
-                .execute(self.db.write())
+            self.db
+                .with_writer(move |conn| {
+                    conn.execute(
+                        "UPDATE quests SET started_at = NULL WHERE id = ? AND is_active = 1",
+                        rusqlite::params![quest_id],
+                    )?;
+                    Ok(())
+                })
                 .await?;
             return self.get_quest(quest_id).await;
         }
@@ -197,18 +217,21 @@ impl QuestService {
             return;
         };
         let now = self.now_epoch();
-        let _ = sqlx::query(
-            "INSERT INTO notable_events \
-             (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
-             VALUES (?, NULL, ?, ?, ?, ?)",
-        )
-        .bind(&session_id)
-        .bind(kind.as_str())
-        .bind(description)
-        .bind(value.value())
-        .bind(now)
-        .execute(self.db.write())
-        .await;
+        let event_type = kind.as_str();
+        let description = description.to_string();
+        let value = value.value();
+        let _ = self
+            .db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO notable_events \
+                     (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
+                     VALUES (?, NULL, ?, ?, ?, ?)",
+                    rusqlite::params![session_id, event_type, description, value, now],
+                )?;
+                Ok(())
+            })
+            .await;
     }
 
     /// Record a completion for cooldown and analytics: keyed by the
@@ -228,15 +251,16 @@ impl QuestService {
             Some(ts) => ts,
             None => self.now_epoch(),
         };
-        sqlx::query(
-            "INSERT OR IGNORE INTO session_quest_completions \
-             (session_id, quest_id, completed_at) VALUES (?, ?, ?)",
-        )
-        .bind(&key)
-        .bind(quest_id)
-        .bind(ts)
-        .execute(self.db.write())
-        .await?;
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_quest_completions \
+                     (session_id, quest_id, completed_at) VALUES (?, ?, ?)",
+                    rusqlite::params![key, quest_id, ts],
+                )?;
+                Ok(())
+            })
+            .await?;
         Ok(())
     }
 

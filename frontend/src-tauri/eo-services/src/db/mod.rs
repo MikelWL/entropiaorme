@@ -129,7 +129,10 @@ impl AdoptError {
 /// over REAL-affinity columns). Only a value that decodes as no
 /// number at all (NULL, text) falls back to zero; a structural
 /// failure (a missing column) is a programming error and panics
-/// rather than silently zeroing an analytic.
+/// rather than silently zeroing an analytic. Production reads moved to
+/// the synchronous core; the test rigs' sqlx-pool asserts still decode
+/// through it.
+#[cfg(test)]
 pub(crate) fn decoded_f64(row: &sqlx::sqlite::SqliteRow, index: usize) -> f64 {
     use sqlx::Row as _;
     row.try_get::<f64, _>(index)

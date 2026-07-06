@@ -17,21 +17,22 @@ pub(super) fn json_truthy(value: Option<&Value>) -> bool {
     }
 }
 
-/// Bind a JSON payload value with the original's sqlite3 adapter
-/// semantics (booleans as integers); a structured value has no adapter
-/// and is a caller error, as it is in the original.
-pub(super) fn bind_json<'q>(
-    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
-    value: &'q Value,
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+/// A JSON payload value as an owned SQLite parameter, with the
+/// original's sqlite3 adapter semantics (booleans as integers); a
+/// structured value has no adapter and is a caller error, as it is in
+/// the original. The owned [`rusqlite::types::Value`] binds by value, so
+/// it moves into a `with_writer` closure with the rest of the captured
+/// parameters.
+pub(super) fn value_to_sql(value: &Value) -> rusqlite::types::Value {
+    use rusqlite::types::Value as SqlValue;
     match value {
-        Value::Null => query.bind(None::<String>),
-        Value::Bool(flag) => query.bind(i64::from(*flag)),
+        Value::Null => SqlValue::Null,
+        Value::Bool(flag) => SqlValue::Integer(i64::from(*flag)),
         Value::Number(number) => match number.as_i64() {
-            Some(integer) => query.bind(integer),
-            None => query.bind(number.as_f64().expect("finite numeric payload")),
+            Some(integer) => SqlValue::Integer(integer),
+            None => SqlValue::Real(number.as_f64().expect("finite numeric payload")),
         },
-        Value::String(text) => query.bind(text.as_str()),
+        Value::String(text) => SqlValue::Text(text.clone()),
         other => panic!("unbindable payload value: {other}"),
     }
 }

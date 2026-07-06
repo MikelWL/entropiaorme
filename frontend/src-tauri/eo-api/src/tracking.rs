@@ -49,8 +49,6 @@ use eo_wire::normalizer::round_half_even;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
 
 use crate::{Api, ApiError};
 
@@ -113,12 +111,15 @@ const REPAIR_FIELDS: [&str; 4] = ["cost_ped", "raw_text", "confidence", "error"]
 
 // ── Engine-typed numeric primitives ─────────────────────────────────
 
-/// A SQLite numeric read preserving the engine type: REAL -> float,
-/// INTEGER (the `COALESCE(SUM(...), 0)` empty case) -> integer.
-fn sql_number(row: &SqliteRow, index: usize) -> Value {
-    match row.try_get::<f64, _>(index) {
-        Ok(value) => json!(value),
-        Err(_) => json!(row.get::<i64, _>(index)),
+/// A SQLite numeric read preserving the engine type: a REAL decodes to a
+/// float, an INTEGER (the `COALESCE(SUM(...), 0)` empty case) to an integer.
+/// The stored value's affinity (`ValueRef`) drives the branch, exactly as the
+/// sqlx `try_get::<f64>`-then-`i64` cascade did (an integer value fails the
+/// float type-check and falls through to the integer read).
+fn sql_number(row: &rusqlite::Row, index: usize) -> Value {
+    match row.get_ref_unwrap(index) {
+        rusqlite::types::ValueRef::Real(value) => json!(value),
+        value => json!(value.as_i64().expect("sql_number reads a numeric column")),
     }
 }
 
@@ -225,41 +226,52 @@ struct ListSummary {
 
 pub(crate) async fn list_sessions_impl(db: &Db, now: f64) -> Result<Value, DbError> {
     // Heal so ended sessions carry current summaries (a write on the read
-    // path, preserved), then read each recent session's row.
+    // path, preserved), then read each recent session's row as one
+    // synchronous unit on a reader-core connection.
     db.with_writer(|conn| eo_services::session_summary::heal_summaries(conn))
         .await?;
-    let pool = db.read();
+    db.with_reader(move |conn| list_sessions_read(conn, now))
+        .await
+}
 
-    let rows = sqlx::query(
-        "SELECT id, started_at, ended_at, is_active \
-         FROM tracking_sessions ORDER BY started_at DESC LIMIT 20",
-    )
-    .fetch_all(pool)
-    .await?;
+/// The session-list read proper: the recent-session rows, their summaries,
+/// and each row shaped from its summary (ended) or the raw tables. One
+/// synchronous pass over a reader-core connection.
+fn list_sessions_read(conn: &rusqlite::Connection, now: f64) -> Result<Value, DbError> {
+    let meta: Vec<(String, Option<f64>, Option<f64>, bool)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, started_at, ended_at, is_active \
+             FROM tracking_sessions ORDER BY started_at DESC LIMIT 20",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<f64>>(1)?,
+                row.get::<_, Option<f64>>(2)?,
+                row.get::<_, i64>(3)? != 0,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
 
-    let ids: Vec<String> = rows.iter().map(|row| row.get::<String, _>(0)).collect();
-    let summaries = fetch_list_summaries(pool, &ids).await?;
+    let ids: Vec<String> = meta.iter().map(|(id, ..)| id.clone()).collect();
+    let summaries = fetch_list_summaries(conn, &ids)?;
 
-    let mut sessions = Vec::with_capacity(rows.len());
-    for row in &rows {
-        let sid = row.get::<String, _>(0);
-        let started_at = row.try_get::<Option<f64>, _>(1).ok().flatten();
-        let ended_at = row.try_get::<Option<f64>, _>(2).ok().flatten();
-        let is_active = row.get::<i64, _>(3) != 0;
-
-        let session = match summaries.get(&sid) {
-            Some(summary) if !is_active => {
-                list_row_from_summary(&sid, started_at, ended_at, is_active, now, summary)
+    let mut sessions = Vec::with_capacity(meta.len());
+    for (sid, started_at, ended_at, is_active) in &meta {
+        let session = match summaries.get(sid) {
+            Some(summary) if !*is_active => {
+                list_row_from_summary(sid, *started_at, *ended_at, *is_active, now, summary)
             }
-            _ => list_row_from_raw(pool, &sid, started_at, ended_at, is_active, now).await?,
+            _ => list_row_from_raw(conn, sid, *started_at, *ended_at, *is_active, now)?,
         };
         sessions.push(session);
     }
     Ok(Value::Array(sessions))
 }
 
-async fn fetch_list_summaries(
-    pool: &SqlitePool,
+fn fetch_list_summaries(
+    conn: &rusqlite::Connection,
     ids: &[String],
 ) -> Result<std::collections::HashMap<String, ListSummary>, DbError> {
     if ids.is_empty() {
@@ -271,14 +283,11 @@ async fn fetch_list_summaries(
          loot_tt, primary_mobs_json, primary_weapons_json, globals, hofs \
          FROM session_summaries WHERE session_id IN ({placeholders})"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for id in ids {
-        query = query.bind(id);
-    }
-    let rows = query.fetch_all(pool).await?;
-    let mut out = std::collections::HashMap::with_capacity(rows.len());
-    for row in &rows {
-        let sid = row.get::<String, _>(0);
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(ids))?;
+    let mut out = std::collections::HashMap::with_capacity(ids.len());
+    while let Some(row) = rows.next()? {
+        let sid = row.get::<_, String>(0)?;
         out.insert(
             sid,
             ListSummary {
@@ -288,10 +297,10 @@ async fn fetch_list_summaries(
                 armour_cost: as_f64(&sql_number(row, 4)),
                 dangling_cost: as_f64(&sql_number(row, 5)),
                 loot_tt: as_f64(&sql_number(row, 6)),
-                primary_mobs: parse_string_array(&row.get::<String, _>(7)),
-                primary_weapons: parse_string_array(&row.get::<String, _>(8)),
-                globals: row.get::<i64, _>(9),
-                hofs: row.get::<i64, _>(10),
+                primary_mobs: parse_string_array(&row.get::<_, String>(7)?),
+                primary_weapons: parse_string_array(&row.get::<_, String>(8)?),
+                globals: row.get::<_, i64>(9)?,
+                hofs: row.get::<_, i64>(10)?,
             },
         );
     }
@@ -336,8 +345,8 @@ fn list_row_from_summary(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn list_row_from_raw(
-    pool: &SqlitePool,
+fn list_row_from_raw(
+    conn: &rusqlite::Connection,
     session_id: &str,
     started_at: Option<f64>,
     ended_at: Option<f64>,
@@ -347,72 +356,64 @@ async fn list_row_from_raw(
     let duration = duration_seconds(started_at, ended_at, is_active, now);
 
     let weapon_cost = scalar(
-        pool,
+        conn,
         "SELECT COALESCE(SUM(ts.cost_per_shot * ts.shots_fired), 0) \
          FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id WHERE k.session_id = ?",
         session_id,
-    )
-    .await?;
+    )?;
     let enhancer_cost = scalar(
-        pool,
+        conn,
         "SELECT COALESCE(SUM(k.enhancer_cost), 0) FROM kills k WHERE k.session_id = ?",
         session_id,
-    )
-    .await?;
-    let sess_costs = sqlx::query(
+    )?;
+    let (armour_cost, heal_cost, dangling_cost) = conn.query_row(
         "SELECT COALESCE(armour_cost, 0), COALESCE(heal_cost, 0), COALESCE(dangling_cost, 0) \
          FROM tracking_sessions WHERE id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
-    let armour_cost = as_f64(&sql_number(&sess_costs, 0));
-    let heal_cost = as_f64(&sql_number(&sess_costs, 1));
-    let dangling_cost = as_f64(&sql_number(&sess_costs, 2));
+        rusqlite::params![session_id],
+        |row| {
+            Ok((
+                as_f64(&sql_number(row, 0)),
+                as_f64(&sql_number(row, 1)),
+                as_f64(&sql_number(row, 2)),
+            ))
+        },
+    )?;
     let weapon_cost = as_f64(&weapon_cost);
     let enhancer_cost = as_f64(&enhancer_cost);
     let cost = weapon_cost + heal_cost + enhancer_cost + armour_cost + dangling_cost;
 
-    let returns = as_f64(
-        &scalar(
-            pool,
-            "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
-            session_id,
-        )
-        .await?,
-    );
+    let returns = as_f64(&scalar(
+        conn,
+        "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
+        session_id,
+    )?);
 
     let primary_mobs = string_column(
-        pool,
+        conn,
         "SELECT mob_name FROM kills \
          WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
          GROUP BY mob_name ORDER BY COUNT(*) DESC LIMIT 3",
         session_id,
-    )
-    .await?;
+    )?;
     let primary_weapons = string_column(
-        pool,
+        conn,
         "SELECT ts.tool_name FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
          WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
          GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC LIMIT 3",
         session_id,
-    )
-    .await?;
+    )?;
 
     let net = returns - cost;
     let return_rate = if cost > 0.0 { returns / cost } else { 0.0 };
 
-    let counts = sqlx::query(
+    let (globals, hofs) = conn.query_row(
         "SELECT \
            COALESCE(SUM(CASE WHEN event_type LIKE 'global_%' THEN 1 ELSE 0 END), 0), \
            COALESCE(SUM(CASE WHEN event_type LIKE 'hof_%' THEN 1 ELSE 0 END), 0) \
          FROM notable_events WHERE session_id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
-    let globals = counts.get::<i64, _>(0);
-    let hofs = counts.get::<i64, _>(1);
+        rusqlite::params![session_id],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    )?;
 
     Ok(json!({
         "id": session_id,
@@ -430,127 +431,142 @@ async fn list_row_from_raw(
     }))
 }
 
-async fn scalar(pool: &SqlitePool, sql: &'static str, sid: &str) -> Result<Value, sqlx::Error> {
-    let row = sqlx::query(sql).bind(sid).fetch_one(pool).await?;
-    Ok(sql_number(&row, 0))
+fn scalar(conn: &rusqlite::Connection, sql: &str, sid: &str) -> Result<Value, DbError> {
+    Ok(conn.query_row(sql, rusqlite::params![sid], |row| Ok(sql_number(row, 0)))?)
 }
 
-async fn string_column(
-    pool: &SqlitePool,
-    sql: &'static str,
+fn string_column(
+    conn: &rusqlite::Connection,
+    sql: &str,
     sid: &str,
-) -> Result<Vec<String>, sqlx::Error> {
-    let rows = sqlx::query(sql).bind(sid).fetch_all(pool).await?;
-    Ok(rows.iter().map(|r| r.get::<String, _>(0)).collect())
+) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(rusqlite::params![sid], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 // ── Session detail ──────────────────────────────────────────────────
 
 pub(crate) async fn get_session_impl(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     now: f64,
-) -> Result<Option<Value>, sqlx::Error> {
-    let session_row = sqlx::query(
-        "SELECT id, started_at, ended_at, is_active, mob_tracking_mode \
-         FROM tracking_sessions WHERE id = ?",
-    )
-    .bind(session_id)
-    .fetch_optional(pool)
-    .await?;
-    let Some(session_row) = session_row else {
+) -> Result<Option<Value>, DbError> {
+    let sid = session_id.to_string();
+    db.with_reader(move |conn| get_session_read(conn, &sid, now))
+        .await
+}
+
+/// One session's full detail, read in one synchronous pass over a reader-core
+/// connection; an absent session is `None`.
+fn get_session_read(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    now: f64,
+) -> Result<Option<Value>, DbError> {
+    use rusqlite::OptionalExtension as _;
+
+    let session_meta = conn
+        .query_row(
+            "SELECT id, started_at, ended_at, is_active, mob_tracking_mode \
+             FROM tracking_sessions WHERE id = ?",
+            rusqlite::params![session_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<f64>>(1)?,
+                    row.get::<_, Option<f64>>(2)?,
+                    row.get::<_, i64>(3)? != 0,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((started_at, ended_at, is_active, mob_mode)) = session_meta else {
         return Ok(None);
     };
 
-    let started_at = session_row.try_get::<Option<f64>, _>(1).ok().flatten();
-    let ended_at = session_row.try_get::<Option<f64>, _>(2).ok().flatten();
-    let is_active = session_row.get::<i64, _>(3) != 0;
-    let mob_entry_mode = session_row
-        .try_get::<Option<String>, _>(4)
-        .ok()
-        .flatten()
+    let mob_entry_mode = mob_mode
         .filter(|m| !m.is_empty())
         .unwrap_or_else(|| "mob".to_string());
 
     let duration = duration_seconds(started_at, ended_at, is_active, now);
 
-    let sess_costs = sqlx::query(
+    let (armour_cost, session_heal_cost, dangling_cost) = conn.query_row(
         "SELECT COALESCE(armour_cost, 0), COALESCE(heal_cost, 0), COALESCE(dangling_cost, 0) \
          FROM tracking_sessions WHERE id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
-    let armour_cost = as_f64(&sql_number(&sess_costs, 0));
-    let session_heal_cost = as_f64(&sql_number(&sess_costs, 1));
-    let dangling_cost = as_f64(&sql_number(&sess_costs, 2));
+        rusqlite::params![session_id],
+        |row| {
+            Ok((
+                as_f64(&sql_number(row, 0)),
+                as_f64(&sql_number(row, 1)),
+                as_f64(&sql_number(row, 2)),
+            ))
+        },
+    )?;
 
-    let kill_totals = sqlx::query(
+    let (kills, total_returns, total_enhancer_cost) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(loot_total_ped), 0), COALESCE(SUM(enhancer_cost), 0) \
          FROM kills WHERE session_id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
-    let kills = kill_totals.get::<i64, _>(0);
-    let total_returns = as_f64(&sql_number(&kill_totals, 1));
-    let total_enhancer_cost = as_f64(&sql_number(&kill_totals, 2));
+        rusqlite::params![session_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                as_f64(&sql_number(row, 1)),
+                as_f64(&sql_number(row, 2)),
+            ))
+        },
+    )?;
 
-    let tool_rows = sqlx::query(
-        "SELECT t.tool_name, SUM(t.shots_fired), SUM(t.damage_dealt), SUM(t.critical_hits), \
-         SUM(COALESCE(t.cost_per_shot, 0) * COALESCE(t.shots_fired, 0)) \
-         FROM kill_tool_stats t JOIN kills k ON k.id = t.kill_id \
-         WHERE k.session_id = ? GROUP BY t.tool_name",
-    )
-    .bind(session_id)
-    .fetch_all(pool)
-    .await?;
-    let mut weapon_cost = 0.0;
-    let mut merged_tools: Vec<(String, i64, f64, i64, f64)> = Vec::with_capacity(tool_rows.len());
-    for row in &tool_rows {
-        let name = row.get::<String, _>(0);
-        let shots = row.try_get::<i64, _>(1).unwrap_or(0);
-        let dmg = as_f64(&sql_number(row, 2));
-        let crits = row.try_get::<i64, _>(3).unwrap_or(0);
-        let cost_attr = as_f64(&sql_number(row, 4));
-        weapon_cost += cost_attr;
-        merged_tools.push((name, shots, dmg, crits, cost_attr));
-    }
-
-    let merged_loot = loot_agg(pool, session_id, "l.deactivated_at IS NULL").await?;
-    let merged_deactivated_loot =
-        loot_agg(pool, session_id, "l.deactivated_at IS NOT NULL").await?;
-
-    let mob_breakdown_rows = sqlx::query(
-        "SELECT mob_name, original_mob_name, COUNT(*) FROM kills \
-         WHERE session_id = ? AND mob_name IS NOT NULL \
-         GROUP BY mob_name, original_mob_name ORDER BY COUNT(*) DESC",
-    )
-    .bind(session_id)
-    .fetch_all(pool)
-    .await?;
-    let mob_breakdown: Vec<Value> = mob_breakdown_rows
+    let merged_tools: Vec<(String, i64, f64, i64, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT t.tool_name, SUM(t.shots_fired), SUM(t.damage_dealt), SUM(t.critical_hits), \
+             SUM(COALESCE(t.cost_per_shot, 0) * COALESCE(t.shots_fired, 0)) \
+             FROM kill_tool_stats t JOIN kills k ON k.id = t.kill_id \
+             WHERE k.session_id = ? GROUP BY t.tool_name",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1).unwrap_or(0),
+                as_f64(&sql_number(row, 2)),
+                row.get::<_, i64>(3).unwrap_or(0),
+                as_f64(&sql_number(row, 4)),
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let weapon_cost: f64 = merged_tools
         .iter()
-        .map(|row| {
-            json!({
-                "currentName": row.get::<String, _>(0),
-                "originalName": row.get::<Option<String>, _>(1),
-                "killCount": row.get::<i64, _>(2),
-            })
-        })
-        .collect();
+        .map(|(_, _, _, _, cost_attr)| cost_attr)
+        .sum();
+
+    let merged_loot = loot_agg(conn, session_id, "l.deactivated_at IS NULL")?;
+    let merged_deactivated_loot = loot_agg(conn, session_id, "l.deactivated_at IS NOT NULL")?;
+
+    let mob_breakdown: Vec<Value> = {
+        let mut stmt = conn.prepare(
+            "SELECT mob_name, original_mob_name, COUNT(*) FROM kills \
+             WHERE session_id = ? AND mob_name IS NOT NULL \
+             GROUP BY mob_name, original_mob_name ORDER BY COUNT(*) DESC",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+            Ok(json!({
+                "currentName": row.get::<_, String>(0)?,
+                "originalName": row.get::<_, Option<String>>(1)?,
+                "killCount": row.get::<_, i64>(2)?,
+            }))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
 
     let total_cost =
         weapon_cost + session_heal_cost + total_enhancer_cost + armour_cost + dangling_cost;
 
-    let detail_skill_tt = as_f64(
-        &scalar(
-            pool,
-            "SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains WHERE session_id = ?",
-            session_id,
-        )
-        .await?,
-    );
+    let detail_skill_tt = as_f64(&scalar(
+        conn,
+        "SELECT COALESCE(SUM(ped_value), 0) FROM skill_gains WHERE session_id = ?",
+        session_id,
+    )?);
 
     let net = total_returns - total_cost;
     let return_rate = if total_cost > 0.0 {
@@ -580,30 +596,27 @@ pub(crate) async fn get_session_impl(
     stable_sort_desc_by_key(&mut tool_stats);
     let tool_stats: Vec<Value> = tool_stats.into_iter().map(|(_, v)| v).collect();
 
-    let notable_rows = sqlx::query(
-        "SELECT event_type, mob_or_item, value_ped FROM notable_events \
-         WHERE session_id = ? ORDER BY timestamp",
-    )
-    .bind(session_id)
-    .fetch_all(pool)
-    .await?;
-    let notable_events: Vec<Value> = notable_rows
-        .iter()
-        .map(|row| {
-            let event_type = row.get::<String, _>(0);
-            let mob_or_item = row.get::<Option<String>, _>(1);
+    let notable_events: Vec<Value> = {
+        let mut stmt = conn.prepare(
+            "SELECT event_type, mob_or_item, value_ped FROM notable_events \
+             WHERE session_id = ? ORDER BY timestamp",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+            let event_type = row.get::<_, String>(0)?;
+            let mob_or_item = row.get::<_, Option<String>>(1)?;
             let value = sql_number(row, 2);
-            json!({
+            Ok(json!({
                 "type": notable_event_category(&event_type),
                 "eventType": event_type,
                 "target": mob_or_item,
                 "item": mob_or_item,
                 "value": float_field(value),
-            })
-        })
-        .collect();
+            }))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
 
-    let skill_gains = session_skill_gains(pool, session_id).await?;
+    let skill_gains = session_skill_gains(conn, session_id)?;
 
     Ok(Some(json!({
         "sessionId": session_id,
@@ -633,30 +646,26 @@ pub(crate) async fn get_session_impl(
     })))
 }
 
-async fn loot_agg(
-    pool: &SqlitePool,
+fn loot_agg(
+    conn: &rusqlite::Connection,
     session_id: &str,
     deactivated_clause: &str,
-) -> Result<Vec<(String, i64, f64)>, sqlx::Error> {
+) -> Result<Vec<(String, i64, f64)>, DbError> {
     let sql = format!(
         "SELECT l.item_name, SUM(l.quantity), SUM(l.value_ped) \
          FROM kill_loot_items l JOIN kills k ON k.id = l.kill_id \
          WHERE k.session_id = ? AND COALESCE(l.is_enhancer_shrapnel, 0) = 0 AND {deactivated_clause} \
          GROUP BY l.item_name"
     );
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(session_id)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows
-        .iter()
-        .map(|row| {
-            let name = row.get::<String, _>(0);
-            let qty = row.try_get::<i64, _>(1).unwrap_or(0);
-            let val = as_f64(&sql_number(row, 2));
-            (name, qty, val)
-        })
-        .collect())
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1).unwrap_or(0),
+            as_f64(&sql_number(row, 2)),
+        ))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn loot_breakdown_sorted(rows: &[(String, i64, f64)]) -> Vec<Value> {
@@ -678,7 +687,7 @@ fn loot_breakdown_sorted(rows: &[(String, i64, f64)]) -> Vec<Value> {
     entries.into_iter().map(|(_, v)| v).collect()
 }
 
-async fn session_skill_gains(pool: &SqlitePool, session_id: &str) -> Result<Value, sqlx::Error> {
+fn session_skill_gains(conn: &rusqlite::Connection, session_id: &str) -> Result<Value, DbError> {
     let attr_placeholders = vec!["?"; ATTRIBUTE_SKILLS.len()].join(",");
     let sql = format!(
         "SELECT sg.skill_name, SUM(sg.amount) as total_amount, \
@@ -687,41 +696,46 @@ async fn session_skill_gains(pool: &SqlitePool, session_id: &str) -> Result<Valu
          AND sg.skill_name NOT IN ({attr_placeholders}) \
          GROUP BY sg.skill_name ORDER BY total_ped DESC"
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id);
-    for attr in ATTRIBUTE_SKILLS {
-        query = query.bind(attr);
-    }
-    let rows = query.fetch_all(pool).await?;
+    // Each row's skill name (index 0) and engine-typed total_ped (index 2);
+    // total_amount (index 1) is unread, kept in the projection for SQL parity.
+    let rows: Vec<(String, Value)> = {
+        let mut params: Vec<&str> = Vec::with_capacity(1 + ATTRIBUTE_SKILLS.len());
+        params.push(session_id);
+        params.extend(ATTRIBUTE_SKILLS);
+        let mut stmt = conn.prepare(&sql)?;
+        let mapped = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((row.get::<_, String>(0)?, sql_number(row, 2)))
+        })?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
     if rows.is_empty() {
         return Ok(json!([]));
     }
 
-    let skill_names: Vec<String> = rows.iter().map(|r| r.get::<String, _>(0)).collect();
+    let skill_names: Vec<String> = rows.iter().map(|(name, _)| name.clone()).collect();
     let placeholders = vec!["?"; skill_names.len()].join(",");
     let cal_sql = format!(
         "SELECT skill_name, level FROM skill_calibrations WHERE id IN ( \
          SELECT MAX(id) FROM skill_calibrations WHERE skill_name IN ({placeholders}) \
          GROUP BY skill_name)"
     );
-    let mut cal_query = sqlx::query(sqlx::AssertSqlSafe(cal_sql));
-    for name in &skill_names {
-        cal_query = cal_query.bind(name);
-    }
-    let cal_rows = cal_query.fetch_all(pool).await?;
     let mut levels: BTreeMap<String, f64> = BTreeMap::new();
-    for row in &cal_rows {
-        levels.insert(row.get::<String, _>(0), as_f64(&sql_number(row, 1)));
+    {
+        let mut stmt = conn.prepare(&cal_sql)?;
+        let mut cal_rows = stmt.query(rusqlite::params_from_iter(&skill_names))?;
+        while let Some(row) = cal_rows.next()? {
+            levels.insert(row.get::<_, String>(0)?, as_f64(&sql_number(row, 1)));
+        }
     }
 
     let gains: Vec<Value> = rows
         .iter()
-        .map(|row| {
-            let name = row.get::<String, _>(0);
-            let level = match levels.get(&name) {
+        .map(|(name, total_ped)| {
+            let level = match levels.get(name) {
                 Some(level) => float_field(json!(round(*level, 1))),
                 None => json!(0.0),
             };
-            let tt = as_f64(&sql_number(row, 2));
+            let tt = as_f64(total_ped);
             json!({
                 "skillName": name,
                 "level": level,
@@ -742,29 +756,27 @@ fn stable_sort_desc_by_f64(entries: &mut [(f64, Value)]) {
 
 // ── Tag suggestions ─────────────────────────────────────────────────
 
-async fn tag_suggestions_impl(
-    pool: &SqlitePool,
-    q: &str,
-    limit: i64,
-) -> Result<Vec<String>, sqlx::Error> {
+async fn tag_suggestions_impl(db: &Db, q: &str, limit: i64) -> Result<Vec<String>, DbError> {
     let query = q.trim();
     if query.is_empty() {
         return Ok(Vec::new());
     }
     let bounded = limit.clamp(1, 20);
     let like = format!("%{}%", query.to_lowercase());
-    let rows = sqlx::query(
-        "SELECT mob_name, COUNT(*) as uses FROM kills \
-         WHERE mob_name IS NOT NULL AND mob_name != 'Unknown' \
-         AND COALESCE(mob_species, '') = '' AND COALESCE(mob_maturity, '') = '' \
-         AND lower(mob_name) LIKE ? \
-         GROUP BY mob_name ORDER BY uses DESC, mob_name ASC LIMIT ?",
-    )
-    .bind(&like)
-    .bind(bounded)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.iter().map(|r| r.get::<String, _>(0)).collect())
+    db.with_reader(move |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT mob_name, COUNT(*) as uses FROM kills \
+             WHERE mob_name IS NOT NULL AND mob_name != 'Unknown' \
+             AND COALESCE(mob_species, '') = '' AND COALESCE(mob_maturity, '') = '' \
+             AND lower(mob_name) LIKE ? \
+             GROUP BY mob_name ORDER BY uses DESC, mob_name ASC LIMIT ?",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![like, bounded], |row| {
+            row.get::<_, String>(0)
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    })
+    .await
 }
 
 // ── Session edits ───────────────────────────────────────────────────
@@ -772,7 +784,7 @@ async fn tag_suggestions_impl(
 // Post-hoc edits to ENDED sessions, byte-faithful to the original. The
 // four mob/loot edits share the active-session guard (404 absent, 409
 // still active); `armour-cost` deliberately omits it. The transport's
-// `EditError` maps onto [`ApiError`]: an `Internal` (a sqlx/DbError at the
+// `EditError` maps onto [`ApiError`]: an `Internal` (a `DbError` at the
 // boundary) is logged server-side and collapses to the fixed reply.
 
 #[derive(Debug)]
@@ -781,12 +793,6 @@ enum EditError {
     Conflict(String),
     BadRequest(String),
     Internal,
-}
-
-impl From<sqlx::Error> for EditError {
-    fn from(_: sqlx::Error) -> Self {
-        EditError::Internal
-    }
 }
 
 impl From<DbError> for EditError {
@@ -804,15 +810,24 @@ fn edit_error(context: &'static str) -> impl Fn(EditError) -> ApiError {
     }
 }
 
-async fn validate_session_exists(pool: &SqlitePool, session_id: &str) -> Result<(), EditError> {
-    let row = sqlx::query("SELECT id, is_active FROM tracking_sessions WHERE id = ?")
-        .bind(session_id)
-        .fetch_optional(pool)
+async fn validate_session_exists(db: &Db, session_id: &str) -> Result<(), EditError> {
+    let sid = session_id.to_string();
+    let is_active = db
+        .with_reader(move |conn| {
+            use rusqlite::OptionalExtension as _;
+            Ok(conn
+                .query_row(
+                    "SELECT id, is_active FROM tracking_sessions WHERE id = ?",
+                    rusqlite::params![sid],
+                    |row| row.get::<_, i64>(1),
+                )
+                .optional()?)
+        })
         .await?;
-    let Some(row) = row else {
+    let Some(is_active) = is_active else {
         return Err(EditError::NotFound("Session not found".to_string()));
     };
-    if row.get::<i64, _>(1) != 0 {
+    if is_active != 0 {
         return Err(EditError::Conflict(
             "Session mob edits are only available after the session has ended".to_string(),
         ));
@@ -821,35 +836,45 @@ async fn validate_session_exists(pool: &SqlitePool, session_id: &str) -> Result<
 }
 
 async fn build_mob_edit_response(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     mob_name: &str,
 ) -> Result<Value, EditError> {
-    let row = sqlx::query("SELECT COUNT(*) FROM kills WHERE session_id = ? AND mob_name = ?")
-        .bind(session_id)
-        .bind(mob_name)
-        .fetch_one(pool)
+    let sid = session_id.to_string();
+    let mob = mob_name.to_string();
+    let kill_count = db
+        .with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM kills WHERE session_id = ? AND mob_name = ?",
+                rusqlite::params![sid, mob],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
         .await?;
     Ok(json!({
         "sessionId": session_id,
         "mobName": mob_name,
-        "killCount": row.get::<i64, _>(0),
+        "killCount": kill_count,
     }))
 }
 
 async fn build_loot_item_edit_response(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     item_name: &str,
     affected_rows: i64,
     total_value_delta: f64,
 ) -> Result<Value, EditError> {
-    let row =
-        sqlx::query("SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?")
-            .bind(session_id)
-            .fetch_one(pool)
-            .await?;
-    let session_returns = as_f64(&sql_number(&row, 0));
+    let sid = session_id.to_string();
+    let session_returns = db
+        .with_reader(move |conn| {
+            Ok(as_f64(&conn.query_row(
+                "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
+                rusqlite::params![sid],
+                |row| Ok(sql_number(row, 0)),
+            )?))
+        })
+        .await?;
     Ok(json!({
         "sessionId": session_id,
         "itemName": item_name,
@@ -860,12 +885,12 @@ async fn build_loot_item_edit_response(
 }
 
 async fn rename_session_mob_impl(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     from_mob: &str,
     to_mob: &str,
 ) -> Result<Value, EditError> {
-    validate_session_exists(pool, session_id).await?;
+    validate_session_exists(db, session_id).await?;
     let from_mob = from_mob.trim();
     let to_mob = to_mob.trim();
     if from_mob.is_empty() || to_mob.is_empty() {
@@ -879,52 +904,61 @@ async fn rename_session_mob_impl(
         ));
     }
 
-    let mut tx = pool.begin().await?;
-    let preserve = sqlx::query(
-        "UPDATE kills \
-         SET original_mob_name = COALESCE(original_mob_name, mob_name) \
-         WHERE session_id = ? AND mob_name = ?",
-    )
-    .bind(session_id)
-    .bind(from_mob)
-    .execute(&mut *tx)
-    .await?;
-    if preserve.rows_affected() == 0 {
-        drop(tx);
-        return Err(EditError::Conflict(format!(
-            "No kills in this session match mob_name='{from_mob}'"
-        )));
+    // The domain outcome of the writer-core transaction: the "nothing matched"
+    // branch the original raised as a conflict, or the completed rename.
+    enum RenameOutcome {
+        NoMatch,
+        Renamed,
     }
-    sqlx::query(
-        "UPDATE kills \
-         SET mob_name = ?, \
-             original_mob_name = CASE \
-                 WHEN original_mob_name = ? THEN NULL \
-                 ELSE original_mob_name \
-             END \
-         WHERE session_id = ? AND mob_name = ?",
-    )
-    .bind(to_mob)
-    .bind(to_mob)
-    .bind(session_id)
-    .bind(from_mob)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("DELETE FROM session_summaries WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
 
-    build_mob_edit_response(pool, session_id, to_mob).await
+    let sid = session_id.to_string();
+    let from = from_mob.to_string();
+    let to = to_mob.to_string();
+    let outcome = db
+        .with_writer(move |conn| {
+            let tx = conn.transaction()?;
+            let preserve = tx.execute(
+                "UPDATE kills \
+                 SET original_mob_name = COALESCE(original_mob_name, mob_name) \
+                 WHERE session_id = ? AND mob_name = ?",
+                rusqlite::params![sid, from],
+            )?;
+            if preserve == 0 {
+                return Ok(RenameOutcome::NoMatch);
+            }
+            tx.execute(
+                "UPDATE kills \
+                 SET mob_name = ?, \
+                     original_mob_name = CASE \
+                         WHEN original_mob_name = ? THEN NULL \
+                         ELSE original_mob_name \
+                     END \
+                 WHERE session_id = ? AND mob_name = ?",
+                rusqlite::params![to, to, sid, from],
+            )?;
+            tx.execute(
+                "DELETE FROM session_summaries WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.commit()?;
+            Ok(RenameOutcome::Renamed)
+        })
+        .await?;
+
+    match outcome {
+        RenameOutcome::NoMatch => Err(EditError::Conflict(format!(
+            "No kills in this session match mob_name='{from_mob}'"
+        ))),
+        RenameOutcome::Renamed => build_mob_edit_response(db, session_id, to_mob).await,
+    }
 }
 
 async fn restore_session_mob_impl(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     current_mob: &str,
 ) -> Result<Value, EditError> {
-    validate_session_exists(pool, session_id).await?;
+    validate_session_exists(db, session_id).await?;
     let current_mob = current_mob.trim();
     if current_mob.is_empty() {
         return Err(EditError::BadRequest(
@@ -932,49 +966,68 @@ async fn restore_session_mob_impl(
         ));
     }
 
-    let mut tx = pool.begin().await?;
-    let restored_rows = sqlx::query(
-        "UPDATE kills \
-         SET mob_name = original_mob_name, original_mob_name = NULL \
-         WHERE session_id = ? AND mob_name = ? AND original_mob_name IS NOT NULL \
-         RETURNING mob_name",
-    )
-    .bind(session_id)
-    .bind(current_mob)
-    .fetch_all(&mut *tx)
-    .await?;
+    // The domain outcome of the writer-core transaction: the two conflict
+    // branches the original raised as edit errors, or the restored prior name.
+    enum RestoreOutcome {
+        NoMatch,
+        Ambiguous(usize),
+        Restored(String),
+    }
 
-    if restored_rows.is_empty() {
-        drop(tx);
-        return Err(EditError::Conflict(format!(
+    let sid = session_id.to_string();
+    let current = current_mob.to_string();
+    let outcome = db
+        .with_writer(move |conn| {
+            let tx = conn.transaction()?;
+            let restored_rows: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "UPDATE kills \
+                     SET mob_name = original_mob_name, original_mob_name = NULL \
+                     WHERE session_id = ? AND mob_name = ? AND original_mob_name IS NOT NULL \
+                     RETURNING mob_name",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![sid, current], |row| {
+                    row.get::<_, String>(0)
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            if restored_rows.is_empty() {
+                return Ok(RestoreOutcome::NoMatch);
+            }
+
+            let mut distinct: Vec<String> = Vec::new();
+            for original in &restored_rows {
+                if !distinct.contains(original) {
+                    distinct.push(original.clone());
+                }
+            }
+            if distinct.len() > 1 {
+                return Ok(RestoreOutcome::Ambiguous(distinct.len()));
+            }
+            let restored_to = distinct.into_iter().next().expect("one distinct original");
+
+            tx.execute(
+                "DELETE FROM session_summaries WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.commit()?;
+            Ok(RestoreOutcome::Restored(restored_to))
+        })
+        .await?;
+
+    match outcome {
+        RestoreOutcome::NoMatch => Err(EditError::Conflict(format!(
             "No restorable kills in this session for mob_name='{current_mob}' \
              (either no rename has happened or the preservation column is empty)"
-        )));
-    }
-
-    let mut distinct: Vec<String> = Vec::new();
-    for row in &restored_rows {
-        let original = row.get::<String, _>(0);
-        if !distinct.contains(&original) {
-            distinct.push(original);
+        ))),
+        RestoreOutcome::Ambiguous(count) => Err(EditError::Conflict(format!(
+            "Ambiguous restore for mob_name='{current_mob}': {count} distinct prior names merged into it."
+        ))),
+        RestoreOutcome::Restored(restored_to) => {
+            build_mob_edit_response(db, session_id, &restored_to).await
         }
     }
-    if distinct.len() > 1 {
-        drop(tx);
-        return Err(EditError::Conflict(format!(
-            "Ambiguous restore for mob_name='{current_mob}': {} distinct prior names merged into it.",
-            distinct.len()
-        )));
-    }
-    let restored_to = distinct.into_iter().next().expect("one distinct original");
-
-    sqlx::query("DELETE FROM session_summaries WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
-
-    build_mob_edit_response(pool, session_id, &restored_to).await
 }
 
 async fn bulk_flip_loot_item(
@@ -983,7 +1036,7 @@ async fn bulk_flip_loot_item(
     item_name: &str,
     to_state: &str,
 ) -> Result<Value, EditError> {
-    validate_session_exists(db.read(), session_id).await?;
+    validate_session_exists(db, session_id).await?;
     let item_name = item_name.trim();
     if item_name.is_empty() {
         return Err(EditError::BadRequest(
@@ -1089,10 +1142,7 @@ async fn bulk_flip_loot_item(
         FlipOutcome::Flipped {
             affected,
             total_delta,
-        } => {
-            build_loot_item_edit_response(db.read(), session_id, item_name, affected, total_delta)
-                .await
-        }
+        } => build_loot_item_edit_response(db, session_id, item_name, affected, total_delta).await,
     }
 }
 
@@ -1780,7 +1830,7 @@ impl Api {
         session_id: String,
     ) -> Result<SessionDetail, ApiError> {
         let now = naive_to_epoch(self.clock.now());
-        match get_session_impl(self.read(), &session_id, now)
+        match get_session_impl(&self.db, &session_id, now)
             .await
             .map_err(ApiError::internal("tracking session detail"))?
         {
@@ -1796,7 +1846,7 @@ impl Api {
         q: String,
         limit: Option<i64>,
     ) -> Result<Vec<String>, ApiError> {
-        tag_suggestions_impl(self.read(), &q, limit.unwrap_or(10))
+        tag_suggestions_impl(&self.db, &q, limit.unwrap_or(10))
             .await
             .map_err(ApiError::internal("tracking tag suggestions"))
     }
@@ -2085,10 +2135,9 @@ impl Api {
         from_mob_name: String,
         to_mob_name: String,
     ) -> Result<MobEditResult, ApiError> {
-        let value =
-            rename_session_mob_impl(self.write(), &session_id, &from_mob_name, &to_mob_name)
-                .await
-                .map_err(edit_error("tracking rename mob"))?;
+        let value = rename_session_mob_impl(&self.db, &session_id, &from_mob_name, &to_mob_name)
+            .await
+            .map_err(edit_error("tracking rename mob"))?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking rename mob shaping"))
     }
 
@@ -2098,7 +2147,7 @@ impl Api {
         session_id: String,
         current_mob_name: String,
     ) -> Result<MobEditResult, ApiError> {
-        let value = restore_session_mob_impl(self.write(), &session_id, &current_mob_name)
+        let value = restore_session_mob_impl(&self.db, &session_id, &current_mob_name)
             .await
             .map_err(edit_error("tracking restore mob"))?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking restore mob shaping"))
@@ -2221,12 +2270,21 @@ impl Api {
 
     /// The session-existence precondition the quest-link routes apply.
     async fn tracking_session_exists(&self, session_id: &str) -> Result<bool, ApiError> {
-        let row = sqlx::query("SELECT id FROM tracking_sessions WHERE id = ?")
-            .bind(session_id)
-            .fetch_optional(self.read())
+        let sid = session_id.to_string();
+        self.db
+            .with_reader(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                Ok(conn
+                    .query_row(
+                        "SELECT id FROM tracking_sessions WHERE id = ?",
+                        rusqlite::params![sid],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                    .is_some())
+            })
             .await
-            .map_err(ApiError::internal("session existence"))?;
-        Ok(row.is_some())
+            .map_err(ApiError::internal("session existence"))
     }
 }
 

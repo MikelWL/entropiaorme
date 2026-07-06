@@ -214,32 +214,26 @@ impl TrackerActor {
             )
         };
 
-        let result: Result<(), sqlx::Error> = async {
-            let mut tx = self.db.write().begin().await?;
-            if let Some(kill_id) = &kill_id {
-                sqlx::query("UPDATE kills SET is_global = 1, is_hof = ? WHERE id = ?")
-                    .bind(i64::from(target_is_hof))
-                    .bind(kill_id)
-                    .execute(&mut *tx)
-                    .await?;
-            }
-            sqlx::query(
-                "INSERT INTO notable_events \
-                 (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&session_id)
-            .bind(&kill_id)
-            .bind(&event_type)
-            .bind(&mob_or_item)
-            .bind(value_ped)
-            .bind(ts)
-            .execute(&mut *tx)
-            .await?;
-            tx.commit().await?;
-            Ok(())
-        }
-        .await;
+        let result = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                if let Some(kill_id) = &kill_id {
+                    tx.execute(
+                        "UPDATE kills SET is_global = 1, is_hof = ? WHERE id = ?",
+                        rusqlite::params![i64::from(target_is_hof), kill_id],
+                    )?;
+                }
+                tx.execute(
+                    "INSERT INTO notable_events \
+                     (session_id, kill_id, event_type, mob_or_item, value_ped, timestamp) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![session_id, kill_id, event_type, mob_or_item, value_ped, ts],
+                )?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await;
         // A persistence failure is contained like the original's
         // handler exception: the in-memory tag stands.
         let _ = result;
