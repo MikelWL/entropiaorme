@@ -1,7 +1,7 @@
 /**
  * Quest and playlist economics: the pure derivations behind the quests
  * analytics view. No runes; every function is a plain input-to-output
- * mapping so the economy-canon invariants (liquid TT and non-liquid PES
+ * mapping so the accounting invariants (liquid TT and non-liquid PES
  * never blend) stay pinned by the colocated tests.
  */
 
