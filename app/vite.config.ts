@@ -31,18 +31,11 @@ export default defineConfig({
 		// virtual CSS module can be requested before the component itself has
 		// compiled; the raw .svelte file then falls through to the CSS
 		// pipeline and the request 500s, leaving that window's webview on a
-		// dead document until reload. Pre-transforming the satellite routes
-		// (plus the root layout they share) closes the gap.
+		// dead document until reload. Pre-transforming every component closes
+		// the gap for whichever route a window requests first; the cost is a
+		// few seconds of background compile at dev-server start.
 		warmup: {
-			clientFiles: [
-				'./src/routes/+layout.svelte',
-				'./src/routes/+page.svelte',
-				'./src/routes/overlay/+page.svelte',
-				'./src/routes/overlay-menu/+page.svelte',
-				'./src/routes/overlay-armour-cost/+page.svelte',
-				'./src/routes/scan-overlay/+layout.svelte',
-				'./src/routes/scan-overlay/+page.svelte',
-			],
+			clientFiles: ['./src/routes/**/*.svelte', './src/lib/**/*.svelte'],
 		},
 	},
 	define: {
