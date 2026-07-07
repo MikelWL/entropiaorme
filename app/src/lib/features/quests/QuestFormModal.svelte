@@ -106,13 +106,13 @@
 					<Input type="text" bind:value={model.mobInput} placeholder="Type mob name, press Enter"
 						class="flex-1"
 						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); model.addMob(); } }} />
-					<Button size="sm" variant="secondary" onclick={() => model.addMob()}>{#snippet children()}Add{/snippet}</Button>
+					<Button type="button" size="sm" variant="secondary" onclick={() => model.addMob()}>{#snippet children()}Add{/snippet}</Button>
 				</div>
 			</div>
 
 
 			<div class="flex justify-end gap-2 pt-1">
-				<Button variant="ghost" onclick={() => (model.showQuestModal = false)}>{#snippet children()}Cancel{/snippet}</Button>
+				<Button type="button" variant="ghost" onclick={() => (model.showQuestModal = false)}>{#snippet children()}Cancel{/snippet}</Button>
 				<Button type="submit">{#snippet children()}{model.editingQuest ? 'Save' : 'Create'}{/snippet}</Button>
 			</div>
 		</form>

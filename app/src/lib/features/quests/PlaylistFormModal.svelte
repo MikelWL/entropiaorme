@@ -99,7 +99,7 @@
 			</div>
 
 			<div class="flex justify-end gap-2 pt-1">
-				<Button variant="ghost" onclick={() => (model.showPlaylistModal = false)}>{#snippet children()}Cancel{/snippet}</Button>
+				<Button type="button" variant="ghost" onclick={() => (model.showPlaylistModal = false)}>{#snippet children()}Cancel{/snippet}</Button>
 				<Button type="submit">{#snippet children()}{model.editingPlaylist ? 'Save' : 'Create'}{/snippet}</Button>
 			</div>
 		</form>

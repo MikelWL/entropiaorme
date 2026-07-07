@@ -230,6 +230,30 @@ describe('quest lifecycle', () => {
 		await model.handleStart('1');
 		expect(model.error).toBe('cooldown active');
 	});
+
+	it('clears a stale error when a later action succeeds', async () => {
+		mocked.startQuest.mockRejectedValueOnce(new Error('cooldown active'));
+		const model = createQuestsModel();
+		await model.handleStart('1');
+		expect(model.error).toBe('cooldown active');
+
+		mocked.completeQuest.mockResolvedValue(quest({ id: '1' }));
+		await model.handleComplete('1');
+		expect(model.error).toBeNull();
+	});
+});
+
+describe('guide mode', () => {
+	it('re-arms the lazy analytics load when leaving guide mode', async () => {
+		const model = createQuestsModel();
+		await model.loadData(true);
+		expect(model.analyticsLoaded).toBe(true);
+
+		mocked.getQuests.mockResolvedValue([]);
+		mocked.getPlaylists.mockResolvedValue([]);
+		await model.loadData(false);
+		expect(model.analyticsLoaded).toBe(false);
+	});
 });
 
 describe('quest form', () => {

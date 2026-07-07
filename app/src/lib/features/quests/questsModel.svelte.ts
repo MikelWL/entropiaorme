@@ -119,7 +119,7 @@ export function createQuestsModel() {
 	let playlistAnalyticsData = $state<PlaylistAnalyticsRow[]>([]);
 	let analyticsLoading = $state(false);
 	let analyticsError = $state<string | null>(null);
-	let analyticsLoaded = false;
+	let analyticsLoaded = $state(false);
 	let rates = $state<GlobalRates>({ liquidReturnRate: 0, skillProgressionRate: 0 });
 	let analyticsRewardMode = $state<RewardMode>('tt');
 
@@ -204,6 +204,9 @@ export function createQuestsModel() {
 				initialiseCollapsedCategories(quests);
 				return;
 			}
+			// Leaving guide mode must drop the seeded demo analytics: re-arm
+			// the lazy analytics load so the next visit reads live data.
+			analyticsLoaded = false;
 			const [q, p] = await Promise.all([getQuests(), getPlaylists()]);
 			quests = q;
 			playlists = p;
@@ -264,6 +267,7 @@ export function createQuestsModel() {
 
 	// ── Quest actions ──
 	async function handleStart(questId: string) {
+		error = null;
 		try {
 			const updated = await startQuest(questId);
 			quests = quests.map((q) => (q.id === updated.id ? updated : q));
@@ -274,6 +278,7 @@ export function createQuestsModel() {
 	}
 
 	async function handleComplete(questId: string) {
+		error = null;
 		try {
 			const updated = await completeQuest(questId);
 			quests = quests.map((q) => (q.id === updated.id ? updated : q));
@@ -284,6 +289,7 @@ export function createQuestsModel() {
 	}
 
 	async function handleCancel(questId: string, undoReward = false) {
+		error = null;
 		try {
 			const updated = await cancelQuest(questId, undoReward);
 			quests = quests.map((q) => (q.id === updated.id ? updated : q));
@@ -382,6 +388,7 @@ export function createQuestsModel() {
 	}
 
 	async function handleDeleteQuest(questId: string) {
+		error = null;
 		try {
 			await deleteQuest(questId);
 			quests = quests.filter((q) => q.id !== questId);
