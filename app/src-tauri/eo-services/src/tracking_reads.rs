@@ -395,8 +395,12 @@ pub fn get_session_read(
         return Ok(None);
     };
 
+    // The column is free text; anything outside the two modes (a
+    // hand-edited row, a legacy value) recovers to the same "mob"
+    // default an absent value takes, so the closed wire vocabulary
+    // holds for every stored shape.
     let mob_entry_mode = mob_mode
-        .filter(|m| !m.is_empty())
+        .filter(|m| m == "tag" || m == "mob")
         .unwrap_or_else(|| "mob".to_string());
 
     let duration = duration_seconds(started_at, ended_at, is_active, now);

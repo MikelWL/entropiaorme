@@ -15,25 +15,16 @@ export * from './analytics';
 export * from './character';
 export { ApiError, type ThrownErrorKind } from './client';
 export * from './codex';
-// The renamed compatibility aliases: the pre-split facade exported
-// these shapes under its own names; they now alias the generated types
-// they always mirrored.
+// The generated shapes consumers reach through this barrel; `ActivityData`
+// is the established consumer-facing name of `AnalyticsActivity`.
 export type {
 	AnalyticsActivity as ActivityData,
 	ApiErrorKind,
-	InventoryItemInput as InventoryItemPayload,
-	InventoryPatch as InventoryItemPatchPayload,
-	InventorySellInput as InventorySellPayload,
-	LootItemEditResult as LootItemEditResponse,
 	ManualMobSuggestion,
-	MobEditResult as MobEditResponse,
-	QuestLinkDecision as SessionQuestLinkDecision,
 	SessionQuestLinkSuggestion,
-	SettingsPatch as SettingsUpdate,
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';
-export { guideSwapped } from './guide';
 export * from './quests';
 export * from './scan';
 export * from './settings';

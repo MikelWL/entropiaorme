@@ -958,9 +958,9 @@ impl Api {
                 Ok(suggestion) => Ok(QuestLinkDecision {
                     session_id: session_id.clone(),
                     status: QuestLinkStatus::Linked,
-                    // The accepted suggestion is always a quest or a playlist
-                    // (accept refuses otherwise), so an unexpected value reads
-                    // as no link type rather than a fabricated one.
+                    // Parses the service's untyped suggestion value: the two
+                    // link kinds map to their variants, and the link type is
+                    // absent for any other shape.
                     link_type: match suggestion["suggestion_type"].as_str() {
                         Some("quest") => Some(QuestLinkType::Quest),
                         Some("playlist") => Some(QuestLinkType::Playlist),
@@ -1061,6 +1061,11 @@ pub(crate) async fn build_snapshot_value(
         Some(tool) => Value::String(tool.clone()),
         None => Value::Null,
     };
+    // The stored mode is free text (config / session row); recover
+    // anything outside the two modes to the "mob" default, exactly as
+    // the settings read does, so the snapshot's closed vocabulary holds
+    // for a hand-edited store rather than failing the whole hydration.
+    let mob_entry_mode = |stored: &str| if stored == "tag" { "tag" } else { "mob" };
 
     let value = match &readout.active {
         None => {
@@ -1073,7 +1078,7 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": config.mob_tracking_mode,
+                "mobEntryMode": mob_entry_mode(&config.mob_tracking_mode),
                 "currentMob": current_mob,
                 "mobSource": mob_source,
                 "recentEvents": [],
@@ -1131,7 +1136,7 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": active.mob_entry_mode.clone(),
+                "mobEntryMode": mob_entry_mode(&active.mob_entry_mode),
                 "currentMob": active.current_mob.clone(),
                 "mobSource": active.mob_source.clone(),
                 "recentEvents": recent_events,
