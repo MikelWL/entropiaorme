@@ -1,10 +1,11 @@
 <script lang="ts">
+	import type { Component } from 'svelte';
 	import { theme } from '$lib/theme';
 
 	export type NavItem = {
 		id: string;
 		label: string;
-		icon: string; // SVG markup string
+		icon: Component; // icon component rendering the glyph's SVG
 		indicator?: 'unread';
 	};
 
@@ -86,7 +87,7 @@
 				></span>
 			{/if}
 			<span class="relative flex-shrink-0 w-5 h-5 flex items-center justify-center">
-				{@html item.icon}
+				<item.icon />
 				{#if item.indicator === 'unread'}
 					<span
 						aria-hidden="true"

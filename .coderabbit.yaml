@@ -51,7 +51,7 @@ reviews:
         - Trust framework guarantees; don't pre-empt with defensive code.
 
         Reactivity (Svelte 5):
-        - Prefer $state / $derived / $effect over legacy stores where the surrounding code uses runes.
+        - Shared state is runes-native (ADR-0022): $state / $derived in a .svelte.ts module. New svelte/store imports are forbidden (the frozen legacy surface is enforced by the no-new-writable CI guard and only shrinks).
         - Don't wipe local state to a placeholder on transient fetch errors; preserve last-good state and let the next poll restore live state.
 
     - path: "app/src-tauri/**/*.rs"

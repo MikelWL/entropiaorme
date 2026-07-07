@@ -55,6 +55,14 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      # Runes-native state ruling: new shared state may not import
+      # svelte/store; the legacy surface is frozen and only shrinks.
+      - id: no-new-writable
+        name: no new svelte/store importers (frontend)
+        entry: bash -c 'cd app/src-tauri && cargo run -q -p xtask -- no-new-writable'
+        language: system
+        pass_filenames: false
+        always_run: true
       # The authoring lint is diff-scoped (it inspects the lines a change adds,
       # against HEAD here); the version-stamp parity check reads the manifests
       # whole, so both always_run. Both are cargo xtask subcommands.
