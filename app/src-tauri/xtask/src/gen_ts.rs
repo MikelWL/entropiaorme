@@ -84,9 +84,7 @@ fn generate() -> Result<String, String> {
         "export type ApiErrorKind = {};\n\n",
         kind_literals.join(" | ")
     ));
-    out.push_str(
-        "/** The error kinds as a runtime list, for guarding a raw rejection. */\n",
-    );
+    out.push_str("/** The error kinds as a runtime list, for guarding a raw rejection. */\n");
     out.push_str(&format!(
         "export const API_ERROR_KINDS: readonly ApiErrorKind[] = [{}];\n\n",
         kind_literals.join(", ")

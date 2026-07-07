@@ -212,7 +212,8 @@ impl Quest {
             cooldown_expires_at: opt_string(&quest["cooldown_expires_at"]).into(),
             reward: opt_f64(&quest["reward_ped"]).into(),
             reward_is_skill: quest["reward_is_skill"].as_i64().unwrap_or(0) != 0,
-            expected_reward_markup_percent: opt_f64(&quest["expected_reward_markup_percent"]).into(),
+            expected_reward_markup_percent: opt_f64(&quest["expected_reward_markup_percent"])
+                .into(),
             reward_description: or_empty(&quest["reward_description"]),
             notes: or_empty(&quest["notes"]),
             chain_name: opt_string(&quest["chain_name"]).into(),

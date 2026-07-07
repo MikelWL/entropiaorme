@@ -252,7 +252,10 @@ async fn a_profit_sale_emits_a_markup_ledger_entry() {
         )
         .await
         .unwrap();
-    let entry = sold.ledger_entry.0.expect("a profit sale emits a ledger row");
+    let entry = sold
+        .ledger_entry
+        .0
+        .expect("a profit sale emits a ledger row");
     assert_eq!(
         serde_json::to_value(entry.kind).unwrap(),
         serde_json::json!("markup")

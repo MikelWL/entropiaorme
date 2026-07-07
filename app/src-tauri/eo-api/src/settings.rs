@@ -27,8 +27,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::Nullable;
 use crate::tracking::MobEntryMode;
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 /// The version the settings response stamps. The crate inherits the

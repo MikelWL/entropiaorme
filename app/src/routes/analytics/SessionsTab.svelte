@@ -134,7 +134,7 @@
 							onclick={() => toggleSession(session.id)}
 						>
 							<td class="px-4 py-3 border-b border-border/50 tabular-nums">
-								{session.startTime ? formatDate(session.startTime) : '—'}
+								{session.startTime ? formatDate(session.startTime) : '\u2014'}
 							</td>
 							<td class="px-4 py-3 border-b border-border/50 text-text-secondary">
 								{formatDuration(session.duration)}
