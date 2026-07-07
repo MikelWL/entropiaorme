@@ -10,23 +10,29 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { ApiError } from './client';
+import { API_ERROR_KINDS, type ApiErrorKind } from './commands.gen';
 
 /** The display message for the kinds that deliberately carry none. */
-const MESSAGE_FOR_KIND: Record<string, string> = {
+const MESSAGE_FOR_KIND: Partial<Record<ApiErrorKind, string>> = {
 	internal: 'Internal Server Error',
 	unavailable: 'backend substrate not ready',
 };
+
+function isContractKind(kind: string): kind is ApiErrorKind {
+	return API_ERROR_KINDS.some((candidate) => candidate === kind);
+}
 
 export async function invokeCommand<T>(command: string, args: Record<string, unknown>): Promise<T> {
 	try {
 		return await invoke<T>(command, args);
 	} catch (raw) {
-		if (raw && typeof raw === 'object' && 'kind' in raw) {
-			const payload = raw as { kind: string; message?: string };
-			throw new ApiError(
-				payload.kind,
-				payload.message ?? MESSAGE_FOR_KIND[payload.kind] ?? payload.kind,
-			);
+		if (raw && typeof raw === 'object' && 'kind' in raw && typeof raw.kind === 'string') {
+			const { kind } = raw;
+			const message = 'message' in raw && typeof raw.message === 'string' ? raw.message : undefined;
+			if (isContractKind(kind)) {
+				throw new ApiError(kind, message ?? MESSAGE_FOR_KIND[kind] ?? kind);
+			}
+			throw new ApiError('unknown', message ?? kind);
 		}
 		// A rejection outside the typed contract (an argument that failed
 		// deserialisation, a missing command): surface it verbatim.

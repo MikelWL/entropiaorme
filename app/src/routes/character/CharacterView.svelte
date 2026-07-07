@@ -2,6 +2,7 @@
 	import type {
 		SkillLevel,
 		ProfessionLevel,
+		StatProfession,
 		HpOptimizerSkill,
 		HpOptimizerAttribute,
 		PathOptimizerResult,
@@ -20,8 +21,8 @@
 		getHpOptimizer,
 		getCharacterProspectOptions,
 		getCharacterProspect,
+		showScanOverlay,
 	} from '$lib/api';
-	import { invoke } from '@tauri-apps/api/core';
 	import { type UnlistenFn } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { guideState, registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
@@ -45,7 +46,7 @@
 	} from '$lib/guide/fixtures/character';
 
 	function openScanOverlay() {
-		invoke('show_scan_overlay').catch(() => {});
+		showScanOverlay().catch(() => {});
 	}
 	import { formatPed, formatDateFull, formatPercent } from '$lib/utils/format';
 	import Card from '$lib/components/Card.svelte';
@@ -66,7 +67,7 @@
 	// ── Data state ──────────────────────────────────────────────────────────────
 
 	let calibration = $state({ calibrated: false, lastCalibration: null as string | null, stale: true });
-	let stats = $state({ hp: 80, topProfessions: [] as ProfessionLevel[] });
+	let stats = $state({ hp: 80, topProfessions: [] as StatProfession[] });
 	let skills = $state([] as SkillLevel[]);
 	let professions = $state([] as ProfessionLevel[]);
 	let loading = $state(true);

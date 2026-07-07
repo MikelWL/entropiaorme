@@ -42,12 +42,14 @@ pub mod dev;
 pub mod equipment;
 mod error;
 pub mod manifest;
+mod nullable;
 pub mod quests;
 pub mod scan;
 pub mod settings;
 pub mod tracking;
 
 pub use error::ApiError;
+pub use nullable::Nullable;
 
 /// The composed application facade the typed commands dispatch into.
 pub struct Api {

@@ -1,71 +1,21 @@
+/**
+ * Equipment-surface types. The wire shapes re-export from the generated
+ * bindings (the authoritative contract); `Equipment` is the historical
+ * consumer-facing name of the generated `EquipmentSummary`. Only
+ * genuinely frontend-owned view types live here.
+ */
+
 import type { Pec } from './common';
 
-/** Enrichment level: 0 = unresolved, 1 = weapon only, 2 = +amp, 3 = full setup */
-export type EnrichmentLevel = 0 | 1 | 2 | 3;
+export type {
+	CostBreakdownLine,
+	EquipmentDetail,
+	EquipmentKind,
+	EquipmentSummary as Equipment,
+} from '$lib/api/commands.gen';
 
-/** Equipment library entry (shown in list) */
-export interface Equipment {
-	id: string;
-	name: string;
-	type: 'weapon' | 'healing' | 'consumable';
-	amplifierName: string | null;
-	costPerUse: Pec;
-	damageMin: number | null;
-	damageMax: number | null;
-	reloadSeconds: number | null;
-	isLimited: boolean;
-	enrichmentLevel: EnrichmentLevel;
-}
-
-/** Expanded equipment detail (inline expand) */
-export interface EquipmentDetail {
-	id: string;
-	weapon: {
-		catalogId: string | null;
-		name: string;
-		decay: Pec;
-		ammoBurn: number;
-		markupPercent: number;
-		isLimited: boolean;
-		damageEnhancers: number;
-	};
-	amplifier: {
-		catalogId: string | null;
-		name: string;
-		decay: Pec;
-		ammoBurn: number;
-		markupPercent: number;
-		isLimited: boolean;
-	} | null;
-	scope: {
-		catalogId: string | null;
-		name: string;
-		decay: Pec;
-		ammoBurn: number;
-		markupPercent: number;
-		isLimited: boolean;
-		damageEnhancers: number;
-	} | null;
-	absorber: {
-		catalogId: string | null;
-		name: string;
-		decay: Pec;
-		ammoBurn: number;
-		absorptionPercent: number;
-		markupPercent: number;
-		isLimited: boolean;
-	} | null;
-	costBreakdown: CostBreakdownLine[];
-	totalCostPerUse: Pec;
-}
-
-export interface CostBreakdownLine {
-	component: string;
-	costPec: Pec;
-	markupMultiplier: number;
-	effectiveCostPec: Pec;
-}
-
+/** The healing-tool view row the equipment page derives from the
+ * library list (a projection, not a wire shape). */
 export interface HealingTool {
 	id: string;
 	name: string;

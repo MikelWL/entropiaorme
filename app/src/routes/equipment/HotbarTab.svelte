@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Equipment } from '$lib/types';
 	import type { Hotbar } from '$lib/types/settings';
-	import { updateSettings } from '$lib/api';
+	import { hotbarFromSettings, updateSettings } from '$lib/api';
 	import { Select } from '$lib/components';
 
 	let {
@@ -57,7 +57,7 @@
 
 		try {
 			const updated = await updateSettings({ hotbar: nextHotbar });
-			hotbar = { ...updated.hotbar };
+			hotbar = hotbarFromSettings(updated);
 			onchange?.(hotbar);
 		} catch (e) {
 			hotbar = previous;

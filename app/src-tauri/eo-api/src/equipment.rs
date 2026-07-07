@@ -20,6 +20,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 /// A catalogue vocabulary the search accepts; each maps to one snapshot
@@ -73,7 +74,7 @@ impl EquipmentKind {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EquipmentSearchHit {
-    pub catalog_id: Option<String>,
+    pub catalog_id: Nullable<String>,
     pub name: String,
     /// Decay per use, PEC.
     pub decay: f64,
@@ -90,11 +91,11 @@ pub struct EquipmentSummary {
     pub name: String,
     #[serde(rename = "type")]
     pub kind: EquipmentKind,
-    pub amplifier_name: Option<String>,
+    pub amplifier_name: Nullable<String>,
     pub cost_per_use: f64,
-    pub damage_min: Option<f64>,
-    pub damage_max: Option<f64>,
-    pub reload_seconds: Option<f64>,
+    pub damage_min: Nullable<f64>,
+    pub damage_max: Nullable<f64>,
+    pub reload_seconds: Nullable<f64>,
     pub is_limited: bool,
     /// 1 = base item, 2 = amplified, 3 = fully accessorised.
     pub enrichment_level: i64,
@@ -104,7 +105,7 @@ pub struct EquipmentSummary {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EquipmentComponent {
-    pub catalog_id: Option<String>,
+    pub catalog_id: Nullable<String>,
     pub name: String,
     pub decay: f64,
     pub ammo_burn: f64,
@@ -117,7 +118,7 @@ pub struct EquipmentComponent {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AbsorberComponent {
-    pub catalog_id: Option<String>,
+    pub catalog_id: Nullable<String>,
     pub name: String,
     pub decay: f64,
     pub ammo_burn: f64,
@@ -142,9 +143,9 @@ pub struct CostBreakdownLine {
 pub struct EquipmentDetail {
     pub id: String,
     pub weapon: EquipmentComponent,
-    pub amplifier: Option<EquipmentComponent>,
-    pub scope: Option<EquipmentComponent>,
-    pub absorber: Option<AbsorberComponent>,
+    pub amplifier: Nullable<EquipmentComponent>,
+    pub scope: Nullable<EquipmentComponent>,
+    pub absorber: Nullable<AbsorberComponent>,
     pub cost_breakdown: Vec<CostBreakdownLine>,
     pub total_cost_per_use: f64,
 }
@@ -264,7 +265,7 @@ fn stored_markup(props: &Value, key: &str) -> f64 {
 fn search_hit(row: &Value) -> EquipmentSearchHit {
     let entity = &row["data"];
     EquipmentSearchHit {
-        catalog_id: id_string(&row["item_id"]),
+        catalog_id: id_string(&row["item_id"]).into(),
         name: row["item_name"].as_str().unwrap_or_default().to_string(),
         decay: eco_or_zero(entity, "decay"),
         ammo_burn: eco_or_zero(entity, "ammo_burn") / 100.0,
@@ -312,11 +313,12 @@ fn row_to_summary(
             amplifier_name: amp_e
                 .and_then(|amp| amp.get("name"))
                 .and_then(Value::as_str)
-                .map(str::to_string),
+                .map(str::to_string)
+                .into(),
             cost_per_use: cost_result["totalCostPerUse"].as_f64().unwrap_or(0.0),
-            damage_min: rounded("damageMin"),
-            damage_max: rounded("damageMax"),
-            reload_seconds: None,
+            damage_min: rounded("damageMin").into(),
+            damage_max: rounded("damageMax").into(),
+            reload_seconds: None.into(),
             is_limited: is_limited(weapon_e),
             enrichment_level: compute_enrichment(props),
         });
@@ -327,11 +329,11 @@ fn row_to_summary(
             id: id.to_string(),
             name: name.to_string(),
             kind: EquipmentKind::Consumable,
-            amplifier_name: None,
+            amplifier_name: None.into(),
             cost_per_use: 0.0,
-            damage_min: None,
-            damage_max: None,
-            reload_seconds: None,
+            damage_min: None.into(),
+            damage_max: None.into(),
+            reload_seconds: None.into(),
             is_limited: false,
             enrichment_level: 1,
         });
@@ -348,11 +350,11 @@ fn row_to_summary(
         id: id.to_string(),
         name: name.to_string(),
         kind: EquipmentKind::Healing,
-        amplifier_name: None,
+        amplifier_name: None.into(),
         cost_per_use: heal_cost_per_use(tool_e, markup),
-        damage_min: None,
-        damage_max: None,
-        reload_seconds: Some(round_half_even(heal_reload_seconds(tool_e), 2)),
+        damage_min: None.into(),
+        damage_max: None.into(),
+        reload_seconds: Some(round_half_even(heal_reload_seconds(tool_e), 2)).into(),
         is_limited: is_limited(tool_e),
         enrichment_level: 1,
     })
@@ -385,7 +387,7 @@ fn row_to_detail(
          -> Result<Option<EquipmentComponent>, ApiError> {
             match props.get(entity_key).filter(|v| !v.is_null()) {
                 Some(entity) => Ok(Some(EquipmentComponent {
-                    catalog_id: props.get(id_key).and_then(id_string),
+                    catalog_id: props.get(id_key).and_then(id_string).into(),
                     name: entity_name(entity)?,
                     decay: eco_or_zero(entity, "decay"),
                     ammo_burn: eco_or_zero(entity, "ammo_burn") / 100.0,
@@ -406,7 +408,7 @@ fn row_to_detail(
                     .unwrap_or(0.0)
                     * 100.0;
                 Some(AbsorberComponent {
-                    catalog_id: props.get("absorber_catalog_id").and_then(id_string),
+                    catalog_id: props.get("absorber_catalog_id").and_then(id_string).into(),
                     name: entity_name(absorber_e)?,
                     decay: eco_or_zero(absorber_e, "decay"),
                     ammo_burn: eco_or_zero(absorber_e, "ammo_burn") / 100.0,
@@ -426,7 +428,7 @@ fn row_to_detail(
         return Ok(EquipmentDetail {
             id: item_id,
             weapon: EquipmentComponent {
-                catalog_id: weapon_catalog_id,
+                catalog_id: weapon_catalog_id.into(),
                 name: entity_name(weapon_e)?,
                 decay: eco_or_zero(weapon_e, "decay"),
                 ammo_burn: eco_or_zero(weapon_e, "ammo_burn") / 100.0,
@@ -434,9 +436,9 @@ fn row_to_detail(
                 is_limited: is_limited(weapon_e),
                 damage_enhancers: enhancers,
             },
-            amplifier: component("amp_entity", "amp_catalog_id", "amp_markup")?,
-            scope: component("scope_entity", "scope_catalog_id", "scope_markup")?,
-            absorber,
+            amplifier: component("amp_entity", "amp_catalog_id", "amp_markup")?.into(),
+            scope: component("scope_entity", "scope_catalog_id", "scope_markup")?.into(),
+            absorber: absorber.into(),
             cost_breakdown: breakdown_lines(&cost_result)?,
             total_cost_per_use: cost_result["totalCostPerUse"].as_f64().unwrap_or(0.0),
         });
@@ -446,7 +448,7 @@ fn row_to_detail(
         return Ok(EquipmentDetail {
             id: item_id,
             weapon: EquipmentComponent {
-                catalog_id: catalog_id.map(str::to_string),
+                catalog_id: catalog_id.map(str::to_string).into(),
                 name: name.to_string(),
                 decay: 0.0,
                 ammo_burn: 0.0,
@@ -454,9 +456,9 @@ fn row_to_detail(
                 is_limited: false,
                 damage_enhancers: 0,
             },
-            amplifier: None,
-            scope: None,
-            absorber: None,
+            amplifier: None.into(),
+            scope: None.into(),
+            absorber: None.into(),
             cost_breakdown: Vec::new(),
             total_cost_per_use: 0.0,
         });
@@ -495,7 +497,7 @@ fn row_to_detail(
     Ok(EquipmentDetail {
         id: item_id,
         weapon: EquipmentComponent {
-            catalog_id: tool_catalog_id,
+            catalog_id: tool_catalog_id.into(),
             name: entity_name(tool_e)?,
             decay,
             ammo_burn: ammo_pec,
@@ -503,9 +505,9 @@ fn row_to_detail(
             is_limited: is_limited(tool_e),
             damage_enhancers: 0,
         },
-        amplifier: None,
-        scope: None,
-        absorber: None,
+        amplifier: None.into(),
+        scope: None.into(),
+        absorber: None.into(),
         cost_breakdown: breakdown,
         total_cost_per_use: cost,
     })

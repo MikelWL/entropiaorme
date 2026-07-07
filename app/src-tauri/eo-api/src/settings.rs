@@ -27,6 +27,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 
+use crate::Nullable;
+use crate::tracking::MobEntryMode;
 use crate::{Api, ApiError};
 
 /// The version the settings response stamps. The crate inherits the
@@ -53,11 +55,11 @@ pub struct GameConnection {
 pub struct TrifectaPresetView {
     pub id: String,
     pub name: String,
-    pub small_weapon_id: Option<i64>,
-    pub big_weapon_id: Option<i64>,
-    pub heal_id: Option<i64>,
+    pub small_weapon_id: Nullable<i64>,
+    pub big_weapon_id: Nullable<i64>,
+    pub heal_id: Nullable<i64>,
     pub ready: bool,
-    pub message: Option<String>,
+    pub message: Nullable<String>,
 }
 
 /// The trifecta block: every preset validated, with the active preset's
@@ -65,11 +67,11 @@ pub struct TrifectaPresetView {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TrifectaSettings {
-    pub active_preset_id: Option<String>,
-    pub active_preset_name: Option<String>,
+    pub active_preset_id: Nullable<String>,
+    pub active_preset_name: Nullable<String>,
     pub presets: Vec<TrifectaPresetView>,
     pub ready: bool,
-    pub message: Option<String>,
+    pub message: Nullable<String>,
 }
 
 /// The full assembled settings response. Field order is the wire order
@@ -82,7 +84,7 @@ pub struct AppSettings {
     pub repair_ocr_enabled: bool,
     pub end_of_session_armour_reminder_enabled: bool,
     pub developer_mode_enabled: bool,
-    pub mob_tracking_mode: String,
+    pub mob_tracking_mode: MobEntryMode,
     pub mob_tracking_tag: String,
     /// The slot-to-equipment map, carried through in its stored insertion
     /// order (`serde_json`'s `preserve_order`), so slot "0" stays last.
@@ -98,8 +100,8 @@ pub struct AppSettings {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OverlayPosition {
-    pub x: Option<i64>,
-    pub y: Option<i64>,
+    pub x: Nullable<i64>,
+    pub y: Nullable<i64>,
 }
 
 // ── Request DTOs ────────────────────────────────────────────────────
@@ -237,7 +239,14 @@ impl Api {
             repair_ocr_enabled: config.repair_ocr_enabled,
             end_of_session_armour_reminder_enabled: config.end_of_session_armour_reminder_enabled,
             developer_mode_enabled: config.developer_mode_enabled,
-            mob_tracking_mode: config.mob_tracking_mode.clone(),
+            // The update path validates the mode to the two values; a stored
+            // value outside them (a hand-edited config) recovers to the same
+            // "mob" default the config loader applies to a missing key.
+            mob_tracking_mode: if config.mob_tracking_mode == "tag" {
+                MobEntryMode::Tag
+            } else {
+                MobEntryMode::Mob
+            },
             mob_tracking_tag: config.mob_tracking_tag.clone(),
             hotbar: config.hotbar.clone(),
             trifecta,
@@ -252,8 +261,8 @@ impl Api {
         let config = load_config_readonly(&self.data_dir)
             .map_err(ApiError::internal("overlay position read"))?;
         Ok(OverlayPosition {
-            x: config.overlay_x,
-            y: config.overlay_y,
+            x: config.overlay_x.into(),
+            y: config.overlay_y.into(),
         })
     }
 
@@ -355,11 +364,11 @@ impl Api {
             presets.push(TrifectaPresetView {
                 id: preset.id.clone(),
                 name: preset.name.clone(),
-                small_weapon_id: preset.small_weapon_id,
-                big_weapon_id: preset.big_weapon_id,
-                heal_id: preset.heal_id,
+                small_weapon_id: preset.small_weapon_id.into(),
+                big_weapon_id: preset.big_weapon_id.into(),
+                heal_id: preset.heal_id.into(),
                 ready,
-                message: message.clone(),
+                message: message.clone().into(),
             });
             if Some(preset.id.as_str()) == config.active_trifecta_preset_id.as_deref() {
                 active_ready = ready;
@@ -369,11 +378,11 @@ impl Api {
         }
 
         Ok(TrifectaSettings {
-            active_preset_id: config.active_trifecta_preset_id.clone(),
-            active_preset_name: active_name,
+            active_preset_id: config.active_trifecta_preset_id.clone().into(),
+            active_preset_name: active_name.into(),
             presets,
             ready: active_ready,
-            message: active_message,
+            message: active_message.into(),
         })
     }
 }

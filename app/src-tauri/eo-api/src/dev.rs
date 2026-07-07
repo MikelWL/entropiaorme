@@ -28,6 +28,7 @@ use eo_services::time::naive_to_epoch;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 /// The compacted-copy name written beside the live database; the name is
@@ -41,7 +42,7 @@ const COMPACTED_DB_NAME: &str = "entropia_orme-compacted.db";
 /// Mirrors `eo_wire::metrics::Bucket`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HistogramBucket {
-    pub bound_us: Option<u64>,
+    pub bound_us: Nullable<u64>,
     pub count: u64,
 }
 

@@ -866,7 +866,7 @@
 	function applySnapshot(snapshot: TrackingSnapshot) {
 		status = snapshot;
 		data = {
-			status: snapshot.status,
+			status: snapshot.status ?? 'idle',
 			sessionId: snapshot.session_id,
 			elapsed: snapshot.elapsed,
 			killCount: snapshot.kill_count,

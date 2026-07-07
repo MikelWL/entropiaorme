@@ -1,0 +1,55 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The shell surface is the single home for bare-command invokes; these
+// tests pin each wrapper's command name and argument shape. `invoke` is
+// captured at module load, so the mock is hoisted and the module is
+// re-imported per test.
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+
+type Mod = typeof import('./shell');
+
+async function loadModule(): Promise<Mod> {
+	vi.resetModules();
+	return import('./shell');
+}
+
+beforeEach(() => {
+	invokeMock.mockReset();
+	invokeMock.mockResolvedValue(undefined);
+});
+
+describe('window commands', () => {
+	it.each([
+		['toggleOverlay', 'toggle_overlay'],
+		['showScanOverlay', 'show_scan_overlay'],
+		['hideScanOverlay', 'hide_scan_overlay'],
+	] as const)('%s invokes %s with no arguments', async (fn, command) => {
+		const shell = await loadModule();
+		await shell[fn]();
+		expect(invokeMock).toHaveBeenCalledWith(command);
+	});
+});
+
+describe('updater commands', () => {
+	it.each([
+		['checkForUpdate', 'check_for_update'],
+		['downloadUpdate', 'download_update'],
+		['getUpdateChannel', 'get_update_channel'],
+		['installUpdate', 'install_update'],
+	] as const)('%s invokes %s', async (fn, command) => {
+		const shell = await loadModule();
+		await shell[fn]();
+		expect(invokeMock).toHaveBeenCalledWith(command);
+	});
+});
+
+describe('manualSkillScanCapturePng', () => {
+	it('fetches the capture preview over the capture_png command as a base64 data URL', async () => {
+		const { manualSkillScanCapturePng } = await loadModule();
+		invokeMock.mockResolvedValue('aGVsbG8=');
+		const url = await manualSkillScanCapturePng(3);
+		expect(invokeMock).toHaveBeenCalledWith('capture_png', { page: 3 });
+		expect(url).toBe('data:image/png;base64,aGVsbG8=');
+	});
+});

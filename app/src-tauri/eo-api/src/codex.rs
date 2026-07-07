@@ -24,6 +24,7 @@ use eo_services::skill_tracker::SUPPRESS_TIMEOUT_SECONDS;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 // ── Request arguments ───────────────────────────────────────────────
@@ -57,11 +58,11 @@ impl CodexRecommendTarget {
 pub struct CodexSpecies {
     pub name: String,
     pub base_cost: f64,
-    pub codex_type: Option<String>,
+    pub codex_type: Nullable<String>,
     pub current_rank: i64,
-    pub next_rank: Option<i64>,
-    pub next_category: Option<String>,
-    pub next_cost: Option<f64>,
+    pub next_rank: Nullable<i64>,
+    pub next_category: Nullable<String>,
+    pub next_cost: Nullable<f64>,
 }
 
 /// One rank in a species' breakdown: the derived cost / reward / category
@@ -79,8 +80,8 @@ pub struct CodexRank {
     pub skills: Vec<String>,
     pub cat4_skills: Vec<String>,
     pub claimed: bool,
-    pub claimed_skill: Option<String>,
-    pub claimed_ped: Option<f64>,
+    pub claimed_skill: Nullable<String>,
+    pub claimed_ped: Nullable<f64>,
     pub is_next: bool,
 }
 
@@ -91,7 +92,7 @@ pub struct CodexRank {
 pub struct CodexSpeciesRanks {
     pub species_name: String,
     pub base_cost: f64,
-    pub codex_type: Option<String>,
+    pub codex_type: Nullable<String>,
     pub current_rank: i64,
     pub ranks: Vec<CodexRank>,
 }
@@ -105,13 +106,13 @@ pub struct CodexSkillOption {
     pub skill_name: String,
     pub category: String,
     pub reward_ped: f64,
-    pub current_level: Option<f64>,
+    pub current_level: Nullable<f64>,
     pub levels_gained: f64,
     pub profession_weight: i64,
     pub prof_contribution: f64,
-    pub hp_increase: Option<f64>,
+    pub hp_increase: Nullable<f64>,
     pub hp_gain: f64,
-    pub recommend_rank: Option<i64>,
+    pub recommend_rank: Nullable<i64>,
 }
 
 /// One meta attribute with its current calibrated level.
@@ -119,7 +120,7 @@ pub struct CodexSkillOption {
 #[serde(rename_all = "camelCase")]
 pub struct CodexMetaAttribute {
     pub name: String,
-    pub current_level: Option<f64>,
+    pub current_level: Nullable<f64>,
 }
 
 /// The record a rank claim (or its reversal) returns.
@@ -216,7 +217,7 @@ impl Api {
             .into_iter()
             .map(|attribute| CodexMetaAttribute {
                 name: attribute.name.to_string(),
-                current_level: attribute.current_level,
+                current_level: attribute.current_level.into(),
             })
             .collect())
     }
@@ -299,11 +300,11 @@ fn species_dto(entry: codex::SpeciesEntry) -> CodexSpecies {
     CodexSpecies {
         name: entry.name,
         base_cost: entry.base_cost,
-        codex_type: entry.codex_type,
+        codex_type: entry.codex_type.into(),
         current_rank: entry.current_rank,
-        next_rank: entry.next_rank,
-        next_category: entry.next_category.map(str::to_string),
-        next_cost: entry.next_cost,
+        next_rank: entry.next_rank.into(),
+        next_category: entry.next_category.map(str::to_string).into(),
+        next_cost: entry.next_cost.into(),
     }
 }
 
@@ -311,7 +312,7 @@ fn species_ranks_dto(ranks: codex::SpeciesRanks) -> CodexSpeciesRanks {
     CodexSpeciesRanks {
         species_name: ranks.species_name,
         base_cost: ranks.base_cost,
-        codex_type: ranks.codex_type,
+        codex_type: ranks.codex_type.into(),
         current_rank: ranks.current_rank,
         ranks: ranks.ranks.into_iter().map(rank_dto).collect(),
     }
@@ -328,8 +329,8 @@ fn rank_dto(entry: codex::RankEntry) -> CodexRank {
         skills: entry.breakdown.skills,
         cat4_skills: entry.breakdown.cat4_skills,
         claimed: entry.claimed,
-        claimed_skill: entry.claimed_skill,
-        claimed_ped: entry.claimed_ped,
+        claimed_skill: entry.claimed_skill.into(),
+        claimed_ped: entry.claimed_ped.into(),
         is_next: entry.is_next,
     }
 }
@@ -339,13 +340,13 @@ fn skill_option_dto(option: codex::SkillOption) -> CodexSkillOption {
         skill_name: option.skill_name.to_string(),
         category: option.category.to_string(),
         reward_ped: option.reward_ped,
-        current_level: option.current_level,
+        current_level: option.current_level.into(),
         levels_gained: option.levels_gained,
         profession_weight: option.profession_weight,
         prof_contribution: option.prof_contribution,
-        hp_increase: option.hp_increase,
+        hp_increase: option.hp_increase.into(),
         hp_gain: option.hp_gain,
-        recommend_rank: option.recommend_rank,
+        recommend_rank: option.recommend_rank.into(),
     }
 }
 

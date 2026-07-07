@@ -1,0 +1,53 @@
+/**
+ * The analytics family: the Overview and Activity aggregates, the
+ * ledger (entries and presets), and the inventory ledger. Thin
+ * wrappers over the generated typed commands; the reads swap onto the
+ * parallel `demo_*` commands while the guide is active (see `./guide`).
+ */
+
+import type { LedgerItem } from './commands.gen';
+import * as commands from './commands.gen';
+import { guideSwapped } from './guide';
+
+const readOverview = guideSwapped(commands.analyticsOverview, commands.demoAnalyticsOverview);
+
+export async function getAnalyticsOverview(period: string = 'all') {
+	return readOverview(period);
+}
+
+export const getAnalyticsActivity = guideSwapped(
+	commands.analyticsActivity,
+	commands.demoAnalyticsActivity,
+);
+export const getLedgerPresets = guideSwapped(
+	commands.ledgerPresetsList,
+	commands.demoLedgerPresetsList,
+);
+export const getInventoryItems = guideSwapped(commands.inventoryList, commands.demoInventoryList);
+
+export const addLedgerEntry = commands.ledgerCreate;
+export const deleteLedgerEntry = commands.ledgerDelete;
+export const addLedgerPreset = commands.ledgerPresetCreate;
+export const deleteLedgerPreset = commands.ledgerPresetDelete;
+export const addInventoryItem = commands.inventoryCreate;
+export const updateInventoryItem = commands.inventoryUpdate;
+export const deleteInventoryItem = commands.inventoryDelete;
+export const sellInventoryItem = commands.inventorySell;
+
+/** One keyset page of ledger entries plus the cursor for the next page
+ * (null on the last page). Frontend-owned reshape of the generated
+ * `LedgerPage` (`entries` reads as `items` at the consumer). */
+export interface LedgerPage {
+	items: LedgerItem[];
+	nextCursor: string | null;
+}
+
+const readLedgerPage = guideSwapped(commands.ledgerList, commands.demoLedgerList);
+
+export async function getLedgerEntries(cursor?: string, limit?: number): Promise<LedgerPage> {
+	const page = await readLedgerPage(cursor ?? null, limit ?? null);
+	return {
+		items: page.entries,
+		nextCursor: page.nextCursor ?? null,
+	};
+}

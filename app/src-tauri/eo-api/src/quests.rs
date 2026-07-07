@@ -35,6 +35,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 // ── Request arguments ───────────────────────────────────────────────
@@ -176,24 +177,24 @@ fn default_group_type() -> String {
 pub struct Quest {
     pub id: String,
     pub name: String,
-    pub category: Option<String>,
+    pub category: Nullable<String>,
     pub target_mobs: Vec<String>,
     pub planet: String,
-    pub waypoint: Option<String>,
-    pub cooldown_duration_hours: Option<f64>,
-    pub cooldown_expires_at: Option<String>,
-    pub reward: Option<f64>,
+    pub waypoint: Nullable<String>,
+    pub cooldown_duration_hours: Nullable<f64>,
+    pub cooldown_expires_at: Nullable<String>,
+    pub reward: Nullable<f64>,
     pub reward_is_skill: bool,
-    pub expected_reward_markup_percent: Option<f64>,
+    pub expected_reward_markup_percent: Nullable<f64>,
     pub reward_description: String,
     pub notes: String,
-    pub chain_name: Option<String>,
-    pub chain_position: Option<i64>,
-    pub chain_total: Option<i64>,
+    pub chain_name: Nullable<String>,
+    pub chain_position: Nullable<i64>,
+    pub chain_total: Nullable<i64>,
     pub playlist_ids: Vec<String>,
     /// A fractional epoch-seconds timestamp (the tracker's clock is
     /// sub-second), null while the quest is not in progress.
-    pub started_at: Option<f64>,
+    pub started_at: Nullable<f64>,
 }
 
 impl Quest {
@@ -203,24 +204,35 @@ impl Quest {
         Self {
             id: str_of(&quest["id"]),
             name: string_field(&quest["name"]),
-            category: opt_string(&quest["category"]),
+            category: opt_string(&quest["category"]).into(),
             target_mobs: string_list(&quest["mobs"]),
             planet: string_field(&quest["planet"]),
-            waypoint: opt_string(&quest["waypoint"]),
-            cooldown_duration_hours: opt_f64(&quest["cooldown_hours"]),
-            cooldown_expires_at: opt_string(&quest["cooldown_expires_at"]),
-            reward: opt_f64(&quest["reward_ped"]),
+            waypoint: opt_string(&quest["waypoint"]).into(),
+            cooldown_duration_hours: opt_f64(&quest["cooldown_hours"]).into(),
+            cooldown_expires_at: opt_string(&quest["cooldown_expires_at"]).into(),
+            reward: opt_f64(&quest["reward_ped"]).into(),
             reward_is_skill: quest["reward_is_skill"].as_i64().unwrap_or(0) != 0,
-            expected_reward_markup_percent: opt_f64(&quest["expected_reward_markup_percent"]),
+            expected_reward_markup_percent: opt_f64(&quest["expected_reward_markup_percent"]).into(),
             reward_description: or_empty(&quest["reward_description"]),
             notes: or_empty(&quest["notes"]),
-            chain_name: opt_string(&quest["chain_name"]),
-            chain_position: opt_i64(&quest["chain_position"]),
-            chain_total: opt_i64(&quest["chain_total"]),
+            chain_name: opt_string(&quest["chain_name"]).into(),
+            chain_position: opt_i64(&quest["chain_position"]).into(),
+            chain_total: opt_i64(&quest["chain_total"]).into(),
             playlist_ids: string_id_list(&quest["playlist_ids"]),
-            started_at: opt_f64(&quest["started_at"]),
+            started_at: opt_f64(&quest["started_at"]).into(),
         }
     }
+}
+
+/// Which playlist group a quest slot belongs to. The serialised forms
+/// are byte-identical to the strings they replace; the input side
+/// (`PlaylistItemInput`) deliberately stays a plain string so its
+/// service-level validation and error replies are untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistItemGroup {
+    Immediate,
+    LongHorizon,
 }
 
 /// One classified slot in a playlist's wire shape.
@@ -228,8 +240,8 @@ impl Quest {
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistItem {
     pub quest_id: String,
-    pub description: Option<String>,
-    pub group_type: String,
+    pub description: Nullable<String>,
+    pub group_type: PlaylistItemGroup,
 }
 
 /// A playlist in the wire shape (`_format_playlist`). Membership arrives
@@ -257,12 +269,13 @@ impl QuestPlaylist {
             .iter()
             .map(|item| PlaylistItem {
                 quest_id: str_of(&item["quest_id"]),
-                description: opt_string(&item["description"]),
-                group_type: item
-                    .get("group_type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("immediate")
-                    .to_string(),
+                description: opt_string(&item["description"]).into(),
+                // Preserves the pre-enum fallback: anything but the explicit
+                // long-horizon marker reads as immediate.
+                group_type: match item.get("group_type").and_then(Value::as_str) {
+                    Some("long_horizon") => PlaylistItemGroup::LongHorizon,
+                    _ => PlaylistItemGroup::Immediate,
+                },
             })
             .collect();
         Self {
@@ -287,10 +300,10 @@ pub struct QuestAnalyticsRow {
     pub quest_id: String,
     pub quest_name: String,
     pub planet: String,
-    pub category: Option<String>,
+    pub category: Nullable<String>,
     pub reward_ped: f64,
     pub reward_is_skill: bool,
-    pub expected_reward_markup_percent: Option<f64>,
+    pub expected_reward_markup_percent: Nullable<f64>,
     pub total_expected_reward_ped: f64,
     pub linked_sessions: i64,
     pub total_duration_sec: f64,
@@ -308,10 +321,10 @@ impl QuestAnalyticsRow {
             quest_id: str_of(&row["quest_id"]),
             quest_name: string_field(&row["quest_name"]),
             planet: string_field(&row["planet"]),
-            category: opt_string(&row["category"]),
+            category: opt_string(&row["category"]).into(),
             reward_ped: model_float(&row["reward_ped"], 2),
             reward_is_skill: row["reward_is_skill"].as_bool().unwrap_or(false),
-            expected_reward_markup_percent: opt_f64(&row["expected_reward_markup_percent"]),
+            expected_reward_markup_percent: opt_f64(&row["expected_reward_markup_percent"]).into(),
             total_expected_reward_ped: model_float(&row["total_expected_reward_ped"], 2),
             linked_sessions: row["linked_sessions"].as_i64().unwrap_or(0),
             total_duration_sec: model_float(&row["total_duration"], 1),

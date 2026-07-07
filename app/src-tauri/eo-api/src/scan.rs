@@ -33,6 +33,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 /// The settled scan phase, in the wire vocabulary the overlay switches on.
@@ -61,14 +62,14 @@ pub struct ScanStatus {
     pub processing: bool,
     pub captured_pages: i64,
     pub expected_pages: i64,
-    pub last_scan_time: Option<f64>,
+    pub last_scan_time: Nullable<f64>,
     pub skills_count: i64,
     pub configured: bool,
     pub game_window_present: bool,
     pub phase: ScanPhase,
     pub processing_progress: ScanProgress,
     pub has_pending_result: bool,
-    pub error: Option<String>,
+    pub error: Nullable<String>,
 }
 
 /// A capture verb's result: the status the grab settled on, plus the
@@ -240,7 +241,7 @@ impl Api {
         } else {
             let mut status: ScanStatus = serde_json::from_value(self.skill_scan.get_status())
                 .map_err(ApiError::internal("scan status decode"))?;
-            status.error = error_of(&value);
+            status.error = error_of(&value).into();
             Ok(status)
         }
     }
