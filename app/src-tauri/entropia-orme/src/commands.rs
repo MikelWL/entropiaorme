@@ -415,7 +415,7 @@ pub async fn ledger_list(
         let _ = (&app, &cursor, &limit);
         Ok(LedgerPage {
             entries: e2e_analytics("ledger")?,
-            next_cursor: None,
+            next_cursor: None.into(),
         })
     }
     #[cfg(not(feature = "e2e-stub"))]

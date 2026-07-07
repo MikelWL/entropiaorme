@@ -15,8 +15,8 @@
     "recentEvents": [
       {
         "id": "e1",
-        "type": "loot",
-        "eventType": "loot",
+        "type": "global",
+        "eventType": "global_item",
         "description": "Looted Animal Oil Residue",
         "value": 2.5,
         "timestamp": "2026-01-01T00:01:00.000Z"
@@ -24,7 +24,7 @@
       {
         "id": "e2",
         "type": "hof",
-        "eventType": "hof",
+        "eventType": "hof_kill",
         "description": "HOF! Combibo Young",
         "value": 250.0,
         "timestamp": "2026-01-01T00:02:00.000Z"
@@ -32,7 +32,7 @@
       {
         "id": "e3",
         "type": "global",
-        "eventType": "global",
+        "eventType": "global_kill",
         "description": "Global! Atrox Old",
         "value": 55.0,
         "timestamp": "2026-01-01T00:03:00.000Z"
@@ -59,7 +59,7 @@
       }
     },
     "notableEvents": [],
-    "mobEntryMode": "auto",
+    "mobEntryMode": "mob",
     "lootBreakdown": [
       { "name": "Animal Oil Residue", "quantity": 1200, "ttValue": 240.5 },
       { "name": "Animal Muscle Oil", "quantity": 800, "ttValue": 160.0 },

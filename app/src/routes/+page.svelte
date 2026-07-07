@@ -7,13 +7,13 @@
 		startQuest,
 		completeQuest,
 		cancelQuest,
+		toggleOverlay,
 		type TrackingLive,
 	} from '$lib/api';
 	import { trackingSnapshot, hydrate, subscribeTracking } from '$lib/stores/trackingStore';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 	import type { Quest, QuestPlaylist } from '$lib/types/quests';
 	import type { CooldownStatus } from '$lib/types/common';
-	import { invoke } from '@tauri-apps/api/core';
 	import { flip } from 'svelte/animate';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import { quintOut } from 'svelte/easing';
@@ -606,7 +606,7 @@
 					loadPlaylists(),
 				]);
 				demoTrackingLive = live && {
-					status: live.status,
+					status: live.status ?? 'idle',
 					elapsed: live.elapsed,
 					currentTool: live.currentTool,
 					currentMob: live.currentMob,
@@ -685,7 +685,7 @@
 
 			<div class="flex items-center gap-2">
 				<span class="inline-flex" data-guide-anchor="dashboard-overlay-btn">
-					<Button size="sm" onclick={() => invoke('toggle_overlay').catch(() => {})}>
+					<Button size="sm" onclick={() => toggleOverlay().catch(() => {})}>
 						{#snippet children()}Overlay{/snippet}
 					</Button>
 				</span>

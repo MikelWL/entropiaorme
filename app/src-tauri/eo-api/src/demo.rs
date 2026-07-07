@@ -232,7 +232,7 @@ impl DemoState {
                 .into_iter()
                 .map(crate::analytics::ledger_item_dto)
                 .collect(),
-            next_cursor: page.next_cursor,
+            next_cursor: page.next_cursor.into(),
         })
     }
 

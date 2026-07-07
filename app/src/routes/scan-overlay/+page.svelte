@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { invoke } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { LogicalSize } from '@tauri-apps/api/dpi';
@@ -12,6 +11,7 @@
 		undoManualSkillCapture,
 		getManualSkillScanStatus,
 		setSpacebarCapture,
+		hideScanOverlay,
 		type ScanManualStatus
 	} from '$lib/api';
 	import { SCAN_TOPIC } from '$lib/stores/scanStore';
@@ -296,7 +296,7 @@
 	}
 
 	function handleClose() {
-		invoke('hide_scan_overlay').catch(() => {});
+		hideScanOverlay().catch(() => {});
 	}
 </script>
 

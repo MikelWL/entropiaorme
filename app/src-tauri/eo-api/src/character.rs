@@ -30,6 +30,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 /// Skills are considered stale after 30 days without recalibration.
@@ -84,7 +85,7 @@ pub struct ProspectQuery {
 #[serde(rename_all = "camelCase")]
 pub struct CalibrationStatus {
     pub calibrated: bool,
-    pub last_calibration: Option<String>,
+    pub last_calibration: Nullable<String>,
     pub stale: bool,
 }
 
@@ -113,8 +114,8 @@ pub struct SkillLevel {
     pub name: String,
     pub category: String,
     pub level: f64,
-    pub anchor_level: Option<f64>,
-    pub gain_since_anchor: Option<f64>,
+    pub anchor_level: Nullable<f64>,
+    pub gain_since_anchor: Nullable<f64>,
     pub rank_name: String,
     pub tt_value: f64,
     pub is_attribute: bool,
@@ -126,8 +127,8 @@ pub struct SkillLevel {
 pub struct ProfessionLevel {
     pub name: String,
     pub level: f64,
-    pub anchor_level: Option<f64>,
-    pub gain_since_anchor: Option<f64>,
+    pub anchor_level: Nullable<f64>,
+    pub gain_since_anchor: Nullable<f64>,
     pub category: String,
 }
 
@@ -201,7 +202,7 @@ pub struct ProspectResult {
     pub warnings: Vec<String>,
     pub profession: String,
     pub slice_type: String,
-    pub slice_value: Option<String>,
+    pub slice_value: Nullable<String>,
     pub markup_uplift: f64,
     pub current_level: f64,
     pub target_level: f64,
@@ -209,8 +210,8 @@ pub struct ProspectResult {
     pub projected_hours: f64,
     pub expected_loot_tt: f64,
     pub expected_net_tt_burn: f64,
-    pub speculative_loot_tt: Option<f64>,
-    pub speculative_net_tt_burn: Option<f64>,
+    pub speculative_loot_tt: Nullable<f64>,
+    pub speculative_net_tt_burn: Nullable<f64>,
     pub sample: ProspectSample,
 }
 
@@ -223,8 +224,8 @@ pub struct OptimizerSkill {
     pub current_level: f64,
     pub levels_needed: f64,
     pub ped_to_next_level: f64,
-    pub codex_category: Option<String>,
-    pub codex_divisor: Option<f64>,
+    pub codex_category: Nullable<String>,
+    pub codex_divisor: Nullable<f64>,
 }
 
 /// One attribute row of the profession / path optimizer.
@@ -267,8 +268,8 @@ pub struct PathAllocation {
     pub levels_to_gain: f64,
     pub ped_cost: f64,
     pub new_level: f64,
-    pub codex_category: Option<String>,
-    pub codex_divisor: Option<f64>,
+    pub codex_category: Nullable<String>,
+    pub codex_divisor: Nullable<f64>,
 }
 
 /// A skill the path optimizer left out, with the reason.
@@ -290,8 +291,8 @@ pub struct PathOptimizerResult {
     pub attributes: Vec<OptimizerAttribute>,
     pub profession: String,
     pub mode: String,
-    pub input_target_level: Option<f64>,
-    pub input_ped_budget: Option<f64>,
+    pub input_target_level: Nullable<f64>,
+    pub input_ped_budget: Nullable<f64>,
     pub current_level: f64,
     pub end_level: f64,
     pub profession_levels_gained: f64,
@@ -311,8 +312,8 @@ pub struct HpOptimizerSkill {
     pub levels_per_hp: f64,
     pub ped_per_hp: f64,
     pub hp_per_ped: f64,
-    pub codex_category: Option<String>,
-    pub codex_divisor: Option<f64>,
+    pub codex_category: Nullable<String>,
+    pub codex_divisor: Nullable<f64>,
 }
 
 /// One attribute row of the HP optimizer.
@@ -348,14 +349,14 @@ impl Api {
         let Some(last_ts) = last_ts else {
             return Ok(CalibrationStatus {
                 calibrated: false,
-                last_calibration: None,
+                last_calibration: None.into(),
                 stale: true,
             });
         };
         let age_days = (naive_to_epoch(self.clock.now()) - last_ts) / 86400.0;
         Ok(CalibrationStatus {
             calibrated: true,
-            last_calibration: Some(to_iso_utc(last_ts)),
+            last_calibration: Some(to_iso_utc(last_ts)).into(),
             stale: age_days > STALE_DAYS,
         })
     }
@@ -440,8 +441,8 @@ impl Api {
                 name: name.clone(),
                 category,
                 level,
-                anchor_level: anchor,
-                gain_since_anchor: gain,
+                anchor_level: anchor.into(),
+                gain_since_anchor: gain.into(),
                 rank_name: skill_rank(level, &ranks),
                 tt_value: round_half_even(tt_value_at(level), 2),
                 is_attribute: is_attribute(name),
@@ -493,8 +494,8 @@ impl Api {
             result.push(ProfessionLevel {
                 name: name.to_string(),
                 level,
-                anchor_level: anchor,
-                gain_since_anchor: gain,
+                anchor_level: anchor.into(),
+                gain_since_anchor: gain.into(),
                 category: prof
                     .get("category")
                     .and_then(Value::as_str)
@@ -663,8 +664,8 @@ impl Api {
                 attributes: Vec::new(),
                 profession: profession.to_string(),
                 mode: mode.to_string(),
-                input_target_level: target_level,
-                input_ped_budget: ped_budget,
+                input_target_level: target_level.into(),
+                input_ped_budget: ped_budget.into(),
                 current_level: 0.0,
                 end_level: 0.0,
                 profession_levels_gained: 0.0,
@@ -695,8 +696,8 @@ impl Api {
                 .collect(),
             profession: profession.to_string(),
             mode: result.mode.to_string(),
-            input_target_level: result.input_target_level,
-            input_ped_budget: result.input_ped_budget,
+            input_target_level: result.input_target_level.into(),
+            input_ped_budget: result.input_ped_budget.into(),
             current_level: result.current_level,
             end_level: result.end_level,
             profession_levels_gained: result.profession_levels_gained,
@@ -735,8 +736,8 @@ impl Api {
                     levels_per_hp: row.levels_per_hp,
                     ped_per_hp: row.ped_per_hp,
                     hp_per_ped: row.hp_per_ped,
-                    codex_category: row.codex_category.map(str::to_string),
-                    codex_divisor: row.codex_divisor.map(|divisor| divisor as f64),
+                    codex_category: row.codex_category.map(str::to_string).into(),
+                    codex_divisor: row.codex_divisor.map(|divisor| divisor as f64).into(),
                 })
                 .collect(),
             attributes: result
@@ -787,8 +788,8 @@ fn optimizer_skill_dto(row: eo_services::character_calc::OptimizerSkillRow) -> O
         current_level: row.current_level,
         levels_needed: row.levels_needed,
         ped_to_next_level: row.ped_to_next_level,
-        codex_category: row.codex_category.map(str::to_string),
-        codex_divisor: row.codex_divisor.map(|divisor| divisor as f64),
+        codex_category: row.codex_category.map(str::to_string).into(),
+        codex_divisor: row.codex_divisor.map(|divisor| divisor as f64).into(),
     }
 }
 
@@ -811,8 +812,8 @@ fn path_allocation_dto(row: eo_services::character_calc::PathAllocationRow) -> P
         levels_to_gain: row.levels_to_gain,
         ped_cost: row.ped_cost,
         new_level: row.new_level,
-        codex_category: row.codex_category.map(str::to_string),
-        codex_divisor: row.codex_divisor.map(|divisor| divisor as f64),
+        codex_category: row.codex_category.map(str::to_string).into(),
+        codex_divisor: row.codex_divisor.map(|divisor| divisor as f64).into(),
     }
 }
 
@@ -1189,7 +1190,7 @@ fn prospect_error_result(
         warnings: Vec::new(),
         profession: profession_name.to_string(),
         slice_type: slice_type.to_string(),
-        slice_value: slice_value.clone(),
+        slice_value: slice_value.clone().into(),
         markup_uplift,
         current_level: round_half_even(current_level, 2),
         target_level: round_half_even(target_level, 2),
@@ -1197,8 +1198,8 @@ fn prospect_error_result(
         projected_hours: 0.0,
         expected_loot_tt: 0.0,
         expected_net_tt_burn: 0.0,
-        speculative_loot_tt: None,
-        speculative_net_tt_burn: None,
+        speculative_loot_tt: None.into(),
+        speculative_net_tt_burn: None.into(),
         sample: sample.dto(),
     }
 }
@@ -1393,7 +1394,7 @@ fn build_prospect_result(
         warnings,
         profession: profession_name.to_string(),
         slice_type: slice_type.to_string(),
-        slice_value: slice_value.clone(),
+        slice_value: slice_value.clone().into(),
         markup_uplift,
         current_level: round_half_even(current_level, 2),
         target_level: round_half_even(target_level, 2),
@@ -1401,8 +1402,8 @@ fn build_prospect_result(
         projected_hours,
         expected_loot_tt,
         expected_net_tt_burn,
-        speculative_loot_tt,
-        speculative_net_tt_burn,
+        speculative_loot_tt: speculative_loot_tt.into(),
+        speculative_net_tt_burn: speculative_net_tt_burn.into(),
         sample: sample.dto(),
     }
 }

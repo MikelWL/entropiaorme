@@ -11,10 +11,16 @@
 // user data: a plain GET of a static per-channel manifest, the running version
 // is compared locally, nothing about the user is sent.
 
-import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { derived, get, type Readable, type Writable, writable } from 'svelte/store';
 
+import {
+	checkForUpdate as invokeCheckForUpdate,
+	downloadUpdate as invokeDownloadUpdate,
+	getUpdateChannel as invokeGetUpdateChannel,
+	installUpdate as invokeInstallUpdate,
+	type UpdateInfo,
+} from './api/shell';
 import { getPreference, setPreference } from './preferences';
 
 /// The auto-update preference key. The runtime default is OFF until the user
@@ -27,12 +33,7 @@ export const AUTO_UPDATE_PREFERENCE_KEY = KEY_AUTO_UPDATE_ENABLED;
 /// The download-progress event the Rust side emits (colon-form, matching the bus).
 const DOWNLOAD_PROGRESS_EVENT = 'updater:download-progress';
 
-/// Metadata about an available update (mirrors the Rust `UpdateInfo`).
-export type UpdateInfo = {
-	version: string;
-	currentVersion: string;
-	notes: string | null;
-};
+export type { UpdateInfo };
 
 /// Bytes-arrived progress (mirrors the Rust `DownloadProgress`). `contentLength`
 /// is null when the server uses chunked transfer; the UI shows indeterminate.
@@ -100,7 +101,7 @@ export async function checkForUpdate(silent = false): Promise<UpdateInfo | null>
 	updateError.set(null);
 	if (!silent) updatePhase.set('checking');
 	try {
-		const info = await invoke<UpdateInfo | null>('check_for_update');
+		const info = await invokeCheckForUpdate();
 		if (info) {
 			availableUpdate.set(info);
 			updatePhase.set('available');
@@ -139,7 +140,7 @@ export async function downloadUpdate(): Promise<void> {
 		});
 	}
 	try {
-		const info = await invoke<UpdateInfo>('download_update');
+		const info = await invokeDownloadUpdate();
 		availableUpdate.set(info);
 		updatePhase.set('ready');
 	} catch (err) {
@@ -155,7 +156,7 @@ export async function installUpdate(): Promise<void> {
 	updateError.set(null);
 	updatePhase.set('installing');
 	try {
-		await invoke('install_update');
+		await invokeInstallUpdate();
 	} catch (err) {
 		updateError.set(String(err));
 		updatePhase.set('error');
@@ -167,7 +168,7 @@ export async function installUpdate(): Promise<void> {
 export async function getUpdateChannel(): Promise<string> {
 	if (!isTauri()) return 'stable';
 	try {
-		return await invoke<string>('get_update_channel');
+		return await invokeGetUpdateChannel();
 	} catch {
 		return 'stable';
 	}

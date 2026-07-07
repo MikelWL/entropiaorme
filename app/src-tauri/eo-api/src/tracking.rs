@@ -43,6 +43,7 @@ use serde_json::{json, Map, Value};
 
 use eo_services::tracking_reads::*;
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -100,6 +101,106 @@ fn edit_error(context: &'static str) -> impl Fn(EditError) -> ApiError {
     }
 }
 
+// ── Closed vocabularies ─────────────────────────────────────────────
+//
+// The string fields whose value sets are closed in code, stated as serde
+// enums so the generated TypeScript carries the literal unions and the
+// compiler owns the vocabulary on both sides of the boundary. Each
+// variant's serialised form is byte-identical to the string it replaces.
+
+/// The session state a tracking readout reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackingState {
+    Idle,
+    Active,
+}
+
+/// Which attribution source prices weapon shots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WeaponAttribution {
+    Hotbar,
+    Trifecta,
+}
+
+/// Mob-attribution input mode a session is captured under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MobEntryMode {
+    Mob,
+    Tag,
+}
+
+/// How the current mob label was locked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MobSource {
+    Manual,
+    Tag,
+}
+
+/// The broad notable-event family (drives styling on the frontend).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NotableEventCategory {
+    Global,
+    Hof,
+    Quest,
+    Warning,
+}
+
+/// The canonical notable-event subtype the services store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotableEventType {
+    GlobalKill,
+    GlobalItem,
+    HofKill,
+    HofItem,
+    QuestStarted,
+    QuestCompleted,
+    QuestCompletedPes,
+}
+
+/// What the quest-link suggestion proposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestLinkSuggestionType {
+    Quest,
+    Playlist,
+    None,
+}
+
+/// Why the quest-link suggestion took its shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestLinkReason {
+    SingleQuest,
+    ExactPlaylist,
+    NoCompletions,
+    Unclean,
+    AmbiguousPlaylist,
+    Declined,
+    AlreadyLinked,
+}
+
+/// The quest-link decision's outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestLinkStatus {
+    Linked,
+    Declined,
+}
+
+/// Which entity a linked decision bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestLinkType {
+    Quest,
+    Playlist,
+}
+
 // ── Response DTOs ───────────────────────────────────────────────────
 
 /// One row of the session list.
@@ -107,8 +208,8 @@ fn edit_error(context: &'static str) -> impl Fn(EditError) -> ApiError {
 #[serde(rename_all = "camelCase")]
 pub struct TrackingSession {
     pub id: String,
-    pub start_time: Option<String>,
-    pub end_time: Option<String>,
+    pub start_time: Nullable<String>,
+    pub end_time: Nullable<String>,
     pub duration: i64,
     pub primary_mobs: Vec<String>,
     pub primary_weapons: Vec<String>,
@@ -149,10 +250,10 @@ pub struct SessionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct NotableEvent {
     #[serde(rename = "type")]
-    pub kind: String,
-    pub event_type: String,
-    pub target: Option<String>,
-    pub item: Option<String>,
+    pub kind: NotableEventCategory,
+    pub event_type: NotableEventType,
+    pub target: Nullable<String>,
+    pub item: Nullable<String>,
     pub value: f64,
 }
 
@@ -170,7 +271,7 @@ pub struct LootEntry {
 #[serde(rename_all = "camelCase")]
 pub struct MobBreakdownRow {
     pub current_name: String,
-    pub original_name: Option<String>,
+    pub original_name: Nullable<String>,
     pub kill_count: i64,
 }
 
@@ -200,7 +301,7 @@ pub struct SkillGain {
 pub struct SessionDetail {
     pub session_id: String,
     pub summary: SessionSummary,
-    pub mob_entry_mode: String,
+    pub mob_entry_mode: MobEntryMode,
     pub notable_events: Vec<NotableEvent>,
     pub loot_breakdown: Vec<LootEntry>,
     pub deactivated_loot_breakdown: Vec<LootEntry>,
@@ -223,12 +324,12 @@ pub struct ManualMobSuggestion {
 #[serde(rename_all = "camelCase")]
 pub struct SessionQuestLinkSuggestion {
     pub session_id: String,
-    pub suggestion_type: Option<String>,
-    pub reason: Option<String>,
-    pub quest_id: Option<String>,
-    pub quest_name: Option<String>,
-    pub playlist_id: Option<String>,
-    pub playlist_name: Option<String>,
+    pub suggestion_type: Nullable<QuestLinkSuggestionType>,
+    pub reason: Nullable<QuestLinkReason>,
+    pub quest_id: Nullable<String>,
+    pub quest_name: Nullable<String>,
+    pub playlist_id: Nullable<String>,
+    pub playlist_name: Nullable<String>,
 }
 
 /// One preset reference inside the trifecta attribution summary.
@@ -244,24 +345,24 @@ pub struct TrifectaPresetRef {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TrifectaAttribution {
-    pub active_preset_id: Option<String>,
-    pub preset_name: Option<String>,
+    pub active_preset_id: Nullable<String>,
+    pub preset_name: Nullable<String>,
     pub presets: Vec<TrifectaPresetRef>,
-    pub small_weapon: Option<String>,
-    pub big_weapon: Option<String>,
-    pub heal_tool: Option<String>,
+    pub small_weapon: Nullable<String>,
+    pub big_weapon: Nullable<String>,
+    pub heal_tool: Nullable<String>,
 }
 
 /// One recent event in the active-session snapshot feed.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RecentEvent {
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: NotableEventCategory,
     pub description: String,
     pub value: f64,
     #[serde(rename = "eventType")]
-    pub event_type: String,
-    pub timestamp: Option<String>,
+    pub event_type: NotableEventType,
+    pub timestamp: Nullable<String>,
     pub id: String,
 }
 
@@ -269,7 +370,7 @@ pub struct RecentEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Warning {
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: NotableEventCategory,
     pub description: String,
     pub value: f64,
 }
@@ -282,21 +383,21 @@ pub struct Warning {
 #[serde(rename_all = "camelCase")]
 pub struct TrackingSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
+    pub status: Option<TrackingState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hotbar_listener_active: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub weapon_attribution: Option<String>,
+    pub weapon_attribution: Option<WeaponAttribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repair_ocr_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_of_session_armour_reminder_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mob_entry_mode: Option<String>,
+    pub mob_entry_mode: Option<MobEntryMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_mob: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mob_source: Option<String>,
+    pub mob_source: Option<MobSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -358,7 +459,7 @@ pub struct TrackingSnapshot {
 pub struct StartResult {
     pub session_id: String,
     pub started_at: String,
-    pub status: String,
+    pub status: TrackingState,
 }
 
 /// The stop lifecycle acknowledgement.
@@ -366,14 +467,14 @@ pub struct StartResult {
 pub struct StopResult {
     pub session_id: String,
     pub started_at: String,
-    pub ended_at: Option<String>,
+    pub ended_at: Nullable<String>,
     pub kill_count: i64,
 }
 
 /// The release-mob acknowledgement.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReleaseResult {
-    pub released: Option<String>,
+    pub released: Nullable<String>,
 }
 
 /// The manual-mob-lock acknowledgement.
@@ -427,9 +528,9 @@ pub struct ArmourCostResult {
 #[serde(rename_all = "camelCase")]
 pub struct QuestLinkDecision {
     pub session_id: String,
-    pub status: String,
+    pub status: QuestLinkStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_type: Option<String>,
+    pub link_type: Option<QuestLinkType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quest_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -601,7 +702,7 @@ impl Api {
         Ok(StartResult {
             session_id: session.id,
             started_at: local_isoformat(session.start_time),
-            status: "active".to_string(),
+            status: TrackingState::Active,
         })
     }
 
@@ -619,7 +720,7 @@ impl Api {
             Some(session) => Ok(StopResult {
                 session_id: session.id.clone(),
                 started_at: local_isoformat(session.start_time),
-                ended_at: session.end_time.map(local_isoformat),
+                ended_at: session.end_time.map(local_isoformat).into(),
                 kill_count: session.kills.len() as i64,
             }),
             // Defensive: `is_tracking` was true above, so a None is a broken
@@ -675,7 +776,7 @@ impl Api {
             released.map(Value::from).unwrap_or(Value::Null)
         };
         Ok(ReleaseResult {
-            released: opt_str(&released),
+            released: opt_str(&released).into(),
         })
     }
 
@@ -856,8 +957,15 @@ impl Api {
             {
                 Ok(suggestion) => Ok(QuestLinkDecision {
                     session_id: session_id.clone(),
-                    status: "linked".to_string(),
-                    link_type: opt_str(&suggestion["suggestion_type"]),
+                    status: QuestLinkStatus::Linked,
+                    // Parses the service's untyped suggestion value: the two
+                    // link kinds map to their variants, and the link type is
+                    // absent for any other shape.
+                    link_type: match suggestion["suggestion_type"].as_str() {
+                        Some("quest") => Some(QuestLinkType::Quest),
+                        Some("playlist") => Some(QuestLinkType::Playlist),
+                        _ => None,
+                    },
                     quest_id: opt_str(&str_id_or_null(&suggestion["quest_id"])),
                     quest_name: opt_str(&suggestion["quest_name"]),
                     playlist_id: opt_str(&str_id_or_null(&suggestion["playlist_id"])),
@@ -874,7 +982,7 @@ impl Api {
                 .map_err(ApiError::internal("quest-link decline"))?;
             return Ok(QuestLinkDecision {
                 session_id,
-                status: "declined".to_string(),
+                status: QuestLinkStatus::Declined,
                 link_type: None,
                 quest_id: None,
                 quest_name: None,
@@ -953,6 +1061,11 @@ pub(crate) async fn build_snapshot_value(
         Some(tool) => Value::String(tool.clone()),
         None => Value::Null,
     };
+    // The stored mode is free text (config / session row); recover
+    // anything outside the two modes to the "mob" default, exactly as
+    // the settings read does, so the snapshot's closed vocabulary holds
+    // for a hand-edited store rather than failing the whole hydration.
+    let mob_entry_mode = |stored: &str| if stored == "tag" { "tag" } else { "mob" };
 
     let value = match &readout.active {
         None => {
@@ -965,7 +1078,7 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": config.mob_tracking_mode,
+                "mobEntryMode": mob_entry_mode(&config.mob_tracking_mode),
                 "currentMob": current_mob,
                 "mobSource": mob_source,
                 "recentEvents": [],
@@ -1023,7 +1136,7 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": active.mob_entry_mode.clone(),
+                "mobEntryMode": mob_entry_mode(&active.mob_entry_mode),
                 "currentMob": active.current_mob.clone(),
                 "mobSource": active.mob_source.clone(),
                 "recentEvents": recent_events,

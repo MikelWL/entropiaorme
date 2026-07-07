@@ -73,6 +73,23 @@ fn generate() -> Result<String, String> {
     out.push_str("/** The serialised error every command rejects with. */\n");
     out.push_str(&format!("export type ApiErrorPayload = {error_body};\n\n"));
 
+    // The closed `kind` vocabulary, read off the same tagged-enum schema
+    // so the thrown error class types its `kind` against the identical
+    // source of truth as the payload. The const array is the runtime
+    // guard for classifying a raw rejection at the transport boundary.
+    let kinds = error_kinds(&error_schema)?;
+    let kind_literals: Vec<String> = kinds.iter().map(|kind| format!("'{kind}'")).collect();
+    out.push_str("/** The closed `kind` vocabulary of the error contract. */\n");
+    out.push_str(&format!(
+        "export type ApiErrorKind = {};\n\n",
+        kind_literals.join(" | ")
+    ));
+    out.push_str("/** The error kinds as a runtime list, for guarding a raw rejection. */\n");
+    out.push_str(&format!(
+        "export const API_ERROR_KINDS: readonly ApiErrorKind[] = [{}];\n\n",
+        kind_literals.join(", ")
+    ));
+
     // Named types: walk every command schema, registering $defs and
     // titled object/enum roots under their names.
     let specs = eo_api::manifest::manifest();
@@ -157,6 +174,36 @@ fn generate() -> Result<String, String> {
         out.pop();
     }
     Ok(out)
+}
+
+/// The error contract's `kind` values, in variant order: each tagged
+/// variant carries its tag as a `const` (or single-member `enum`) on the
+/// `kind` property.
+fn error_kinds(schema: &Value) -> Result<Vec<String>, String> {
+    let variants = schema
+        .get("oneOf")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gen-ts: error schema is not a oneOf union".to_string())?;
+    let mut kinds = Vec::with_capacity(variants.len());
+    for variant in variants {
+        let kind_schema = variant
+            .get("properties")
+            .and_then(|properties| properties.get("kind"))
+            .ok_or_else(|| format!("gen-ts: error variant without a kind tag: {variant}"))?;
+        let kind = kind_schema
+            .get("const")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                kind_schema
+                    .get("enum")
+                    .and_then(Value::as_array)
+                    .and_then(|values| values.first())
+                    .and_then(Value::as_str)
+            })
+            .ok_or_else(|| format!("gen-ts: error variant kind is not a literal: {variant}"))?;
+        kinds.push(kind.to_string());
+    }
+    Ok(kinds)
 }
 
 /// Register a schema's `$defs`, plus the titled object/enum root
@@ -429,5 +476,17 @@ mod tests {
             );
         }
         assert!(generated.contains("export type ApiErrorPayload"));
+    }
+
+    #[test]
+    fn the_error_kind_union_matches_the_error_contract() {
+        let generated = generate().expect("bindings generate");
+        assert!(
+            generated.contains(
+                "export type ApiErrorKind = 'badRequest' | 'notFound' | 'conflict' | 'internal' | 'unavailable';"
+            ),
+            "the error-kind union should carry the five tagged variants in declaration order"
+        );
+        assert!(generated.contains("export const API_ERROR_KINDS: readonly ApiErrorKind[]"));
     }
 }

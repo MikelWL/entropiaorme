@@ -43,7 +43,9 @@
 				result = null;
 				mode = 'manual';
 			} else {
-				result = { cost_ped: scan.cost_ped, raw_text: scan.raw_text };
+				// The success shape carries both fields (`error` and the values
+				// are mutually exclusive on this surface).
+				result = { cost_ped: scan.cost_ped ?? 0, raw_text: scan.raw_text ?? '' };
 				mode = 'result';
 			}
 		} catch {

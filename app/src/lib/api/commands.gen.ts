@@ -20,11 +20,17 @@ export type ApiErrorPayload = {
 		kind: 'unavailable';
 	};
 
+/** The closed `kind` vocabulary of the error contract. */
+export type ApiErrorKind = 'badRequest' | 'notFound' | 'conflict' | 'internal' | 'unavailable';
+
+/** The error kinds as a runtime list, for guarding a raw rejection. */
+export const API_ERROR_KINDS: readonly ApiErrorKind[] = ['badRequest', 'notFound', 'conflict', 'internal', 'unavailable'];
+
 /**
  * The absorber component of a stored weapon setup.
  */
 export interface AbsorberComponent {
-	catalogId?: string | null;
+	catalogId: string | null;
 	name: string;
 	decay: number;
 	ammoBurn: number;
@@ -59,7 +65,7 @@ export interface AnalyticsActivity {
  */
 export interface AnalyticsOverview {
 	totalReturnRate: number;
-	trend: string;
+	trend: Trend;
 	returnsBreakdown: ReturnsBreakdown;
 	lossesBreakdown: LossesBreakdown;
 	totalGains: number;
@@ -78,7 +84,7 @@ export interface AppSettings {
 	repairOcrEnabled: boolean;
 	endOfSessionArmourReminderEnabled: boolean;
 	developerModeEnabled: boolean;
-	mobTrackingMode: string;
+	mobTrackingMode: MobEntryMode;
 	mobTrackingTag: string;
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
 	hotbar: Record<string, unknown>;
@@ -101,7 +107,7 @@ export interface ArmourCostResult {
  */
 export interface CalibrationStatus {
 	calibrated: boolean;
-	lastCalibration?: string | null;
+	lastCalibration: string | null;
 	stale: boolean;
 }
 
@@ -115,14 +121,14 @@ export interface CaptureResult {
 	processing: boolean;
 	captured_pages: number;
 	expected_pages: number;
-	last_scan_time?: number | null;
+	last_scan_time: number | null;
 	skills_count: number;
 	configured: boolean;
 	game_window_present: boolean;
 	phase: ScanPhase;
 	processing_progress: ScanProgress;
 	has_pending_result: boolean;
-	error?: string | null;
+	error: string | null;
 	page?: number | null;
 	captured?: boolean | null;
 }
@@ -159,7 +165,7 @@ export interface CodexClaimResult {
  */
 export interface CodexMetaAttribute {
 	name: string;
-	currentLevel?: number | null;
+	currentLevel: number | null;
 }
 
 /**
@@ -185,8 +191,8 @@ export interface CodexRank {
 	skills: string[];
 	cat4Skills: string[];
 	claimed: boolean;
-	claimedSkill?: string | null;
-	claimedPed?: number | null;
+	claimedSkill: string | null;
+	claimedPed: number | null;
 	isNext: boolean;
 }
 
@@ -206,13 +212,13 @@ export interface CodexSkillOption {
 	skillName: string;
 	category: string;
 	rewardPed: number;
-	currentLevel?: number | null;
+	currentLevel: number | null;
 	levelsGained: number;
 	professionWeight: number;
 	profContribution: number;
-	hpIncrease?: number | null;
+	hpIncrease: number | null;
 	hpGain: number;
-	recommendRank?: number | null;
+	recommendRank: number | null;
 }
 
 /**
@@ -223,11 +229,11 @@ export interface CodexSkillOption {
 export interface CodexSpecies {
 	name: string;
 	baseCost: number;
-	codexType?: string | null;
+	codexType: string | null;
 	currentRank: number;
-	nextRank?: number | null;
-	nextCategory?: string | null;
-	nextCost?: number | null;
+	nextRank: number | null;
+	nextCategory: string | null;
+	nextCost: number | null;
 }
 
 /**
@@ -237,7 +243,7 @@ export interface CodexSpecies {
 export interface CodexSpeciesRanks {
 	speciesName: string;
 	baseCost: number;
-	codexType?: string | null;
+	codexType: string | null;
 	currentRank: number;
 	ranks: CodexRank[];
 }
@@ -301,7 +307,7 @@ export interface CycledBreakdown {
  * One configured component of a stored weapon setup.
  */
 export interface EquipmentComponent {
-	catalogId?: string | null;
+	catalogId: string | null;
 	name: string;
 	decay: number;
 	ammoBurn: number;
@@ -316,9 +322,9 @@ export interface EquipmentComponent {
 export interface EquipmentDetail {
 	id: string;
 	weapon: EquipmentComponent;
-	amplifier?: EquipmentComponent | null;
-	scope?: EquipmentComponent | null;
-	absorber?: AbsorberComponent | null;
+	amplifier: EquipmentComponent | null;
+	scope: EquipmentComponent | null;
+	absorber: AbsorberComponent | null;
 	costBreakdown: CostBreakdownLine[];
 	totalCostPerUse: number;
 }
@@ -350,7 +356,7 @@ export interface EquipmentRequest {
  * A catalogue search hit.
  */
 export interface EquipmentSearchHit {
-	catalogId?: string | null;
+	catalogId: string | null;
 	name: string;
 	/** Decay per use, PEC. */
 	decay: number;
@@ -366,11 +372,11 @@ export interface EquipmentSummary {
 	id: string;
 	name: string;
 	type: EquipmentKind;
-	amplifierName?: string | null;
+	amplifierName: string | null;
 	costPerUse: number;
-	damageMin?: number | null;
-	damageMax?: number | null;
-	reloadSeconds?: number | null;
+	damageMin: number | null;
+	damageMax: number | null;
+	reloadSeconds: number | null;
 	isLimited: boolean;
 	/** 1 = base item, 2 = amplified, 3 = fully accessorised. */
 	enrichmentLevel: number;
@@ -401,7 +407,7 @@ export interface GameConnection {
  * Mirrors `eo_wire::metrics::Bucket`.
  */
 export interface HistogramBucket {
-	bound_us?: number | null;
+	bound_us: number | null;
 	count: number;
 }
 
@@ -446,8 +452,8 @@ export interface HpOptimizerSkill {
 	levelsPerHp: number;
 	pedPerHp: number;
 	hpPerPed: number;
-	codexCategory?: string | null;
-	codexDivisor?: number | null;
+	codexCategory: string | null;
+	codexDivisor: number | null;
 }
 
 /**
@@ -458,7 +464,7 @@ export interface InventoryItem {
 	name: string;
 	ttValue: number;
 	markupPaid: number;
-	notes?: string | null;
+	notes: string | null;
 	acquiredAt: string;
 }
 
@@ -499,7 +505,7 @@ export interface InventorySellInput {
  * (`null` for a zero-delta sale) and the sold item.
  */
 export interface InventorySellResult {
-	ledgerEntry?: LedgerItem | null;
+	ledgerEntry: LedgerItem | null;
 	soldItem: InventoryItem;
 }
 
@@ -520,11 +526,18 @@ export interface LedgerEntryInput {
 export interface LedgerItem {
 	id: string;
 	date: string;
-	type: string;
+	type: LedgerKind;
 	description: string;
 	amount: number;
 	tag: string;
 }
+
+/**
+ * A ledger entry's accounting class. Writes validate to exactly these
+ * two values; the read side classifies anything else as an expense,
+ * mirroring the binary styling check the frontend has always applied.
+ */
+export type LedgerKind = 'expense' | 'markup';
 
 /**
  * A page of ledger entries plus the opaque cursor for the next page
@@ -533,7 +546,7 @@ export interface LedgerItem {
  */
 export interface LedgerPage {
 	entries: LedgerItem[];
-	nextCursor?: string | null;
+	nextCursor: string | null;
 }
 
 /**
@@ -542,7 +555,7 @@ export interface LedgerPage {
 export interface LedgerPreset {
 	id: string;
 	name: string;
-	type: string;
+	type: LedgerKind;
 	description: string;
 	amount: number;
 	tag: string;
@@ -627,7 +640,7 @@ export interface MetricsSnapshot {
  */
 export interface MobBreakdownRow {
 	currentName: string;
-	originalName?: string | null;
+	originalName: string | null;
 	killCount: number;
 }
 
@@ -654,6 +667,16 @@ export interface MobEditResult {
 }
 
 /**
+ * Mob-attribution input mode a session is captured under.
+ */
+export type MobEntryMode = 'mob' | 'tag';
+
+/**
+ * How the current mob label was locked.
+ */
+export type MobSource = 'manual' | 'tag';
+
+/**
  * One month of the Overview monthly breakdown.
  */
 export interface MonthlyEntry {
@@ -671,12 +694,22 @@ export interface MonthlyEntry {
  * One notable event in a session detail.
  */
 export interface NotableEvent {
-	type: string;
-	eventType: string;
-	target?: string | null;
-	item?: string | null;
+	type: NotableEventCategory;
+	eventType: NotableEventType;
+	target: string | null;
+	item: string | null;
 	value: number;
 }
+
+/**
+ * The broad notable-event family (drives styling on the frontend).
+ */
+export type NotableEventCategory = 'global' | 'hof' | 'quest' | 'warning';
+
+/**
+ * The canonical notable-event subtype the services store.
+ */
+export type NotableEventType = 'global_kill' | 'global_item' | 'hof_kill' | 'hof_item' | 'quest_started' | 'quest_completed' | 'quest_completed_pes';
 
 /**
  * One attribute row of the profession / path optimizer.
@@ -697,8 +730,8 @@ export interface OptimizerSkill {
 	currentLevel: number;
 	levelsNeeded: number;
 	pedToNextLevel: number;
-	codexCategory?: string | null;
-	codexDivisor?: number | null;
+	codexCategory: string | null;
+	codexDivisor: number | null;
 }
 
 /**
@@ -706,8 +739,8 @@ export interface OptimizerSkill {
  * until first placed).
  */
 export interface OverlayPosition {
-	x?: number | null;
-	y?: number | null;
+	x: number | null;
+	y: number | null;
 }
 
 /**
@@ -720,8 +753,8 @@ export interface PathAllocation {
 	levelsToGain: number;
 	pedCost: number;
 	newLevel: number;
-	codexCategory?: string | null;
-	codexDivisor?: number | null;
+	codexCategory: string | null;
+	codexDivisor: number | null;
 }
 
 /**
@@ -734,8 +767,8 @@ export interface PathOptimizerResult {
 	attributes: OptimizerAttribute[];
 	profession: string;
 	mode: string;
-	inputTargetLevel?: number | null;
-	inputPedBudget?: number | null;
+	inputTargetLevel: number | null;
+	inputPedBudget: number | null;
 	currentLevel: number;
 	endLevel: number;
 	professionLevelsGained: number;
@@ -791,9 +824,17 @@ export interface PlaylistInput {
  */
 export interface PlaylistItem {
 	questId: string;
-	description?: string | null;
-	groupType: string;
+	description: string | null;
+	groupType: PlaylistItemGroup;
 }
+
+/**
+ * Which playlist group a quest slot belongs to. The serialised forms
+ * are byte-identical to the strings they replace; the input side
+ * (`PlaylistItemInput`) deliberately stays a plain string so its
+ * service-level validation and error replies are untouched.
+ */
+export type PlaylistItemGroup = 'immediate' | 'long_horizon';
 
 /**
  * One classified quest slot in a playlist create/update.
@@ -810,8 +851,8 @@ export interface PlaylistItemInput {
 export interface ProfessionLevel {
 	name: string;
 	level: number;
-	anchorLevel?: number | null;
-	gainSinceAnchor?: number | null;
+	anchorLevel: number | null;
+	gainSinceAnchor: number | null;
 	category: string;
 }
 
@@ -866,7 +907,7 @@ export interface ProspectResult {
 	warnings: string[];
 	profession: string;
 	sliceType: string;
-	sliceValue?: string | null;
+	sliceValue: string | null;
 	markupUplift: number;
 	currentLevel: number;
 	targetLevel: number;
@@ -874,8 +915,8 @@ export interface ProspectResult {
 	projectedHours: number;
 	expectedLootTt: number;
 	expectedNetTtBurn: number;
-	speculativeLootTt?: number | null;
-	speculativeNetTtBurn?: number | null;
+	speculativeLootTt: number | null;
+	speculativeNetTtBurn: number | null;
 	sample: ProspectSample;
 }
 
@@ -930,23 +971,23 @@ export type ProspectSliceType = 'global' | 'tag' | 'mob' | 'weapon';
 export interface Quest {
 	id: string;
 	name: string;
-	category?: string | null;
+	category: string | null;
 	targetMobs: string[];
 	planet: string;
-	waypoint?: string | null;
-	cooldownDurationHours?: number | null;
-	cooldownExpiresAt?: string | null;
-	reward?: number | null;
+	waypoint: string | null;
+	cooldownDurationHours: number | null;
+	cooldownExpiresAt: string | null;
+	reward: number | null;
 	rewardIsSkill: boolean;
-	expectedRewardMarkupPercent?: number | null;
+	expectedRewardMarkupPercent: number | null;
 	rewardDescription: string;
 	notes: string;
-	chainName?: string | null;
-	chainPosition?: number | null;
-	chainTotal?: number | null;
+	chainName: string | null;
+	chainPosition: number | null;
+	chainTotal: number | null;
 	playlistIds: string[];
 	/** A fractional epoch-seconds timestamp (the tracker's clock is sub-second), null while the quest is not in progress. */
-	startedAt?: number | null;
+	startedAt: number | null;
 }
 
 /**
@@ -958,10 +999,10 @@ export interface QuestAnalyticsRow {
 	questId: string;
 	questName: string;
 	planet: string;
-	category?: string | null;
+	category: string | null;
 	rewardPed: number;
 	rewardIsSkill: boolean;
-	expectedRewardMarkupPercent?: number | null;
+	expectedRewardMarkupPercent: number | null;
 	totalExpectedRewardPed: number;
 	linkedSessions: number;
 	totalDurationSec: number;
@@ -1008,13 +1049,33 @@ export interface QuestInput {
  */
 export interface QuestLinkDecision {
 	sessionId: string;
-	status: string;
-	linkType?: string | null;
+	status: QuestLinkStatus;
+	linkType?: QuestLinkType | null;
 	questId?: string | null;
 	questName?: string | null;
 	playlistId?: string | null;
 	playlistName?: string | null;
 }
+
+/**
+ * Why the quest-link suggestion took its shape.
+ */
+export type QuestLinkReason = 'single_quest' | 'exact_playlist' | 'no_completions' | 'unclean' | 'ambiguous_playlist' | 'declined' | 'already_linked';
+
+/**
+ * The quest-link decision's outcome.
+ */
+export type QuestLinkStatus = 'linked' | 'declined';
+
+/**
+ * What the quest-link suggestion proposes.
+ */
+export type QuestLinkSuggestionType = 'quest' | 'playlist' | 'none';
+
+/**
+ * Which entity a linked decision bound.
+ */
+export type QuestLinkType = 'quest' | 'playlist';
 
 /**
  * A playlist in the wire shape (`_format_playlist`). Membership arrives
@@ -1046,11 +1107,11 @@ export interface RebuildReport {
  * One recent event in the active-session snapshot feed.
  */
 export interface RecentEvent {
-	type: string;
+	type: NotableEventCategory;
 	description: string;
 	value: number;
-	eventType: string;
-	timestamp?: string | null;
+	eventType: NotableEventType;
+	timestamp: string | null;
 	id: string;
 }
 
@@ -1067,7 +1128,7 @@ export interface RejectResult {
  * The release-mob acknowledgement.
  */
 export interface ReleaseResult {
-	released?: string | null;
+	released: string | null;
 }
 
 /**
@@ -1115,14 +1176,14 @@ export interface ScanStatus {
 	processing: boolean;
 	captured_pages: number;
 	expected_pages: number;
-	last_scan_time?: number | null;
+	last_scan_time: number | null;
 	skills_count: number;
 	configured: boolean;
 	game_window_present: boolean;
 	phase: ScanPhase;
 	processing_progress: ScanProgress;
 	has_pending_result: boolean;
-	error?: string | null;
+	error: string | null;
 }
 
 /**
@@ -1139,7 +1200,7 @@ export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'c
 export interface SessionDetail {
 	sessionId: string;
 	summary: SessionSummary;
-	mobEntryMode: string;
+	mobEntryMode: MobEntryMode;
 	notableEvents: NotableEvent[];
 	lootBreakdown: LootEntry[];
 	deactivatedLootBreakdown: LootEntry[];
@@ -1154,12 +1215,12 @@ export interface SessionDetail {
  */
 export interface SessionQuestLinkSuggestion {
 	sessionId: string;
-	suggestionType?: string | null;
-	reason?: string | null;
-	questId?: string | null;
-	questName?: string | null;
-	playlistId?: string | null;
-	playlistName?: string | null;
+	suggestionType: QuestLinkSuggestionType | null;
+	reason: QuestLinkReason | null;
+	questId: string | null;
+	questName: string | null;
+	playlistId: string | null;
+	playlistName: string | null;
 }
 
 /**
@@ -1215,8 +1276,8 @@ export interface SkillLevel {
 	name: string;
 	category: string;
 	level: number;
-	anchorLevel?: number | null;
-	gainSinceAnchor?: number | null;
+	anchorLevel: number | null;
+	gainSinceAnchor: number | null;
 	rankName: string;
 	ttValue: number;
 	isAttribute: boolean;
@@ -1244,7 +1305,7 @@ export interface SpacebarResult {
 export interface StartResult {
 	session_id: string;
 	started_at: string;
-	status: string;
+	status: TrackingState;
 }
 
 /**
@@ -1263,7 +1324,7 @@ export interface StatProfession {
 export interface StopResult {
 	session_id: string;
 	started_at: string;
-	ended_at?: string | null;
+	ended_at: string | null;
 	kill_count: number;
 }
 
@@ -1328,8 +1389,8 @@ export interface ToolStat {
  */
 export interface TrackingSession {
 	id: string;
-	startTime?: string | null;
-	endTime?: string | null;
+	startTime: string | null;
+	endTime: string | null;
 	duration: number;
 	primaryMobs: string[];
 	primaryWeapons: string[];
@@ -1348,14 +1409,14 @@ export interface TrackingSession {
  * movement a present-null field is dropped rather than serialised null.
  */
 export interface TrackingSnapshot {
-	status?: string | null;
+	status?: TrackingState | null;
 	hotbarListenerActive?: boolean | null;
-	weaponAttribution?: string | null;
+	weaponAttribution?: WeaponAttribution | null;
 	repairOcrEnabled?: boolean | null;
 	endOfSessionArmourReminderEnabled?: boolean | null;
-	mobEntryMode?: string | null;
+	mobEntryMode?: MobEntryMode | null;
 	currentMob?: string | null;
-	mobSource?: string | null;
+	mobSource?: MobSource | null;
 	currentTool?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
@@ -1386,17 +1447,28 @@ export interface TrackingSnapshot {
 }
 
 /**
+ * The session state a tracking readout reports.
+ */
+export type TrackingState = 'idle' | 'active';
+
+/**
+ * The Overview headline trend, as the service computes it. The
+ * serialised forms are byte-identical to the strings they replace.
+ */
+export type Trend = 'improving' | 'declining' | 'stable';
+
+/**
  * The trifecta attribution summary (present when trifecta mode is active
  * and a preset or binding exists). Its members are always emitted (a
  * null binding stays on the wire), so none skip.
  */
 export interface TrifectaAttribution {
-	activePresetId?: string | null;
-	presetName?: string | null;
+	activePresetId: string | null;
+	presetName: string | null;
 	presets: TrifectaPresetRef[];
-	smallWeapon?: string | null;
-	bigWeapon?: string | null;
-	healTool?: string | null;
+	smallWeapon: string | null;
+	bigWeapon: string | null;
+	healTool: string | null;
 }
 
 /**
@@ -1426,11 +1498,11 @@ export interface TrifectaPresetRef {
 export interface TrifectaPresetView {
 	id: string;
 	name: string;
-	smallWeaponId?: number | null;
-	bigWeaponId?: number | null;
-	healId?: number | null;
+	smallWeaponId: number | null;
+	bigWeaponId: number | null;
+	healId: number | null;
 	ready: boolean;
-	message?: string | null;
+	message: string | null;
 }
 
 /**
@@ -1438,11 +1510,11 @@ export interface TrifectaPresetView {
  * readiness lifted to the top level.
  */
 export interface TrifectaSettings {
-	activePresetId?: string | null;
-	activePresetName?: string | null;
+	activePresetId: string | null;
+	activePresetName: string | null;
 	presets: TrifectaPresetView[];
 	ready: boolean;
-	message?: string | null;
+	message: string | null;
 }
 
 /**
@@ -1454,14 +1526,14 @@ export interface UndoResult {
 	processing: boolean;
 	captured_pages: number;
 	expected_pages: number;
-	last_scan_time?: number | null;
+	last_scan_time: number | null;
 	skills_count: number;
 	configured: boolean;
 	game_window_present: boolean;
 	phase: ScanPhase;
 	processing_progress: ScanProgress;
 	has_pending_result: boolean;
-	error?: string | null;
+	error: string | null;
 	undone_page?: number | null;
 }
 
@@ -1469,10 +1541,15 @@ export interface UndoResult {
  * One active-session warning.
  */
 export interface Warning {
-	type: string;
+	type: NotableEventCategory;
 	description: string;
 	value: number;
 }
+
+/**
+ * Which attribution source prices weapon shots.
+ */
+export type WeaponAttribution = 'hotbar' | 'trifecta';
 
 /**
  * One row of the per-weapon activity comparison.

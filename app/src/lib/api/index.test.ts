@@ -27,7 +27,6 @@ const { FakeApiError, guideState, tauriInvoke } = vi.hoisted(() => {
 
 vi.mock('./client', () => ({
 	ApiError: FakeApiError,
-	manualSkillScanCapturePng: async (page: number) => `data:image/png;base64,page${page}`,
 }));
 
 vi.mock('$lib/guide/state.svelte', () => ({ guideState }));
@@ -694,9 +693,13 @@ describe('getCharacterProspect dispatches the typed command', () => {
 	});
 });
 
-describe('re-exported client surface', () => {
-	it('forwards ApiError and the capture-preview helper from ./client', async () => {
+describe('re-exported client and shell surface', () => {
+	it('forwards ApiError from ./client and the shell window commands from ./shell', async () => {
 		expect(api.ApiError).toBe(FakeApiError);
-		expect(await api.manualSkillScanCapturePng(2)).toBe('data:image/png;base64,page2');
+		tauriInvoke.mockResolvedValue('aGVsbG8=');
+		expect(await api.manualSkillScanCapturePng(2)).toBe('data:image/png;base64,aGVsbG8=');
+		expect(tauriInvoke).toHaveBeenCalledWith('capture_png', { page: 2 });
+		await api.toggleOverlay();
+		expect(tauriInvoke).toHaveBeenCalledWith('toggle_overlay');
 	});
 });

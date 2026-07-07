@@ -11,6 +11,7 @@
 		removeFromLibrary,
 		getEquipmentDetail,
 		getSettings,
+		hotbarFromSettings,
 		type EquipmentSearchResult
 	} from '$lib/api';
 	import { getPreference } from '$lib/preferences';
@@ -118,7 +119,7 @@
 				consumables = library
 					.filter((e) => e.type === 'consumable')
 					.sort((a, b) => a.name.localeCompare(b.name));
-				hotbar = settings.hotbar ?? {};
+				hotbar = hotbarFromSettings(settings);
 				hotbarHooksEnabled = settings.hotbarHooksEnabled;
 				trifecta = settings.trifecta;
 				detailCache = {};
@@ -258,7 +259,8 @@
 		[...equipmentList].sort((a, b) => a.name.localeCompare(b.name))
 	);
 
-	// Local cost preview (formula mirrors backend cost_engine.py for instant feedback)
+	// Local cost preview (formula mirrors the backend cost engine's
+	// per-use pricing for instant feedback)
 	let liveCostPreview = $derived.by(() => {
 		if (!selectedWeapon) return null;
 		const weaponMult = selectedWeapon.isLimited ? markupPercent / 100 : 1.0;
@@ -276,19 +278,21 @@
 	});
 
 	// ── Helpers ──
-	function enrichmentLabel(level: 0 | 1 | 2 | 3): string {
+	// The wire carries the enrichment level as a plain number (0-3 by
+	// construction); anything outside the ladder reads as unresolved.
+	function enrichmentLabel(level: number): string {
 		const labels = ['Unresolved', 'Base', 'Base + Amp', 'Full Setup'];
-		return labels[level];
+		return labels[level] ?? labels[0];
 	}
 
-	function enrichmentColor(level: 0 | 1 | 2 | 3): 'negative' | 'warning' | 'accent' | 'positive' {
+	function enrichmentColor(level: number): 'negative' | 'warning' | 'accent' | 'positive' {
 		const colors: ('negative' | 'warning' | 'accent' | 'positive')[] = [
 			'negative',
 			'warning',
 			'accent',
 			'positive'
 		];
-		return colors[level];
+		return colors[level] ?? colors[0];
 	}
 
 	function formatPec(pec: number): string {

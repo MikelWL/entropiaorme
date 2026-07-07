@@ -122,6 +122,7 @@ export const equipmentDemoDetails: Record<string, EquipmentDetail> = {
 			ammoBurn: 0.55,
 			markupPercent: 100,
 			isLimited: false,
+			damageEnhancers: 0,
 		},
 		scope: null,
 		absorber: null,

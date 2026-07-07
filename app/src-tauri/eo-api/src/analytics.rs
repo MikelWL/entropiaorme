@@ -28,6 +28,7 @@ use eo_services::analytics::AnalyticsError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::Nullable;
 use crate::{Api, ApiError};
 
 // ── Overview response DTOs ──────────────────────────────────────────
@@ -92,13 +93,43 @@ pub struct MonthlyEntry {
     pub ledger_losses: BTreeMap<String, f64>,
 }
 
+/// The Overview headline trend, as the service computes it. The
+/// serialised forms are byte-identical to the strings they replace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Trend {
+    Improving,
+    Declining,
+    Stable,
+}
+
+/// A ledger entry's accounting class. Writes validate to exactly these
+/// two values; the read side classifies anything else as an expense,
+/// mirroring the binary styling check the frontend has always applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LedgerKind {
+    Expense,
+    Markup,
+}
+
+impl LedgerKind {
+    fn classify(kind: &str) -> Self {
+        if kind == "markup" {
+            Self::Markup
+        } else {
+            Self::Expense
+        }
+    }
+}
+
 /// The Overview aggregate: the total return rate and trend, the returns /
 /// losses breakdowns, the totals, and the day / month timelines.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyticsOverview {
     pub total_return_rate: f64,
-    pub trend: String,
+    pub trend: Trend,
     pub returns_breakdown: ReturnsBreakdown,
     pub losses_breakdown: LossesBreakdown,
     pub total_gains: f64,
@@ -165,7 +196,7 @@ pub struct LedgerItem {
     pub id: String,
     pub date: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: LedgerKind,
     pub description: String,
     pub amount: f64,
     pub tag: String,
@@ -178,7 +209,7 @@ pub struct LedgerItem {
 #[serde(rename_all = "camelCase")]
 pub struct LedgerPage {
     pub entries: Vec<LedgerItem>,
-    pub next_cursor: Option<String>,
+    pub next_cursor: Nullable<String>,
 }
 
 /// One ledger preset (a reusable ledger-entry template).
@@ -187,7 +218,7 @@ pub struct LedgerPreset {
     pub id: String,
     pub name: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: LedgerKind,
     pub description: String,
     pub amount: f64,
     pub tag: String,
@@ -201,7 +232,7 @@ pub struct InventoryItem {
     pub name: String,
     pub tt_value: f64,
     pub markup_paid: f64,
-    pub notes: Option<String>,
+    pub notes: Nullable<String>,
     pub acquired_at: String,
 }
 
@@ -210,7 +241,7 @@ pub struct InventoryItem {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InventorySellResult {
-    pub ledger_entry: Option<LedgerItem>,
+    pub ledger_entry: Nullable<LedgerItem>,
     pub sold_item: InventoryItem,
 }
 
@@ -313,7 +344,7 @@ impl Api {
             .map_err(analytics_error("ledger list"))?;
         Ok(LedgerPage {
             entries: page.entries.into_iter().map(ledger_item_dto).collect(),
-            next_cursor: page.next_cursor,
+            next_cursor: page.next_cursor.into(),
         })
     }
 
@@ -472,7 +503,7 @@ impl Api {
             .map_err(analytics_error("inventory sell"))?
         {
             Some(sale) => Ok(InventorySellResult {
-                ledger_entry: sale.ledger_entry.map(ledger_item_dto),
+                ledger_entry: sale.ledger_entry.map(ledger_item_dto).into(),
                 sold_item: inventory_item_dto(sale.sold_item),
             }),
             None => Err(ApiError::not_found("Inventory item not found")),
@@ -485,7 +516,12 @@ impl Api {
 pub(crate) fn overview_dto(data: eo_services::analytics::OverviewData) -> AnalyticsOverview {
     AnalyticsOverview {
         total_return_rate: data.total_return_rate,
-        trend: data.trend.to_string(),
+        // The service emits exactly these three; its own fallback is stable.
+        trend: match data.trend {
+            "improving" => Trend::Improving,
+            "declining" => Trend::Declining,
+            _ => Trend::Stable,
+        },
         returns_breakdown: ReturnsBreakdown {
             loot_tt: data.returns_breakdown.loot_tt,
             pes: data.returns_breakdown.pes,
@@ -585,7 +621,7 @@ pub(crate) fn ledger_item_dto(row: eo_services::analytics::LedgerRow) -> LedgerI
     LedgerItem {
         id: row.id,
         date: row.date,
-        kind: row.kind,
+        kind: LedgerKind::classify(&row.kind),
         description: row.description,
         amount: row.amount,
         tag: row.tag,
@@ -596,7 +632,7 @@ pub(crate) fn ledger_preset_dto(row: eo_services::analytics::PresetRow) -> Ledge
     LedgerPreset {
         id: row.id,
         name: row.name,
-        kind: row.kind,
+        kind: LedgerKind::classify(&row.kind),
         description: row.description,
         amount: row.amount,
         tag: row.tag,
@@ -609,7 +645,7 @@ pub(crate) fn inventory_item_dto(row: eo_services::analytics::InventoryRow) -> I
         name: row.name,
         tt_value: row.tt_value,
         markup_paid: row.markup_paid,
-        notes: row.notes,
+        notes: row.notes.into(),
         acquired_at: row.acquired_at,
     }
 }

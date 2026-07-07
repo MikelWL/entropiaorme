@@ -99,9 +99,13 @@ async fn a_ledger_create_reads_back_the_wire_shape() {
         })
         .await
         .unwrap();
-    // Transport invariance: the `type` key stays `type`, the amount coerces
-    // to its float form, and the generated id rides along.
-    assert_eq!(created.kind, "expense");
+    // Transport invariance: the `type` key stays `type`, its serialised
+    // form stays the plain string, the amount coerces to its float form,
+    // and the generated id rides along.
+    assert_eq!(
+        serde_json::to_value(created.kind).unwrap(),
+        serde_json::json!("expense")
+    );
     assert_eq!(created.date, "2026-05-01");
     assert_eq!(created.amount, 12.5);
     assert!(!created.id.is_empty());
@@ -140,7 +144,7 @@ async fn the_ledger_page_carries_the_next_cursor_when_more_remain() {
     // yields every entry once, newest first.
     let first = api.ledger_list(None, Some(2)).await.unwrap();
     assert_eq!(first.entries.len(), 2);
-    let cursor = first.next_cursor.clone().expect("a further page");
+    let cursor = first.next_cursor.0.clone().expect("a further page");
     let second = api.ledger_list(Some(cursor), Some(2)).await.unwrap();
     assert_eq!(second.entries.len(), 1);
     assert_eq!(second.next_cursor, None);
@@ -248,8 +252,14 @@ async fn a_profit_sale_emits_a_markup_ledger_entry() {
         )
         .await
         .unwrap();
-    let entry = sold.ledger_entry.expect("a profit sale emits a ledger row");
-    assert_eq!(entry.kind, "markup");
+    let entry = sold
+        .ledger_entry
+        .0
+        .expect("a profit sale emits a ledger row");
+    assert_eq!(
+        serde_json::to_value(entry.kind).unwrap(),
+        serde_json::json!("markup")
+    );
     assert_eq!(entry.amount, 8.0);
     assert_eq!(entry.tag, "inventory_sale");
     assert_eq!(entry.description, "Inventory Sale: Sword");
