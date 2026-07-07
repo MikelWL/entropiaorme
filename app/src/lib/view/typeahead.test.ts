@@ -195,7 +195,10 @@ describe('stale responses', () => {
 
 describe('errors', () => {
 	it('sets error to a rejected Error message and empties the results', async () => {
-		const search = vi.fn().mockResolvedValueOnce([alpha]).mockRejectedValueOnce(new Error('backend away'));
+		const search = vi
+			.fn()
+			.mockResolvedValueOnce([alpha])
+			.mockRejectedValueOnce(new Error('backend away'));
 		const ta = createTypeahead<Item>({ search });
 		ta.query = 'alp';
 		vi.advanceTimersByTime(200);

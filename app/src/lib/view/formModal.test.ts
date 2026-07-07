@@ -152,7 +152,10 @@ describe('submit', () => {
 	});
 
 	it('clears the previous error at the start of a retry, then succeeds', async () => {
-		const save = vi.fn().mockRejectedValueOnce(new Error('first try')).mockResolvedValueOnce(undefined);
+		const save = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('first try'))
+			.mockResolvedValueOnce(undefined);
 		const { modal } = makeModal(save);
 		modal.openNew();
 		await modal.submit();
