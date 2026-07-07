@@ -12,6 +12,7 @@
 //! xtask version-stamps
 //! xtask mutation-floors     --outcomes <PATH>
 //! xtask no-bare-setinterval [--warn-only]
+//! xtask no-new-writable     [--warn-only]
 //! xtask bump-version        <NEW_VERSION>
 //! ```
 
@@ -21,6 +22,7 @@ mod gen_ts;
 mod git;
 mod mutation_floors;
 mod no_bare_setinterval;
+mod no_new_writable;
 mod ratify;
 mod version_stamps;
 
@@ -38,6 +40,7 @@ SUBCOMMANDS:
     version-stamps                            assert the app version stamps agree across the tree
     mutation-floors --outcomes <PATH>         enforce per-file cargo-mutants score floors
     no-bare-setinterval [--warn-only]         forbid bare setInterval and the retired tracking event in the frontend
+    no-new-writable [--warn-only]             forbid svelte/store imports outside the frozen legacy surface
     bump-version <NEW_VERSION>                rewrite the app version stamps in lock-step
     gen-ts [--check]                          emit the TypeScript bindings for the typed IPC commands
 ";
@@ -56,6 +59,7 @@ fn main() -> ExitCode {
         "version-stamps" => version_stamps::run(rest),
         "mutation-floors" => mutation_floors::run(rest),
         "no-bare-setinterval" => no_bare_setinterval::run(rest),
+        "no-new-writable" => no_new_writable::run(rest),
         "bump-version" => bump_version::run(rest),
         "gen-ts" => gen_ts::run(rest),
         "-h" | "--help" | "help" => {

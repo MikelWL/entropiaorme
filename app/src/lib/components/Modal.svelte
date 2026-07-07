@@ -15,6 +15,11 @@
 		class?: string;
 	} = $props();
 
+	let panelEl = $state<HTMLDivElement | null>(null);
+
+	const FOCUSABLE_SELECTOR =
+		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 	function handleBackdropClick(e: MouseEvent) {
 		if (e.target === e.currentTarget) {
 			open = false;
@@ -24,8 +29,46 @@
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			open = false;
+		} else if (e.key === 'Tab') {
+			trapTab(e);
 		}
 	}
+
+	// Keep Tab cycling within the panel while the dialog is open.
+	function trapTab(e: KeyboardEvent) {
+		if (!panelEl || e.defaultPrevented) return;
+		const focusables = Array.from(panelEl.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+		if (focusables.length === 0) {
+			e.preventDefault();
+			panelEl.focus();
+			return;
+		}
+		const first = focusables[0];
+		const last = focusables[focusables.length - 1];
+		const active = document.activeElement;
+		const inside = active instanceof HTMLElement && panelEl.contains(active);
+		if (e.shiftKey) {
+			if (!inside || active === first || active === panelEl) {
+				e.preventDefault();
+				last.focus();
+			}
+		} else if (!inside || active === last) {
+			e.preventDefault();
+			first.focus();
+		}
+	}
+
+	// On open: remember the opener and move focus into the panel; on close
+	// (or unmount) hand focus back to the previously focused element.
+	$effect(() => {
+		if (!open) return;
+		const previouslyFocused =
+			document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		panelEl?.focus();
+		return () => {
+			previouslyFocused?.focus();
+		};
+	});
 </script>
 
 <svelte:window onkeydown={open ? handleKeydown : undefined} />
@@ -43,6 +86,7 @@
 		></div>
 
 		<div
+			bind:this={panelEl}
 			class="relative z-10 w-full max-w-md rounded-lg border border-border-bright/60
 				bg-surface-raised/95 shadow-lg backdrop-blur-md
 				before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit]
@@ -51,6 +95,7 @@
 			role="dialog"
 			aria-modal="true"
 			aria-label={title}
+			tabindex="-1"
 			transition:scale={{ duration: 220, start: 0.96, easing: quintOut }}
 		>
 			{#if title}

@@ -34,3 +34,4 @@
   - [ADR-0019: Typed IPC commands over a service facade](adr/0019-typed-command-facade.md)
   - [ADR-0020: The tracker as a single-owner actor](adr/0020-tracker-actor-refounding.md)
   - [ADR-0021: A synchronous database core](adr/0021-synchronous-database-core.md)
+  - [ADR-0022: Runes-native shared state](adr/0022-runes-native-shared-state.md)
