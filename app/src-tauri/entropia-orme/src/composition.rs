@@ -70,8 +70,10 @@ use eo_services::clock::{Clock, RealClock};
 use eo_services::config_service::{
     active_trifecta_preset, load_config_readonly, AppConfig, ConfigReader, ConfigService,
 };
-use eo_services::cost_engine::{cost_per_shot_from_props, heal_cost_per_use, heal_reload_seconds};
-use eo_services::db::{AdoptError, Db, DbError};
+use eo_services::db::{AdoptError, Db};
+use eo_services::equipment_pricing::{
+    cost_per_shot_ped, heal_cost_from_props, hotbar_equipment_row_sync, weapon_cost_by_name,
+};
 use eo_services::eu_window;
 use eo_services::event_bus::{EventBus, Topic};
 use eo_services::game_data_store::GameDataStore;
@@ -458,6 +460,11 @@ pub struct Composed {
     /// handles.
     pub api: Arc<eo_api::Api>,
     pub producers: ProducerState,
+    /// The warmed OCR engine when the runtime loaded. Production
+    /// consumers (the scan services) hold their own clones captured at
+    /// compose time, so nothing re-reads this copy outside the
+    /// composition tests, which drive the warmed engine directly.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub ocr_engine: Option<Arc<OcrEngine>>,
     /// The manual skill-scan state machine, composed on the spine bus (its
     /// `scan.status.changed` envelopes reach the shell's event bridge) over
@@ -1075,7 +1082,7 @@ fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
         // as the swallowed async error did.
         db.with_reader_blocking(move |conn| {
             let Some((name, item_type, properties_json)) =
-                hotbar_equipment_row_blocking(conn, equip_id)?
+                hotbar_equipment_row_sync(conn, equip_id)?
             else {
                 return Ok(None);
             };
@@ -1095,97 +1102,6 @@ fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
         .ok()
         .flatten()
     })
-}
-
-/// One equipment-library row by id: `(name, item_type, properties JSON)`, or
-/// None when absent. The synchronous reader-core counterpart of
-/// `Db::hotbar_equipment_row`, run on the hotbar listener's plain key thread.
-fn hotbar_equipment_row_blocking(
-    conn: &rusqlite::Connection,
-    id: i64,
-) -> Result<Option<(String, String, String)>, DbError> {
-    use rusqlite::OptionalExtension as _;
-    let row = conn
-        .query_row(
-            "SELECT name, item_type, properties_json FROM equipment_library \
-             WHERE id = ?",
-            rusqlite::params![id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            },
-        )
-        .optional()?;
-    Ok(row)
-}
-
-/// The first weapon-row `properties_json` whose name contains the fragment,
-/// the synchronous reader-core counterpart of
-/// `Db::weapon_properties_by_name_fragment`: a `LIKE '%fragment%'` over weapon
-/// rows with the fragment's own `%` / `_` / `\` escaped under an explicit
-/// `ESCAPE '\'`, and the fragment trimmed exactly as the async path trims it.
-fn weapon_properties_by_name_fragment_blocking(
-    conn: &rusqlite::Connection,
-    fragment: &str,
-) -> Result<Option<String>, DbError> {
-    use rusqlite::OptionalExtension as _;
-    let safe = fragment
-        .trim()
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let row = conn
-        .query_row(
-            "SELECT properties_json FROM equipment_library \
-             WHERE item_type = 'weapon' AND name LIKE ? ESCAPE '\\'",
-            rusqlite::params![format!("%{safe}%")],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    Ok(row)
-}
-
-/// The per-shot weapon cost in PED for a tool by name fragment, mirroring the
-/// cost provider's `equipment.cost_per_shot`: `totalCostPerUse / 100`, or 0
-/// when the tool is unknown. A read failure degrades to 0 (the tool-unknown
-/// value), exactly as the swallowed async lookup did, so a weapon slot still
-/// resolves rather than dropping the tool change.
-fn weapon_cost_by_name(conn: &rusqlite::Connection, name: &str) -> f64 {
-    match weapon_properties_by_name_fragment_blocking(conn, name)
-        .ok()
-        .flatten()
-    {
-        Some(properties_json) => {
-            let props: Value = serde_json::from_str(&properties_json).unwrap_or(Value::Null);
-            cost_per_shot_from_props(&props, None)["totalCostPerUse"]
-                .as_f64()
-                .unwrap_or(0.0)
-                / 100.0
-        }
-        None => 0.0,
-    }
-}
-
-/// The healing-tool per-use cost (PED) and reload (seconds) from a row's
-/// properties, mirroring `_heal_tool_cost_lookup`: a missing or empty tool
-/// entity falls back to `(0, 2.5)`; otherwise the cost engine's per-use cost
-/// over the entity and its markup, in PED, and the entity's reload.
-fn heal_cost_from_props(properties_json: &str) -> (f64, f64) {
-    let props: Value = serde_json::from_str(properties_json).unwrap_or(Value::Null);
-    let tool = props
-        .get("tool_entity")
-        .filter(|value| !value.is_null() && value.as_object().is_none_or(|map| !map.is_empty()));
-    let Some(tool) = tool else {
-        return (0.0, 2.5);
-    };
-    let markup = props.get("markup").and_then(Value::as_f64).unwrap_or(100.0) / 100.0;
-    (
-        heal_cost_per_use(tool, markup) / 100.0,
-        heal_reload_seconds(tool),
-    )
 }
 
 /// Bridge the producer bus's frontend-facing domain topics onto the typed
@@ -1240,13 +1156,10 @@ impl EquipmentLibrary for LiveEquipmentLibrary {
     }
 
     fn cost_per_shot(&self, tool_name: &str) -> f64 {
-        // The per-shot cost in PED derived from the profile,
-        // `totalCostPerUse / 100`, or 0.0 when the tool is unknown.
+        // The per-shot cost in PED derived from the profile, or 0.0 when
+        // the tool is unknown.
         match self.weapon_profile(tool_name) {
-            Some(props) => {
-                let cost = cost_per_shot_from_props(&Value::Object(props), None);
-                cost["totalCostPerUse"].as_f64().unwrap_or(0.0) / 100.0
-            }
+            Some(props) => cost_per_shot_ped(&Value::Object(props)),
             None => 0.0,
         }
     }

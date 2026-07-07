@@ -35,9 +35,10 @@ Defined by `app/src-tauri/eo-api/src/lib.rs`. The facade is the application boun
 
 Defined by `app/src-tauri/eo-services/src/lib.rs`. This crate carries the service layer behind the command facade, built up service by service over the course of the migration. Its modules group as follows:
 
-- **Live tracking.** `tracker` (the `HuntTracker` producer spine), `chatlog_watcher` and `chatlog_parser` (the tailing watcher and line grammar), `session_summary`, `tracking_models`, `loot_filter`, and `mob_lookup_service`.
+- **Live tracking.** `tracker` (the `HuntTracker` producer spine), `chatlog_watcher` and `chatlog_parser` (the tailing watcher and line grammar), `session_summary`, `tracking_reads` (the session list/detail reads and the post-hoc session edits), `tracking_models`, `loot_filter`, and `mob_lookup_service`.
 - **Quests and codex.** `quests`, `codex`, and `codex_categories`.
-- **Character and cost analytics.** `character_calc`, `cost_engine` (the pure-arithmetic leaf service), `trifecta_service`, `tt_value_curve`, and `tool_inference`.
+- **Ledger analytics.** `analytics` (the Overview/Activity aggregates and the ledger, preset, and inventory CRUD) and `daily_rollup` (the read-model projection those aggregates scale on).
+- **Character and cost analytics.** `character_calc`, `cost_engine` (the pure-arithmetic leaf service), `equipment_pricing` (the per-shot and per-use cost lookups over the equipment library), `trifecta_service`, `tt_value_curve`, and `tool_inference`.
 - **Configuration.** `config_service` (the settings reader and writer).
 - **Scanning and OCR.** `ocr_engine` (the recogniser, EP-agnostic; the runtime wiring is a composition-root concern), `screen_capture`, `skill_scan_manual`, `skill_panel`, `scan_completion`, `scan_drift`, `scan_presets`, and `repair_ocr`. The fuzzy text matching used by these services lives in `fuzzy_match` and `difflib`.
 - **Input listeners.** `hotbar_listener` and `spacebar_capture_listener` (the two OS keyboard hooks), behind the `keystroke_source` seam that filters keys at the hook boundary and provides an injectable mock for tests.

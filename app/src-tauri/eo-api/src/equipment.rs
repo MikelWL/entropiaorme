@@ -16,7 +16,6 @@ use eo_services::cost_engine::{
     is_limited,
 };
 use eo_wire::normalizer::{round_half_even, to_python_json_dumps};
-use rusqlite::OptionalExtension as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -537,22 +536,9 @@ impl Api {
 
     /// The stored library, oldest first.
     pub async fn equipment_library(&self) -> Result<Vec<EquipmentSummary>, ApiError> {
-        let rows: Vec<(i64, String, String, String)> = self
+        let rows = self
             .db
-            .with_reader(|conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, name, item_type, properties_json FROM equipment_library ORDER BY created_at",
-                )?;
-                let mapped = stmt.query_map([], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                })?;
-                Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
-            })
+            .equipment_library_rows()
             .await
             .map_err(ApiError::internal("equipment library read"))?;
         let mut results = Vec::with_capacity(rows.len());
@@ -568,40 +554,29 @@ impl Api {
         req: &EquipmentRequest,
     ) -> Result<EquipmentSummary, ApiError> {
         let built = self.build_props(req)?;
-        let name = built.name;
-        let kind_str = req.kind.as_str();
-        let stored_catalog_id = built.stored_catalog_id;
         let props_json = to_python_json_dumps(&built.props);
         let inserted = self
             .db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "INSERT INTO equipment_library (name, item_type, catalog_id, properties_json) \
-                     VALUES (?, ?, ?, ?)",
-                    rusqlite::params![name, kind_str, stored_catalog_id, props_json],
-                )?;
-                Ok(conn.last_insert_rowid())
-            })
+            .insert_equipment(
+                built.name,
+                req.kind.as_str().to_string(),
+                built.stored_catalog_id,
+                props_json,
+            )
             .await
             .map_err(ApiError::internal("equipment insert"))?;
-        let (id, name, item_type, raw_props) = self
+        let Some((id, name, item_type, raw_props)) = self
             .db
-            .with_reader(move |conn| {
-                Ok(conn.query_row(
-                    "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
-                    rusqlite::params![inserted],
-                    |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
-                )?)
-            })
+            .equipment_row(inserted)
             .await
-            .map_err(ApiError::internal("inserted equipment read-back"))?;
+            .map_err(ApiError::internal("inserted equipment read-back"))?
+        else {
+            // The row was just inserted; its absence is a driver-level
+            // invariant break.
+            return Err(ApiError::invalid_state(
+                "inserted equipment read-back failed",
+            ));
+        };
         summary_from_parts(id, &name, &item_type, &raw_props)
     }
 
@@ -613,15 +588,7 @@ impl Api {
     ) -> Result<EquipmentSummary, ApiError> {
         let existing_type: Option<String> = self
             .db
-            .with_reader(move |conn| {
-                Ok(conn
-                    .query_row(
-                        "SELECT id, item_type FROM equipment_library WHERE id = ?",
-                        rusqlite::params![item_id],
-                        |row| row.get::<_, String>(1),
-                    )
-                    .optional()?)
-            })
+            .equipment_item_type(item_id)
             .await
             .map_err(ApiError::internal("equipment row lookup"))?;
         let Some(existing_type) = existing_type else {
@@ -633,37 +600,23 @@ impl Api {
             return Err(ApiError::bad_request("Cannot change equipment type"));
         }
         let built = self.build_props(req)?;
-        let name = built.name;
-        let stored_catalog_id = built.stored_catalog_id;
         let props_json = to_python_json_dumps(&built.props);
         self.db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "UPDATE equipment_library SET name = ?, catalog_id = ?, properties_json = ? WHERE id = ?",
-                    rusqlite::params![name, stored_catalog_id, props_json, item_id],
-                )?;
-                Ok(())
-            })
+            .update_equipment(item_id, built.name, built.stored_catalog_id, props_json)
             .await
             .map_err(ApiError::internal("equipment update"))?;
-        let (id, name, item_type, raw_props) = self
+        let Some((id, name, item_type, raw_props)) = self
             .db
-            .with_reader(move |conn| {
-                Ok(conn.query_row(
-                    "SELECT id, name, item_type, properties_json FROM equipment_library WHERE id = ?",
-                    rusqlite::params![item_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
-                )?)
-            })
+            .equipment_row(item_id)
             .await
-            .map_err(ApiError::internal("updated equipment read-back"))?;
+            .map_err(ApiError::internal("updated equipment read-back"))?
+        else {
+            // The row's existence was checked before the update; its
+            // absence is a driver-level invariant break.
+            return Err(ApiError::invalid_state(
+                "updated equipment read-back failed",
+            ));
+        };
         summary_from_parts(id, &name, &item_type, &raw_props)
     }
 
@@ -681,13 +634,7 @@ impl Api {
             ));
         }
         self.db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "DELETE FROM equipment_library WHERE id = ?",
-                    rusqlite::params![item_id],
-                )?;
-                Ok(())
-            })
+            .delete_equipment(item_id)
             .await
             .map_err(ApiError::internal("equipment delete"))?;
         Ok(())
@@ -697,24 +644,7 @@ impl Api {
     pub async fn equipment_detail(&self, item_id: i64) -> Result<EquipmentDetail, ApiError> {
         let row = self
             .db
-            .with_reader(move |conn| {
-                Ok(conn
-                    .query_row(
-                        "SELECT id, name, item_type, catalog_id, properties_json \
-                         FROM equipment_library WHERE id = ?",
-                        rusqlite::params![item_id],
-                        |row| {
-                            Ok((
-                                row.get::<_, i64>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, String>(2)?,
-                                row.get::<_, Option<String>>(3)?,
-                                row.get::<_, String>(4)?,
-                            ))
-                        },
-                    )
-                    .optional()?)
-            })
+            .equipment_detail_row(item_id)
             .await
             .map_err(ApiError::internal("equipment detail lookup"))?;
         let Some((id, name, item_type, catalog_id, raw_props)) = row else {
