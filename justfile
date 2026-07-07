@@ -28,10 +28,11 @@ default:
 dev:
     powershell -NoProfile -ExecutionPolicy RemoteSigned -File "{{justfile_directory()}}\scripts\dev-launch.ps1"
 
+# On macOS / Linux the same single Tauri dev process launches directly; env
+# vars from .env.local are inherited the same way. Ctrl+C tears the stack down.
 [unix]
 dev:
-    @echo "just dev: macOS / Linux dev launch is not yet implemented; contributions welcome."
-    @exit 1
+    npm --prefix app run tauri:dev
 
 # Run the native backend (Rust) test suite. Invoked from the workspace so
 # app/src-tauri/.cargo/config.toml is discovered: it redirects test temp
