@@ -25,6 +25,25 @@ export default defineConfig({
 	server: {
 		port,
 		strictPort: true,
+		// The shell pre-spawns its hidden satellite windows (overlay,
+		// scan-overlay) at boot, so their routes are requested while the dev
+		// server is still cold. Under that parallel first load, a component's
+		// virtual CSS module can be requested before the component itself has
+		// compiled; the raw .svelte file then falls through to the CSS
+		// pipeline and the request 500s, leaving that window's webview on a
+		// dead document until reload. Pre-transforming the satellite routes
+		// (plus the root layout they share) closes the gap.
+		warmup: {
+			clientFiles: [
+				'./src/routes/+layout.svelte',
+				'./src/routes/+page.svelte',
+				'./src/routes/overlay/+page.svelte',
+				'./src/routes/overlay-menu/+page.svelte',
+				'./src/routes/overlay-armour-cost/+page.svelte',
+				'./src/routes/scan-overlay/+layout.svelte',
+				'./src/routes/scan-overlay/+page.svelte',
+			],
+		},
 	},
 	define: {
 		// Forces the JS-driven chart tweens to settle instantly (visual-regression
