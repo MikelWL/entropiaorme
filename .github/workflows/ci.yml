@@ -436,6 +436,64 @@ jobs:
       - name: Compile the criterion benches
         run: cargo bench -p eo-services --no-run
 
+  linux-bundle:
+    name: Linux build + bundle (deb)
+    runs-on: ubuntu-latest
+    # Proves the Linux port builds the full Tauri shell and produces an
+    # installable package. It is the platform counterpart of the Windows
+    # e2e job's shell build: a Linux-only regression (a platform seam that
+    # stops compiling, a bundler/resource misconfiguration) fails here
+    # rather than surfacing only at release. Skipped on a
+    # documentation-only pull request; the ci-gate sentinel covers the
+    # required-check report in that case.
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      # The Tauri build chain's system libraries (WebKitGTK, GTK, the
+      # appindicator/rsvg stack) plus the bundler's helpers.
+      - name: Install the Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf file
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (branch SHA; dtolnay has no semver tags)
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: app/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+      - name: Install the frontend dependencies
+        working-directory: app
+        run: npm ci
+      # Build the shell and bundle the .deb through the Linux config
+      # overlay (deb target, the Linux ONNX Runtime resource). AppImage is
+      # built locally and in the release job; the per-push gate stays on
+      # the deb, which needs no FUSE and proves the same build + resource
+      # wiring.
+      - name: Build and bundle the Linux package
+        working-directory: app
+        run: npm run tauri -- build --config src-tauri/entropia-orme/tauri.linux.conf.json --bundles deb
+      - name: Confirm the .deb was produced
+        run: |
+          deb=$(find app/src-tauri/target -name '*.deb' | head -1)
+          if [ -z "$deb" ]; then echo "::error::no .deb produced by the Linux bundle"; exit 1; fi
+          echo "built $deb"
+      - name: Upload the Linux package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-deb-${{ github.run_id }}
+          path: app/src-tauri/target/**/*.deb
+          if-no-files-found: error
+
   rust-coverage:
     name: Rust backend members (branch coverage)
     runs-on: ubuntu-latest
@@ -542,7 +600,7 @@ jobs:
     # jobs did not pass, fails it, so a skip can never let an untested change
     # merge. This lets a documentation-only pull request go green in seconds
     # without deadlocking on a never-reported required job.
-    needs: [changes, golden-ratification, authoring-lint, frontend, frontend-e2e, rust-policy, rust, rust-members, rust-coverage]
+    needs: [changes, golden-ratification, authoring-lint, frontend, frontend-e2e, rust-policy, rust, rust-members, rust-coverage, linux-bundle]
     if: always()
     steps:
       - name: Require the gated jobs to have passed (or been documentation-only)
@@ -557,6 +615,7 @@ jobs:
           RUST_RESULT: ${{ needs.rust.result }}
           RUST_MEMBERS_RESULT: ${{ needs.rust-members.result }}
           RUST_COVERAGE_RESULT: ${{ needs.rust-coverage.result }}
+          LINUX_BUNDLE_RESULT: ${{ needs.linux-bundle.result }}
         shell: bash
         run: |
           if [ "$CHANGES_RESULT" != "success" ]; then
