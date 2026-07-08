@@ -1,241 +1,35 @@
 <script lang="ts">
-	import { getAnalyticsOverview } from '$lib/api';
-	import type { OverviewStats, TimelineDay, MonthlyEntry } from '$lib/types/analytics';
-	import { formatPed, formatPercent, formatDate } from '$lib/utils/format';
 	import Card from '$lib/components/Card.svelte';
 	import Divider from '$lib/components/Divider.svelte';
+	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import {
+		createOverviewModel,
+		labelFor,
+		PIE_C,
+		PIE_R,
+		PROGRESSION_GAIN_TAGS,
+		ranges
+	} from '$lib/features/analytics/overviewModel.svelte';
+	import { formatDate, formatPed, formatPercent } from '$lib/utils/format';
 
-	let data = $state<OverviewStats | null>(null);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
+	const model = createOverviewModel();
 
-	// --- Return config: per-source toggles ---
-	// lootTt (gains) and trackingCost (losses) are always on — not in config.
-	const PROGRESSION_GAIN_TAGS = new Set(['codex']);
-
-	interface ReturnConfig {
-		gainTags: Record<string, boolean>;
-		lossTags: Record<string, boolean>;
-	}
-
-	let config = $state<ReturnConfig>({ gainTags: {}, lossTags: {} });
-
-	function initConfig(stats: OverviewStats) {
-		const gainTags: Record<string, boolean> = {};
-		for (const tag of Object.keys(stats.returnsBreakdown.ledger)) {
-			if (PROGRESSION_GAIN_TAGS.has(tag)) continue;
-			gainTags[tag] = true;
-		}
-		const lossTags: Record<string, boolean> = {};
-		for (const tag of Object.keys(stats.lossesBreakdown.ledger)) {
-			lossTags[tag] = true;
-		}
-		config = { gainTags, lossTags };
-	}
-
-	let activeRange = $state('All Time');
-	let showBreakdown = $state(false);
-	const ranges = ['All Time', '30d', '90d', '1y'];
-	const periodMap: Record<string, string> = {
-		'All Time': 'all',
-		'30d': '30d',
-		'90d': '90d',
-		'1y': '1y'
-	};
-
-	$effect(() => {
-		const period = periodMap[activeRange];
-		loadData(period);
-	});
-
-	async function loadData(period: string) {
-		loading = true;
-		error = null;
-		try {
-			data = await getAnalyticsOverview(period);
-			initConfig(data);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load overview';
-		} finally {
-			loading = false;
-		}
-	}
-
-	// --- Config-aware aggregation helpers ---
-	function sumRecord(rec: Record<string, number>, enabled: Record<string, boolean>): number {
-		let total = 0;
-		for (const [tag, amount] of Object.entries(rec)) {
-			if (enabled[tag]) total += amount;
-		}
-		return total;
-	}
-
-	function dayGains(d: TimelineDay): number {
-		let total = d.lootTt;
-		total += sumRecord(d.ledgerGains, config.gainTags);
-		return total;
-	}
-	function dayLosses(d: TimelineDay): number {
-		return d.trackingCost + sumRecord(d.ledgerLosses, config.lossTags);
-	}
-	function monthGains(m: MonthlyEntry): number {
-		let total = m.lootTt;
-		total += sumRecord(m.ledgerGains, config.gainTags);
-		return total;
-	}
-	function monthLosses(m: MonthlyEntry): number {
-		return m.trackingCost + sumRecord(m.ledgerLosses, config.lossTags);
-	}
-
-	// --- Donut chart ---
-	const PIE_R = 50;
-	const PIE_C = 2 * Math.PI * PIE_R;
 	let hoveredIdx = $state(-1);
 
-	const segmentColors: Record<string, string> = {
-		lootTt: '#38bdf8',
-		item_sale: '#fbbf24',
-		quest_reward: '#a78bfa',
-		inventory_sale: '#f472b6',
-		other: '#fb7185'
-	};
-
-	const tagLabels: Record<string, string> = {
-		lootTt: 'TT Loot',
-		item_sale: 'Auction Sales',
-		quest_reward: 'Quest Rewards',
-		inventory_sale: 'Mayhem',
-		repair: 'Repairs',
-		equipment: 'Equipment',
-		other: 'Other'
-	};
-
-	function labelFor(key: string): string {
-		return tagLabels[key] || key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
-	}
-
-	function colorFor(key: string): string {
-		return segmentColors[key] || '#94a3b8';
-	}
-
-	interface PieView {
-		rate: number;
-		gains: number;
-		losses: number;
-		arcs: { label: string; ped: number; pct: number; color: string; length: number; offset: number }[];
-	}
-
-	let pieView = $derived.by((): PieView | null => {
-		if (!data) return null;
-
-		const rb = data.returnsBreakdown;
-
-		// Build gain sources from config
-		const sources: { key: string; ped: number }[] = [];
-		if (rb.lootTt > 0) sources.push({ key: 'lootTt', ped: rb.lootTt });
-		for (const [tag, amount] of Object.entries(rb.ledger)) {
-			if (config.gainTags[tag] && amount > 0) sources.push({ key: tag, ped: amount });
-		}
-
-		const gains = sources.reduce((sum, s) => sum + s.ped, 0);
-
-		// Build losses from config
-		let losses = data.lossesBreakdown.trackingCost;
-		for (const [tag, amount] of Object.entries(data.lossesBreakdown.ledger)) {
-			if (config.lossTags[tag]) losses += amount;
-		}
-
-		if (losses <= 0 || gains <= 0) return null;
-
-		const arcs: PieView['arcs'] = [];
-		let offset = 0;
-		for (const { key, ped } of sources) {
-			const length = (ped / gains) * PIE_C;
-			arcs.push({
-				label: labelFor(key), ped,
-				pct: ped / losses, color: colorFor(key),
-				length, offset
-			});
-			offset += length;
-		}
-		return { rate: gains / losses, gains, losses, arcs };
+	$effect(() => {
+		void model.loadData(model.period);
 	});
-
-	// --- Timeline (config-aware cumulative P&L) ---
-	let chartPoints = $derived.by(() => {
-		if (!data || data.timeline.length < 2) return [];
-		let cumulative = 0;
-		const vals = data.timeline.map((d) => {
-			cumulative += dayGains(d) - dayLosses(d);
-			return { date: d.date, net: cumulative };
-		});
-		const nets = vals.map((v) => v.net);
-		const minV = Math.min(...nets, 0);
-		const maxV = Math.max(...nets, 0);
-		const range = maxV - minV || 1;
-		// Y-mapping: the data line is bounded between y=28 (top) and y=140 (bottom).
-		// Top reserves 18px of headroom so the end-of-period current-net label
-		// (which sits above the rightmost dot) never overlaps the line, even when
-		// the line peaks at the chart's all-time-high right edge.
-		return vals.map((v, i) => ({
-			x: 40 + (i / (vals.length - 1)) * 720,
-			y: 28 + ((maxV - v.net) / range) * 112,
-			value: Math.round(v.net * 100) / 100,
-			date: v.date
-		}));
-	});
-
-	let chartPath = $derived(chartPoints.map((p) => `${p.x},${p.y}`).join(' '));
-
-	// Fill polygon closes at the zero line (not the bottom of the chart) so the
-	// above-zero half lives between the data line and zeroY, the below-zero half
-	// likewise. Each half is then clipped + tinted to its sign-coloured gradient.
-	let chartFillPath = $derived.by(() => {
-		if (chartPoints.length < 2) return '';
-		const last = chartPoints[chartPoints.length - 1];
-		const first = chartPoints[0];
-		return chartPath + ` ${last.x},${zeroY} ${first.x},${zeroY}`;
-	});
-
-	let zeroY = $derived.by(() => {
-		if (chartPoints.length < 2) return 84;
-		const vals = chartPoints.map((p) => p.value);
-		const minV = Math.min(...vals, 0);
-		const maxV = Math.max(...vals, 0);
-		const range = maxV - minV || 1;
-		return 28 + ((maxV - 0) / range) * 112;
-	});
-
-	// --- Monthly (config-aware) ---
-	let monthlyRows = $derived.by(() => {
-		if (!data) return [];
-		return data.monthlyBreakdown.map((m) => {
-			const gains = monthGains(m);
-			const losses = monthLosses(m);
-			const net = gains - losses;
-			const globalRate = losses > 0 ? gains / losses : null;
-			const cycled = m.trackingCost;
-			const lootRate = cycled > 0 ? m.lootTt / cycled : null;
-			return {
-				month: m.month,
-				cost: losses,
-				returns: gains,
-				net,
-				lootRate,
-				globalRate,
-				pes: m.pes + m.codexPes + m.questPes
-			};
-		});
-	});
-
 </script>
 
-{#if loading}
+{#if model.loading}
 	<p class="text-sm text-text-secondary">Loading overview...</p>
-{:else if error}
-	<p class="text-sm text-error">{error}</p>
-{:else if data}
+{:else if model.error}
+	<ErrorNotice message={model.error} />
+{:else if model.data}
+	{@const data = model.data}
+	{@const config = model.config}
+	{@const pieView = model.pieView}
 	<div class="space-y-6" data-guide-anchor="analytics-overview-area">
 
 		<!-- Returns breakdown: donut + legend | gains/losses -->
@@ -249,8 +43,8 @@
 					<SegmentedControl
 						class="flex-shrink-0"
 						options={ranges.map((r) => ({ id: r, label: r }))}
-						active={activeRange}
-						onchange={(id) => (activeRange = id)}
+						active={model.activeRange}
+						onchange={(id) => (model.activeRange = id)}
 					/>
 				</div>
 				<div class="flex flex-col gap-2 min-w-0 mb-4">
@@ -420,7 +214,9 @@
 			<h3 class="eyebrow mb-3">
 				Cumulative P&L
 			</h3>
-			{#if chartPoints.length >= 2}
+			{#if model.chartPoints.length >= 2}
+				{@const chartPoints = model.chartPoints}
+				{@const zeroY = model.zeroY}
 				<Card class="p-4">
 					<div class="h-44">
 						<svg viewBox="0 0 800 160" class="w-full h-full" preserveAspectRatio="xMidYMid meet">
@@ -456,23 +252,23 @@
 							<!-- Fill area: above-zero in green, below-zero in orange. Single
 							     polygon closing at the zero line; rendered twice with
 							     opposite clipPaths + opposite gradients. -->
-							{#if chartFillPath}
+							{#if model.chartFillPath}
 								<polygon
-									points={chartFillPath}
+									points={model.chartFillPath}
 									fill="url(#plGradientPositive)"
 									clip-path="url(#plClipAboveZero)"
 								/>
 								<polygon
-									points={chartFillPath}
+									points={model.chartFillPath}
 									fill="url(#plGradientNegative)"
 									clip-path="url(#plClipBelowZero)"
 								/>
 							{/if}
 
-							<!-- Line: same trick — render once green clipped above, once orange clipped below. -->
-							{#if chartPath}
+							<!-- Line: same trick, rendered once green clipped above, once orange clipped below. -->
+							{#if model.chartPath}
 								<polyline
-									points={chartPath}
+									points={model.chartPath}
 									fill="none"
 									stroke="var(--color-positive)"
 									stroke-width="2"
@@ -481,7 +277,7 @@
 									clip-path="url(#plClipAboveZero)"
 								/>
 								<polyline
-									points={chartPath}
+									points={model.chartPath}
 									fill="none"
 									stroke="var(--color-negative)"
 									stroke-width="2"
@@ -557,15 +353,15 @@
 			<div class="mt-2">
 				<button
 					class="flex items-center gap-1.5 eyebrow mb-3 cursor-pointer hover:text-text transition-colors"
-					onclick={() => (showBreakdown = !showBreakdown)}
+					onclick={() => (model.showBreakdown = !model.showBreakdown)}
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
-						class="h-3.5 w-3.5 transition-transform duration-150 {showBreakdown ? 'rotate-180' : ''}">
+						class="h-3.5 w-3.5 transition-transform duration-150 {model.showBreakdown ? 'rotate-180' : ''}">
 						<path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
 					</svg>
 					Cumulative Breakdown
 				</button>
-				{#if showBreakdown}
+				{#if model.showBreakdown}
 				<Card class="p-4">
 					<table class="w-full text-sm">
 						<tbody>
@@ -660,7 +456,7 @@
 			<h3 class="eyebrow mb-3">
 				Monthly Breakdown
 			</h3>
-			{#if monthlyRows.length === 0}
+			{#if model.monthlyRows.length === 0}
 				<p class="text-sm text-text-tertiary">No monthly data yet.</p>
 			{:else}
 				<table class="w-full text-sm">
@@ -676,7 +472,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each monthlyRows as month}
+						{#each model.monthlyRows as month}
 							<tr
 								class="border-b border-border/50 hover:bg-surface-hover/50 transition-colors duration-[var(--duration-fast)]"
 							>

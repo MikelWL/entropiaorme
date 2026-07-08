@@ -1,0 +1,289 @@
+/**
+ * Overview-tab view model: the period-scoped overview load, the per-source
+ * return/cost configuration, and the derived donut, cumulative-P&L timeline,
+ * and monthly rows. Presentation lives in the tab component; it composes
+ * over this state.
+ */
+
+import { getAnalyticsOverview } from '$lib/api';
+import type { MonthlyEntry, OverviewStats, TimelineDay } from '$lib/types/analytics';
+import { describeError } from '$lib/view/errorState';
+
+// lootTt (gains) and trackingCost (losses) are always on; not in config.
+export const PROGRESSION_GAIN_TAGS = new Set(['codex']);
+
+export interface ReturnConfig {
+	gainTags: Record<string, boolean>;
+	lossTags: Record<string, boolean>;
+}
+
+export const ranges = ['All Time', '30d', '90d', '1y'];
+const periodMap: Record<string, string> = {
+	'All Time': 'all',
+	'30d': '30d',
+	'90d': '90d',
+	'1y': '1y',
+};
+
+// ── Donut chart geometry ──
+export const PIE_R = 50;
+export const PIE_C = 2 * Math.PI * PIE_R;
+
+const segmentColors: Record<string, string> = {
+	lootTt: '#38bdf8',
+	item_sale: '#fbbf24',
+	quest_reward: '#a78bfa',
+	inventory_sale: '#f472b6',
+	other: '#fb7185',
+};
+
+const tagLabels: Record<string, string> = {
+	lootTt: 'TT Loot',
+	item_sale: 'Auction Sales',
+	quest_reward: 'Quest Rewards',
+	inventory_sale: 'Mayhem',
+	repair: 'Repairs',
+	equipment: 'Equipment',
+	other: 'Other',
+};
+
+export function labelFor(key: string): string {
+	return tagLabels[key] || key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
+}
+
+function colorFor(key: string): string {
+	return segmentColors[key] || '#94a3b8';
+}
+
+export interface PieView {
+	rate: number;
+	gains: number;
+	losses: number;
+	arcs: {
+		label: string;
+		ped: number;
+		pct: number;
+		color: string;
+		length: number;
+		offset: number;
+	}[];
+}
+
+export function createOverviewModel() {
+	let data = $state<OverviewStats | null>(null);
+	let loading = $state(true);
+	let error = $state<string | null>(null);
+	let config = $state<ReturnConfig>({ gainTags: {}, lossTags: {} });
+	let activeRange = $state('All Time');
+	let showBreakdown = $state(false);
+
+	function initConfig(stats: OverviewStats) {
+		const gainTags: Record<string, boolean> = {};
+		for (const tag of Object.keys(stats.returnsBreakdown.ledger)) {
+			if (PROGRESSION_GAIN_TAGS.has(tag)) continue;
+			gainTags[tag] = true;
+		}
+		const lossTags: Record<string, boolean> = {};
+		for (const tag of Object.keys(stats.lossesBreakdown.ledger)) {
+			lossTags[tag] = true;
+		}
+		config = { gainTags, lossTags };
+	}
+
+	async function loadData(period: string) {
+		loading = true;
+		error = null;
+		try {
+			data = await getAnalyticsOverview(period);
+			initConfig(data);
+		} catch (e) {
+			error = describeError(e, 'Failed to load overview');
+		} finally {
+			loading = false;
+		}
+	}
+
+	// ── Config-aware aggregation helpers ──
+	function sumRecord(rec: Record<string, number>, enabled: Record<string, boolean>): number {
+		let total = 0;
+		for (const [tag, amount] of Object.entries(rec)) {
+			if (enabled[tag]) total += amount;
+		}
+		return total;
+	}
+
+	function dayGains(d: TimelineDay): number {
+		let total = d.lootTt;
+		total += sumRecord(d.ledgerGains, config.gainTags);
+		return total;
+	}
+	function dayLosses(d: TimelineDay): number {
+		return d.trackingCost + sumRecord(d.ledgerLosses, config.lossTags);
+	}
+	function monthGains(m: MonthlyEntry): number {
+		let total = m.lootTt;
+		total += sumRecord(m.ledgerGains, config.gainTags);
+		return total;
+	}
+	function monthLosses(m: MonthlyEntry): number {
+		return m.trackingCost + sumRecord(m.ledgerLosses, config.lossTags);
+	}
+
+	const pieView = $derived.by((): PieView | null => {
+		if (!data) return null;
+
+		const rb = data.returnsBreakdown;
+
+		// Build gain sources from config
+		const sources: { key: string; ped: number }[] = [];
+		if (rb.lootTt > 0) sources.push({ key: 'lootTt', ped: rb.lootTt });
+		for (const [tag, amount] of Object.entries(rb.ledger)) {
+			if (config.gainTags[tag] && amount > 0) sources.push({ key: tag, ped: amount });
+		}
+
+		const gains = sources.reduce((sum, s) => sum + s.ped, 0);
+
+		// Build losses from config
+		let losses = data.lossesBreakdown.trackingCost;
+		for (const [tag, amount] of Object.entries(data.lossesBreakdown.ledger)) {
+			if (config.lossTags[tag]) losses += amount;
+		}
+
+		if (losses <= 0 || gains <= 0) return null;
+
+		const arcs: PieView['arcs'] = [];
+		let offset = 0;
+		for (const { key, ped } of sources) {
+			const length = (ped / gains) * PIE_C;
+			arcs.push({
+				label: labelFor(key),
+				ped,
+				pct: ped / losses,
+				color: colorFor(key),
+				length,
+				offset,
+			});
+			offset += length;
+		}
+		return { rate: gains / losses, gains, losses, arcs };
+	});
+
+	// ── Timeline (config-aware cumulative P&L) ──
+	const chartPoints = $derived.by(() => {
+		if (!data || data.timeline.length < 2) return [];
+		let cumulative = 0;
+		const vals = data.timeline.map((d) => {
+			cumulative += dayGains(d) - dayLosses(d);
+			return { date: d.date, net: cumulative };
+		});
+		const nets = vals.map((v) => v.net);
+		const minV = Math.min(...nets, 0);
+		const maxV = Math.max(...nets, 0);
+		const range = maxV - minV || 1;
+		// Y-mapping: the data line is bounded between y=28 (top) and y=140 (bottom).
+		// Top reserves 18px of headroom so the end-of-period current-net label
+		// (which sits above the rightmost dot) never overlaps the line, even when
+		// the line peaks at the chart's all-time-high right edge.
+		return vals.map((v, i) => ({
+			x: 40 + (i / (vals.length - 1)) * 720,
+			y: 28 + ((maxV - v.net) / range) * 112,
+			value: Math.round(v.net * 100) / 100,
+			date: v.date,
+		}));
+	});
+
+	const chartPath = $derived(chartPoints.map((p) => `${p.x},${p.y}`).join(' '));
+
+	const zeroY = $derived.by(() => {
+		if (chartPoints.length < 2) return 84;
+		const vals = chartPoints.map((p) => p.value);
+		const minV = Math.min(...vals, 0);
+		const maxV = Math.max(...vals, 0);
+		const range = maxV - minV || 1;
+		return 28 + ((maxV - 0) / range) * 112;
+	});
+
+	// Fill polygon closes at the zero line (not the bottom of the chart) so the
+	// above-zero half lives between the data line and zeroY, the below-zero half
+	// likewise. Each half is then clipped + tinted to its sign-coloured gradient.
+	const chartFillPath = $derived.by(() => {
+		if (chartPoints.length < 2) return '';
+		const last = chartPoints[chartPoints.length - 1];
+		const first = chartPoints[0];
+		return `${chartPath} ${last.x},${zeroY} ${first.x},${zeroY}`;
+	});
+
+	// ── Monthly (config-aware) ──
+	const monthlyRows = $derived.by(() => {
+		if (!data) return [];
+		return data.monthlyBreakdown.map((m) => {
+			const gains = monthGains(m);
+			const losses = monthLosses(m);
+			const net = gains - losses;
+			const globalRate = losses > 0 ? gains / losses : null;
+			const cycled = m.trackingCost;
+			const lootRate = cycled > 0 ? m.lootTt / cycled : null;
+			return {
+				month: m.month,
+				cost: losses,
+				returns: gains,
+				net,
+				lootRate,
+				globalRate,
+				pes: m.pes + m.codexPes + m.questPes,
+			};
+		});
+	});
+
+	return {
+		get data() {
+			return data;
+		},
+		get loading() {
+			return loading;
+		},
+		get error() {
+			return error;
+		},
+		get config() {
+			return config;
+		},
+		get activeRange() {
+			return activeRange;
+		},
+		set activeRange(value: string) {
+			activeRange = value;
+		},
+		get period() {
+			return periodMap[activeRange];
+		},
+		get showBreakdown() {
+			return showBreakdown;
+		},
+		set showBreakdown(value: boolean) {
+			showBreakdown = value;
+		},
+		get pieView() {
+			return pieView;
+		},
+		get chartPoints() {
+			return chartPoints;
+		},
+		get chartPath() {
+			return chartPath;
+		},
+		get chartFillPath() {
+			return chartFillPath;
+		},
+		get zeroY() {
+			return zeroY;
+		},
+		get monthlyRows() {
+			return monthlyRows;
+		},
+
+		loadData,
+	};
+}
+
+export type OverviewModel = ReturnType<typeof createOverviewModel>;

@@ -1,407 +1,59 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type {
-		LedgerEntry,
-		LedgerEntryType,
-		LedgerPreset,
-		InventoryItem,
-		InventorySellResult
-	} from '$lib/types/analytics';
-	import {
-		getLedgerEntries,
-		addLedgerEntry,
-		deleteLedgerEntry,
-		getLedgerPresets,
-		addLedgerPreset,
-		deleteLedgerPreset,
-		getInventoryItems,
-		deleteInventoryItem
-	} from '$lib/api';
-	import { formatPed, formatLedgerDate } from '$lib/utils/format';
-	import Card from '$lib/components/Card.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import Card from '$lib/components/Card.svelte';
 	import Divider from '$lib/components/Divider.svelte';
-	import Modal from '$lib/components/Modal.svelte';
+	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import Input from '$lib/components/Input.svelte';
+	import Modal from '$lib/components/Modal.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import {
+		createLedgerModel,
+		type NetRange,
+		netRanges,
+		PAGE_SIZE,
+		tagLabels
+	} from '$lib/features/analytics/ledgerModel.svelte';
+	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
+	import type { LedgerEntryType } from '$lib/types/analytics';
+	import { formatLedgerDate, formatPed } from '$lib/utils/format';
 	import InventoryItemFormModal from './InventoryItemFormModal.svelte';
 	import SellInventoryItemModal from './SellInventoryItemModal.svelte';
-	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
 
-	const netRanges = ['All Time', '30d', '90d', '1y'] as const;
-	type NetRange = (typeof netRanges)[number];
-	const netRangeDays: Record<NetRange, number | null> = {
-		'All Time': null,
-		'30d': 30,
-		'90d': 90,
-		'1y': 365
-	};
-	let netRange = $state<NetRange>('All Time');
-
-	let entries = $state<LedgerEntry[]>([]);
-	let presets = $state<LedgerPreset[]>([]);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
-	// Keyset pagination: the cursor for the next server page (null once the
-	// whole ledger is loaded), and whether a "load more" fetch is in flight.
-	let nextCursor = $state<string | null>(null);
-	let loadingMore = $state(false);
-
-	// Form state
-	let entryType = $state<LedgerEntryType>('expense');
-	let entryAmount = $state(0);
-	let entryDescription = $state('');
-	let entryTag = $state('');
-	let tagInputFocused = $state(false);
-
-	// Preset form state
-	let presetName = $state('');
-	let presetType = $state<LedgerEntryType>('expense');
-	let presetAmount = $state(0);
-	let presetDescription = $state('');
-	let presetTag = $state('');
-	let presetTagInputFocused = $state(false);
-
-	const tagLabels: Record<string, string> = {
-		equipment: 'Equipment',
-		repair: 'Repair',
-		other: 'Other',
-		item_sale: 'Auction Sales',
-		quest_reward: 'Quest Reward',
-		codex: 'Codex',
-		inventory_sale: 'Mayhem'
-	};
-
-	function buildTagSuggestions(query: string, type: LedgerEntryType): string[] {
-		const normalisedQuery = query.trim().toLowerCase();
-		if (!normalisedQuery) return [];
-
-		const tagCounts = new Map<string, number>();
-		for (const entry of entries) {
-			if (entry.type !== type) continue;
-			const tag = entry.tag.trim();
-			if (!tag) continue;
-			const normalised = tag.toLowerCase();
-			if (!normalised.includes(normalisedQuery) || normalised === normalisedQuery) continue;
-			tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
-		}
-
-		return Array.from(tagCounts.entries())
-			.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-			.slice(0, 6)
-			.map(([tag]) => tag);
-	}
-
-	let ledgerTagSuggestions = $derived(
-		tagInputFocused ? buildTagSuggestions(entryTag, entryType) : []
-	);
-
-	let presetTagSuggestions = $derived(
-		presetTagInputFocused ? buildTagSuggestions(presetTag, presetType) : []
-	);
+	const model = createLedgerModel();
+	const table = model.table;
 
 	$effect(() => {
-		loadAll();
+		void model.loadAll();
 	});
-
-	async function loadAll() {
-		loading = true;
-		error = null;
-		try {
-			const [entryPage, presetRows] = await Promise.all([
-				getLedgerEntries(),
-				getLedgerPresets()
-			]);
-			entries = entryPage.items;
-			nextCursor = entryPage.nextCursor;
-			presets = presetRows;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load ledger';
-		} finally {
-			loading = false;
-		}
-	}
-
-	// Fetch the next keyset page and append it, growing the client paginator's
-	// range. Older entries stay reachable without loading the whole table up
-	// front.
-	async function loadMoreEntries() {
-		if (!nextCursor || loadingMore) return;
-		loadingMore = true;
-		try {
-			const page = await getLedgerEntries(nextCursor);
-			entries = [...entries, ...page.items];
-			nextCursor = page.nextCursor;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load more entries';
-		} finally {
-			loadingMore = false;
-		}
-	}
-
-	async function addEntry() {
-		const description = entryDescription.trim();
-		const tag = entryTag.trim();
-		if (!description || !tag || entryAmount <= 0) return;
-		try {
-			const newEntry = await addLedgerEntry({
-				date: new Date().toISOString(),
-				type: entryType,
-				description,
-				amount: entryAmount,
-				tag
-			});
-			entries = [newEntry, ...entries];
-			entryDescription = '';
-			entryAmount = 0;
-			entryTag = '';
-			currentPage = 1;
-			showAddModal = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to add entry';
-		}
-	}
-
-	function applyTagSuggestion(tag: string) {
-		entryTag = tag;
-		tagInputFocused = false;
-	}
-
-	function applyPresetTagSuggestion(tag: string) {
-		presetTag = tag;
-		presetTagInputFocused = false;
-	}
-
-	async function deleteEntry(id: string) {
-		try {
-			await deleteLedgerEntry(id);
-			entries = entries.filter((e) => e.id !== id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to delete entry';
-		}
-	}
-
-	async function savePreset() {
-		const name = presetName.trim();
-		const description = presetDescription.trim();
-		const tag = presetTag.trim();
-		if (!name || !description || !tag || presetAmount <= 0) return;
-		try {
-			const newPreset = await addLedgerPreset({
-				name,
-				type: presetType,
-				description,
-				amount: presetAmount,
-				tag
-			});
-			presets = [...presets, newPreset];
-			presetName = '';
-			presetAmount = 0;
-			presetDescription = '';
-			presetTag = '';
-			showPresetForm = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to save preset';
-		}
-	}
-
-	async function removePreset(id: string) {
-		try {
-			await deleteLedgerPreset(id);
-			presets = presets.filter((p) => p.id !== id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to delete preset';
-		}
-	}
-
-	async function applyPreset(preset: LedgerPreset) {
-		try {
-			const newEntry = await addLedgerEntry({
-				date: new Date().toISOString(),
-				type: preset.type,
-				description: preset.description,
-				amount: preset.amount,
-				tag: preset.tag
-			});
-			entries = [newEntry, ...entries];
-			currentPage = 1;
-			showAddModal = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to add entry';
-		}
-	}
-
-	// Pagination
-	let currentPage = $state(1);
-	const itemsPerPage = 5;
-
-	let totalPages = $derived(Math.max(1, Math.ceil(entries.length / itemsPerPage)));
-	let paginatedEntries = $derived(
-		entries.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-	);
 
 	$effect(() => {
-		if (currentPage > totalPages) {
-			currentPage = Math.max(1, totalPages);
-		}
-	});
-
-	// Computed summaries (filtered by netRange — affects only the Net card)
-	let netRangeEntries = $derived.by(() => {
-		const days = netRangeDays[netRange];
-		if (days === null) return entries;
-		const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-		return entries.filter((e) => new Date(e.date).getTime() >= cutoff);
-	});
-
-	let expenseTags = $derived.by(() => {
-		const tags: Record<string, number> = {};
-		netRangeEntries
-			.filter((e) => e.type === 'expense')
-			.forEach((e) => {
-				tags[e.tag] = (tags[e.tag] || 0) + e.amount;
-			});
-		return Object.entries(tags).map(([tag, total]) => ({ tag, total }));
-	});
-
-	let markupTags = $derived.by(() => {
-		const tags: Record<string, number> = {};
-		netRangeEntries
-			.filter((e) => e.type === 'markup')
-			.forEach((e) => {
-				tags[e.tag] = (tags[e.tag] || 0) + e.amount;
-			});
-		return Object.entries(tags).map(([tag, total]) => ({ tag, total }));
-	});
-
-	let totalExpenses = $derived(
-		netRangeEntries.filter((e) => e.type === 'expense').reduce((sum, e) => sum + e.amount, 0)
-	);
-
-	let totalMarkup = $derived(
-		netRangeEntries.filter((e) => e.type === 'markup').reduce((sum, e) => sum + e.amount, 0)
-	);
-
-	let netLedger = $derived(totalMarkup - totalExpenses);
-
-	let showAddModal = $state(false);
-	let showPresets = $state(false);
-	let showPresetForm = $state(false);
-	let showLedgerSources = $state(false);
-
-	// Inventory ledger state
-	let inventoryItems = $state<InventoryItem[]>([]);
-	let inventoryLoading = $state(true);
-	let inventoryError = $state<string | null>(null);
-	let showInventoryFormModal = $state(false);
-	let inventoryEditTarget = $state<InventoryItem | null>(null);
-	let inventorySellTarget = $state<InventoryItem | null>(null);
-	let inventorySellPrefilledPrice = $state<number | null>(null);
-
-	let inventoryTtTotal = $derived(inventoryItems.reduce((sum, i) => sum + i.ttValue, 0));
-	let inventoryPaidTotal = $derived(
-		inventoryItems.reduce((sum, i) => sum + i.ttValue + i.markupPaid, 0)
-	);
-
-	$effect(() => {
-		void loadInventory();
+		void model.loadInventory();
 	});
 
 	// Guide-mode demoApi: lets the analytics surface drive the Add Entry modal
 	// and the inventory Sell flow programmatically for the looped animations.
-	// injectDemoSaleEntry / clearDemoSaleEntry mutate local entries state only
-	// (no /demo/ writes; the demo router is read-only) so the synthetic row
-	// vanishes the moment guide-mode flips off.
 	onMount(() => {
 		registerDemoApi('analytics-ledger', {
-			openAddEntryModal: () => (showAddModal = true),
-			closeAddEntryModal: () => (showAddModal = false),
-			openInventorySellModal: (itemName: string, prefilledPrice?: number) => {
-				const target = inventoryItems.find((i) => i.name === itemName);
-				if (!target) return;
-				inventorySellPrefilledPrice = prefilledPrice ?? null;
-				inventorySellTarget = target;
-			},
-			closeInventorySellModal: () => {
-				inventorySellTarget = null;
-				inventorySellPrefilledPrice = null;
-			},
-			injectDemoSaleEntry: (itemName: string, gain: number) => {
-				const syntheticEntry: LedgerEntry = {
-					id: 'demo-inventory-sale',
-					date: new Date().toISOString(),
-					type: 'markup',
-					description: `Sold ${itemName} at +${gain.toFixed(0)} PED over basis`,
-					amount: gain,
-					tag: 'inventory_sale'
-				};
-				entries = [syntheticEntry, ...entries.filter((e) => e.id !== syntheticEntry.id)];
-				currentPage = 1;
-			},
-			clearDemoSaleEntry: () => {
-				entries = entries.filter((e) => e.id !== 'demo-inventory-sale');
-			}
+			openAddEntryModal: () => (model.showAddModal = true),
+			closeAddEntryModal: () => (model.showAddModal = false),
+			openInventorySellModal: (itemName: string, prefilledPrice?: number) =>
+				model.openInventorySellByName(itemName, prefilledPrice),
+			closeInventorySellModal: () => model.closeInventorySell(),
+			injectDemoSaleEntry: (itemName: string, gain: number) =>
+				model.injectDemoSaleEntry(itemName, gain),
+			clearDemoSaleEntry: () => model.clearDemoSaleEntry()
 		});
 		return () => unregisterDemoApi('analytics-ledger');
 	});
-
-	async function loadInventory() {
-		inventoryLoading = true;
-		inventoryError = null;
-		try {
-			inventoryItems = await getInventoryItems();
-		} catch (e) {
-			inventoryError = e instanceof Error ? e.message : 'Failed to load inventory ledger';
-		} finally {
-			inventoryLoading = false;
-		}
-	}
-
-	function openInventoryAdd() {
-		inventoryEditTarget = null;
-		showInventoryFormModal = true;
-	}
-
-	function openInventoryEdit(item: InventoryItem) {
-		inventoryEditTarget = item;
-		showInventoryFormModal = true;
-	}
-
-	function openInventorySell(item: InventoryItem) {
-		inventorySellTarget = item;
-	}
-
-	function handleInventorySaved(saved: InventoryItem) {
-		const idx = inventoryItems.findIndex((i) => i.id === saved.id);
-		if (idx >= 0) {
-			inventoryItems = inventoryItems.map((i) => (i.id === saved.id ? saved : i));
-		} else {
-			inventoryItems = [saved, ...inventoryItems];
-		}
-	}
-
-	function handleInventorySold(result: InventorySellResult) {
-		inventoryItems = inventoryItems.filter((i) => i.id !== result.soldItem.id);
-		inventorySellTarget = null;
-	}
-
-	async function handleInventoryDelete(item: InventoryItem) {
-		try {
-			await deleteInventoryItem(item.id);
-			inventoryItems = inventoryItems.filter((i) => i.id !== item.id);
-		} catch (e) {
-			inventoryError = e instanceof Error ? e.message : 'Failed to delete item';
-		}
-	}
 </script>
 
-{#if loading}
+{#if model.loading}
 	<p class="text-sm text-text-secondary">Loading ledger...</p>
-{:else if error}
-	<p class="text-sm text-error">{error}</p>
 {:else}
 	<div class="space-y-6" data-guide-anchor="analytics-ledger-area">
+		<ErrorNotice message={model.error} />
 		<!-- Strip + table grouped so guide-mode can cutout just the main ledger area
 		     (excluding the inventory section below). Inner space-y-6 preserves
 		     the prior vertical rhythm. -->
@@ -412,24 +64,24 @@
 				<button
 					type="button"
 					class="flex items-center gap-3 group cursor-pointer"
-					aria-expanded={showLedgerSources}
-					onclick={() => (showLedgerSources = !showLedgerSources)}
+					aria-expanded={model.showLedgerSources}
+					onclick={() => (model.showLedgerSources = !model.showLedgerSources)}
 				>
 					<span class="eyebrow group-hover:text-text transition-colors">
 						Net Ledger Impact
 					</span>
 					<span
-						class="text-sm font-semibold tabular-nums {netLedger >= 0
+						class="text-sm font-semibold tabular-nums {model.netLedger >= 0
 							? 'text-positive'
 							: 'text-negative'}"
 					>
-						{netLedger >= 0 ? '+' : ''}{formatPed(netLedger)} PED
+						{model.netLedger >= 0 ? '+' : ''}{formatPed(model.netLedger)} PED
 					</span>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						viewBox="0 0 20 20"
 						fill="currentColor"
-						class="h-4 w-4 text-text-tertiary transition-transform duration-[var(--duration-base)] {showLedgerSources ? 'rotate-180' : ''}"
+						class="h-4 w-4 text-text-tertiary transition-transform duration-[var(--duration-base)] {model.showLedgerSources ? 'rotate-180' : ''}"
 					>
 						<path
 							fill-rule="evenodd"
@@ -442,26 +94,26 @@
 				<div class="flex items-center gap-2 flex-shrink-0">
 					<SegmentedControl
 						options={netRanges.map((r) => ({ id: r, label: r }))}
-						active={netRange}
-						onchange={(id) => (netRange = id as NetRange)}
+						active={model.netRange}
+						onchange={(id) => (model.netRange = id as NetRange)}
 					/>
 					<span data-guide-anchor="ledger-add-entry-btn" class="inline-flex">
-						<Button size="sm" onclick={() => (showAddModal = true)}>Add Entry</Button>
+						<Button size="sm" onclick={() => (model.showAddModal = true)}>Add Entry</Button>
 					</span>
 				</div>
 			</div>
 
-			{#if showLedgerSources}
+			{#if model.showLedgerSources}
 				<div class="mt-4 pt-4 border-t border-border/50 grid grid-cols-1 md:grid-cols-2 gap-6">
 					<div>
 						<h3 class="eyebrow mb-3">
 							Expense Sources
 						</h3>
-						{#if expenseTags.length === 0}
+						{#if model.expenseTags.length === 0}
 							<p class="text-xs text-text-tertiary">No expenses recorded</p>
 						{:else}
 							<div class="space-y-2">
-								{#each expenseTags as { tag, total }}
+								{#each model.expenseTags as { tag, total }}
 									<div class="flex items-center justify-between text-sm">
 										<span class="text-text-secondary">{tagLabels[tag] || tag}</span>
 										<span class="text-negative tabular-nums font-medium">
@@ -472,7 +124,7 @@
 								<Divider class="my-1" />
 								<div class="flex items-center justify-between text-sm font-medium">
 									<span class="text-text">Total Expenses</span>
-									<span class="text-negative tabular-nums">{formatPed(totalExpenses)} PED</span>
+									<span class="text-negative tabular-nums">{formatPed(model.totalExpenses)} PED</span>
 								</div>
 							</div>
 						{/if}
@@ -481,11 +133,11 @@
 						<h3 class="eyebrow mb-3">
 							Markup Sources
 						</h3>
-						{#if markupTags.length === 0}
+						{#if model.markupTags.length === 0}
 							<p class="text-xs text-text-tertiary">No markup recorded</p>
 						{:else}
 							<div class="space-y-2">
-								{#each markupTags as { tag, total }}
+								{#each model.markupTags as { tag, total }}
 									<div class="flex items-center justify-between text-sm">
 										<span class="text-text-secondary">{tagLabels[tag] || tag}</span>
 										<span class="text-positive tabular-nums font-medium">
@@ -496,7 +148,7 @@
 								<Divider class="my-1" />
 								<div class="flex items-center justify-between text-sm font-medium">
 									<span class="text-text">Total Markup</span>
-									<span class="text-positive tabular-nums">{formatPed(totalMarkup)} PED</span>
+									<span class="text-positive tabular-nums">{formatPed(model.totalMarkup)} PED</span>
 								</div>
 							</div>
 						{/if}
@@ -507,7 +159,7 @@
 
 		<!-- Entry table -->
 		<div>
-			{#if entries.length === 0}
+			{#if model.entries.length === 0}
 				<Card class="p-8">
 					<p class="text-center text-text-tertiary text-sm">
 						Record confirmed sales, equipment purchases, quest rewards, and other economic flows not
@@ -528,7 +180,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each paginatedEntries as entry}
+						{#each table.pageRows as entry}
 							<tr
 								data-guide-anchor="ledger-entry-row"
 								data-entry-id={entry.id}
@@ -554,7 +206,7 @@
 									<button
 										type="button"
 										class="icon-button-row"
-										onclick={() => deleteEntry(entry.id)}
+										onclick={() => model.deleteEntry(entry.id)}
 										aria-label="Delete entry"
 									>
 										<svg
@@ -574,25 +226,25 @@
 					</tbody>
 				</table>
 
-				{#if totalPages > 1}
+				{#if table.totalPages > 1}
 					<div class="flex items-center justify-between mt-4">
 						<span class="text-xs text-text-tertiary">
-							Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, entries.length)} of {entries.length} entries
+							Showing {table.page * PAGE_SIZE + 1} to {Math.min((table.page + 1) * PAGE_SIZE, model.entries.length)} of {model.entries.length} entries
 						</span>
 						<div class="flex gap-1">
 							<Button
 								size="sm"
 								variant="ghost"
-								disabled={currentPage === 1}
-								onclick={() => currentPage--}
+								disabled={table.page === 0}
+								onclick={() => table.page--}
 							>
 								Previous
 							</Button>
 							<Button
 								size="sm"
 								variant="ghost"
-								disabled={currentPage === totalPages}
-								onclick={() => currentPage++}
+								disabled={table.page === table.totalPages - 1}
+								onclick={() => table.page++}
 							>
 								Next
 							</Button>
@@ -600,15 +252,15 @@
 					</div>
 				{/if}
 
-				{#if nextCursor}
+				{#if model.nextCursor}
 					<div class="flex justify-center mt-4">
 						<Button
 							size="sm"
 							variant="ghost"
-							disabled={loadingMore}
-							onclick={loadMoreEntries}
+							disabled={model.loadingMore}
+							onclick={() => model.loadMoreEntries()}
 						>
-							{loadingMore ? 'Loading...' : 'Load more entries'}
+							{model.loadingMore ? 'Loading...' : 'Load more entries'}
 						</Button>
 					</div>
 				{/if}
@@ -620,11 +272,10 @@
 
 		<!-- Inventory Ledger -->
 		<div data-guide-anchor="analytics-ledger-inventory-area">
-			{#if inventoryLoading}
+			{#if model.inventoryLoading}
 				<p class="text-sm text-text-secondary">Loading inventory ledger...</p>
-			{:else if inventoryError}
-				<p class="text-sm text-error">{inventoryError}</p>
 			{:else}
+				<ErrorNotice message={model.inventoryError} class="mb-3" />
 				<Card class="p-4 mb-3">
 					<div class="flex items-center justify-between gap-4 flex-wrap">
 						<div class="flex items-center gap-6 flex-wrap">
@@ -633,7 +284,7 @@
 									Inventory TT Value
 								</span>
 								<span class="text-sm font-semibold tabular-nums text-text">
-									{formatPed(inventoryTtTotal)} PED
+									{formatPed(model.inventoryTtTotal)} PED
 								</span>
 							</div>
 							<div class="flex items-center gap-3">
@@ -641,15 +292,15 @@
 									Value After Paid Markup
 								</span>
 								<span class="text-sm font-semibold tabular-nums text-text">
-									{formatPed(inventoryPaidTotal)} PED
+									{formatPed(model.inventoryPaidTotal)} PED
 								</span>
 							</div>
 						</div>
-						<Button size="sm" onclick={openInventoryAdd}>Add Item</Button>
+						<Button size="sm" onclick={() => model.openInventoryAdd()}>Add Item</Button>
 					</div>
 				</Card>
 
-				{#if inventoryItems.length === 0}
+				{#if model.inventoryItems.length === 0}
 					<Card class="p-6">
 						<p class="text-center text-text-tertiary text-sm">
 							Log unlimited weapons, estates, deeds, or other persistent items you own.
@@ -669,7 +320,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each inventoryItems as item (item.id)}
+							{#each model.inventoryItems as item (item.id)}
 								<tr
 									class="border-b border-border/50 hover:bg-surface-hover/50 transition-colors duration-[var(--duration-fast)]"
 								>
@@ -692,7 +343,7 @@
 									</td>
 									<td class="py-2.5 px-3">
 										<div class="flex items-center justify-end gap-1.5">
-											<Button size="sm" variant="ghost" onclick={() => openInventoryEdit(item)}>
+											<Button size="sm" variant="ghost" onclick={() => model.openInventoryEdit(item)}>
 												Edit
 											</Button>
 											<span
@@ -700,12 +351,12 @@
 												data-item-name={item.name}
 												class="inline-flex"
 											>
-												<Button size="sm" onclick={() => openInventorySell(item)}>Sell</Button>
+												<Button size="sm" onclick={() => model.openInventorySell(item)}>Sell</Button>
 											</span>
 											<button
 												type="button"
 												class="icon-button-row"
-												onclick={() => handleInventoryDelete(item)}
+												onclick={() => model.handleInventoryDelete(item)}
 												aria-label={`Delete ${item.name}`}
 												title="Delete (no ledger entry)"
 											>
@@ -735,22 +386,19 @@
 
 <!-- Inventory item modals -->
 <InventoryItemFormModal
-	bind:open={showInventoryFormModal}
-	item={inventoryEditTarget}
-	onsaved={handleInventorySaved}
+	bind:open={model.showInventoryFormModal}
+	item={model.inventoryEditTarget}
+	onsaved={model.handleInventorySaved}
 />
 <SellInventoryItemModal
-	item={inventorySellTarget}
-	prefilledSalePrice={inventorySellPrefilledPrice}
-	onsold={handleInventorySold}
-	oncancel={() => {
-		inventorySellTarget = null;
-		inventorySellPrefilledPrice = null;
-	}}
+	item={model.inventorySellTarget}
+	prefilledSalePrice={model.inventorySellPrefilledPrice}
+	onsold={model.handleInventorySold}
+	oncancel={() => model.closeInventorySell()}
 />
 
 <!-- Add Entry Modal -->
-<Modal bind:open={showAddModal} title="Add Entry" class="max-w-lg">
+<Modal bind:open={model.showAddModal} title="Add Entry" class="max-w-lg">
 	<div class="space-y-5">
 		<!-- Type toggle -->
 		<div>
@@ -761,8 +409,8 @@
 					{ id: 'expense', label: 'Expense' },
 					{ id: 'markup', label: 'Markup' }
 				]}
-				active={entryType}
-				onchange={(id) => (entryType = id as LedgerEntryType)}
+				active={model.entryType}
+				onchange={(id) => (model.entryType = id as LedgerEntryType)}
 			/>
 		</div>
 
@@ -774,7 +422,7 @@
 			<Input
 				id="ledger-amount"
 				type="number"
-				bind:value={entryAmount}
+				bind:value={model.entryAmount}
 				placeholder="0.00"
 				step="0.01"
 				min="0"
@@ -789,7 +437,7 @@
 			<Input
 				id="ledger-desc"
 				type="text"
-				bind:value={entryDescription}
+				bind:value={model.entryDescription}
 				placeholder="What was this for?"
 			/>
 		</div>
@@ -801,26 +449,26 @@
 			</label>
 			<Input
 				id="ledger-tag"
-				bind:value={entryTag}
+				bind:value={model.entryTag}
 				type="text"
-				placeholder={entryType === 'expense' ? 'equipment' : 'item_sale'}
-				onfocus={() => (tagInputFocused = true)}
+				placeholder={model.entryType === 'expense' ? 'equipment' : 'item_sale'}
+				onfocus={() => (model.tagInputFocused = true)}
 				onblur={() => {
 					setTimeout(() => {
-						tagInputFocused = false;
+						model.tagInputFocused = false;
 					}, 100);
 				}}
 			/>
-			{#if ledgerTagSuggestions.length > 0}
+			{#if model.ledgerTagSuggestions.length > 0}
 				<div
 					class="absolute top-full left-0 right-0 z-10 mt-1 overflow-hidden rounded-md border border-border bg-surface-raised shadow-lg"
 				>
-					{#each ledgerTagSuggestions as suggestion}
+					{#each model.ledgerTagSuggestions as suggestion}
 						<button
 							type="button"
 							class="block w-full px-3 py-2 text-left text-sm text-text-secondary transition-colors hover:bg-surface-hover hover:text-text cursor-pointer"
 							onmousedown={(event) => event.preventDefault()}
-							onclick={() => applyTagSuggestion(suggestion)}
+							onclick={() => model.applyTagSuggestion(suggestion)}
 						>
 							{suggestion}
 						</button>
@@ -836,7 +484,7 @@
 			</h3>
 
 			<div class="mt-3 flex flex-wrap items-center gap-2">
-					{#each presets as preset (preset.id)}
+					{#each model.presets as preset (preset.id)}
 						{@const isMarkup = preset.type === 'markup'}
 						<span
 							class="group/badge inline-flex items-center gap-1.5 rounded-sm pl-2 pr-1 py-0.5 text-xs font-medium {isMarkup
@@ -847,7 +495,7 @@
 								type="button"
 								class="inline-flex items-center gap-1.5 cursor-pointer"
 								title="Add entry from this preset"
-								onclick={() => applyPreset(preset)}
+								onclick={() => model.applyPreset(preset)}
 							>
 								<span>{preset.name}</span>
 								<span class="tabular-nums opacity-80">
@@ -861,7 +509,7 @@
 								title="Delete preset"
 								onclick={(e) => {
 									e.stopPropagation();
-									removePreset(preset.id);
+									model.removePreset(preset.id);
 								}}
 							>
 								<svg
@@ -881,15 +529,15 @@
 					<div class="ml-auto">
 						<Button
 							size="sm"
-							variant={showPresetForm ? 'secondary' : 'ghost'}
-							onclick={() => (showPresetForm = !showPresetForm)}
+							variant={model.showPresetForm ? 'secondary' : 'ghost'}
+							onclick={() => (model.showPresetForm = !model.showPresetForm)}
 						>
-							{showPresetForm ? 'Cancel' : 'New Quick Entry'}
+							{model.showPresetForm ? 'Cancel' : 'New Quick Entry'}
 						</Button>
 					</div>
 				</div>
 
-				{#if showPresetForm}
+				{#if model.showPresetForm}
 					<div class="mt-3 pt-3 border-t border-border/30 space-y-3">
 						<div>
 							<label class="block eyebrow mb-1.5" for="preset-name">
@@ -898,7 +546,7 @@
 							<Input
 								id="preset-name"
 								type="text"
-								bind:value={presetName}
+								bind:value={model.presetName}
 								placeholder="e.g. L weapon"
 							/>
 						</div>
@@ -911,8 +559,8 @@
 									{ id: 'expense', label: 'Expense' },
 									{ id: 'markup', label: 'Markup' }
 								]}
-								active={presetType}
-								onchange={(id) => (presetType = id as LedgerEntryType)}
+								active={model.presetType}
+								onchange={(id) => (model.presetType = id as LedgerEntryType)}
 							/>
 						</div>
 
@@ -923,7 +571,7 @@
 							<Input
 								id="preset-amount"
 								type="number"
-								bind:value={presetAmount}
+								bind:value={model.presetAmount}
 								placeholder="0.00"
 								step="0.01"
 								min="0"
@@ -937,7 +585,7 @@
 							<Input
 								id="preset-desc"
 								type="text"
-								bind:value={presetDescription}
+								bind:value={model.presetDescription}
 								placeholder="What was this for?"
 							/>
 						</div>
@@ -948,26 +596,26 @@
 							</label>
 							<Input
 								id="preset-tag"
-								bind:value={presetTag}
+								bind:value={model.presetTag}
 								type="text"
-								placeholder={presetType === 'expense' ? 'equipment' : 'item_sale'}
-								onfocus={() => (presetTagInputFocused = true)}
+								placeholder={model.presetType === 'expense' ? 'equipment' : 'item_sale'}
+								onfocus={() => (model.presetTagInputFocused = true)}
 								onblur={() => {
 									setTimeout(() => {
-										presetTagInputFocused = false;
+										model.presetTagInputFocused = false;
 									}, 100);
 								}}
 							/>
-							{#if presetTagSuggestions.length > 0}
+							{#if model.presetTagSuggestions.length > 0}
 								<div
 									class="absolute top-full left-0 right-0 z-10 mt-1 overflow-hidden rounded-md border border-border bg-surface-raised shadow-lg"
 								>
-									{#each presetTagSuggestions as suggestion}
+									{#each model.presetTagSuggestions as suggestion}
 										<button
 											type="button"
 											class="block w-full px-3 py-2 text-left text-sm text-text-secondary transition-colors hover:bg-surface-hover hover:text-text cursor-pointer"
 											onmousedown={(event) => event.preventDefault()}
-											onclick={() => applyPresetTagSuggestion(suggestion)}
+											onclick={() => model.applyPresetTagSuggestion(suggestion)}
 										>
 											{suggestion}
 										</button>
@@ -977,15 +625,15 @@
 						</div>
 
 						<div class="flex justify-end">
-							<Button size="sm" onclick={savePreset}>Save Preset</Button>
+							<Button size="sm" onclick={() => model.savePreset()}>Save Preset</Button>
 						</div>
 					</div>
 				{/if}
 		</div>
 
 		<div class="flex justify-end gap-2 pt-2">
-			<Button variant="ghost" onclick={() => (showAddModal = false)}>Cancel</Button>
-			<Button onclick={addEntry}>Add Entry</Button>
+			<Button variant="ghost" onclick={() => (model.showAddModal = false)}>Cancel</Button>
+			<Button onclick={() => model.addEntry()}>Add Entry</Button>
 		</div>
 	</div>
 </Modal>
