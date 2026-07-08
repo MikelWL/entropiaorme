@@ -7,8 +7,9 @@
  * 1. **Armour prompt.** When the end-of-session armour reminder is enabled,
  *    the stop request does not stop: it arms a Track armour? decision and the
  *    actual stop runs only on the Yes/No answer. Yes also opens the
- *    armour-cost popup once the session has stopped; No (or the reminder
- *    being disabled wholesale) suppresses it.
+ *    armour-cost popup after the stop attempt settles (even a failed stop
+ *    opens it: the popup anchors to the still-current session); No (or the
+ *    reminder being disabled wholesale) suppresses it.
  * 2. **Quest-link suggestion.** After the stop lands, the backend may suggest
  *    linking the session to a quest or playlist; the user accepts or
  *    declines. An unclean or ambiguous record shows a dismissable skip
@@ -20,9 +21,11 @@
  * for the idle state.
  *
  * The readout (session id + final stats) survives until the quest-link flow
- * resolves; when the armour-cost popup is open at that moment, the clear is
- * deferred until the popup closes (`notifyArmourPopupClosed`) so the readout
- * does not vanish underneath it.
+ * resolves. When the flow ends with no prompt to show (no suggestion, or the
+ * load failed) while the armour-cost popup is open, the clear is deferred
+ * until the popup closes (`notifyArmourPopupClosed`) so the readout does not
+ * vanish underneath it; an explicit user verdict (accept, decline, or
+ * dismissing the skip notice) clears immediately, popup or not.
  */
 
 import type { SessionQuestLinkSuggestion } from '$lib/api';
