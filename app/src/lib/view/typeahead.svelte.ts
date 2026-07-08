@@ -16,14 +16,28 @@ export interface Typeahead<T> {
 	readonly error: string | null;
 	select(item: T): void;
 	clear(): void;
+	/**
+	 * Re-run the search for the current query, dropping any in-flight
+	 * response first. For when the search's behaviour changed out from under
+	 * an unchanged query (e.g. the endpoint it dispatches to switched), so a
+	 * response computed under the old behaviour must not land.
+	 */
+	refresh(): void;
+	/**
+	 * Cancel pending and in-flight work and blank the results, loading and
+	 * error state, keeping the query (and any selection). For suspending the
+	 * picker while its input is hidden without losing the typed text.
+	 */
+	cancel(): void;
 	destroy(): void;
 }
 
 /**
  * Debounced async picker view model. No search fires while an item is selected
  * or the trimmed query is under `minLength`; responses are dropped as stale
- * unless the query they answered still matches (and no selection or teardown
- * intervened), so out-of-order resolutions can never overwrite fresher state.
+ * unless the query they answered still matches (and no selection, refresh,
+ * cancel, or teardown intervened), so out-of-order resolutions can never
+ * overwrite fresher state.
  */
 export function createTypeahead<T>(options: TypeaheadOptions<T>): Typeahead<T> {
 	const { search, debounceMs = 200, minLength = 2, labelOf } = options;
@@ -36,6 +50,9 @@ export function createTypeahead<T>(options: TypeaheadOptions<T>): Typeahead<T> {
 
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	let destroyed = false;
+	// Bumped by refresh()/cancel() to invalidate in-flight responses whose
+	// query still matches (the query guard alone cannot catch those).
+	let epoch = 0;
 
 	function cancelPending(): void {
 		if (timer !== null) {
@@ -44,24 +61,24 @@ export function createTypeahead<T>(options: TypeaheadOptions<T>): Typeahead<T> {
 		}
 	}
 
-	function isCurrent(searched: string): boolean {
-		return !destroyed && selected === null && query.trim() === searched;
+	function isCurrent(searched: string, searchedEpoch: number): boolean {
+		return !destroyed && selected === null && epoch === searchedEpoch && query.trim() === searched;
 	}
 
-	async function run(searched: string): Promise<void> {
+	async function run(searched: string, searchedEpoch: number): Promise<void> {
 		try {
 			const items = await search(searched);
-			if (isCurrent(searched)) {
+			if (isCurrent(searched, searchedEpoch)) {
 				results = items;
 				error = null;
 			}
 		} catch (e) {
-			if (isCurrent(searched)) {
+			if (isCurrent(searched, searchedEpoch)) {
 				results = [];
 				error = e instanceof Error ? e.message : String(e);
 			}
 		} finally {
-			if (isCurrent(searched)) loading = false;
+			if (isCurrent(searched, searchedEpoch)) loading = false;
 		}
 	}
 
@@ -77,7 +94,7 @@ export function createTypeahead<T>(options: TypeaheadOptions<T>): Typeahead<T> {
 		timer = setTimeout(() => {
 			timer = null;
 			loading = true;
-			void run(trimmed);
+			void run(trimmed, epoch);
 		}, debounceMs);
 	}
 
@@ -114,6 +131,17 @@ export function createTypeahead<T>(options: TypeaheadOptions<T>): Typeahead<T> {
 			cancelPending();
 			selected = null;
 			query = '';
+			results = [];
+			loading = false;
+			error = null;
+		},
+		refresh() {
+			epoch += 1;
+			schedule();
+		},
+		cancel() {
+			epoch += 1;
+			cancelPending();
 			results = [];
 			loading = false;
 			error = null;

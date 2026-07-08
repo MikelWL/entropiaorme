@@ -19,11 +19,13 @@
  *   factory's state so a later `ensure()` retries creation from scratch.
  * - **Show protocol.** Size and position settle before the show payload goes
  *   out, and the window is revealed only after it, so the satellite never
- *   flashes at a stale location. Focus is optional and best-effort.
- * - **Tolerant hide.** Hiding emits `hideEvent` to whichever window can be
- *   resolved (the pending creation, else get-by-label) and is a no-op when
- *   none can: the satellite may never have been created, or its creation may
- *   have failed.
+ *   flashes at a stale location. Focus is optional and best-effort. A
+ *   satellite route that sizes and reveals itself from the state payload
+ *   opts out of the host-side reveal (`reveal: false`).
+ * - **Tolerant hide and emit.** `hide()` and `emitTo()` address whichever
+ *   window can be resolved (the pending creation, else get-by-label) and are
+ *   no-ops when none can: the satellite may never have been created, or its
+ *   creation may have failed.
  */
 
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
@@ -48,6 +50,19 @@ export interface SatelliteWindowOptions {
 	showEvent: string;
 	/** Event `hide()` emits. */
 	hideEvent: string;
+	/**
+	 * Overrides for the failure messages `ensure()` rejects with. These
+	 * surface directly in the host's UI, so a host keeps its established
+	 * wording; the defaults are the generic satellite phrasings.
+	 */
+	messages?: {
+		/** Creation handshake timeout (default 'Satellite window creation timed out'). */
+		creationTimeout?: string;
+		/** `tauri://error` fired with an empty payload (default 'Unknown satellite window creation error'). */
+		creationFailed?: string;
+		/** Readiness timeout (default 'Satellite window did not become ready'). */
+		readyTimeout?: string;
+	};
 }
 
 export interface SatellitePosition {
@@ -64,6 +79,13 @@ export interface SatellitePosition {
 export interface SatelliteShowOptions {
 	/** Focus the satellite after revealing it (best-effort; failures are swallowed). */
 	focus?: boolean;
+	/**
+	 * Reveal the window after emitting the state (default true). A satellite
+	 * route that measures its content and reveals itself, to avoid a flash at
+	 * a stale position, opts out; `show()` then only delivers the state
+	 * payload (and focus is left to the satellite too).
+	 */
+	reveal?: boolean;
 }
 
 export interface SatelliteWindow {
@@ -73,6 +95,12 @@ export interface SatelliteWindow {
 	show(state: unknown, position?: SatellitePosition, opts?: SatelliteShowOptions): Promise<void>;
 	/** Ask the satellite to hide; tolerates the window not existing. */
 	hide(): Promise<void>;
+	/**
+	 * Emit an arbitrary event to the satellite when it exists (the pending
+	 * creation, else get-by-label); a swallowed no-op when it does not or
+	 * when the emit fails. Never creates the window.
+	 */
+	emitTo(event: string, payload?: unknown): Promise<void>;
 }
 
 export function createSatelliteWindow(options: SatelliteWindowOptions): SatelliteWindow {
@@ -128,7 +156,9 @@ export function createSatelliteWindow(options: SatelliteWindowOptions): Satellit
 
 			await new Promise<void>((resolve, reject) => {
 				const timeoutId = window.setTimeout(() => {
-					reject(new Error('Satellite window creation timed out'));
+					reject(
+						new Error(options.messages?.creationTimeout ?? 'Satellite window creation timed out'),
+					);
 				}, CREATION_TIMEOUT_MS);
 
 				void satellite.once('tauri://created', () => {
@@ -140,7 +170,12 @@ export function createSatelliteWindow(options: SatelliteWindowOptions): Satellit
 					window.clearTimeout(timeoutId);
 					const payload =
 						typeof event.payload === 'string' ? event.payload : JSON.stringify(event.payload);
-					reject(new Error(payload || 'Unknown satellite window creation error'));
+					reject(
+						new Error(
+							payload ||
+								(options.messages?.creationFailed ?? 'Unknown satellite window creation error'),
+						),
+					);
 				});
 			});
 
@@ -148,7 +183,9 @@ export function createSatelliteWindow(options: SatelliteWindowOptions): Satellit
 				readyRace,
 				new Promise<never>((_, reject) => {
 					window.setTimeout(() => {
-						reject(new Error('Satellite window did not become ready'));
+						reject(
+							new Error(options.messages?.readyTimeout ?? 'Satellite window did not become ready'),
+						);
 					}, READY_TIMEOUT_MS);
 				}),
 			]);
@@ -178,19 +215,31 @@ export function createSatelliteWindow(options: SatelliteWindowOptions): Satellit
 			await satellite.setPosition(new PhysicalPosition(position.x, position.y));
 		}
 		await satellite.emit(options.showEvent, state);
+		if (opts?.reveal === false) return;
 		await satellite.show();
 		if (opts?.focus) {
 			await satellite.setFocus().catch(() => {});
 		}
 	}
 
+	/** The window when it exists (pending creation, else get-by-label); never creates. */
+	function resolveExisting(): Promise<WebviewWindow | null> {
+		return windowPromise
+			? windowPromise.catch(() => null)
+			: WebviewWindow.getByLabel(options.label);
+	}
+
 	async function hide(): Promise<void> {
-		const satellite = windowPromise
-			? await windowPromise.catch(() => null)
-			: await WebviewWindow.getByLabel(options.label);
+		const satellite = await resolveExisting();
 		if (!satellite) return;
 		await satellite.emit(options.hideEvent).catch(() => {});
 	}
 
-	return { ensure, show, hide };
+	async function emitTo(event: string, payload?: unknown): Promise<void> {
+		const satellite = await resolveExisting();
+		if (!satellite) return;
+		await satellite.emit(event, payload).catch(() => {});
+	}
+
+	return { ensure, show, hide, emitTo };
 }

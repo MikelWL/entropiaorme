@@ -17,16 +17,20 @@
 		type TrackingLive,
 		type TrackingStatus,
 		type TrackingSnapshot,
-		type ManualMobSuggestion,
-		type SessionQuestLinkSuggestion
+		type ManualMobSuggestion
 	} from '$lib/api';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { useVisiblePoll, windowGeometryPoll } from '$lib/realtime/useVisiblePoll';
+	import { createSnapshotStore } from '$lib/realtime/snapshotStore.svelte';
+	import { createPostSessionFlow } from '$lib/features/tracking/postSession.svelte';
+	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import type { MobTrackingMode } from '$lib/types/settings';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
-	import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import { PhysicalPosition } from '@tauri-apps/api/dpi';
 	import { listen } from '@tauri-apps/api/event';
+	import { anchorBelow, anchorCentreBelow, createAnchorTracker } from '$lib/windows/anchor';
+	import { createSatelliteWindow } from '$lib/windows/satellite';
+	import { createWindowSizeSync } from '$lib/windows/windowSize';
 	import {
 		OVERLAY_MENU_CLOSED_EVENT,
 		OVERLAY_MENU_HIDE_EVENT,
@@ -38,7 +42,7 @@
 		type OverlayMenuKind,
 		type OverlayMenuSelection,
 		type OverlayMenuState
-	} from '$lib/overlayMenu';
+	} from '$lib/windows/overlayMenu';
 	import {
 		OVERLAY_ARMOUR_COST_CLOSED_EVENT,
 		OVERLAY_ARMOUR_COST_HIDE_EVENT,
@@ -47,7 +51,7 @@
 		OVERLAY_ARMOUR_COST_UPDATE_EVENT,
 		OVERLAY_ARMOUR_COST_WINDOW_LABEL,
 		type OverlayArmourCostState
-	} from '$lib/overlayArmourCost';
+	} from '$lib/windows/overlayArmourCost';
 	import OverlayStrip from '$lib/components/overlay/OverlayStrip.svelte';
 
 	// The colon-form Tauri topic the event relay re-emits each backend tracking
@@ -57,20 +61,13 @@
 	// Emitted by the shell (toggle_overlay) when this hidden window is shown, so
 	// the overlay can re-read config/runtime fields no tracking frame announces.
 	const OVERLAY_SHOWN_EVENT = 'overlay-shown';
-	const OVERLAY_SIZE_SLACK = 36;
 	const OVERLAY_MENU_VERTICAL_GAP = 6;
 	const OVERLAY_MENU_MAX_HEIGHT = 220;
 	const OVERLAY_MENU_MAX_WIDTH = 340;
 	const OVERLAY_MENU_MIN_WIDTH = 180;
 
 	let overlayRoot: HTMLDivElement | null = $state(null);
-	let resizeFrame: number | null = null;
-	let lastWindowWidth: number | null = null;
-	let lastWindowHeight: number | null = null;
 	let overlayMenuKind = $state<OverlayMenuKind | null>(null);
-	let overlayMenuWindowPromise: Promise<WebviewWindow> | null = null;
-	let overlayMenuReady = false;
-	let overlayMenuReadyPromise: Promise<void> | null = null;
 	let armourCostOpen = $state(false);
 	// Stamped when the popup self-closes (blur, ESC, post-save). The Cost-button
 	// click handler races against the CLOSED event: if blur arrives first,
@@ -78,17 +75,9 @@
 	// click would reopen the popup that the same gesture just dismissed.
 	// Gating the open branch on this timestamp suppresses that reopen.
 	let armourCostClosedAt = 0;
-	let armourCostWindowPromise: Promise<WebviewWindow> | null = null;
-	let armourCostReady = false;
-	let armourCostReadyPromise: Promise<void> | null = null;
 	let armourCostError = $state<string | null>(null);
 	let armourCostAnchor: HTMLElement | null = $state(null);
-	let armourCostAnchorFrame: number | null = null;
 	let postSessionArmourButton: HTMLButtonElement | null = $state(null);
-	// Yellow "Track armour?" prompt that replaces the Stop button after the user
-	// clicks Stop while the end-of-session armour reminder is enabled. The actual
-	// stop sequence runs only after the user picks Yes/No.
-	let awaitingArmourTrackDecision = $state(false);
 	// Yellow attribution-not-ready warning that replaces the TRACK button when
 	// startTracking is refused by the backend (no hotbar slot bound in hotbar
 	// mode, or trifecta not configured in trifecta mode). Persists until the
@@ -99,6 +88,84 @@
 	let trifectaSaving = $state(false);
 	let trifectaError = $state<string | null>(null);
 	let overlayMenuLaunchError = $state<string | null>(null);
+
+	let data = $state<TrackingLive>({ status: 'idle' });
+	let status = $state<TrackingStatus | null>(null);
+	// Session start in epoch-ms (parsed from the snapshot's started_at), the basis
+	// for the client-side elapsed tick. null when no active session is timed.
+	let sessionStartedAtMs = $state<number | null>(null);
+	let releasing = $state(false);
+	let starting = $state(false);
+
+	let mobQuery = $state('');
+	// The mob/tag lookup's error channel, shared between the typeahead (search
+	// failures, mirrored in by the presenter effect below) and the lock/apply
+	// actions.
+	let mobError = $state<string | null>(null);
+	let selectingMob = $state(false);
+	let mobCloseTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// The two satellite popovers this window drives. The failure messages keep
+	// the overlay's established wording (they render in the strip).
+	const menuWindow = createSatelliteWindow({
+		label: OVERLAY_MENU_WINDOW_LABEL,
+		url: '/overlay-menu',
+		width: OVERLAY_MENU_MIN_WIDTH,
+		height: 44,
+		readyEvent: OVERLAY_MENU_READY_EVENT,
+		showEvent: OVERLAY_MENU_SHOW_EVENT,
+		hideEvent: OVERLAY_MENU_HIDE_EVENT,
+		messages: {
+			creationTimeout: 'Popup window creation timed out',
+			creationFailed: 'Unknown Tauri popup creation error',
+			readyTimeout: 'Popup route did not become ready'
+		}
+	});
+	const armourCostWindow = createSatelliteWindow({
+		label: OVERLAY_ARMOUR_COST_WINDOW_LABEL,
+		url: '/overlay-armour-cost',
+		width: 320,
+		height: 64,
+		readyEvent: OVERLAY_ARMOUR_COST_READY_EVENT,
+		showEvent: OVERLAY_ARMOUR_COST_SHOW_EVENT,
+		hideEvent: OVERLAY_ARMOUR_COST_HIDE_EVENT,
+		messages: {
+			creationTimeout: 'Armour cost popup creation timed out',
+			creationFailed: 'Unknown Tauri popup creation error',
+			readyTimeout: 'Armour cost popup did not become ready'
+		}
+	});
+
+	// The consolidated snapshot, event-driven with coalesced re-reads (see the
+	// factory). Each webview is its own JS context, so the overlay keeps its
+	// own store instance beside the dashboard's.
+	const snapshot = createSnapshotStore<TrackingSnapshot>(TRACKING_TOPIC, getTrackingSnapshot);
+
+	// Post-session flow: the armour prompt gating the stop, the final-stats
+	// readout, and the quest-link suggestion (see the module for the state
+	// machine). Render state comes off `flow`; the deps close over this
+	// window's snapshot and armour-cost popup.
+	const flow = createPostSessionFlow({
+		isSessionActive: () => data.status === 'active',
+		isBusy: () => toggling,
+		armourReminderEnabled: () => data.endOfSessionArmourReminderEnabled === true,
+		refresh: () => snapshot.hydrate(),
+		readStats: () => ({
+			cost: snapshot.current?.cost ?? 0,
+			returns: snapshot.current?.returns ?? 0,
+			pes: snapshot.current?.pes ?? 0,
+			net: snapshot.current?.net ?? 0
+		}),
+		stopTracking,
+		fetchQuestLinkSuggestion: getSessionQuestLinkSuggestion,
+		decideQuestLink: decideSessionQuestLink,
+		isArmourPopupOpen: () => armourCostOpen,
+		showArmourPopup: showPostSessionArmourPopup,
+		onPromptShown: () => {
+			void tick().then(scheduleArmourCostAnchorSync);
+		}
+	});
+	const toggling = $derived(starting || flow.stopping);
 
 	async function handleDrag(e: MouseEvent) {
 		const target = e.target as HTMLElement;
@@ -111,29 +178,6 @@
 		}
 		await getCurrentWindow().startDragging();
 	}
-
-	let data = $state<TrackingLive>({ status: 'idle' });
-	let status = $state<TrackingStatus | null>(null);
-	// Session start in epoch-ms (parsed from the snapshot's started_at), the basis
-	// for the client-side elapsed tick. null when no active session is timed.
-	let sessionStartedAtMs = $state<number | null>(null);
-	let releasing = $state(false);
-	let toggling = $state(false);
-
-	// Post-session quest link flow
-	let lastSessionId = $state<string | null>(null);
-	let lastSessionStats = $state<{ cost: number; returns: number; pes: number; net: number } | null>(null);
-	let questLinkSuggestion = $state<SessionQuestLinkSuggestion | null>(null);
-	let questLinkMessage = $state<string | null>(null);
-	let questLinkSaving = $state(false);
-	let postSessionClearPending = $state(false);
-	let mobQuery = $state('');
-	let tagSuggestions = $state<string[]>([]);
-	let mobSuggestions = $state<ManualMobSuggestion[]>([]);
-	let mobLoading = $state(false);
-	let mobError = $state<string | null>(null);
-	let selectingMob = $state(false);
-	let mobCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function clearMobCloseTimer() {
 		if (!mobCloseTimer) return;
@@ -157,42 +201,11 @@
 		overlayMenuLaunchError = message;
 	}
 
-	function measureOverlaySize(root: HTMLDivElement) {
-		const rootRect = root.getBoundingClientRect();
-		return {
-			width: Math.max(1, Math.ceil(rootRect.width + OVERLAY_SIZE_SLACK)),
-			height: Math.max(1, Math.ceil(rootRect.height + OVERLAY_SIZE_SLACK))
-		};
-	}
-
-	async function syncOverlayWindowSize() {
-		if (!overlayRoot) return;
-
-		const { width, height } = measureOverlaySize(overlayRoot);
-		if (width === lastWindowWidth && height === lastWindowHeight) return;
-
-		lastWindowWidth = width;
-		lastWindowHeight = height;
-
-		try {
-			await getCurrentWindow().setSize(new LogicalSize(width, height));
-		} catch {
-			lastWindowWidth = null;
-			lastWindowHeight = null;
-		}
-	}
-
-	function scheduleOverlayWindowSizeSync() {
-		if (!overlayRoot || resizeFrame != null) return;
-
-		resizeFrame = window.requestAnimationFrame(() => {
-			resizeFrame = null;
-			void (async () => {
-				await syncOverlayWindowSize();
-				scheduleArmourCostAnchorSync();
-			})();
-		});
-	}
+	// Keep this window's OS size in step with the strip; each sync re-anchors
+	// the armour-cost popup, which hangs off a strip button.
+	const windowSizeSync = createWindowSizeSync(() => overlayRoot, {
+		afterSync: () => scheduleArmourCostAnchorSync()
+	});
 
 	function measureMenuTextWidth(labels: string[], font = '500 12px Inter, system-ui, sans-serif') {
 		if (labels.length === 0) return 0;
@@ -260,35 +273,6 @@
 		};
 	}
 
-	async function getAnchorPosition(anchor: HTMLElement) {
-		const currentWindow = getCurrentWindow();
-		const [windowPosition, scaleFactor] = await Promise.all([
-			currentWindow.outerPosition(),
-			currentWindow.scaleFactor()
-		]);
-		const rect = anchor.getBoundingClientRect();
-		return {
-			x: Math.round(windowPosition.x + rect.left * scaleFactor),
-			y: Math.round(windowPosition.y + (rect.bottom + OVERLAY_MENU_VERTICAL_GAP) * scaleFactor),
-			width: rect.width
-		};
-	}
-
-	async function getArmourCostAnchor(anchor: HTMLElement) {
-		const currentWindow = getCurrentWindow();
-		const [windowOuterPosition, scaleFactor] = await Promise.all([
-			currentWindow.outerPosition(),
-			currentWindow.scaleFactor()
-		]);
-		const rect = anchor.getBoundingClientRect();
-		const windowLogicalX = windowOuterPosition.x / scaleFactor;
-		const windowLogicalY = windowOuterPosition.y / scaleFactor;
-		return {
-			centerX: windowLogicalX + rect.left + rect.width / 2,
-			top: windowLogicalY + rect.bottom + OVERLAY_MENU_VERTICAL_GAP
-		};
-	}
-
 	async function buildArmourCostState(anchor: HTMLElement): Promise<OverlayArmourCostState | null> {
 		const sessionId = armourSessionId;
 		if (!sessionId || !anchor.isConnected) return null;
@@ -296,90 +280,8 @@
 		return {
 			sessionId,
 			repairOcrEnabled: data.repairOcrEnabled === true,
-			anchor: await getArmourCostAnchor(anchor)
+			anchor: await anchorCentreBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 		};
-	}
-
-	function ensureOverlayMenuReadyListener() {
-		if (overlayMenuReady || overlayMenuReadyPromise) return overlayMenuReadyPromise ?? Promise.resolve();
-
-		overlayMenuReadyPromise = new Promise((resolve) => {
-			let unlisten: (() => void) | undefined;
-			void listen<{ label?: string }>(OVERLAY_MENU_READY_EVENT, (event) => {
-				if (event.payload?.label !== OVERLAY_MENU_WINDOW_LABEL) return;
-				overlayMenuReady = true;
-				overlayMenuReadyPromise = null;
-				unlisten?.();
-				resolve();
-			}).then((fn) => {
-				unlisten = fn;
-			});
-		});
-
-		return overlayMenuReadyPromise;
-	}
-
-	async function ensureOverlayMenuWindow() {
-		if (overlayMenuWindowPromise) return overlayMenuWindowPromise;
-
-		overlayMenuWindowPromise = (async () => {
-			const existing = await WebviewWindow.getByLabel(OVERLAY_MENU_WINDOW_LABEL);
-			if (existing) {
-				overlayMenuReady = true;
-				return existing;
-			}
-
-			const readyPromise = ensureOverlayMenuReadyListener();
-			const popupWindow = new WebviewWindow(OVERLAY_MENU_WINDOW_LABEL, {
-				url: '/overlay-menu',
-				width: OVERLAY_MENU_MIN_WIDTH,
-				height: 44,
-				visible: false,
-				decorations: false,
-				transparent: true,
-				alwaysOnTop: true,
-				skipTaskbar: true,
-				shadow: false,
-				resizable: false,
-				focus: false
-			});
-
-			await new Promise<void>((resolve, reject) => {
-				const timeoutId = window.setTimeout(() => {
-					reject(new Error('Popup window creation timed out'));
-				}, 3000);
-
-				void popupWindow.once('tauri://created', () => {
-					window.clearTimeout(timeoutId);
-					resolve();
-				});
-
-				void popupWindow.once('tauri://error', (event) => {
-					window.clearTimeout(timeoutId);
-					const payload = typeof event.payload === 'string'
-						? event.payload
-						: JSON.stringify(event.payload);
-					reject(new Error(payload || 'Unknown Tauri popup creation error'));
-				});
-			});
-
-			await Promise.race([
-				readyPromise,
-				new Promise<never>((_, reject) => {
-					window.setTimeout(() => {
-						reject(new Error('Popup route did not become ready'));
-					}, 3000);
-				})
-			]);
-			return popupWindow;
-		})().catch((error) => {
-			overlayMenuWindowPromise = null;
-			overlayMenuReady = false;
-			overlayMenuReadyPromise = null;
-			throw error;
-		});
-
-		return overlayMenuWindowPromise;
 	}
 
 	async function showOverlayMenu(
@@ -389,9 +291,11 @@
 		options: { focusPopup?: boolean } = {}
 	) {
 		try {
-			const [popupWindow, anchorPosition] = await Promise.all([
-				ensureOverlayMenuWindow(),
-				getAnchorPosition(anchor)
+			// Resolve the window (creating it on first use) while the anchor
+			// maths runs; the show below re-adopts the settled window.
+			const [, anchorPosition] = await Promise.all([
+				menuWindow.ensure(),
+				anchorBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 			]);
 			const height = state.kind === 'trifecta'
 				? computeMenuHeight(state.options.length)
@@ -403,13 +307,11 @@
 							: Math.max(1, state.mobSuggestions.length)
 				);
 
-			await popupWindow.setSize(new LogicalSize(state.width, height));
-			await popupWindow.setPosition(new PhysicalPosition(anchorPosition.x, anchorPosition.y));
-			await popupWindow.emit(OVERLAY_MENU_SHOW_EVENT, state);
-			await popupWindow.show();
-			if (options.focusPopup) {
-				await popupWindow.setFocus().catch(() => {});
-			}
+			await menuWindow.show(
+				state,
+				{ x: anchorPosition.x, y: anchorPosition.y, width: state.width, height },
+				{ focus: options.focusPopup }
+			);
 			if (kind === 'mob') {
 				overlayMenuLaunchError = null;
 			}
@@ -425,11 +327,7 @@
 			clearMobCloseTimer();
 		}
 		overlayMenuKind = null;
-		const popupWindow = overlayMenuWindowPromise
-			? await overlayMenuWindowPromise.catch(() => null)
-			: await WebviewWindow.getByLabel(OVERLAY_MENU_WINDOW_LABEL);
-		if (!popupWindow) return;
-		await popupWindow.emit(OVERLAY_MENU_HIDE_EVENT).catch(() => {});
+		await menuWindow.hide();
 	}
 
 	async function openMobMenu() {
@@ -458,99 +356,17 @@
 		await showOverlayMenu('trifecta', anchor, state, { focusPopup: true });
 	}
 
-	function ensureArmourCostReadyListener() {
-		if (armourCostReady || armourCostReadyPromise) return armourCostReadyPromise ?? Promise.resolve();
-
-		armourCostReadyPromise = new Promise((resolve) => {
-			let unlisten: (() => void) | undefined;
-			void listen<{ label?: string }>(OVERLAY_ARMOUR_COST_READY_EVENT, (event) => {
-				if (event.payload?.label !== OVERLAY_ARMOUR_COST_WINDOW_LABEL) return;
-				armourCostReady = true;
-				armourCostReadyPromise = null;
-				unlisten?.();
-				resolve();
-			}).then((fn) => {
-				unlisten = fn;
-			});
-		});
-
-		return armourCostReadyPromise;
-	}
-
-	async function ensureArmourCostWindow() {
-		if (armourCostWindowPromise) return armourCostWindowPromise;
-
-		armourCostWindowPromise = (async () => {
-			const existing = await WebviewWindow.getByLabel(OVERLAY_ARMOUR_COST_WINDOW_LABEL);
-			if (existing) {
-				armourCostReady = true;
-				return existing;
-			}
-
-			const readyPromise = ensureArmourCostReadyListener();
-			const popupWindow = new WebviewWindow(OVERLAY_ARMOUR_COST_WINDOW_LABEL, {
-				url: '/overlay-armour-cost',
-				width: 320,
-				height: 64,
-				visible: false,
-				decorations: false,
-				transparent: true,
-				alwaysOnTop: true,
-				skipTaskbar: true,
-				shadow: false,
-				resizable: false,
-				focus: false
-			});
-
-			await new Promise<void>((resolve, reject) => {
-				const timeoutId = window.setTimeout(() => {
-					reject(new Error('Armour cost popup creation timed out'));
-				}, 3000);
-
-				void popupWindow.once('tauri://created', () => {
-					window.clearTimeout(timeoutId);
-					resolve();
-				});
-
-				void popupWindow.once('tauri://error', (event) => {
-					window.clearTimeout(timeoutId);
-					const payload = typeof event.payload === 'string'
-						? event.payload
-						: JSON.stringify(event.payload);
-					reject(new Error(payload || 'Unknown Tauri popup creation error'));
-				});
-			});
-
-			await Promise.race([
-				readyPromise,
-				new Promise<never>((_, reject) => {
-					window.setTimeout(() => {
-						reject(new Error('Armour cost popup did not become ready'));
-					}, 3000);
-				})
-			]);
-			return popupWindow;
-		})().catch((error) => {
-			armourCostWindowPromise = null;
-			armourCostReady = false;
-			armourCostReadyPromise = null;
-			throw error;
-		});
-
-		return armourCostWindowPromise;
-	}
-
 	async function showArmourCost(anchor: HTMLElement) {
 		try {
-			const popupWindow = await ensureArmourCostWindow();
+			await armourCostWindow.ensure();
 			const state = await buildArmourCostState(anchor);
 			if (!state) return;
 
 			armourCostAnchor = anchor;
 			// The popup measures its panel, sizes+positions itself accurately, then
-			// reveals + focuses on its own — avoids a one-frame flash at the wrong
-			// (initial-guess) location.
-			await popupWindow.emit(OVERLAY_ARMOUR_COST_SHOW_EVENT, state);
+			// reveals + focuses on its own (never revealed from here) so it cannot
+			// flash for one frame at the wrong (initial-guess) location.
+			await armourCostWindow.show(state, undefined, { reveal: false });
 			armourCostError = null;
 			armourCostOpen = true;
 			scheduleArmourCostAnchorSync();
@@ -569,38 +385,26 @@
 		const state = await buildArmourCostState(armourCostAnchor);
 		if (!state) return;
 
-		const popupWindow = armourCostWindowPromise
-			? await armourCostWindowPromise.catch(() => null)
-			: await WebviewWindow.getByLabel(OVERLAY_ARMOUR_COST_WINDOW_LABEL);
-		await popupWindow?.emit(OVERLAY_ARMOUR_COST_UPDATE_EVENT, state).catch(() => {});
+		await armourCostWindow.emitTo(OVERLAY_ARMOUR_COST_UPDATE_EVENT, state);
 	}
 
-	function scheduleArmourCostAnchorSync() {
-		if (!armourCostOpen || !armourCostAnchor || armourCostAnchorFrame != null) return;
+	const armourAnchorTracker = createAnchorTracker(() => void syncArmourCostAnchor());
 
-		armourCostAnchorFrame = window.requestAnimationFrame(() => {
-			armourCostAnchorFrame = null;
-			void syncArmourCostAnchor();
-		});
+	function scheduleArmourCostAnchorSync() {
+		if (!armourCostOpen || !armourCostAnchor) return;
+		armourAnchorTracker.schedule();
 	}
 
 	function clearArmourCostOpenState() {
 		armourCostOpen = false;
 		armourCostAnchor = null;
-		if (armourCostAnchorFrame != null) {
-			window.cancelAnimationFrame(armourCostAnchorFrame);
-			armourCostAnchorFrame = null;
-		}
-		clearDeferredPostSessionState();
+		armourAnchorTracker.cancel();
+		flow.notifyArmourPopupClosed();
 	}
 
 	async function hideArmourCost() {
 		clearArmourCostOpenState();
-		const popupWindow = armourCostWindowPromise
-			? await armourCostWindowPromise.catch(() => null)
-			: await WebviewWindow.getByLabel(OVERLAY_ARMOUR_COST_WINDOW_LABEL);
-		if (!popupWindow) return;
-		await popupWindow.emit(OVERLAY_ARMOUR_COST_HIDE_EVENT).catch(() => {});
+		await armourCostWindow.hide();
 	}
 
 	async function toggleArmourCost(event: MouseEvent) {
@@ -614,6 +418,15 @@
 		await showArmourCost(anchor);
 	}
 
+	// The armour-cost popup after a Yes on the armour prompt: the anchor
+	// button only renders once the post-session readout has, hence the tick.
+	async function showPostSessionArmourPopup() {
+		await tick();
+		if (postSessionArmourButton && armourSessionId && !armourCostOpen) {
+			await showArmourCost(postSessionArmourButton);
+		}
+	}
+
 	async function handleTrifectaPresetSelection(presetId: string) {
 		const trifecta = data.trifectaAttribution;
 		if (!trifecta || trifectaSaving || presetId === trifecta.activePresetId) return;
@@ -622,7 +435,7 @@
 		trifectaError = null;
 		try {
 			await updateSettings({ active_trifecta_preset_id: presetId });
-			await hydrate();
+			await snapshot.hydrate();
 		} catch (error) {
 			trifectaError = error instanceof ApiError || error instanceof Error
 				? error.message
@@ -675,23 +488,23 @@
 	$effect(() => {
 		if (!overlayRoot) return;
 
-		scheduleOverlayWindowSizeSync();
+		windowSizeSync.schedule();
 
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
-				scheduleOverlayWindowSizeSync();
+				windowSizeSync.schedule();
 			} else {
 				void hideOverlayMenu();
 				void hideArmourCost();
 			}
 		};
 		const handleFocus = () => {
-			scheduleOverlayWindowSizeSync();
+			windowSizeSync.schedule();
 			scheduleArmourCostAnchorSync();
 		};
 
 		const resizeObserver = new ResizeObserver(() => {
-			scheduleOverlayWindowSizeSync();
+			windowSizeSync.schedule();
 			scheduleArmourCostAnchorSync();
 		});
 		resizeObserver.observe(overlayRoot);
@@ -700,10 +513,7 @@
 		window.addEventListener('focus', handleFocus);
 
 		return () => {
-			if (resizeFrame != null) {
-				window.cancelAnimationFrame(resizeFrame);
-				resizeFrame = null;
-			}
+			windowSizeSync.cancel();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			window.removeEventListener('focus', handleFocus);
 			resizeObserver.disconnect();
@@ -712,26 +522,24 @@
 
 
 
-	// Hydrate the consolidated snapshot on mount and re-read it on each backend
-	// tracking frame the event relay re-emits onto the typed Tauri topic. No
-	// polling: the snapshot is the single source of render shape, and a frame is
-	// a pure trigger to re-read it (the payload is never reduced into state).
+	// Re-read the consolidated snapshot on each backend tracking frame. The
+	// listener attaches FIRST and the initial hydrate runs after it settles,
+	// so a frame arriving during subscription setup is not lost (it simply
+	// re-triggers a read). A payload-less reconnect nudge on this topic
+	// re-hydrates the same way, so it can never be mistaken for an idle
+	// session.
 	$effect(() => {
 		let disposed = false;
 		let unlisten: (() => void) | undefined;
 
-		(async () => {
-			unlisten = await listen(TRACKING_TOPIC, () => {
-				if (disposed) return;
-				void hydrate();
-			});
-			// Hydrate AFTER the listener attaches, so a frame arriving during
-			// subscription setup is not lost (it re-triggers a read). A payload-less
-			// reconnect nudge on this topic re-hydrates the same way, so it can
-			// never be mistaken for an idle session.
-			if (disposed) return;
-			void hydrate();
-		})();
+		void snapshot.subscribe().then((fn) => {
+			if (disposed) {
+				fn();
+				return;
+			}
+			unlisten = fn;
+			void snapshot.hydrate();
+		});
 
 		return () => {
 			disposed = true;
@@ -753,7 +561,7 @@
 		(async () => {
 			unlisten = await listen(OVERLAY_SHOWN_EVENT, () => {
 				if (disposed) return;
-				void hydrate();
+				void snapshot.hydrate();
 			});
 		})();
 
@@ -853,9 +661,6 @@
 
 
 
-	let snapshotInFlight = false;
-	let snapshotRefetchQueued = false;
-
 	// Map the one consolidated snapshot onto the overlay's two render bindings:
 	// `data` (TrackingLive, the strip) and `status` (TrackingStatus, the stat
 	// pills). TrackingSnapshot is a strict superset of TrackingStatus, so `status`
@@ -863,61 +668,40 @@
 	// snake `session_id` / `kill_count` onto the live shape's camel `sessionId` /
 	// `killCount`. The activity feed (`recentEvents`) is deliberately not mapped:
 	// the overlay renders no feed.
-	function applySnapshot(snapshot: TrackingSnapshot) {
-		status = snapshot;
+	function applySnapshot(snap: TrackingSnapshot) {
+		status = snap;
 		data = {
-			status: snapshot.status ?? 'idle',
-			sessionId: snapshot.session_id,
-			elapsed: snapshot.elapsed,
-			killCount: snapshot.kill_count,
-			cost: snapshot.cost,
-			returns: snapshot.returns,
-			pes: snapshot.pes,
-			net: snapshot.net,
-			returnRate: snapshot.returnRate,
-			weaponAttribution: snapshot.weaponAttribution,
-			repairOcrEnabled: snapshot.repairOcrEnabled,
-			endOfSessionArmourReminderEnabled: snapshot.endOfSessionArmourReminderEnabled,
-			mobEntryMode: snapshot.mobEntryMode,
-			currentMob: snapshot.currentMob,
-			mobSource: snapshot.mobSource,
-			currentTool: snapshot.currentTool,
-			trifectaAttribution: snapshot.trifectaAttribution,
+			status: snap.status ?? 'idle',
+			sessionId: snap.session_id,
+			elapsed: snap.elapsed,
+			killCount: snap.kill_count,
+			cost: snap.cost,
+			returns: snap.returns,
+			pes: snap.pes,
+			net: snap.net,
+			returnRate: snap.returnRate,
+			weaponAttribution: snap.weaponAttribution,
+			repairOcrEnabled: snap.repairOcrEnabled,
+			endOfSessionArmourReminderEnabled: snap.endOfSessionArmourReminderEnabled,
+			mobEntryMode: snap.mobEntryMode,
+			currentMob: snap.currentMob,
+			mobSource: snap.mobSource,
+			currentTool: snap.currentTool,
+			trifectaAttribution: snap.trifectaAttribution,
 		};
-		const startedMs = snapshot.started_at ? new Date(snapshot.started_at).getTime() : NaN;
+		const startedMs = snap.started_at ? new Date(snap.started_at).getTime() : NaN;
 		sessionStartedAtMs = Number.isNaN(startedMs) ? null : startedMs;
 	}
 
-	// Re-read the consolidated snapshot and apply it. Overlapping calls coalesce:
-	// a frame arriving mid-read queues exactly one follow-up read, so two reads
-	// can never settle out of order and the overlay always lands on the latest
-	// state. A failed read keeps the last-good render rather than flickering the
-	// overlay to a dormant default; the next frame (or the relay's reconnect
-	// nudge) re-reads. Mirrors the dashboard trackingStore; each webview is its
-	// own JS context, so the overlay keeps its own coalescer instance.
-	async function hydrate(): Promise<void> {
-		if (snapshotInFlight) {
-			snapshotRefetchQueued = true;
-			return;
-		}
-		snapshotInFlight = true;
-		try {
-			do {
-				snapshotRefetchQueued = false;
-				try {
-					applySnapshot(await getTrackingSnapshot());
-				} catch {
-					// Transient read failure: keep the last good snapshot.
-				}
-			} while (snapshotRefetchQueued);
-		} finally {
-			snapshotInFlight = false;
-		}
-	}
+	$effect(() => {
+		const current = snapshot.current;
+		if (!current) return;
+		applySnapshot(current);
+	});
 
 	const isTrifectaAttribution = $derived(data.weaponAttribution === 'trifecta');
 
-	const armourSessionId = $derived(data.sessionId ?? lastSessionId);
+	const armourSessionId = $derived(data.sessionId ?? flow.lastSessionId);
 	const isTagEntryMode = $derived(data.mobEntryMode === 'tag');
 	const mobLabel = $derived(isTagEntryMode ? 'Tag' : 'Mob');
 	const showTagInput = $derived(
@@ -932,81 +716,81 @@
 	);
 	const showManualInput = $derived(showTagInput || showManualMobInput);
 
+	// The mob/tag lookup: a debounced typeahead over whichever endpoint the
+	// entry mode selects, its results split back into the two suggestion lists
+	// by shape (tag suggestions are bare strings). Search failures are mapped
+	// to the overlay's established wording before the typeahead records them.
+	const mobTypeahead = createTypeahead<string | ManualMobSuggestion>({
+		search: async (query) => {
+			if (showTagInput) {
+				try {
+					return await getTrackingTagSuggestions(query);
+				} catch (error) {
+					throw new Error(error instanceof ApiError ? error.message : 'Tag lookup failed');
+				}
+			}
+			try {
+				return await getManualMobSuggestions(query);
+			} catch (error) {
+				throw new Error(error instanceof ApiError ? error.message : 'Mob lookup failed');
+			}
+		},
+		debounceMs: 120,
+		minLength: 1
+	});
+
+	const tagSuggestions = $derived(
+		mobTypeahead.results.filter((item): item is string => typeof item === 'string')
+	);
+	const mobSuggestions = $derived(
+		mobTypeahead.results.filter((item): item is ManualMobSuggestion => typeof item !== 'string')
+	);
+	const mobLoading = $derived(mobTypeahead.loading);
+
+	// Drive the typeahead from the input state. Hiding the input or emptying
+	// the query suspends the search and closes the menu, keeping the typed
+	// text; a tag/manual mode flip re-queries the unchanged text against the
+	// new endpoint (dropping any in-flight response from the old one).
 	$effect(() => {
 		if (!showManualInput) {
-			tagSuggestions = [];
-			mobSuggestions = [];
-			mobLoading = false;
-			void closeMobMenu();
-			mobError = null;
-			overlayMenuLaunchError = null;
-			return;
-		}
-
-		const query = mobQuery.trim();
-		if (!query) {
-			tagSuggestions = [];
-			mobSuggestions = [];
-			mobLoading = false;
-			mobError = null;
+			mobTypeahead.cancel();
 			void closeMobMenu();
 			overlayMenuLaunchError = null;
 			return;
 		}
 
-		let cancelled = false;
-		const handle = setTimeout(async () => {
-			mobLoading = true;
+		mobTypeahead.query = mobQuery;
+		if (!mobQuery.trim()) {
+			mobTypeahead.cancel();
+			void closeMobMenu();
+			overlayMenuLaunchError = null;
+			return;
+		}
+
+		void showTagInput;
+		mobTypeahead.refresh();
+	});
+
+	// Present the search lifecycle in the menu window: mirror the typeahead's
+	// settled error into the shared channel and re-sync the menu at each
+	// transition (the loading flip, a results publication, an error) while the
+	// input is focused or the menu already open. Only the lifecycle is
+	// tracked; the gate reads are untracked so a bare focus change cannot
+	// re-open a menu with nothing new to show.
+	$effect(() => {
+		void mobTypeahead.loading;
+		void mobTypeahead.results;
+		mobError = mobTypeahead.error;
+		untrack(() => {
+			if (!showManualInput || !mobQuery.trim()) return;
 			if (mobInputFocused || overlayMenuKind === 'mob') {
 				void openMobMenu();
 			}
-			try {
-				if (showTagInput) {
-					const suggestions = await getTrackingTagSuggestions(query);
-					if (!cancelled && mobQuery.trim() === query) {
-						tagSuggestions = suggestions;
-						mobSuggestions = [];
-						if (mobInputFocused || overlayMenuKind === 'mob') {
-							void openMobMenu();
-						}
-						mobError = null;
-					}
-				} else {
-					const suggestions = await getManualMobSuggestions(query);
-					if (!cancelled && mobQuery.trim() === query) {
-						mobSuggestions = suggestions;
-						tagSuggestions = [];
-						if (mobInputFocused || overlayMenuKind === 'mob') {
-							void openMobMenu();
-						}
-						mobError = null;
-					}
-				}
-			} catch (error) {
-				if (!cancelled && mobQuery.trim() === query) {
-					tagSuggestions = [];
-					mobSuggestions = [];
-					mobError = error instanceof ApiError
-						? error.message
-						: showTagInput ? 'Tag lookup failed' : 'Mob lookup failed';
-					if (mobInputFocused || overlayMenuKind === 'mob') {
-						void openMobMenu();
-					}
-				}
-			} finally {
-				if (!cancelled && mobQuery.trim() === query) {
-					mobLoading = false;
-					if (mobInputFocused || overlayMenuKind === 'mob') {
-						void openMobMenu();
-					}
-				}
-			}
-		}, 120);
+		});
+	});
 
-		return () => {
-			cancelled = true;
-			clearTimeout(handle);
-		};
+	$effect(() => {
+		return () => mobTypeahead.destroy();
 	});
 
 	async function handleMobTrackingModeChange(mode: MobTrackingMode) {
@@ -1018,133 +802,21 @@
 	}
 
 	async function handleStart() {
-		toggling = true;
+		starting = true;
 		attributionWarning = null;
 		try {
 			await startTracking();
-			await hydrate();
+			await snapshot.hydrate();
 		} catch (error) {
 			if (error instanceof ApiError && error.kind === 'badRequest') {
 				attributionWarning = error.message;
 			}
 		}
-		toggling = false;
+		starting = false;
 	}
 
 	function dismissAttributionWarning() {
 		attributionWarning = null;
-	}
-
-	async function handleStopRequest() {
-		if (data.status !== 'active' || toggling) return;
-		// Gate behind the yellow "Track armour?" prompt when the reminder is on.
-		// Yes/No on the prompt drive the actual stop via handleArmourTrackDecision.
-		if (data.endOfSessionArmourReminderEnabled === true) {
-			awaitingArmourTrackDecision = true;
-			return;
-		}
-		await handleStop({ showArmour: false });
-	}
-
-	async function handleArmourTrackDecision(action: 'yes' | 'no') {
-		if (!awaitingArmourTrackDecision) return;
-		awaitingArmourTrackDecision = false;
-		await handleStop({ showArmour: action === 'yes' });
-	}
-
-	async function handleStop({ showArmour }: { showArmour: boolean }) {
-		toggling = true;
-		const wasActive = data.status === 'active';
-		let stoppedSessionId: string | null = null;
-		try {
-			// Refresh to the latest totals before capturing the final readout.
-			// With no poll, `data` is only as fresh as the last backend frame, and
-			// cost / returns / net are confirmed-ledger PED figures: the
-			// post-session readout must show the session's true final totals, not a
-			// tick-stale snapshot. The session is still active here, so this reads
-			// the live totals; stopping adds nothing to them.
-			if (wasActive) await hydrate();
-			lastSessionStats = wasActive ? {
-				cost: data.cost ?? 0,
-				returns: data.returns ?? 0,
-				pes: data.pes ?? 0,
-				net: data.net ?? 0,
-			} : null;
-
-			const result = await stopTracking();
-			stoppedSessionId = result.session_id;
-			lastSessionId = stoppedSessionId;
-			await hydrate();
-		} catch { /* ignore */ }
-		toggling = false;
-
-		// Armour-cost popup is opt-in via the prompt's Yes branch; suppressed
-		// when the user picked No or when the reminder is disabled wholesale.
-		if (wasActive && showArmour) {
-			await tick();
-			if (postSessionArmourButton && armourSessionId && !armourCostOpen) {
-				await showArmourCost(postSessionArmourButton);
-			}
-		}
-
-		if (stoppedSessionId) {
-			void loadQuestLinkSuggestion(stoppedSessionId);
-		}
-	}
-
-	async function loadQuestLinkSuggestion(sessionId: string) {
-		questLinkSuggestion = null;
-		questLinkMessage = null;
-		try {
-			const suggestion = await getSessionQuestLinkSuggestion(sessionId);
-			if (suggestion.suggestionType === 'quest' || suggestion.suggestionType === 'playlist') {
-				questLinkSuggestion = suggestion;
-				void tick().then(scheduleArmourCostAnchorSync);
-				return;
-			}
-			if (suggestion.reason === 'unclean' || suggestion.reason === 'ambiguous_playlist') {
-				questLinkMessage = 'Unclean quest record, skipping linkage';
-				void tick().then(scheduleArmourCostAnchorSync);
-				return;
-			}
-		} catch { /* ignore */ }
-		clearPostSessionStateWhenReady();
-	}
-
-	async function handleQuestLinkDecision(action: 'accept' | 'decline') {
-		if (!lastSessionId) return;
-		questLinkSaving = true;
-		try {
-			await decideSessionQuestLink(lastSessionId, action);
-		} catch { /* ignore */ }
-		clearPostSessionState();
-		questLinkSaving = false;
-	}
-
-	function handleDismissQuestLinkMessage() {
-		clearPostSessionState();
-	}
-
-	function clearPostSessionState() {
-		postSessionClearPending = false;
-		lastSessionId = null;
-		lastSessionStats = null;
-		questLinkSuggestion = null;
-		questLinkMessage = null;
-		questLinkSaving = false;
-	}
-
-	function clearPostSessionStateWhenReady() {
-		if (armourCostOpen) {
-			postSessionClearPending = true;
-			return;
-		}
-		clearPostSessionState();
-	}
-
-	function clearDeferredPostSessionState() {
-		if (!postSessionClearPending) return;
-		clearPostSessionState();
 	}
 
 	async function handleReleaseMob() {
@@ -1152,11 +824,10 @@
 		try {
 			await releaseMob();
 			mobQuery = '';
-			tagSuggestions = [];
-			mobSuggestions = [];
+			mobTypeahead.cancel();
 			await closeMobMenu();
 			mobError = null;
-			await hydrate();
+			await snapshot.hydrate();
 		} catch { /* ignore */ }
 		releasing = false;
 	}
@@ -1204,11 +875,10 @@
 		try {
 			await lockTrackingTag(tag);
 			mobQuery = '';
-			tagSuggestions = [];
-			mobSuggestions = [];
+			mobTypeahead.cancel();
 			overlayMenuLaunchError = null;
 			await closeMobMenu();
-			await hydrate();
+			await snapshot.hydrate();
 		} catch (error) {
 			mobError = error instanceof ApiError ? error.message : 'Failed to set tag';
 		}
@@ -1222,10 +892,10 @@
 		try {
 			await lockManualMob(option.species, option.maturity);
 			mobQuery = '';
-			mobSuggestions = [];
+			mobTypeahead.cancel();
 			overlayMenuLaunchError = null;
 			await closeMobMenu();
-			await hydrate();
+			await snapshot.hydrate();
 		} catch (error) {
 			mobError = error instanceof ApiError ? error.message : 'Failed to lock mob';
 		}
@@ -1249,18 +919,18 @@
 		mobMenuOpen={overlayMenuKind === 'mob'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
-		{lastSessionId}
-		{lastSessionStats}
-		{questLinkSuggestion}
-		{questLinkMessage}
-		{questLinkSaving}
+		lastSessionId={flow.lastSessionId}
+		lastSessionStats={flow.lastSessionStats}
+		questLinkSuggestion={flow.questLinkSuggestion}
+		questLinkMessage={flow.questLinkMessage}
+		questLinkSaving={flow.questLinkSaving}
 		bind:mobQuery
 		bind:mobInput
 		bind:postSessionArmourButton
 		onStart={handleStart}
-		onStop={handleStopRequest}
-		awaitingArmourTrackDecision={awaitingArmourTrackDecision}
-		onArmourTrackDecision={handleArmourTrackDecision}
+		onStop={flow.requestStop}
+		awaitingArmourTrackDecision={flow.awaitingArmourDecision}
+		onArmourTrackDecision={flow.decideArmourTrack}
 		attributionWarning={attributionWarning}
 		onDismissAttributionWarning={dismissAttributionWarning}
 		onMobModeChange={handleMobTrackingModeChange}
@@ -1270,8 +940,8 @@
 		onMobKeydown={handleMobKeydown}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
-		onQuestLinkDecision={handleQuestLinkDecision}
-		onDismissQuestLinkMessage={handleDismissQuestLinkMessage}
+		onQuestLinkDecision={flow.decideQuestLink}
+		onDismissQuestLinkMessage={flow.dismissQuestLinkMessage}
 	/>
 </div>
 

@@ -28,8 +28,6 @@ const LEGACY_STORE_MODULES: &[&str] = &[
     "app/src/lib/newsFetch.ts",
     "app/src/lib/statsCustomisation.test.ts",
     "app/src/lib/statsCustomisation.ts",
-    "app/src/lib/stores/scanStore.test.ts",
-    "app/src/lib/stores/scanStore.ts",
     "app/src/lib/stores/trackingStore.test.ts",
     "app/src/lib/stores/trackingStore.ts",
     "app/src/lib/theme.ts",

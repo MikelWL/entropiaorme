@@ -318,6 +318,100 @@ describe('selection', () => {
 	});
 });
 
+describe('refresh', () => {
+	it('re-runs the search for the unchanged query after the debounce', async () => {
+		const search = vi.fn().mockResolvedValue([alpha]);
+		const ta = createTypeahead<Item>({ search });
+		ta.query = 'alp';
+		vi.advanceTimersByTime(200);
+		await flush();
+		expect(search).toHaveBeenCalledTimes(1);
+
+		ta.refresh();
+		expect(search).toHaveBeenCalledTimes(1);
+		vi.advanceTimersByTime(200);
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(search).toHaveBeenLastCalledWith('alp');
+	});
+
+	it('drops an in-flight response even though its query still matches', async () => {
+		const first = deferred<Item[]>();
+		const search = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce([beta]);
+		const ta = createTypeahead<Item>({ search });
+		ta.query = 'alp';
+		vi.advanceTimersByTime(200);
+
+		// The search's behaviour changed under the same query: the response
+		// computed under the old behaviour must not land.
+		ta.refresh();
+		first.resolve([alpha]);
+		await flush();
+		expect(ta.results).toEqual([]);
+		expect(ta.loading).toBe(true);
+
+		vi.advanceTimersByTime(200);
+		await flush();
+		expect(ta.results).toEqual([beta]);
+		expect(ta.loading).toBe(false);
+	});
+
+	it('just clears when the current query is under minLength', () => {
+		const search = vi.fn().mockResolvedValue([alpha]);
+		const ta = createTypeahead<Item>({ search });
+		ta.refresh();
+		vi.advanceTimersByTime(1000);
+		expect(search).not.toHaveBeenCalled();
+		expect(ta.results).toEqual([]);
+	});
+});
+
+describe('cancel', () => {
+	it('blanks results, loading and error while keeping the query', async () => {
+		const search = vi.fn().mockResolvedValueOnce([alpha]).mockRejectedValueOnce(new Error('boom'));
+		const ta = createTypeahead<Item>({ search });
+		ta.query = 'alp';
+		vi.advanceTimersByTime(200);
+		await flush();
+		expect(ta.results).toEqual([alpha]);
+
+		ta.cancel();
+		expect(ta.results).toEqual([]);
+		expect(ta.loading).toBe(false);
+		expect(ta.error).toBeNull();
+		expect(ta.query).toBe('alp');
+	});
+
+	it('cancels a pending debounce and drops an in-flight response', async () => {
+		const pending = createTypeahead<Item>({ search: vi.fn().mockResolvedValue([alpha]) });
+		pending.query = 'alp';
+		pending.cancel();
+		vi.advanceTimersByTime(1000);
+		expect(pending.results).toEqual([]);
+
+		const d = deferred<Item[]>();
+		const search = vi.fn().mockReturnValue(d.promise);
+		const inFlight = createTypeahead<Item>({ search });
+		inFlight.query = 'alp';
+		vi.advanceTimersByTime(200);
+		inFlight.cancel();
+		d.resolve([alpha]);
+		await flush();
+		expect(inFlight.results).toEqual([]);
+		expect(inFlight.loading).toBe(false);
+	});
+
+	it('searching resumes on the next query change', async () => {
+		const search = vi.fn().mockResolvedValue([beta]);
+		const ta = createTypeahead<Item>({ search });
+		ta.query = 'alp';
+		ta.cancel();
+		ta.query = 'alph';
+		vi.advanceTimersByTime(200);
+		await flush();
+		expect(ta.results).toEqual([beta]);
+	});
+});
+
 describe('teardown', () => {
 	it('destroy cancels a pending debounce', () => {
 		const search = vi.fn().mockResolvedValue([]);
