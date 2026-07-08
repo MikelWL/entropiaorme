@@ -1015,4 +1015,74 @@ mod tests {
             .unwrap();
         assert_eq!(rows, ["sess-full", "sess-manual"]);
     }
+
+    #[test]
+    fn is_missing_table_matches_only_the_no_such_table_report() {
+        let missing = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("no such table: skill_gains".to_string()),
+        );
+        assert!(is_missing_table(&missing));
+        // A different SQLite failure is not tolerated.
+        let other = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("no such column: session_id".to_string()),
+        );
+        assert!(!is_missing_table(&other));
+        assert!(!is_missing_table(&rusqlite::Error::QueryReturnedNoRows));
+    }
+
+    /// A gains-probe failure that is NOT the tolerated missing-table case must
+    /// propagate rather than reading as "no gains" and clearing a valid summary.
+    #[tokio::test]
+    async fn a_non_missing_table_gains_error_propagates() {
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
+        // Recreate skill_gains without session_id so the gains probe raises
+        // "no such column" (present table, missing column), not a missing table.
+        run(&db, "DROP TABLE skill_gains").await;
+        run(&db, "CREATE TABLE skill_gains (id INTEGER)").await;
+        let result = db
+            .with_writer(|conn| Ok(compute_session_summary(conn, "s1")))
+            .await
+            .unwrap();
+        assert!(result.is_err());
+    }
+
+    /// Rebuild drops every summary row and regenerates exactly the qualifying
+    /// (ended, skill-bearing) sessions, so an orphan row clears and a missing
+    /// one reappears.
+    #[tokio::test]
+    async fn rebuild_clears_orphans_and_regenerates_qualifying_rows() {
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
+        // An orphan summary row backing no session at all.
+        run(
+            &db,
+            "INSERT INTO session_summaries \
+             (session_id, summary_version, started_at, ended_at, duration_hours, kills, loot_tt, \
+              weapon_cost, enhancer_cost, armour_cost, heal_cost, dangling_cost, cycled_ped, \
+              regular_skill_ped_json, attribute_levels_json, regular_skill_tt, attribute_levels_total) \
+             VALUES ('ghost', 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '{}', '{}', 0, 0)",
+        )
+        .await;
+
+        db.with_writer(|conn| rebuild_summaries(conn))
+            .await
+            .unwrap();
+
+        let ids: Vec<String> = db
+            .with_reader(|conn| {
+                let mut stmt =
+                    conn.prepare("SELECT session_id FROM session_summaries ORDER BY session_id")?;
+                let out = stmt
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(out)
+            })
+            .await
+            .unwrap();
+        // The orphan is gone; the qualifying s1 was regenerated.
+        assert_eq!(ids, ["s1"]);
+    }
 }

@@ -109,3 +109,159 @@ pub fn weapon_properties_by_name_fragment_sync(
         .optional()?;
     Ok(row)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use serde_json::json;
+
+    async fn open() -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("entropia_orme.db"))
+            .await
+            .unwrap();
+        (dir, db)
+    }
+
+    async fn seed(db: &Db, sql: &str) {
+        let sql = sql.to_string();
+        db.with_writer(move |conn| {
+            conn.execute_batch(&sql)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn cost_per_shot_ped_divides_total_cost_per_use_by_a_hundred() {
+        // decay 0.05 @ 1.0 + ammo (200 pec / 100) 2.0 @ 1.0 = 2.05 per use;
+        // the per-shot PED figure is that over 100.
+        let props = json!({"weapon_entity": {"economy": {"decay": 0.05, "ammo_burn": 200}}});
+        assert_eq!(cost_per_shot_ped(&props), 2.05 / 100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "weapon_entity")]
+    fn cost_per_shot_ped_panics_on_a_missing_weapon_entity() {
+        // Current behaviour: a properties payload with no weapon_entity reaches
+        // the cost engine's fail-fast. Pinned as-is (see the inbox note).
+        let _ = cost_per_shot_ped(&json!({}));
+    }
+
+    #[test]
+    fn heal_cost_from_props_uses_the_tool_economy_and_markup() {
+        // (decay 0.0512 + ammo 0.3) * markup 1.1 = 0.38632 -> 0.3863 pec,
+        // over 100 for PED; reload 60 / 30 uses = 2.0s.
+        let props = json!({
+            "tool_entity": {"economy": {"decay": 0.0512, "ammo_burn": 30}, "uses_per_minute": 30},
+            "markup": 110,
+        });
+        assert_eq!(
+            heal_cost_from_props(&props.to_string()),
+            (0.3863 / 100.0, 2.0)
+        );
+    }
+
+    #[test]
+    fn heal_cost_from_props_falls_back_for_a_degenerate_tool() {
+        // Missing, null and empty tool entities all fall back to (0, 2.5); a
+        // kept degenerate tool would compute to the same pair, so the filter's
+        // guards are behaviour-equivalent here.
+        assert_eq!(heal_cost_from_props("{}"), (0.0, 2.5));
+        assert_eq!(
+            heal_cost_from_props(&json!({"tool_entity": null}).to_string()),
+            (0.0, 2.5)
+        );
+        assert_eq!(
+            heal_cost_from_props(&json!({"tool_entity": {}}).to_string()),
+            (0.0, 2.5)
+        );
+        // Unparseable JSON degrades to the same fallback.
+        assert_eq!(heal_cost_from_props("not json"), (0.0, 2.5));
+    }
+
+    #[tokio::test]
+    async fn weapon_cost_by_name_prices_a_seeded_weapon_and_zeroes_the_unknown() {
+        let (_dir, db) = open().await;
+        seed(
+            &db,
+            "INSERT INTO equipment_library (id, name, item_type, properties_json) VALUES \
+             (1, 'Opalo Rifle', 'weapon', \
+              '{\"weapon_entity\":{\"economy\":{\"decay\":0.05,\"ammo_burn\":200}}}')",
+        )
+        .await;
+
+        let cost = db
+            .with_reader(|conn| Ok(weapon_cost_by_name(conn, "Opalo")))
+            .await
+            .unwrap();
+        assert_eq!(cost, 2.05 / 100.0);
+
+        // An unknown tool prices to zero rather than dropping the tool change.
+        let unknown = db
+            .with_reader(|conn| Ok(weapon_cost_by_name(conn, "Nonexistent")))
+            .await
+            .unwrap();
+        assert_eq!(unknown, 0.0);
+    }
+
+    #[tokio::test]
+    async fn hotbar_equipment_row_sync_reads_one_row_by_id() {
+        let (_dir, db) = open().await;
+        seed(
+            &db,
+            "INSERT INTO equipment_library (id, name, item_type, properties_json) VALUES \
+             (7, 'Opalo', 'weapon', '{\"x\":1}')",
+        )
+        .await;
+
+        let row = db
+            .with_reader(|conn| hotbar_equipment_row_sync(conn, 7))
+            .await
+            .unwrap();
+        assert_eq!(
+            row,
+            Some(("Opalo".into(), "weapon".into(), "{\"x\":1}".into()))
+        );
+
+        let missing = db
+            .with_reader(|conn| hotbar_equipment_row_sync(conn, 999))
+            .await
+            .unwrap();
+        assert_eq!(missing, None);
+    }
+
+    #[tokio::test]
+    async fn weapon_properties_by_name_fragment_sync_matches_the_first_weapon() {
+        let (_dir, db) = open().await;
+        seed(
+            &db,
+            "INSERT INTO equipment_library (id, name, item_type, properties_json) VALUES \
+             (1, 'Opalo Mk2', 'weapon', '{\"tag\":\"o\"}'), \
+             (2, 'Longsword', 'melee', '{\"tag\":\"s\"}')",
+        )
+        .await;
+
+        let hit = db
+            .with_reader(|conn| weapon_properties_by_name_fragment_sync(conn, "Opalo"))
+            .await
+            .unwrap();
+        assert_eq!(hit, Some("{\"tag\":\"o\"}".into()));
+
+        // The item_type gate keeps a same-named non-weapon out.
+        let melee = db
+            .with_reader(|conn| weapon_properties_by_name_fragment_sync(conn, "Longsword"))
+            .await
+            .unwrap();
+        assert_eq!(melee, None);
+
+        // An absent fragment matches nothing.
+        let miss = db
+            .with_reader(|conn| weapon_properties_by_name_fragment_sync(conn, "Zzz"))
+            .await
+            .unwrap();
+        assert_eq!(miss, None);
+    }
+}
