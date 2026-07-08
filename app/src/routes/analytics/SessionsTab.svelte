@@ -1,110 +1,37 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getTrackingSessions, getSessionDetail, deleteSession } from '$lib/api';
-	import type { TrackingSession, SessionDetail } from '$lib/types/tracking';
-	import { formatPed, formatDuration, formatDate } from '$lib/utils/format';
 	import Badge from '$lib/components/Badge.svelte';
-	import Card from '$lib/components/Card.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import Card from '$lib/components/Card.svelte';
+	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import SessionDetailView from '$lib/components/SessionDetail.svelte';
+	import { createSessionsModel, PAGE_SIZE } from '$lib/features/analytics/sessionsModel.svelte';
 	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
+	import { formatDate, formatDuration, formatPed } from '$lib/utils/format';
 
-	let sessions = $state<TrackingSession[]>([]);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
-	let expandedSessionId = $state<string | null>(null);
-	let expandedDetail = $state<SessionDetail | null>(null);
-	let loadingDetail = $state(false);
-	let confirmDeleteId = $state<string | null>(null);
-	let deleting = $state(false);
+	const model = createSessionsModel();
+	const table = model.table;
 
 	$effect(() => {
-		loadSessions();
-	});
-
-	async function loadSessions() {
-		loading = true;
-		error = null;
-		try {
-			sessions = await getTrackingSessions();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load sessions';
-		} finally {
-			loading = false;
-		}
-	}
-
-	async function toggleSession(id: string) {
-		if (expandedSessionId === id) {
-			expandedSessionId = null;
-			expandedDetail = null;
-			return;
-		}
-
-		expandedSessionId = id;
-		expandedDetail = null;
-		loadingDetail = true;
-		try {
-			expandedDetail = await getSessionDetail(id);
-		} catch {
-			expandedDetail = null;
-		} finally {
-			loadingDetail = false;
-		}
-	}
-
-	async function handleDelete(id: string) {
-		deleting = true;
-		try {
-			await deleteSession(id);
-			sessions = sessions.filter((s) => s.id !== id);
-			if (expandedSessionId === id) {
-				expandedSessionId = null;
-				expandedDetail = null;
-			}
-		} catch { /* ignore */ }
-		deleting = false;
-		confirmDeleteId = null;
-	}
-
-	// Pagination
-	let currentPage = $state(1);
-	const itemsPerPage = 10;
-
-	let totalPages = $derived(Math.max(1, Math.ceil(sessions.length / itemsPerPage)));
-	let paginatedSessions = $derived(
-		sessions.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-	);
-
-	$effect(() => {
-		if (currentPage > totalPages) {
-			currentPage = Math.max(1, totalPages);
-		}
+		void model.loadSessions();
 	});
 
 	// Guide-mode demoApi: lets the analytics surface's sessions card drive
 	// row expand/collapse programmatically for the looped animation.
 	onMount(() => {
 		registerDemoApi('analytics-sessions', {
-			collapseAllSessions: () => {
-				expandedSessionId = null;
-				expandedDetail = null;
-			},
-			expandSessionAtIndex: (idx: number) => {
-				const target = paginatedSessions[idx];
-				if (!target) return;
-				void toggleSession(target.id);
-			}
+			collapseAllSessions: () => model.collapseAll(),
+			expandSessionAtIndex: (idx: number) => model.expandAtIndex(idx)
 		});
 		return () => unregisterDemoApi('analytics-sessions');
 	});
 </script>
 
-{#if loading}
+{#if model.loading}
 	<p class="text-sm text-text-secondary">Loading sessions...</p>
-{:else if error}
-	<p class="text-sm text-error">{error}</p>
-{:else if sessions.length === 0}
+{:else if model.error && model.sessions.length === 0}
+	<ErrorNotice message={model.error} />
+{:else if model.sessions.length === 0}
 	<Card class="p-6">
 		<p class="text-sm text-text-tertiary text-center">
 			No sessions yet. Start tracking from the Dashboard to begin.
@@ -112,6 +39,7 @@
 	</Card>
 {:else}
 	<div class="space-y-4" data-guide-anchor="analytics-sessions-area">
+		<ErrorNotice message={model.error} />
 		<div class="overflow-x-auto rounded-md border border-border">
 			<table class="w-full text-sm text-left border-collapse">
 				<thead class="bg-surface-hover/50 text-text-secondary text-xs uppercase tracking-wider">
@@ -125,13 +53,13 @@
 					</tr>
 				</thead>
 				<tbody class="bg-surface">
-					{#each paginatedSessions as session, i}
-						{@const isExpanded = expandedSessionId === session.id}
+					{#each table.pageRows as session, i}
+						{@const isExpanded = model.expandedSessionId === session.id}
 						<tr
 							data-guide-anchor="sessions-row"
 							data-session-index={i}
 							class="hover:bg-surface-hover/50 transition-colors cursor-pointer {isExpanded ? 'bg-surface-hover' : ''}"
-							onclick={() => toggleSession(session.id)}
+							onclick={() => model.toggleSession(session.id)}
 						>
 							<td class="px-4 py-3 border-b border-border/50 tabular-nums">
 								{session.startTime ? formatDate(session.startTime) : '\u2014'}
@@ -163,12 +91,12 @@
 							</td>
 							<td class="px-4 py-3 border-b border-border/50 text-right" onclick={(e) => e.stopPropagation()}>
 								<div class="flex items-center justify-end gap-2">
-									{#if confirmDeleteId === session.id}
+									{#if model.confirmDeleteId === session.id}
 										<div class="flex items-center gap-1">
-											<Button size="sm" variant="danger" onclick={() => handleDelete(session.id)}>
+											<Button size="sm" variant="danger" onclick={() => model.handleDelete(session.id)}>
 												{#snippet children()}Delete{/snippet}
 											</Button>
-											<Button size="sm" variant="ghost" onclick={() => (confirmDeleteId = null)}>
+											<Button size="sm" variant="ghost" onclick={() => (model.confirmDeleteId = null)}>
 												{#snippet children()}Cancel{/snippet}
 											</Button>
 										</div>
@@ -176,7 +104,7 @@
 										<button
 											type="button"
 											class="icon-button-row p-1"
-											onclick={() => (confirmDeleteId = session.id)}
+											onclick={() => (model.confirmDeleteId = session.id)}
 											aria-label="Delete session"
 											title="Delete session"
 										>
@@ -202,10 +130,10 @@
 							<tr>
 								<td colspan="6" class="p-0 border-b border-border/50">
 									<div class="bg-surface-hover/30 p-4">
-										{#if loadingDetail}
+										{#if model.loadingDetail}
 											<p class="text-xs text-text-tertiary animate-pulse">Loading detail...</p>
-										{:else if expandedDetail}
-											<SessionDetailView detail={expandedDetail} />
+										{:else if model.expandedDetail}
+											<SessionDetailView detail={model.expandedDetail} />
 										{:else}
 											<p class="text-xs text-text-tertiary">No detail available.</p>
 										{/if}
@@ -218,26 +146,26 @@
 			</table>
 		</div>
 
-		{#if totalPages > 1}
+		{#if table.totalPages > 1}
 			<div class="flex items-center justify-between px-2">
 				<span class="text-xs text-text-tertiary tabular-nums">
-					Showing {(currentPage - 1) * itemsPerPage + 1}–{Math.min(currentPage * itemsPerPage, sessions.length)} of {sessions.length}
+					Showing {table.page * PAGE_SIZE + 1}{'\u2013'}{Math.min((table.page + 1) * PAGE_SIZE, model.sessions.length)} of {model.sessions.length}
 				</span>
 				<div class="flex items-center gap-2">
 					<Button
 						size="sm"
 						variant="ghost"
-						disabled={currentPage === 1}
-						onclick={() => currentPage--}
+						disabled={table.page === 0}
+						onclick={() => table.page--}
 					>
 						Previous
 					</Button>
-					<span class="text-xs font-medium px-2">{currentPage} / {totalPages}</span>
+					<span class="text-xs font-medium px-2">{table.page + 1} / {table.totalPages}</span>
 					<Button
 						size="sm"
 						variant="ghost"
-						disabled={currentPage === totalPages}
-						onclick={() => currentPage++}
+						disabled={table.page === table.totalPages - 1}
+						onclick={() => table.page++}
 					>
 						Next
 					</Button>

@@ -114,6 +114,28 @@ describe('refresh', () => {
 		expect(model.quests.map((q) => q.id)).toEqual(['1']);
 		expect(model.error).toBeNull();
 	});
+
+	it('drops a pending cancel choice whose quest vanished from the refreshed list', async () => {
+		mocked.getQuests.mockResolvedValue([quest({ id: '1' }), quest({ id: '2' })]);
+		const model = createQuestsModel();
+		await model.loadData(false);
+		model.toggleCancelChoice('2');
+		expect(model.pendingCancelChoiceQuestId).toBe('2');
+
+		mocked.getQuests.mockResolvedValue([quest({ id: '1' })]);
+		await model.refresh();
+		expect(model.pendingCancelChoiceQuestId).toBeNull();
+	});
+
+	it('keeps a pending cancel choice whose quest survives the refresh', async () => {
+		mocked.getQuests.mockResolvedValue([quest({ id: '1' })]);
+		const model = createQuestsModel();
+		await model.loadData(false);
+		model.toggleCancelChoice('1');
+
+		await model.refresh();
+		expect(model.pendingCancelChoiceQuestId).toBe('1');
+	});
 });
 
 describe('filtering', () => {

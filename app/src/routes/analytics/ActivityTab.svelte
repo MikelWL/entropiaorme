@@ -1,169 +1,33 @@
 <script lang="ts">
-	import type { MobComparison, TagComparison, WeaponComparison } from '$lib/types/analytics';
-	import { getAnalyticsActivity, type ActivityData } from '$lib/api';
-	import { formatPed, formatPercent } from '$lib/utils/format';
+	import type { ArchiveKind } from '$lib/activityArchive';
+	import Card from '$lib/components/Card.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Divider from '$lib/components/Divider.svelte';
-	import Card from '$lib/components/Card.svelte';
+	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import {
-		activityArchive,
-		archive as archiveItem,
-		unarchive as unarchiveItem,
-		isArchived,
-		type ArchiveKind,
-	} from '$lib/activityArchive';
+		ACTION_KEY,
+		createActivityModel,
+		mobColumns,
+		rowKey,
+		tagColumns,
+		weaponColumns
+	} from '$lib/features/analytics/activityModel.svelte';
+	import type { MobComparison, TagComparison, WeaponComparison } from '$lib/types/analytics';
+	import { formatPed, formatPercent } from '$lib/utils/format';
 
-	let data = $state<ActivityData | null>(null);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
+	const model = createActivityModel();
 
 	$effect(() => {
-		loadData();
+		void model.loadData();
 	});
-
-	async function loadData() {
-		loading = true;
-		error = null;
-		try {
-			data = await getAnalyticsActivity();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load activity data';
-		} finally {
-			loading = false;
-		}
-	}
-
-	let viewMode = $state<'main' | 'archive'>('main');
-	let confirmKey = $state<string | null>(null);
-
-	function rowKey(kind: ArchiveKind, name: string): string {
-		return `${kind}:${name}`;
-	}
-
-	async function onArchiveConfirm(kind: ArchiveKind, name: string) {
-		await archiveItem(kind, name);
-		confirmKey = null;
-	}
-
-	async function onUnarchiveConfirm(kind: ArchiveKind, name: string) {
-		await unarchiveItem(kind, name);
-		confirmKey = null;
-	}
-
-	let mobSortKey = $state<(keyof MobComparison & string) | undefined>('cycled');
-	let mobSortDir = $state<'asc' | 'desc'>('desc');
-
-	let sortedMobs = $derived.by(() => {
-		if (!data) return [];
-		const archived = $activityArchive;
-		const filtered = data.mobComparisons.filter((m) =>
-			viewMode === 'archive'
-				? isArchived(archived, 'mob', m.mobName)
-				: !isArchived(archived, 'mob', m.mobName)
-		);
-		if (!mobSortKey) return filtered;
-		const key = mobSortKey;
-		return [...filtered].sort((a, b) => {
-			const aVal = a[key];
-			const bVal = b[key];
-			if (typeof aVal === 'number' && typeof bVal === 'number') {
-				return mobSortDir === 'asc' ? aVal - bVal : bVal - aVal;
-			}
-			return mobSortDir === 'asc'
-				? String(aVal).localeCompare(String(bVal))
-				: String(bVal).localeCompare(String(aVal));
-		});
-	});
-
-	let tagSortKey = $state<(keyof TagComparison & string) | undefined>('cycled');
-	let tagSortDir = $state<'asc' | 'desc'>('desc');
-
-	let sortedTags = $derived.by(() => {
-		if (!data) return [];
-		const archived = $activityArchive;
-		const filtered = data.tagComparisons.filter((t) =>
-			viewMode === 'archive'
-				? isArchived(archived, 'tag', t.tagName)
-				: !isArchived(archived, 'tag', t.tagName)
-		);
-		if (!tagSortKey) return filtered;
-		const key = tagSortKey;
-		return [...filtered].sort((a, b) => {
-			const aVal = a[key];
-			const bVal = b[key];
-			if (typeof aVal === 'number' && typeof bVal === 'number') {
-				return tagSortDir === 'asc' ? aVal - bVal : bVal - aVal;
-			}
-			return tagSortDir === 'asc'
-				? String(aVal).localeCompare(String(bVal))
-				: String(bVal).localeCompare(String(aVal));
-		});
-	});
-
-	let weaponSortKey = $state<(keyof WeaponComparison & string) | undefined>('cycled');
-	let weaponSortDir = $state<'asc' | 'desc'>('desc');
-
-	let sortedWeapons = $derived.by(() => {
-		if (!data) return [];
-		const archived = $activityArchive;
-		const filtered = data.weaponComparisons.filter((w) =>
-			viewMode === 'archive'
-				? isArchived(archived, 'weapon', w.weaponName)
-				: !isArchived(archived, 'weapon', w.weaponName)
-		);
-		if (!weaponSortKey) return filtered;
-		const key = weaponSortKey;
-		return [...filtered].sort((a, b) => {
-			const aVal = a[key];
-			const bVal = b[key];
-			if (typeof aVal === 'number' && typeof bVal === 'number') {
-				return weaponSortDir === 'asc' ? aVal - bVal : bVal - aVal;
-			}
-			return weaponSortDir === 'asc'
-				? String(aVal).localeCompare(String(bVal))
-				: String(bVal).localeCompare(String(aVal));
-		});
-	});
-
-	const ACTION_KEY = '__action';
-
-	const mobColumns = [
-		{ key: 'mobName', label: 'Mob', sortable: true, widthClass: 'w-[26%]' },
-		{ key: 'sessions', label: 'Sessions', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-		{ key: 'kills', label: 'Kills', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-		{ key: 'cycled', label: 'Cycled', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: 'pesPer100Ped', label: 'PES/100', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: 'lootRate', label: 'Loot', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
-	];
-
-	const tagColumns = [
-		{ key: 'tagName', label: 'Tag', sortable: true, widthClass: 'w-[26%]' },
-		{ key: 'sessions', label: 'Sessions', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-		{ key: 'kills', label: 'Kills', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-		{ key: 'cycled', label: 'Cycled', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: 'pesPer100Ped', label: 'PES/100', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: 'lootRate', label: 'Loot', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
-	];
-
-	const weaponColumns = [
-		{ key: 'weaponName', label: 'Weapon', sortable: true, widthClass: 'w-[26%]' },
-		{ key: 'sessions', label: 'Sessions', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-		{ key: 'kills', label: 'Kills', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-		{ key: 'cycled', label: 'Cycled', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: 'pesPer100Ped', label: 'PES/100', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: 'lootRate', label: 'Loot', align: 'right' as const, sortable: true, widthClass: 'w-[16%]' },
-		{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
-	];
 </script>
 
 {#snippet archiveAction(kind: ArchiveKind, name: string)}
-	{#if viewMode === 'main'}
+	{#if model.viewMode === 'main'}
 		<button
 			type="button"
 			class="text-text-tertiary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer p-1"
-			onclick={(e) => { e.stopPropagation(); confirmKey = rowKey(kind, name); }}
+			onclick={(e) => { e.stopPropagation(); model.confirmKey = rowKey(kind, name); }}
 			aria-label="Archive {name}"
 			title="Archive"
 		>
@@ -186,7 +50,7 @@
 		<button
 			type="button"
 			class="text-text-tertiary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer p-1"
-			onclick={(e) => { e.stopPropagation(); confirmKey = rowKey(kind, name); }}
+			onclick={(e) => { e.stopPropagation(); model.confirmKey = rowKey(kind, name); }}
 			aria-label="Restore {name}"
 			title="Restore from archive"
 		>
@@ -209,7 +73,7 @@
 {/snippet}
 
 {#snippet confirmPrompt(kind: ArchiveKind, name: string)}
-	{@const isRestore = viewMode === 'archive'}
+	{@const isRestore = model.viewMode === 'archive'}
 	<div class="inline-flex items-center gap-3">
 		<span class="text-xs text-text-secondary">
 			{isRestore ? 'Send back to main activity records?' : 'Send record to archive?'}
@@ -217,7 +81,7 @@
 		<button
 			type="button"
 			class="text-xs text-text-secondary hover:text-text px-2 py-0.5 rounded-sm cursor-pointer border border-border/60 hover:border-border-bright"
-			onclick={(e) => { e.stopPropagation(); confirmKey = null; }}
+			onclick={(e) => { e.stopPropagation(); model.confirmKey = null; }}
 		>
 			Cancel
 		</button>
@@ -226,8 +90,8 @@
 			class="text-xs text-accent hover:text-accent-hover px-2 py-0.5 rounded-sm cursor-pointer border border-accent/40 hover:border-accent font-medium"
 			onclick={(e) => {
 				e.stopPropagation();
-				if (isRestore) onUnarchiveConfirm(kind, name);
-				else onArchiveConfirm(kind, name);
+				if (isRestore) model.onUnarchiveConfirm(kind, name);
+				else model.onArchiveConfirm(kind, name);
 			}}
 		>
 			Yes
@@ -277,19 +141,20 @@
 	{/if}
 {/snippet}
 
-{#if loading}
+{#if model.loading}
 	<p class="text-sm text-text-secondary">Loading activity data...</p>
-{:else if error}
-	<p class="text-sm text-error">{error}</p>
-{:else if data}
+{:else if model.error && !model.data}
+	<ErrorNotice message={model.error} />
+{:else if model.data}
 	<div class="space-y-6" data-guide-anchor="analytics-activity-area">
-		{#if viewMode === 'archive'}
+		<ErrorNotice message={model.error} />
+		{#if model.viewMode === 'archive'}
 			<div class="flex items-center justify-between">
 				<h3 class="text-sm font-medium text-text-secondary">Archived rows</h3>
 				<button
 					type="button"
 					class="text-sm text-text-secondary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer inline-flex items-center gap-1"
-					onclick={() => { viewMode = 'main'; confirmKey = null; }}
+					onclick={() => { model.viewMode = 'main'; model.confirmKey = null; }}
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3.5 h-3.5">
 						<path fill-rule="evenodd" d="M9.78 4.22a.75.75 0 010 1.06L7.06 8H15a.75.75 0 010 1.5H7.06l2.72 2.72a.75.75 0 11-1.06 1.06l-4-4a.75.75 0 010-1.06l4-4a.75.75 0 011.06 0z" clip-rule="evenodd" transform="translate(0 2)" />
@@ -314,15 +179,15 @@
 			<h3 class="eyebrow mb-3">Per-Mob Comparison</h3>
 			<DataTable
 				columns={mobColumns}
-				rows={sortedMobs}
-				bind:sortKey={mobSortKey}
-				bind:sortDir={mobSortDir}
+				rows={model.sortedMobs}
+				bind:sortKey={model.mobSortKey}
+				bind:sortDir={model.mobSortDir}
 				cell={mobCell}
 				fixedLayout={true}
 				rowKeyFn={(r: MobComparison) => rowKey('mob', r.mobName)}
-				overlayKey={confirmKey}
+				overlayKey={model.confirmKey}
 				rowOverlay={mobOverlay}
-				emptyMessage={viewMode === 'archive' ? 'No archived mobs' : 'No mob data available'}
+				emptyMessage={model.viewMode === 'archive' ? 'No archived mobs' : 'No mob data available'}
 			/>
 		</div>
 
@@ -332,15 +197,15 @@
 			<h3 class="eyebrow mb-3">Per-Tag Comparison</h3>
 			<DataTable
 				columns={tagColumns}
-				rows={sortedTags}
-				bind:sortKey={tagSortKey}
-				bind:sortDir={tagSortDir}
+				rows={model.sortedTags}
+				bind:sortKey={model.tagSortKey}
+				bind:sortDir={model.tagSortDir}
 				cell={tagCell}
 				fixedLayout={true}
 				rowKeyFn={(r: TagComparison) => rowKey('tag', r.tagName)}
-				overlayKey={confirmKey}
+				overlayKey={model.confirmKey}
 				rowOverlay={tagOverlay}
-				emptyMessage={viewMode === 'archive' ? 'No archived tags' : 'No tagged hunt data available'}
+				emptyMessage={model.viewMode === 'archive' ? 'No archived tags' : 'No tagged hunt data available'}
 			/>
 		</div>
 
@@ -351,15 +216,15 @@
 			<h3 class="eyebrow mb-3">Per-Weapon Comparison</h3>
 			<DataTable
 				columns={weaponColumns}
-				rows={sortedWeapons}
-				bind:sortKey={weaponSortKey}
-				bind:sortDir={weaponSortDir}
+				rows={model.sortedWeapons}
+				bind:sortKey={model.weaponSortKey}
+				bind:sortDir={model.weaponSortDir}
 				cell={weaponCell}
 				fixedLayout={true}
 				rowKeyFn={(r: WeaponComparison) => rowKey('weapon', r.weaponName)}
-				overlayKey={confirmKey}
+				overlayKey={model.confirmKey}
 				rowOverlay={weaponOverlay}
-				emptyMessage={viewMode === 'archive' ? 'No archived weapons' : 'No weapon data available'}
+				emptyMessage={model.viewMode === 'archive' ? 'No archived weapons' : 'No weapon data available'}
 			/>
 		</div>
 
@@ -380,11 +245,11 @@
 					loot-only return per cycled PED; useful, but more volatile.
 				</p>
 			</div>
-			{#if viewMode === 'main'}
+			{#if model.viewMode === 'main'}
 				<button
 					type="button"
 					class="text-sm text-text-secondary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer inline-flex items-center gap-1.5 shrink-0"
-					onclick={() => { viewMode = 'archive'; confirmKey = null; }}
+					onclick={() => { model.viewMode = 'archive'; model.confirmKey = null; }}
 				>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"

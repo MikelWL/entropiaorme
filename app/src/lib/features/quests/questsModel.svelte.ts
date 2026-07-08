@@ -223,6 +223,14 @@ export function createQuestsModel() {
 			const [q, p] = await Promise.all([getQuests(), getPlaylists()]);
 			quests = q;
 			playlists = p;
+			// A refresh can drop a quest (deleted elsewhere); a pending cancel
+			// choice on a vanished quest would otherwise dangle forever.
+			if (
+				pendingCancelChoiceQuestId &&
+				!q.some((quest) => quest.id === pendingCancelChoiceQuestId)
+			) {
+				pendingCancelChoiceQuestId = null;
+			}
 		} catch {
 			// Deliberate swallow: this is the background tracking-active poll; a
 			// failed tick keeps the last good data and the next tick retries.
