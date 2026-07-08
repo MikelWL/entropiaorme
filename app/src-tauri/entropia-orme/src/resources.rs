@@ -77,7 +77,11 @@ fn sample_process_resources() -> Option<(u64, u64)> {
     // SAFETY: sysconf(_SC_PAGESIZE) reads a constant system parameter and
     // returns it directly; it has no failure mode that touches memory.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    let page_size = if page_size > 0 { page_size as u64 } else { 4096 };
+    let page_size = if page_size > 0 {
+        page_size as u64
+    } else {
+        4096
+    };
     let rss_bytes = resident_pages * page_size;
 
     let fd_count = std::fs::read_dir("/proc/self/fd")
@@ -112,9 +116,11 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn sampling_reads_a_plausible_resident_set_and_handle_count() {
-        let (rss, handles) =
-            sample_process_resources().expect("the /proc counters are readable");
+        let (rss, handles) = sample_process_resources().expect("the /proc counters are readable");
         assert!(rss > 0, "the test process has a non-zero resident set");
-        assert!(handles > 0, "the test process holds at least one open descriptor");
+        assert!(
+            handles > 0,
+            "the test process holds at least one open descriptor"
+        );
     }
 }

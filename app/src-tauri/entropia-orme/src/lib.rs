@@ -90,6 +90,29 @@ struct RuntimeWindowIcons(Mutex<Vec<isize>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Force the GTK/webview stack onto X11 (XWayland) on Linux before any
+    // GTK initialisation. Under a native Wayland backend a client cannot
+    // position its own windows or hold always-on-top, which the overlay
+    // and its satellite popups depend on; XWayland restores both with no
+    // behaviour change to the rest of the app. An explicit operator value
+    // wins (so a user who has a reason to run native Wayland can), but the
+    // default is the backend the overlay UX actually works on. Must run
+    // before `gtk::init` (reached via the Tauri builder), hence first.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+
+    // Point the screen-capture seam's restore-token store at the app data
+    // dir, so the one-time ScreenCast consent persists across launches and
+    // later captures acquire the stream silently. Linux-only (the seam
+    // reads this only there); harmless to set elsewhere.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("EO_CAPTURE_TOKEN_PATH").is_none() {
+        let token = composition::data_dir().join("capture-restore-token");
+        std::env::set_var("EO_CAPTURE_TOKEN_PATH", token);
+    }
+
     // Install the process-wide tracing subscriber first, before anything
     // else runs, so every diagnostic and every instrumented seam is captured
     // from the first instant. The guard is held for the whole process so the
