@@ -6,7 +6,7 @@
 		overlayStats,
 		OVERLAY_STATS_CHANGED_EVENT,
 		type StatPref,
-	} from '$lib/statsCustomisation';
+	} from '$lib/statsCustomisation.svelte';
 
 	let { children } = $props();
 
@@ -15,7 +15,7 @@
 		let unlisten: (() => void) | undefined;
 		void (async () => {
 			unlisten = await listen<StatPref[]>(OVERLAY_STATS_CHANGED_EVENT, (event) => {
-				if (Array.isArray(event.payload)) overlayStats.set(event.payload);
+				if (Array.isArray(event.payload)) overlayStats.current = event.payload;
 			});
 		})();
 		return () => {

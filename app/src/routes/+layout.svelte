@@ -8,11 +8,11 @@
 	import { onMount } from 'svelte';
 	import { getOnboardingComplete } from '$lib/onboarding';
 	import { isTosAccepted } from '$lib/tos';
-	import { theme, initTheme } from '$lib/theme';
-	import { initStatsCustomisation } from '$lib/statsCustomisation';
-	import { initActivityArchive } from '$lib/activityArchive';
-	import { initNews, newsOptIn, newsHasUnread } from '$lib/news';
-	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater';
+	import { theme, initTheme } from '$lib/theme.svelte';
+	import { initStatsCustomisation } from '$lib/statsCustomisation.svelte';
+	import { initActivityArchive } from '$lib/activityArchive.svelte';
+	import { initNews, newsOptIn, newsHasUnread } from '$lib/news.svelte';
+	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater.svelte';
 	import { maybeRefreshOnMount } from '$lib/newsFetch';
 	import { getPreference } from '$lib/preferences';
 	import { startEventRelay } from '$lib/realtime/eventRelay';
@@ -38,7 +38,7 @@
 
 	$effect(() => {
 		if (typeof document !== 'undefined') {
-			document.documentElement.setAttribute('data-theme', $theme);
+			document.documentElement.setAttribute('data-theme', theme.current);
 		}
 	});
 
@@ -89,13 +89,13 @@
 	];
 
 	let footerNavItems = $derived([
-		...($newsOptIn
+		...(newsOptIn.current
 			? [
 					{
 						id: '/news',
 						label: 'News & Updates',
 						icon: NavNews,
-						...($newsHasUnread ? { indicator: 'unread' as const } : {}),
+						...(newsHasUnread.current ? { indicator: 'unread' as const } : {}),
 					},
 				]
 			: []),
@@ -103,7 +103,7 @@
 		// pending (a quiet call-to-action with the unread dot); otherwise it is
 		// reached from the toast or Settings. Keeps it distinct from the news
 		// feed's "News & Updates" entry.
-		...($updateAvailable
+		...(updateAvailable.current
 			? [{ id: '/updates', label: 'Updates', icon: NavUpdates, indicator: 'unread' as const }]
 			: []),
 	]);

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ArchiveKind } from '$lib/activityArchive';
+	import type { ArchiveKind } from '$lib/activityArchive.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import Divider from '$lib/components/Divider.svelte';

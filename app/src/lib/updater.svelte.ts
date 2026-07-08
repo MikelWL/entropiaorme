@@ -4,7 +4,7 @@
 // directly), so channel resolution and the forced-exit teardown live on the
 // Rust side; this module is the thin frontend seam: the opt-out preference, the
 // check / download / install flow, the download-progress subscription, and the
-// derived stores the toast and the Updates page read.
+// derived state the toast and the Updates page read.
 //
 // Networking posture: the launch-time check is an outbound call, so it is gated
 // on the auto-update preference (default ON; the user opts out). It transmits no
@@ -12,7 +12,6 @@
 // is compared locally, nothing about the user is sent.
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { derived, get, type Readable, type Writable, writable } from 'svelte/store';
 
 import {
 	checkForUpdate as invokeCheckForUpdate,
@@ -53,27 +52,82 @@ export type UpdatePhase =
 	| 'installing'
 	| 'error';
 
-export const autoUpdateEnabled: Writable<boolean> = writable(false);
-export const updatePhase: Writable<UpdatePhase> = writable('idle');
-export const availableUpdate: Writable<UpdateInfo | null> = writable(null);
-export const downloadProgress: Writable<DownloadProgress | null> = writable(null);
-export const updateError: Writable<string | null> = writable(null);
+let enabled = $state(false);
+let phase = $state<UpdatePhase>('idle');
+let available = $state<UpdateInfo | null>(null);
+let progress = $state<DownloadProgress | null>(null);
+let error = $state<string | null>(null);
+// Session-scoped toast dismissal. Not persisted: per the re-nudge decision, a
+// dismissed update stays silent only until the next launch check.
+let toastDismissed = $state(false);
 
-/// Session-scoped toast dismissal. Not persisted: per the re-nudge decision, a
-/// dismissed update stays silent only until the next launch check.
-export const updateToastDismissed: Writable<boolean> = writable(false);
+export const autoUpdateEnabled = {
+	get current(): boolean {
+		return enabled;
+	},
+	set current(value: boolean) {
+		enabled = value;
+	},
+};
+
+export const updatePhase = {
+	get current(): UpdatePhase {
+		return phase;
+	},
+	set current(value: UpdatePhase) {
+		phase = value;
+	},
+};
+
+export const availableUpdate = {
+	get current(): UpdateInfo | null {
+		return available;
+	},
+	set current(value: UpdateInfo | null) {
+		available = value;
+	},
+};
+
+export const downloadProgress = {
+	get current(): DownloadProgress | null {
+		return progress;
+	},
+	set current(value: DownloadProgress | null) {
+		progress = value;
+	},
+};
+
+export const updateError = {
+	get current(): string | null {
+		return error;
+	},
+	set current(value: string | null) {
+		error = value;
+	},
+};
+
+export const updateToastDismissed = {
+	get current(): boolean {
+		return toastDismissed;
+	},
+	set current(value: boolean) {
+		toastDismissed = value;
+	},
+};
 
 /// Whether an update is pending the user's attention (drives the sidebar dot).
-export const updateAvailable: Readable<boolean> = derived(
-	updatePhase,
-	($phase) => $phase === 'available' || $phase === 'downloading' || $phase === 'ready',
-);
+export const updateAvailable = {
+	get current(): boolean {
+		return phase === 'available' || phase === 'downloading' || phase === 'ready';
+	},
+};
 
 /// Whether to show the toast: an update is pending and not dismissed this session.
-export const showUpdateToast: Readable<boolean> = derived(
-	[updateAvailable, updateToastDismissed],
-	([$available, $dismissed]) => $available && !$dismissed,
-);
+export const showUpdateToast = {
+	get current(): boolean {
+		return updateAvailable.current && !toastDismissed;
+	},
+};
 
 /// Whether the Tauri IPC bridge is present. Checked at call time (not module
 /// load) so the bridge can appear after import and so tests can toggle it.
@@ -85,32 +139,31 @@ let unlistenProgress: UnlistenFn | null = null;
 
 /// Hydrate the opt-out preference from the store. Call once on app start.
 export async function initUpdater(): Promise<void> {
-	const enabled = await getPreference<boolean>(KEY_AUTO_UPDATE_ENABLED, false);
-	autoUpdateEnabled.set(enabled);
+	enabled = await getPreference<boolean>(KEY_AUTO_UPDATE_ENABLED, false);
 }
 
 /// Persist the opt-out preference.
 export async function setAutoUpdateEnabled(value: boolean): Promise<void> {
-	autoUpdateEnabled.set(value);
+	enabled = value;
 	await setPreference(KEY_AUTO_UPDATE_ENABLED, value);
 }
 
 /// Check the active channel's manifest for a newer release.
 export async function checkForUpdate(silent = false): Promise<UpdateInfo | null> {
 	if (!isTauri()) return null;
-	updateError.set(null);
-	if (!silent) updatePhase.set('checking');
+	error = null;
+	if (!silent) phase = 'checking';
 	try {
 		const info = await invokeCheckForUpdate();
 		if (info) {
-			availableUpdate.set(info);
-			updatePhase.set('available');
-			updateToastDismissed.set(false);
+			available = info;
+			phase = 'available';
+			toastDismissed = false;
 		} else {
-			availableUpdate.set(null);
+			available = null;
 			// A silent launch check leaves no trace when up to date; a manual
 			// check reports it.
-			updatePhase.set(silent ? 'idle' : 'up-to-date');
+			phase = silent ? 'idle' : 'up-to-date';
 		}
 		return info;
 	} catch (err) {
@@ -118,10 +171,10 @@ export async function checkForUpdate(silent = false): Promise<UpdateInfo | null>
 		// launch would otherwise open /updates in an error state the user never
 		// asked for. Only a user-initiated check reports the error.
 		if (silent) {
-			updatePhase.set('idle');
+			phase = 'idle';
 		} else {
-			updateError.set(String(err));
-			updatePhase.set('error');
+			error = String(err);
+			phase = 'error';
 		}
 		return null;
 	}
@@ -131,21 +184,21 @@ export async function checkForUpdate(silent = false): Promise<UpdateInfo | null>
 /// install, surfacing progress. Idempotent on the progress listener.
 export async function downloadUpdate(): Promise<void> {
 	if (!isTauri()) return;
-	updateError.set(null);
-	downloadProgress.set(null);
-	updatePhase.set('downloading');
+	error = null;
+	progress = null;
+	phase = 'downloading';
 	if (!unlistenProgress) {
 		unlistenProgress = await listen<DownloadProgress>(DOWNLOAD_PROGRESS_EVENT, (event) => {
-			downloadProgress.set(event.payload);
+			progress = event.payload;
 		});
 	}
 	try {
 		const info = await invokeDownloadUpdate();
-		availableUpdate.set(info);
-		updatePhase.set('ready');
+		available = info;
+		phase = 'ready';
 	} catch (err) {
-		updateError.set(String(err));
-		updatePhase.set('error');
+		error = String(err);
+		phase = 'error';
 	}
 }
 
@@ -153,13 +206,13 @@ export async function downloadUpdate(): Promise<void> {
 /// before this resolves (Windows), so only the failure path returns control.
 export async function installUpdate(): Promise<void> {
 	if (!isTauri()) return;
-	updateError.set(null);
-	updatePhase.set('installing');
+	error = null;
+	phase = 'installing';
 	try {
 		await invokeInstallUpdate();
 	} catch (err) {
-		updateError.set(String(err));
-		updatePhase.set('error');
+		error = String(err);
+		phase = 'error';
 	}
 }
 
@@ -176,13 +229,13 @@ export async function getUpdateChannel(): Promise<string> {
 
 /// Dismiss the toast for this session.
 export function dismissUpdateToast(): void {
-	updateToastDismissed.set(true);
+	toastDismissed = true;
 }
 
 /// The launch-time check, gated on the opt-out preference. Silent on failure:
 /// a failed update check must never disrupt startup.
 export async function maybeCheckOnLaunch(): Promise<void> {
 	if (!isTauri()) return;
-	if (!get(autoUpdateEnabled)) return;
+	if (!enabled) return;
 	await checkForUpdate(true);
 }

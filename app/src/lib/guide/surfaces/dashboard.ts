@@ -1,4 +1,4 @@
-import type { StatPref } from '$lib/statsCustomisation';
+import type { StatPref } from '$lib/statsCustomisation.svelte';
 import { getDemoApi, guideState } from '../state.svelte';
 import type { GuideSurface } from '../types';
 

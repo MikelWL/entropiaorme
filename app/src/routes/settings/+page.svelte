@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { Button, Divider, Toggle, Input, SegmentedControl } from '$lib/components';
-	import { theme, setTheme, type Theme } from '$lib/theme';
-	import { newsOptIn, setNewsOptIn } from '$lib/news';
-	import { autoUpdateEnabled, setAutoUpdateEnabled } from '$lib/updater';
+	import { theme, setTheme, type Theme } from '$lib/theme.svelte';
+	import { newsOptIn, setNewsOptIn } from '$lib/news.svelte';
+	import { autoUpdateEnabled, setAutoUpdateEnabled } from '$lib/updater.svelte';
 	import { goto } from '$app/navigation';
 	import { getSettings, updateSettings } from '$lib/api';
 	import type { AppSettings } from '$lib/types';
@@ -472,7 +472,7 @@
 				</div>
 				<SegmentedControl
 					options={themeOptions}
-					active={$theme}
+					active={theme.current}
 					onchange={handleThemeChange}
 					size="md"
 				/>
@@ -491,7 +491,7 @@
 					</p>
 				</div>
 				<Toggle
-					checked={$newsOptIn}
+					checked={newsOptIn.current}
 					onchange={setNewsOptIn}
 					label="Enable News"
 				/>
@@ -511,7 +511,7 @@
 					</p>
 				</div>
 				<Toggle
-					checked={$autoUpdateEnabled}
+					checked={autoUpdateEnabled.current}
 					onchange={setAutoUpdateEnabled}
 					label="Enable automatic updates"
 				/>
@@ -529,7 +529,7 @@
 	<footer class="pt-10 pb-2 flex flex-col items-center gap-3.5">
 		<div class="flex items-center gap-3">
 			<img
-				src={$theme === 'light' ? '/wordmark-on-light.png' : '/wordmark-on-dark.png'}
+				src={theme.current === 'light' ? '/wordmark-on-light.png' : '/wordmark-on-dark.png'}
 				alt="EntropiaOrme"
 				class="h-[1.875rem] w-auto opacity-60 select-none"
 				draggable="false"

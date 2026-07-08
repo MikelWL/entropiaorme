@@ -1,11 +1,10 @@
-import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALL_STAT_IDS, STAT_DEFS, type StatId } from './statsRegistry';
 
 // Mock the two side-effecting seams. These vi.fn()s are hoisted alongside the
 // vi.mock factory; we read/reset them per test. Because the module under test
-// holds singleton stores, each test re-imports it fresh via vi.resetModules()
-// + dynamic import() so store state is order-independent.
+// holds singleton runes state, each test re-imports it fresh via
+// vi.resetModules() + dynamic import() so state is order-independent.
 const getPreference = vi.fn();
 const setPreference = vi.fn();
 const emit = vi.fn();
@@ -19,12 +18,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 	emit: (...args: unknown[]) => emit(...args),
 }));
 
-type Mod = typeof import('./statsCustomisation');
+type Mod = typeof import('./statsCustomisation.svelte');
 
-// Fresh module (and fresh stores) per call.
+// Fresh module (and fresh state) per call.
 async function loadModule(): Promise<Mod> {
 	vi.resetModules();
-	return import('./statsCustomisation');
+	return import('./statsCustomisation.svelte');
 }
 
 const ids = (prefs: { id: StatId }[]): StatId[] => prefs.map((p) => p.id);
@@ -68,11 +67,11 @@ describe('DEFAULT_STAT_PREFS / DEFAULT_OVERLAY_PREFS', () => {
 		expect(enabled).toEqual(['net', 'multiplier_last']);
 	});
 
-	it('initial store values are the defaults', async () => {
+	it('initial state values are the defaults', async () => {
 		const { dashboardStats, overlayStats, DEFAULT_STAT_PREFS, DEFAULT_OVERLAY_PREFS } =
 			await loadModule();
-		expect(get(dashboardStats)).toEqual(DEFAULT_STAT_PREFS);
-		expect(get(overlayStats)).toEqual(DEFAULT_OVERLAY_PREFS);
+		expect(dashboardStats.current).toEqual(DEFAULT_STAT_PREFS);
+		expect(overlayStats.current).toEqual(DEFAULT_OVERLAY_PREFS);
 	});
 });
 
@@ -89,12 +88,12 @@ describe('initStatsCustomisation', () => {
 		await initStatsCustomisation();
 
 		// sanitise(null, DEFAULT_STAT_PREFS) -> DEFAULT_STAT_PREFS for the dashboard.
-		expect(get(dashboardStats)).toEqual(DEFAULT_STAT_PREFS);
+		expect(dashboardStats.current).toEqual(DEFAULT_STAT_PREFS);
 		// A corrupt overlay pref recovers to the OVERLAY defaults, not the
 		// dashboard's enabled flags; reorderToMatch is a no-op since both share
 		// the registry id order.
-		expect(get(overlayStats)).toEqual(DEFAULT_OVERLAY_PREFS);
-		expect(ids(get(overlayStats))).toEqual(ALL_STAT_IDS);
+		expect(overlayStats.current).toEqual(DEFAULT_OVERLAY_PREFS);
+		expect(ids(overlayStats.current)).toEqual(ALL_STAT_IDS);
 	});
 
 	it('reads both dashboard and overlay keys with their default fallbacks', async () => {
@@ -122,7 +121,7 @@ describe('initStatsCustomisation', () => {
 		const { initStatsCustomisation, dashboardStats, overlayStats } = await loadModule();
 		await initStatsCustomisation();
 
-		const dash = get(dashboardStats);
+		const dash = dashboardStats.current;
 		expect(dash).toHaveLength(19);
 		// Provided ids keep their position/order; the rest appended in registry order.
 		expect(dash[0]).toEqual({ id: 'net', enabled: true });
@@ -134,7 +133,7 @@ describe('initStatsCustomisation', () => {
 		for (const p of appended) expect(p.enabled).toBe(false);
 
 		// Overlay output is reorderToMatch'd to the dashboard's id order.
-		const ov = get(overlayStats);
+		const ov = overlayStats.current;
 		expect(ov).toHaveLength(19);
 		expect(ids(ov)).toEqual(ids(dash));
 		// Its own enabled flag (multiplier_last:true) is preserved through the reorder.
@@ -162,7 +161,7 @@ describe('initStatsCustomisation', () => {
 		const { initStatsCustomisation, dashboardStats } = await loadModule();
 		await initStatsCustomisation();
 
-		const dash = get(dashboardStats);
+		const dash = dashboardStats.current;
 		expect(dash).toHaveLength(19);
 		expect(new Set(ids(dash)).size).toBe(19);
 		// cycled kept from the FIRST occurrence (enabled:1 -> Boolean -> true).
@@ -180,10 +179,10 @@ describe('initStatsCustomisation', () => {
 		const { initStatsCustomisation, dashboardStats, overlayStats } = await loadModule();
 		await initStatsCustomisation();
 
-		const dash = get(dashboardStats);
+		const dash = dashboardStats.current;
 		expect(ids(dash)).toEqual(ALL_STAT_IDS); // empty -> pure append in registry order
 		for (const p of dash) expect(p.enabled).toBe(false);
-		expect(ids(get(overlayStats))).toEqual(ALL_STAT_IDS);
+		expect(ids(overlayStats.current)).toEqual(ALL_STAT_IDS);
 	});
 });
 
@@ -195,7 +194,7 @@ describe('setDashboardStats', () => {
 		];
 		const { setDashboardStats, dashboardStats } = await loadModule();
 		await setDashboardStats(value);
-		const dash = get(dashboardStats);
+		const dash = dashboardStats.current;
 		// Sanitised: a fresh array of all 19 ids, the provided ones kept first in order.
 		expect(dash).not.toBe(value);
 		expect(dash).toHaveLength(19);
@@ -209,9 +208,9 @@ describe('setDashboardStats', () => {
 		const value = [{ id: 'net' as StatId, enabled: true }];
 		const { setDashboardStats, dashboardStats } = await loadModule();
 		await setDashboardStats(value);
-		// The persisted payload is the sanitised store value, not the raw input.
-		expect(setPreference).toHaveBeenCalledWith('dashboardStats', get(dashboardStats));
-		expect(get(dashboardStats)).toHaveLength(19);
+		// The persisted payload is the sanitised state value, not the raw input.
+		expect(setPreference).toHaveBeenCalledWith('dashboardStats', dashboardStats.current);
+		expect(dashboardStats.current).toHaveLength(19);
 	});
 
 	it('reslaves the overlay to the new dashboard order, preserving overlay enabled flags', async () => {
@@ -223,7 +222,7 @@ describe('setDashboardStats', () => {
 		];
 		await setDashboardStats(value);
 
-		const ov = get(overlayStats);
+		const ov = overlayStats.current;
 		// Overlay is the full 19 in the sanitised dashboard order (provided ids first).
 		expect(ov).toHaveLength(19);
 		expect(ids(ov).slice(0, 2)).toEqual(['multiplier_last', 'net']);
@@ -243,7 +242,7 @@ describe('setDashboardStats', () => {
 			{ id: 'net' as StatId, enabled: false },
 		];
 		await setDashboardStats(value);
-		const reordered = get(overlayStats);
+		const reordered = overlayStats.current;
 
 		// Overlay persisted with the reordered payload (not `value`).
 		expect(setPreference).toHaveBeenCalledWith('overlayStats', reordered);
@@ -263,9 +262,9 @@ describe('setDashboardStats', () => {
 		expect(setPreference.mock.calls[1][0]).toBe('overlayStats');
 	});
 
-	it('sanitises the value: duplicate ids are collapsed (first wins) in both stores', async () => {
+	it('sanitises the value: duplicate ids are collapsed (first wins) on both surfaces', async () => {
 		// The setter normalises through sanitise, so a caller-supplied duplicate id
-		// is deduped (first occurrence wins) rather than propagating into the stores.
+		// is deduped (first occurrence wins) rather than propagating into the state.
 		const value = [
 			{ id: 'net' as StatId, enabled: true },
 			{ id: 'net' as StatId, enabled: false },
@@ -274,13 +273,13 @@ describe('setDashboardStats', () => {
 		await setDashboardStats(value);
 
 		// Dashboard: net appears exactly once (first occurrence, enabled:true); 19 total.
-		const dash = get(dashboardStats);
+		const dash = dashboardStats.current;
 		expect(dash).toHaveLength(19);
 		expect(ids(dash).filter((id) => id === 'net')).toEqual(['net']);
 		expect(dash[0]).toEqual({ id: 'net', enabled: true });
 		// The overlay reslave is likewise free of the duplicate.
-		expect(get(overlayStats)).toHaveLength(19);
-		expect(ids(get(overlayStats)).filter((id) => id === 'net')).toEqual(['net']);
+		expect(overlayStats.current).toHaveLength(19);
+		expect(ids(overlayStats.current).filter((id) => id === 'net')).toEqual(['net']);
 	});
 });
 
@@ -295,7 +294,7 @@ describe('setOverlayStats', () => {
 		];
 		await setOverlayStats(value);
 
-		const ov = get(overlayStats);
+		const ov = overlayStats.current;
 		// Output is the full dashboard order (19 ids), not the 2 passed.
 		expect(ids(ov)).toEqual(ALL_STAT_IDS);
 		expect(ov).toHaveLength(19);
@@ -309,7 +308,7 @@ describe('setOverlayStats', () => {
 		const { setOverlayStats, OVERLAY_STATS_CHANGED_EVENT, overlayStats } = await loadModule();
 		const value = [{ id: 'net' as StatId, enabled: true }];
 		await setOverlayStats(value);
-		const reordered = get(overlayStats);
+		const reordered = overlayStats.current;
 
 		expect(setPreference).toHaveBeenCalledTimes(1);
 		expect(setPreference).toHaveBeenCalledWith('overlayStats', reordered);
@@ -331,7 +330,7 @@ describe('setOverlayStats', () => {
 			{ id: 'net' as StatId, enabled: true },
 			{ id: 'rate' as StatId, enabled: false },
 		]);
-		const ov = get(overlayStats);
+		const ov = overlayStats.current;
 		// Sanitised dashboard order leads with rate, net (the provided ids); 19 total.
 		expect(ov).toHaveLength(19);
 		expect(ids(ov).slice(0, 2)).toEqual(['rate', 'net']);

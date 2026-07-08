@@ -5,33 +5,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatId } from '$lib/statsRegistry';
 import { getStatDef } from '$lib/statsRegistry';
 
-// The strip renders from props plus the overlayStats customisation store; the
-// store is the one side-effecting seam (its real module pulls in the Tauri
-// preference plumbing), so it is replaced with a hand-rolled store-contract
-// stub the tests drive (vi.hoisted: the factory runs before top-level imports
-// initialise, so svelte/store's writable is not constructible there). The
-// stats registry is real: the pill assertions exercise the actual render
-// functions.
+// The strip renders from props plus the overlayStats customisation state; the
+// state module is the one side-effecting seam (the real module pulls in the
+// Tauri preference plumbing), so it is replaced with a plain `{ current }`
+// stub the tests assign before each render (vi.hoisted so the mock factory
+// can reference it before top-level imports initialise). The stats registry
+// is real: the pill assertions exercise the actual render functions.
 const { overlayStats } = vi.hoisted(() => {
 	type Pref = { id: string; enabled: boolean };
-	let value: Pref[] = [];
-	const subscribers = new Set<(v: Pref[]) => void>();
 	return {
-		overlayStats: {
-			set(next: Pref[]): void {
-				value = next;
-				for (const fn of subscribers) fn(value);
-			},
-			subscribe(fn: (v: Pref[]) => void): () => void {
-				subscribers.add(fn);
-				fn(value);
-				return () => subscribers.delete(fn);
-			},
-		},
+		overlayStats: { current: [] as Pref[] },
 	};
 });
 
-vi.mock('$lib/statsCustomisation', () => ({
+vi.mock('$lib/statsCustomisation.svelte', () => ({
 	overlayStats,
 }));
 
@@ -47,7 +34,7 @@ function activeStatus(overrides: Partial<TrackingStatus> = {}): TrackingStatus {
 }
 
 beforeEach(() => {
-	overlayStats.set([]);
+	overlayStats.current = [];
 });
 
 describe('track / stop control', () => {
@@ -212,10 +199,10 @@ describe('mob and tag section', () => {
 
 describe('customisable stat pills', () => {
 	it('renders only the enabled overlay stats, through the real registry render', () => {
-		overlayStats.set([
+		overlayStats.current = [
 			{ id: 'net' as StatId, enabled: true },
 			{ id: 'kills' as StatId, enabled: false },
-		]);
+		];
 		const status = activeStatus({ cost: 10, returns: 12.5, kill_count: 7 });
 		render(OverlayStrip, { props: { data: liveData({ status: 'active' }), status } });
 
@@ -229,7 +216,7 @@ describe('customisable stat pills', () => {
 	});
 
 	it('renders nothing when no overlay stat is enabled', () => {
-		overlayStats.set([{ id: 'net' as StatId, enabled: false }]);
+		overlayStats.current = [{ id: 'net' as StatId, enabled: false }];
 		const netDef = getStatDef('net' as StatId);
 		render(OverlayStrip, { props: { data: liveData({ status: 'active' }) } });
 		expect(netDef && screen.queryByText(netDef.label)).toBeNull();

@@ -1,4 +1,3 @@
-import { derived, get, type Readable, type Writable, writable } from 'svelte/store';
 import { getPreference, setPreference } from './preferences';
 
 export type NewsCategory = 'article' | 'changelog';
@@ -45,19 +44,55 @@ const KEY_LAST_VIEWED_AT = 'news_last_viewed_at';
 // Runtime default OFF until the user has made the choice. The opt-out posture
 // (news on by default, the user opts out in onboarding) is carried by the
 // onboarding panel's default-on toggle and the saved preference, NOT by this
-// runtime default: the store stays off until the choice is saved, so no news
+// runtime default: the state stays off until the choice is saved, so no news
 // request fires before the user has seen the choice (a not-yet-onboarded
 // profile must not phone home before consent).
-export const newsOptIn: Writable<boolean> = writable(false);
-export const newsOptInSeen: Writable<boolean> = writable(false);
-export const newsCache: Writable<NewsCache | null> = writable(null);
+let optIn = $state(false);
+let optInSeen = $state(false);
+let cache = $state<NewsCache | null>(null);
 // Cursor for the unread-dot derivation: the highest article date the user
 // has acknowledged by visiting /news. Compared lex-greater against article
 // dates in the cache; persisted as an ISO string. Article-date rather than
 // wall-clock-now, because articles can be stamped to a planned future
 // release date (e.g. a launch-day announcement dated tomorrow), and a
 // wall-clock cursor would trail those dates forever.
-export const newsLastViewedAt: Writable<string | null> = writable(null);
+let lastViewedAt = $state<string | null>(null);
+
+export const newsOptIn = {
+	get current(): boolean {
+		return optIn;
+	},
+	set current(value: boolean) {
+		optIn = value;
+	},
+};
+
+export const newsOptInSeen = {
+	get current(): boolean {
+		return optInSeen;
+	},
+	set current(value: boolean) {
+		optInSeen = value;
+	},
+};
+
+export const newsCache = {
+	get current(): NewsCache | null {
+		return cache;
+	},
+	set current(value: NewsCache | null) {
+		cache = value;
+	},
+};
+
+export const newsLastViewedAt = {
+	get current(): string | null {
+		return lastViewedAt;
+	},
+	set current(value: string | null) {
+		lastViewedAt = value;
+	},
+};
 
 function isCache(value: unknown): value is NewsCache {
 	if (!value || typeof value !== 'object') return false;
@@ -68,25 +103,25 @@ function isCache(value: unknown): value is NewsCache {
 }
 
 export async function initNews(): Promise<void> {
-	const [optIn, seen, rawCache, lastViewed] = await Promise.all([
+	const [storedOptIn, seen, rawCache, lastViewed] = await Promise.all([
 		getPreference<boolean>(KEY_OPT_IN, false),
 		getPreference<boolean>(KEY_OPT_IN_SEEN, false),
 		getPreference<unknown>(KEY_CACHE, null),
 		getPreference<string | null>(KEY_LAST_VIEWED_AT, null),
 	]);
-	newsOptIn.set(optIn);
-	newsOptInSeen.set(seen);
+	optIn = storedOptIn;
+	optInSeen = seen;
 	// Discard caches written under any earlier shape; opt-in users will
 	// repopulate on the next refresh.
-	newsCache.set(isCache(rawCache) ? rawCache : null);
+	cache = isCache(rawCache) ? rawCache : null;
 	if (!isCache(rawCache) && rawCache !== null) {
 		await setPreference<NewsCache | null>(KEY_CACHE, null);
 	}
-	newsLastViewedAt.set(lastViewed);
+	lastViewedAt = lastViewed;
 }
 
 export async function setNewsOptIn(value: boolean): Promise<void> {
-	newsOptIn.set(value);
+	optIn = value;
 	await setPreference(KEY_OPT_IN, value);
 	if (!value) {
 		await purgeNewsCache();
@@ -94,43 +129,40 @@ export async function setNewsOptIn(value: boolean): Promise<void> {
 }
 
 export async function markNewsOptInSeen(): Promise<void> {
-	newsOptInSeen.set(true);
+	optInSeen = true;
 	await setPreference(KEY_OPT_IN_SEEN, true);
 }
 
 export async function purgeNewsCache(): Promise<void> {
-	newsCache.set(null);
+	cache = null;
 	await setPreference<NewsCache | null>(KEY_CACHE, null);
 }
 
-export async function persistNewsCache(cache: NewsCache): Promise<void> {
-	newsCache.set(cache);
-	await setPreference(KEY_CACHE, cache);
+export async function persistNewsCache(value: NewsCache): Promise<void> {
+	cache = value;
+	await setPreference(KEY_CACHE, value);
 }
 
 export async function markNewsAsRead(): Promise<void> {
-	const cache = get(newsCache);
 	if (!cache || cache.items.length === 0) return;
 	const newest = cache.items.reduce((max, e) => (e.date > max ? e.date : max), '');
 	if (!newest) return;
-	const current = get(newsLastViewedAt);
-	if (current && current >= newest) return;
-	newsLastViewedAt.set(newest);
+	if (lastViewedAt && lastViewedAt >= newest) return;
+	lastViewedAt = newest;
 	await setPreference(KEY_LAST_VIEWED_AT, newest);
 }
 
 // True when the cache contains an entry strictly newer than the last viewed
 // timestamp. Acts as a binary unread indicator for the sidebar.
-export const newsHasUnread: Readable<boolean> = derived(
-	[newsCache, newsLastViewedAt],
-	([$cache, $lastViewed]) => {
-		if (!$cache || $cache.items.length === 0) return false;
-		const newest = $cache.items.reduce((max, e) => (e.date > max ? e.date : max), '');
+export const newsHasUnread = {
+	get current(): boolean {
+		if (!cache || cache.items.length === 0) return false;
+		const newest = cache.items.reduce((max, e) => (e.date > max ? e.date : max), '');
 		if (!newest) return false;
-		if (!$lastViewed) return true;
-		return newest > $lastViewed;
+		if (!lastViewedAt) return true;
+		return newest > lastViewedAt;
 	},
-);
+};
 
 export const NEWS_PREFERENCE_KEYS = {
 	optIn: KEY_OPT_IN,

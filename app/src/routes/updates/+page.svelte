@@ -12,7 +12,7 @@
 		setAutoUpdateEnabled,
 		updateError,
 		updatePhase,
-	} from '$lib/updater';
+	} from '$lib/updater.svelte';
 
 	let currentVersion = $state('');
 	let channel = $state('stable');
@@ -31,7 +31,7 @@
 	// Percent of the download done, or null when the server announced no total
 	// (chunked transfer) so the UI shows an indeterminate bar.
 	let downloadPercent = $derived.by(() => {
-		const p = $downloadProgress;
+		const p = downloadProgress.current;
 		if (!p || !p.contentLength) return null;
 		return Math.min(100, Math.round((p.downloaded / p.contentLength) * 100));
 	});
@@ -72,31 +72,31 @@
 		<div class="divider"></div>
 
 		<div class="status">
-			{#if $updatePhase === 'checking'}
+			{#if updatePhase.current === 'checking'}
 				<div class="status-line">
 					<span class="spinner" aria-hidden="true"></span>
 					<span>Checking for updates…</span>
 				</div>
-			{:else if $updatePhase === 'available'}
+			{:else if updatePhase.current === 'available'}
 				<div class="status-head">
 					<span class="signal" aria-hidden="true"></span>
 					<div>
 						<p class="status-title">
-							Version {$availableUpdate?.version} is available.
+							Version {availableUpdate.current?.version} is available.
 						</p>
 						<p class="status-sub">You're on {currentVersion || 'an earlier version'}.</p>
 					</div>
 				</div>
-				{#if $availableUpdate?.notes}
-					<div class="notes" aria-label="Release notes">{$availableUpdate.notes}</div>
+				{#if availableUpdate.current?.notes}
+					<div class="notes" aria-label="Release notes">{availableUpdate.current.notes}</div>
 				{/if}
 				<div class="actions">
 					<Button variant="primary" onclick={downloadUpdate}>Download update</Button>
 				</div>
-			{:else if $updatePhase === 'downloading'}
+			{:else if updatePhase.current === 'downloading'}
 				<div class="status-head">
 					<span class="signal" aria-hidden="true"></span>
-					<p class="status-title">Downloading version {$availableUpdate?.version}…</p>
+					<p class="status-title">Downloading version {availableUpdate.current?.version}{'\u2026'}</p>
 				</div>
 				<div
 					class="bar"
@@ -109,42 +109,42 @@
 					<span class="bar-fill" style={downloadPercent !== null ? `width:${downloadPercent}%` : ''}></span>
 				</div>
 				<p class="status-sub">
-					{#if downloadPercent !== null && $downloadProgress}
-						{downloadPercent}% · {formatBytes($downloadProgress.downloaded)}
-					{:else if $downloadProgress}
-						{formatBytes($downloadProgress.downloaded)} downloaded
+					{#if downloadPercent !== null && downloadProgress.current}
+						{downloadPercent}% {'\u00B7'} {formatBytes(downloadProgress.current.downloaded)}
+					{:else if downloadProgress.current}
+						{formatBytes(downloadProgress.current.downloaded)} downloaded
 					{:else}
 						Starting download…
 					{/if}
 				</p>
-			{:else if $updatePhase === 'ready'}
+			{:else if updatePhase.current === 'ready'}
 				<div class="status-head">
 					<span class="signal ready" aria-hidden="true"></span>
 					<div>
-						<p class="status-title">Version {$availableUpdate?.version} is ready to install.</p>
+						<p class="status-title">Version {availableUpdate.current?.version} is ready to install.</p>
 						<p class="status-sub">EntropiaOrme will close and reopen on the new version.</p>
 					</div>
 				</div>
 				<div class="actions">
 					<Button variant="primary" onclick={installUpdate}>Install and restart</Button>
 				</div>
-			{:else if $updatePhase === 'installing'}
+			{:else if updatePhase.current === 'installing'}
 				<div class="status-line">
 					<span class="spinner" aria-hidden="true"></span>
 					<span>Installing… the app will restart.</span>
 				</div>
-			{:else if $updatePhase === 'error'}
+			{:else if updatePhase.current === 'error'}
 				<div class="status-head">
 					<span class="signal error" aria-hidden="true"></span>
 					<div>
 						<p class="status-title">Something went wrong.</p>
-						<p class="status-sub">{$updateError ?? 'The update could not be completed.'}</p>
+						<p class="status-sub">{updateError.current ?? 'The update could not be completed.'}</p>
 					</div>
 				</div>
 				<div class="actions">
 					<Button variant="secondary" onclick={() => checkForUpdate()}>Try again</Button>
 				</div>
-			{:else if $updatePhase === 'up-to-date'}
+			{:else if updatePhase.current === 'up-to-date'}
 				<div class="status-head">
 					<span class="signal ready" aria-hidden="true"></span>
 					<p class="status-title">You're on the latest version.</p>
@@ -173,7 +173,7 @@
 				</span>
 			</div>
 			<Toggle
-				checked={$autoUpdateEnabled}
+				checked={autoUpdateEnabled.current}
 				onchange={onToggleAutoUpdate}
 				label="Automatic updates"
 			/>

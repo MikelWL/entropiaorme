@@ -1,10 +1,10 @@
-import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the two side-effecting seams: the snapshot read and the Tauri event
-// bus. The module under test holds singleton coalescer state (inFlight /
-// refetchQueued) plus the writable store, so each test re-imports it fresh via
-// vi.resetModules() + dynamic import() so state is order-independent.
+// bus. The module under test is a createSnapshotStore instance holding
+// singleton coalescer state (inFlight / refetchQueued) plus the published
+// snapshot, so each test re-imports it fresh via vi.resetModules() + dynamic
+// import() so state is order-independent.
 const getTrackingSnapshot = vi.fn();
 const listen = vi.fn();
 
@@ -16,12 +16,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 	listen: (...args: unknown[]) => listen(...args),
 }));
 
-type Mod = typeof import('./trackingStore');
+type Mod = typeof import('./trackingStore.svelte');
 
-// Fresh module (and fresh coalescer + store) per call.
+// Fresh module (and fresh coalescer + state) per call.
 async function loadModule(): Promise<Mod> {
 	vi.resetModules();
-	return import('./trackingStore');
+	return import('./trackingStore.svelte');
 }
 
 /** A manually resolvable snapshot read, for driving the coalescer mid-flight. */
@@ -48,13 +48,13 @@ beforeEach(() => {
 });
 
 describe('hydrate', () => {
-	it('publishes the fetched snapshot into the store', async () => {
+	it('publishes the fetched snapshot into current', async () => {
 		getTrackingSnapshot.mockResolvedValue(snapshotA);
 		const { hydrate, trackingSnapshot } = await loadModule();
-		expect(get(trackingSnapshot)).toBeNull();
+		expect(trackingSnapshot.current).toBeNull();
 
 		await hydrate();
-		expect(get(trackingSnapshot)).toEqual(snapshotA);
+		expect(trackingSnapshot.current).toEqual(snapshotA);
 	});
 
 	it('keeps the last good snapshot when a read fails', async () => {
@@ -64,7 +64,7 @@ describe('hydrate', () => {
 
 		getTrackingSnapshot.mockRejectedValueOnce(new Error('backend away'));
 		await hydrate();
-		expect(get(trackingSnapshot)).toEqual(snapshotA);
+		expect(trackingSnapshot.current).toEqual(snapshotA);
 		expect(getTrackingSnapshot).toHaveBeenCalledTimes(2);
 	});
 
@@ -84,7 +84,7 @@ describe('hydrate', () => {
 		first.resolve(snapshotA);
 		await inFlight;
 		expect(getTrackingSnapshot).toHaveBeenCalledTimes(2);
-		expect(get(trackingSnapshot)).toEqual(snapshotB);
+		expect(trackingSnapshot.current).toEqual(snapshotB);
 	});
 
 	it('still runs the queued follow-up when the in-flight read fails', async () => {
@@ -98,7 +98,7 @@ describe('hydrate', () => {
 		await inFlight;
 
 		expect(getTrackingSnapshot).toHaveBeenCalledTimes(2);
-		expect(get(trackingSnapshot)).toEqual(snapshotB);
+		expect(trackingSnapshot.current).toEqual(snapshotB);
 	});
 });
 
@@ -123,11 +123,12 @@ describe('subscribeTracking', () => {
 		const onFrame = listen.mock.calls[0][1] as (event: unknown) => void;
 		// A frame is a pure trigger: the callback ignores the payload entirely,
 		// so a payload-less reconnect nudge re-reads instead of blanking.
-		// Wait on the settled STORE VALUE, not the call count: the set happens a
-		// microtask after the read fires, so settling on the value is race-free.
+		// Wait on the settled PUBLISHED VALUE, not the call count: the write
+		// happens a microtask after the read fires, so settling on the value is
+		// race-free.
 		onFrame({ payload: {} });
 		await vi.waitFor(() => {
-			expect(get(trackingSnapshot)).toEqual(snapshotA);
+			expect(trackingSnapshot.current).toEqual(snapshotA);
 		});
 		expect(getTrackingSnapshot).toHaveBeenCalledTimes(1);
 	});

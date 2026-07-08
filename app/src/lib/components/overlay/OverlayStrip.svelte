@@ -4,7 +4,7 @@
 		TrackingStatus,
 		SessionQuestLinkSuggestion
 	} from '$lib/api';
-	import { overlayStats } from '$lib/statsCustomisation';
+	import { overlayStats } from '$lib/statsCustomisation.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
 	import Button from '$lib/components/Button.svelte';
 	import type { MobTrackingMode } from '$lib/types/settings';
@@ -299,10 +299,10 @@
 			{/if}
 		</div>
 
-		<!-- Customisable stat pills (driven by $overlayStats): treated as one
-			 unit, so the section separator sits at the unit boundary, not between
-			 individual pills. -->
-		{@const enabledPills = $overlayStats.filter((p) => p.enabled)}
+		<!-- Customisable stat pills (driven by the overlay stat prefs): treated as
+			 one unit, so the section separator sits at the unit boundary, not
+			 between individual pills. -->
+		{@const enabledPills = overlayStats.current.filter((p) => p.enabled)}
 		{#if enabledPills.length > 0}
 			<div class="flex items-center gap-4 shrink-0 border-l border-white/10 pl-3">
 				{#each enabledPills as pref (pref.id)}

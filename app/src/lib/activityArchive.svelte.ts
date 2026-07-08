@@ -1,4 +1,3 @@
-import { get, type Writable, writable } from 'svelte/store';
 import { getPreference, setPreference } from './preferences';
 
 export type ArchiveKind = 'mob' | 'tag' | 'weapon';
@@ -13,7 +12,18 @@ const KEY = 'activityArchive';
 
 const EMPTY: ActivityArchiveState = { mobs: [], tags: [], weapons: [] };
 
-export const activityArchive: Writable<ActivityArchiveState> = writable(EMPTY);
+let archiveState = $state<ActivityArchiveState>(EMPTY);
+
+// Direct writes are for test arrangement; app code mutates through
+// archive/unarchive so every change persists.
+export const activityArchive = {
+	get current(): ActivityArchiveState {
+		return archiveState;
+	},
+	set current(value: ActivityArchiveState) {
+		archiveState = value;
+	},
+};
 
 function sanitise(value: unknown): ActivityArchiveState {
 	const v = (value ?? {}) as Partial<ActivityArchiveState>;
@@ -30,7 +40,7 @@ function sanitise(value: unknown): ActivityArchiveState {
 
 export async function initActivityArchive(): Promise<void> {
 	const raw = await getPreference<unknown>(KEY, EMPTY);
-	activityArchive.set(sanitise(raw));
+	archiveState = sanitise(raw);
 }
 
 function bucketKey(kind: ArchiveKind): keyof ActivityArchiveState {
@@ -38,21 +48,21 @@ function bucketKey(kind: ArchiveKind): keyof ActivityArchiveState {
 }
 
 export async function archive(kind: ArchiveKind, name: string): Promise<void> {
-	const state = { ...get(activityArchive) };
+	const next = { ...archiveState };
 	const bucket = bucketKey(kind);
-	if (state[bucket].includes(name)) return;
-	state[bucket] = [...state[bucket], name];
-	activityArchive.set(state);
-	await setPreference(KEY, state);
+	if (next[bucket].includes(name)) return;
+	next[bucket] = [...next[bucket], name];
+	archiveState = next;
+	await setPreference(KEY, next);
 }
 
 export async function unarchive(kind: ArchiveKind, name: string): Promise<void> {
-	const state = { ...get(activityArchive) };
+	const next = { ...archiveState };
 	const bucket = bucketKey(kind);
-	if (!state[bucket].includes(name)) return;
-	state[bucket] = state[bucket].filter((n) => n !== name);
-	activityArchive.set(state);
-	await setPreference(KEY, state);
+	if (!next[bucket].includes(name)) return;
+	next[bucket] = next[bucket].filter((n) => n !== name);
+	archiveState = next;
+	await setPreference(KEY, next);
 }
 
 export function isArchived(state: ActivityArchiveState, kind: ArchiveKind, name: string): boolean {

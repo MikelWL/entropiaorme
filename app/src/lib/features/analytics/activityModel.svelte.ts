@@ -11,11 +11,10 @@ import {
 	archive as archiveItem,
 	isArchived,
 	unarchive as unarchiveItem,
-} from '$lib/activityArchive';
+} from '$lib/activityArchive.svelte';
 import { type ActivityData, getAnalyticsActivity } from '$lib/api';
 import type { MobComparison, TagComparison, WeaponComparison } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
-import { legacyStoreState } from '$lib/view/legacyStore.svelte';
 
 export type SortDir = 'asc' | 'desc';
 export type ViewMode = 'main' | 'archive';
@@ -142,8 +141,6 @@ function sortComparisons<T>(rows: T[], key: keyof T & string, dir: SortDir): T[]
 }
 
 export function createActivityModel() {
-	const archived = legacyStoreState(activityArchive);
-
 	let data = $state<ActivityData | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -190,8 +187,8 @@ export function createActivityModel() {
 		if (!data) return [];
 		const filtered = data.mobComparisons.filter((m) =>
 			viewMode === 'archive'
-				? isArchived(archived.current, 'mob', m.mobName)
-				: !isArchived(archived.current, 'mob', m.mobName),
+				? isArchived(activityArchive.current, 'mob', m.mobName)
+				: !isArchived(activityArchive.current, 'mob', m.mobName),
 		);
 		if (!mobSortKey) return filtered;
 		return sortComparisons(filtered, mobSortKey, mobSortDir);
@@ -204,8 +201,8 @@ export function createActivityModel() {
 		if (!data) return [];
 		const filtered = data.tagComparisons.filter((t) =>
 			viewMode === 'archive'
-				? isArchived(archived.current, 'tag', t.tagName)
-				: !isArchived(archived.current, 'tag', t.tagName),
+				? isArchived(activityArchive.current, 'tag', t.tagName)
+				: !isArchived(activityArchive.current, 'tag', t.tagName),
 		);
 		if (!tagSortKey) return filtered;
 		return sortComparisons(filtered, tagSortKey, tagSortDir);
@@ -218,8 +215,8 @@ export function createActivityModel() {
 		if (!data) return [];
 		const filtered = data.weaponComparisons.filter((w) =>
 			viewMode === 'archive'
-				? isArchived(archived.current, 'weapon', w.weaponName)
-				: !isArchived(archived.current, 'weapon', w.weaponName),
+				? isArchived(activityArchive.current, 'weapon', w.weaponName)
+				: !isArchived(activityArchive.current, 'weapon', w.weaponName),
 		);
 		if (!weaponSortKey) return filtered;
 		return sortComparisons(filtered, weaponSortKey, weaponSortDir);

@@ -2,7 +2,6 @@
 	import { flip } from 'svelte/animate';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import { quintOut } from 'svelte/easing';
-	import { get } from 'svelte/store';
 	import { ALL_STAT_IDS, STAT_DEFS } from '$lib/statsRegistry';
 	import {
 		dashboardStats,
@@ -10,7 +9,7 @@
 		setDashboardStats,
 		setOverlayStats,
 		type StatPref,
-	} from '$lib/statsCustomisation';
+	} from '$lib/statsCustomisation.svelte';
 
 	type Surface = 'dashboard' | 'overlay';
 
@@ -35,8 +34,8 @@
 				enabled: enabledMap.get(id) ?? STAT_DEFS[id].defaultEnabled,
 			}));
 		};
-		void setDashboardStats(restore(get(dashboardStats)));
-		void setOverlayStats(restore(get(overlayStats)));
+		void setDashboardStats(restore(dashboardStats.current));
+		void setOverlayStats(restore(overlayStats.current));
 	}
 </script>
 
@@ -68,7 +67,7 @@
 	</div>
 
 	{#each surfaces as { surface, title } (surface)}
-		{@const prefs = surface === 'dashboard' ? $dashboardStats : $overlayStats}
+		{@const prefs = surface === 'dashboard' ? dashboardStats.current : overlayStats.current}
 		<div class="flex flex-col gap-2" data-customise-surface={surface}>
 			<span class="eyebrow">{title}</span>
 			<div class="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">

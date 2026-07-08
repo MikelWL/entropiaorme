@@ -6,7 +6,7 @@
 	 * component suite drives the mocked API and Tauri listener seams and
 	 * asserts this rendered output tracks the store.
 	 */
-	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore';
+	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore.svelte';
 
 	$effect(() => {
 		let unlisten: (() => void) | undefined;
@@ -27,5 +27,7 @@
 </script>
 
 <span data-testid="status">
-	{$trackingSnapshot ? `${$trackingSnapshot.status}:${$trackingSnapshot.kill_count ?? 0}` : 'unhydrated'}
+	{trackingSnapshot.current
+		? `${trackingSnapshot.current.status}:${trackingSnapshot.current.kill_count ?? 0}`
+		: 'unhydrated'}
 </span>
