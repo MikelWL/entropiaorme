@@ -1678,9 +1678,15 @@ mod tests {
         assert_eq!(status["phase"], "idle");
         assert_eq!(status["captured_pages"], 0);
         // `configured` mirrors whether the engine loaded (the real provider);
-        // the game window is never present on a headless host.
+        // `game_window_present` mirrors the live window-discovery seam, so
+        // it is compared against that seam's own answer rather than assumed
+        // absent (a dev host can legitimately have the real game running,
+        // which is precisely the live-provider wiring this test proves).
         assert_eq!(status["configured"], composed.ocr_engine.is_some());
-        assert_eq!(status["game_window_present"], false);
+        assert_eq!(
+            status["game_window_present"],
+            eo_services::eu_window::game_window_present()
+        );
         // The scan composed on the spine bus (its status frames reach the
         // domain bridge); the forwarding is covered by
         // `the_domain_bridge_forwards_typed_envelopes_to_a_subscriber`. The
