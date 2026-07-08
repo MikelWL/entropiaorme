@@ -293,6 +293,61 @@ pub struct OcrEngine {
     provider: &'static str,
 }
 
+/// Whether a Vulkan driver manifest (ICD) is discoverable on this host,
+/// mirroring the loader's search closely enough to answer one question:
+/// would `vkCreateInstance` find any driver at all? The WebGPU attempt
+/// is gated on this because Dawn's failed no-driver instance creation
+/// reports its error cleanly but corrupts process teardown (a segfault
+/// at exit), so a driverless host must go straight to the CPU provider
+/// without ever starting Dawn. A false negative only costs the GPU
+/// preference (the CPU provider still recognises identically); a false
+/// positive means a driver manifest exists, which is exactly the case
+/// Dawn's own error path handles safely.
+#[cfg(target_os = "linux")]
+fn vulkan_driver_manifest_present() -> bool {
+    use std::path::PathBuf;
+    // The loader's explicit override variables take absolute precedence:
+    // when one is set (non-empty), discovery is limited to exactly the
+    // colon-separated files it lists.
+    for var in ["VK_DRIVER_FILES", "VK_ICD_FILENAMES"] {
+        if let Ok(value) = std::env::var(var) {
+            if !value.is_empty() {
+                return value.split(':').any(|path| Path::new(path).is_file());
+            }
+        }
+    }
+    // Otherwise scan the loader's standard manifest directories (plus
+    // XDG_DATA_DIRS, which the loader also honours) for any ICD json.
+    let mut dirs: Vec<PathBuf> = [
+        "/usr/local/etc/vulkan/icd.d",
+        "/usr/local/share/vulkan/icd.d",
+        "/etc/vulkan/icd.d",
+        "/usr/share/vulkan/icd.d",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect();
+    if let Ok(xdg) = std::env::var("XDG_DATA_DIRS") {
+        dirs.extend(
+            xdg.split(':')
+                .filter(|dir| !dir.is_empty())
+                .map(|dir| Path::new(dir).join("vulkan/icd.d")),
+        );
+    }
+    dirs.iter().any(|dir| {
+        std::fs::read_dir(dir).is_ok_and(|mut entries| {
+            entries.any(|entry| {
+                entry.is_ok_and(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+                })
+            })
+        })
+    })
+}
+
 /// The base session options every engine shares, matching the
 /// original's `SessionOptions` exactly: full graph optimisation,
 /// single intra/inter-op thread, sequential execution, and the
@@ -372,27 +427,48 @@ impl OcrEngine {
         // CPU-only session that would still be mislabelled with the GPU
         // provider's name. The recorded provider then never lies: it
         // names the GPU provider only when that provider truly ran.
+        //
+        // On Linux the attempt is additionally gated on a Vulkan driver
+        // manifest being discoverable at all: on a driverless host Dawn's
+        // failed instance creation reports the error cleanly (and the CPU
+        // retry works) but corrupts process teardown, segfaulting at
+        // exit, so the WebGPU attempt must never start there.
         #[cfg(target_os = "linux")]
-        let (preferred, preferred_name) = (
-            WebGPU::default().build().error_on_failure(),
-            "WebGpuExecutionProvider",
-        );
+        let preferred = vulkan_driver_manifest_present().then(|| {
+            (
+                WebGPU::default().build().error_on_failure(),
+                "WebGpuExecutionProvider",
+            )
+        });
         #[cfg(not(target_os = "linux"))]
-        let (preferred, preferred_name) = (
+        let preferred = Some((
             DirectML::default().build().error_on_failure(),
             "DmlExecutionProvider",
-        );
+        ));
 
-        let (session, provider) = match build(vec![preferred, CPU::default().build()]) {
-            Ok(session) => (session, preferred_name),
-            Err(gpu_error) => {
-                // The whole-session GPU init failed (no GPU, driver
-                // mismatch, GPU OOM, or a bundled runtime without the
-                // provider); retry CPU-only exactly as the original's
-                // except-branch does.
-                tracing::warn!(
+        let (session, provider) = match preferred {
+            Some((preferred, preferred_name)) => {
+                match build(vec![preferred, CPU::default().build()]) {
+                    Ok(session) => (session, preferred_name),
+                    Err(gpu_error) => {
+                        // The whole-session GPU init failed (no GPU, driver
+                        // mismatch, GPU OOM, or a bundled runtime without the
+                        // provider); retry CPU-only exactly as the original's
+                        // except-branch does.
+                        tracing::warn!(
+                            target: "eo::ocr",
+                            "{preferred_name} session init failed ({gpu_error}); falling back to CPU"
+                        );
+                        let session =
+                            build(vec![CPU::default().build()]).map_err(OcrError::EngineLoad)?;
+                        (session, "CPUExecutionProvider")
+                    }
+                }
+            }
+            None => {
+                tracing::info!(
                     target: "eo::ocr",
-                    "{preferred_name} session init failed ({gpu_error}); falling back to CPU"
+                    "no Vulkan driver manifest found; building the OCR session CPU-only"
                 );
                 let session = build(vec![CPU::default().build()]).map_err(OcrError::EngineLoad)?;
                 (session, "CPUExecutionProvider")
@@ -564,6 +640,57 @@ mod tests {
         ORT_TEST_LOCK
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// The Vulkan-manifest probe honours the loader's override
+    /// variables: pointing `VK_DRIVER_FILES` at a missing file reads as
+    /// driverless (the path a GPU-less CI runner takes, where Dawn must
+    /// never start), and at an existing file as driver-present. The
+    /// probe reads the process environment, so the test serialises
+    /// behind the same lock as every other env-touching engine test and
+    /// restores the variables it moves.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn vulkan_probe_honours_the_loader_override_variables() {
+        let _ort = lock_ort();
+        let saved: Vec<(&str, Option<String>)> = ["VK_DRIVER_FILES", "VK_ICD_FILENAMES"]
+            .into_iter()
+            .map(|var| (var, std::env::var(var).ok()))
+            .collect();
+
+        // SAFETY: `lock_ort` serialises every env-touching engine test,
+        // so no other thread reads or writes these variables concurrently.
+        unsafe {
+            std::env::set_var("VK_DRIVER_FILES", "/nonexistent/driver.json");
+            std::env::remove_var("VK_ICD_FILENAMES");
+        }
+        let driverless = vulkan_driver_manifest_present();
+
+        let manifest = tempfile::NamedTempFile::new().expect("temp manifest");
+        // SAFETY: as above.
+        unsafe {
+            std::env::set_var("VK_DRIVER_FILES", manifest.path());
+        }
+        let present = vulkan_driver_manifest_present();
+
+        // SAFETY: as above.
+        unsafe {
+            for (var, value) in saved {
+                match value {
+                    Some(value) => std::env::set_var(var, value),
+                    None => std::env::remove_var(var),
+                }
+            }
+        }
+
+        assert!(
+            !driverless,
+            "an override pointing at a missing manifest reads as driverless"
+        );
+        assert!(
+            present,
+            "an override pointing at an existing manifest reads as driver-present"
+        );
     }
 
     /// The repo's bundled recogniser model + dict, the same pair the
