@@ -28,6 +28,7 @@
 	let expanded = $state(false);
 </script>
 
+<!-- Kept: hover/focus expansion is decorative; every nav item is a native button, reachable collapsed or expanded. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <nav
 	class="relative flex flex-col h-full overflow-hidden
@@ -37,6 +38,12 @@
 		{className}"
 	onmouseenter={() => (expanded = true)}
 	onmouseleave={() => (expanded = false)}
+	onfocusin={() => (expanded = true)}
+	onfocusout={(e) => {
+		if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) {
+			expanded = false;
+		}
+	}}
 	aria-label="Main navigation"
 >
 	<!-- Right-edge separator: subtle gradient instead of a hard line -->

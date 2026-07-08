@@ -74,6 +74,7 @@
 <svelte:window onkeydown={open ? handleKeydown : undefined} />
 
 {#if open}
+	<!-- Kept: backdrop click-to-dismiss is a pointer convenience; Escape (window keydown above) and the Close button are the keyboard paths. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center p-6"

@@ -903,6 +903,7 @@
 	}
 </script>
 
+<!-- Kept: mousedown is the frameless overlay window's drag handle (pointer-only by nature); the controls inside are native buttons. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="p-2 flex flex-col items-start overlay-frame w-max" bind:this={overlayRoot} onmousedown={handleDrag}>
 	<OverlayStrip

@@ -36,20 +36,33 @@ export default defineConfig({
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'html'],
+			// Directory-based instrumentation over the tested layers (feature
+			// modules, view models, window helpers, realtime plumbing, the API
+			// seam, the runes state modules) plus the standalone pure-logic
+			// modules, so a new module in a tested layer is instrumented from the
+			// moment it lands rather than only once someone remembers to list it.
+			// `.svelte` components stay excluded (they are exercised through the
+			// module suites and the native-shell e2e, not unit-instrumented), as
+			// do generated files and test files.
 			include: [
+				'src/lib/features/**',
+				'src/lib/view/**',
+				'src/lib/windows/**',
+				'src/lib/realtime/**',
+				'src/lib/api/**',
+				'src/lib/stores/**',
+				'src/lib/*.svelte.ts',
 				'src/lib/motion/testMotion.ts',
 				'src/lib/utils/format.ts',
 				'src/lib/statsRegistry.ts',
-				'src/lib/statsCustomisation.svelte.ts',
-				'src/lib/news.svelte.ts',
-				'src/lib/activityArchive.svelte.ts',
 				'src/lib/preferences.ts',
-				'src/lib/api/client.ts',
-				'src/lib/api/index.ts',
-				'src/lib/realtime/useVisiblePoll.ts',
-				'src/lib/realtime/eventRelay.ts',
-				'src/lib/stores/trackingStore.svelte.ts',
-				'src/lib/stores/scanStore.svelte.ts',
+			],
+			exclude: [
+				'**/*.svelte',
+				'**/*.test.ts',
+				'**/__fixtures__/**',
+				'**/*.d.ts',
+				'src/lib/api/commands.gen.ts',
 			],
 		},
 	},
