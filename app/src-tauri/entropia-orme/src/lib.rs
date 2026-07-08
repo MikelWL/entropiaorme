@@ -257,6 +257,15 @@ pub fn run() {
             app.manage(updater::PendingUpdate::default());
             #[cfg(windows)]
             install_runtime_window_icons(app.handle());
+            // Register a system-tray presence on Linux (a StatusNotifierItem
+            // on the session bus). The overlay windows are undecorated and
+            // skip the taskbar, so on a Linux desktop the tray is the app's
+            // reliable handle for raising the main window or quitting.
+            // Windows keeps its taskbar presence and builds no tray.
+            #[cfg(target_os = "linux")]
+            if let Err(error) = install_tray(app.handle()) {
+                tracing::warn!(target: "eo::shell", %error, "system tray unavailable");
+            }
             // The single pure-Rust binary: the frontend reaches the backend
             // through the in-process IPC command (no inbound socket) and every
             // route is served natively (the Python sidecar has been
@@ -327,6 +336,56 @@ pub(crate) fn run_exit_teardown(app: &tauri::AppHandle) {
             tracing::info!(target: "eo::db", "ran PRAGMA optimize on shutdown");
         }
     }
+}
+
+/// Build the Linux system tray: an icon that registers as a
+/// StatusNotifierItem on the session bus, with a menu to raise the main
+/// window or quit. Left-clicking the icon also raises the main window.
+/// Linux-only; the tray is the app's reliable desktop handle where the
+/// overlay windows are undecorated and skip the taskbar.
+#[cfg(target_os = "linux")]
+fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+    use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItemBuilder::with_id("tray-show", "Show EntropiaOrme").build(app)?;
+    let quit = MenuItemBuilder::with_id("tray-quit", "Quit").build(app)?;
+    let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+
+    let raise_main = |app: &tauri::AppHandle| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    };
+
+    let mut builder = TrayIconBuilder::with_id("eo-tray")
+        .tooltip("EntropiaOrme")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "tray-show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            "tray-quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(move |tray, event| {
+            if let TrayIconEvent::Click { .. } = event {
+                raise_main(tray.app_handle());
+            }
+        });
+    // Prefer the bundled window icon; the tray still registers without one.
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    Ok(())
 }
 
 #[cfg(windows)]

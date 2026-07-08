@@ -31,7 +31,12 @@ license = "MIT"
 # re-evaluate only on a major release with material benefit.
 # tauri-build rides its matching minor for the same reason. Review the
 # .cargo/audit.toml and deny.toml ignore lists together with any bump.
-tauri = { version = "~2.11", features = [] }
+# `tray-icon` enables the system-tray API. It is compiled on every platform
+# but exercised only on Linux (the shell builds a tray under
+# `cfg(target_os = "linux")`), where a StatusNotifierItem gives the app a
+# presence on a desktop whose windowing model treats an undecorated overlay
+# app less predictably; Windows behaviour is unchanged (no tray is built there).
+tauri = { version = "~2.11", features = ["tray-icon"] }
 tauri-build = { version = "~2.6", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-store = "2"
