@@ -1,0 +1,185 @@
+<script lang="ts">
+	import { Badge, Button, Divider } from '$lib/components';
+	import type { Equipment } from '$lib/types';
+	import { enrichmentColor, enrichmentLabel, formatPec } from './display';
+	import type { LibraryModel } from './libraryModel.svelte';
+
+	let { model, item }: { model: LibraryModel; item: Equipment } = $props();
+
+	const detail = $derived(model.detailCache[item.id] ?? null);
+</script>
+
+<!-- Equipment row -->
+<button
+	type="button"
+	data-guide-anchor="library-row-{item.id}"
+	class="w-full text-left px-4 py-3 rounded-md transition-colors duration-[var(--duration-fast)]
+		cursor-pointer
+		{model.expandedId === item.id
+		? 'bg-surface-hover'
+		: 'hover:bg-surface-hover/50'}"
+	onclick={() => model.toggleExpand(item.id)}
+>
+	<div class="flex items-center gap-3">
+		<!-- Type icon -->
+		<div class="shrink-0 h-8 w-8 rounded-md bg-surface flex items-center justify-center">
+			<div class="h-2 w-2 rounded-full bg-accent"></div>
+		</div>
+
+		<!-- Name + amp -->
+		<div class="flex-1 min-w-0">
+			<div class="flex items-center gap-2">
+				<span class="text-sm font-medium text-text truncate">{item.name}</span>
+			</div>
+			{#if item.amplifierName}
+				<p class="text-xs text-text-tertiary mt-0.5 truncate">
+					+ {item.amplifierName}
+				</p>
+			{/if}
+		</div>
+
+		<!-- Cost -->
+		<div class="text-right shrink-0">
+			<span class="text-sm font-medium tabular-nums text-text">
+				{formatPec(item.costPerUse)}
+			</span>
+			<span class="text-xs text-text-tertiary ml-0.5">PEC</span>
+		</div>
+
+		<!-- Enrichment badge -->
+		<span data-guide-anchor="enrichment-badge-{item.id}" class="shrink-0">
+			<Badge variant={enrichmentColor(item.enrichmentLevel)} class="shrink-0">
+				{enrichmentLabel(item.enrichmentLevel)}
+			</Badge>
+		</span>
+
+		<!-- Chevron -->
+		<svg
+			xmlns="http://www.w3.org/2000/svg"
+			viewBox="0 0 20 20"
+			fill="currentColor"
+			class="h-4 w-4 text-text-tertiary transition-transform duration-[var(--duration-base)]
+				{model.expandedId === item.id ? 'rotate-180' : ''}"
+		>
+			<path
+				fill-rule="evenodd"
+				d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+				clip-rule="evenodd"
+			/>
+		</svg>
+	</div>
+</button>
+
+<!-- Inline detail panel -->
+{#if model.expandedId === item.id}
+	{#if detail}
+		<div class="ml-11 mr-4 mb-2 p-4 bg-surface rounded-md border border-border/50">
+			<!-- Cost breakdown -->
+			<h3 class="eyebrow mb-3">
+				Cost Breakdown
+			</h3>
+			<div class="space-y-2 mb-4">
+				{#each detail.costBreakdown as line}
+					<div class="flex items-center justify-between text-sm">
+						<span class="text-text-secondary">{line.component}</span>
+						<div class="flex items-center gap-3 tabular-nums">
+							<span class="text-text-tertiary text-xs">
+								{formatPec(line.costPec)} PEC
+								{#if line.markupMultiplier !== 1}
+									<span class="text-warning">
+										x{line.markupMultiplier.toFixed(2)}
+									</span>
+								{/if}
+							</span>
+							<span class="text-text font-medium w-16 text-right">
+								{formatPec(line.effectiveCostPec)}
+							</span>
+						</div>
+					</div>
+				{/each}
+				<Divider />
+				<div class="flex items-center justify-between text-sm font-medium">
+					<span class="text-text">Total per use</span>
+					<span class="text-accent tabular-nums">
+						{formatPec(detail.totalCostPerUse)} PEC
+					</span>
+				</div>
+			</div>
+
+			<!-- Component list -->
+			<h3 class="eyebrow mb-2">
+				Components
+			</h3>
+			<div class="space-y-1.5 text-sm mb-4">
+				<div class="flex items-center justify-between">
+					<span class="text-text">
+						{detail.weapon.name}
+					</span>
+					<span class="text-text-secondary text-xs tabular-nums">
+						Decay {formatPec(detail.weapon.decay)} · Ammo {formatPec(detail.weapon.ammoBurn)} PEC
+					</span>
+				</div>
+				{#if detail.weapon.damageEnhancers > 0}
+					<div class="flex items-center justify-between">
+						<span class="text-text">Damage enhancers</span>
+						<span class="text-text-secondary text-xs tabular-nums">
+							{detail.weapon.damageEnhancers} slot{detail.weapon.damageEnhancers === 1 ? '' : 's'}
+						</span>
+					</div>
+				{/if}
+				{#if detail.amplifier}
+					<div class="flex items-center justify-between">
+						<span class="text-text">
+							{detail.amplifier.name}
+						</span>
+						<span class="text-text-secondary text-xs tabular-nums">
+							Decay {formatPec(detail.amplifier.decay)} · Ammo
+							{formatPec(detail.amplifier.ammoBurn)} PEC
+						</span>
+					</div>
+				{/if}
+				{#if detail.scope}
+					<div class="flex items-center justify-between">
+						<span class="text-text">
+							{detail.scope.name}
+						</span>
+						<span class="text-text-secondary text-xs tabular-nums">
+							Decay {formatPec(detail.scope.decay)}
+							{#if detail.scope.markupPercent !== 100}
+								· {detail.scope.markupPercent}%
+							{/if}
+						</span>
+					</div>
+				{/if}
+				{#if detail.absorber}
+					<div class="flex items-center justify-between">
+						<span class="text-text">
+							{detail.absorber.name}
+						</span>
+						<span class="text-text-secondary text-xs tabular-nums">
+							-{detail.absorber.absorptionPercent}% weapon decay
+							{#if detail.absorber.markupPercent !== 100}
+								· {detail.absorber.markupPercent}%
+							{/if}
+						</span>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Actions -->
+			<div class="flex items-center gap-2">
+				<Button size="sm" variant="ghost" onclick={() => model.openEditModal(item.id)}>
+					Edit
+				</Button>
+				<Button size="sm" variant="danger" onclick={() => model.removeEquipment(item.id)}>
+					Remove
+				</Button>
+			</div>
+		</div>
+	{:else}
+		<!-- Loading detail -->
+		<div class="ml-11 mr-4 mb-2 p-4 bg-surface rounded-md border border-border/50">
+			<p class="text-xs text-text-tertiary">Loading…</p>
+		</div>
+	{/if}
+{/if}

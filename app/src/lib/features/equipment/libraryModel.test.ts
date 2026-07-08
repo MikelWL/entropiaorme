@@ -1,0 +1,568 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppSettings, EquipmentDetail } from '$lib/api/commands.gen';
+import type { Equipment } from '$lib/types';
+import { createLibraryModel } from './libraryModel.svelte';
+
+vi.mock('$lib/api', () => ({
+	getEquipmentLibrary: vi.fn(),
+	getSettings: vi.fn(),
+	hotbarFromSettings: vi.fn(() => ({ '1': null })),
+	searchEquipmentItems: vi.fn(),
+	addToLibrary: vi.fn(),
+	updateLibrary: vi.fn(),
+	removeFromLibrary: vi.fn(),
+	getEquipmentDetail: vi.fn(),
+}));
+
+import * as api from '$lib/api';
+
+const mocked = vi.mocked(api);
+
+function summary(overrides: Partial<Equipment> = {}): Equipment {
+	return {
+		id: '1',
+		name: 'Jester D-1',
+		type: 'weapon',
+		amplifierName: null,
+		costPerUse: 0.42,
+		damageMin: 13,
+		damageMax: 22.5,
+		reloadSeconds: 2.5,
+		isLimited: false,
+		enrichmentLevel: 1,
+		...overrides,
+	};
+}
+
+function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
+	return {
+		id: '1',
+		weapon: {
+			catalogId: 'jester-d1',
+			name: 'Jester D-1',
+			decay: 0.05,
+			ammoBurn: 2.0,
+			markupPercent: 100,
+			isLimited: false,
+			damageEnhancers: 0,
+		},
+		amplifier: null,
+		scope: null,
+		absorber: null,
+		costBreakdown: [],
+		totalCostPerUse: 2.05,
+		...overrides,
+	};
+}
+
+function settings(): AppSettings {
+	return {
+		hotbarHooksEnabled: false,
+		hotbar: {},
+		trifecta: {
+			activePresetId: 'p1',
+			activePresetName: 'Preset',
+			presets: [],
+			ready: true,
+			message: null,
+		},
+	} as unknown as AppSettings;
+}
+
+const weaponHit = {
+	catalogId: 'korss-h400',
+	name: 'Korss H400',
+	decay: 2.0,
+	ammoBurn: 1.0,
+	isLimited: false,
+};
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	mocked.getEquipmentLibrary.mockResolvedValue([]);
+	mocked.getSettings.mockResolvedValue(settings());
+	mocked.searchEquipmentItems.mockResolvedValue([]);
+});
+
+afterEach(() => {
+	vi.useRealTimers();
+});
+
+describe('loadData', () => {
+	it('splits the library by kind and sorts the healing and consumable views', async () => {
+		mocked.getEquipmentLibrary.mockResolvedValue([
+			summary({ id: '1', name: 'Zulu', type: 'weapon' }),
+			summary({ id: '2', name: 'Vivo T1', type: 'healing', costPerUse: 0.18, isLimited: true }),
+			summary({ id: '3', name: 'Adjusted Fap', type: 'healing' }),
+			summary({ id: '4', name: 'Oil', type: 'consumable' }),
+		]);
+		const model = createLibraryModel();
+		await model.loadData(false);
+
+		expect(model.allEquipment).toHaveLength(4);
+		expect(model.sortedEquipment.map((e) => e.name)).toEqual(['Zulu']);
+		expect(model.healingTools.map((t) => t.name)).toEqual(['Adjusted Fap', 'Vivo T1']);
+		expect(model.healingTools[1]).toEqual({
+			id: '2',
+			name: 'Vivo T1',
+			costPerHeal: 0.18,
+			isLimited: true,
+		});
+		expect(model.consumables.map((c) => c.name)).toEqual(['Oil']);
+		expect(model.hotbarHooksEnabled).toBe(false);
+		expect(model.trifecta.activePresetId).toBe('p1');
+		expect(model.hotbar).toEqual({ '1': null });
+	});
+
+	it('drops the detail cache on a live reload', async () => {
+		mocked.getEquipmentLibrary.mockResolvedValue([summary()]);
+		mocked.getEquipmentDetail.mockResolvedValue(detail());
+		const model = createLibraryModel();
+		await model.loadData(false);
+		await model.toggleExpand('1');
+		expect(model.detailCache['1']).toBeDefined();
+
+		await model.loadData(false);
+		expect(model.detailCache['1']).toBeUndefined();
+	});
+
+	it('seeds the guide fixtures without touching the API in guide mode', async () => {
+		const model = createLibraryModel();
+		await model.loadData(true);
+		expect(mocked.getEquipmentLibrary).not.toHaveBeenCalled();
+		expect(mocked.getSettings).not.toHaveBeenCalled();
+		expect(model.sortedEquipment.length).toBeGreaterThan(0);
+		expect(Object.keys(model.detailCache).length).toBeGreaterThan(0);
+		expect(model.hotbarHooksEnabled).toBe(true);
+	});
+
+	it('surfaces a load failure through the error strip', async () => {
+		mocked.getEquipmentLibrary.mockRejectedValue(new Error('backend unreachable'));
+		const model = createLibraryModel();
+		await model.loadData(false);
+		expect(model.error).toBe('backend unreachable');
+	});
+});
+
+describe('row expansion', () => {
+	it('loads the detail once and collapses on the second toggle', async () => {
+		mocked.getEquipmentDetail.mockResolvedValue(detail());
+		const model = createLibraryModel();
+		await model.toggleExpand('1');
+		expect(model.expandedId).toBe('1');
+		expect(mocked.getEquipmentDetail).toHaveBeenCalledTimes(1);
+
+		await model.toggleExpand('1');
+		expect(model.expandedId).toBeNull();
+
+		await model.toggleExpand('1');
+		expect(mocked.getEquipmentDetail).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces a detail-load failure and keeps the row expanded', async () => {
+		mocked.getEquipmentDetail.mockRejectedValue(new Error('not found'));
+		const model = createLibraryModel();
+		await model.toggleExpand('1');
+		expect(model.expandedId).toBe('1');
+		expect(model.error).toBe('not found');
+	});
+});
+
+describe('form open and reset', () => {
+	it('openAddModal resets the form and clears every picker', async () => {
+		const model = createLibraryModel();
+		model.weaponPicker.select({ ...weaponHit });
+		model.consumablePicker.select({
+			catalogId: null,
+			name: 'Oil',
+			decay: 0,
+			ammoBurn: 0,
+			isLimited: false,
+		});
+		model.markupPercent = 150;
+		model.damageEnhancers = 3;
+		model.showOptionalAttachments = true;
+
+		model.openAddModal(undefined, 'consumable');
+		expect(model.showAddModal).toBe(true);
+		expect(model.addType).toBe('consumable');
+		expect(model.editingEquipmentId).toBeNull();
+		expect(model.weaponPicker.selected).toBeNull();
+		expect(model.consumablePicker.selected).toBeNull();
+		expect(model.markupPercent).toBe(100);
+		expect(model.scopeMarkupPercent).toBe(100);
+		expect(model.absorberMarkupPercent).toBe(100);
+		expect(model.damageEnhancers).toBe(0);
+		expect(model.showOptionalAttachments).toBe(false);
+		expect(model.liveCostPreview).toBeNull();
+	});
+
+	it('openAddModal with a prefill schedules a weapon search for it', async () => {
+		vi.useFakeTimers();
+		const model = createLibraryModel();
+		model.openAddModal('korss');
+		expect(model.weaponPicker.query).toBe('korss');
+		await vi.advanceTimersByTimeAsync(200);
+		expect(mocked.searchEquipmentItems).toHaveBeenCalledWith('korss', 'weapon');
+	});
+
+	it('closing the modal drops the edit target on every close path', async () => {
+		mocked.getEquipmentDetail.mockResolvedValue(detail());
+		const model = createLibraryModel();
+		await model.openEditModal('1');
+		expect(model.editingEquipmentId).toBe('1');
+		model.showAddModal = false;
+		expect(model.editingEquipmentId).toBeNull();
+	});
+});
+
+describe('openEditModal', () => {
+	it('seeds the form from the stored detail', async () => {
+		mocked.getEquipmentDetail.mockResolvedValue(
+			detail({
+				weapon: {
+					catalogId: 'cb14',
+					name: 'CB14',
+					decay: 1.0,
+					ammoBurn: 0.5,
+					markupPercent: 140,
+					isLimited: true,
+					damageEnhancers: 2,
+				},
+				amplifier: {
+					catalogId: 'a104',
+					name: 'Omegaton A104',
+					decay: 0.4,
+					ammoBurn: 0.1,
+					markupPercent: 100,
+					isLimited: false,
+					damageEnhancers: 0,
+				},
+				scope: {
+					catalogId: 'scope-1',
+					name: 'Bullseye',
+					decay: 0.2,
+					ammoBurn: 0,
+					markupPercent: 120,
+					isLimited: true,
+					damageEnhancers: 0,
+				},
+			}),
+		);
+		const model = createLibraryModel();
+		await model.openEditModal('1');
+
+		expect(model.showAddModal).toBe(true);
+		expect(model.editingEquipmentId).toBe('1');
+		expect(model.addType).toBe('weapon');
+		expect(model.weaponPicker.selected?.catalogId).toBe('cb14');
+		expect(model.weaponPicker.query).toBe('CB14');
+		expect(model.ampPicker.selected?.catalogId).toBe('a104');
+		expect(model.scopePicker.selected?.catalogId).toBe('scope-1');
+		expect(model.absorberPicker.selected).toBeNull();
+		expect(model.healerPicker.selected).toBeNull();
+		expect(model.showOptionalAttachments).toBe(true);
+		expect(model.markupPercent).toBe(140);
+		expect(model.scopeMarkupPercent).toBe(120);
+		expect(model.absorberMarkupPercent).toBe(100);
+		expect(model.damageEnhancers).toBe(2);
+	});
+
+	it('keeps the attachments section folded when neither scope nor absorber is stored', async () => {
+		mocked.getEquipmentDetail.mockResolvedValue(detail());
+		const model = createLibraryModel();
+		await model.openEditModal('1');
+		expect(model.showOptionalAttachments).toBe(false);
+	});
+
+	it('reuses the cached detail without refetching', async () => {
+		mocked.getEquipmentDetail.mockResolvedValue(detail());
+		const model = createLibraryModel();
+		await model.toggleExpand('1');
+		await model.openEditModal('1');
+		expect(mocked.getEquipmentDetail).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces a detail-load failure and leaves the modal closed', async () => {
+		mocked.getEquipmentDetail.mockRejectedValue(new Error('not found'));
+		const model = createLibraryModel();
+		await model.openEditModal('1');
+		expect(model.showAddModal).toBe(false);
+		expect(model.error).toBe('not found');
+	});
+});
+
+describe('setAddType clearing', () => {
+	function seededModel() {
+		const model = createLibraryModel();
+		model.weaponPicker.select({ ...weaponHit });
+		model.ampPicker.select({ ...weaponHit, name: 'Amp' });
+		model.healerPicker.select({ ...weaponHit, name: 'Fap' });
+		model.consumablePicker.select({
+			catalogId: null,
+			name: 'Oil',
+			decay: 0,
+			ammoBurn: 0,
+			isLimited: false,
+		});
+		return model;
+	}
+
+	it('switching to healing clears the weapon and amp', () => {
+		const model = seededModel();
+		model.setAddType('healing');
+		expect(model.weaponPicker.selected).toBeNull();
+		expect(model.weaponPicker.query).toBe('');
+		expect(model.ampPicker.selected).toBeNull();
+		expect(model.healerPicker.selected).not.toBeNull();
+		expect(model.consumablePicker.selected).not.toBeNull();
+	});
+
+	it('switching to consumable clears the weapon, amp and healer', () => {
+		const model = seededModel();
+		model.setAddType('consumable');
+		expect(model.weaponPicker.selected).toBeNull();
+		expect(model.ampPicker.selected).toBeNull();
+		expect(model.healerPicker.selected).toBeNull();
+		expect(model.consumablePicker.selected).not.toBeNull();
+	});
+
+	it('switching to weapon clears the healer only', () => {
+		const model = seededModel();
+		model.setAddType('weapon');
+		expect(model.healerPicker.selected).toBeNull();
+		expect(model.weaponPicker.selected).not.toBeNull();
+		expect(model.ampPicker.selected).not.toBeNull();
+		expect(model.consumablePicker.selected).not.toBeNull();
+	});
+});
+
+describe('amp picker', () => {
+	it('drops the selected weapon from the amp results', async () => {
+		vi.useFakeTimers();
+		const model = createLibraryModel();
+		model.weaponPicker.select({ ...weaponHit });
+		mocked.searchEquipmentItems.mockResolvedValue([
+			{ ...weaponHit },
+			{ ...weaponHit, catalogId: 'a104', name: 'Omegaton A104' },
+		]);
+		model.ampPicker.query = 'omega';
+		await vi.advanceTimersByTimeAsync(200);
+		expect(model.ampPicker.results.map((r) => r.name)).toEqual(['Omegaton A104']);
+	});
+});
+
+describe('saveEquipment', () => {
+	it('sends the weapon payload with markups only for limited components', async () => {
+		mocked.addToLibrary.mockResolvedValue(summary({ id: '9', name: 'Korss H400' }));
+		mocked.getEquipmentDetail.mockResolvedValue(detail({ id: '9' }));
+		const model = createLibraryModel();
+		model.openAddModal();
+		model.weaponPicker.select({ ...weaponHit, isLimited: true });
+		model.ampPicker.select({ ...weaponHit, catalogId: 'a104', name: 'A104' });
+		model.scopePicker.select({
+			...weaponHit,
+			catalogId: 'scope-1',
+			name: 'Scope',
+			isLimited: true,
+		});
+		model.markupPercent = 150;
+		model.scopeMarkupPercent = 130;
+		model.damageEnhancers = 4;
+		await model.saveEquipment();
+
+		expect(mocked.addToLibrary).toHaveBeenCalledWith({
+			type: 'weapon',
+			catalog_id: 'korss-h400',
+			amp_catalog_id: 'a104',
+			scope_catalog_id: 'scope-1',
+			absorber_catalog_id: null,
+			weapon_markup: 150,
+			amp_markup: 100,
+			scope_markup: 130,
+			absorber_markup: 100,
+			damage_enhancers: 4,
+		});
+		expect(model.showAddModal).toBe(false);
+		expect(model.detailCache['9']).toBeDefined();
+		expect(model.sortedEquipment.map((e) => e.id)).toEqual(['9']);
+	});
+
+	it('routes an edit through updateLibrary and swaps the row in place', async () => {
+		mocked.getEquipmentLibrary.mockResolvedValue([summary({ id: '1', name: 'Old' })]);
+		mocked.getEquipmentDetail.mockResolvedValue(detail());
+		mocked.updateLibrary.mockResolvedValue(summary({ id: '1', name: 'New' }));
+		const model = createLibraryModel();
+		await model.loadData(false);
+		await model.openEditModal('1');
+		await model.saveEquipment();
+
+		expect(mocked.updateLibrary).toHaveBeenCalledWith(
+			'1',
+			expect.objectContaining({ type: 'weapon' }),
+		);
+		expect(mocked.addToLibrary).not.toHaveBeenCalled();
+		expect(model.sortedEquipment.map((e) => e.name)).toEqual(['New']);
+	});
+
+	it('does nothing when the selected weapon has no catalogue id', async () => {
+		const model = createLibraryModel();
+		model.openAddModal();
+		model.weaponPicker.select({ ...weaponHit, catalogId: null });
+		await model.saveEquipment();
+		expect(mocked.addToLibrary).not.toHaveBeenCalled();
+		expect(model.showAddModal).toBe(true);
+		expect(model.saving).toBe(false);
+	});
+
+	it('sends the healing payload with the shared markup for limited tools', async () => {
+		mocked.addToLibrary.mockResolvedValue(summary({ id: '5', name: 'Vivo', type: 'healing' }));
+		const model = createLibraryModel();
+		model.openAddModal(undefined, 'healing');
+		model.healerPicker.select({
+			...weaponHit,
+			catalogId: 'vivo-t1',
+			name: 'Vivo',
+			isLimited: true,
+		});
+		model.markupPercent = 120;
+		await model.saveEquipment();
+
+		expect(mocked.addToLibrary).toHaveBeenCalledWith({
+			type: 'healing',
+			catalog_id: 'vivo-t1',
+			weapon_markup: 120,
+		});
+		expect(model.healingTools.map((t) => t.id)).toEqual(['5']);
+	});
+
+	it('sends a catalogue consumable by id and a custom one by name', async () => {
+		mocked.addToLibrary.mockResolvedValue(summary({ id: '6', name: 'Oil', type: 'consumable' }));
+		const model = createLibraryModel();
+		model.openAddModal(undefined, 'consumable');
+		model.consumablePicker.select({
+			catalogId: 'oil-1',
+			name: 'Animal Eye Oil',
+			decay: 0,
+			ammoBurn: 0,
+			isLimited: false,
+		});
+		await model.saveEquipment();
+		expect(mocked.addToLibrary).toHaveBeenCalledWith({
+			type: 'consumable',
+			catalog_id: 'oil-1',
+			name: null,
+		});
+
+		model.openAddModal(undefined, 'consumable');
+		model.selectConsumableCustom('  Nutrio Bar  ');
+		expect(model.consumablePicker.query).toBe('Nutrio Bar');
+		await model.saveEquipment();
+		expect(mocked.addToLibrary).toHaveBeenLastCalledWith({
+			type: 'consumable',
+			catalog_id: null,
+			name: 'Nutrio Bar',
+		});
+		expect(model.consumables.map((c) => c.id)).toEqual(['6']);
+	});
+
+	it('keeps the modal open and surfaces the message when saving fails', async () => {
+		mocked.addToLibrary.mockRejectedValue(new Error('duplicate entry'));
+		const model = createLibraryModel();
+		model.openAddModal();
+		model.weaponPicker.select({ ...weaponHit });
+		await model.saveEquipment();
+		expect(model.showAddModal).toBe(true);
+		expect(model.error).toBe('duplicate entry');
+		expect(model.saving).toBe(false);
+	});
+
+	it('closes the modal before the detail fetch so a fetch failure cannot invite a duplicate retry', async () => {
+		mocked.addToLibrary.mockResolvedValue(summary({ id: '9', name: 'Korss H400' }));
+		mocked.getEquipmentDetail.mockRejectedValue(new Error('detail unavailable'));
+		const model = createLibraryModel();
+		model.openAddModal();
+		model.weaponPicker.select({ ...weaponHit });
+		await model.saveEquipment();
+
+		expect(model.showAddModal).toBe(false);
+		expect(model.editingEquipmentId).toBeNull();
+		expect(model.sortedEquipment.map((e) => e.id)).toEqual(['9']);
+		expect(model.detailCache['9']).toBeUndefined();
+		expect(model.error).toBe('detail unavailable');
+		expect(model.saving).toBe(false);
+	});
+
+	it('clears a stale error on entry', async () => {
+		mocked.addToLibrary.mockResolvedValue(summary({ id: '9' }));
+		mocked.getEquipmentDetail.mockResolvedValue(detail({ id: '9' }));
+		const model = createLibraryModel();
+		model.error = 'stale failure';
+		model.openAddModal();
+		model.weaponPicker.select({ ...weaponHit });
+		await model.saveEquipment();
+		expect(model.error).toBeNull();
+	});
+});
+
+describe('removeEquipment', () => {
+	async function loadedModel() {
+		mocked.getEquipmentLibrary.mockResolvedValue([
+			summary({ id: '1', name: 'Weapon', type: 'weapon' }),
+			summary({ id: '2', name: 'Fap', type: 'healing' }),
+			summary({ id: '3', name: 'Oil', type: 'consumable' }),
+		]);
+		const model = createLibraryModel();
+		await model.loadData(false);
+		return model;
+	}
+
+	it('removes each kind from its own view and the shared list', async () => {
+		mocked.removeFromLibrary.mockResolvedValue(undefined);
+		const model = await loadedModel();
+		await model.removeEquipment('2', 'healing');
+		expect(model.healingTools).toEqual([]);
+		await model.removeEquipment('3', 'consumable');
+		expect(model.consumables).toEqual([]);
+		await model.removeEquipment('1');
+		expect(model.sortedEquipment).toEqual([]);
+		expect(model.allEquipment).toEqual([]);
+	});
+
+	it('collapses the removed row and evicts its cached detail', async () => {
+		mocked.removeFromLibrary.mockResolvedValue(undefined);
+		mocked.getEquipmentDetail.mockResolvedValue(detail());
+		const model = await loadedModel();
+		await model.toggleExpand('1');
+		await model.removeEquipment('1');
+		expect(model.expandedId).toBeNull();
+		expect(model.detailCache['1']).toBeUndefined();
+	});
+
+	it('surfaces a removal failure and keeps the row', async () => {
+		mocked.removeFromLibrary.mockRejectedValue(new Error('in use'));
+		const model = await loadedModel();
+		await model.removeEquipment('1');
+		expect(model.error).toBe('in use');
+		expect(model.sortedEquipment.map((e) => e.id)).toEqual(['1']);
+	});
+});
+
+describe('liveCostPreview', () => {
+	it('is null until a weapon is selected and follows the form inputs', () => {
+		const model = createLibraryModel();
+		expect(model.liveCostPreview).toBeNull();
+		model.weaponPicker.select({ ...weaponHit, isLimited: true });
+		model.markupPercent = 150;
+		model.damageEnhancers = 2;
+		expect(model.liveCostPreview).toBeCloseTo(4.8, 10);
+	});
+
+	it('does not move when an absorber is selected', () => {
+		const model = createLibraryModel();
+		model.weaponPicker.select({ ...weaponHit });
+		const before = model.liveCostPreview;
+		model.absorberPicker.select({ ...weaponHit, catalogId: 'abs-1', name: 'Absorber' });
+		expect(model.liveCostPreview).toBe(before);
+	});
+});
