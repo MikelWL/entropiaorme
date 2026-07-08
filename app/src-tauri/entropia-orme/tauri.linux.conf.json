@@ -3,6 +3,8 @@
   "bundle": {
     "targets": ["deb", "appimage"],
     "createUpdaterArtifacts": false,
+    "shortDescription": "Analytical desktop tool for Entropia Universe (experimental Linux build)",
+    "longDescription": "EntropiaOrme is an analytical desktop tool for Entropia Universe gameplay. The Linux build is experimental: feature-complete, but still being validated against the live game.",
     "resources": {
       "resources/ort/*.dll": null,
       "resources/ort-linux/*.so": "ort-linux/"
