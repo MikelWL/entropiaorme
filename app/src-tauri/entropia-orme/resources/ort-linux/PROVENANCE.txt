@@ -1,16 +1,28 @@
-Source: onnxruntime-linux-x64 1.24.4, the official Microsoft ONNX Runtime
-release for Linux x86_64 (CPU execution provider), the platform counterpart
-of the Windows onnxruntime-directml 1.24.4 build bundled beside it in ../ort.
-ONNX Runtime C API version 24, matching the ort crate pin (api-24).
+Source: onnxruntime-webgpu 1.27.0, the official Microsoft ONNX Runtime
+build for Linux x86_64 with the WebGPU execution provider (Dawn over
+Vulkan) compiled in alongside the CPU provider. The platform counterpart
+of the Windows onnxruntime-directml build bundled beside it in ../ort:
+each platform ships one runtime carrying its GPU provider plus the CPU
+fallback, and the session ladder in ocr_engine.rs prefers the GPU
+provider with a CPU retry.
 
-Release tarball: onnxruntime-linux-x64-1.24.4.tgz
-  from https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/
-  sha256 3a211fbea252c1e66290658f1b735b772056149f28321e71c308942cdb54b747  (8155822 bytes)
+The library is published by the ONNX Runtime project on PyPI (the
+onnxruntime-webgpu package is the official distribution channel for the
+WebGPU-enabled native build; no GitHub release tarball carries it). The
+shared library inside the wheel is a plain C-API runtime, independent of
+the wheel's Python version tag.
 
-Bundled file: libonnxruntime.so (the tarball's lib/libonnxruntime.so.1.24.4,
+Package wheel: onnxruntime_webgpu-1.27.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+  from https://files.pythonhosted.org/packages/24/11/6cd5f840be97819cbd172bacc1868726ab5fa54ceaaa79508c5a64e61233/
+  sha256 fe5e49e00ad71bc667316d57670bfbf525438783d4a3468e0d337314ec985cbe  (25163729 bytes)
+
+Bundled file: libonnxruntime.so (the wheel's onnxruntime/capi/libonnxruntime.so.1.27.0,
 renamed to the unversioned soname ORT_DYLIB_PATH pins directly)
-  sha256 d132535d051344ff5c64c9c200004150559049a81ed330eb4422c1962fb6b7e4  (22159232 bytes)
+  sha256 882f54a76dde1b6c7e66ed353f29bf167c2a2d4e77875b093205074b31d2c7f4  (32018832 bytes)
 
-The Linux build carries the CPU execution provider only; DirectML is a
-Windows-only provider, and CUDA/ROCm GPU acceleration is a possible later
-addition (a separate optional runtime), not part of this baseline.
+Version skew against the Windows runtime (1.24.4) is deliberate: 1.27.0
+is the first stable WebGPU-enabled Linux artefact, and the crate binding
+requests C API version 24, which ONNX Runtime's API versioning contract
+serves unchanged from newer runtimes. Requirements at run time: glibc
+2.27+ and, for the GPU path, a Vulkan driver; with no usable adapter the
+session falls back to the CPU provider.
