@@ -24,7 +24,7 @@
 		hydrate as hydrateScan,
 		scanStatus as scanStatusStore,
 		subscribeScan,
-	} from '$lib/stores/scanStore';
+	} from '$lib/stores/scanStore.svelte';
 	import { formatDateFull } from '$lib/utils/format';
 	import CodexTab from './CodexTab.svelte';
 	import ScanInFlightView from './ScanInFlightView.svelte';
@@ -92,7 +92,7 @@
 	// is active (the guide owns this view then). The effect below hydrates once
 	// and subscribes when the guide is inactive; the store re-reads on each
 	// backend scan frame the relay re-emits, replacing the retired 500ms poll.
-	let scanStatus = $derived(guideState.isActive ? null : $scanStatusStore);
+	let scanStatus = $derived(guideState.isActive ? null : scanStatusStore.current);
 	let scanInFlight = $derived(scanStatus !== null && scanStatus.phase !== 'idle');
 
 	$effect(() => {

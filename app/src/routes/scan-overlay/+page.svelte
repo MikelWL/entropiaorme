@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-	import { LogicalSize } from '@tauri-apps/api/dpi';
 	import Button from '$lib/components/Button.svelte';
 	import {
 		startManualSkillScan,
@@ -14,14 +13,11 @@
 		hideScanOverlay,
 		type ScanManualStatus
 	} from '$lib/api';
-	import { SCAN_TOPIC } from '$lib/stores/scanStore';
-
-	const OVERLAY_SIZE_SLACK = 36;
+	import { SCAN_TOPIC } from '$lib/stores/scanStore.svelte';
+	import { createWindowSizeSync } from '$lib/windows/windowSize';
 
 	let overlayRoot: HTMLDivElement | null = $state(null);
-	let resizeFrame: number | null = null;
-	let lastWindowWidth: number | null = null;
-	let lastWindowHeight: number | null = null;
+	const windowSizeSync = createWindowSizeSync(() => overlayRoot);
 
 	let status = $state<ScanManualStatus | null>(null);
 	let busy = $state(false);
@@ -151,46 +147,13 @@
 		await getCurrentWindow().startDragging();
 	}
 
-	function measureOverlaySize(root: HTMLDivElement) {
-		const rect = root.getBoundingClientRect();
-		return {
-			width: Math.max(1, Math.ceil(rect.width + OVERLAY_SIZE_SLACK)),
-			height: Math.max(1, Math.ceil(rect.height + OVERLAY_SIZE_SLACK))
-		};
-	}
-
-	async function syncOverlayWindowSize() {
-		if (!overlayRoot) return;
-		const { width, height } = measureOverlaySize(overlayRoot);
-		if (width === lastWindowWidth && height === lastWindowHeight) return;
-		lastWindowWidth = width;
-		lastWindowHeight = height;
-		try {
-			await getCurrentWindow().setSize(new LogicalSize(width, height));
-		} catch {
-			lastWindowWidth = null;
-			lastWindowHeight = null;
-		}
-	}
-
-	function scheduleOverlayWindowSizeSync() {
-		if (!overlayRoot || resizeFrame != null) return;
-		resizeFrame = window.requestAnimationFrame(() => {
-			resizeFrame = null;
-			void syncOverlayWindowSize();
-		});
-	}
-
 	$effect(() => {
 		if (!overlayRoot) return;
-		scheduleOverlayWindowSizeSync();
-		const observer = new ResizeObserver(() => scheduleOverlayWindowSizeSync());
+		windowSizeSync.schedule();
+		const observer = new ResizeObserver(() => windowSizeSync.schedule());
 		observer.observe(overlayRoot);
 		return () => {
-			if (resizeFrame != null) {
-				window.cancelAnimationFrame(resizeFrame);
-				resizeFrame = null;
-			}
+			windowSizeSync.cancel();
 			observer.disconnect();
 		};
 	});

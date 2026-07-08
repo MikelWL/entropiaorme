@@ -1,8 +1,11 @@
-import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mirrors trackingStore.test.ts: the same coalescer pattern over the scan
-// status read. Singleton module state, so fresh import per test.
+// The scan store is a createSnapshotStore instance over the scan topic; the
+// factory's coalescing and keep-last-good semantics carry their own suite
+// (lib/realtime/snapshotStore.test.ts). Pinned here: the module's own
+// surface, i.e. the topic wiring, the injected status read, and the
+// singleton semantics its consumers rely on. Module-level state, so fresh
+// import per test.
 const getManualSkillScanStatus = vi.fn();
 const listen = vi.fn();
 
@@ -14,11 +17,11 @@ vi.mock('@tauri-apps/api/event', () => ({
 	listen: (...args: unknown[]) => listen(...args),
 }));
 
-type Mod = typeof import('./scanStore');
+type Mod = typeof import('./scanStore.svelte');
 
 async function loadModule(): Promise<Mod> {
 	vi.resetModules();
-	return import('./scanStore');
+	return import('./scanStore.svelte');
 }
 
 function deferred<T>(): {
@@ -47,10 +50,10 @@ describe('hydrate', () => {
 	it('publishes the fetched status into the store', async () => {
 		getManualSkillScanStatus.mockResolvedValue(statusIdle);
 		const { hydrate, scanStatus } = await loadModule();
-		expect(get(scanStatus)).toBeNull();
+		expect(scanStatus.current).toBeNull();
 
 		await hydrate();
-		expect(get(scanStatus)).toEqual(statusIdle);
+		expect(scanStatus.current).toEqual(statusIdle);
 	});
 
 	it('keeps the last good status when a read fails', async () => {
@@ -60,7 +63,7 @@ describe('hydrate', () => {
 
 		getManualSkillScanStatus.mockRejectedValueOnce(new Error('backend away'));
 		await hydrate();
-		expect(get(scanStatus)).toEqual(statusCapturing);
+		expect(scanStatus.current).toEqual(statusCapturing);
 	});
 
 	it('coalesces overlapping calls into exactly one queued follow-up read', async () => {
@@ -76,21 +79,7 @@ describe('hydrate', () => {
 		first.resolve(statusIdle);
 		await inFlight;
 		expect(getManualSkillScanStatus).toHaveBeenCalledTimes(2);
-		expect(get(scanStatus)).toEqual(statusCapturing);
-	});
-
-	it('still runs the queued follow-up when the in-flight read fails', async () => {
-		const first = deferred<typeof statusIdle>();
-		getManualSkillScanStatus.mockReturnValueOnce(first.promise).mockResolvedValue(statusCapturing);
-		const { hydrate, scanStatus } = await loadModule();
-
-		const inFlight = hydrate();
-		void hydrate();
-		first.reject(new Error('mid-read drop'));
-		await inFlight;
-
-		expect(getManualSkillScanStatus).toHaveBeenCalledTimes(2);
-		expect(get(scanStatus)).toEqual(statusCapturing);
+		expect(scanStatus.current).toEqual(statusCapturing);
 	});
 });
 
@@ -113,11 +102,11 @@ describe('subscribeScan', () => {
 		await subscribeScan();
 
 		const onFrame = listen.mock.calls[0][1] as (event: unknown) => void;
-		// Settle on the store value, not the call count (the set lands a
+		// Settle on the store value, not the call count (the write lands a
 		// microtask after the read fires).
 		onFrame({ payload: {} });
 		await vi.waitFor(() => {
-			expect(get(scanStatus)).toEqual(statusCapturing);
+			expect(scanStatus.current).toEqual(statusCapturing);
 		});
 		expect(getManualSkillScanStatus).toHaveBeenCalledTimes(1);
 	});

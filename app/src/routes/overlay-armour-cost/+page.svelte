@@ -12,7 +12,7 @@
 		OVERLAY_ARMOUR_COST_SHOW_EVENT,
 		OVERLAY_ARMOUR_COST_UPDATE_EVENT,
 		type OverlayArmourCostState
-	} from '$lib/overlayArmourCost';
+	} from '$lib/windows/overlayArmourCost';
 
 	const SIZE_SLACK = 4;
 	const FALLBACK_WIDTH = 320;

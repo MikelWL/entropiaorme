@@ -49,7 +49,7 @@ export default defineConfig({
 				'src/lib/realtime/useVisiblePoll.ts',
 				'src/lib/realtime/eventRelay.ts',
 				'src/lib/stores/trackingStore.ts',
-				'src/lib/stores/scanStore.ts',
+				'src/lib/stores/scanStore.svelte.ts',
 			],
 		},
 	},

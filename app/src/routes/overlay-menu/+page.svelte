@@ -10,7 +10,7 @@
 		OVERLAY_MENU_SHOW_EVENT,
 		type OverlayMenuSelection,
 		type OverlayMenuState
-	} from '$lib/overlayMenu';
+	} from '$lib/windows/overlayMenu';
 
 	const MENU_MAX_HEIGHT = 220;
 

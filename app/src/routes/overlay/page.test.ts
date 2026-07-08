@@ -283,3 +283,46 @@ describe('overlay popup readiness handshake', () => {
 		);
 	});
 });
+
+describe('armour-cost popup', () => {
+	it('hands the popup its state and leaves sizing, placement and reveal to the popup', async () => {
+		render(OverlayPage);
+		const trigger = await screen.findByTitle('Record armour cost');
+		trigger.click();
+
+		await waitFor(() => {
+			expect(seams.FakeWebviewWindow.instances).toHaveLength(1);
+		});
+		const popup = seams.FakeWebviewWindow.instances[0];
+		expect(popup.label).toBe('overlay-armour-cost');
+		expect(popup.options.visible).toBe(false);
+
+		await act(async () => {
+			popup.onceHandlers.get('tauri://created')?.({});
+		});
+		await act(async () => {
+			fireReady('overlay-armour-cost:ready', 'overlay-armour-cost');
+		});
+
+		await waitFor(() => {
+			expect(popup.emit).toHaveBeenCalledWith(
+				'overlay-armour-cost:show',
+				expect.objectContaining({
+					sessionId: 's1',
+					repairOcrEnabled: false,
+					anchor: { centerX: expect.any(Number), top: expect.any(Number) },
+				}),
+			);
+		});
+		await waitFor(() => {
+			expect(screen.getByTitle('Record armour cost').getAttribute('aria-expanded')).toBe('true');
+		});
+		// The popup measures its panel and sizes, positions, reveals and
+		// focuses itself from the payload; a host-side reveal would flash the
+		// window at a stale location before it has measured anything.
+		expect(popup.show).not.toHaveBeenCalled();
+		expect(popup.setSize).not.toHaveBeenCalled();
+		expect(popup.setPosition).not.toHaveBeenCalled();
+		expect(popup.setFocus).not.toHaveBeenCalled();
+	});
+});

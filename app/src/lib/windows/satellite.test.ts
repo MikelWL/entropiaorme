@@ -194,6 +194,40 @@ describe('ensure', () => {
 		await rejection;
 	});
 
+	it('rejects with the overridden messages when the host provides them', async () => {
+		vi.useFakeTimers();
+		const withMessages = {
+			...options,
+			messages: {
+				creationTimeout: 'Popup window creation timed out',
+				creationFailed: 'Unknown Tauri popup creation error',
+				readyTimeout: 'Popup route did not become ready',
+			},
+		};
+
+		// Creation timeout carries the host's wording.
+		const satellite = createSatelliteWindow(withMessages);
+		const creation = satellite.ensure();
+		const creationRejection = expect(creation).rejects.toThrow('Popup window creation timed out');
+		await vi.advanceTimersByTimeAsync(3100);
+		await creationRejection;
+
+		// tauri://error with an empty payload falls back to the host's wording.
+		const failed = satellite.ensure();
+		const failedRejection = expect(failed).rejects.toThrow('Unknown Tauri popup creation error');
+		await vi.advanceTimersByTimeAsync(0);
+		seams.FakeWebviewWindow.instances[1].onceHandlers.get('tauri://error')?.({ payload: '' });
+		await failedRejection;
+
+		// Readiness timeout carries the host's wording.
+		const ready = satellite.ensure();
+		const readyRejection = expect(ready).rejects.toThrow('Popup route did not become ready');
+		await vi.advanceTimersByTimeAsync(0);
+		seams.FakeWebviewWindow.instances[2].onceHandlers.get('tauri://created')?.({});
+		await vi.advanceTimersByTimeAsync(3100);
+		await readyRejection;
+	});
+
 	it('reuses an existing window by label and skips the whole handshake', async () => {
 		const existing = new seams.FakeWebviewWindow(options.label, {});
 		seams.FakeWebviewWindow.instances = [];
@@ -268,6 +302,49 @@ describe('show', () => {
 		existing.setFocus.mockRejectedValueOnce(new Error('focus refused'));
 
 		await expect(satellite.show({}, { x: 0, y: 0 }, { focus: true })).resolves.toBeUndefined();
+	});
+
+	it('only delivers the state payload when the reveal is opted out', async () => {
+		const { satellite, existing } = await reusableSatellite();
+		const state = { selfRevealing: true };
+
+		// A self-revealing satellite (it measures, positions, and shows itself
+		// from the payload) gets the state and nothing else: no host-side
+		// reveal, no host-side focus.
+		await satellite.show(state, undefined, { reveal: false, focus: true });
+
+		expect(existing.emit).toHaveBeenCalledWith(options.showEvent, state);
+		expect(existing.show).not.toHaveBeenCalled();
+		expect(existing.setFocus).not.toHaveBeenCalled();
+	});
+});
+
+describe('emitTo', () => {
+	it('emits the event and payload to an existing window', async () => {
+		const existing = new seams.FakeWebviewWindow(options.label, {});
+		seams.FakeWebviewWindow.instances = [];
+		seams.FakeWebviewWindow.getByLabel.mockResolvedValue(existing);
+		const satellite = createSatelliteWindow(options);
+
+		await satellite.emitTo('satellite-under-test:update', { row: 4 });
+		expect(existing.emit).toHaveBeenCalledWith('satellite-under-test:update', { row: 4 });
+	});
+
+	it('tolerates the window not existing and never creates one', async () => {
+		const satellite = createSatelliteWindow(options);
+
+		await expect(satellite.emitTo('satellite-under-test:update', {})).resolves.toBeUndefined();
+		expect(seams.FakeWebviewWindow.instances).toHaveLength(0);
+	});
+
+	it('swallows an emit failure', async () => {
+		const existing = new seams.FakeWebviewWindow(options.label, {});
+		seams.FakeWebviewWindow.instances = [];
+		seams.FakeWebviewWindow.getByLabel.mockResolvedValue(existing);
+		existing.emit.mockRejectedValueOnce(new Error('window gone'));
+		const satellite = createSatelliteWindow(options);
+
+		await expect(satellite.emitTo('satellite-under-test:update', {})).resolves.toBeUndefined();
 	});
 });
 
