@@ -1444,6 +1444,13 @@ mod tests {
         // Serialised: this test mutates the process-global CWD, which would
         // race any concurrent test reading the CWD or a relative path.
         let _ort = ORT_TEST_LOCK.lock().await;
+        // The expected leaf mirrors the resolver's platform fork: the
+        // Windows onnxruntime-directml build under `ort/`, the Linux
+        // build under `ort-linux/`.
+        #[cfg(target_os = "linux")]
+        let (subdir, file) = ("ort-linux", "libonnxruntime.so");
+        #[cfg(not(target_os = "linux"))]
+        let (subdir, file) = ("ort", "onnxruntime.dll");
         let resource = PathBuf::from("X:/resources");
         let resolved = ort_dylib_path(Some(&resource));
 
@@ -1460,8 +1467,8 @@ mod tests {
         );
         assert_eq!(
             resolved.file_name().and_then(|n| n.to_str()),
-            Some("onnxruntime.dll"),
-            "the pinned path points at onnxruntime.dll"
+            Some(file),
+            "the pinned path points at the platform's bundled ONNX Runtime dylib"
         );
 
         // The expected installed-vs-dev location.
@@ -1473,14 +1480,14 @@ mod tests {
                     .join("src-tauri")
                     .join("entropia-orme")
                     .join("resources")
-                    .join("ort")
-                    .join("onnxruntime.dll"),
+                    .join(subdir)
+                    .join(file),
                 "dev resolves to the committed repo dylib"
             );
         } else {
             assert_eq!(
                 resolved,
-                resource.join("ort").join("onnxruntime.dll"),
+                resource.join(subdir).join(file),
                 "installed resolves under the OS-given resource dir"
             );
         }
