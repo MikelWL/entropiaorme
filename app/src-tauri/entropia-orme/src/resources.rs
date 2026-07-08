@@ -9,8 +9,8 @@
 //!
 //! Sampling is best-effort and never on a hot path: a detached thread that
 //! sleeps between samples, so it cannot stall the producers or the HTTP
-//! surface. Off Windows there is no portable resident-set/handle source wired
-//! (the app ships Windows-only), so the sampler simply records nothing.
+//! surface. Windows reads the process counters; Linux reads `/proc/self`;
+//! platforms without a bundled build record nothing.
 
 use std::time::Duration;
 
