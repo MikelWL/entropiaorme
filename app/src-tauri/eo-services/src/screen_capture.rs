@@ -160,7 +160,12 @@ mod platform {
 /// location from `EO_CAPTURE_TOKEN_PATH` (set by the shell at startup)
 /// and skips persistence when unset, so a headless test never writes to
 /// a real config location.
-#[cfg(target_os = "linux")]
+///
+/// Gated behind the `linux-capture` feature: the GStreamer stack links
+/// system libraries the backend members must not require, so the default
+/// backend build stands the capturer down (returning `None`, exactly as
+/// an unsupported host does) and only the shell enables the real path.
+#[cfg(all(target_os = "linux", feature = "linux-capture"))]
 mod platform {
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
@@ -363,7 +368,11 @@ mod platform {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// The stand-down capturer: every host without a compiled capture backend
+/// (non-Windows non-Linux, and Linux with the `linux-capture` feature off).
+/// Returns `None` so the scan/repair routes report "engine unavailable"
+/// rather than serving an empty capture, exactly as on an unsupported host.
+#[cfg(not(any(windows, all(target_os = "linux", feature = "linux-capture"))))]
 mod platform {
     pub fn capture_bgra(_x: i64, _y: i64, _w: i64, _h: i64) -> Option<Vec<u8>> {
         None

@@ -83,3 +83,7 @@ windows = { workspace = true, features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 # The page size behind the /proc resident-set sampler (resources.rs).
 libc = { workspace = true }
+# The shell links the GStreamer stack (through WebKitGTK) anyway, so it is
+# the right place to enable the Linux ScreenCast-portal capture backend that
+# the backend member keeps optional to stay system-library-free.
+eo-services = { workspace = true, features = ["linux-capture"] }
