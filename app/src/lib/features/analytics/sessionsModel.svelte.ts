@@ -60,6 +60,7 @@ export function createSessionsModel() {
 	}
 
 	async function handleDelete(id: string) {
+		if (deleting) return;
 		error = null;
 		deleting = true;
 		try {

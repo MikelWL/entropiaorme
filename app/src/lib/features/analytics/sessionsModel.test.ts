@@ -134,6 +134,26 @@ describe('handleDelete', () => {
 		expect(model.confirmDeleteId).toBeNull();
 	});
 
+	it('ignores a re-entrant delete while one is in flight', async () => {
+		mocked.getTrackingSessions.mockResolvedValue([session()]);
+		let resolveDelete!: () => void;
+		mocked.deleteSession.mockImplementation(
+			() =>
+				new Promise<void>((res) => {
+					resolveDelete = res;
+				}),
+		);
+		const model = createSessionsModel();
+		await model.loadSessions();
+
+		const first = model.handleDelete('s1');
+		await model.handleDelete('s1');
+		expect(mocked.deleteSession).toHaveBeenCalledTimes(1);
+		resolveDelete();
+		await first;
+		expect(model.sessions).toHaveLength(0);
+	});
+
 	it('surfaces a delete failure and keeps the row', async () => {
 		mocked.getTrackingSessions.mockResolvedValue([session()]);
 		mocked.deleteSession.mockRejectedValue(new Error('delete failed'));

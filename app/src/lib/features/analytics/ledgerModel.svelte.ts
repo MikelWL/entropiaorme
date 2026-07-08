@@ -321,6 +321,9 @@ export function createLedgerModel() {
 
 	function openInventorySell(item: InventoryItem) {
 		inventorySellTarget = item;
+		// A manual open must not inherit a demo prefill from an earlier
+		// guide-mode sell.
+		inventorySellPrefilledPrice = null;
 	}
 
 	function closeInventorySell() {
@@ -340,6 +343,7 @@ export function createLedgerModel() {
 	function handleInventorySold(result: InventorySellResult) {
 		inventoryItems = inventoryItems.filter((i) => i.id !== result.soldItem.id);
 		inventorySellTarget = null;
+		inventorySellPrefilledPrice = null;
 	}
 
 	async function handleInventoryDelete(item: InventoryItem) {

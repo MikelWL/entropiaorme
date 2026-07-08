@@ -356,6 +356,25 @@ describe('guide demo handlers', () => {
 		expect(model.inventorySellPrefilledPrice).toBeNull();
 	});
 
+	it('never leaks a demo prefill into a manual sell or past a completed sale', async () => {
+		mocked.getInventoryItems.mockResolvedValue([item()]);
+		const model = createLedgerModel();
+		await model.loadInventory();
+
+		model.openInventorySellByName('Hedoc Mayhem, Adjusted', 1360);
+		expect(model.inventorySellPrefilledPrice).toBe(1360);
+		model.openInventorySell(model.inventoryItems[0]);
+		expect(model.inventorySellPrefilledPrice).toBeNull();
+
+		model.openInventorySellByName('Hedoc Mayhem, Adjusted', 1360);
+		model.handleInventorySold({
+			soldItem: model.inventoryItems[0],
+			ledgerEntry: entry(),
+		});
+		expect(model.inventorySellTarget).toBeNull();
+		expect(model.inventorySellPrefilledPrice).toBeNull();
+	});
+
 	it('injects the synthetic sale entry once, resets the pager, and clears it', async () => {
 		seedLoad(
 			Array.from({ length: 6 }, (_, i) => entry({ id: `e${i}` })),

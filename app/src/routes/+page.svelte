@@ -175,14 +175,17 @@
 		void guideDemo.refreshDemoTracking(active);
 		void (async () => {
 			await questsModel.loadData(active);
-			if (questsModel.error) return;
 			if (!active && snapshotActivePlaylistId !== undefined) {
-				// Restore on guide-close. syncActivePlaylist then validates
-				// the restored id against the freshly-loaded real playlists
-				// (and nulls it if the user deleted that playlist mid-tour).
+				// Restore on guide-close, even when the reload failed: a
+				// surviving snapshot would clobber the user's next selection
+				// on the following guide cycle. syncActivePlaylist (success
+				// path) then validates the restored id against the freshly
+				// loaded real playlists (and nulls it if the user deleted
+				// that playlist mid-tour).
 				activePlaylistId = snapshotActivePlaylistId;
 				snapshotActivePlaylistId = undefined;
 			}
+			if (questsModel.error) return;
 			syncActivePlaylist(questsModel.playlists);
 		})();
 	});

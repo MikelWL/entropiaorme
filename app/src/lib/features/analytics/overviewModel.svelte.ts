@@ -90,16 +90,24 @@ export function createOverviewModel() {
 		config = { gainTags, lossTags };
 	}
 
+	// Monotonic token so a slow response for a superseded period cannot
+	// overwrite the newer period's data (or its error) after a range change.
+	let loadEpoch = 0;
+
 	async function loadData(period: string) {
+		const epoch = ++loadEpoch;
 		loading = true;
 		error = null;
 		try {
-			data = await getAnalyticsOverview(period);
+			const loaded = await getAnalyticsOverview(period);
+			if (epoch !== loadEpoch) return;
+			data = loaded;
 			initConfig(data);
 		} catch (e) {
+			if (epoch !== loadEpoch) return;
 			error = describeError(e, 'Failed to load overview');
 		} finally {
-			loading = false;
+			if (epoch === loadEpoch) loading = false;
 		}
 	}
 

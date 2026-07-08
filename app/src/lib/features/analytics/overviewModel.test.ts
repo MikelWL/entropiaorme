@@ -86,6 +86,27 @@ describe('loadData', () => {
 		expect(model.period).toBe('30d');
 	});
 
+	it('ignores a slow response for a superseded period', async () => {
+		let resolveFirst!: (v: OverviewStats) => void;
+		mocked.getAnalyticsOverview
+			.mockImplementationOnce(
+				() =>
+					new Promise<OverviewStats>((res) => {
+						resolveFirst = res;
+					}),
+			)
+			.mockResolvedValueOnce(overview({ totalReturnRate: 0.3 }));
+		const model = createOverviewModel();
+		const first = model.loadData('all');
+		await model.loadData('30d');
+		expect(model.data?.totalReturnRate).toBe(0.3);
+
+		resolveFirst(overview({ totalReturnRate: 0.99 }));
+		await first;
+		expect(model.data?.totalReturnRate).toBe(0.3);
+		expect(model.loading).toBe(false);
+	});
+
 	it('surfaces a load failure and clears a stale error on entry', async () => {
 		mocked.getAnalyticsOverview.mockRejectedValueOnce(new Error('backend unreachable'));
 		const model = createOverviewModel();
