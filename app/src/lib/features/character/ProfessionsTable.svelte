@@ -17,16 +17,16 @@
 			<thead>
 				<tr class="border-b border-border">
 					<th class="py-2 px-3 text-left eyebrow" aria-sort={table.sortKey === 'name' ? (table.sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
-						<button type="button" class="inline-flex items-center gap-1 cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('name')}>Profession {#if table.sortKey === 'name'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
+						<button type="button" class="inline-flex items-center gap-1 uppercase cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('name')}>Profession {#if table.sortKey === 'name'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
 					</th>
 					<th class="py-2 px-3 text-right eyebrow" aria-sort={table.sortKey === 'anchorLevel' ? (table.sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
-						<button type="button" class="inline-flex items-center gap-1 cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('anchorLevel')}>Anchor {#if table.sortKey === 'anchorLevel'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
+						<button type="button" class="inline-flex items-center gap-1 uppercase cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('anchorLevel')}>Anchor {#if table.sortKey === 'anchorLevel'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
 					</th>
 					<th class="py-2 px-3 text-right eyebrow" aria-sort={table.sortKey === 'gainSinceAnchor' ? (table.sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
-						<button type="button" class="inline-flex items-center gap-1 cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('gainSinceAnchor')}>Gain {#if table.sortKey === 'gainSinceAnchor'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
+						<button type="button" class="inline-flex items-center gap-1 uppercase cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('gainSinceAnchor')}>Gain {#if table.sortKey === 'gainSinceAnchor'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
 					</th>
 					<th class="py-2 px-3 text-right eyebrow" aria-sort={table.sortKey === 'level' ? (table.sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
-						<button type="button" class="inline-flex items-center gap-1 cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('level')}>Level {#if table.sortKey === 'level'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
+						<button type="button" class="inline-flex items-center gap-1 uppercase cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text" onclick={() => table.setSort('level')}>Level {#if table.sortKey === 'level'}<span class="text-accent">{table.sortDir === 'asc' ? '\u2191' : '\u2193'}</span>{/if}</button>
 					</th>
 				</tr>
 			</thead>
