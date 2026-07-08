@@ -1,0 +1,154 @@
+/**
+ * Character-surface view model: calibration, stats, the skill and profession
+ * tables, the shared data load, and the optimiser and prospect sub-models
+ * composed over one page-level error slot. Presentation lives in the feature
+ * components; they compose over this state.
+ */
+
+import {
+	getCalibrationStatus,
+	getCharacterProfessions,
+	getCharacterProspectOptions,
+	getCharacterSkills,
+	getCharacterStats,
+	showScanOverlay,
+} from '$lib/api';
+import {
+	characterDemoCalibration,
+	characterDemoProfessions,
+	characterDemoProspectOptions,
+	characterDemoSkills,
+	characterDemoStats,
+} from '$lib/guide/fixtures/character';
+import type { ProfessionLevel, SkillLevel, StatProfession } from '$lib/types/analytics';
+import { describeError } from '$lib/view/errorState';
+import { createTableModel } from '$lib/view/tableModel.svelte';
+import { createOptimizerModel, type PageErrorSlot } from './optimizerModel.svelte';
+import { createProspectModel } from './prospectModel.svelte';
+
+export const PAGE_SIZE = 12;
+
+function createErrorSlot(): PageErrorSlot {
+	let error = $state<string | null>(null);
+	return {
+		get error() {
+			return error;
+		},
+		set error(value: string | null) {
+			error = value;
+		},
+	};
+}
+
+export function createCharacterModel() {
+	const errors = createErrorSlot();
+	const optimizer = createOptimizerModel(errors);
+	const prospect = createProspectModel(optimizer, errors);
+
+	let calibration = $state({
+		calibrated: false,
+		lastCalibration: null as string | null,
+		stale: true,
+	});
+	let stats = $state({ hp: 80, topProfessions: [] as StatProfession[] });
+	let skills = $state([] as SkillLevel[]);
+	let professions = $state([] as ProfessionLevel[]);
+	let loading = $state(true);
+
+	// ── Split attributes from regular skills ──
+	const attributes = $derived(skills.filter((s) => s.isAttribute));
+	const regularSkills = $derived(skills.filter((s) => !s.isAttribute));
+
+	const skillsTable = createTableModel<SkillLevel>({
+		rows: () => regularSkills,
+		pageSize: PAGE_SIZE,
+		searchText: (s) => [s.name],
+		categoryOf: (s) => s.category,
+		initialSort: { key: 'level', dir: 'desc' },
+	});
+
+	const professionsTable = createTableModel<ProfessionLevel>({
+		rows: () => professions,
+		pageSize: PAGE_SIZE,
+		searchText: (p) => [p.name],
+		initialSort: { key: 'level', dir: 'desc' },
+	});
+
+	async function loadCharacterData(guideMode: boolean) {
+		errors.error = null;
+		if (guideMode) {
+			calibration = characterDemoCalibration;
+			stats = characterDemoStats;
+			skills = characterDemoSkills.map((s) => ({ ...s }));
+			professions = characterDemoProfessions.map((p) => ({ ...p }));
+			prospect.options = characterDemoProspectOptions;
+			loading = false;
+			return;
+		}
+		try {
+			const [cal, st, sk, pr, po] = await Promise.all([
+				getCalibrationStatus(),
+				getCharacterStats(),
+				getCharacterSkills(),
+				getCharacterProfessions(),
+				getCharacterProspectOptions(),
+			]);
+			calibration = cal;
+			stats = st;
+			skills = sk;
+			professions = pr;
+			prospect.options = po;
+		} catch (e) {
+			errors.error = describeError(e, 'Failed to load character data');
+		} finally {
+			loading = false;
+		}
+	}
+
+	function openScanOverlay() {
+		errors.error = null;
+		showScanOverlay().catch((e) => {
+			errors.error = describeError(e, 'Failed to open the skill scanner');
+		});
+	}
+
+	return {
+		optimizer,
+		prospect,
+		skillsTable,
+		professionsTable,
+
+		get error() {
+			return errors.error;
+		},
+		set error(value: string | null) {
+			errors.error = value;
+		},
+		get calibration() {
+			return calibration;
+		},
+		get stats() {
+			return stats;
+		},
+		get skills() {
+			return skills;
+		},
+		get professions() {
+			return professions;
+		},
+		get loading() {
+			return loading;
+		},
+		get attributes() {
+			return attributes;
+		},
+		get regularSkills() {
+			return regularSkills;
+		},
+
+		loadCharacterData,
+		openScanOverlay,
+	};
+}
+
+export type CharacterModel = ReturnType<typeof createCharacterModel>;
