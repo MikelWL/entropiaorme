@@ -1436,3 +1436,1465 @@ pub async fn equipment_name(db: &Db, id: Option<i64>, item_type: &str) -> Result
         None => Ok(Value::Null),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config_service::{AppConfig, TrifectaPresetConfig};
+    use crate::db::Db;
+    use rusqlite::{params, Connection};
+    use serde_json::json;
+
+    // ── Test database and seeds ─────────────────────────────────────
+
+    /// A real database over a temp file: the synchronous core opens its own
+    /// connections, which an in-memory database cannot share, so the reads
+    /// under test see the committed seeds under WAL.
+    async fn open_db() -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("entropia_orme.db"))
+            .await
+            .unwrap();
+        (dir, db)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_session(
+        conn: &Connection,
+        id: &str,
+        started: f64,
+        ended: Option<f64>,
+        active: bool,
+        mode: &str,
+        armour: f64,
+        heal: f64,
+        dangling: f64,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO tracking_sessions \
+             (id, started_at, ended_at, is_active, mob_tracking_mode, armour_cost, heal_cost, dangling_cost) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![id, started, ended, active as i64, mode, armour, heal, dangling],
+        )?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_kill(
+        conn: &Connection,
+        id: &str,
+        session: &str,
+        mob: Option<&str>,
+        original: Option<&str>,
+        loot: f64,
+        enhancer: f64,
+        ts: f64,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO kills \
+             (id, session_id, mob_name, original_mob_name, loot_total_ped, enhancer_cost, timestamp) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![id, session, mob, original, loot, enhancer, ts],
+        )?;
+        Ok(())
+    }
+
+    fn seed_tool(
+        conn: &Connection,
+        kill: &str,
+        tool: &str,
+        shots: i64,
+        dmg: f64,
+        crits: i64,
+        cost_per_shot: f64,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO kill_tool_stats \
+             (kill_id, tool_name, shots_fired, damage_dealt, critical_hits, cost_per_shot) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![kill, tool, shots, dmg, crits, cost_per_shot],
+        )?;
+        Ok(())
+    }
+
+    fn seed_loot(
+        conn: &Connection,
+        kill: &str,
+        name: &str,
+        qty: i64,
+        value: f64,
+        shrapnel: bool,
+        deactivated: Option<f64>,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO kill_loot_items \
+             (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel, deactivated_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![kill, name, qty, value, shrapnel as i64, deactivated],
+        )?;
+        Ok(())
+    }
+
+    fn seed_notable(
+        conn: &Connection,
+        session: &str,
+        event_type: &str,
+        mob_or_item: &str,
+        value: f64,
+        ts: f64,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO notable_events (session_id, event_type, mob_or_item, value_ped, timestamp) \
+             VALUES (?, ?, ?, ?, ?)",
+            params![session, event_type, mob_or_item, value, ts],
+        )?;
+        Ok(())
+    }
+
+    fn seed_skill_gain(
+        conn: &Connection,
+        session: &str,
+        skill: &str,
+        amount: f64,
+        ped: f64,
+        ts: f64,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+             VALUES (?, ?, ?, ?, ?)",
+            params![session, ts, skill, amount, ped],
+        )?;
+        Ok(())
+    }
+
+    fn seed_calibration(conn: &Connection, skill: &str, level: f64) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO skill_calibrations (skill_name, level, source) VALUES (?, ?, 'manual')",
+            params![skill, level],
+        )?;
+        Ok(())
+    }
+
+    fn seed_equipment(
+        conn: &Connection,
+        id: i64,
+        name: &str,
+        item_type: &str,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO equipment_library (id, name, item_type, properties_json) VALUES (?, ?, ?, '{}')",
+            params![id, name, item_type],
+        )?;
+        Ok(())
+    }
+
+    // ── Engine-typed numeric primitives ─────────────────────────────
+
+    #[test]
+    fn sql_number_preserves_the_engine_type() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.query_row("SELECT 2.5, 7", [], |row| {
+            // A REAL decodes to a float, an INTEGER to an integer: neither
+            // masquerades as the other.
+            assert_eq!(sql_number(row, 0), json!(2.5));
+            assert_eq!(sql_number(row, 1), json!(7));
+            assert_ne!(sql_number(row, 1), json!(7.0));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn as_f64_reads_numbers_and_defaults_null_to_zero() {
+        assert_eq!(as_f64(&json!(2.5)), 2.5);
+        assert_eq!(as_f64(&json!(3)), 3.0);
+        assert_eq!(as_f64(&Value::Null), 0.0);
+    }
+
+    #[test]
+    fn round_applies_bankers_rounding() {
+        assert_eq!(round(1.23456, 2), 1.23);
+        // Half-to-even: 2.5 rounds down to the even 2, 1.25 to the even 1.2.
+        assert_eq!(round(2.5, 0), 2.0);
+        assert_eq!(round(1.25, 1), 1.2);
+    }
+
+    #[test]
+    fn float_field_coerces_integers_and_leaves_floats() {
+        assert_eq!(float_field(json!(5)), json!(5.0));
+        assert_ne!(float_field(json!(5)), json!(5));
+        assert_eq!(float_field(json!(2.5)), json!(2.5));
+        assert_eq!(float_field(Value::Null), Value::Null);
+    }
+
+    #[test]
+    fn list_ts_to_iso_renders_whole_fractional_and_carry_cases() {
+        assert_eq!(list_ts_to_iso(None), Value::Null);
+        assert_eq!(
+            list_ts_to_iso(Some(0.0)),
+            json!("1970-01-01T00:00:00+00:00")
+        );
+        assert_eq!(
+            list_ts_to_iso(Some(1.5)),
+            json!("1970-01-01T00:00:01.500000+00:00")
+        );
+        // A fraction that rounds up to a full second carries into the whole.
+        assert_eq!(
+            list_ts_to_iso(Some(0.9999999)),
+            json!("1970-01-01T00:00:01+00:00")
+        );
+        // A negative timestamp borrows a second so the microseconds stay positive.
+        assert_eq!(
+            list_ts_to_iso(Some(-1.5)),
+            json!("1969-12-31T23:59:58.500000+00:00")
+        );
+    }
+
+    #[test]
+    fn event_ts_to_iso_renders_or_nulls() {
+        assert_eq!(event_ts_to_iso(None), Value::Null);
+        assert_eq!(
+            event_ts_to_iso(Some(0.0)),
+            json!("1970-01-01T00:00:00+00:00")
+        );
+        assert_eq!(
+            event_ts_to_iso(Some(1.5)),
+            json!("1970-01-01T00:00:01.500000+00:00")
+        );
+    }
+
+    #[test]
+    fn duration_seconds_covers_ended_active_and_zero() {
+        // Ended: the stored span, regardless of the clock.
+        assert_eq!(
+            duration_seconds(Some(100.0), Some(250.0), false, 999.0),
+            150
+        );
+        // Active with no end: the running span from the clock.
+        assert_eq!(duration_seconds(Some(100.0), None, true, 250.0), 150);
+        // Active but never started, and inactive with no end: both zero.
+        assert_eq!(duration_seconds(None, None, true, 250.0), 0);
+        assert_eq!(duration_seconds(Some(100.0), None, false, 250.0), 0);
+    }
+
+    #[test]
+    fn notable_event_category_maps_every_branch() {
+        assert_eq!(notable_event_category("quest_started"), "quest");
+        assert_eq!(notable_event_category("hof_kill"), "hof");
+        assert_eq!(notable_event_category("global_kill"), "global");
+        assert_eq!(notable_event_category(""), "global");
+        assert_eq!(notable_event_category("anything_else"), "global");
+    }
+
+    #[test]
+    fn parse_string_array_parses_or_falls_back_empty() {
+        assert_eq!(parse_string_array("[\"a\",\"b\"]"), json!(["a", "b"]));
+        assert_eq!(parse_string_array("not json"), json!([]));
+    }
+
+    // ── Session list ────────────────────────────────────────────────
+
+    #[test]
+    fn list_row_from_summary_shapes_the_summary_row() {
+        let summary = ListSummary {
+            weapon_cost: 1.0,
+            heal_cost: 2.0,
+            enhancer_cost: 3.0,
+            armour_cost: 4.0,
+            dangling_cost: 5.0,
+            loot_tt: 30.0,
+            primary_mobs: json!(["Argonaut"]),
+            primary_weapons: json!(["Gun"]),
+            globals: 2,
+            hofs: 1,
+        };
+        let row = list_row_from_summary("s1", Some(1000.0), Some(4600.0), false, 9999.0, &summary);
+        assert_eq!(
+            row,
+            json!({
+                "id": "s1",
+                "startTime": "1970-01-01T00:16:40+00:00",
+                "endTime": "1970-01-01T01:16:40+00:00",
+                "duration": 3600,
+                "primaryMobs": ["Argonaut"],
+                "primaryWeapons": ["Gun"],
+                "cost": 15.0,
+                "returns": 30.0,
+                "net": 15.0,
+                "returnRate": 2.0,
+                "globals": 2,
+                "hofs": 1,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn scalar_reads_a_number_and_zero_defaults() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 12.5, 0.0, 1000.0)?;
+            seed_kill(conn, "k2", "s1", Some("Argonaut"), None, 7.5, 0.0, 1100.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let sum = db
+            .with_reader(|conn| {
+                scalar(
+                    conn,
+                    "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
+                    "s1",
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(sum, json!(20.0));
+
+        // The empty COALESCE case stays an engine integer zero.
+        let empty = db
+            .with_reader(|conn| {
+                scalar(
+                    conn,
+                    "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
+                    "absent",
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(empty, json!(0));
+    }
+
+    #[tokio::test]
+    async fn string_column_collects_grouped_names() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 0.0, 0.0, 1000.0)?;
+            seed_kill(conn, "k2", "s1", Some("Argonaut"), None, 0.0, 0.0, 1100.0)?;
+            seed_kill(conn, "k3", "s1", Some("Atrox"), None, 0.0, 0.0, 1200.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let names = db
+            .with_reader(|conn| {
+                string_column(
+                    conn,
+                    "SELECT mob_name FROM kills WHERE session_id = ? \
+                     GROUP BY mob_name ORDER BY COUNT(*) DESC, mob_name ASC",
+                    "s1",
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(names, vec!["Argonaut".to_string(), "Atrox".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn list_row_from_raw_aggregates_the_raw_tables() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(4600.0),
+                false,
+                "mob",
+                4.0,
+                2.0,
+                1.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 30.0, 3.0, 1000.0)?;
+            seed_kill(conn, "k2", "s1", Some("Argonaut"), None, 0.0, 0.0, 1100.0)?;
+            seed_tool(conn, "k1", "Gun", 10, 100.0, 1, 0.5)?;
+            seed_tool(conn, "k2", "Gun", 10, 100.0, 0, 0.5)?;
+            seed_notable(conn, "s1", "global_kill", "Argonaut", 50.0, 1000.0)?;
+            seed_notable(conn, "s1", "hof_item", "Sword", 100.0, 1100.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let row = db
+            .with_reader(|conn| {
+                list_row_from_raw(conn, "s1", Some(1000.0), Some(4600.0), false, 0.0)
+            })
+            .await
+            .unwrap();
+        // weapon 10 + heal 2 + enhancer 3 + armour 4 + dangling 1 = 20 cost;
+        // returns 30; net 10; rate 30/20 = 1.5.
+        assert_eq!(
+            row,
+            json!({
+                "id": "s1",
+                "startTime": "1970-01-01T00:16:40+00:00",
+                "endTime": "1970-01-01T01:16:40+00:00",
+                "duration": 3600,
+                "primaryMobs": ["Argonaut"],
+                "primaryWeapons": ["Gun"],
+                "cost": 20.0,
+                "returns": 30.0,
+                "net": 10.0,
+                "returnRate": 1.5,
+                "globals": 1,
+                "hofs": 1,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn list_sessions_read_picks_summary_only_for_ended_rows() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            // An ended session carrying a summary: the summary path.
+            seed_session(
+                conn,
+                "s-ended",
+                1000.0,
+                Some(4600.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            conn.execute(
+                "INSERT INTO session_summaries \
+                 (session_id, started_at, ended_at, duration_hours, kills, loot_tt, weapon_cost, \
+                  enhancer_cost, armour_cost, heal_cost, dangling_cost, cycled_ped, \
+                  regular_skill_ped_json, attribute_levels_json, regular_skill_tt, \
+                  attribute_levels_total, primary_mobs_json, primary_weapons_json, globals, hofs) \
+                 VALUES ('s-ended', 1000.0, 4600.0, 1.0, 2, 30.0, 1.0, 3.0, 4.0, 2.0, 5.0, 0.0, \
+                  '{}', '{}', 0.0, 0.0, '[\"Argonaut\"]', '[\"Gun\"]', 2, 1)",
+                [],
+            )?;
+            // An active session that also has a summary must still read raw,
+            // so the summary's numbers never leak onto an in-progress row.
+            seed_session(conn, "s-active", 2000.0, None, true, "mob", 0.0, 0.0, 0.0)?;
+            conn.execute(
+                "INSERT INTO session_summaries \
+                 (session_id, started_at, ended_at, duration_hours, kills, loot_tt, weapon_cost, \
+                  enhancer_cost, armour_cost, heal_cost, dangling_cost, cycled_ped, \
+                  regular_skill_ped_json, attribute_levels_json, regular_skill_tt, \
+                  attribute_levels_total, primary_mobs_json, primary_weapons_json, globals, hofs) \
+                 VALUES ('s-active', 2000.0, 2000.0, 1.0, 9, 999.0, 9.0, 9.0, 9.0, 9.0, 9.0, 0.0, \
+                  '{}', '{}', 0.0, 0.0, '[\"Leak\"]', '[\"Leak\"]', 9, 9)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let value = db
+            .with_reader(|conn| list_sessions_read(conn, 5000.0))
+            .await
+            .unwrap();
+        let rows = value.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        // Ordered by started_at DESC: the active session first.
+        assert_eq!(rows[0]["id"], json!("s-active"));
+        assert_eq!(rows[1]["id"], json!("s-ended"));
+
+        // The active row read raw: none of the summary's leak values survive.
+        assert_eq!(rows[0]["cost"], json!(0.0));
+        assert_eq!(rows[0]["returns"], json!(0.0));
+        assert_eq!(rows[0]["globals"], json!(0));
+        assert_eq!(rows[0]["primaryMobs"], json!([]));
+        assert_eq!(rows[0]["duration"], json!(3000));
+
+        // The ended row read its summary.
+        assert_eq!(rows[1]["cost"], json!(15.0));
+        assert_eq!(rows[1]["returns"], json!(30.0));
+        assert_eq!(rows[1]["returnRate"], json!(2.0));
+        assert_eq!(rows[1]["globals"], json!(2));
+        assert_eq!(rows[1]["primaryMobs"], json!(["Argonaut"]));
+    }
+
+    // ── Session detail ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_session_read_shapes_the_full_detail() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(4600.0),
+                false,
+                "mob",
+                4.0,
+                2.0,
+                1.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 30.0, 3.0, 1000.0)?;
+            seed_kill(conn, "k2", "s1", Some("Argonaut"), None, 0.0, 0.0, 1100.0)?;
+            seed_tool(conn, "k1", "Gun", 10, 100.0, 1, 0.5)?;
+            seed_tool(conn, "k2", "Gun", 10, 100.0, 0, 0.5)?;
+            seed_loot(conn, "k1", "Oil", 2, 20.0, false, None)?;
+            seed_loot(conn, "k1", "Enhancer Shrapnel", 1, 5.0, true, None)?;
+            seed_loot(conn, "k2", "Hide", 1, 10.0, false, Some(4700.0))?;
+            seed_notable(conn, "s1", "global_kill", "Argonaut", 50.0, 1000.0)?;
+            seed_notable(conn, "s1", "hof_item", "Sword", 100.0, 1100.0)?;
+            seed_skill_gain(conn, "s1", "Laser Weaponry Technology", 1.0, 0.5, 1000.0)?;
+            seed_skill_gain(conn, "s1", "Agility", 2.0, 1.0, 1000.0)?;
+            seed_calibration(conn, "Laser Weaponry Technology", 42.5)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let value = db
+            .with_reader(|conn| get_session_read(conn, "s1", 0.0))
+            .await
+            .unwrap()
+            .expect("the session exists");
+
+        // weapon 10 + heal 2 + enhancer 3 + armour 4 + dangling 1 = 20 cost;
+        // returns 30; net 10; rate 1.5; pes = 0.5 + 1.0 skill TT.
+        assert_eq!(
+            value,
+            json!({
+                "sessionId": "s1",
+                "summary": {
+                    "cost": 20.0,
+                    "returns": 30.0,
+                    "pes": 1.5,
+                    "net": 10.0,
+                    "returnRate": 1.5,
+                    "kills": 2,
+                    "duration": 3600,
+                    "costBreakdown": {
+                        "weaponCost": 10.0,
+                        "healCost": 2.0,
+                        "enhancerCost": 3.0,
+                        "armourCost": 4.0,
+                    },
+                },
+                "mobEntryMode": "mob",
+                "notableEvents": [
+                    {"type": "global", "eventType": "global_kill", "target": "Argonaut", "item": "Argonaut", "value": 50.0},
+                    {"type": "hof", "eventType": "hof_item", "target": "Sword", "item": "Sword", "value": 100.0},
+                ],
+                "lootBreakdown": [{"name": "Oil", "quantity": 2, "ttValue": 20.0}],
+                "deactivatedLootBreakdown": [{"name": "Hide", "quantity": 1, "ttValue": 10.0}],
+                "mobBreakdown": [{"currentName": "Argonaut", "originalName": null, "killCount": 2}],
+                "effectiveLoot": 30.0,
+                "toolStats": [{"weaponName": "Gun", "shotsFired": 20, "damageDealt": 200.0, "crits": 1, "costAttributed": 10.0}],
+                "skillGains": [{"skillName": "Laser Weaponry Technology", "level": 42.5, "ttValueGained": 0.5}],
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn get_session_read_absent_is_none() {
+        let (_dir, db) = open_db().await;
+        let value = db
+            .with_reader(|conn| get_session_read(conn, "absent", 0.0))
+            .await
+            .unwrap();
+        assert!(value.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_session_read_recovers_the_mob_entry_mode() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "tag",
+                1000.0,
+                Some(2000.0),
+                false,
+                "tag",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_session(
+                conn,
+                "weird",
+                1000.0,
+                Some(2000.0),
+                false,
+                "legacy",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let tag = db
+            .with_reader(|conn| get_session_read(conn, "tag", 0.0))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tag["mobEntryMode"], json!("tag"));
+        // Anything outside the closed vocabulary recovers to the mob default.
+        let weird = db
+            .with_reader(|conn| get_session_read(conn, "weird", 0.0))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(weird["mobEntryMode"], json!("mob"));
+    }
+
+    #[tokio::test]
+    async fn loot_agg_splits_active_and_deactivated_and_drops_shrapnel() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 0.0, 0.0, 1000.0)?;
+            seed_loot(conn, "k1", "Oil", 2, 20.0, false, None)?;
+            seed_loot(conn, "k1", "Enhancer Shrapnel", 1, 5.0, true, None)?;
+            seed_loot(conn, "k1", "Hide", 1, 10.0, false, Some(1500.0))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let active = db
+            .with_reader(|conn| loot_agg(conn, "s1", "l.deactivated_at IS NULL"))
+            .await
+            .unwrap();
+        assert_eq!(active, vec![("Oil".to_string(), 2, 20.0)]);
+
+        let deactivated = db
+            .with_reader(|conn| loot_agg(conn, "s1", "l.deactivated_at IS NOT NULL"))
+            .await
+            .unwrap();
+        assert_eq!(deactivated, vec![("Hide".to_string(), 1, 10.0)]);
+    }
+
+    #[test]
+    fn loot_breakdown_sorted_orders_by_tt_descending() {
+        let rows = vec![
+            ("Shrapnel".to_string(), 5, 10.0),
+            ("Oil".to_string(), 2, 25.5),
+        ];
+        let out = loot_breakdown_sorted(&rows);
+        assert_eq!(
+            out,
+            vec![
+                json!({"name": "Oil", "quantity": 2, "ttValue": 25.5}),
+                json!({"name": "Shrapnel", "quantity": 5, "ttValue": 10.0}),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn session_skill_gains_excludes_attributes_and_joins_levels() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_skill_gain(conn, "s1", "Laser Weaponry Technology", 1.0, 0.5, 1000.0)?;
+            seed_skill_gain(conn, "s1", "Agility", 2.0, 1.0, 1000.0)?;
+            seed_calibration(conn, "Laser Weaponry Technology", 42.5)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let gains = db
+            .with_reader(|conn| session_skill_gains(conn, "s1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            gains,
+            json!([{"skillName": "Laser Weaponry Technology", "level": 42.5, "ttValueGained": 0.5}])
+        );
+
+        // No gains: an empty array, not null.
+        let empty = db
+            .with_reader(|conn| session_skill_gains(conn, "absent"))
+            .await
+            .unwrap();
+        assert_eq!(empty, json!([]));
+    }
+
+    #[test]
+    fn stable_sort_desc_by_key_orders_descending() {
+        let mut entries = vec![(1i64, json!("a")), (3, json!("b")), (2, json!("c"))];
+        stable_sort_desc_by_key(&mut entries);
+        let keys: Vec<i64> = entries.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn stable_sort_desc_by_f64_orders_descending_and_is_stable() {
+        let mut entries = vec![(1.0f64, json!("a")), (3.0, json!("b")), (3.0, json!("c"))];
+        stable_sort_desc_by_f64(&mut entries);
+        let order: Vec<&Value> = entries.iter().map(|(_, v)| v).collect();
+        // Descending, and the two equal keys keep their input order.
+        assert_eq!(order, vec![&json!("b"), &json!("c"), &json!("a")]);
+    }
+
+    // ── Session existence and tag suggestions ───────────────────────
+
+    #[tokio::test]
+    async fn session_exists_reports_presence() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )
+        })
+        .await
+        .unwrap();
+        assert!(session_exists(&db, "s1").await.unwrap());
+        assert!(!session_exists(&db, "absent").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn tag_suggestions_match_free_text_mobs() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            // Two tag-style kills (no species/maturity) and one classified kill.
+            seed_kill(conn, "k1", "s1", Some("My Tag"), None, 0.0, 0.0, 1000.0)?;
+            seed_kill(conn, "k2", "s1", Some("My Tag"), None, 0.0, 0.0, 1100.0)?;
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, mob_species, timestamp) \
+                 VALUES ('k3', 's1', 'Argonaut', 'Argonaut', 1200.0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        // An empty query short-circuits.
+        assert_eq!(
+            tag_suggestions_impl(&db, "  ", 5).await.unwrap(),
+            Vec::<String>::new()
+        );
+        // A match returns the free-text tag; the classified mob is excluded.
+        assert_eq!(
+            tag_suggestions_impl(&db, "tag", 5).await.unwrap(),
+            vec!["My Tag".to_string()]
+        );
+        assert!(tag_suggestions_impl(&db, "argonaut", 5)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    // ── Async read impls over the real core ─────────────────────────
+
+    #[tokio::test]
+    async fn list_sessions_impl_returns_the_recent_sessions() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )
+        })
+        .await
+        .unwrap();
+        let value = list_sessions_impl(&db, 5000.0).await.unwrap();
+        let rows = value.as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], json!("s1"));
+    }
+
+    #[tokio::test]
+    async fn get_session_impl_returns_detail_or_none() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )
+        })
+        .await
+        .unwrap();
+        let found = get_session_impl(&db, "s1", 0.0).await.unwrap();
+        assert_eq!(found.unwrap()["sessionId"], json!("s1"));
+        assert!(get_session_impl(&db, "absent", 0.0)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    // ── Session edits ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn validate_session_exists_guards_absent_and_active() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "ended",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_session(conn, "active", 1000.0, None, true, "mob", 0.0, 0.0, 0.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(validate_session_exists(&db, "ended").await.is_ok());
+        assert!(matches!(
+            validate_session_exists(&db, "absent").await,
+            Err(EditError::NotFound(_))
+        ));
+        assert!(matches!(
+            validate_session_exists(&db, "active").await,
+            Err(EditError::Conflict(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn build_mob_edit_response_counts_kills() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 0.0, 0.0, 1000.0)?;
+            seed_kill(conn, "k2", "s1", Some("Argonaut"), None, 0.0, 0.0, 1100.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let value = build_mob_edit_response(&db, "s1", "Argonaut")
+            .await
+            .unwrap();
+        assert_eq!(
+            value,
+            json!({"sessionId": "s1", "mobName": "Argonaut", "killCount": 2})
+        );
+    }
+
+    #[tokio::test]
+    async fn build_loot_item_edit_response_shapes_the_delta() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 30.0, 0.0, 1000.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let value = build_loot_item_edit_response(&db, "s1", "Oil", 3, -12.3456)
+            .await
+            .unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "sessionId": "s1",
+                "itemName": "Oil",
+                "affectedRows": 3,
+                "totalValueDelta": -12.3456,
+                "sessionTotalReturns": 30.0,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn rename_session_mob_impl_covers_the_flow_and_guards() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 0.0, 0.0, 1000.0)?;
+            seed_kill(conn, "k2", "s1", Some("Argonaut"), None, 0.0, 0.0, 1100.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        // Blank targets and a no-op rename are rejected before any write.
+        assert!(matches!(
+            rename_session_mob_impl(&db, "s1", "  ", "Atrox").await,
+            Err(EditError::BadRequest(_))
+        ));
+        assert!(matches!(
+            rename_session_mob_impl(&db, "s1", "Argonaut", "Argonaut").await,
+            Err(EditError::Conflict(_))
+        ));
+        assert!(matches!(
+            rename_session_mob_impl(&db, "s1", "Nonexistent", "Atrox").await,
+            Err(EditError::Conflict(_))
+        ));
+
+        // The rename lands and reports the new count.
+        let value = rename_session_mob_impl(&db, "s1", "Argonaut", "Atrox")
+            .await
+            .unwrap();
+        assert_eq!(
+            value,
+            json!({"sessionId": "s1", "mobName": "Atrox", "killCount": 2})
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_session_mob_impl_covers_the_flow_and_guards() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        // Blank and no-match branches.
+        assert!(matches!(
+            restore_session_mob_impl(&db, "s1", "  ").await,
+            Err(EditError::BadRequest(_))
+        ));
+        assert!(matches!(
+            restore_session_mob_impl(&db, "s1", "Atrox").await,
+            Err(EditError::Conflict(_))
+        ));
+
+        // A single prior name restores cleanly.
+        db.with_writer(|conn| {
+            seed_kill(
+                conn,
+                "k1",
+                "s1",
+                Some("Atrox"),
+                Some("Argonaut"),
+                0.0,
+                0.0,
+                1000.0,
+            )
+        })
+        .await
+        .unwrap();
+        let value = restore_session_mob_impl(&db, "s1", "Atrox").await.unwrap();
+        assert_eq!(value["mobName"], json!("Argonaut"));
+
+        // Two distinct prior names merged into one is ambiguous.
+        db.with_writer(|conn| {
+            seed_kill(
+                conn,
+                "k2",
+                "s1",
+                Some("Merged"),
+                Some("First"),
+                0.0,
+                0.0,
+                1000.0,
+            )?;
+            seed_kill(
+                conn,
+                "k3",
+                "s1",
+                Some("Merged"),
+                Some("Second"),
+                0.0,
+                0.0,
+                1100.0,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            restore_session_mob_impl(&db, "s1", "Merged").await,
+            Err(EditError::Conflict(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn bulk_flip_loot_item_flips_and_guards() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 30.0, 0.0, 1000.0)?;
+            seed_loot(conn, "k1", "Oil", 1, 20.0, false, None)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        // No such loot is a not-found; deactivating an active row nets it out.
+        assert!(matches!(
+            bulk_flip_loot_item(&db, "s1", "Ghost", "deactivated").await,
+            Err(EditError::NotFound(_))
+        ));
+        let value = bulk_flip_loot_item(&db, "s1", "Oil", "deactivated")
+            .await
+            .unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "sessionId": "s1",
+                "itemName": "Oil",
+                "affectedRows": 1,
+                "totalValueDelta": -20.0,
+                "sessionTotalReturns": 10.0,
+            })
+        );
+
+        // A second deactivate finds nothing left to flip: a conflict.
+        assert!(matches!(
+            bulk_flip_loot_item(&db, "s1", "Oil", "deactivated").await,
+            Err(EditError::Conflict(_))
+        ));
+
+        // Flipping it back to active restores the value.
+        let back = bulk_flip_loot_item(&db, "s1", "Oil", "active")
+            .await
+            .unwrap();
+        assert_eq!(back["totalValueDelta"], json!(20.0));
+        assert_eq!(back["sessionTotalReturns"], json!(30.0));
+    }
+
+    #[tokio::test]
+    async fn set_armour_cost_impl_accumulates_or_not_found() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                1.0,
+                0.0,
+                0.0,
+            )
+        })
+        .await
+        .unwrap();
+
+        let value = set_armour_cost_impl(&db, "s1", 5.0).await.unwrap();
+        assert_eq!(value, json!({"sessionId": "s1", "armourCost": 5.0}));
+        // The stored cost accumulated onto the seeded 1.0.
+        let stored = db
+            .with_reader(|conn| {
+                Ok::<f64, DbError>(conn.query_row(
+                    "SELECT armour_cost FROM tracking_sessions WHERE id = 's1'",
+                    [],
+                    |row| row.get::<_, f64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(stored, 6.0);
+
+        assert!(matches!(
+            set_armour_cost_impl(&db, "absent", 5.0).await,
+            Err(EditError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_session_impl_cascades_and_guards() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(2000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 30.0, 0.0, 1000.0)?;
+            seed_tool(conn, "k1", "Gun", 10, 100.0, 1, 0.5)?;
+            seed_loot(conn, "k1", "Oil", 1, 20.0, false, None)?;
+            seed_notable(conn, "s1", "global_kill", "Argonaut", 50.0, 1000.0)?;
+            seed_skill_gain(conn, "s1", "Laser Weaponry Technology", 1.0, 0.5, 1000.0)?;
+            seed_session(conn, "active", 1000.0, None, true, "mob", 0.0, 0.0, 0.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            delete_session_impl(&db, "absent").await,
+            Err(EditError::NotFound(_))
+        ));
+        assert!(matches!(
+            delete_session_impl(&db, "active").await,
+            Err(EditError::Conflict(_))
+        ));
+
+        delete_session_impl(&db, "s1").await.unwrap();
+        assert!(!session_exists(&db, "s1").await.unwrap());
+        // The kill-scoped children are gone with it.
+        let kill_count = db
+            .with_reader(|conn| {
+                Ok::<i64, DbError>(conn.query_row(
+                    "SELECT COUNT(*) FROM kills WHERE session_id = 's1'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(kill_count, 0);
+    }
+
+    // ── Producer helpers ────────────────────────────────────────────
+
+    #[test]
+    fn validate_hotbar_needs_a_bound_slot() {
+        let mut config = AppConfig::default();
+        // The default hotbar is all-null: not workable.
+        let (ok, message) = validate_hotbar(&config);
+        assert!(!ok);
+        assert!(message.unwrap().contains("Bind at least one"));
+
+        // Binding one slot makes it workable.
+        config.hotbar.insert("1".to_string(), json!(5));
+        assert_eq!(validate_hotbar(&config), (true, None));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn configured_manual_label_covers_tag_and_manual() {
+        let mut config = AppConfig::default();
+
+        // Tag mode with a tag, and with a blank tag.
+        config.mob_tracking_mode = "tag".to_string();
+        config.mob_tracking_tag = "My Tag".to_string();
+        assert_eq!(
+            configured_manual_label(&config),
+            (json!("My Tag"), json!("tag"))
+        );
+        config.mob_tracking_tag = "  ".to_string();
+        assert_eq!(configured_manual_label(&config), (Value::Null, Value::Null));
+
+        // Manual mode: species with and without maturity, and blank species.
+        config.mob_tracking_mode = "mob".to_string();
+        config.manual_mob_species = "Argonaut".to_string();
+        config.manual_mob_maturity = "Young".to_string();
+        assert_eq!(
+            configured_manual_label(&config),
+            (json!("Young Argonaut"), json!("manual"))
+        );
+        config.manual_mob_maturity = String::new();
+        assert_eq!(
+            configured_manual_label(&config),
+            (json!("Argonaut"), json!("manual"))
+        );
+        config.manual_mob_species = String::new();
+        assert_eq!(configured_manual_label(&config), (Value::Null, Value::Null));
+    }
+
+    #[test]
+    fn notable_event_label_covers_known_and_fallbacks() {
+        assert_eq!(notable_event_label("global_kill"), "Global Kill");
+        assert_eq!(notable_event_label("global_item"), "Global Item");
+        assert_eq!(notable_event_label("hof_kill"), "HoF Kill");
+        assert_eq!(notable_event_label("hof_item"), "HoF Item");
+        assert_eq!(notable_event_label("quest_started"), "Quest Started");
+        assert_eq!(notable_event_label("quest_completed"), "Quest Completed");
+        // Unknown types fall back to the category rendering.
+        assert_eq!(notable_event_label("hof_other"), "HoF");
+        assert_eq!(notable_event_label("quest_other"), "Quest");
+        assert_eq!(notable_event_label("anything"), "Global");
+    }
+
+    #[test]
+    fn notable_event_description_formats_quest_and_valued() {
+        assert_eq!(
+            notable_event_description("quest_started", "Dragon", 0.0),
+            "Quest Started: Dragon"
+        );
+        assert_eq!(
+            notable_event_description("global_kill", "Argonaut", 12.5),
+            "Global Kill: Argonaut (12.50 PED)"
+        );
+    }
+
+    #[test]
+    fn capitalize_uppercases_the_first_char() {
+        assert_eq!(capitalize("global"), "Global");
+        assert_eq!(capitalize("a"), "A");
+        assert_eq!(capitalize(""), "");
+    }
+
+    #[test]
+    fn clear_tag_clears_the_free_text_tag() {
+        let updates = clear_tag();
+        assert_eq!(updates.get("mob_tracking_tag"), Some(&json!("")));
+        assert_eq!(updates.len(), 1);
+    }
+
+    #[test]
+    fn clear_manual_mob_clears_species_and_maturity() {
+        let updates = clear_manual_mob();
+        assert_eq!(updates.get("manual_mob_species"), Some(&json!("")));
+        assert_eq!(updates.get("manual_mob_maturity"), Some(&json!("")));
+        assert_eq!(updates.len(), 2);
+    }
+
+    #[test]
+    fn mob_display_joins_maturity_and_species() {
+        assert_eq!(mob_display("Argonaut", "Young"), json!("Young Argonaut"));
+        assert_eq!(mob_display("Argonaut", ""), json!("Argonaut"));
+        assert_eq!(mob_display("", ""), Value::Null);
+    }
+
+    #[test]
+    fn project_keeps_present_fields_in_order() {
+        let value = json!({"a": 1, "b": 2, "c": 3});
+        let projected = project(&value, &["b", "a", "z"]);
+        // Present fields only, in the requested order.
+        assert_eq!(
+            serde_json::to_string(&projected).unwrap(),
+            r#"{"b":2,"a":1}"#
+        );
+    }
+
+    #[test]
+    fn python_str_of_renders_scalars() {
+        assert_eq!(python_str_of(&json!("hi")), "hi");
+        assert_eq!(python_str_of(&json!(42)), "42");
+        assert_eq!(python_str_of(&json!(true)), "true");
+    }
+
+    #[test]
+    fn str_id_or_null_stringifies_or_nulls() {
+        assert_eq!(str_id_or_null(&Value::Null), Value::Null);
+        assert_eq!(str_id_or_null(&json!(42)), json!("42"));
+        assert_eq!(str_id_or_null(&json!("x")), json!("x"));
+    }
+
+    #[test]
+    fn opt_str_reads_strings_only() {
+        assert_eq!(opt_str(&json!("x")), Some("x".to_string()));
+        assert_eq!(opt_str(&Value::Null), None);
+        assert_eq!(opt_str(&json!(5)), None);
+    }
+
+    #[test]
+    fn format_quest_link_suggestion_shapes_the_wire() {
+        let suggestion = json!({
+            "suggestion_type": "auto",
+            "reason": "match",
+            "quest_id": 42,
+            "quest_name": "Q",
+            "playlist_id": null,
+            "playlist_name": "P",
+        });
+        assert_eq!(
+            format_quest_link_suggestion("s1", &suggestion),
+            json!({
+                "sessionId": "s1",
+                "suggestionType": "auto",
+                "reason": "match",
+                "questId": "42",
+                "questName": "Q",
+                "playlistId": null,
+                "playlistName": "P",
+            })
+        );
+    }
+
+    // ── Quest-link and trifecta ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn trifecta_attribution_summary_builds_or_nulls() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_equipment(conn, 1, "Small Gun", "weapon")?;
+            seed_equipment(conn, 2, "Heal Tool", "healing")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let config = AppConfig {
+            trifecta_presets: vec![TrifectaPresetConfig {
+                id: "p1".to_string(),
+                name: "Preset One".to_string(),
+                small_weapon_id: Some(1),
+                big_weapon_id: None,
+                heal_id: Some(2),
+            }],
+            active_trifecta_preset_id: Some("p1".to_string()),
+            ..AppConfig::default()
+        };
+        let summary = trifecta_attribution_summary(&db, &config).await.unwrap();
+        assert_eq!(
+            summary,
+            json!({
+                "activePresetId": "p1",
+                "presetName": "Preset One",
+                "presets": [{"id": "p1", "name": "Preset One"}],
+                "smallWeapon": "Small Gun",
+                "bigWeapon": null,
+                "healTool": "Heal Tool",
+            })
+        );
+
+        // No presets and no bound ids collapses to null.
+        let empty = AppConfig {
+            trifecta_presets: vec![],
+            active_trifecta_preset_id: None,
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            trifecta_attribution_summary(&db, &empty).await.unwrap(),
+            Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn equipment_name_resolves_by_id_and_type() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| seed_equipment(conn, 1, "Small Gun", "weapon"))
+            .await
+            .unwrap();
+        assert_eq!(
+            equipment_name(&db, None, "weapon").await.unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            equipment_name(&db, Some(1), "weapon").await.unwrap(),
+            json!("Small Gun")
+        );
+        // An absent id and a type mismatch both read null.
+        assert_eq!(
+            equipment_name(&db, Some(999), "weapon").await.unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            equipment_name(&db, Some(1), "healing").await.unwrap(),
+            Value::Null
+        );
+    }
+}

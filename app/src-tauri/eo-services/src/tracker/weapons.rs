@@ -342,3 +342,44 @@ pub(super) fn value_truthy(value: &Value) -> bool {
         Value::Object(map) => !map.is_empty(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reset_runtime_clears_the_non_identity_state_and_keeps_the_hotbar_tool() {
+        let mut runtime = WeaponRuntime {
+            hotbar_tool: Some("Opalo".to_string()),
+            active_key: Some("opalo".to_string()),
+            observed_name: Some("Opalo (L)".to_string()),
+            last_offensive_tool: Some("opalo".to_string()),
+            ..WeaponRuntime::default()
+        };
+        runtime
+            .trifecta_profiles
+            .insert("opalo".to_string(), Arc::new(json!({})));
+        runtime.enhancer_states.insert(
+            "opalo".to_string(),
+            DamageEnhancerState::from_props("Opalo", Arc::new(json!({"damage_enhancers": 2}))),
+        );
+        runtime.profile_cache.insert("opalo".to_string(), None);
+        runtime
+            .static_cost_cache
+            .insert("opalo".to_string(), Ped(0.5));
+
+        runtime.reset_runtime();
+
+        // The hotbar tool identity survives the reload.
+        assert_eq!(runtime.hotbar_tool.as_deref(), Some("Opalo"));
+        // Everything else is cleared.
+        assert!(runtime.active_key.is_none());
+        assert!(runtime.observed_name.is_none());
+        assert!(runtime.last_offensive_tool.is_none());
+        assert!(runtime.trifecta_profiles.is_empty());
+        assert!(runtime.enhancer_states.is_empty());
+        assert!(runtime.profile_cache.is_empty());
+        assert!(runtime.static_cost_cache.is_empty());
+    }
+}

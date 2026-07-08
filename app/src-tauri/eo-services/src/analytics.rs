@@ -3026,4 +3026,434 @@ mod tests {
         assert!(service.delete_inventory_item(&id).await.unwrap());
         assert!(!service.delete_inventory_item(&id).await.unwrap());
     }
+
+    /// The inventory list reads created rows back, newest acquisition first.
+    #[tokio::test]
+    async fn list_inventory_returns_created_rows_newest_first() {
+        let (_dir, service) = write_service().await;
+        service
+            .create_inventory_item("Old", 1.0, 0.0, None, Some("2026-01-01"))
+            .await
+            .unwrap();
+        service
+            .create_inventory_item("New", 2.0, 0.0, None, Some("2026-02-01"))
+            .await
+            .unwrap();
+        let rows = service.list_inventory().await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "New");
+        assert_eq!(rows[1].name, "Old");
+    }
+
+    /// A page whose row count exactly meets the limit ends the walk: the extra
+    /// probe row finds nothing, so `has_more` is strictly greater-than, not
+    /// greater-or-equal.
+    #[tokio::test]
+    async fn ledger_page_exactly_at_the_limit_has_no_next_cursor() {
+        let (_dir, service) = write_service().await;
+        service
+            .create_ledger_entry("2026-05-01", "expense", "only", 1.0, "t")
+            .await
+            .unwrap();
+        let page = service.list_ledger(None, Some(1)).await.unwrap();
+        assert_eq!(page.entries.len(), 1);
+        assert!(page.next_cursor.is_none());
+    }
+
+    #[test]
+    fn hybrid_window_partitions_an_epoch_range_against_the_watermark() {
+        let d = |day: &str| daily_rollup::day_range(day).unwrap();
+        let (s11, _) = d("2026-03-11");
+        let (s12, _) = d("2026-03-12");
+        let (s15, _) = d("2026-03-15");
+        let (_, e20) = d("2026-03-20");
+
+        // Interior window with partial edge days at both ends: the full days
+        // 12..=14 roll, the sub-day edges read raw.
+        let a = hybrid_window(Some(s11 + 100.0), Some(s15 + 100.0), "2026-03-20");
+        assert_eq!(
+            a.rollup_days,
+            Some((Some("2026-03-12".to_string()), "2026-03-14".to_string()))
+        );
+        assert_eq!(
+            a.raw_ranges,
+            vec![
+                (Some(s11 + 100.0), Some(s12)),
+                (Some(s15), Some(s15 + 100.0)),
+            ]
+        );
+
+        // Bounds landing exactly on midnights: no raw edges at all.
+        let b = hybrid_window(Some(s12), Some(s15), "2026-03-20");
+        assert_eq!(
+            b.rollup_days,
+            Some((Some("2026-03-12".to_string()), "2026-03-14".to_string()))
+        );
+        assert_eq!(b.raw_ranges, Vec::<(Option<f64>, Option<f64>)>::new());
+
+        // The all-time window: unbounded below, raw tail from the watermark on.
+        let c = hybrid_window(None, None, "2026-03-20");
+        assert_eq!(c.rollup_days, Some((None, "2026-03-20".to_string())));
+        assert_eq!(c.raw_ranges, vec![(Some(e20), None)]);
+
+        // A sub-day window spanning no full day is served entirely raw.
+        let day = hybrid_window(Some(s12 + 100.0), Some(s12 + 200.0), "2026-03-20");
+        assert_eq!(day.rollup_days, None);
+        assert_eq!(day.raw_ranges, vec![(Some(s12 + 100.0), Some(s12 + 200.0))]);
+    }
+
+    #[test]
+    fn merge_family_sums_adds_present_slots_and_leaves_the_rest() {
+        let mut into: FamilySums = [
+            Some(2.0),
+            None,
+            Some(1.0),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ];
+        merge_family_sums(
+            &mut into,
+            [
+                Some(3.0),
+                Some(4.0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+        );
+        assert_eq!(into[0], Some(5.0)); // present + present
+        assert_eq!(into[1], Some(4.0)); // an empty slot takes the incoming value
+        assert_eq!(into[2], Some(1.0)); // an incoming None leaves the slot
+        assert_eq!(into[3], None);
+    }
+
+    fn make_metrics(
+        loot: f64,
+        gains: &[(&str, f64)],
+        cost: f64,
+        losses: &[(&str, f64)],
+    ) -> Metrics {
+        let map = |pairs: &[(&str, f64)]| {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), *v))
+                .collect::<std::collections::BTreeMap<String, f64>>()
+        };
+        Metrics {
+            loot_tt: SqlNumber::Float(loot),
+            skill_tt: SqlNumber::Int(0),
+            codex_pes: SqlNumber::Int(0),
+            quest_pes: SqlNumber::Int(0),
+            weapon: SqlNumber::Int(0),
+            healing: SqlNumber::Int(0),
+            enhancer: SqlNumber::Int(0),
+            armour: SqlNumber::Int(0),
+            dangling: SqlNumber::Int(0),
+            tracking_cost: SqlNumber::Float(cost),
+            ledger_gains: map(gains),
+            ledger_losses: map(losses),
+        }
+    }
+
+    #[test]
+    fn rate_from_metrics_is_liquid_gains_over_liquid_losses() {
+        // (loot 10 + markup 5) / (cost 4 + expense 1) = 3.0.
+        let m = make_metrics(10.0, &[("markup", 5.0)], 4.0, &[("expense", 1.0)]);
+        assert_eq!(rate_from_metrics(&m), 3.0);
+        // Non-positive losses short-circuit to 0.0 (no division).
+        let zero = make_metrics(10.0, &[("markup", 5.0)], 0.0, &[]);
+        assert_eq!(rate_from_metrics(&zero), 0.0);
+    }
+
+    #[test]
+    fn slice_rows_zero_cycled_group_yields_zero_rates() {
+        // A group whose summed cycled PED is zero rates to 0.0, never a
+        // divide-by-zero infinity.
+        let agg = SessionAgg {
+            duration_hours: 1.0,
+            kills: 1,
+            loot_tt: 5.0,
+            skill_tt: 5.0,
+            cycled_ped: 0.0,
+            dominant_mob: Some("X".to_string()),
+            dominant_mob_kills: 1,
+            ..SessionAgg::default()
+        };
+        let rows =
+            build_activity_slice_rows(&[agg], |s| s.dominant_mob.clone(), |s| s.dominant_mob_kills);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pes_per100_ped, 0.0);
+        assert_eq!(rows[0].loot_rate, 0.0);
+    }
+
+    /// A summary row with zero kills is dropped by the Activity filter even
+    /// when its duration and cycled PED are positive.
+    #[tokio::test]
+    async fn activity_filter_drops_a_zero_kill_summary_row() {
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO session_summaries \
+                 (session_id, summary_version, started_at, ended_at, duration_hours, kills, \
+                  loot_tt, weapon_cost, enhancer_cost, armour_cost, heal_cost, dangling_cost, \
+                  cycled_ped, regular_skill_ped_json, attribute_levels_json, regular_skill_tt, \
+                  attribute_levels_total, dominant_mob, dominant_tag, dominant_weapon, \
+                  dominant_mob_kills, dominant_tag_kills, activity_skill_tt) \
+                 VALUES ('ghost', 2, 0, 3600, 1.0, 0, 2.0, 0, 0, 0, 0, 0, 5.0, '{}', '{}', 0, 0, \
+                         'Ghost', NULL, NULL, 3, 0, 1.0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let sessions = db.with_reader(activity_sessions_read).await.unwrap();
+        assert!(sessions.is_empty());
+    }
+
+    /// The Overview timeline carries per-bucket family totals from BOTH sides
+    /// of the hybrid split (a rolled old day and a raw current day), including
+    /// the session-cost leg of a rolled day whose heal/dangling sums are NULL.
+    /// The period metrics fold the same raw edge in.
+    #[tokio::test]
+    async fn overview_timeline_carries_rolled_and_raw_family_totals() {
+        let now = 1_800_000_000.0;
+        let day = 86400.0;
+        let (_dir, db) = open_env().await;
+        let old = now - 40.0 * day;
+        db.with_writer(move |conn| {
+            // A rolled old day: a session with armour cost only (heal/dangling
+            // NULL, so the rollup keeps them NULL) and a loot kill.
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, armour_cost, heal_cost, dangling_cost) \
+                 VALUES ('old', ?1, ?2, 3.0, NULL, NULL)",
+                rusqlite::params![old, old + 3600.0],
+            )?;
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
+                 VALUES ('ok', 'old', 'M', ?1, 0, 20.0)",
+                rusqlite::params![old + 10.0],
+            )?;
+            // A raw kill dated at `now` (after the healed watermark).
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
+                 VALUES ('rk', 'x', 'M', ?1, 0, 7.0)",
+                rusqlite::params![now],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let data = overview_impl(&db, now, "all").await.unwrap();
+        let loot: f64 = data.timeline.iter().map(|p| p.loot_tt).sum();
+        let cost: f64 = data.timeline.iter().map(|p| p.tracking_cost).sum();
+        // Rolled loot 20 (old day) + raw loot 7 (today).
+        assert_eq!(loot, 27.0);
+        // The armour-only rolled session's cost survives the session leg.
+        assert_eq!(cost, 3.0);
+        // The period metrics fold the raw edge into the rolled sums too.
+        assert_eq!(data.returns_breakdown.loot_tt, 27.0);
+    }
+
+    /// A timeline point carries its per-tag ledger bucket totals.
+    #[tokio::test]
+    async fn overview_timeline_carries_ledger_bucket_totals() {
+        let now = 1_800_000_000.0;
+        let (_dir, db) = open_env().await;
+        let today = epoch_to_iso(now);
+        let today_c = today.clone();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                 VALUES ('g', ?1, 'markup', 'sold', 12.5, 'loot_sale')",
+                rusqlite::params![today_c],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let data = overview_impl(&db, now, "all").await.unwrap();
+        let point = data
+            .timeline
+            .iter()
+            .find(|p| p.bucket == today)
+            .expect("the ledgered day has a timeline point");
+        assert_eq!(point.ledger_gains.get("loot_sale"), Some(&12.5));
+    }
+
+    /// The trend bands are exclusive at their edges: a recent rate exactly at
+    /// prior * 1.02 is not "improving", and exactly at prior * 0.98 is not
+    /// "declining".
+    #[tokio::test]
+    async fn overview_trend_bands_are_exclusive_at_the_edges() {
+        let now = 1_800_000_000.0;
+        let day = 86400.0;
+
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "r", now - 10.0 * day, 50.0, 1, 51.0).await; // 51/50 = 1.02
+        seed_rate(&db, "p", now - 45.0 * day, 10.0, 1, 10.0).await; // 1.0
+        assert_eq!(
+            overview_impl(&db, now, "all").await.unwrap().trend,
+            "stable"
+        );
+
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "r", now - 10.0 * day, 50.0, 1, 49.0).await; // 49/50 = 0.98
+        seed_rate(&db, "p", now - 45.0 * day, 10.0, 1, 10.0).await; // 1.0
+        assert_eq!(
+            overview_impl(&db, now, "all").await.unwrap().trend,
+            "stable"
+        );
+    }
+
+    /// Every field the raw reconciliation aggregate computes for one session,
+    /// hand-derived from the seed.
+    #[tokio::test]
+    async fn raw_session_agg_computes_every_field() {
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            for (kill, mob, species, maturity, loot, enhancer) in [
+                ("k1", "Young Atrox", "Atrox", "Young", 2.0, 0.1),
+                ("k2", "Young Atrox", "Atrox", "Young", 3.0, 0.0),
+                ("k3", "Young Atrox", "Atrox", "Young", 4.0, 0.0),
+                ("k4", "Snable", "Snable", "", 1.0, 0.0),
+                ("k5", "Unknown", "", "", 0.5, 0.0),
+            ] {
+                conn.execute(
+                    "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
+                     timestamp, enhancer_cost, loot_total_ped) \
+                     VALUES (?1, 'rs', ?2, ?3, ?4, 1500.0, ?5, ?6)",
+                    rusqlite::params![kill, mob, species, maturity, enhancer, loot],
+                )?;
+            }
+            conn.execute(
+                "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, cost_per_shot) \
+                 VALUES ('k1', 'Rifle', 30, 0.05), ('k2', 'Pistol', 10, 0.01)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+                 VALUES ('rs', 1100.0, 'Rifle', 1.0, 0.5), ('rs', 1200.0, 'Rifle', 1.0, 0.25), \
+                        ('rs', 1300.0, 'Agility', 0.25, NULL)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let agg = db
+            .with_reader(|conn| raw_session_agg(conn, "rs", 1000.0, 8200.0, 0.07, 0.11, 0.13))
+            .await
+            .unwrap();
+        assert_eq!(agg.duration_hours, 2.0); // (8200 - 1000) / 3600
+        assert_eq!(agg.armour_cost, 0.07);
+        assert_eq!(agg.heal_cost, 0.11);
+        assert_eq!(agg.dangling_cost, 0.13);
+        assert_eq!(agg.kills, 5);
+        assert_eq!(agg.loot_tt, 10.5);
+        assert_eq!(agg.enhancer_cost, 0.1);
+        assert_eq!(agg.weapon_cost, 1.6); // 30 @ 0.05 + 10 @ 0.01
+        assert_eq!(agg.weapon_shots, 40.0);
+        assert_eq!(agg.skill_tt, 0.75); // 0.5 + 0.25 (NULL excluded)
+                                        // Atrox 3 of 4 known kills = 0.75, species present -> dominant mob.
+        assert_eq!(agg.dominant_mob, Some("Young Atrox".to_string()));
+        assert_eq!(agg.dominant_mob_kills, 3);
+        assert_eq!(agg.dominant_tag, None);
+        // Rifle 30 of 40 shots = 0.75 -> dominant weapon.
+        assert_eq!(agg.dominant_weapon, Some("Rifle".to_string()));
+        // weapon 1.6 + enhancer 0.1 + armour 0.07 + heal 0.11 + dangling 0.13.
+        assert_eq!(agg.cycled_ped, 2.01);
+    }
+
+    /// Bare mob names (no species or maturity) classify as a tag, not a mob.
+    #[tokio::test]
+    async fn raw_session_agg_classifies_bare_names_as_tags() {
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            for i in 0..3 {
+                conn.execute(
+                    "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
+                     timestamp, enhancer_cost, loot_total_ped) \
+                     VALUES (?1, 'tg', 'Thing', NULL, NULL, ?2, 0, 1.0)",
+                    rusqlite::params![format!("tg-{i}"), 1000.0 + i as f64],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let agg = db
+            .with_reader(|conn| raw_session_agg(conn, "tg", 1000.0, 4600.0, 0.0, 0.0, 0.0))
+            .await
+            .unwrap();
+        assert_eq!(agg.dominant_tag, Some("Thing".to_string()));
+        assert_eq!(agg.dominant_mob, None);
+    }
+
+    /// Weapon dominance admits the exact 60% threshold and above, refusing
+    /// below it.
+    #[tokio::test]
+    async fn raw_session_agg_weapon_dominance_threshold() {
+        let (_dir, db) = open_env().await;
+        assert_eq!(
+            weapon_dominance(&db, "a", 60, Some(40)).await,
+            Some("Main".to_string())
+        );
+        assert_eq!(
+            weapon_dominance(&db, "c", 70, Some(30)).await,
+            Some("Main".to_string())
+        );
+        assert_eq!(weapon_dominance(&db, "b", 55, Some(45)).await, None);
+    }
+
+    /// Seed one kill and its tool stats (a main tool, optionally a second), then
+    /// return the raw aggregate's dominant weapon.
+    async fn weapon_dominance(db: &Db, sid: &str, main: i64, alt: Option<i64>) -> Option<String> {
+        let sid_s = sid.to_string();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
+                 VALUES (?1, ?2, 'M', 1.0, 0, 1.0)",
+                rusqlite::params![format!("{sid_s}-k"), sid_s],
+            )?;
+            conn.execute(
+                "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, cost_per_shot) \
+                 VALUES (?1, 'Main', ?2, 0.0)",
+                rusqlite::params![format!("{sid_s}-k"), main],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        if let Some(alt) = alt {
+            let sid_s = sid.to_string();
+            db.with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, cost_per_shot) \
+                     VALUES (?1, 'Alt', ?2, 0.0)",
+                    rusqlite::params![format!("{sid_s}-k"), alt],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
+        let sid_s = sid.to_string();
+        db.with_reader(move |conn| raw_session_agg(conn, &sid_s, 1000.0, 4600.0, 0.0, 0.0, 0.0))
+            .await
+            .unwrap()
+            .dominant_weapon
+    }
 }

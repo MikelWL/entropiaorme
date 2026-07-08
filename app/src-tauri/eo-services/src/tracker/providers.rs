@@ -115,3 +115,27 @@ impl TrackingConfig for DefaultTrackingConfig {
         Vec::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inert_equipment_offers_nothing() {
+        let equipment = InertEquipment;
+        assert_eq!(equipment.weapon_profile("Opalo"), None);
+        assert_eq!(equipment.cost_per_shot("Opalo"), 0.0);
+        assert_eq!(equipment.resolve_trifecta(), None);
+    }
+
+    #[test]
+    fn default_tracking_config_is_the_inert_fallback() {
+        let config = DefaultTrackingConfig;
+        assert_eq!(config.mob_tracking_mode(), "mob");
+        assert_eq!(config.mob_tracking_tag(), "");
+        assert!(config.manual_mob_entry_enabled());
+        assert_eq!(config.manual_mob(), None);
+        assert!(!config.weapon_attribution_trifecta());
+        assert!(config.loot_filter_blacklist().is_empty());
+    }
+}

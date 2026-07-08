@@ -317,3 +317,22 @@ impl TrackerActor {
         self.loot_blacklist = normalize_blacklist(Some(blacklist.iter().map(String::as_str)));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn in_tracker_actor_reads_the_reentrancy_task_local() {
+        // Outside the actor's dispatch scope: not the actor.
+        assert!(!in_tracker_actor());
+        // Inside the scope the reentrancy guard reports true.
+        IN_TRACKER_ACTOR
+            .scope((), async {
+                assert!(in_tracker_actor(), "the dispatch scope is detected");
+            })
+            .await;
+        // The scope does not leak past its future.
+        assert!(!in_tracker_actor());
+    }
+}

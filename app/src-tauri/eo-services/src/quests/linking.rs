@@ -354,3 +354,18 @@ impl QuestService {
             .await?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_type_parses_each_stored_variant_and_rejects_the_rest() {
+        assert_eq!(LinkType::from_db("quest"), Some(LinkType::Quest));
+        assert_eq!(LinkType::from_db("playlist"), Some(LinkType::Playlist));
+        assert_eq!(LinkType::from_db("declined"), Some(LinkType::Declined));
+        // An unknown value reads as a standing (non-declined) link.
+        assert_eq!(LinkType::from_db("something-else"), None);
+        assert_eq!(LinkType::from_db(""), None);
+    }
+}

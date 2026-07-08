@@ -176,3 +176,14 @@ impl TrackerActor {
         released
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mob_source_wire_strings() {
+        assert_eq!(MobSource::Tag.as_str(), "tag");
+        assert_eq!(MobSource::Manual.as_str(), "manual");
+    }
+}

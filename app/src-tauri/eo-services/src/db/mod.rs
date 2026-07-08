@@ -1726,4 +1726,185 @@ mod tests {
             assert_eq!(row.2, embedded.checksum(), "checksum for {}", row.1);
         }
     }
+
+    #[tokio::test]
+    async fn equipment_insert_read_update_and_delete_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+
+        // The public insert returns the autoincrement id, growing from 1.
+        let first = db
+            .insert_equipment(
+                "Opalo".into(),
+                "weapon".into(),
+                Some("cat-1".into()),
+                r#"{"weapon_entity":{}}"#.into(),
+            )
+            .await
+            .unwrap();
+        let second = db
+            .insert_equipment(
+                "Healer".into(),
+                "healing".into(),
+                None,
+                r#"{"tool":1}"#.into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!((first, second), (1, 2));
+
+        // equipment_row: the full four-tuple by id, None when absent.
+        assert_eq!(
+            db.equipment_row(first).await.unwrap(),
+            Some((
+                1,
+                "Opalo".into(),
+                "weapon".into(),
+                r#"{"weapon_entity":{}}"#.into(),
+            )),
+        );
+        assert_eq!(db.equipment_row(999).await.unwrap(), None);
+
+        // equipment_detail_row: carries the optional catalogue id verbatim.
+        assert_eq!(
+            db.equipment_detail_row(first).await.unwrap(),
+            Some((
+                1,
+                "Opalo".into(),
+                "weapon".into(),
+                Some("cat-1".into()),
+                r#"{"weapon_entity":{}}"#.into(),
+            )),
+        );
+        assert_eq!(
+            db.equipment_detail_row(second).await.unwrap(),
+            Some((
+                2,
+                "Healer".into(),
+                "healing".into(),
+                None,
+                r#"{"tool":1}"#.into()
+            )),
+        );
+        assert_eq!(db.equipment_detail_row(999).await.unwrap(), None);
+
+        // equipment_item_type: the type string alone, None when absent.
+        assert_eq!(
+            db.equipment_item_type(first).await.unwrap(),
+            Some("weapon".into())
+        );
+        assert_eq!(
+            db.equipment_item_type(second).await.unwrap(),
+            Some("healing".into())
+        );
+        assert_eq!(db.equipment_item_type(999).await.unwrap(), None);
+
+        // equipment_library_rows: every stored row (order-independent here).
+        let mut rows = db.equipment_library_rows().await.unwrap();
+        rows.sort_by_key(|row| row.0);
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    1,
+                    "Opalo".into(),
+                    "weapon".into(),
+                    r#"{"weapon_entity":{}}"#.into()
+                ),
+                (2, "Healer".into(), "healing".into(), r#"{"tool":1}"#.into()),
+            ],
+        );
+
+        // update_equipment replaces name, catalogue binding and properties;
+        // the item type is fixed.
+        db.update_equipment(
+            first,
+            "Opalo Mk II".into(),
+            None,
+            r#"{"weapon_entity":{"v":2}}"#.into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.equipment_detail_row(first).await.unwrap(),
+            Some((
+                1,
+                "Opalo Mk II".into(),
+                "weapon".into(),
+                None,
+                r#"{"weapon_entity":{"v":2}}"#.into(),
+            )),
+        );
+
+        // delete_equipment removes the row (and is idempotent over a miss).
+        db.delete_equipment(first).await.unwrap();
+        assert_eq!(db.equipment_row(first).await.unwrap(), None);
+        db.delete_equipment(first).await.unwrap();
+        assert_eq!(db.equipment_library_rows().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn skill_calibrations_read_the_latest_per_skill_and_the_epoch() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+
+        // No rows yet: no epoch, empty calibrations.
+        assert_eq!(db.last_calibration_epoch().await.unwrap(), None);
+        assert!(db.latest_skill_calibrations(None).await.unwrap().is_empty());
+
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) VALUES \
+                 ('Rifle', 10.0, 'scan', 100.0), \
+                 ('Rifle', 12.0, 'manual', 200.0), \
+                 ('Agility', 5.0, 'scan', 150.0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        // Believed-current (source = None): the newest row per skill wins,
+        // so Rifle reads the manual 12.0, not the earlier scan.
+        let mut current = db.latest_skill_calibrations(None).await.unwrap();
+        current.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            current,
+            vec![("Agility".into(), 5.0), ("Rifle".into(), 12.0)]
+        );
+
+        // The scan anchor: only scan rows, so Rifle reads its scan 10.0.
+        let mut scan = db
+            .latest_skill_calibrations(Some("scan".into()))
+            .await
+            .unwrap();
+        scan.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(scan, vec![("Agility".into(), 5.0), ("Rifle".into(), 10.0)]);
+
+        // The epoch is the maximum scan instant across every source.
+        assert_eq!(db.last_calibration_epoch().await.unwrap(), Some(200.0));
+    }
+
+    #[tokio::test]
+    async fn optimize_on_shutdown_reports_success_on_a_healthy_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+        assert!(
+            db.optimize_on_shutdown().await,
+            "PRAGMA optimize succeeds on a live writer"
+        );
+    }
+
+    #[tokio::test]
+    async fn debug_render_names_the_synchronous_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+        // The handle's Debug delegates to the core's own formatter, so the
+        // core must name itself rather than render empty.
+        assert!(
+            format!("{db:?}").contains("SyncCore"),
+            "the core's Debug names it: {db:?}"
+        );
+    }
 }
