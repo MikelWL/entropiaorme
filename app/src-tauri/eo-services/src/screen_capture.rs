@@ -167,6 +167,7 @@ mod platform {
 /// an unsupported host does) and only the shell enables the real path.
 #[cfg(all(target_os = "linux", feature = "linux-capture"))]
 mod platform {
+    use std::os::unix::fs::OpenOptionsExt as _;
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
@@ -242,7 +243,20 @@ mod platform {
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    let _ = std::fs::write(path, token);
+                    // Owner-only mode: the token is a capability at rest
+                    // (it grants silent re-acquisition of the consented
+                    // capture stream to a process presenting this app's
+                    // identity), so it must not be readable by other users.
+                    let _ = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .mode(0o600)
+                        .open(path)
+                        .and_then(|mut file| {
+                            use std::io::Write as _;
+                            file.write_all(token.as_bytes())
+                        });
                 }
             }
 
