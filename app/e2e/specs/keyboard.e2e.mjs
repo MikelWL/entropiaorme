@@ -1,6 +1,6 @@
 import { $, browser, expect } from '@wdio/globals';
 import { Key } from 'webdriverio';
-import { ensureDashboard } from '../helpers/onboarding.mjs';
+import { ensureDashboard, ensureViewport } from '../helpers/onboarding.mjs';
 import { DEV_URL } from '../wdio.conf.mjs';
 
 // Keyboard-only smoke over the shared interactive primitives, in the real
@@ -45,6 +45,10 @@ describe('keyboard access (native Tauri shell)', () => {
 		await ensureDashboard(browser, DEV_URL);
 		await browser.url(`${DEV_URL}quests`);
 		await expect($('h1')).toHaveText('Quests');
+		// Key events land on real laid-out elements, so the run gates on a
+		// recovered inner viewport exactly like the visual captures do: a
+		// collapsed viewport leaves the form controls non-interactable.
+		await ensureViewport(browser);
 		// The list has loaded once the empty state (or a stray row) renders.
 		await browser.waitUntil(async () => !(await $('main').getText()).includes('Loading quests'), {
 			timeout: 15000,
@@ -117,6 +121,9 @@ describe('keyboard access (native Tauri shell)', () => {
 	});
 
 	it('drives the quest row menu with the keyboard alone', async () => {
+		// The inner-viewport collapse can strike between tests; re-gate before
+		// interacting (see ensureViewport).
+		await ensureViewport(browser);
 		// Setup (pointer-driven; the keyboard assertions start at the menu): the
 		// empty database has no rows, so create the quest whose row hosts the menu.
 		const newQuestBtn = await $('button*=+ Quest');
