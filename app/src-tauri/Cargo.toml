@@ -64,6 +64,19 @@ windows = "0.61"
 # and fcntl(2) calls that keep those reads interruptible.
 evdev = "0.13"
 libc = "0.2"
+# Pure-Rust, safe X11 protocol bindings: the Linux game-window discovery
+# and geometry lookups run over XWayland (where the game and our windows
+# both live), mirroring the Windows EnumWindows/GetClientRect helpers.
+x11rb = "0.13"
+# Wayland screen capture: the ScreenCast desktop portal opens a consented
+# PipeWire stream (ashpd drives the portal D-Bus dance + restore tokens);
+# GStreamer consumes the node as frames. GStreamer is already an app-level
+# runtime dependency via WebKitGTK's media backend, so binding to it adds
+# no new package dependency.
+ashpd = { version = "0.11", default-features = false, features = ["tokio"] }
+gstreamer = "0.24"
+gstreamer-app = "0.24"
+gstreamer-video = "0.24"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
 # The chatlog parser's line grammar: plain regular expressions (the one
 # Python lookahead is reproduced as an explicit post-match check), the

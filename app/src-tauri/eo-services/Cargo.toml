@@ -50,6 +50,13 @@ windows = { workspace = true, features = [
 # implementation behind the keystroke source seam (keystroke_source.rs).
 evdev = { workspace = true }
 libc = { workspace = true }
+# Game-window discovery + geometry over X11/XWayland (eu_window.rs).
+x11rb = { workspace = true }
+# ScreenCast-portal + PipeWire screen capture (screen_capture.rs).
+ashpd = { workspace = true }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+gstreamer-video = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
