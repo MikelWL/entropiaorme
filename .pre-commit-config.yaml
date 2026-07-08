@@ -63,6 +63,15 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      # Route-shell discipline: tracked route files stay at or under their
+      # line ceilings (thin shells over lib/features modules); ceilings only
+      # ratchet down. A whole-tree cargo xtask guard.
+      - id: route-ceilings
+        name: route files within their line ceilings (frontend)
+        entry: bash -c 'cd app/src-tauri && cargo run -q -p xtask -- route-ceilings'
+        language: system
+        pass_filenames: false
+        always_run: true
       # The authoring lint is diff-scoped (it inspects the lines a change adds,
       # against HEAD here); the version-stamp parity check reads the manifests
       # whole, so both always_run. Both are cargo xtask subcommands.
