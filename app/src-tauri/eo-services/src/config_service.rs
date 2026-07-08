@@ -622,6 +622,18 @@ mod tests {
     }
 
     #[test]
+    fn a_reader_follows_the_live_config_after_an_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = service(dir.path());
+        let reader = svc.reader();
+        let mut updates = Map::new();
+        updates.insert("player_name".into(), Value::from("Live"));
+        svc.update(&updates).unwrap();
+        // The write publishes the new snapshot to the read handle.
+        assert_eq!(reader.current().player_name, "Live");
+    }
+
+    #[test]
     fn unknown_keys_survive_saves_in_their_stored_positions() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(

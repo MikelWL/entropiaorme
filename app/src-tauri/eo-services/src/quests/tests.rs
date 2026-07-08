@@ -525,6 +525,22 @@ async fn present_null_lists_refuse_and_leave_state_untouched() {
 }
 
 #[tokio::test]
+async fn create_quest_ignores_a_falsy_mobs_payload_without_dereferencing_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    // A present-but-null mobs value is falsy on create: it writes no mob
+    // rows and must never be dereferenced as a list.
+    let created = svc
+        .create_quest(&json!({"name": "Bounty", "mobs": null}))
+        .await
+        .unwrap();
+    let id = quest_id(&created);
+    let stored = svc.get_quest(id).await.unwrap().unwrap();
+    assert_eq!(stored["name"], "Bounty");
+    assert_eq!(stored["mobs"], json!([]), "no mob rows written");
+}
+
+#[tokio::test]
 async fn soft_deleting_a_quest_keeps_its_mob_rows() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, db) = service(dir.path()).await;

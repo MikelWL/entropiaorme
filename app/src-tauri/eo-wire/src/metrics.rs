@@ -274,6 +274,28 @@ mod tests {
     }
 
     #[test]
+    fn record_db_query_lands_in_the_db_histogram() {
+        let m = Metrics::new();
+        m.record_db_query(Duration::from_micros(120));
+        m.record_db_query(Duration::from_micros(9));
+        let snap = m.snapshot();
+        assert_eq!(snap.db_query_latency.count, 2, "both queries recorded");
+        assert_eq!(snap.db_query_latency.sum_us, 129);
+        // The OCR histogram stays untouched (no cross-wiring).
+        assert_eq!(snap.ocr_latency.count, 0);
+    }
+
+    #[test]
+    fn metrics_returns_the_one_process_wide_registry() {
+        // Every call hands back the same static, so records accumulate in
+        // one place rather than a fresh throwaway per call.
+        assert!(
+            std::ptr::eq(metrics(), metrics()),
+            "metrics() is a singleton handle, not a fresh allocation"
+        );
+    }
+
+    #[test]
     fn the_snapshot_round_trips_through_json() {
         let m = Metrics::new();
         m.record_db_query(Duration::from_micros(120));

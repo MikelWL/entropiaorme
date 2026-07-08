@@ -106,3 +106,20 @@ pub fn to_iso_utc(ts: f64) -> String {
         format!("{}+00:00", instant.format("%Y-%m-%dT%H:%M:%S%.6f"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epoch_to_instant_scales_microseconds_to_nanoseconds() {
+        // 1.5s is one whole second plus 500_000 microseconds; the fractional
+        // part must reach the instant as microsecond precision, not be
+        // divided away.
+        let instant = epoch_to_instant(1.5);
+        assert_eq!(instant.timestamp(), 1);
+        assert_eq!(instant.timestamp_subsec_micros(), 500_000);
+        // A whole-second epoch carries no fractional part.
+        assert_eq!(epoch_to_instant(42.0).timestamp_subsec_micros(), 0);
+    }
+}

@@ -513,3 +513,36 @@ fn number_sum(a: &Value, b: &Value) -> Value {
         _ => json!(a.as_f64().unwrap_or(0.0) + b.as_f64().unwrap_or(0.0)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expected_reward_total_applies_markup_only_to_positive_liquid_rewards() {
+        // A positive liquid reward with a markup: the percentage applies.
+        assert_eq!(
+            expected_reward_total(&json!(2.0), false, Some(50.0), 3),
+            json!(3.0)
+        );
+        // A skill reward is never marked up, even with a markup present and
+        // the reward positive (the gate is `!skill && reward > 0`).
+        assert_eq!(
+            expected_reward_total(&json!(2.0), true, Some(50.0), 3),
+            json!(6.0)
+        );
+        // A zero reward yields zero either way (the markup branch and the
+        // plain branch coincide at the boundary).
+        assert_eq!(
+            expected_reward_total(&json!(0.0), false, Some(50.0), 2),
+            json!(0.0)
+        );
+        // An integer reward multiplies in integers, no markup path.
+        assert_eq!(expected_reward_total(&json!(5), false, None, 3), json!(15));
+        // A non-positive completion count collapses to the integer zero.
+        assert_eq!(
+            expected_reward_total(&json!(2.0), false, Some(50.0), 0),
+            json!(0)
+        );
+    }
+}

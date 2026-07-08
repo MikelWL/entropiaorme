@@ -906,4 +906,102 @@ mod tests {
         assert_eq!(watermark, "2001-09-08");
         assert_eq!(snapshot(db.clone()).await, before);
     }
+
+    #[tokio::test]
+    async fn day_range_is_the_canonical_days_epoch_window() {
+        // A canonical key maps to its `[midnight, next midnight)` window.
+        assert_eq!(day_range("2001-09-05"), Some((DAY_05, DAY_05 + 86_400.0)));
+        assert_eq!(day_range("2001-09-09"), Some((DAY_09, DAY_09 + 86_400.0)));
+        // A non-canonical spelling and pure junk are both stray: no window.
+        assert_eq!(day_range("2001-9-2"), None);
+        assert_eq!(day_range("not-a-day"), None);
+    }
+
+    #[tokio::test]
+    async fn earliest_data_day_prefers_the_smallest_canonical_source() {
+        let (_dir, db) = env().await;
+        // Epoch-derived data lands on 09-05, but a canonical ledger key
+        // sits earlier at 09-01; a stray ledger key is ignored entirely.
+        run(
+            &db,
+            &format!(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
+                 VALUES ('k1', 'ghost', 'Atrox', {}, 0.0, 1.0)",
+                DAY_05 + 100.0
+            ),
+        )
+        .await;
+        run(
+            &db,
+            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) VALUES \
+             ('l1', '2001-09-01', 'markup', 'earlier canonical', 1.0, 'manual'), \
+             ('l2', '2001-08-99', 'expense', 'stray, ignored', 1.0, 'stray')",
+        )
+        .await;
+        let earliest = db
+            .with_reader(|conn| earliest_data_day(conn))
+            .await
+            .unwrap();
+        assert_eq!(earliest, NaiveDate::from_ymd_opt(2001, 9, 1));
+    }
+
+    #[tokio::test]
+    async fn recompute_membership_isolates_each_contributing_family() {
+        let (_dir, db) = env().await;
+        // Days past the seed window, each carrying exactly one family so
+        // that day's membership hinges on that single count alone.
+        const DAY_10: f64 = 1_000_080_000.0; // kill only
+        const DAY_11: f64 = 1_000_166_400.0; // session only
+        const DAY_12: f64 = 1_000_252_800.0; // codex only
+        const DAY_13: f64 = 1_000_339_200.0; // quest only
+
+        // A kill with no tool stats, whose session_id names no session row.
+        run(
+            &db,
+            &format!(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
+                 VALUES ('k1', 'ghost', 'Atrox', {}, 0.0, 1.0)",
+                DAY_10 + 100.0
+            ),
+        )
+        .await;
+        run(
+            &db,
+            &format!(
+                "INSERT INTO tracking_sessions (id, started_at, is_active) VALUES ('s1', {}, 0)",
+                DAY_11 + 100.0
+            ),
+        )
+        .await;
+        run(
+            &db,
+            &format!(
+                "INSERT INTO codex_claims (species_name, rank, skill_name, ped_value, claimed_at) \
+                 VALUES ('Atrox', 1, 'Rifle', 1.0, {})",
+                DAY_12 + 100.0
+            ),
+        )
+        .await;
+        run(
+            &db,
+            &format!(
+                "INSERT INTO quest_claims (quest_name, ped_value, claimed_at) VALUES ('Iron', 1.0, {})",
+                DAY_13 + 100.0
+            ),
+        )
+        .await;
+
+        for day in ["2001-09-10", "2001-09-11", "2001-09-12", "2001-09-13"] {
+            recompute(&db, day).await;
+            let row = rollup_row(&db, day).await.unwrap();
+            assert_eq!(
+                row.has_rows, 1,
+                "{day}: its single family confers membership"
+            );
+        }
+
+        // An empty day between them stays a non-member.
+        recompute(&db, "2001-09-14").await;
+        assert_eq!(rollup_row(&db, "2001-09-14").await.unwrap().has_rows, 0);
+    }
 }

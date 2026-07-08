@@ -715,6 +715,41 @@ mod linux_evdev {
             assert_eq!(kind_for_value(2), Some(KeystrokeKind::Press));
             assert_eq!(kind_for_value(3), None);
         }
+
+        #[test]
+        fn set_nonblocking_sets_the_flag_and_preserves_it() {
+            unsafe {
+                let mut fds = [0i32; 2];
+                assert_eq!(libc::pipe(fds.as_mut_ptr()), 0, "pipe(2) for a real fd");
+                let read_fd = fds[0];
+                let write_fd = fds[1];
+
+                // A fresh pipe fd blocks; the call adds O_NONBLOCK.
+                assert_eq!(
+                    libc::fcntl(read_fd, libc::F_GETFL) & libc::O_NONBLOCK,
+                    0,
+                    "a fresh fd blocks"
+                );
+                set_nonblocking(read_fd);
+                assert_ne!(
+                    libc::fcntl(read_fd, libc::F_GETFL) & libc::O_NONBLOCK,
+                    0,
+                    "the call sets O_NONBLOCK"
+                );
+
+                // A second call preserves the flag (an OR into the existing
+                // flags, never a toggle).
+                set_nonblocking(read_fd);
+                assert_ne!(
+                    libc::fcntl(read_fd, libc::F_GETFL) & libc::O_NONBLOCK,
+                    0,
+                    "O_NONBLOCK survives a repeat call"
+                );
+
+                libc::close(read_fd);
+                libc::close(write_fd);
+            }
+        }
     }
 }
 

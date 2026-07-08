@@ -2644,3 +2644,103 @@ fn reload_clears_a_manual_stamp_once_entry_disables() {
         assert_eq!(active.mob.source(), None);
     });
 }
+
+#[test]
+fn prime_demo_activates_a_demo_session_and_stamps_its_mob() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    assert!(!tracker.is_tracking(), "idle before priming");
+
+    let session = crate::tracking_models::TrackingSession {
+        id: "demo".to_string(),
+        start_time: chrono::DateTime::from_timestamp(1_000, 0).unwrap(),
+        end_time: None,
+        kills: Vec::new(),
+        dangling_cost: Ped::ZERO,
+    };
+    rig.wait(tracker.prime_demo(
+        session,
+        super::mob::MobSelection::Tag("Atrox".to_string()),
+        super::mob::TrackingMode::Tag,
+    ));
+
+    // The demo session is live without ever running start_session.
+    assert!(tracker.is_tracking(), "prime_demo activates the session");
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("a demo session is active");
+        assert_eq!(active.mob.name(), Some("Atrox"));
+    });
+}
+
+#[test]
+fn on_tool_changed_ensures_a_bucket_before_merging_the_unknown_stats() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    // A demo session gives an active session without the bus wiring; the
+    // handler is exercised directly on the actor thread.
+    let session = crate::tracking_models::TrackingSession {
+        id: "demo".to_string(),
+        start_time: chrono::DateTime::from_timestamp(1_000, 0).unwrap(),
+        end_time: None,
+        kills: Vec::new(),
+        dangling_cost: Ped::ZERO,
+    };
+    rig.wait(tracker.prime_demo(
+        session,
+        super::mob::MobSelection::Unset,
+        super::mob::TrackingMode::Mob,
+    ));
+
+    rig.probe(&tracker, |actor| {
+        {
+            let active = actor.session.active_mut().unwrap();
+            active.weapons.hotbar_tool = None;
+            // An accumulated 'Unknown' bucket plus an unrelated named
+            // bucket: the identified tool has no bucket yet, so the merge
+            // must create one before folding 'Unknown' in.
+            active.accumulator.tool_stats = vec![
+                (
+                    "Unknown".to_string(),
+                    crate::tracking_models::ToolStats {
+                        tool_name: "Unknown".to_string(),
+                        shots_fired: 5,
+                        damage_dealt: 12.0,
+                        critical_hits: 1,
+                        cost_per_shot: Ped::ZERO,
+                    },
+                ),
+                (
+                    "Other".to_string(),
+                    crate::tracking_models::ToolStats::new("Other", Ped::ZERO),
+                ),
+            ];
+        }
+        // The inert equipment gives Rifle no cost, so the else-branch that
+        // ensures the bucket (rather than the positive-cost phase path) runs.
+        actor.on_tool_changed(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "Rifle".to_string(),
+            source: None,
+        }));
+
+        let active = actor.session.active().unwrap();
+        let keys: Vec<&str> = active
+            .accumulator
+            .tool_stats
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect();
+        assert!(
+            keys.contains(&"Rifle"),
+            "the identified tool ensured its bucket"
+        );
+        assert!(keys.contains(&"Other"), "the unrelated bucket survives");
+        assert!(!keys.contains(&"Unknown"), "the Unknown bucket merged away");
+        let rifle = active
+            .accumulator
+            .tool_stats
+            .iter()
+            .find(|(key, _)| key == "Rifle")
+            .unwrap();
+        assert_eq!(rifle.1.shots_fired, 5, "Unknown shots folded into Rifle");
+    });
+}
