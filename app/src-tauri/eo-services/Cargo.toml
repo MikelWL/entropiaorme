@@ -45,6 +45,12 @@ windows = { workspace = true, features = [
     "Win32_Graphics_Gdi",
 ] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Passive global key observation via the kernel input layer: the Linux
+# implementation behind the keystroke source seam (keystroke_source.rs).
+evdev = { workspace = true }
+libc = { workspace = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }

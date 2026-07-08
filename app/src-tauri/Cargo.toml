@@ -59,6 +59,11 @@ serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 ort = { version = "2.0.0-rc.12", default-features = false, features = ["load-dynamic", "std", "api-24", "directml"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 windows = "0.61"
+# Linux counterparts of the Windows input plumbing: passive keystroke
+# observation reads the kernel evdev nodes; libc supplies the poll(2)
+# and fcntl(2) calls that keep those reads interruptible.
+evdev = "0.13"
+libc = "0.2"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
 # The chatlog parser's line grammar: plain regular expressions (the one
 # Python lookahead is reproduced as an explicit post-match check), the
