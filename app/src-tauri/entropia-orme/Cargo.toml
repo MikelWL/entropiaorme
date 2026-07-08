@@ -79,3 +79,7 @@ windows = { workspace = true, features = [
   "Win32_UI_HiDpi",
   "Win32_UI_WindowsAndMessaging"
 ] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The page size behind the /proc resident-set sampler (resources.rs).
+libc = { workspace = true }

@@ -178,15 +178,23 @@ pub(crate) fn demo_db_path(resource_dir: Option<&PathBuf>) -> PathBuf {
 /// the OS-resolved `resource_dir`), so the runtime is never sought on
 /// `PATH`/CWD.
 fn ort_dylib_path(resource_dir: Option<&PathBuf>) -> PathBuf {
+    // The runtime is platform-forked: the Windows onnxruntime-directml
+    // build under `ort/`, the Linux CPU build under `ort-linux/` (see each
+    // dir's PROVENANCE.txt). Both are bundled beside the same `resources/`
+    // subtree; the release branch flattens each to its own bundle target.
+    #[cfg(target_os = "linux")]
+    let (subdir, file) = ("ort-linux", "libonnxruntime.so");
+    #[cfg(not(target_os = "linux"))]
+    let (subdir, file) = ("ort", "onnxruntime.dll");
     match resource_dir {
-        Some(dir) if !cfg!(debug_assertions) => dir.join("ort").join("onnxruntime.dll"),
+        Some(dir) if !cfg!(debug_assertions) => dir.join(subdir).join(file),
         _ => dev_project_root()
             .join("app")
             .join("src-tauri")
             .join("entropia-orme")
             .join("resources")
-            .join("ort")
-            .join("onnxruntime.dll"),
+            .join(subdir)
+            .join(file),
     }
 }
 
@@ -239,10 +247,11 @@ fn pin_ort_dylib_env(resource_dir: Option<&PathBuf>) -> PathBuf {
 }
 
 fn init_ort_runtime(resource_dir: Option<&PathBuf>) {
-    // The bundled ONNX Runtime is the Windows onnxruntime-directml build; on
-    // any other platform there is no compatible runtime to pin (and loading
-    // the Windows PE there hangs the loader), so OCR simply stays offline.
-    if !cfg!(windows) {
+    // A compatible runtime ships for Windows (onnxruntime-directml) and
+    // Linux (onnxruntime CPU); macOS and the rest have no bundled runtime,
+    // so OCR stays offline there rather than pinning a foreign binary
+    // (loading a wrong-platform library hangs or aborts the loader).
+    if !cfg!(any(windows, target_os = "linux")) {
         return;
     }
     static ORT_INIT: std::sync::Once = std::sync::Once::new();

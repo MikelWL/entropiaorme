@@ -1,0 +1,16 @@
+Source: onnxruntime-linux-x64 1.24.4, the official Microsoft ONNX Runtime
+release for Linux x86_64 (CPU execution provider), the platform counterpart
+of the Windows onnxruntime-directml 1.24.4 build bundled beside it in ../ort.
+ONNX Runtime C API version 24, matching the ort crate pin (api-24).
+
+Release tarball: onnxruntime-linux-x64-1.24.4.tgz
+  from https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/
+  sha256 3a211fbea252c1e66290658f1b735b772056149f28321e71c308942cdb54b747  (8155822 bytes)
+
+Bundled file: libonnxruntime.so (the tarball's lib/libonnxruntime.so.1.24.4,
+renamed to the unversioned soname ORT_DYLIB_PATH pins directly)
+  sha256 d132535d051344ff5c64c9c200004150559049a81ed330eb4422c1962fb6b7e4  (22159232 bytes)
+
+The Linux build carries the CPU execution provider only; DirectML is a
+Windows-only provider, and CUDA/ROCm GPU acceleration is a possible later
+addition (a separate optional runtime), not part of this baseline.
