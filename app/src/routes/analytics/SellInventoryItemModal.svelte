@@ -94,6 +94,7 @@
 
 			<div>
 				<label for="sale-price" class="text-xs text-text-secondary mb-1 block">Sale price (PED)</label>
+				<!-- Kept: moving focus to the sale-price field on open is the dialog's single task (the accepted modal-autofocus pattern). -->
 				<!-- svelte-ignore a11y_autofocus -->
 				<Input
 					id="sale-price"

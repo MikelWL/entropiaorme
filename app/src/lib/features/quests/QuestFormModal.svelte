@@ -97,7 +97,7 @@
 						{#each model.questForm.mobs as mob}
 							<span class="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 flex items-center gap-1">
 								{mob}
-								<button class="hover:text-text cursor-pointer" onclick={() => model.removeMob(mob)}>×</button>
+								<button type="button" class="hover:text-text cursor-pointer" aria-label="Remove {mob}" onclick={() => model.removeMob(mob)}>&times;</button>
 							</span>
 						{/each}
 					</div>

@@ -59,7 +59,15 @@
 							data-guide-anchor="sessions-row"
 							data-session-index={i}
 							class="hover:bg-surface-hover/50 transition-colors cursor-pointer {isExpanded ? 'bg-surface-hover' : ''}"
+							tabindex="0"
+							aria-expanded={isExpanded}
 							onclick={() => model.toggleSession(session.id)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									model.toggleSession(session.id);
+								}
+							}}
 						>
 							<td class="px-4 py-3 border-b border-border/50 tabular-nums">
 								{session.startTime ? formatDate(session.startTime) : '\u2014'}

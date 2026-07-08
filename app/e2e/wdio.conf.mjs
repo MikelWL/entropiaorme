@@ -134,7 +134,11 @@ export const config = {
 				baselineFolder: join(E2E_DIR, 'baselines'),
 				screenshotPath: join(E2E_DIR, '.visual-output'),
 				formatImageName: '{tag}',
-				autoSaveBaseline: true,
+				// A missing baseline FAILS the spec rather than silently adopting the
+				// first capture as truth: new baselines are added deliberately (run
+				// with `npm run test:visual:update`, or commit the actuals a CI run
+				// uploads), never as a side effect of a green run.
+				autoSaveBaseline: false,
 				savePerInstance: false,
 				// WebView2 via tauri-driver mis-clips the BiDi element-screenshot for
 				// elements taller than / below the fold (height=0 capture errors). The

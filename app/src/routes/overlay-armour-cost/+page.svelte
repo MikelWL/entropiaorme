@@ -206,6 +206,7 @@
 </script>
 
 {#if panelState}
+	<!-- Kept: pointer/wheel are liveness signals that hold the popup open during interaction, not actions; Escape (window keydown) closes it. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="armour-cost-shell"

@@ -475,6 +475,7 @@
 						<div class="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-border-bright"></div>
 						<div class="absolute inset-y-0 left-0 right-0 bg-[linear-gradient(to_right,transparent_0%,transparent_24.5%,rgba(148,163,184,0.12)_25%,transparent_25.5%,transparent_49.5%,rgba(148,163,184,0.12)_50%,transparent_50.5%,transparent_74.5%,rgba(148,163,184,0.12)_75%,transparent_75.5%,transparent_100%)]"></div>
 						{#each weaponBands as band}
+							<!-- Kept (both bands): the hover tooltip is a pointer-only reading aid on a decorative chart mark; the exact ranges ride along as visually hidden text. -->
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
 								class="absolute top-1/2 h-5 -translate-y-1/2 rounded-full cursor-default
@@ -483,7 +484,9 @@
 								onmouseenter={(event) => showTip(event, `${band.name} crit: ${formatRange(band.crit)}`)}
 								onmousemove={(event) => moveTip(event, `${band.name} crit: ${formatRange(band.crit)}`)}
 								onmouseleave={hideTip}
-							></div>
+							>
+								<span class="sr-only">{band.name} crit: {formatRange(band.crit)}</span>
+							</div>
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
 								data-guide-anchor={band.tone === 'small' ? 'trifecta-band-small-hit' : 'trifecta-band-big-hit'}
@@ -493,7 +496,9 @@
 								onmouseenter={(event) => showTip(event, `${band.name} hit: ${formatRange(band.normal)}`)}
 								onmousemove={(event) => moveTip(event, `${band.name} hit: ${formatRange(band.normal)}`)}
 								onmouseleave={hideTip}
-							></div>
+							>
+								<span class="sr-only">{band.name} hit: {formatRange(band.normal)}</span>
+							</div>
 						{/each}
 						{#if hoverTip}
 							<div

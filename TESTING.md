@@ -160,10 +160,12 @@ npm run test:watch      # re-run on change during development
 npm run test:coverage   # run with a v8 coverage report
 ```
 
-Scope is two layers, with end-to-end flows out of scope:
+Scope is two layers, with end-to-end flows owned by the native-shell suite (below):
 
-- **Unit**: the cleanly-separated pure-TypeScript logic layer (the rendering, formatting, preference, API-facade, realtime, and store-coordination modules under `src/lib/`). Suites are colocated as `<module>.test.ts` next to their source.
+- **Module**: the extracted logic layers under `src/lib/`. Each route's behaviour lives in a per-surface feature module (`lib/features/<surface>/`: view models and pure domain logic, e.g. `questsModel.svelte.ts`, `cooldown.ts`), backed by the shared view-model helpers (`lib/view/`: table, form-modal, typeahead, error-state), the window and overlay helpers (`lib/windows/`), the realtime plumbing (`lib/realtime/`), the typed API seam (`lib/api/`), and the runes state modules (`lib/*.svelte.ts`, `lib/stores/`). Suites are colocated as `<module>.test.ts` next to their source; `.svelte.ts` modules compile through the Svelte plugin, so `$state` / `$derived` behave in the tests exactly as in the app.
 - **Component**: the high-logic Svelte surfaces, rendered under Testing Library with `happy-dom` and the Tauri/backend seams mocked.
+
+Coverage instrumentation (`coverage.include` in `app/vitest.config.ts`) is directory-based over those tested layers plus the standalone pure-logic modules, so a new module landing in a tested layer is instrumented from the moment it exists rather than once someone remembers to list it. `.svelte` components, generated files, test files, and fixtures are excluded: components are exercised through the component suites and the native-shell e2e, not unit-instrumented.
 
 Tests assert the code's actual behaviour; where a module diverges from what a reader might expect, the divergence is asserted and flagged in-file as a candidate defect rather than papered over.
 
@@ -185,7 +187,9 @@ The typed frontend API client is generated from the Rust DTOs: the command bindi
 
 ### Runes-native frontend
 
-The Svelte frontend is runes-native: `svelte.config.js` forces runes mode for every non-`node_modules` file, so the legacy Svelte-4 reactivity primitives (`$:` reactive statements, `export let` props) are compile errors rather than a style preference. The guard is the production build itself: `npm run build` (run by the `frontend` CI job) fails on any legacy-reactivity reintroduction, which is why the convention cannot silently rot. New component state uses `$state` / `$derived` / `$effect` and `$props`; `onMount` stays for genuine run-once mount work, and ordinary `svelte/store` subscriptions are orthogonal to runes and are kept as they are.
+The Svelte frontend is runes-native: `svelte.config.js` forces runes mode for every non-`node_modules` file, so the legacy Svelte-4 reactivity primitives (`$:` reactive statements, `export let` props) are compile errors rather than a style preference. The guard is the production build itself: `npm run build` (run by the `frontend` CI job) fails on any legacy-reactivity reintroduction, which is why the convention cannot silently rot. New component state uses `$state` / `$derived` / `$effect` and `$props`; `onMount` stays for genuine run-once mount work.
+
+Shared state is runes-native too: cross-surface state is authored as `.svelte.ts` modules, the legacy `svelte/store` writables have all been migrated away, and the `no-new-writable` authoring lint (`cargo run -p xtask -- no-new-writable`, run in CI) forbids any `svelte/store` import from returning. Its frozen-legacy allowlist is empty and can only ever shrink, so the guarantee is whole-tree: no importer anywhere.
 
 ### Frontend end-to-end tests (native shell)
 
@@ -199,6 +203,8 @@ npm run test:visual:update # regenerate the baselines after an intended UI chang
 ```
 
 The e2e build embeds the frontend and serves it at the application's own `tauri://` origin (native IPC), built with an in-process request-fixture stub (the `e2e-stub` feature) so responses are deterministic, and with chart tweens frozen (`E2E_FREEZE_TWEENS`) so the visual baselines are stable. A `tauri.e2e.conf.json` overlay (capture window size plus a broadened CSP for the stub) is e2e-only and never ships. The visual layer commits per-surface screenshot baselines under `e2e/baselines/` and diffs against them with a small fuzzy tolerance. Baselines are captured in one rendering environment (WebView2 on Windows), so a different renderer will diff: regenerate after an intended change rather than editing the image.
+
+The functional suite covers the panel flows and the live IPC surface, plus a keyboard-only smoke (`e2e/specs/keyboard.e2e.mjs`) that drives the shared modal and menu primitives with real key events: the modal's focus trap, Escape dismissal, and focus return, and the menu's roving menuitem focus, arrow keys, and Escape-to-trigger. The visual suite pins the dashboard and analytics surfaces against their populated fixtures, and the quests and character surfaces in their default (empty-database) states; populated-state visual coverage for those two surfaces needs fixture-served data and is a deliberate follow-up. A missing baseline fails the run rather than silently adopting the first capture (`autoSaveBaseline: false`), so new baselines land deliberately: `npm run test:visual:update` locally, or committing the actuals a CI run uploads.
 
 This layer runs on Windows in CI (the `Frontend e2e + visual (native shell, Windows)` job), the application's platform; it provisions `tauri-driver` and the matching Microsoft Edge WebDriver per run.
 

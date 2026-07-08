@@ -71,25 +71,30 @@
 					<th
 						class="eyebrow py-2.5 px-3
 							{alignClasses[col.align ?? 'left']}
-							{col.widthClass ?? ''}
-							{col.sortable
-							? 'cursor-pointer transition-colors duration-[var(--duration-fast)] hover:text-text'
-							: ''}"
-						onclick={col.sortable ? () => handleSort(col.key) : undefined}
+							{col.widthClass ?? ''}"
 						aria-sort={sortKey === col.key
 							? sortDir === 'asc'
 								? 'ascending'
 								: 'descending'
 							: undefined}
 					>
-						<span class="inline-flex items-center gap-1">
-							{col.label}
-							{#if col.sortable && sortKey === col.key}
-								<span class="text-accent text-xs leading-none">
-									{sortDir === 'asc' ? '↑' : '↓'}
-								</span>
-							{/if}
-						</span>
+						{#if col.sortable}
+							<button
+								type="button"
+								class="inline-flex items-center gap-1 cursor-pointer
+									transition-colors duration-[var(--duration-fast)] hover:text-text"
+								onclick={() => handleSort(col.key)}
+							>
+								{col.label}
+								{#if sortKey === col.key}
+									<span class="text-accent text-xs leading-none">
+										{sortDir === 'asc' ? '\u2191' : '\u2193'}
+									</span>
+								{/if}
+							</button>
+						{:else}
+							<span class="inline-flex items-center gap-1">{col.label}</span>
+						{/if}
 					</th>
 				{/each}
 			</tr>
