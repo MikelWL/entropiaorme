@@ -12,12 +12,70 @@ use std::sync::Mutex;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+/// Whether `(x, y)` lies on a live monitor with enough margin that the
+/// window's grab area is reachable. The X screen (and the Windows virtual
+/// desktop) is the bounding box of all monitors, so an asymmetric layout
+/// contains dead space no monitor covers; a window placed there renders
+/// nowhere while every geometry API happily reports it. A stored or
+/// default position is applied only when this holds.
+fn position_on_a_monitor(window: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
+    const GRAB_MARGIN: i32 = 40;
+    let Ok(monitors) = window.available_monitors() else {
+        return false;
+    };
+    monitors.iter().any(|monitor| {
+        let position = monitor.position();
+        let size = monitor.size();
+        x >= position.x
+            && x <= position.x + size.width as i32 - GRAB_MARGIN
+            && y >= position.y
+            && y <= position.y + size.height as i32 - GRAB_MARGIN
+    })
+}
+
+/// A safe on-screen anchor: `offset` into the primary monitor (or the
+/// first one when no primary is reported), never the raw screen origin,
+/// which on a multi-monitor layout can sit in dead space.
+fn monitor_anchor(
+    window: &tauri::WebviewWindow,
+    offset: (i32, i32),
+) -> tauri::PhysicalPosition<i32> {
+    let monitor = window.primary_monitor().ok().flatten().or_else(|| {
+        window
+            .available_monitors()
+            .ok()
+            .and_then(|m| m.into_iter().next())
+    });
+    let base = monitor
+        .map(|m| *m.position())
+        .unwrap_or(tauri::PhysicalPosition::new(0, 0));
+    tauri::PhysicalPosition::new(base.x + offset.0, base.y + offset.1)
+}
+
 #[tauri::command]
-fn toggle_overlay(app: tauri::AppHandle) {
+async fn toggle_overlay(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
+            // Apply the persisted position on EVERY show, validated against
+            // the live monitor layout. The overlay webview also restores it
+            // once at boot, but that happens while the window is hidden and
+            // an X11 window manager re-places a window at map time, so the
+            // boot-time restore does not survive to the first show there;
+            // the show path is the only reliable place. An off-monitor or
+            // absent stored position falls back to a primary-monitor anchor
+            // rather than the screen origin (dead space on some layouts).
+            let stored = match commands::facade(&app) {
+                Ok(facade) => facade.settings_overlay_position().await.ok(),
+                Err(_) => None,
+            };
+            let position = stored
+                .and_then(|p| p.x.0.zip(p.y.0))
+                .map(|(x, y)| tauri::PhysicalPosition::new(x as i32, y as i32))
+                .filter(|p| position_on_a_monitor(&window, p.x, p.y))
+                .unwrap_or_else(|| monitor_anchor(&window, (60, 60)));
+            let _ = window.set_position(position);
             let _ = window.show();
             // The overlay is a pre-spawned hidden window shown without focus, so
             // no focus/visibility event reaches its webview on show. Signal the
@@ -31,9 +89,11 @@ fn toggle_overlay(app: tauri::AppHandle) {
 #[tauri::command]
 fn show_scan_overlay(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("scan-overlay") {
-        // Position near top-left so the overlay never collides with a
-        // bottom-right docked in-game skills/professions panel.
-        let _ = window.set_position(tauri::PhysicalPosition::new(40, 40));
+        // Position near a monitor's top-left so the overlay never collides
+        // with a bottom-right docked in-game skills/professions panel. The
+        // anchor is monitor-relative, not the raw screen origin, which on a
+        // multi-monitor layout can lie outside every panel.
+        let _ = window.set_position(monitor_anchor(&window, (40, 40)));
         let _ = window.show();
         let _ = window.set_focus();
     }
