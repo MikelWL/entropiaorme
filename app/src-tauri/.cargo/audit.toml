@@ -7,14 +7,13 @@
 # for each category is "wait for upstream"; the per-advisory comments below
 # spell out why each is non-actionable in the shipped Windows artefact.
 #
-# Categorisation note: most entries below are `unmaintained` / `unsound`
-# *warnings*. The two quick-xml advisories (RUSTSEC-2026-0194 / -0195) are
-# genuine DoS *vulnerability* advisories, suppressed only because a
-# reachability audit proved their XML-parse path is dead code in the shipped
-# Windows artefact (see their inline rationale). The nightly `advisory-watch`
-# job re-audits with those two un-suppressed after an in-range update and
-# fails the moment a fix becomes reachable, so the suppression cannot outlive
-# its justification.
+# Categorisation note: every entry below is an `unmaintained` / `unsound`
+# *warning*, not a vulnerability. Any future *vulnerability* suppression must
+# carry a proven-non-reachability rationale, a structural pin of that
+# assumption (a `cargo deny` wrapper ban), and a scheduled re-check that fails
+# when an upstream fix propagates, so the suppression cannot outlive its
+# justification (the retired quick-xml RUSTSEC-2026-0194/-0195 pair is the
+# template: suppressed 2026-07-02, fix propagated and dropped 2026-07-08).
 #
 # Review cadence: re-walk on every Tauri bump and whenever a new advisory
 # fires against a crate in our transitive tree.
@@ -67,20 +66,4 @@ ignore = [
     # attack vector is not present in our embedding. Single advisory ID
     # covers both rand versions.
     "RUSTSEC-2026-0097", # rand (0.7.3, 0.8.5)
-
-    # quick-xml 0.38.4 (via plist <- tauri-utils <- tauri): two DoS-class
-    # *vulnerability* advisories, not the unmaintained/unsound warnings above.
-    # Suppressed on a proven-non-reachability basis: the only runtime plist
-    # XML-parse is `#[cfg(target_os = "macos")]` and reads the app's own bundle
-    # Info.plist; the build-time parse is macOS+dev-gated over developer files;
-    # the updater manifest is JSON, not XML; and no first-party crate parses XML
-    # or plist. quick-xml is linked but its parse path is not compiled on
-    # x86_64-pc-windows-msvc. -0195's `NsReader` API is not even instantiated by
-    # plist (it uses the base `Reader`), so it is unreachable on every target.
-    # Fixed by quick-xml >= 0.41.0; no released plist reaches it yet (1.9.0 still
-    # pins 0.39.x). Drop both the moment plist bumps into range; the deny.toml
-    # `wrappers = ["plist"]` ban pins the reachability assumption and the nightly
-    # advisory-watch enforces the drop.
-    "RUSTSEC-2026-0194", # quick-xml: quadratic duplicate-attribute check (DoS)
-    "RUSTSEC-2026-0195", # quick-xml: unbounded NsReader ns-alloc (DoS; API unused by plist)
 ]

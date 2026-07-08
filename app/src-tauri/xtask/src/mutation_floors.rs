@@ -1,12 +1,13 @@
 //! Port of the original Python implementation.
 //!
-//! Reads a cargo-mutants `outcomes.json` and enforces the per-file mutation
-//! score floors below. Scoring matches the campaign's conventions: a mutant
-//! counts as caught when a test failed on it OR the mutated build timed out;
-//! missed mutants count against the score; unviable mutants (the mutation does
-//! not compile) leave the denominator entirely. Files without an adopted floor
-//! are held to the strictest bar (any missed mutant fails). Floors only ever
-//! ratchet up.
+//! Reads one or more cargo-mutants `outcomes.json` files (the flag repeats,
+//! once per campaign shard; per-file counts are summed across them) and
+//! enforces the per-file mutation score floors below. Scoring matches the
+//! campaign's conventions: a mutant counts as caught when a test failed on it
+//! OR the mutated build timed out; missed mutants count against the score;
+//! unviable mutants (the mutation does not compile) leave the denominator
+//! entirely. Files without an adopted floor are held to the strictest bar
+//! (any missed mutant fails). Floors only ever ratchet up.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -59,7 +60,6 @@ struct Counts {
     caught: u32,
     missed: u32,
     timeout: u32,
-    #[allow(dead_code)]
     unviable: u32,
 }
 
@@ -105,11 +105,22 @@ fn score_outcomes(text: &str) -> Result<BTreeMap<String, Counts>, String> {
 }
 
 pub fn run(args: &[String]) -> Result<i32, String> {
-    let outcomes_path = crate::flag_value(args, "--outcomes")?
-        .unwrap_or_else(|| "mutants.out/outcomes.json".to_string());
-    let text = std::fs::read_to_string(Path::new(&outcomes_path))
-        .map_err(|e| format!("cannot read {outcomes_path}: {e}"))?;
-    let per_file = score_outcomes(&text)?;
+    let mut outcomes_paths = crate::flag_values(args, "--outcomes")?;
+    if outcomes_paths.is_empty() {
+        outcomes_paths.push("mutants.out/outcomes.json".to_string());
+    }
+    let mut per_file: BTreeMap<String, Counts> = BTreeMap::new();
+    for outcomes_path in &outcomes_paths {
+        let text = std::fs::read_to_string(Path::new(outcomes_path))
+            .map_err(|e| format!("cannot read {outcomes_path}: {e}"))?;
+        for (file, counts) in score_outcomes(&text)? {
+            let merged = per_file.entry(file).or_default();
+            merged.caught += counts.caught;
+            merged.missed += counts.missed;
+            merged.timeout += counts.timeout;
+            merged.unviable += counts.unviable;
+        }
+    }
 
     if per_file.is_empty() {
         println!("no mutants in the campaign output; nothing to score");
@@ -262,6 +273,55 @@ mod tests {
         let caught = c.caught + c.timeout;
         let denom = caught + c.missed;
         assert_eq!(denom, 0);
+    }
+
+    #[test]
+    fn sharded_outcomes_merge_per_file_counts() {
+        // Two shards each scoring the same file; the merged badge must reflect
+        // the summed counts (3 caught of 4 considered = 75.0%).
+        let dir =
+            std::env::temp_dir().join(format!("xtask-mutation-shards-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shard_a = dir.join("a.json");
+        let shard_b = dir.join("b.json");
+        let badge = dir.join("badge.json");
+        std::fs::write(
+            &shard_a,
+            serde_json::json!({"outcomes": [
+                {"scenario": "Baseline", "summary": "Success"},
+                outcome("a.rs", "CaughtMutant"),
+                outcome("a.rs", "MissedMutant"),
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            &shard_b,
+            serde_json::json!({"outcomes": [
+                {"scenario": "Baseline", "summary": "Success"},
+                outcome("a.rs", "CaughtMutant"),
+                outcome("a.rs", "Timeout"),
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let args: Vec<String> = [
+            "--outcomes",
+            shard_a.to_str().unwrap(),
+            "--outcomes",
+            shard_b.to_str().unwrap(),
+            "--badge-out",
+            badge.to_str().unwrap(),
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let code = run(&args).unwrap();
+        assert_eq!(code, 0);
+        let rendered: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&badge).unwrap()).unwrap();
+        assert_eq!(rendered["message"], "75.0%");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

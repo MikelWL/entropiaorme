@@ -19,15 +19,20 @@ permissions:
 
 jobs:
   rust-mutation:
-    name: Mutation testing (cargo-mutants)
+    name: Mutation testing (shard ${{ matrix.shard }}/8)
     # The mutation campaign over the native-backend workspace members, the proof
     # the test net has no holes. The Tauri shell stays out of the campaign: its
     # logic is OS-window plumbing behind cfg(windows), and building it needs the
-    # Tauri system toolchain this Linux runner deliberately lacks. The acceptance
-    # bar is the per-file floor map in the cargo xtask `mutation-floors` guard:
-    # files without an adopted floor are held to no-missed-mutants and floors only
-    # ratchet up. The aggregate score is published as the README's mutation badge.
+    # Tauri system toolchain this Linux runner deliberately lacks. The campaign
+    # is sharded across parallel runners because the full run exceeds the 6-hour
+    # hosted-job ceiling on a single runner; each shard tests a deterministic
+    # slice of the mutant set and reports its outcomes to the verdict job below,
+    # which merges them for the floors gate and the badge.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     defaults:
       run:
         working-directory: app/src-tauri
@@ -39,8 +44,10 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: app/src-tauri
-          # Restrict cache writes to the trusted main timeline; PR and merge-queue
-          # runs restore read-only so a branch cannot seed or poison the cache.
+          # One cache entry shared by every shard (their build inputs are
+          # identical); writes restricted to the trusted main timeline so a
+          # branch cannot seed or poison the cache.
+          shared-key: mutation
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Prebuilt binary rather than cargo install, which would compile the
       # tool from source on every run.
@@ -54,44 +61,32 @@ jobs:
       # relocated corpus under app/src-tauri/fixtures/), which
       # cargo-mutants' default copied build tree does not contain. Exit codes 2
       # (missed mutants) and 3 (timed-out mutants) are outcome reports, tolerated
-      # here because the floors step below is the acceptance bar (it counts a
-      # timeout as caught); anything else (usage error, failing baseline,
-      # internal error) still fails this step.
-      - name: Run mutation campaign (backend members)
-        run: cargo mutants --package eo-wire --package eo-services --in-place || { rc=$?; test "$rc" -eq 2 -o "$rc" -eq 3; }
-      # Reduce the campaign to the aggregate-score shields badge. Badge-only mode
-      # always exits 0, so the badge reflects reality even when the floors step
-      # below fails; built on every run, published (next job) only from main.
-      - name: Build mutation badge
-        run: cargo run -q -p xtask -- mutation-floors --outcomes mutants.out/outcomes.json --badge-out mutation.json
-      # Hand the badge to the main-only publish job as an artifact rather than
-      # pushing here: this job builds repository code, so it must never carry a
-      # write-scoped token (mirrors the coverage measure/publish split).
-      - name: Upload mutation badge
-        if: github.ref == 'refs/heads/main'
+      # here because the floors gate in the verdict job is the acceptance bar (it
+      # counts a timeout as caught); anything else (usage error, failing
+      # baseline, internal error) still fails this shard.
+      - name: Run mutation campaign shard (backend members)
+        run: cargo mutants --package eo-wire --package eo-services --in-place --shard ${{ matrix.shard }}/8 || { rc=$?; test "$rc" -eq 2 -o "$rc" -eq 3; }
+      # Every shard hands its outcomes to the verdict job; if-no-files-found
+      # fails closed so a shard that produced nothing cannot silently thin the
+      # merged campaign.
+      - name: Upload shard outcomes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: mutation-badge
+          name: mutation-outcomes-${{ matrix.shard }}
           # Repo-root relative: upload-artifact ignores the job's working-directory.
-          path: app/src-tauri/mutation.json
+          path: app/src-tauri/mutants.out/outcomes.json
           if-no-files-found: error
           retention-days: 1
-      # The acceptance gate: enforce the per-file floors (no --badge-out, so this
-      # invocation enforces and fails on any regression below an adopted floor or
-      # a missed mutant in a no-floor file). Runs after the badge build, so the
-      # badge still reflects reality on a regression.
-      - name: Enforce the per-file mutation floors
-        run: cargo run -q -p xtask -- mutation-floors --outcomes mutants.out/outcomes.json
 
-  advisory-watch:
-    name: Suppressed-advisory watch (quick-xml)
-    # Anti-rot guard for the vulnerability suppressions in .cargo/audit.toml and
-    # deny.toml. After an in-range dependency update (which pulls a fixed plist
-    # once upstream ships one), re-audit with the two watched quick-xml
-    # advisories un-suppressed. If they no longer fire, a fix has propagated and
-    # the suppression must be dropped, so fail loudly rather than let it rot.
-    # Nightly-only: this is a monitor, not a merge gate.
+  mutation-verdict:
+    name: Mutation verdict (floors + badge)
+    # Merges the shard outcomes (the floors tool sums per-file counts across
+    # repeated --outcomes flags), builds the aggregate-score badge, then
+    # enforces the per-file floor map: files without an adopted floor are held
+    # to no-missed-mutants and floors only ratchet up. Badge before gate, so
+    # the published badge still reflects reality on a regression.
     runs-on: ubuntu-latest
+    needs: [rust-mutation]
     defaults:
       run:
         working-directory: app/src-tauri
@@ -100,29 +95,44 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6190aa5fb88a88ee71c12769924bbe63a9ab152e # 1.96.0 (branch SHA; dtolnay has no semver release tags)
-      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          tool: cargo-audit
-      - name: Watch suppressed quick-xml advisories for an upstream fix
+          workspaces: app/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          pattern: mutation-outcomes-*
+          path: mutation-shards
+      - name: Merge shard outcomes into badge and floors verdict
         run: |
           set -euo pipefail
-          # Pull in-range dependency updates; once a released plist moves to
-          # quick-xml >= 0.41 this brings the fix into the tree.
-          cargo update -q
-          # Strip the two watched suppressions so the audit reports them if they
-          # are still present, then check the audit output for those IDs directly
-          # (robust to unrelated advisories the updated tree may surface).
-          sed -i -E '/RUSTSEC-2026-0194|RUSTSEC-2026-0195/d' .cargo/audit.toml
-          out=$(cargo audit 2>&1 || true)
-          if echo "$out" | grep -q 'RUSTSEC-2026-019[45]'; then
-            echo "quick-xml advisories still fire after an in-range update; suppression remains justified."
-          else
-            echo "::error::quick-xml advisories (RUSTSEC-2026-0194/-0195) no longer fire after an in-range update. A fix has propagated: bump plist and drop the suppression from .cargo/audit.toml and deny.toml."
+          # Repo-root relative: download-artifact ignores the job's working-directory.
+          mapfile -t shard_files < <(find "$GITHUB_WORKSPACE/mutation-shards" -name outcomes.json | sort)
+          if [ "${#shard_files[@]}" -ne 8 ]; then
+            echo "::error::expected 8 shard outcome files, found ${#shard_files[@]}; refusing a partial campaign verdict."
             exit 1
           fi
+          outcome_flags=()
+          for f in "${shard_files[@]}"; do outcome_flags+=(--outcomes "$f"); done
+          # Badge first (badge-only mode always exits 0, so the badge reflects
+          # reality even when the floors gate below fails), then the gate.
+          cargo run -q -p xtask -- mutation-floors "${outcome_flags[@]}" --badge-out mutation.json
+          cargo run -q -p xtask -- mutation-floors "${outcome_flags[@]}"
+      # Hand the badge to the main-only publish job as an artifact rather than
+      # pushing here: this job builds repository code, so it must never carry a
+      # write-scoped token (mirrors the coverage measure/publish split).
+      - name: Upload mutation badge
+        if: ${{ always() && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-badge
+          # Repo-root relative: upload-artifact ignores the job's working-directory.
+          path: app/src-tauri/mutation.json
+          if-no-files-found: error
+          retention-days: 1
 
   # Publish the mutation badge to the badges branch, from the trunk only. Kept
-  # separate from the campaign job so the write-scoped token never attaches to a
+  # separate from the verdict job so the write-scoped token never attaches to a
   # run that builds repository code: this job runs no repository code, it only
   # downloads the badge artifact and pushes it. if: always() so the badge still
   # publishes when the floors gate failed (the badge then shows the regressed
@@ -130,7 +140,7 @@ jobs:
   publish-mutation-badge:
     name: Publish mutation badge
     runs-on: ubuntu-latest
-    needs: [rust-mutation]
+    needs: [mutation-verdict]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     permissions:
       contents: write

@@ -101,7 +101,7 @@ The acceptance bar is a **per-file floor map** enforced by the in-tree guard:
 cargo run -p xtask -- mutation-floors --outcomes mutants.out/outcomes.json
 ```
 
-A file with an adopted floor must hold its score; a file without one is held to the strictest bar (any missed mutant fails); floors only ever ratchet up. A mutant counts as caught when a test failed on it or the mutated build timed out; unviable mutants (the mutation does not compile) leave the denominator. The aggregate score is published as the README's mutation badge. Triaging a survivor is a two-way choice: strengthen a test until it is killed, or, if the mutation is provably equivalent, leave it with a recorded reason. Never lower a floor to make a regressed run pass.
+(The `--outcomes` flag repeats to merge the outcome files of a sharded campaign; per-file counts are summed before scoring.) A file with an adopted floor must hold its score; a file without one is held to the strictest bar (any missed mutant fails); floors only ever ratchet up. A mutant counts as caught when a test failed on it or the mutated build timed out; unviable mutants (the mutation does not compile) leave the denominator. The aggregate score is published as the README's mutation badge. Triaging a survivor is a two-way choice: strengthen a test until it is killed, or, if the mutation is provably equivalent, leave it with a recorded reason. Never lower a floor to make a regressed run pass.
 
 ## Goldens regeneration
 
@@ -236,7 +236,7 @@ Skipping a required check is the hazard: branch protection treats a never-report
 
 ### Nightly
 
-A separate scheduled workflow (`.github/workflows/nightly.yml`) runs the slower checks once a day: the `cargo-mutants` campaign over the backend members, the per-file mutation-floor enforcement, and the mutation-score badge publish from `main` (see "Mutation testing" above).
+A separate scheduled workflow (`.github/workflows/nightly.yml`) runs the slower checks once a day: the `cargo-mutants` campaign over the backend members (sharded across parallel runners; a single runner cannot finish the full campaign inside the hosted six-hour job ceiling), a verdict job that merges the shard outcomes for the per-file mutation-floor enforcement, and the mutation-score badge publish from `main` (see "Mutation testing" above).
 
 ## Local checks (pre-commit)
 

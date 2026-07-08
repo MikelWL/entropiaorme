@@ -10,7 +10,7 @@
 //! xtask ratify-check        --range <BASE>..<HEAD>
 //! xtask authoring-lint      --range <BASE>..<HEAD>
 //! xtask version-stamps
-//! xtask mutation-floors     --outcomes <PATH>
+//! xtask mutation-floors     --outcomes <PATH> [--outcomes <PATH> ...]
 //! xtask no-bare-setinterval [--warn-only]
 //! xtask no-new-writable     [--warn-only]
 //! xtask bump-version        <NEW_VERSION>
@@ -38,7 +38,7 @@ SUBCOMMANDS:
     ratify-check    --range <BASE>..<HEAD>   guard golden changes behind a recorded ratification verdict
     authoring-lint  --range <BASE>..<HEAD>   flag em dashes and US spellings on newly added lines
     version-stamps                            assert the app version stamps agree across the tree
-    mutation-floors --outcomes <PATH>         enforce per-file cargo-mutants score floors
+    mutation-floors --outcomes <PATH>...      enforce per-file cargo-mutants score floors (flag repeats to merge campaign shards)
     no-bare-setinterval [--warn-only]         forbid bare setInterval and the retired tracking event in the frontend
     no-new-writable [--warn-only]             forbid svelte/store imports outside the frozen legacy surface
     bump-version <NEW_VERSION>                rewrite the app version stamps in lock-step
@@ -88,17 +88,25 @@ fn main() -> ExitCode {
 /// with a value, and `Err` when present without a following value. Kept here so
 /// every subcommand parses its flags the same way without a CLI dependency.
 pub fn flag_value(args: &[String], flag: &str) -> Result<Option<String>, String> {
+    let values = flag_values(args, flag)?;
+    Ok(values.into_iter().next())
+}
+
+/// Pull every value of a repeatable flag (e.g. `--outcomes A --outcomes B`)
+/// out of an argument list, in order. Empty when the flag is absent; `Err`
+/// when any occurrence lacks a following value.
+pub fn flag_values(args: &[String], flag: &str) -> Result<Vec<String>, String> {
+    let mut values = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == flag {
-            return match iter.next() {
-                Some(value) => Ok(Some(value.clone())),
-                None => Err(format!("xtask: {flag} requires a value")),
-            };
-        }
-        if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
-            return Ok(Some(value.to_string()));
+            match iter.next() {
+                Some(value) => values.push(value.clone()),
+                None => return Err(format!("xtask: {flag} requires a value")),
+            }
+        } else if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
+            values.push(value.to_string());
         }
     }
-    Ok(None)
+    Ok(values)
 }
