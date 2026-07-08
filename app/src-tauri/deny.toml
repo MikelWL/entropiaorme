@@ -17,23 +17,37 @@
 #     alternative registries fail until allowlisted here.
 
 [graph]
-# The shell ships on Windows only; resolve the policy against the real
-# target rather than the full cross-platform graph so Linux-only subtrees
-# (GTK et al.) do not drive licensing decisions for artefacts we ship.
-targets = ["x86_64-pc-windows-msvc"]
+# Resolve the policy against the targets we actually ship (Windows, and
+# the Linux deb/AppImage) rather than the full cross-platform graph, so
+# subtrees for platforms we do not build (macOS et al.) do not drive
+# licensing decisions for artefacts we ship.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 all-features = true
 
 [advisories]
 version = 2
 yanked = "deny"
-# The Windows-graph subset of .cargo/audit.toml (single source of full
+# The shipped-graph subset of .cargo/audit.toml (single source of full
 # rationale). Most are `unmaintained` warnings on transitive Tauri-toolchain
-# crates. The two quick-xml entries are DoS *vulnerability* advisories,
-# suppressed only because a reachability audit proved their XML-parse path is
-# dead code in the Windows artefact; the `wrappers = ["plist"]` ban below pins
-# that assumption structurally. Drop them when plist reaches quick-xml >= 0.41.
-# Review both files together on every Tauri bump.
+# crates: the gtk-rs GTK3 family is the Linux backend every Tauri Linux app
+# carries until Tauri migrates off GTK3. The two quick-xml entries are DoS
+# *vulnerability* advisories, suppressed only because a reachability audit
+# proved their XML-parse path is dead code in the shipped artefacts; the
+# `wrappers = ["plist"]` ban below pins that assumption structurally. Drop
+# them when plist reaches quick-xml >= 0.41. Review both files together on
+# every Tauri bump.
 ignore = [
+    "RUSTSEC-2024-0411", # gdkwayland-sys (gtk-rs GTK3 family, unmaintained)
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0414", # gdkx11-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0417", # gdkx11
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0370", # proc-macro-error (build-time macro crate)
     "RUSTSEC-2025-0075", # unic-char-range (build-time Unicode data)
     "RUSTSEC-2025-0080", # unic-common
     "RUSTSEC-2025-0081", # unic-char-property

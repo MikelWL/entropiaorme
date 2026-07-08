@@ -68,6 +68,19 @@ installer:
     @echo "just installer: the Windows installer build requires Windows (WiX + MSVC x86)."
     @exit 1
 
+# Build the Linux packages (.deb + AppImage) end to end via the Tauri
+# bundler, applying the Linux config overlay (deb/appimage targets, the
+# Linux ONNX Runtime resource). Needs the Tauri build chain plus the
+# WebKitGTK / GTK dev libraries. Mirrors the Linux release job.
+[linux]
+bundle:
+    npm --prefix app run tauri -- build --config src-tauri/entropia-orme/tauri.linux.conf.json --bundles deb,appimage
+
+[windows, macos]
+bundle:
+    @echo "just bundle: the Linux package build requires Linux (deb + AppImage)."
+    @exit 1
+
 # Headless smoke verification of the dev launch. Not yet implemented.
 smoke:
     @echo "just smoke: headless smoke verification is not yet implemented."

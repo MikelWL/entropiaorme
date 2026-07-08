@@ -26,9 +26,17 @@ The recogniser is an ONNX model. Specifically it is the SVTRv2-mobile text
 recogniser, distributed as an ONNX graph and executed through ONNX Runtime.
 The engine loads the bundled model
 (`app/src-tauri/entropia-orme/resources/models/svtrv2_rec.onnx`) through
-the `ort` crate. On Windows with a DirectX 12 GPU the session runs under the
-**DirectML** execution provider; otherwise it falls back to the **CPU**
-execution provider. The engine records which provider was actually committed.
+the `ort` crate. The session prefers the platform's GPU execution provider
+and falls back to the **CPU** provider when no usable GPU is present: on
+Windows with a DirectX 12 GPU that is **DirectML**, on Linux with a Vulkan
+driver it is **WebGPU** (Dawn over Vulkan). The engine records which provider
+was actually committed. Running inference on the GPU is a deliberate design
+choice, not an optimisation: the game the recogniser reads is CPU-limited, so
+OCR belongs on the GPU the game leaves idle rather than the CPU it competes
+for. The ONNX Runtime itself is platform-forked: Windows bundles the DirectML
+build, Linux bundles the official WebGPU-enabled build
+(`app/src-tauri/entropia-orme/resources/ort-linux/`; see its
+`PROVENANCE.txt`), each resolved and pinned by absolute path.
 
 The model weights ship inside the installer and the recogniser operates fully
 offline from a cold start: there is no network access at any point of the read
@@ -289,7 +297,9 @@ are held locally and kept out of the public tree, so the test runs only when
 loadable; otherwise it skips with its reason stated rather than passing
 vacuously. The same host-gating applies to the provider-selection tests in
 `app/src-tauri/eo-services/src/ocr_engine.rs`, which additionally run only
-on Windows, where the bundled Windows ONNX Runtime build is present.
+on Windows, where the bundled Windows ONNX Runtime build is present; the Linux
+runtime is exercised by the platform port's scan-chain verification rather than
+these Windows-pinned provider-ladder tests.
 
 The rationale for pinning equivalence to this recorded corpus, rather than
 chasing a moving accuracy target, is recorded in

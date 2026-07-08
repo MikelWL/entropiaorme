@@ -103,18 +103,27 @@ impl KeystrokeSource for MockKeystrokeSource {
     }
 }
 
-/// The production source: the Windows low-level keyboard hook behind
-/// the same trait. On other platforms `start` stays inert and returns
-/// false, exactly as the original does when its hook library is
-/// unavailable.
+#[cfg(target_os = "linux")]
+use linux_evdev as platform_hook;
+/// The platform module behind [`HookKeystrokeSource`]: the Windows
+/// low-level keyboard hook or the Linux evdev reader, each exposing the
+/// same `start(callbacks, allowlist) -> Option<Running>` surface.
+#[cfg(windows)]
+use windows_hook as platform_hook;
+
+/// The production source: the platform's global key observer behind the
+/// same trait (the Windows low-level keyboard hook; the Linux passive
+/// evdev reader). On platforms without an implementation `start` stays
+/// inert and returns false, exactly as the original does when its hook
+/// library is unavailable.
 pub struct HookKeystrokeSource {
     // Consumed by the platform hook module; the portable build keeps
     // the field so construction is uniform across platforms.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
     allowlist: Option<BTreeSet<String>>,
     callbacks: Arc<Mutex<Vec<KeystrokeCallback>>>,
-    #[cfg(windows)]
-    state: Mutex<Option<windows_hook::Running>>,
+    #[cfg(any(windows, target_os = "linux"))]
+    state: Mutex<Option<platform_hook::Running>>,
 }
 
 impl HookKeystrokeSource {
@@ -123,12 +132,12 @@ impl HookKeystrokeSource {
         Self {
             allowlist,
             callbacks: Arc::new(Mutex::new(Vec::new())),
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             state: Mutex::new(None),
         }
     }
 
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
     fn dispatch(
         callbacks: &Mutex<Vec<KeystrokeCallback>>,
         allowlist: &Option<BTreeSet<String>>,
@@ -157,13 +166,13 @@ impl KeystrokeSource for HookKeystrokeSource {
         self.callbacks.lock().expect("callbacks").push(callback);
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     fn start(&self) -> bool {
         let mut state = self.state.lock().expect("hook state");
         if state.is_some() {
             return true;
         }
-        match windows_hook::start(self.callbacks.clone(), self.allowlist.clone()) {
+        match platform_hook::start(self.callbacks.clone(), self.allowlist.clone()) {
             Some(running) => {
                 *state = Some(running);
                 true
@@ -172,19 +181,19 @@ impl KeystrokeSource for HookKeystrokeSource {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn start(&self) -> bool {
         false
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     fn stop(&self) {
         if let Some(running) = self.state.lock().expect("hook state").take() {
             running.stop();
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn stop(&self) {}
 }
 
@@ -432,6 +441,283 @@ mod windows_hook {
     }
 }
 
+/// The Linux plumbing: passive readers on the kernel evdev nodes. One
+/// thread per keyboard-class device polls its file descriptor with a
+/// short timeout (so `stop` is honoured promptly) and reads events
+/// without ever grabbing the device, so the focused application keeps
+/// receiving every key; one owned worker drains the queue and
+/// dispatches to subscribers. Requires read access to `/dev/input`
+/// (the `input` group); when enumeration finds no readable keyboard
+/// the source reports inert, mirroring the Windows hook-install
+/// failure path. Unlike the Windows hook there is no process-global
+/// single-instance constraint: concurrent readers are kernel-supported,
+/// so no slot guard is needed.
+#[cfg(target_os = "linux")]
+mod linux_evdev {
+    use super::{KeystrokeCallback, KeystrokeKind};
+    use std::collections::BTreeSet;
+    use std::os::fd::AsRawFd;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::channel;
+    use std::sync::{Arc, Mutex};
+
+    use evdev::{Device, EventType, KeyCode};
+
+    /// How long a reader blocks in poll(2) before re-checking the stop
+    /// flag: short enough that teardown feels immediate, long enough
+    /// that an idle keyboard costs a handful of wakeups per second.
+    const POLL_TIMEOUT_MS: i32 = 200;
+
+    pub struct Running {
+        stop: Arc<AtomicBool>,
+        readers: Vec<std::thread::JoinHandle<()>>,
+        worker: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for Running {
+        fn drop(&mut self) {
+            self.shutdown();
+        }
+    }
+
+    impl Running {
+        pub fn stop(self) {
+            // Dropping runs the shutdown; the explicit form exists for
+            // call-site clarity.
+        }
+
+        fn shutdown(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            for reader in self.readers.drain(..) {
+                let _ = reader.join();
+            }
+            // The readers dropping their senders ends the worker's
+            // queue, so it drains and exits.
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    /// The key vocabulary the listeners speak, mirroring the Windows
+    /// mapping exactly: number-row and keypad digits fold to the same
+    /// digit strings, the spacebar is "space", everything else is
+    /// unmapped.
+    fn key_name(code: KeyCode) -> Option<&'static str> {
+        Some(match code {
+            KeyCode::KEY_1 | KeyCode::KEY_KP1 => "1",
+            KeyCode::KEY_2 | KeyCode::KEY_KP2 => "2",
+            KeyCode::KEY_3 | KeyCode::KEY_KP3 => "3",
+            KeyCode::KEY_4 | KeyCode::KEY_KP4 => "4",
+            KeyCode::KEY_5 | KeyCode::KEY_KP5 => "5",
+            KeyCode::KEY_6 | KeyCode::KEY_KP6 => "6",
+            KeyCode::KEY_7 | KeyCode::KEY_KP7 => "7",
+            KeyCode::KEY_8 | KeyCode::KEY_KP8 => "8",
+            KeyCode::KEY_9 | KeyCode::KEY_KP9 => "9",
+            KeyCode::KEY_0 | KeyCode::KEY_KP0 => "0",
+            KeyCode::KEY_SPACE => "space",
+            _ => return None,
+        })
+    }
+
+    /// A device qualifies as a keyboard for our purposes when it emits
+    /// key events at all and can produce at least one key in the
+    /// vocabulary. This keeps mice (BTN_LEFT is a key event too) and
+    /// consumer-control devices out of the reader set.
+    fn is_candidate(device: &Device) -> bool {
+        if !device.supported_events().contains(EventType::KEY) {
+            return false;
+        }
+        device
+            .supported_keys()
+            .is_some_and(|keys| keys.iter().any(|code| key_name(code).is_some()))
+    }
+
+    /// Kernel evdev key-event values: 0 release, 1 press, 2 autorepeat.
+    /// Autorepeat maps to a press, matching the repeated WM_KEYDOWN
+    /// stream the Windows hook delivers while a key is held.
+    fn kind_for_value(value: i32) -> Option<KeystrokeKind> {
+        match value {
+            0 => Some(KeystrokeKind::Release),
+            1 | 2 => Some(KeystrokeKind::Press),
+            _ => None,
+        }
+    }
+
+    fn set_nonblocking(fd: i32) {
+        // A reader must never block in read(2) past the stop flag;
+        // poll(2) provides the bounded wait instead.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags >= 0 {
+                libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            }
+        }
+    }
+
+    pub fn start(
+        callbacks: Arc<Mutex<Vec<KeystrokeCallback>>>,
+        allowlist: Option<BTreeSet<String>>,
+    ) -> Option<Running> {
+        let devices: Vec<(std::path::PathBuf, Device)> = evdev::enumerate()
+            .filter(|(_, device)| is_candidate(device))
+            .collect();
+        if devices.is_empty() {
+            tracing::warn!(
+                target: "eo::input",
+                "no readable keyboard device found; keystroke source inert \
+                 (is the user in the input group?)"
+            );
+            return None;
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = channel::<(String, KeystrokeKind)>();
+
+        let mut readers = Vec::with_capacity(devices.len());
+        for (path, mut device) in devices {
+            let fd = device.as_raw_fd();
+            set_nonblocking(fd);
+            let stop_flag = stop.clone();
+            let event_sender = sender.clone();
+            let label = path.display().to_string();
+            let reader = std::thread::Builder::new()
+                .name("keystroke-evdev".into())
+                .spawn(move || {
+                    tracing::info!(target: "eo::input", device = %label, "evdev reader attached");
+                    let mut pollfd = libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    loop {
+                        if stop_flag.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        let ready = unsafe { libc::poll(&mut pollfd, 1, POLL_TIMEOUT_MS) };
+                        if ready <= 0 {
+                            // Timeout or EINTR: re-check the stop flag.
+                            continue;
+                        }
+                        match device.fetch_events() {
+                            Ok(events) => {
+                                for event in events {
+                                    if event.event_type() != EventType::KEY {
+                                        continue;
+                                    }
+                                    let Some(kind) = kind_for_value(event.value()) else {
+                                        continue;
+                                    };
+                                    if let Some(key) = key_name(KeyCode::new(event.code())) {
+                                        let _ = event_sender.send((key.to_string(), kind));
+                                    }
+                                }
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                            Err(error) => {
+                                // The device went away (unplug, suspend);
+                                // this reader retires, the others carry on.
+                                tracing::warn!(
+                                    target: "eo::input",
+                                    device = %label,
+                                    %error,
+                                    "evdev reader detached"
+                                );
+                                break;
+                            }
+                        }
+                    }
+                });
+            match reader {
+                Ok(handle) => readers.push(handle),
+                Err(_) => {
+                    // A failed spawn tears the already-started readers
+                    // down through Running's drop.
+                    drop(sender);
+                    let mut partial = Running {
+                        stop,
+                        readers,
+                        worker: None,
+                    };
+                    partial.shutdown();
+                    return None;
+                }
+            }
+        }
+        // The worker's queue must end when the readers exit, so the
+        // spawn loop's original sender does not outlive them.
+        drop(sender);
+
+        let worker = match std::thread::Builder::new()
+            .name("keystroke-dispatch".into())
+            .spawn(move || {
+                // Ends when the last reader drops its sender.
+                while let Ok((key, kind)) = receiver.recv() {
+                    super::HookKeystrokeSource::dispatch(&callbacks, &allowlist, &key, kind);
+                }
+            }) {
+            Ok(worker) => worker,
+            Err(_) => {
+                let mut partial = Running {
+                    stop,
+                    readers,
+                    worker: None,
+                };
+                partial.shutdown();
+                return None;
+            }
+        };
+
+        Some(Running {
+            stop,
+            readers,
+            worker: Some(worker),
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_vocabulary_mirrors_the_windows_mapping() {
+            for (row, pad, expected) in [
+                (KeyCode::KEY_1, KeyCode::KEY_KP1, "1"),
+                (KeyCode::KEY_2, KeyCode::KEY_KP2, "2"),
+                (KeyCode::KEY_3, KeyCode::KEY_KP3, "3"),
+                (KeyCode::KEY_4, KeyCode::KEY_KP4, "4"),
+                (KeyCode::KEY_5, KeyCode::KEY_KP5, "5"),
+                (KeyCode::KEY_6, KeyCode::KEY_KP6, "6"),
+                (KeyCode::KEY_7, KeyCode::KEY_KP7, "7"),
+                (KeyCode::KEY_8, KeyCode::KEY_KP8, "8"),
+                (KeyCode::KEY_9, KeyCode::KEY_KP9, "9"),
+                (KeyCode::KEY_0, KeyCode::KEY_KP0, "0"),
+            ] {
+                assert_eq!(key_name(row), Some(expected), "number row {row:?}");
+                assert_eq!(key_name(pad), Some(expected), "keypad {pad:?}");
+            }
+            assert_eq!(key_name(KeyCode::KEY_SPACE), Some("space"));
+            for unmapped in [
+                KeyCode::KEY_A,
+                KeyCode::KEY_ESC,
+                KeyCode::KEY_F5,
+                KeyCode::KEY_ENTER,
+                KeyCode::KEY_LEFTSHIFT,
+            ] {
+                assert_eq!(key_name(unmapped), None, "{unmapped:?} must stay unmapped");
+            }
+        }
+
+        #[test]
+        fn autorepeat_counts_as_a_press_and_unknown_values_drop() {
+            assert_eq!(kind_for_value(0), Some(KeystrokeKind::Release));
+            assert_eq!(kind_for_value(1), Some(KeystrokeKind::Press));
+            assert_eq!(kind_for_value(2), Some(KeystrokeKind::Press));
+            assert_eq!(kind_for_value(3), None);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,19 +748,24 @@ mod tests {
     }
 
     #[test]
-    fn the_hook_source_is_inert_off_windows() {
+    fn the_hook_source_lifecycle_is_safe_without_a_start() {
         let source = HookKeystrokeSource::new(None);
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             assert!(!source.start(), "no hook mechanism on this platform");
             source.stop();
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         {
-            // Starting a real hook on CI is possible but pointless
-            // headless; the lifecycle is exercised by the listener
-            // wiring and the platform smoke instead.
-            let _ = &source;
+            // Starting a real observer in a unit test would install a
+            // process-global keyboard hook (Windows) or attach evdev
+            // readers whose success depends on the machine's device
+            // permissions (Linux): both are environment, not logic.
+            // The attach paths are exercised by the listener wiring
+            // with mock sources and by the platform smoke instead.
+            // Stopping an un-started source must be a safe no-op.
+            source.stop();
+            source.stop();
         }
     }
 

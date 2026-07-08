@@ -116,7 +116,120 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+/// The Linux lookup runs over X11: the game client runs under Proton,
+/// which renders through XWayland, and the app itself forces the X11
+/// GDK backend, so both live on the X server where windows are
+/// enumerable and measurable (native-Wayland surfaces are deliberately
+/// invisible to clients). Discovery walks the window manager's
+/// `_NET_CLIENT_LIST`, matches the title prefix, and geometry
+/// translates the client origin to root coordinates: the same
+/// title-then-client-area contract as the Windows helpers. Every call
+/// opens its own short-lived connection (lookups are per-scan, not
+/// hot-path) and any X error folds to None, matching the
+/// window-vanished handling on Windows.
+#[cfg(target_os = "linux")]
+mod platform {
+    use super::{WindowHandle, GAME_TITLE_PREFIX};
+
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, MapState, Window};
+
+    fn window_title(
+        conn: &impl Connection,
+        window: Window,
+        net_wm_name: Atom,
+        utf8_string: Atom,
+    ) -> Option<String> {
+        let reply = conn
+            .get_property(false, window, net_wm_name, utf8_string, 0, 1024)
+            .ok()?
+            .reply()
+            .ok()?;
+        if reply.value_len > 0 {
+            return String::from_utf8(reply.value).ok();
+        }
+        // Pre-EWMH fallback (Wine windows occasionally carry only WM_NAME).
+        let reply = conn
+            .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)
+            .ok()?
+            .reply()
+            .ok()?;
+        (reply.value_len > 0).then(|| String::from_utf8_lossy(&reply.value).into_owned())
+    }
+
+    pub fn find_game_window() -> Option<WindowHandle> {
+        let (conn, screen_num) = x11rb::connect(None).ok()?;
+        let root = conn.setup().roots[screen_num].root;
+        let net_client_list = conn
+            .intern_atom(false, b"_NET_CLIENT_LIST")
+            .ok()?
+            .reply()
+            .ok()?
+            .atom;
+        let net_wm_name = conn
+            .intern_atom(false, b"_NET_WM_NAME")
+            .ok()?
+            .reply()
+            .ok()?
+            .atom;
+        let utf8_string = conn
+            .intern_atom(false, b"UTF8_STRING")
+            .ok()?
+            .reply()
+            .ok()?
+            .atom;
+        let clients = conn
+            .get_property(false, root, net_client_list, AtomEnum::WINDOW, 0, u32::MAX)
+            .ok()?
+            .reply()
+            .ok()?;
+        for window in clients.value32()? {
+            let Some(title) = window_title(&conn, window, net_wm_name, utf8_string) else {
+                continue;
+            };
+            if !title.starts_with(GAME_TITLE_PREFIX) {
+                continue;
+            }
+            let viewable = conn
+                .get_window_attributes(window)
+                .ok()
+                .and_then(|cookie| cookie.reply().ok())
+                .is_some_and(|attributes| attributes.map_state == MapState::VIEWABLE);
+            if viewable {
+                return Some(WindowHandle(window as isize));
+            }
+        }
+        None
+    }
+
+    pub fn get_window_geometry(handle: WindowHandle) -> Option<(i64, i64, i64, i64)> {
+        let window = Window::try_from(u32::try_from(handle.0).ok()?).ok()?;
+        let (conn, screen_num) = x11rb::connect(None).ok()?;
+        let root = conn.setup().roots[screen_num].root;
+        let geometry = conn.get_geometry(window).ok()?.reply().ok()?;
+        let width = i64::from(geometry.width);
+        let height = i64::from(geometry.height);
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+        // The EWMH client list yields the client window (the WM frame is
+        // its parent), so translating its origin to root coordinates is
+        // the client area's screen position: the ClientToScreen twin.
+        let origin = conn
+            .translate_coordinates(window, root, 0, 0)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some((
+            i64::from(origin.dst_x),
+            i64::from(origin.dst_y),
+            width,
+            height,
+        ))
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use super::WindowHandle;
 
@@ -135,7 +248,7 @@ mod tests {
 
     #[test]
     fn absent_windows_yield_none_regions() {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             assert!(find_game_window().is_none());
             assert!(!game_window_present());
@@ -144,6 +257,15 @@ mod tests {
             assert!(skill_region(&presets).is_none());
             assert!(profession_region(&presets).is_none());
             assert!(repair_region(&presets).is_none());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Live-session lookups read ambient window state (another
+            // process could legitimately carry the title), so a unit
+            // test may only assert the environment-independent paths:
+            // a handle that cannot be an X window id resolves to None
+            // deterministically, on a live session and headless alike.
+            assert!(get_window_geometry(WindowHandle(-1)).is_none());
         }
         #[cfg(windows)]
         {

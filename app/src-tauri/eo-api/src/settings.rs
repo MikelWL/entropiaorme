@@ -269,7 +269,21 @@ impl Api {
     /// Persist the overlay window position. Unlike the PATCH / reset
     /// writes it carries no producer side effects, so no watcher / hotbar
     /// / tracker signal follows.
+    ///
+    /// The coordinates are bounds-checked before persistence: a client
+    /// that reports a nonsense position (the failure mode observed on a
+    /// Wayland backend, where a window cannot read its own global
+    /// position and hands back a degenerate value) must not be able to
+    /// poison the store with a location no monitor could hold, which
+    /// would leave the overlay stranded off-screen on the next restore.
+    /// The frontend owns the richer, monitor-geometry-aware guard; this
+    /// is the backend's defence-in-depth sanity bound.
     pub async fn settings_set_overlay_position(&self, x: i64, y: i64) -> Result<(), ApiError> {
+        if !is_plausible_overlay_position(x, y) {
+            return Err(ApiError::bad_request(format!(
+                "overlay position ({x}, {y}) is outside the plausible desktop bounds"
+            )));
+        }
         let mut updates = Map::new();
         updates.insert("overlay_x".into(), json!(x));
         updates.insert("overlay_y".into(), json!(y));
@@ -434,6 +448,21 @@ fn expanduser(value: &str) -> String {
 /// forward-slash env override still reads back in the native form, as the
 /// Python reference's `pathlib` normalisation does); other platforms keep
 /// the path as built.
+/// The inclusive coordinate bound (per axis) a persisted overlay
+/// position must fall within. X11 window coordinates are `i16`, and any
+/// real multi-monitor desktop (including monitors placed left of or
+/// above the primary, hence negative origins) fits inside this range;
+/// a value beyond it is corruption, not a reachable window location.
+const OVERLAY_COORD_BOUND: i64 = 32_767;
+
+/// Whether `(x, y)` is a position some monitor on a real desktop could
+/// hold. Pure and total so the guard is unit-testable without a config
+/// service; both axes must be within `±OVERLAY_COORD_BOUND`.
+fn is_plausible_overlay_position(x: i64, y: i64) -> bool {
+    (-OVERLAY_COORD_BOUND..=OVERLAY_COORD_BOUND).contains(&x)
+        && (-OVERLAY_COORD_BOUND..=OVERLAY_COORD_BOUND).contains(&y)
+}
+
 fn python_path_str(path: &Path) -> String {
     #[cfg(windows)]
     {
@@ -485,6 +514,27 @@ mod tests {
             python_path_str(Path::new("/tmp/data/x.db")),
             "/tmp/data/x.db"
         );
+    }
+
+    #[test]
+    fn overlay_position_guard_accepts_real_desktop_coordinates() {
+        // Origin, a large multi-monitor offset, and negative origins
+        // (a monitor left of / above the primary) are all reachable.
+        assert!(is_plausible_overlay_position(0, 0));
+        assert!(is_plausible_overlay_position(40, 40));
+        assert!(is_plausible_overlay_position(5120, 1440));
+        assert!(is_plausible_overlay_position(-1920, -1080));
+        assert!(is_plausible_overlay_position(32_767, -32_767));
+    }
+
+    #[test]
+    fn overlay_position_guard_rejects_corruption() {
+        // Values no monitor could hold: the store must not be poisoned
+        // with a location that would strand the overlay off-screen.
+        assert!(!is_plausible_overlay_position(32_768, 0));
+        assert!(!is_plausible_overlay_position(0, -32_768));
+        assert!(!is_plausible_overlay_position(i64::MAX, i64::MIN));
+        assert!(!is_plausible_overlay_position(1_000_000, 1_000_000));
     }
 
     #[test]

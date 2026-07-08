@@ -6,7 +6,7 @@
 
 An analytical desktop tool for Entropia Universe. Overview and installer downloads: **[entropiaorme.com](https://entropiaorme.com)**.
 
-A Tauri 2 shell hosting a Svelte 5 frontend over a pure-Rust in-process backend. Windows-only for now. The rest of this README covers building from source.
+A Tauri 2 shell hosting a Svelte 5 frontend over a pure-Rust in-process backend. It runs on Windows and, experimentally, on Linux (Ubuntu on Wayland/GNOME, via XWayland); the OS-touching seams (input observation, screen capture, window discovery) are implemented per platform behind shared traits, and the Linux build is still being validated against the live game. The rest of this README covers building from source.
 
 ## Repository map
 

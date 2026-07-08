@@ -21,4 +21,5 @@
 # Bundled native binaries (the ONNX Runtime + DirectML libraries and the OCR
 # model): always binary, never line-ending- or text-normalised.
 *.dll binary
+*.so binary
 *.onnx binary

@@ -9,8 +9,8 @@
 //!
 //! Sampling is best-effort and never on a hot path: a detached thread that
 //! sleeps between samples, so it cannot stall the producers or the HTTP
-//! surface. Off Windows there is no portable resident-set/handle source wired
-//! (the app ships Windows-only), so the sampler simply records nothing.
+//! surface. Windows reads the process counters; Linux reads `/proc/self`;
+//! platforms without a bundled build record nothing.
 
 use std::time::Duration;
 
@@ -63,9 +63,39 @@ fn sample_process_resources() -> Option<(u64, u64)> {
     }
 }
 
-/// No portable resident-set/handle source off Windows (the app ships
-/// Windows-only); the sampler records nothing there.
-#[cfg(not(windows))]
+/// Linux resident-set and open-descriptor sampling, the `/proc`
+/// counterpart of the Windows process counters. RSS comes from
+/// `/proc/self/statm` (its second field is resident pages), scaled by
+/// the page size; the "handle" analogue is the open file-descriptor
+/// count from `/proc/self/fd`. Best-effort like the Windows path: an
+/// unreadable `/proc` (unusual, but possible under a restrictive
+/// sandbox) records nothing rather than failing.
+#[cfg(target_os = "linux")]
+fn sample_process_resources() -> Option<(u64, u64)> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let resident_pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    // SAFETY: sysconf(_SC_PAGESIZE) reads a constant system parameter and
+    // returns it directly; it has no failure mode that touches memory.
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    let page_size = if page_size > 0 {
+        page_size as u64
+    } else {
+        4096
+    };
+    let rss_bytes = resident_pages * page_size;
+
+    let fd_count = std::fs::read_dir("/proc/self/fd")
+        .ok()?
+        .filter(Result::is_ok)
+        .count() as u64;
+
+    Some((rss_bytes, fd_count))
+}
+
+/// No portable resident-set/handle source on the remaining platforms
+/// (macOS and others carry no bundled build); the sampler records
+/// nothing there.
+#[cfg(not(any(windows, target_os = "linux")))]
 fn sample_process_resources() -> Option<(u64, u64)> {
     None
 }
@@ -81,5 +111,16 @@ mod tests {
             sample_process_resources().expect("the Windows process counters are readable");
         assert!(rss > 0, "the test process has a non-zero resident set");
         assert!(handles > 0, "the test process holds at least one OS handle");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn sampling_reads_a_plausible_resident_set_and_handle_count() {
+        let (rss, handles) = sample_process_resources().expect("the /proc counters are readable");
+        assert!(rss > 0, "the test process has a non-zero resident set");
+        assert!(
+            handles > 0,
+            "the test process holds at least one open descriptor"
+        );
     }
 }

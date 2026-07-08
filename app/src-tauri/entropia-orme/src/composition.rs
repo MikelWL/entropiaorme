@@ -35,15 +35,16 @@
 //! 3. **Select the execution provider, with a guaranteed CPU fallback.**
 //!    The EP ladder lives per-session in
 //!    [`eo_services::ocr_engine::OcrEngine::new_with_providers`]
-//!    (DirectML preferred, CPU fallback), not on the global env, so the
-//!    engine owns its full session config. The env here carries no EPs.
+//!    (the platform's GPU provider preferred, CPU fallback), not on the
+//!    global env, so the engine owns its full session config. The env
+//!    here carries no EPs.
 //!
 //! Two deliberate divergences from the original (`local_ocr.py`),
 //! recorded so a later reviewer does not read them as oversights:
 //!
 //! * **Eager warm-up at composition, not lazy on first use.** The
 //!   original warms the engine on the first `get_engine()`; we warm it at
-//!   startup so the first real scan never eats DirectML shader
+//!   startup so the first real scan never eats the GPU provider's shader
 //!   compilation. The warm-up runs a synchronous, potentially multi-
 //!   second inference, so it is offloaded onto a blocking thread
 //!   ([`tokio::task::spawn_blocking`]) rather than stalling the
@@ -51,8 +52,8 @@
 //! * **No queried provider string.** The original records
 //!   `session.get_providers()[0]`; this ort version has no per-session
 //!   provider readout, so the engine derives the provider from its
-//!   construction control flow (the DirectML-then-CPU attempt) instead.
-//!   The behaviour (DirectML-preferred with CPU fallback) is faithful;
+//!   construction control flow (the GPU-then-CPU attempt) instead.
+//!   The behaviour (GPU-preferred with CPU fallback) is faithful;
 //!   only the readback mechanism differs.
 //!
 //! A failed ORT init or engine load never declines composition: OCR is
@@ -166,27 +167,36 @@ pub(crate) fn demo_db_path(resource_dir: Option<&PathBuf>) -> PathBuf {
     }
 }
 
-/// The ABSOLUTE path to the bundled `onnxruntime.dll`: the installed
-/// resource dir (`<resource_dir>/ort/onnxruntime.dll`) in a release
-/// build, the committed repo copy
-/// (`app/src-tauri/entropia-orme/resources/ort/onnxruntime.dll`)
-/// in dev. Its siblings `DirectML.dll` and
+/// The ABSOLUTE path to the platform's bundled ONNX Runtime dylib: the
+/// installed resource dir in a release build, the committed repo copy
+/// (`app/src-tauri/entropia-orme/resources/ort*/...`) in dev. On
+/// Windows its siblings `DirectML.dll` and
 /// `onnxruntime_providers_shared.dll` live in the same directory in
 /// both layouts, where ONNX Runtime resolves them module-relative at
-/// session creation. Always absolute (the dev branch resolves through
+/// session creation; the Linux build is a single dylib with its GPU
+/// provider (WebGPU) compiled in. Always absolute (the dev branch resolves through
 /// the compiled-in [`dev_project_root`], the installed branch through
 /// the OS-resolved `resource_dir`), so the runtime is never sought on
 /// `PATH`/CWD.
 fn ort_dylib_path(resource_dir: Option<&PathBuf>) -> PathBuf {
+    // The runtime is platform-forked: the Windows onnxruntime-directml
+    // build under `ort/`, the Linux WebGPU-enabled build under
+    // `ort-linux/` (see each dir's PROVENANCE.txt). Both are bundled
+    // beside the same `resources/` subtree; the release branch flattens
+    // each to its own bundle target.
+    #[cfg(target_os = "linux")]
+    let (subdir, file) = ("ort-linux", "libonnxruntime.so");
+    #[cfg(not(target_os = "linux"))]
+    let (subdir, file) = ("ort", "onnxruntime.dll");
     match resource_dir {
-        Some(dir) if !cfg!(debug_assertions) => dir.join("ort").join("onnxruntime.dll"),
+        Some(dir) if !cfg!(debug_assertions) => dir.join(subdir).join(file),
         _ => dev_project_root()
             .join("app")
             .join("src-tauri")
             .join("entropia-orme")
             .join("resources")
-            .join("ort")
-            .join("onnxruntime.dll"),
+            .join(subdir)
+            .join(file),
     }
 }
 
@@ -239,10 +249,11 @@ fn pin_ort_dylib_env(resource_dir: Option<&PathBuf>) -> PathBuf {
 }
 
 fn init_ort_runtime(resource_dir: Option<&PathBuf>) {
-    // The bundled ONNX Runtime is the Windows onnxruntime-directml build; on
-    // any other platform there is no compatible runtime to pin (and loading
-    // the Windows PE there hangs the loader), so OCR simply stays offline.
-    if !cfg!(windows) {
+    // A compatible runtime ships for Windows (onnxruntime-directml) and
+    // Linux (onnxruntime CPU); macOS and the rest have no bundled runtime,
+    // so OCR stays offline there rather than pinning a foreign binary
+    // (loading a wrong-platform library hangs or aborts the loader).
+    if !cfg!(any(windows, target_os = "linux")) {
         return;
     }
     static ORT_INIT: std::sync::Once = std::sync::Once::new();
@@ -664,7 +675,7 @@ async fn compose_with(
     // must exist for the handoff), with warm-up detached so the slow first
     // inference does not gate compose -> serve (see `build_ocr_engine`). A
     // failed load is logged and leaves the engine `None`; OCR is optional,
-    // so composition still succeeds. The DirectML-then-CPU ladder and the
+    // so composition still succeeds. The GPU-then-CPU ladder and the
     // recorded provider live in `OcrEngine::new_with_providers`.
     let ocr_engine = build_ocr_engine(models).await;
 
@@ -725,7 +736,7 @@ async fn compose_with(
 /// Construct the OCR engine off the async runtime worker, then warm it up
 /// DETACHED. Construction (a session commit) is awaited because the engine
 /// must exist before the handoff to managed state, but it is quick. Warm-up
-/// (a real inference; DirectML compiles shaders on first run, seconds) is
+/// (a real inference; the GPU providers compile shaders on first run, seconds) is
 /// NOT awaited: stalling it ahead of `serve()` would make every request the
 /// webview fires during startup hang, so it runs on a detached blocking
 /// thread, concurrent with the server coming up. The reference warms lazily
@@ -733,11 +744,13 @@ async fn compose_with(
 /// anything, more faithful. Returns `None` (logged) on any load failure:
 /// OCR is an optional faculty and never declines composition.
 async fn build_ocr_engine(models: PathBuf) -> Option<Arc<OcrEngine>> {
-    // OCR ships only where a compatible ONNX Runtime is bundled, which today
-    // is Windows (the onnxruntime-directml libraries). On other platforms the
-    // engine stays absent rather than attempting to load the Windows runtime
-    // (which hangs the loader), exactly as a failed load would leave it.
-    if !cfg!(windows) {
+    // OCR ships only where a compatible ONNX Runtime is bundled: Windows
+    // (the onnxruntime-directml libraries) and Linux (the WebGPU-enabled
+    // build). Elsewhere the engine stays absent rather than attempting to
+    // load a foreign-platform runtime (which hangs the loader), exactly as
+    // a failed load would leave it. Keep this gate aligned with
+    // `init_ort_runtime`'s platform check.
+    if !cfg!(any(windows, target_os = "linux")) {
         return None;
     }
     let model_path = models.join("svtrv2_rec.onnx");
@@ -1435,6 +1448,13 @@ mod tests {
         // Serialised: this test mutates the process-global CWD, which would
         // race any concurrent test reading the CWD or a relative path.
         let _ort = ORT_TEST_LOCK.lock().await;
+        // The expected leaf mirrors the resolver's platform fork: the
+        // Windows onnxruntime-directml build under `ort/`, the Linux
+        // build under `ort-linux/`.
+        #[cfg(target_os = "linux")]
+        let (subdir, file) = ("ort-linux", "libonnxruntime.so");
+        #[cfg(not(target_os = "linux"))]
+        let (subdir, file) = ("ort", "onnxruntime.dll");
         let resource = PathBuf::from("X:/resources");
         let resolved = ort_dylib_path(Some(&resource));
 
@@ -1451,8 +1471,8 @@ mod tests {
         );
         assert_eq!(
             resolved.file_name().and_then(|n| n.to_str()),
-            Some("onnxruntime.dll"),
-            "the pinned path points at onnxruntime.dll"
+            Some(file),
+            "the pinned path points at the platform's bundled ONNX Runtime dylib"
         );
 
         // The expected installed-vs-dev location.
@@ -1464,14 +1484,14 @@ mod tests {
                     .join("src-tauri")
                     .join("entropia-orme")
                     .join("resources")
-                    .join("ort")
-                    .join("onnxruntime.dll"),
+                    .join(subdir)
+                    .join(file),
                 "dev resolves to the committed repo dylib"
             );
         } else {
             assert_eq!(
                 resolved,
-                resource.join("ort").join("onnxruntime.dll"),
+                resource.join(subdir).join(file),
                 "installed resolves under the OS-given resource dir"
             );
         }
@@ -1582,8 +1602,12 @@ mod tests {
         match &composed.ocr_engine {
             Some(engine) => {
                 let provider = engine.provider();
+                #[cfg(target_os = "linux")]
+                let gpu_provider = "WebGpuExecutionProvider";
+                #[cfg(not(target_os = "linux"))]
+                let gpu_provider = "DmlExecutionProvider";
                 assert!(
-                    provider == "DmlExecutionProvider" || provider == "CPUExecutionProvider",
+                    provider == gpu_provider || provider == "CPUExecutionProvider",
                     "the composed engine recorded a real provider, got {provider:?}"
                 );
                 // The engine is genuinely live (warmed at composition):
@@ -1596,6 +1620,17 @@ mod tests {
                 eprintln!("composed OCR engine provider={provider}");
             }
             None => {
+                // On the platforms that bundle a runtime the dylib was
+                // verified present above, so a missing engine is a real
+                // regression in the composition path (the gate that once
+                // skipped OCR off-Windows hid exactly this), not an
+                // acceptable optional-faculty outcome.
+                if cfg!(any(windows, target_os = "linux")) {
+                    panic!(
+                        "the committed ONNX Runtime is present on this platform, \
+                         yet composition produced no OCR engine"
+                    );
+                }
                 eprintln!(
                     "OCR engine did not load on this host (runtime/model unavailable); \
                      composition still succeeded, which is the optional-faculty contract"
@@ -1643,9 +1678,15 @@ mod tests {
         assert_eq!(status["phase"], "idle");
         assert_eq!(status["captured_pages"], 0);
         // `configured` mirrors whether the engine loaded (the real provider);
-        // the game window is never present on a headless host.
+        // `game_window_present` mirrors the live window-discovery seam, so
+        // it is compared against that seam's own answer rather than assumed
+        // absent (a dev host can legitimately have the real game running,
+        // which is precisely the live-provider wiring this test proves).
         assert_eq!(status["configured"], composed.ocr_engine.is_some());
-        assert_eq!(status["game_window_present"], false);
+        assert_eq!(
+            status["game_window_present"],
+            eo_services::eu_window::game_window_present()
+        );
         // The scan composed on the spine bus (its status frames reach the
         // domain bridge); the forwarding is covered by
         // `the_domain_bridge_forwards_typed_envelopes_to_a_subscriber`. The

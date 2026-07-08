@@ -30,3 +30,4 @@ Several of the earlier records predate two later structural decisions: the colla
 | [ADR-0020](0020-tracker-actor-refounding.md) | The tracker as a single-owner actor with a typestate session, named seams, and an instant time basis |
 | [ADR-0021](0021-synchronous-database-core.md) | A synchronous database core on dedicated threads, adopted against a measured null result |
 | [ADR-0022](0022-runes-native-shared-state.md) | Runes-native shared state: the svelte/store surface is frozen behind a whole-tree guard and only shrinks |
+| [ADR-0023](0023-linux-platform-layer.md) | The Linux platform layer: XWayland windowing, evdev key observation, ScreenCast-portal capture, and deb/AppImage packaging |

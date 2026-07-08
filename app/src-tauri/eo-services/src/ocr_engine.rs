@@ -21,7 +21,11 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use ort::ep::{DirectML, ExecutionProviderDispatch, CPU};
+#[cfg(not(target_os = "linux"))]
+use ort::ep::DirectML;
+#[cfg(target_os = "linux")]
+use ort::ep::WebGPU;
+use ort::ep::{ExecutionProviderDispatch, CPU};
 use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 use ort::session::Session;
 use ort::value::Tensor;
@@ -282,11 +286,66 @@ pub struct OcrEngine {
     /// The execution provider the session was actually built on, as the
     /// original records `session.get_providers()[0]`. This ort version
     /// exposes no per-session provider readout, so the value is derived
-    /// from the construction control flow (the DirectML-then-CPU attempt
+    /// from the construction control flow (the GPU-then-CPU attempt
     /// in [`OcrEngine::new_with_providers`]): the requested-and-committed
     /// provider, not a queried one. `new` (no EP selection) records the
     /// runtime's own default.
     provider: &'static str,
+}
+
+/// Whether a Vulkan driver manifest (ICD) is discoverable on this host,
+/// mirroring the loader's search closely enough to answer one question:
+/// would `vkCreateInstance` find any driver at all? The WebGPU attempt
+/// is gated on this because Dawn's failed no-driver instance creation
+/// reports its error cleanly but corrupts process teardown (a segfault
+/// at exit), so a driverless host must go straight to the CPU provider
+/// without ever starting Dawn. A false negative only costs the GPU
+/// preference (the CPU provider still recognises identically); a false
+/// positive means a driver manifest exists, which is exactly the case
+/// Dawn's own error path handles safely.
+#[cfg(target_os = "linux")]
+fn vulkan_driver_manifest_present() -> bool {
+    use std::path::PathBuf;
+    // The loader's explicit override variables take absolute precedence:
+    // when one is set (non-empty), discovery is limited to exactly the
+    // colon-separated files it lists.
+    for var in ["VK_DRIVER_FILES", "VK_ICD_FILENAMES"] {
+        if let Ok(value) = std::env::var(var) {
+            if !value.is_empty() {
+                return value.split(':').any(|path| Path::new(path).is_file());
+            }
+        }
+    }
+    // Otherwise scan the loader's standard manifest directories (plus
+    // XDG_DATA_DIRS, which the loader also honours) for any ICD json.
+    let mut dirs: Vec<PathBuf> = [
+        "/usr/local/etc/vulkan/icd.d",
+        "/usr/local/share/vulkan/icd.d",
+        "/etc/vulkan/icd.d",
+        "/usr/share/vulkan/icd.d",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect();
+    if let Ok(xdg) = std::env::var("XDG_DATA_DIRS") {
+        dirs.extend(
+            xdg.split(':')
+                .filter(|dir| !dir.is_empty())
+                .map(|dir| Path::new(dir).join("vulkan/icd.d")),
+        );
+    }
+    dirs.iter().any(|dir| {
+        std::fs::read_dir(dir).is_ok_and(|mut entries| {
+            entries.any(|entry| {
+                entry.is_ok_and(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+                })
+            })
+        })
+    })
 }
 
 /// The base session options every engine shares, matching the
@@ -334,19 +393,26 @@ impl OcrEngine {
     }
 
     /// Load the model with the production execution-provider ladder:
-    /// DirectML preferred, CPU fallback, faithful to `local_ocr.py`'s
-    /// `try InferenceSession(providers=["Dml","CPU"]) except CPU-only`.
+    /// the platform's GPU provider preferred, CPU fallback, faithful to
+    /// `local_ocr.py`'s `try InferenceSession(providers=["Dml","CPU"])
+    /// except CPU-only`. The GPU-first preference is a deliberate design
+    /// choice, not an optimisation: the game the recogniser reads is
+    /// CPU-limited, so inference belongs on the GPU the game leaves idle
+    /// rather than the CPU it competes for. The preferred provider is
+    /// platform-forked: DirectML on Windows, WebGPU (Dawn over Vulkan)
+    /// on Linux, each requiring the matching bundled ONNX Runtime build
+    /// (see `resources/ort*/PROVENANCE.txt`).
     ///
     /// The fallback is deliberately a two-attempt control flow rather
-    /// than a single mixed `[DirectML, CPU]` commit. DirectML's
-    /// registration succeeds even with no DX12 GPU (it only appends the
-    /// EP to the session options); the no-GPU failure surfaces at session
+    /// than a single mixed `[GPU, CPU]` commit. A GPU EP's registration
+    /// can succeed even with no usable GPU (it only appends the EP to
+    /// the session options); the no-GPU failure surfaces at session
     /// commit, which a mixed list does NOT auto-recover from. So the
-    /// first attempt asks for DirectML (with CPU in the list for per-op
-    /// fallback once the session is up); on a commit error the second
-    /// attempt rebuilds CPU-only. The succeeding attempt also tells us
-    /// which provider we actually got, recorded on the engine since this
-    /// ort version exposes no `Session::get_providers()`.
+    /// first attempt asks for the GPU provider (with CPU in the list for
+    /// per-op fallback once the session is up); on a commit error the
+    /// second attempt rebuilds CPU-only. The succeeding attempt also
+    /// tells us which provider we actually got, recorded on the engine
+    /// since this ort version exposes no `Session::get_providers()`.
     pub fn new_with_providers(model_path: &Path, dict_path: &Path) -> Result<Self, OcrError> {
         let chars = load_dict(dict_path)?;
         let build = |eps: Vec<ExecutionProviderDispatch>| -> Result<Session, ort::Error> {
@@ -354,31 +420,60 @@ impl OcrEngine {
             base_session_options(builder)?.commit_from_file(model_path)
         };
 
-        let (session, provider) =
-            // `error_on_failure` so a DirectML REGISTRATION failure (no DML
-            // runtime / non-Windows / no DX12) surfaces as an `Err` and
-            // routes to the honest CPU-only retry below, rather than being
-            // swallowed (ort's default) into a CPU-only session that would
-            // still be mislabelled `DmlExecutionProvider`. The recorded
-            // provider then never lies: it is DML only when DML truly ran.
-            match build(vec![
-                DirectML::default().build().error_on_failure(),
-                CPU::default().build(),
-            ]) {
-                Ok(session) => (session, "DmlExecutionProvider"),
-                Err(dml_error) => {
-                    // The whole-session DirectML init failed (no DX12 GPU,
-                    // driver mismatch, GPU OOM); retry CPU-only exactly as
-                    // the original's except-branch does.
-                    tracing::warn!(
-                        target: "eo::ocr",
-                        "DirectML session init failed ({dml_error}); falling back to CPU"
-                    );
-                    let session =
-                        build(vec![CPU::default().build()]).map_err(OcrError::EngineLoad)?;
-                    (session, "CPUExecutionProvider")
+        // `error_on_failure` so a GPU-provider REGISTRATION failure (no
+        // GPU runtime in the loaded ONNX Runtime build, no adapter)
+        // surfaces as an `Err` and routes to the honest CPU-only retry
+        // below, rather than being swallowed (ort's default) into a
+        // CPU-only session that would still be mislabelled with the GPU
+        // provider's name. The recorded provider then never lies: it
+        // names the GPU provider only when that provider truly ran.
+        //
+        // On Linux the attempt is additionally gated on a Vulkan driver
+        // manifest being discoverable at all: on a driverless host Dawn's
+        // failed instance creation reports the error cleanly (and the CPU
+        // retry works) but corrupts process teardown, segfaulting at
+        // exit, so the WebGPU attempt must never start there.
+        #[cfg(target_os = "linux")]
+        let preferred = vulkan_driver_manifest_present().then(|| {
+            (
+                WebGPU::default().build().error_on_failure(),
+                "WebGpuExecutionProvider",
+            )
+        });
+        #[cfg(not(target_os = "linux"))]
+        let preferred = Some((
+            DirectML::default().build().error_on_failure(),
+            "DmlExecutionProvider",
+        ));
+
+        let (session, provider) = match preferred {
+            Some((preferred, preferred_name)) => {
+                match build(vec![preferred, CPU::default().build()]) {
+                    Ok(session) => (session, preferred_name),
+                    Err(gpu_error) => {
+                        // The whole-session GPU init failed (no GPU, driver
+                        // mismatch, GPU OOM, or a bundled runtime without the
+                        // provider); retry CPU-only exactly as the original's
+                        // except-branch does.
+                        tracing::warn!(
+                            target: "eo::ocr",
+                            "{preferred_name} session init failed ({gpu_error}); falling back to CPU"
+                        );
+                        let session =
+                            build(vec![CPU::default().build()]).map_err(OcrError::EngineLoad)?;
+                        (session, "CPUExecutionProvider")
+                    }
                 }
-            };
+            }
+            None => {
+                tracing::info!(
+                    target: "eo::ocr",
+                    "no Vulkan driver manifest found; building the OCR session CPU-only"
+                );
+                let session = build(vec![CPU::default().build()]).map_err(OcrError::EngineLoad)?;
+                (session, "CPUExecutionProvider")
+            }
+        };
         Self::from_session(session, chars, provider)
     }
 
@@ -417,8 +512,9 @@ impl OcrEngine {
     /// all-white BGR cell, the result discarded. Best-effort by design;
     /// a warm-up failure is no different from a real-inference failure
     /// the scan path already reports, so it must not change engine
-    /// construction. DirectML in particular compiles shaders / JITs
-    /// kernels on first run, which this absorbs at startup.
+    /// construction. The GPU providers in particular (DirectML, WebGPU)
+    /// compile shaders / JIT kernels on first run, which this absorbs at
+    /// startup.
     pub fn warm_up(&self) {
         let dummy = vec![255u8; TARGET_H * 200 * 3];
         let _ = self.recognize_bgr(&dummy, TARGET_H, 200);
@@ -546,6 +642,57 @@ mod tests {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    /// The Vulkan-manifest probe honours the loader's override
+    /// variables: pointing `VK_DRIVER_FILES` at a missing file reads as
+    /// driverless (the path a GPU-less CI runner takes, where Dawn must
+    /// never start), and at an existing file as driver-present. The
+    /// probe reads the process environment, so the test serialises
+    /// behind the same lock as every other env-touching engine test and
+    /// restores the variables it moves.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn vulkan_probe_honours_the_loader_override_variables() {
+        let _ort = lock_ort();
+        let saved: Vec<(&str, Option<String>)> = ["VK_DRIVER_FILES", "VK_ICD_FILENAMES"]
+            .into_iter()
+            .map(|var| (var, std::env::var(var).ok()))
+            .collect();
+
+        // SAFETY: `lock_ort` serialises every env-touching engine test,
+        // so no other thread reads or writes these variables concurrently.
+        unsafe {
+            std::env::set_var("VK_DRIVER_FILES", "/nonexistent/driver.json");
+            std::env::remove_var("VK_ICD_FILENAMES");
+        }
+        let driverless = vulkan_driver_manifest_present();
+
+        let manifest = tempfile::NamedTempFile::new().expect("temp manifest");
+        // SAFETY: as above.
+        unsafe {
+            std::env::set_var("VK_DRIVER_FILES", manifest.path());
+        }
+        let present = vulkan_driver_manifest_present();
+
+        // SAFETY: as above.
+        unsafe {
+            for (var, value) in saved {
+                match value {
+                    Some(value) => std::env::set_var(var, value),
+                    None => std::env::remove_var(var),
+                }
+            }
+        }
+
+        assert!(
+            !driverless,
+            "an override pointing at a missing manifest reads as driverless"
+        );
+        assert!(
+            present,
+            "an override pointing at an existing manifest reads as driver-present"
+        );
+    }
+
     /// The repo's bundled recogniser model + dict, the same pair the
     /// offline bench resolves.
     fn repo_model_paths() -> (PathBuf, PathBuf) {
@@ -558,26 +705,41 @@ mod tests {
         )
     }
 
-    /// The committed ONNX Runtime dylib next to the bundle's DirectML.dll
-    /// and providers-shared sibling: the dev resource layout.
+    /// The committed ONNX Runtime dylib for this platform: the Windows
+    /// onnxruntime-directml build (next to its DirectML.dll and
+    /// providers-shared siblings) or the Linux build, each in the dev
+    /// resource layout.
     fn repo_ort_dylib() -> PathBuf {
+        #[cfg(target_os = "linux")]
+        let leaf = "app/src-tauri/entropia-orme/resources/ort-linux/libonnxruntime.so";
+        #[cfg(not(target_os = "linux"))]
+        let leaf = "app/src-tauri/entropia-orme/resources/ort/onnxruntime.dll";
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")
-            .join("app/src-tauri/entropia-orme/resources/ort/onnxruntime.dll")
+            .join(leaf)
     }
 
-    /// PROVIDER SELECTION: `new_with_providers` runs the DirectML-then-CPU
+    /// Whether this platform has a committed ONNX Runtime to test against
+    /// (Windows and Linux do; anywhere else the engine tests skip). The
+    /// gate is platform-shape, not file presence: a missing dylib on a
+    /// covered platform is reported by the callers' file check instead of
+    /// silently skipped.
+    fn platform_has_bundled_ort() -> bool {
+        cfg!(any(windows, target_os = "linux"))
+    }
+
+    /// PROVIDER SELECTION: `new_with_providers` runs the GPU-then-CPU
     /// ladder and records a *real* provider (never the EP-agnostic
     /// `"default"`), faithful to `local_ocr.py` recording
-    /// `session.get_providers()[0]`. On a DX12 host the first attempt
-    /// commits and records `DmlExecutionProvider`; on a host without a
-    /// DX12 GPU (or a non-Windows target, where DirectML registration
-    /// itself fails) the second attempt fires and records
-    /// `CPUExecutionProvider`. We assert the provider is one of those two
-    /// (host-dependent which), proving the ladder ran and recorded its
-    /// selection; the [DirectML, CPU] order is fixed in
-    /// `new_with_providers` and the EP-agnostic `new` is asserted to
-    /// record `"default"` so the two paths never blur.
+    /// `session.get_providers()[0]`. On a host whose GPU provider commits
+    /// (DirectML on a DX12 host, WebGPU on a Linux host with a usable
+    /// adapter) the first attempt records that provider; otherwise the
+    /// second attempt fires and records `CPUExecutionProvider`. We assert
+    /// the provider is the platform's GPU provider or CPU (host-dependent
+    /// which), proving the ladder ran and recorded its selection; the
+    /// [GPU, CPU] order is fixed in `new_with_providers` and the
+    /// EP-agnostic `new` is asserted to record `"default"` so the two
+    /// paths never blur.
     ///
     /// Host-gated like `ocr_bench_differential`: the committed dylib is
     /// pinned via `ORT_DYLIB_PATH` so the test can load the runtime
@@ -585,14 +747,14 @@ mod tests {
     /// cannot be loaded on this host, the test skips with its reason
     /// rather than passing vacuously.
     #[test]
-    fn new_with_providers_runs_the_dml_then_cpu_ladder_and_records_the_selection() {
+    fn new_with_providers_runs_the_gpu_then_cpu_ladder_and_records_the_selection() {
         let _ort = lock_ort();
-        // The bundled ONNX Runtime is the Windows onnxruntime-directml build;
-        // loading that PE via the loader on a non-Windows host hangs rather
-        // than erroring, so this load-bearing test runs only on Windows
-        // (where the real runtime is present and the OCR feature ships).
-        if !cfg!(windows) {
-            eprintln!("the bundled ONNX Runtime is Windows-only; skipping on this platform");
+        // Platforms without a committed ONNX Runtime cannot load a real
+        // session at all (and loading a foreign-format dylib can hang the
+        // loader rather than error), so the test runs only where a
+        // bundled runtime ships.
+        if !platform_has_bundled_ort() {
+            eprintln!("no bundled ONNX Runtime on this platform; skipping");
             return;
         }
         let dylib = repo_ort_dylib();
@@ -627,10 +789,14 @@ mod tests {
             }
         };
         let provider = engine.provider();
+        #[cfg(target_os = "linux")]
+        let gpu_provider = "WebGpuExecutionProvider";
+        #[cfg(not(target_os = "linux"))]
+        let gpu_provider = "DmlExecutionProvider";
         assert!(
-            provider == "DmlExecutionProvider" || provider == "CPUExecutionProvider",
-            "the ladder records a real provider (DML on a DX12 host, CPU otherwise), \
-             got {provider:?}"
+            provider == gpu_provider || provider == "CPUExecutionProvider",
+            "the ladder records a real provider (the platform's GPU provider on a \
+             GPU-capable host, CPU otherwise), got {provider:?}"
         );
         assert_ne!(
             provider, "default",
@@ -654,10 +820,9 @@ mod tests {
     #[test]
     fn new_records_the_default_provider() {
         let _ort = lock_ort();
-        // Windows-only: see `new_with_providers_...` (loading the bundled
-        // Windows runtime on another platform hangs the loader).
-        if !cfg!(windows) {
-            eprintln!("the bundled ONNX Runtime is Windows-only; skipping on this platform");
+        // Bundled-runtime platforms only: see `new_with_providers_...`.
+        if !platform_has_bundled_ort() {
+            eprintln!("no bundled ONNX Runtime on this platform; skipping");
             return;
         }
         let dylib = repo_ort_dylib();
@@ -692,13 +857,13 @@ mod tests {
     /// The OCR instrumentation fires: a real recognise records one latency
     /// sample into the metrics registry (the OCR-latency proof for the
     /// observability spine). Host-gated exactly like the ladder test above:
-    /// it needs the bundled Windows ONNX Runtime and the repo model, and skips
-    /// with a reason otherwise rather than passing vacuously.
+    /// it needs the platform's bundled ONNX Runtime and the repo model, and
+    /// skips with a reason otherwise rather than passing vacuously.
     #[test]
     fn recognising_records_an_ocr_latency_sample() {
         let _ort = lock_ort();
-        if !cfg!(windows) {
-            eprintln!("the bundled ONNX Runtime is Windows-only; skipping on this platform");
+        if !platform_has_bundled_ort() {
+            eprintln!("no bundled ONNX Runtime on this platform; skipping");
             return;
         }
         let dylib = repo_ort_dylib();

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// buckets. A request/query/inference whose elapsed time exceeds the last
 /// bound lands in the implicit overflow bucket. The spread (50us to 1s)
 /// spans the OCR inference range (sub-ms warm CPU reads to multi-hundred-ms
-/// DirectML shader-cold runs) and the single-connection DB pool's
+/// GPU-provider shader-cold runs) and the single-connection DB pool's
 /// acquire-plus-execute latencies.
 const LATENCY_BUCKET_BOUNDS_US: [u64; 14] = [
     50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000,
