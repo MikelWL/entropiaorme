@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ErrorNotice } from '$lib/components';
 	import DashboardWidgets from '$lib/components/dashboard/DashboardWidgets.svelte';
 	import { createGuideDemoModel } from '$lib/features/dashboard/guideDemoModel.svelte';
 	import GuideOverlayDemo from '$lib/features/dashboard/GuideOverlayDemo.svelte';
@@ -219,8 +218,6 @@
 			</button>
 		</div>
 	</div>
-
-	<ErrorNotice message={questsModel.error} class="flex-shrink-0" />
 
 	<SessionIsland {status} {statsGrid} />
 

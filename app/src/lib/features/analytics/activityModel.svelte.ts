@@ -5,7 +5,6 @@
  * this state.
  */
 
-import { fromStore } from 'svelte/store';
 import {
 	type ArchiveKind,
 	activityArchive,
@@ -16,6 +15,7 @@ import {
 import { type ActivityData, getAnalyticsActivity } from '$lib/api';
 import type { MobComparison, TagComparison, WeaponComparison } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
+import { legacyStoreState } from '$lib/view/legacyStore.svelte';
 
 export type SortDir = 'asc' | 'desc';
 export type ViewMode = 'main' | 'archive';
@@ -142,7 +142,7 @@ function sortComparisons<T>(rows: T[], key: keyof T & string, dir: SortDir): T[]
 }
 
 export function createActivityModel() {
-	const archived = fromStore(activityArchive);
+	const archived = legacyStoreState(activityArchive);
 
 	let data = $state<ActivityData | null>(null);
 	let loading = $state(true);

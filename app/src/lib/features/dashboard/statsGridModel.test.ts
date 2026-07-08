@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { get } from 'svelte/store';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	DEFAULT_OVERLAY_PREFS,
@@ -9,6 +9,7 @@ import {
 	type StatPref,
 } from '$lib/statsCustomisation';
 import type { StatId } from '$lib/statsRegistry';
+import { readLegacyStore } from '$lib/view/legacyStore.svelte';
 import { createStatsGridModel } from './statsGridModel.svelte';
 
 vi.mock('$lib/preferences', () => ({
@@ -28,7 +29,7 @@ function prefsWith(enabled: StatId[]): StatPref[] {
 }
 
 function enabledIds(): string[] {
-	return get(dashboardStats)
+	return readLegacyStore(dashboardStats)
 		.filter((p) => p.enabled)
 		.map((p) => p.id);
 }
@@ -179,7 +180,7 @@ describe('guide demo controls', () => {
 
 		model.syncGuideStats(true);
 		expect(enabledIds()).toHaveLength(10);
-		expect(get(overlayStats).filter((p) => p.enabled)).toHaveLength(3);
+		expect(readLegacyStore(overlayStats).filter((p) => p.enabled)).toHaveLength(3);
 
 		// Re-entrant active sync keeps the original snapshot.
 		model.syncGuideStats(true);

@@ -5,7 +5,6 @@
  * surface; presentation composes over this state.
  */
 
-import { fromStore, get } from 'svelte/store';
 import {
 	DEFAULT_OVERLAY_PREFS,
 	DEFAULT_STAT_PREFS,
@@ -14,6 +13,7 @@ import {
 	type StatPref,
 	setDashboardStats,
 } from '$lib/statsCustomisation';
+import { legacyStoreState, readLegacyStore } from '$lib/view/legacyStore.svelte';
 
 export interface StatsSnapshot {
 	dashboard: StatPref[];
@@ -64,7 +64,7 @@ function fullIndexOfEnabled(prefs: StatPref[], filteredIndex: number): number {
 }
 
 export function createStatsGridModel() {
-	const prefs = fromStore(dashboardStats);
+	const prefs = legacyStoreState(dashboardStats);
 
 	// Stats grid drag-reorder via pointer events (not HTML5 drag: the latter
 	// cedes cursor control to the OS, so we can't keep the grabbing hand stable
@@ -124,7 +124,7 @@ export function createStatsGridModel() {
 			}
 		}
 		if (targetFilteredIndex < 0 || targetFilteredIndex === dragFilteredIndex) return;
-		const full = get(dashboardStats);
+		const full = readLegacyStore(dashboardStats);
 		const sourceFull = fullIndexOfEnabled(full, dragFilteredIndex);
 		const targetFull = fullIndexOfEnabled(full, targetFilteredIndex);
 		if (sourceFull < 0 || targetFull < 0) return;
@@ -142,7 +142,7 @@ export function createStatsGridModel() {
 		if (target?.hasPointerCapture?.(e.pointerId)) {
 			target.releasePointerCapture(e.pointerId);
 		}
-		if (dragMoved) void setDashboardStats(get(dashboardStats));
+		if (dragMoved) void setDashboardStats(readLegacyStore(dashboardStats));
 		dragFilteredIndex = null;
 		dragMoved = false;
 		lastReorderAt = 0;
@@ -151,7 +151,7 @@ export function createStatsGridModel() {
 
 	function handlePointerCancel() {
 		if (dragFilteredIndex === null) return;
-		if (dragMoved) void setDashboardStats(get(dashboardStats));
+		if (dragMoved) void setDashboardStats(readLegacyStore(dashboardStats));
 		dragFilteredIndex = null;
 		dragMoved = false;
 		lastReorderAt = 0;
@@ -162,8 +162,8 @@ export function createStatsGridModel() {
 
 	function snapshotStats(): StatsSnapshot {
 		return {
-			dashboard: get(dashboardStats),
-			overlay: get(overlayStats),
+			dashboard: readLegacyStore(dashboardStats),
+			overlay: readLegacyStore(overlayStats),
 		};
 	}
 
@@ -190,7 +190,7 @@ export function createStatsGridModel() {
 		// shape (map then flip enabled flag) but bypasses setDashboardStats
 		// so the persisted prefs aren't touched.
 		const store = surface === 'dashboard' ? dashboardStats : overlayStats;
-		const current = get(store);
+		const current = readLegacyStore(store);
 		const next = current.map((p) => (p.id === statId ? { ...p, enabled: !p.enabled } : p));
 		store.set(next);
 	}
@@ -199,7 +199,7 @@ export function createStatsGridModel() {
 		// Transient reorder using the existing fullIndexOfEnabled logic
 		// so the move respects the disabled-stats-stay-put invariant
 		// the real drag handler enforces.
-		const current = get(dashboardStats);
+		const current = readLegacyStore(dashboardStats);
 		const sourceFull = fullIndexOfEnabled(current, fromFilteredIdx);
 		const targetFull = fullIndexOfEnabled(current, toFilteredIdx);
 		if (sourceFull < 0 || targetFull < 0) return;
