@@ -24,6 +24,7 @@
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { guideState } from '$lib/guide/state.svelte';
+	import { createTableModel } from '$lib/view/tableModel.svelte';
 	import {
 		characterDemoProfessions,
 		characterDemoCodexSpecies,
@@ -56,10 +57,8 @@
 
 	// ── Controls ────────────────────────────────────────────────────────────────
 
-	let search = $state('');
 	let selectedProfession = $state('');
 	let calibrateMode = $state(false);
-	let page = $state(0);
 
 	// ── Selected species (right panel) ──────────────────────────────────────────
 
@@ -157,16 +156,11 @@
 
 	// ── Filtering & pagination ──────────────────────────────────────────────────
 
-	let filtered = $derived.by(() => {
-		const q = search.toLowerCase();
-		if (!q) return species;
-		return species.filter(s => s.name.toLowerCase().includes(q));
+	const table = createTableModel<CodexSpecies>({
+		rows: () => species,
+		pageSize: PAGE_SIZE,
+		searchText: (s) => [s.name],
 	});
-
-	let totalPages = $derived(Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)));
-	let pageRows = $derived(filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE));
-
-	$effect(() => { search; page = 0; });
 
 	// ── Category display helpers ────────────────────────────────────────────────
 
@@ -326,7 +320,7 @@
 		</div>
 
 		{#if codexMode === 'mobs'}
-			<SearchInput bind:value={search} placeholder="Search species..." class="flex-1" />
+			<SearchInput bind:value={table.search} placeholder="Search species..." class="flex-1" />
 
 			<Select
 				bind:value={selectedProfession}
@@ -398,10 +392,10 @@
 			<div class="border border-border rounded-md">
 				{#if loading}
 					<div class="py-8 text-center text-text-tertiary text-sm">Loading...</div>
-				{:else if pageRows.length === 0}
+				{:else if table.pageRows.length === 0}
 					<div class="py-8 text-center text-text-tertiary text-sm">No species found</div>
 				{:else}
-					{#each pageRows as sp}
+					{#each table.pageRows as sp}
 						<div
 							class="flex items-center justify-between px-3 py-2 border-b border-border/30 transition-colors
 								{selectedSpecies === sp.name ? 'bg-accent/10 text-accent' : 'hover:bg-surface-hover/50 text-text'}
@@ -438,23 +432,23 @@
 			<div class="h-0 w-full" data-guide-anchor="character-codex-mobs-list-placement"></div>
 
 			<!-- Pagination -->
-			{#if totalPages > 1}
+			{#if table.totalPages > 1}
 				<div class="flex items-center justify-between mt-2 px-1">
 					<span class="text-xs text-text-tertiary tabular-nums">
-						{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} / {filtered.length}
+						{table.page * PAGE_SIZE + 1}{'\u2013'}{Math.min((table.page + 1) * PAGE_SIZE, table.filtered.length)} / {table.filtered.length}
 					</span>
 					<div class="flex items-center gap-1">
 						<button
 							class="px-1.5 py-0.5 text-xs rounded transition-colors cursor-pointer
-								{page > 0 ? 'text-text-secondary hover:text-text hover:bg-surface-hover' : 'text-text-tertiary/50 cursor-default'}"
-							disabled={page === 0}
-							onclick={() => page--}
+								{table.page > 0 ? 'text-text-secondary hover:text-text hover:bg-surface-hover' : 'text-text-tertiary/50 cursor-default'}"
+							disabled={table.page === 0}
+							onclick={() => table.page--}
 						>&lsaquo;</button>
 						<button
 							class="px-1.5 py-0.5 text-xs rounded transition-colors cursor-pointer
-								{page < totalPages - 1 ? 'text-text-secondary hover:text-text hover:bg-surface-hover' : 'text-text-tertiary/50 cursor-default'}"
-							disabled={page >= totalPages - 1}
-							onclick={() => page++}
+								{table.page < table.totalPages - 1 ? 'text-text-secondary hover:text-text hover:bg-surface-hover' : 'text-text-tertiary/50 cursor-default'}"
+							disabled={table.page >= table.totalPages - 1}
+							onclick={() => table.page++}
 						>&rsaquo;</button>
 					</div>
 				</div>
