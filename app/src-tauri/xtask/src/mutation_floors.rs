@@ -19,22 +19,44 @@ use std::path::Path;
 /// measured score so a regression trips the gate while justified residual
 /// survivors do not.
 const FLOORS: &[(&str, f64)] = &[
-    ("eo-services/src/analytics.rs", 92.0),
+    // The original campaign's adoptions (the tracker.rs and quests.rs entries
+    // moved to their split module files when those services became module
+    // directories).
     ("eo-services/src/cost_engine.rs", 92.0),
     ("eo-services/src/tt_value_curve.rs", 92.0),
     ("eo-services/src/character_calc.rs", 92.0),
     ("eo-services/src/chatlog_parser.rs", 92.0),
     ("eo-services/src/chatlog_watcher.rs", 92.0),
-    ("eo-services/src/tracker.rs", 92.0),
-    ("eo-services/src/session_summary.rs", 92.0),
     ("eo-services/src/fuzzy_match.rs", 92.0),
     ("eo-services/src/ocr_engine.rs", 82.0),
     ("eo-services/src/skill_panel.rs", 92.0),
     ("eo-services/src/codex.rs", 92.0),
-    ("eo-services/src/quests.rs", 92.0),
     ("eo-services/src/difflib.rs", 92.0),
     ("eo-wire/src/normalizer.rs", 81.0),
     ("eo-wire/src/http_fingerprint.rs", 97.0),
+    // 2026-07 coverage-recovery adoptions, calibrated so ONE further missed
+    // mutant trips the gate. Each floor's gap to 100 encodes that file's
+    // reviewed residual survivors: provable equivalences (guard clauses whose
+    // mutants compute identical results, threshold comparisons at unreachable
+    // boundaries) or environment-bounded mutants a hermetic CI test cannot
+    // reach (evdev device handles, database-corruption and interrupt races,
+    // host-timezone DST gaps, shutdown thread-join ordering).
+    ("eo-services/src/analytics.rs", 98.8),
+    ("eo-services/src/session_summary.rs", 96.0),
+    ("eo-services/src/tracking_reads.rs", 98.5),
+    ("eo-services/src/equipment_pricing.rs", 96.0),
+    ("eo-services/src/db/mod.rs", 95.7),
+    ("eo-services/src/db/pool.rs", 65.0),
+    ("eo-services/src/daily_rollup.rs", 97.0),
+    ("eo-services/src/keystroke_source.rs", 79.0),
+    ("eo-services/src/time.rs", 95.0),
+    ("eo-services/src/spacebar_capture_listener.rs", 91.0),
+    ("eo-services/src/quests/actor.rs", 84.0),
+    ("eo-services/src/quests/analytics.rs", 93.0),
+    ("eo-services/src/tracker/providers.rs", 85.0),
+    ("eo-services/src/tracker/combat.rs", 96.0),
+    ("eo-services/src/tracker/mob.rs", 92.0),
+    ("eo-services/src/tracker/weapons.rs", 97.0),
 ];
 
 /// Map a score to a shields.io colour band (identical floors to
@@ -327,6 +349,6 @@ mod tests {
     #[test]
     fn floor_map_has_the_expected_entry_count() {
         // Guards against an accidental drop when editing the map.
-        assert_eq!(FLOORS.len(), 16);
+        assert_eq!(FLOORS.len(), 28);
     }
 }
