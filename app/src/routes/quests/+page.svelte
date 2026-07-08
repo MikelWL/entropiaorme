@@ -13,7 +13,7 @@
 	import { questsSurface } from '$lib/guide/surfaces/quests';
 	import { getPreference } from '$lib/preferences';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
-	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore';
+	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore.svelte';
 
 	const model = createQuestsModel();
 	const playlistModel = createPlaylistModel(model);
@@ -24,7 +24,7 @@
 	// Cooldown tick
 	let now = $state(Date.now());
 
-	let trackingActive = $derived($trackingSnapshot?.status === 'active');
+	let trackingActive = $derived(trackingSnapshot.current?.status === 'active');
 
 	// Guide
 	let guideSeen = $state(true);

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Component } from 'svelte';
-	import { theme } from '$lib/theme';
+	import { theme } from '$lib/theme.svelte';
 
 	export type NavItem = {
 		id: string;
@@ -59,7 +59,7 @@
 				{expanded ? 'opacity-0' : 'opacity-100'}"
 		/>
 		<img
-			src={$theme === 'light' ? '/wordmark-on-light.png' : '/wordmark-on-dark.png'}
+			src={theme.current === 'light' ? '/wordmark-on-light.png' : '/wordmark-on-dark.png'}
 			alt="EntropiaOrme"
 			class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none h-10 w-auto select-none transition-opacity duration-[var(--duration-base)] ease-[var(--ease-out)]
 				{expanded ? 'opacity-100' : 'opacity-0'}"

@@ -1,40 +1,23 @@
 //! One whole-tree rule over the tracked frontend source, enforcing the
-//! runes-native state ruling (ADR-0022) so the legacy-store idiom cannot
-//! grow while its remaining modules migrate:
+//! runes-native state ruling (ADR-0022):
 //!
-//!   - Rule (frozen legacy-store surface): an import from `svelte/store`
-//!     may appear ONLY in the files listed in `LEGACY_STORE_MODULES`, the
-//!     modules (and their tests / direct consumers) that predate the
-//!     ruling. New shared state is authored as runes-based `.svelte.ts`
-//!     modules; as legacy modules migrate, their entries leave this list
-//!     and it only ever shrinks.
+//!   - Rule (no legacy-store imports): no tracked frontend source file may
+//!     import from `svelte/store`. Shared state is authored as runes-based
+//!     `.svelte.ts` modules. The allowlist below froze the legacy surface
+//!     while it migrated; the migration is complete and the list is empty.
+//!     It stays wired in so the guarantee keeps its shape: an entry can
+//!     only ever be removed, never added, and the stale-entry check fails
+//!     on any listed file that is no longer tracked.
 //!
 //! Whole-tree rather than diff-scoped, like the sibling polling lint: the
-//! allowlist pins the exact tracked surface, so the guarantee is "no new
-//! importer anywhere". The source set is the `git ls-files`-tracked
-//! compiled-source files under `app/src`.
+//! guarantee is "no importer anywhere". The source set is the
+//! `git ls-files`-tracked compiled-source files under `app/src`.
 
 use crate::git;
 
 /// The frozen legacy surface: every file importing `svelte/store` at the
-/// time of the ruling. Migration removes entries; nothing adds one.
-const LEGACY_STORE_MODULES: &[&str] = &[
-    "app/src/lib/activityArchive.test.ts",
-    "app/src/lib/activityArchive.ts",
-    "app/src/lib/components/dashboard/CustomiseStatsWidget.svelte",
-    "app/src/lib/motion/testMotion.test.ts",
-    "app/src/lib/news.test.ts",
-    "app/src/lib/news.ts",
-    "app/src/lib/newsFetch.ts",
-    "app/src/lib/statsCustomisation.test.ts",
-    "app/src/lib/statsCustomisation.ts",
-    "app/src/lib/stores/trackingStore.test.ts",
-    "app/src/lib/stores/trackingStore.ts",
-    "app/src/lib/theme.ts",
-    "app/src/lib/updater.test.ts",
-    "app/src/lib/updater.ts",
-    "app/src/routes/+page.svelte",
-];
+/// time of the ruling. Migration removed every entry; nothing adds one.
+const LEGACY_STORE_MODULES: &[&str] = &[];
 
 const SCAN_ROOT: &str = "app/src";
 const SCAN_SUFFIXES: &[&str] = &[".svelte", ".ts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
@@ -73,8 +56,8 @@ pub fn scan_text(path: &str, text: &str) -> Vec<Finding> {
             findings.push(Finding {
                 path: posix.clone(),
                 lineno: idx + 1,
-                detail: "svelte/store import outside the frozen legacy surface; \
-author shared state as a runes-based .svelte.ts module (ADR-0022)"
+                detail: "svelte/store import; author shared state as a \
+runes-based .svelte.ts module (ADR-0022)"
                     .to_string(),
             });
         }
@@ -110,18 +93,15 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     let (findings, stale) = evaluate(&repo_root)?;
 
     if findings.is_empty() && stale.is_empty() {
-        println!(
-            "check-no-new-writable: no svelte/store imports outside the frozen \
-legacy surface."
-        );
+        println!("check-no-new-writable: no svelte/store imports in the tracked frontend source.");
         return Ok(0);
     }
 
     if !findings.is_empty() {
         eprintln!(
             "check-no-new-writable: runes-native state ruling violations \
-(ADR-0022).\n\nNew shared state is authored with runes in a .svelte.ts module; \
-the svelte/store legacy surface is frozen and only shrinks. Offenders:\n"
+(ADR-0022).\n\nShared state is authored with runes in a .svelte.ts module; \
+the svelte/store surface is fully migrated and stays empty. Offenders:\n"
         );
         for f in &findings {
             eprintln!("  {}:{}: {}", f.path, f.lineno, f.detail);
@@ -151,7 +131,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn flags_an_import_outside_the_frozen_surface() {
+    fn flags_an_import_anywhere_in_the_tree() {
         let f = scan_text(
             "app/src/lib/newStore.ts",
             "import { writable } from 'svelte/store';",
@@ -161,19 +141,22 @@ mod tests {
     }
 
     #[test]
-    fn allows_the_frozen_legacy_modules() {
+    fn flags_the_formerly_frozen_modules() {
+        // The legacy surface is fully migrated: a once-allowlisted path gets
+        // no special treatment.
         let f = scan_text(
             "app/src/lib/stores/trackingStore.ts",
             "import { writable } from 'svelte/store';",
         );
-        assert!(f.is_empty());
+        assert_eq!(f.len(), 1);
     }
 
     #[test]
-    fn the_check_is_path_normalised() {
+    fn findings_are_path_normalised() {
         let win = "app/src/lib/theme.ts".replace('/', "\\");
         let f = scan_text(&win, "import { writable } from 'svelte/store';");
-        assert!(f.is_empty());
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].path, "app/src/lib/theme.ts");
     }
 
     #[test]

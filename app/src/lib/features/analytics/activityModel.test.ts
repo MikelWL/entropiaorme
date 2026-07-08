@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { activityArchive } from '$lib/activityArchive';
+import { activityArchive } from '$lib/activityArchive.svelte';
 import type { AnalyticsActivity } from '$lib/api/commands.gen';
 import { createActivityModel } from './activityModel.svelte';
 
@@ -68,7 +68,7 @@ function activity(): AnalyticsActivity {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockedPrefs.setPreference.mockResolvedValue(undefined);
-	activityArchive.set({ mobs: [], tags: [], weapons: [] });
+	activityArchive.current = { mobs: [], tags: [], weapons: [] };
 });
 
 describe('loadData', () => {

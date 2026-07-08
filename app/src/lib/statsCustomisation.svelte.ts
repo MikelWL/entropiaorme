@@ -1,5 +1,4 @@
 import { emit } from '@tauri-apps/api/event';
-import { get, type Writable, writable } from 'svelte/store';
 import { getPreference, setPreference } from './preferences';
 import { ALL_STAT_IDS, STAT_DEFS, type StatId } from './statsRegistry';
 
@@ -22,8 +21,28 @@ export const DEFAULT_OVERLAY_PREFS: StatPref[] = ALL_STAT_IDS.map((id) => ({
 	enabled: STAT_DEFS[id].defaultOverlayEnabled ?? false,
 }));
 
-export const dashboardStats: Writable<StatPref[]> = writable(DEFAULT_STAT_PREFS);
-export const overlayStats: Writable<StatPref[]> = writable(DEFAULT_OVERLAY_PREFS);
+let dashboard = $state<StatPref[]>(DEFAULT_STAT_PREFS);
+let overlay = $state<StatPref[]>(DEFAULT_OVERLAY_PREFS);
+
+// Direct writes are transient (the guide's demo configuration, the overlay
+// window's broadcast sync); a persisted change goes through the setters below.
+export const dashboardStats = {
+	get current(): StatPref[] {
+		return dashboard;
+	},
+	set current(value: StatPref[]) {
+		dashboard = value;
+	},
+};
+
+export const overlayStats = {
+	get current(): StatPref[] {
+		return overlay;
+	},
+	set current(value: StatPref[]) {
+		overlay = value;
+	},
+};
 
 // `fallback` is the surface-appropriate default returned when the stored value
 // is unusable (not an array): DEFAULT_STAT_PREFS for the dashboard,
@@ -54,7 +73,7 @@ function sanitise(prefs: unknown, fallback: StatPref[]): StatPref[] {
 	return cleaned;
 }
 
-// Stat order is global — dashboard is the canonical source. Overlay's order
+// Stat order is global: dashboard is the canonical source. Overlay's order
 // is always slaved to it; only per-stat enabled flags vary per surface.
 function reorderToMatch(target: StatPref[], referenceOrder: StatId[]): StatPref[] {
 	const enabledMap = new Map(target.map((p) => [p.id, p.enabled]));
@@ -69,13 +88,12 @@ export async function initStatsCustomisation(): Promise<void> {
 		getPreference<unknown>(KEY_DASHBOARD, DEFAULT_STAT_PREFS),
 		getPreference<unknown>(KEY_OVERLAY, DEFAULT_OVERLAY_PREFS),
 	]);
-	const dashboard = sanitise(d, DEFAULT_STAT_PREFS);
-	dashboardStats.set(dashboard);
-	const overlay = reorderToMatch(
+	const cleanDashboard = sanitise(d, DEFAULT_STAT_PREFS);
+	dashboard = cleanDashboard;
+	overlay = reorderToMatch(
 		sanitise(o, DEFAULT_OVERLAY_PREFS),
-		dashboard.map((p) => p.id),
+		cleanDashboard.map((p) => p.id),
 	);
-	overlayStats.set(overlay);
 }
 
 export async function setDashboardStats(value: StatPref[]): Promise<void> {
@@ -83,25 +101,25 @@ export async function setDashboardStats(value: StatPref[]): Promise<void> {
 	// missing as disabled) so the stored shape matches what initStatsCustomisation
 	// produces on load and a caller-supplied duplicate cannot propagate.
 	const clean = sanitise(value, DEFAULT_STAT_PREFS);
-	dashboardStats.set(clean);
+	dashboard = clean;
 	await setPreference(KEY_DASHBOARD, clean);
 	// Slave overlay's order to the new dashboard order; preserve its enabled flags.
 	const reorderedOverlay = reorderToMatch(
-		get(overlayStats),
+		overlay,
 		clean.map((p) => p.id),
 	);
-	overlayStats.set(reorderedOverlay);
+	overlay = reorderedOverlay;
 	await setPreference(KEY_OVERLAY, reorderedOverlay);
 	void emit(OVERLAY_STATS_CHANGED_EVENT, reorderedOverlay);
 }
 
 export async function setOverlayStats(value: StatPref[]): Promise<void> {
-	// Clamp to dashboard's canonical order — overlay never owns ordering.
+	// Clamp to dashboard's canonical order: overlay never owns ordering.
 	const reordered = reorderToMatch(
 		value,
-		get(dashboardStats).map((p) => p.id),
+		dashboard.map((p) => p.id),
 	);
-	overlayStats.set(reordered);
+	overlay = reordered;
 	await setPreference(KEY_OVERLAY, reordered);
 	void emit(OVERLAY_STATS_CHANGED_EVENT, reordered);
 }

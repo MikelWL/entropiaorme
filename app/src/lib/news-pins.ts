@@ -1,4 +1,4 @@
-import type { NewsEntry, SlotId } from './news';
+import type { NewsEntry, SlotId } from './news.svelte';
 
 /*
  * Slot defaults for the three-slot pinned-cards strip at the top of /news.

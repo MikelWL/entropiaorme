@@ -5,9 +5,9 @@
 	import Button from '$lib/components/Button.svelte';
 	import { setOnboardingComplete } from '$lib/onboarding';
 	import { CURRENT_TOS_VERSION, setAcceptedTosVersion } from '$lib/tos';
-	import { theme, setTheme, type Theme } from '$lib/theme';
-	import { markNewsOptInSeen, setNewsOptIn } from '$lib/news';
-	import { setAutoUpdateEnabled } from '$lib/updater';
+	import { theme, setTheme, type Theme } from '$lib/theme.svelte';
+	import { markNewsOptInSeen, setNewsOptIn } from '$lib/news.svelte';
+	import { setAutoUpdateEnabled } from '$lib/updater.svelte';
 	import { refreshNews } from '$lib/newsFetch';
 	import NetworkingStep from './NetworkingStep.svelte';
 	import TermsStep from './TermsStep.svelte';
@@ -87,7 +87,7 @@
 					<div class="hero">
 						<span class="eyebrow">Welcome</span>
 						<img
-							src={$theme === 'light' ? '/wordmark-on-light.png' : '/wordmark-on-dark.png'}
+							src={theme.current === 'light' ? '/wordmark-on-light.png' : '/wordmark-on-dark.png'}
 							alt="EntropiaOrme"
 							class="hero-wordmark"
 						/>
@@ -219,9 +219,9 @@
 							<button
 								type="button"
 								class="theme-card recommended"
-								class:selected={$theme === 'dark'}
+								class:selected={theme.current === 'dark'}
 								role="radio"
-								aria-checked={$theme === 'dark'}
+								aria-checked={theme.current === 'dark'}
 								onclick={() => handleThemeChange('dark')}
 							>
 								<span class="theme-card-badge">Recommended</span>
@@ -231,9 +231,9 @@
 							<button
 								type="button"
 								class="theme-card"
-								class:selected={$theme === 'light'}
+								class:selected={theme.current === 'light'}
 								role="radio"
-								aria-checked={$theme === 'light'}
+								aria-checked={theme.current === 'light'}
 								onclick={() => handleThemeChange('light')}
 							>
 								<div class="theme-card-preview" data-theme-preview="light" aria-hidden="true"></div>

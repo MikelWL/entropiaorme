@@ -61,12 +61,7 @@ const seams = vi.hoisted(() => {
 			outerPosition: vi.fn(async () => ({ x: 0, y: 0 })),
 			scaleFactor: vi.fn(async () => 1),
 		},
-		overlayStats: {
-			subscribe(fn: (v: never[]) => void): () => void {
-				fn([]);
-				return () => {};
-			},
-		},
+		overlayStats: { current: [] as never[] },
 	};
 });
 
@@ -126,7 +121,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
 	WebviewWindow: seams.FakeWebviewWindow,
 }));
 
-vi.mock('$lib/statsCustomisation', () => ({
+vi.mock('$lib/statsCustomisation.svelte', () => ({
 	overlayStats: seams.overlayStats,
 }));
 

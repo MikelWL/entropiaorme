@@ -16,7 +16,7 @@
 	import { dashboardSurface } from '$lib/guide/surfaces/dashboard';
 	import { getPreference } from '$lib/preferences';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
-	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore';
+	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore.svelte';
 	import type { CooldownStatus } from '$lib/types/common';
 	import type { Quest, QuestPlaylist } from '$lib/types/quests';
 
@@ -24,8 +24,8 @@
 	// single source of live-session render shape. Every tracking read on this
 	// route flows through this one derived (the island, widgets, and events list
 	// take it as input), so the store has a single consumption point here.
-	let status = $derived($trackingSnapshot);
-	let recentEvents = $derived($trackingSnapshot?.recentEvents ?? []);
+	let status = $derived(trackingSnapshot.current);
+	let recentEvents = $derived(trackingSnapshot.current?.recentEvents ?? []);
 
 	// Quest data + lifecycle handlers come from the shared quests feature model;
 	// the dashboard adds only its playlist-selection view over them. The stats

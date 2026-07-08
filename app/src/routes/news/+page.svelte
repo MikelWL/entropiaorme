@@ -8,7 +8,7 @@
 		markNewsAsRead,
 		type NewsEntry,
 		type SlotId,
-	} from '$lib/news';
+	} from '$lib/news.svelte';
 	import { refreshNews } from '$lib/newsFetch';
 	import {
 		SLOT_DEFAULTS,
@@ -24,7 +24,7 @@
 	let refreshing = $state(false);
 	let refreshStatus = $state<string | null>(null);
 
-	let items = $derived($newsCache?.items ?? []);
+	let items = $derived(newsCache.current?.items ?? []);
 	let pinSlots = $derived(resolvePinSlots(items));
 	let pinned = $derived(
 		SLOT_ORDER
@@ -38,13 +38,13 @@
 			.slice()
 			.sort((a, b) => b.date.localeCompare(a.date)),
 	);
-	let lastFetched = $derived($newsCache?.fetchedAt ?? null);
+	let lastFetched = $derived(newsCache.current?.fetchedAt ?? null);
 
 	// Acknowledge the cache on entry, and again whenever it changes mid-session
 	// (e.g. a refresh completes while the user is on /news). markNewsAsRead is
 	// idempotent: only writes when the max article date exceeds the cursor.
 	$effect(() => {
-		if ($newsCache) void markNewsAsRead();
+		if (newsCache.current) void markNewsAsRead();
 	});
 
 	function togglePin(slot: SlotId) {
@@ -95,7 +95,7 @@
 			<p class="text-sm text-text-secondary mt-0.5">Articles and release notices</p>
 		</header>
 
-		{#if !$newsOptIn}
+		{#if !newsOptIn.current}
 			<Card class="p-6">
 				<p class="text-sm text-text-secondary">
 					News &amp; Updates is currently disabled. Enable it from the Settings page if you want the

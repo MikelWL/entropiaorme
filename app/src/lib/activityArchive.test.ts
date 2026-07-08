@@ -1,4 +1,3 @@
-import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The `./preferences` seam is mocked so the suite never touches Tauri or
@@ -13,13 +12,14 @@ vi.mock('./preferences', () => ({
 	setPreference: (...args: unknown[]) => setPreference(...args),
 }));
 
-// The store lives at module scope (writable(EMPTY)), so each test re-imports a
-// fresh module graph via resetModules + dynamic import to stay order-independent.
-type ArchiveModule = typeof import('./activityArchive');
+// The state lives at module scope ($state seeded with EMPTY), so each test
+// re-imports a fresh module graph via resetModules + dynamic import to stay
+// order-independent.
+type ArchiveModule = typeof import('./activityArchive.svelte');
 
 async function freshModule(): Promise<ArchiveModule> {
 	vi.resetModules();
-	return import('./activityArchive');
+	return import('./activityArchive.svelte');
 }
 
 beforeEach(() => {
@@ -37,14 +37,14 @@ describe('sanitise (via initActivityArchive)', () => {
 		getPreference.mockResolvedValue(null);
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(get(mod.activityArchive)).toEqual({ mobs: [], tags: [], weapons: [] });
+		expect(mod.activityArchive.current).toEqual({ mobs: [], tags: [], weapons: [] });
 	});
 
 	it('coerces undefined from the store into the empty shape', async () => {
 		getPreference.mockResolvedValue(undefined);
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(get(mod.activityArchive)).toEqual({ mobs: [], tags: [], weapons: [] });
+		expect(mod.activityArchive.current).toEqual({ mobs: [], tags: [], weapons: [] });
 	});
 
 	it('replaces a non-array bucket with an empty array', async () => {
@@ -55,7 +55,7 @@ describe('sanitise (via initActivityArchive)', () => {
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(get(mod.activityArchive)).toEqual({ mobs: [], tags: [], weapons: [] });
+		expect(mod.activityArchive.current).toEqual({ mobs: [], tags: [], weapons: [] });
 	});
 
 	it('filters out non-string members from a bucket', async () => {
@@ -66,7 +66,7 @@ describe('sanitise (via initActivityArchive)', () => {
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(get(mod.activityArchive).mobs).toEqual(['atrox', 'molisk']);
+		expect(mod.activityArchive.current.mobs).toEqual(['atrox', 'molisk']);
 	});
 
 	it('dedupes members via Set, preserving first-occurrence order', async () => {
@@ -77,7 +77,7 @@ describe('sanitise (via initActivityArchive)', () => {
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(get(mod.activityArchive).mobs).toEqual(['atrox', 'molisk', 'daikiba']);
+		expect(mod.activityArchive.current.mobs).toEqual(['atrox', 'molisk', 'daikiba']);
 	});
 
 	it('passes the storage KEY and EMPTY default through to getPreference', async () => {
@@ -103,7 +103,7 @@ describe('archive', () => {
 		await mod.archive('tag', 'event:beacon');
 		await mod.archive('weapon', 'ArMatrix LR-69');
 
-		expect(get(mod.activityArchive)).toEqual({
+		expect(mod.activityArchive.current).toEqual({
 			mobs: ['atrox'],
 			tags: ['event:beacon'],
 			weapons: ['ArMatrix LR-69'],
@@ -133,19 +133,19 @@ describe('archive', () => {
 
 		await mod.archive('mob', 'molisk');
 
-		expect(get(mod.activityArchive).mobs).toEqual(['atrox', 'molisk']);
+		expect(mod.activityArchive.current.mobs).toEqual(['atrox', 'molisk']);
 	});
 
 	it('short-circuits on an already-present name: no state change, no persist', async () => {
 		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [], weapons: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		const before = get(mod.activityArchive);
+		const before = mod.activityArchive.current;
 
 		await mod.archive('mob', 'atrox');
 
-		// Reference identity is unchanged because set() was never called.
-		expect(get(mod.activityArchive)).toBe(before);
+		// Reference identity is unchanged because the state was never reassigned.
+		expect(mod.activityArchive.current).toBe(before);
 		expect(setPreference).not.toHaveBeenCalled();
 	});
 });
@@ -162,7 +162,7 @@ describe('unarchive', () => {
 
 		await mod.unarchive('mob', 'molisk');
 
-		expect(get(mod.activityArchive).mobs).toEqual(['atrox', 'daikiba']);
+		expect(mod.activityArchive.current.mobs).toEqual(['atrox', 'daikiba']);
 		expect(setPreference).toHaveBeenCalledTimes(1);
 		expect(setPreference).toHaveBeenCalledWith('activityArchive', {
 			mobs: ['atrox', 'daikiba'],
@@ -175,11 +175,11 @@ describe('unarchive', () => {
 		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [], weapons: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		const before = get(mod.activityArchive);
+		const before = mod.activityArchive.current;
 
 		await mod.unarchive('mob', 'nonexistent');
 
-		expect(get(mod.activityArchive)).toBe(before);
+		expect(mod.activityArchive.current).toBe(before);
 		expect(setPreference).not.toHaveBeenCalled();
 	});
 
@@ -194,7 +194,7 @@ describe('unarchive', () => {
 
 		await mod.unarchive('tag', 'shared');
 
-		expect(get(mod.activityArchive)).toEqual({
+		expect(mod.activityArchive.current).toEqual({
 			mobs: ['shared'],
 			tags: [],
 			weapons: ['shared'],
@@ -207,11 +207,11 @@ describe('immutability', () => {
 		getPreference.mockResolvedValue(null);
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		const before = get(mod.activityArchive);
+		const before = mod.activityArchive.current;
 
 		await mod.archive('mob', 'atrox');
 
-		const after = get(mod.activityArchive);
+		const after = mod.activityArchive.current;
 		expect(after).not.toBe(before);
 		// The original snapshot is not mutated in place.
 		expect(before.mobs).toEqual([]);
@@ -221,12 +221,12 @@ describe('immutability', () => {
 		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [], weapons: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		const before = get(mod.activityArchive);
+		const before = mod.activityArchive.current;
 		const beforeMobs = before.mobs;
 
 		await mod.archive('mob', 'molisk');
 
-		expect(get(mod.activityArchive).mobs).not.toBe(beforeMobs);
+		expect(mod.activityArchive.current.mobs).not.toBe(beforeMobs);
 		expect(beforeMobs).toEqual(['atrox']);
 	});
 
@@ -234,11 +234,11 @@ describe('immutability', () => {
 		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [], weapons: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		const before = get(mod.activityArchive);
+		const before = mod.activityArchive.current;
 
 		await mod.unarchive('mob', 'atrox');
 
-		const after = get(mod.activityArchive);
+		const after = mod.activityArchive.current;
 		expect(after).not.toBe(before);
 		expect(before.mobs).toEqual(['atrox']);
 	});

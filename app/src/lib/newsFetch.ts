@@ -1,5 +1,10 @@
-import { get } from 'svelte/store';
-import { type NewsCache, type NewsEntry, type NewsFeed, newsOptIn, persistNewsCache } from './news';
+import {
+	type NewsCache,
+	type NewsEntry,
+	type NewsFeed,
+	newsOptIn,
+	persistNewsCache,
+} from './news.svelte';
 
 // This file is the sole site of outbound non-loopback HTTP in the app.
 // The CSP `connect-src` entry in app/src-tauri/entropia-orme/tauri.conf.json gates
@@ -75,7 +80,7 @@ export async function fetchNews(): Promise<NewsCache> {
 export type RefreshResult = { ok: true } | { ok: false; reason: string };
 
 export async function refreshNews(): Promise<RefreshResult> {
-	if (!get(newsOptIn)) {
+	if (!newsOptIn.current) {
 		return { ok: false, reason: 'opt-in is off' };
 	}
 	try {
@@ -91,6 +96,6 @@ export async function refreshNews(): Promise<RefreshResult> {
 }
 
 export async function maybeRefreshOnMount(): Promise<void> {
-	if (!get(newsOptIn)) return;
+	if (!newsOptIn.current) return;
 	await refreshNews();
 }

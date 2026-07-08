@@ -5,8 +5,8 @@
 	import { onMount } from 'svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { getPreference } from '$lib/preferences';
-	import { markNewsOptInSeen, NEWS_PREFERENCE_KEYS, setNewsOptIn } from '$lib/news';
-	import { AUTO_UPDATE_PREFERENCE_KEY, setAutoUpdateEnabled } from '$lib/updater';
+	import { markNewsOptInSeen, NEWS_PREFERENCE_KEYS, setNewsOptIn } from '$lib/news.svelte';
+	import { AUTO_UPDATE_PREFERENCE_KEY, setAutoUpdateEnabled } from '$lib/updater.svelte';
 	import { refreshNews } from '$lib/newsFetch';
 	import NetworkingStep from '../NetworkingStep.svelte';
 

@@ -1,9 +1,19 @@
 // @vitest-environment happy-dom
 
 import { cubicOut } from 'svelte/easing';
-import { get } from 'svelte/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { settleTween, shouldSettleInstantly } from './testMotion';
+
+// Read a tweened value via a transient subscription (svelte/motion stores call
+// a new subscriber synchronously), keeping this suite off the svelte/store
+// import surface.
+function currentValue<T>(store: { subscribe(run: (value: T) => void): () => void }): T {
+	let value!: T;
+	store.subscribe((v) => {
+		value = v;
+	})();
+	return value;
+}
 
 // Drive `prefers-reduced-motion` deterministically: matchMedia is the only
 // signal `shouldSettleInstantly` reads at runtime (the build-time e2e flag is
@@ -45,7 +55,7 @@ describe('settleTween', () => {
 	it('exposes the seed value before any set', () => {
 		setReducedMotion(false);
 		const t = settleTween(7, { duration: 600, easing: cubicOut });
-		expect(get(t)).toBe(7);
+		expect(currentValue(t)).toBe(7);
 	});
 
 	it('settles instantly to the target when reduced motion is preferred', async () => {
@@ -55,6 +65,6 @@ describe('settleTween', () => {
 		// set promise resolves on the next tick with the value already at target,
 		// rather than animating across 600ms.
 		await t.set(100);
-		expect(get(t)).toBe(100);
+		expect(currentValue(t)).toBe(100);
 	});
 });

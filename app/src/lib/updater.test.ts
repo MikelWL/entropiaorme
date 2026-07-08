@@ -1,5 +1,4 @@
 // @vitest-environment happy-dom
-import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the Tauri IPC + event seams and the preferences seam so the flow is
@@ -28,7 +27,7 @@ import {
 	updateAvailable,
 	updatePhase,
 	updateToastDismissed,
-} from './updater';
+} from './updater.svelte';
 
 const invokeMock = vi.mocked(invoke);
 const listenMock = vi.mocked(listen);
@@ -45,10 +44,10 @@ function withoutTauri(): void {
 const sampleUpdate: UpdateInfo = { version: '0.2.0', currentVersion: '0.1.0', notes: 'Fixes.' };
 
 beforeEach(() => {
-	autoUpdateEnabled.set(false);
-	updatePhase.set('idle');
-	availableUpdate.set(null);
-	updateToastDismissed.set(false);
+	autoUpdateEnabled.current = false;
+	updatePhase.current = 'idle';
+	availableUpdate.current = null;
+	updateToastDismissed.current = false;
 	invokeMock.mockReset();
 	listenMock.mockReset();
 	listenMock.mockResolvedValue(() => {});
@@ -65,7 +64,7 @@ afterEach(() => {
 
 describe('initUpdater', () => {
 	it('loads auto-update OFF at runtime until chosen (the opt-out posture is panel-driven)', async () => {
-		// The runtime store stays OFF until the user has made the choice, so the
+		// The runtime state stays OFF until the user has made the choice, so the
 		// launch check never fires before consent; the opt-out "on by default"
 		// lives in the onboarding panel and the saved preference.
 		getPreferenceMock.mockImplementation(
@@ -75,7 +74,7 @@ describe('initUpdater', () => {
 		await initUpdater();
 
 		expect(getPreferenceMock).toHaveBeenCalledWith(AUTO_UPDATE_PREFERENCE_KEY, false);
-		expect(get(autoUpdateEnabled)).toBe(false);
+		expect(autoUpdateEnabled.current).toBe(false);
 	});
 
 	it('honours a persisted opt-out', async () => {
@@ -83,31 +82,31 @@ describe('initUpdater', () => {
 
 		await initUpdater();
 
-		expect(get(autoUpdateEnabled)).toBe(false);
+		expect(autoUpdateEnabled.current).toBe(false);
 	});
 });
 
 describe('setAutoUpdateEnabled', () => {
-	it('sets the store and persists the choice', async () => {
+	it('sets the state and persists the choice', async () => {
 		await setAutoUpdateEnabled(false);
 
-		expect(get(autoUpdateEnabled)).toBe(false);
+		expect(autoUpdateEnabled.current).toBe(false);
 		expect(setPreferenceMock).toHaveBeenCalledWith(AUTO_UPDATE_PREFERENCE_KEY, false);
 	});
 });
 
 describe('checkForUpdate', () => {
 	it('marks an available update and clears any prior toast dismissal', async () => {
-		updateToastDismissed.set(true);
+		updateToastDismissed.current = true;
 		invokeMock.mockResolvedValue(sampleUpdate);
 
 		const result = await checkForUpdate();
 
 		expect(invokeMock).toHaveBeenCalledWith('check_for_update');
 		expect(result).toEqual(sampleUpdate);
-		expect(get(updatePhase)).toBe('available');
-		expect(get(availableUpdate)).toEqual(sampleUpdate);
-		expect(get(updateToastDismissed)).toBe(false);
+		expect(updatePhase.current).toBe('available');
+		expect(availableUpdate.current).toEqual(sampleUpdate);
+		expect(updateToastDismissed.current).toBe(false);
 	});
 
 	it('marks up-to-date when the backend reports no update', async () => {
@@ -115,8 +114,8 @@ describe('checkForUpdate', () => {
 
 		await checkForUpdate();
 
-		expect(get(updatePhase)).toBe('up-to-date');
-		expect(get(availableUpdate)).toBeNull();
+		expect(updatePhase.current).toBe('up-to-date');
+		expect(availableUpdate.current).toBeNull();
 	});
 
 	it('surfaces an error phase when the check throws', async () => {
@@ -124,7 +123,7 @@ describe('checkForUpdate', () => {
 
 		await checkForUpdate();
 
-		expect(get(updatePhase)).toBe('error');
+		expect(updatePhase.current).toBe('error');
 	});
 
 	it('is a no-op outside Tauri', async () => {
@@ -134,7 +133,7 @@ describe('checkForUpdate', () => {
 
 		expect(result).toBeNull();
 		expect(invokeMock).not.toHaveBeenCalled();
-		expect(get(updatePhase)).toBe('idle');
+		expect(updatePhase.current).toBe('idle');
 	});
 });
 
@@ -146,7 +145,7 @@ describe('downloadUpdate', () => {
 
 		expect(listenMock).toHaveBeenCalledWith('updater:download-progress', expect.any(Function));
 		expect(invokeMock).toHaveBeenCalledWith('download_update');
-		expect(get(updatePhase)).toBe('ready');
+		expect(updatePhase.current).toBe('ready');
 	});
 
 	it('surfaces an error phase when the download throws', async () => {
@@ -154,13 +153,13 @@ describe('downloadUpdate', () => {
 
 		await downloadUpdate();
 
-		expect(get(updatePhase)).toBe('error');
+		expect(updatePhase.current).toBe('error');
 	});
 });
 
 describe('maybeCheckOnLaunch', () => {
 	it('checks when auto-update is enabled', async () => {
-		autoUpdateEnabled.set(true);
+		autoUpdateEnabled.current = true;
 		invokeMock.mockResolvedValue(null);
 
 		await maybeCheckOnLaunch();
@@ -169,7 +168,7 @@ describe('maybeCheckOnLaunch', () => {
 	});
 
 	it('does nothing when the user has opted out', async () => {
-		autoUpdateEnabled.set(false);
+		autoUpdateEnabled.current = false;
 
 		await maybeCheckOnLaunch();
 
@@ -177,33 +176,33 @@ describe('maybeCheckOnLaunch', () => {
 	});
 
 	it('stays silent on failure (no error phase) for the launch check', async () => {
-		autoUpdateEnabled.set(true);
+		autoUpdateEnabled.current = true;
 		invokeMock.mockRejectedValue('offline');
 
 		await maybeCheckOnLaunch();
 
 		// A failed launch check must not leave /updates in an error state.
-		expect(get(updatePhase)).toBe('idle');
+		expect(updatePhase.current).toBe('idle');
 	});
 });
 
-describe('derived stores', () => {
+describe('derived state', () => {
 	it('updateAvailable tracks the pending phases', () => {
-		updatePhase.set('idle');
-		expect(get(updateAvailable)).toBe(false);
-		updatePhase.set('available');
-		expect(get(updateAvailable)).toBe(true);
-		updatePhase.set('ready');
-		expect(get(updateAvailable)).toBe(true);
-		updatePhase.set('up-to-date');
-		expect(get(updateAvailable)).toBe(false);
+		updatePhase.current = 'idle';
+		expect(updateAvailable.current).toBe(false);
+		updatePhase.current = 'available';
+		expect(updateAvailable.current).toBe(true);
+		updatePhase.current = 'ready';
+		expect(updateAvailable.current).toBe(true);
+		updatePhase.current = 'up-to-date';
+		expect(updateAvailable.current).toBe(false);
 	});
 
 	it('showUpdateToast is suppressed by dismissal', () => {
-		updatePhase.set('available');
-		updateToastDismissed.set(false);
-		expect(get(showUpdateToast)).toBe(true);
-		updateToastDismissed.set(true);
-		expect(get(showUpdateToast)).toBe(false);
+		updatePhase.current = 'available';
+		updateToastDismissed.current = false;
+		expect(showUpdateToast.current).toBe(true);
+		updateToastDismissed.current = true;
+		expect(showUpdateToast.current).toBe(false);
 	});
 });

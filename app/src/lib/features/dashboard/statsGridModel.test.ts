@@ -7,9 +7,8 @@ import {
 	dashboardStats,
 	overlayStats,
 	type StatPref,
-} from '$lib/statsCustomisation';
+} from '$lib/statsCustomisation.svelte';
 import type { StatId } from '$lib/statsRegistry';
-import { readLegacyStore } from '$lib/view/legacyStore.svelte';
 import { createStatsGridModel } from './statsGridModel.svelte';
 
 vi.mock('$lib/preferences', () => ({
@@ -29,9 +28,7 @@ function prefsWith(enabled: StatId[]): StatPref[] {
 }
 
 function enabledIds(): string[] {
-	return readLegacyStore(dashboardStats)
-		.filter((p) => p.enabled)
-		.map((p) => p.id);
+	return dashboardStats.current.filter((p) => p.enabled).map((p) => p.id);
 }
 
 /** A minimal pointer-event stand-in carrying only the fields the handlers read. */
@@ -73,13 +70,13 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	document.body.innerHTML = '';
 	document.body.classList.remove('stat-drag-active');
-	dashboardStats.set(DEFAULT_STAT_PREFS);
-	overlayStats.set(DEFAULT_OVERLAY_PREFS);
+	dashboardStats.current = DEFAULT_STAT_PREFS;
+	overlayStats.current = DEFAULT_OVERLAY_PREFS;
 });
 
 describe('enabledStats', () => {
 	it('projects only the enabled prefs, in stored order', () => {
-		dashboardStats.set(prefsWith(['net', 'cycled']));
+		dashboardStats.current = prefsWith(['net', 'cycled']);
 		const model = createStatsGridModel();
 		expect(model.enabledStats.map((p) => p.id)).toEqual(['cycled', 'net']);
 	});
@@ -87,7 +84,7 @@ describe('enabledStats', () => {
 
 describe('drag reorder', () => {
 	it('moves the dragged stat past the threshold while disabled stats keep their slots', () => {
-		dashboardStats.set(prefsWith(['cycled', 'net', 'rate'])); // loot_tt stays disabled between them
+		dashboardStats.current = prefsWith(['cycled', 'net', 'rate']); // loot_tt stays disabled between them
 		mountCells(3);
 		const model = createStatsGridModel();
 		const target = cellTarget();
@@ -109,7 +106,7 @@ describe('drag reorder', () => {
 	});
 
 	it('treats sub-threshold jitter as a click: no reorder, no persist', () => {
-		dashboardStats.set(prefsWith(['cycled', 'net', 'rate']));
+		dashboardStats.current = prefsWith(['cycled', 'net', 'rate']);
 		mountCells(3);
 		const model = createStatsGridModel();
 		const target = cellTarget();
@@ -123,7 +120,7 @@ describe('drag reorder', () => {
 	});
 
 	it('ignores non-primary buttons and restores cleanly on cancel', () => {
-		dashboardStats.set(prefsWith(['cycled', 'net']));
+		dashboardStats.current = prefsWith(['cycled', 'net']);
 		mountCells(2);
 		const model = createStatsGridModel();
 		const target = cellTarget();
@@ -148,7 +145,7 @@ describe('guide demo controls', () => {
 	});
 
 	it('resets to the default baseline with optional overrides', () => {
-		dashboardStats.set(prefsWith(['pes']));
+		dashboardStats.current = prefsWith(['pes']);
 		const model = createStatsGridModel();
 		model.setDemoStatsBaseline({ rate: false });
 		expect(enabledIds()).toEqual(['cycled', 'loot_tt', 'net']);
@@ -157,7 +154,7 @@ describe('guide demo controls', () => {
 	});
 
 	it('reorders transiently through the filtered indices', () => {
-		dashboardStats.set(prefsWith(['cycled', 'net', 'rate']));
+		dashboardStats.current = prefsWith(['cycled', 'net', 'rate']);
 		const model = createStatsGridModel();
 		model.reorderDemoStat(2, 0);
 		expect(enabledIds()).toEqual(['rate', 'cycled', 'net']);
@@ -175,12 +172,12 @@ describe('guide demo controls', () => {
 	});
 
 	it('snapshots on guide-open, applies the preselected set, and restores on close', () => {
-		dashboardStats.set(prefsWith(['pes']));
+		dashboardStats.current = prefsWith(['pes']);
 		const model = createStatsGridModel();
 
 		model.syncGuideStats(true);
 		expect(enabledIds()).toHaveLength(10);
-		expect(readLegacyStore(overlayStats).filter((p) => p.enabled)).toHaveLength(3);
+		expect(overlayStats.current.filter((p) => p.enabled)).toHaveLength(3);
 
 		// Re-entrant active sync keeps the original snapshot.
 		model.syncGuideStats(true);
