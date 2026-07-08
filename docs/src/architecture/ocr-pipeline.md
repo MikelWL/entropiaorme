@@ -29,6 +29,11 @@ The engine loads the bundled model
 the `ort` crate. On Windows with a DirectX 12 GPU the session runs under the
 **DirectML** execution provider; otherwise it falls back to the **CPU**
 execution provider. The engine records which provider was actually committed.
+The ONNX Runtime itself is platform-forked: Windows bundles the DirectML build,
+Linux bundles the official CPU build of the same runtime version
+(`app/src-tauri/entropia-orme/resources/ort-linux/`), each resolved and pinned
+by absolute path. On Linux the provider ladder lands on CPU, as DirectML is a
+Windows-only provider.
 
 The model weights ship inside the installer and the recogniser operates fully
 offline from a cold start: there is no network access at any point of the read
@@ -289,7 +294,9 @@ are held locally and kept out of the public tree, so the test runs only when
 loadable; otherwise it skips with its reason stated rather than passing
 vacuously. The same host-gating applies to the provider-selection tests in
 `app/src-tauri/eo-services/src/ocr_engine.rs`, which additionally run only
-on Windows, where the bundled Windows ONNX Runtime build is present.
+on Windows, where the bundled Windows ONNX Runtime build is present; the Linux
+runtime is exercised by the platform port's scan-chain verification rather than
+these Windows-pinned provider-ladder tests.
 
 The rationale for pinning equivalence to this recorded corpus, rather than
 chasing a moving accuracy target, is recorded in
