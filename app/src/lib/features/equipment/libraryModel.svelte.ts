@@ -115,24 +115,30 @@ export function createLibraryModel() {
 		}),
 	);
 
+	// Split the flat library into the per-kind lists the view renders. Weapons
+	// stay unsorted here; the view's sorted derivation owns their ordering.
+	function splitByKind(library: Equipment[]) {
+		equipmentList = library.filter((e) => e.type === 'weapon');
+		healingTools = library
+			.filter((e) => e.type === 'healing')
+			.map((e) => ({
+				id: e.id,
+				name: e.name,
+				costPerHeal: e.costPerUse,
+				isLimited: e.isLimited,
+			}))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		consumables = library
+			.filter((e) => e.type === 'consumable')
+			.sort((a, b) => a.name.localeCompare(b.name));
+	}
+
 	async function loadData(guideMode: boolean): Promise<void> {
 		try {
 			if (guideMode) {
 				const library = equipmentDemoLibrary.map((e) => ({ ...e }));
 				allEquipment = library;
-				equipmentList = library.filter((e) => e.type === 'weapon');
-				healingTools = library
-					.filter((e) => e.type === 'healing')
-					.map((e) => ({
-						id: e.id,
-						name: e.name,
-						costPerHeal: e.costPerUse,
-						isLimited: e.isLimited,
-					}))
-					.sort((a, b) => a.name.localeCompare(b.name));
-				consumables = library
-					.filter((e) => e.type === 'consumable')
-					.sort((a, b) => a.name.localeCompare(b.name));
+				splitByKind(library);
 				hotbar = { ...equipmentDemoHotbar };
 				hotbarHooksEnabled = true;
 				trifecta = {
@@ -145,19 +151,7 @@ export function createLibraryModel() {
 			} else {
 				const [library, settings] = await Promise.all([getEquipmentLibrary(), getSettings()]);
 				allEquipment = library;
-				equipmentList = library.filter((e) => e.type === 'weapon');
-				healingTools = library
-					.filter((e) => e.type === 'healing')
-					.map((e) => ({
-						id: e.id,
-						name: e.name,
-						costPerHeal: e.costPerUse,
-						isLimited: e.isLimited,
-					}))
-					.sort((a, b) => a.name.localeCompare(b.name));
-				consumables = library
-					.filter((e) => e.type === 'consumable')
-					.sort((a, b) => a.name.localeCompare(b.name));
+				splitByKind(library);
 				hotbar = hotbarFromSettings(settings);
 				hotbarHooksEnabled = settings.hotbarHooksEnabled;
 				trifecta = settings.trifecta;
@@ -172,21 +166,7 @@ export function createLibraryModel() {
 		allEquipment = allEquipment.some((item) => item.id === updated.id)
 			? allEquipment.map((item) => (item.id === updated.id ? updated : item))
 			: [...allEquipment, updated];
-		equipmentList = allEquipment
-			.filter((item) => item.type === 'weapon')
-			.sort((a, b) => a.name.localeCompare(b.name));
-		healingTools = allEquipment
-			.filter((item) => item.type === 'healing')
-			.map((item) => ({
-				id: item.id,
-				name: item.name,
-				costPerHeal: item.costPerUse,
-				isLimited: item.isLimited,
-			}))
-			.sort((a, b) => a.name.localeCompare(b.name));
-		consumables = allEquipment
-			.filter((item) => item.type === 'consumable')
-			.sort((a, b) => a.name.localeCompare(b.name));
+		splitByKind(allEquipment);
 	}
 
 	function openAddModal(prefill?: string, type: EquipmentFormType = 'weapon') {
@@ -343,6 +323,11 @@ export function createLibraryModel() {
 					? await updateLibrary(editingEquipmentId, payload)
 					: await addToLibrary(payload);
 				replaceEquipment(item);
+				// The save has succeeded, so close the form before the detail fetch:
+				// a fetch failure must not leave the modal open with a retry path
+				// that would create a duplicate entry.
+				showAddModal = false;
+				editingEquipmentId = null;
 				detailCache[item.id] = await getEquipmentDetail(item.id);
 			} else if (addType === 'healing') {
 				const healer = healerPicker.selected;

@@ -477,6 +477,22 @@ describe('saveEquipment', () => {
 		expect(model.saving).toBe(false);
 	});
 
+	it('closes the modal before the detail fetch so a fetch failure cannot invite a duplicate retry', async () => {
+		mocked.addToLibrary.mockResolvedValue(summary({ id: '9', name: 'Korss H400' }));
+		mocked.getEquipmentDetail.mockRejectedValue(new Error('detail unavailable'));
+		const model = createLibraryModel();
+		model.openAddModal();
+		model.weaponPicker.select({ ...weaponHit });
+		await model.saveEquipment();
+
+		expect(model.showAddModal).toBe(false);
+		expect(model.editingEquipmentId).toBeNull();
+		expect(model.sortedEquipment.map((e) => e.id)).toEqual(['9']);
+		expect(model.detailCache['9']).toBeUndefined();
+		expect(model.error).toBe('detail unavailable');
+		expect(model.saving).toBe(false);
+	});
+
 	it('clears a stale error on entry', async () => {
 		mocked.addToLibrary.mockResolvedValue(summary({ id: '9' }));
 		mocked.getEquipmentDetail.mockResolvedValue(detail({ id: '9' }));
