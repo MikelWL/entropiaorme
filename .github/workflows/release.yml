@@ -31,7 +31,7 @@ jobs:
     # yet, so it contributes nothing to latest.json.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Install the Tauri system dependencies
@@ -47,7 +47,7 @@ jobs:
         with:
           workspaces: app/src-tauri
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "20"
           cache: "npm"
@@ -68,7 +68,7 @@ jobs:
           mkdir -p linux-dist
           cp "$deb" "linux-dist/entropiaorme-${version}-amd64.deb"
       - name: Upload the Linux package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-deb
           path: linux-dist/*.deb
@@ -84,11 +84,11 @@ jobs:
       id-token: write # mint the OIDC token the provenance attestation signs with
       attestations: write # record the build-provenance attestation
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "20"
           cache: "npm"
@@ -104,7 +104,7 @@ jobs:
           # Restrict cache writes to the trusted main timeline (parity with ci.yml).
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+      - uses: taiki-e/install-action@5ebac0d9522d786674368e47e92963ba13f2c376 # v2.82.11
         with:
           tool: cargo-cyclonedx
 
@@ -154,7 +154,7 @@ jobs:
         # Lands the .deb in dist/ ahead of the staging, checksum, provenance,
         # and draft steps, so every published asset shares one supply-chain
         # treatment regardless of the platform that built it.
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: linux-deb
           path: dist
@@ -258,7 +258,7 @@ jobs:
       - name: Attest build provenance
         # SLSA-style provenance over the installer, portable, and Linux
         # package artefacts.
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             dist/entropiaorme-*-x64-setup.exe
