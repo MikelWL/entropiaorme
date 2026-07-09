@@ -3456,4 +3456,60 @@ mod tests {
             .unwrap()
             .dominant_weapon
     }
+
+    /// The trend compares the recent-30d window (lower bound `now - 30*86400`)
+    /// against the prior-30d window (bounds `now - 60*86400` .. `now -
+    /// 30*86400`). A high recent rate over a low prior rate is "improving".
+    /// The three seeded sessions pin BOTH window bounds: an ancient session
+    /// older than 60 days sits outside the prior window, so mutating either
+    /// bound's `-` to a `/` (which collapses the bound to near-epoch) folds
+    /// extra sessions in and flips the verdict. Mutating the 30-day bound
+    /// empties the prior window ("stable"); mutating the 60-day bound drags
+    /// the prior rate up with the ancient session ("declining").
+    #[tokio::test]
+    async fn overview_trend_reads_the_thirty_and_sixty_day_window_bounds() {
+        let now = 1_800_000_000.0;
+        let day = 86400.0;
+        let (_dir, db) = open_env().await;
+        seed_rate(&db, "recent", now - 10.0 * day, 10.0, 1, 20.0).await; // rate 2.0
+        seed_rate(&db, "prior", now - 45.0 * day, 10.0, 1, 10.0).await; // rate 1.0
+        seed_rate(&db, "ancient", now - 90.0 * day, 10.0, 1, 100.0).await; // rate 10.0
+        assert_eq!(
+            overview_impl(&db, now, "all").await.unwrap().trend,
+            "improving"
+        );
+    }
+
+    /// A rolled old day whose session carries heal cost only (armour/dangling
+    /// NULL, so the rollup keeps them NULL). The session-cost leg must survive:
+    /// the family guard is a disjunction, and mutating its second `||` to `&&`
+    /// (which binds tighter, parsing as `armour || (heal && dangling)`) would
+    /// drop a heal-only day's cost.
+    #[tokio::test]
+    async fn overview_timeline_carries_a_heal_only_rolled_session_cost() {
+        let now = 1_800_000_000.0;
+        let day = 86400.0;
+        let (_dir, db) = open_env().await;
+        let old = now - 40.0 * day;
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, armour_cost, heal_cost, dangling_cost) \
+                 VALUES ('old', ?1, ?2, NULL, 4.0, NULL)",
+                rusqlite::params![old, old + 3600.0],
+            )?;
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
+                 VALUES ('ok', 'old', 'M', ?1, 0, 20.0)",
+                rusqlite::params![old + 10.0],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let data = overview_impl(&db, now, "all").await.unwrap();
+        let cost: f64 = data.timeline.iter().map(|p| p.tracking_cost).sum();
+        assert_eq!(cost, 4.0);
+    }
 }
