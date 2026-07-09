@@ -34,13 +34,20 @@ const FLOORS: &[(&str, f64)] = &[
     ("eo-services/src/difflib.rs", 92.0),
     ("eo-wire/src/normalizer.rs", 81.0),
     ("eo-wire/src/http_fingerprint.rs", 97.0),
-    // 2026-07 coverage-recovery adoptions, calibrated so ONE further missed
-    // mutant trips the gate. Each floor's gap to 100 encodes that file's
-    // reviewed residual survivors: provable equivalences (guard clauses whose
-    // mutants compute identical results, threshold comparisons at unreachable
-    // boundaries) or environment-bounded mutants a hermetic CI test cannot
-    // reach (evdev device handles, database-corruption and interrupt races,
-    // host-timezone DST gaps, shutdown thread-join ordering).
+    // 2026-07 coverage-recovery adoptions. Each floor's gap to 100 encodes
+    // that file's reviewed residual survivors: provable equivalences (guard
+    // clauses whose mutants compute identical results, threshold comparisons at
+    // unreachable boundaries) or environment-bounded mutants a hermetic CI test
+    // cannot reach (evdev device handles, database-corruption and interrupt
+    // races, host-timezone DST gaps, shutdown thread-join ordering). Where an
+    // equivalence is cleanly expressible as a mutant-name pattern it is instead
+    // filtered out of the campaign in .cargo/mutants.toml (so it never enters
+    // the denominator); the gap then covers only the residuals that resist a
+    // stable pattern. analytics.rs carries three such campaign-level
+    // exclusions, leaving its gap as headroom rather than a one-miss margin;
+    // tracking_reads.rs keeps two gap-encoded residuals (the unobservable
+    // sub-second nanos in list_ts_to_iso, discarded by the whole-second
+    // format).
     ("eo-services/src/analytics.rs", 98.8),
     ("eo-services/src/session_summary.rs", 96.0),
     ("eo-services/src/tracking_reads.rs", 98.5),

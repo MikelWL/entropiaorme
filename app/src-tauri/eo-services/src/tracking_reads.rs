@@ -2897,4 +2897,118 @@ mod tests {
             Value::Null
         );
     }
+
+    // ── Return-rate zero-cost guards and active-duration ────────────
+
+    /// A zero-cost summary row with loot returns a 0.0 rate, never a
+    /// divide-by-zero: relaxing the `cost > 0.0` guard to `>=` would divide
+    /// loot by zero and drop the field to null.
+    #[test]
+    fn list_row_from_summary_zero_cost_yields_a_zero_rate() {
+        let summary = ListSummary {
+            weapon_cost: 0.0,
+            heal_cost: 0.0,
+            enhancer_cost: 0.0,
+            armour_cost: 0.0,
+            dangling_cost: 0.0,
+            loot_tt: 30.0,
+            primary_mobs: json!([]),
+            primary_weapons: json!([]),
+            globals: 0,
+            hofs: 0,
+        };
+        let row = list_row_from_summary("s1", Some(1000.0), Some(4600.0), false, 9999.0, &summary);
+        assert_eq!(row["cost"], json!(0.0));
+        assert_eq!(row["returns"], json!(30.0));
+        assert_eq!(row["returnRate"], json!(0.0));
+    }
+
+    /// The same guard on the raw path: a session with no costs and a loot kill
+    /// holds the rate at 0.0.
+    #[tokio::test]
+    async fn list_row_from_raw_zero_cost_yields_a_zero_rate() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(4600.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            // A loot kill with no tool rows and no enhancer cost: cost is zero.
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 30.0, 0.0, 1000.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let row = db
+            .with_reader(|conn| {
+                list_row_from_raw(conn, "s1", Some(1000.0), Some(4600.0), false, 0.0)
+            })
+            .await
+            .unwrap();
+        assert_eq!(row["cost"], json!(0.0));
+        assert_eq!(row["returns"], json!(30.0));
+        assert_eq!(row["returnRate"], json!(0.0));
+    }
+
+    /// An active session with no end time measures its duration to `now` and
+    /// guards a zero-cost rate. This pins two boundary conditions in the full
+    /// detail read: the `is_active != 0` decode (mutating it to `== 0` would
+    /// zero an active session's duration) and the `total_cost > 0.0` rate
+    /// guard (relaxing it to `>=` would divide loot by zero).
+    #[tokio::test]
+    async fn get_session_read_active_zero_cost_measures_duration_and_guards_the_rate() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(conn, "s1", 1000.0, None, true, "mob", 0.0, 0.0, 0.0)?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 30.0, 0.0, 1000.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let value = db
+            .with_reader(|conn| get_session_read(conn, "s1", 4600.0))
+            .await
+            .unwrap()
+            .expect("the session exists");
+        assert_eq!(value["summary"]["duration"], json!(3600));
+        assert_eq!(value["summary"]["cost"], json!(0.0));
+        assert_eq!(value["summary"]["returnRate"], json!(0.0));
+    }
+
+    /// A preset exists but none is active, so every bound id is None while the
+    /// preset list is non-empty. The early-return guard is a conjunction of
+    /// four terms; turning any `&&` into `||` would collapse this real preset
+    /// list to null.
+    #[tokio::test]
+    async fn trifecta_attribution_summary_keeps_an_unbound_preset_list() {
+        let (_dir, db) = open_db().await;
+        let config = AppConfig {
+            trifecta_presets: vec![TrifectaPresetConfig {
+                id: "p1".to_string(),
+                name: "Preset One".to_string(),
+                small_weapon_id: None,
+                big_weapon_id: None,
+                heal_id: None,
+            }],
+            active_trifecta_preset_id: None,
+            ..AppConfig::default()
+        };
+        let summary = trifecta_attribution_summary(&db, &config).await.unwrap();
+        assert_ne!(summary, Value::Null);
+        assert_eq!(
+            summary["presets"],
+            json!([{"id": "p1", "name": "Preset One"}])
+        );
+        assert_eq!(summary["activePresetId"], Value::Null);
+        assert_eq!(summary["smallWeapon"], Value::Null);
+    }
 }

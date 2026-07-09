@@ -64,4 +64,16 @@ exclude_re = [
     # capturing, with no observable effect (no page captured, no status
     # published). Equivalent to the gated form for any assertion.
     "spacebar_capture_listener\\.rs.*replace SpacebarCaptureListener::is_capturing -> bool with true",
+    # Provable equivalences in the Overview/Activity read paths: guard clauses
+    # whose mutants compute an identical result on every reachable input.
+    #   analytics.rs:2080  `if delta > 0.0` sits inside `if delta != 0.0`, so
+    #     `>` and `>=` differ only at delta == 0, which the outer guard excludes.
+    "analytics\\.rs.*replace > with >= in AnalyticsService::sell_inventory_item",
+    #   analytics.rs:1408  `if total_known > 0` where total_known sums a GROUP
+    #     BY's COUNT(*) values (each >= 1) over a non-empty row set, so it is
+    #     always >= 1; the zero case where `>`/`>=` would differ is unreachable.
+    #   analytics.rs:1437  `if total_shots > 0.0 && top/total >= threshold`:
+    #     shots are non-negative, so at total_shots == 0 the top share is 0/0 =
+    #     NaN, which fails the threshold either way; `>` and `>=` coincide.
+    "analytics\\.rs.*replace > with >= in raw_session_agg",
 ]
