@@ -21,6 +21,7 @@ mod authoring;
 mod bump_version;
 mod gen_ts;
 mod git;
+mod market_isolation;
 mod mutation_floors;
 mod no_bare_setinterval;
 mod no_new_writable;
@@ -43,6 +44,7 @@ SUBCOMMANDS:
     mutation-floors --outcomes <PATH>...      enforce per-file cargo-mutants score floors (flag repeats to merge campaign shards)
     no-bare-setinterval [--warn-only]         forbid bare setInterval and the retired tracking event in the frontend
     no-new-writable [--warn-only]             forbid svelte/store imports outside the frozen legacy surface
+    market-isolation [--warn-only]            forbid market-layer references on the accounting surface
     route-ceilings [--warn-only]              hold tracked route files at or under their line ceilings
     bump-version <NEW_VERSION>                rewrite the app version stamps in lock-step
     gen-ts [--check]                          emit the TypeScript bindings for the typed IPC commands
@@ -63,6 +65,7 @@ fn main() -> ExitCode {
         "mutation-floors" => mutation_floors::run(rest),
         "no-bare-setinterval" => no_bare_setinterval::run(rest),
         "no-new-writable" => no_new_writable::run(rest),
+        "market-isolation" => market_isolation::run(rest),
         "route-ceilings" => route_ceilings::run(rest),
         "bump-version" => bump_version::run(rest),
         "gen-ts" => gen_ts::run(rest),

@@ -27,6 +27,7 @@ use eo_services::config_service::ConfigService;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
+use eo_services::market_service::MarketService;
 use eo_services::quests::QuestService;
 use eo_services::repair_ocr::RepairOcrService;
 use eo_services::skill_scan_manual::SkillScanManual;
@@ -42,6 +43,7 @@ pub mod dev;
 pub mod equipment;
 mod error;
 pub mod manifest;
+pub mod market;
 mod nullable;
 pub mod quests;
 pub mod scan;
@@ -96,6 +98,10 @@ pub struct Api {
     /// The analytics service (Overview / Activity aggregates, ledger,
     /// presets, inventory), built over the facade's shared db and clock.
     analytics: AnalyticsService,
+    /// The market service (markup-observation paste feed + reads), built
+    /// over the facade's shared db and clock. An informational layer
+    /// only: nothing here feeds the ledger or any realised P&L figure.
+    market: MarketService,
     /// The bundled guide-mode demo database path (a shipped resource), or
     /// `None` on a facade built without it (the demo commands then report the
     /// unavailable error). The demo services are a parallel database + tracker
@@ -127,6 +133,7 @@ impl Api {
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
+        let market = MarketService::new(db.clone(), clock.clone());
         Self {
             db,
             game_data,
@@ -143,6 +150,7 @@ impl Api {
             codex,
             quests,
             analytics,
+            market,
             demo_db_path,
             demo: tokio::sync::OnceCell::new(),
         }

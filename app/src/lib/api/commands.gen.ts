@@ -621,6 +621,90 @@ export interface ManualMobSuggestion {
 }
 
 /**
+ * A committed paste: the submission it created.
+ */
+export interface MarketCommitResult {
+	submissionId: number;
+	itemCount: number;
+	skippedCount: number;
+	/** Epoch seconds. */
+	observedAt: number;
+}
+
+/**
+ * One point of an item's per-horizon history, oldest first.
+ */
+export interface MarketHistoryPoint {
+	/** Epoch seconds. */
+	observedAt: number;
+	markupPct: number | null;
+	salesPed: number;
+}
+
+/**
+ * One of the export's five aggregation horizons.
+ */
+export type MarketHorizon = 'day' | 'week' | 'month' | 'year' | 'decade';
+
+/**
+ * One overview row: an item's latest readings (from the most recent
+ * submission that carried it) and when they were observed.
+ */
+export interface MarketOverviewRow {
+	itemName: string;
+	tier: number;
+	/** Epoch seconds of the submission the readings came from (the staleness signal). */
+	observedAt: number;
+	day: MarketReading;
+	week: MarketReading;
+	month: MarketReading;
+	year: MarketReading;
+	decade: MarketReading;
+}
+
+/**
+ * The parse preview: what a commit of the same text would store, and
+ * what it would ignore.
+ */
+export interface MarketPastePreview {
+	rows: MarketPastePreviewRow[];
+	skipped: MarketSkippedLine[];
+}
+
+/**
+ * One parsed item row: the five horizon readings by name.
+ */
+export interface MarketPastePreviewRow {
+	itemName: string;
+	tier: number;
+	day: MarketReading;
+	week: MarketReading;
+	month: MarketReading;
+	year: MarketReading;
+	decade: MarketReading;
+}
+
+/**
+ * One horizon's reading: the markup percentage (null where the game
+ * reported N/A, meaning no sales in that horizon) and the sales
+ * volume in PED.
+ */
+export interface MarketReading {
+	markupPct: number | null;
+	salesPed: number;
+}
+
+/**
+ * One line the parser could not use, for the review flow.
+ */
+export interface MarketSkippedLine {
+	/** 1-based line number within the paste. */
+	lineNumber: number;
+	content: string;
+	reason: string;
+}
+
+/**
  * A point-in-time read of the process telemetry registry: event
  * throughput, the OCR / database latency histograms, and the
  * resource-drift gauges. Counts and durations only; no PII. Mirrors
@@ -1782,6 +1866,22 @@ export async function inventoryDelete(itemId: string): Promise<void> {
 
 export async function inventorySell(itemId: string, sale: InventorySellInput): Promise<InventorySellResult> {
 	return invokeCommand('inventory_sell', { item_id: itemId, sale });
+}
+
+export async function marketPastePreview(text: string): Promise<MarketPastePreview> {
+	return invokeCommand('market_paste_preview', { text });
+}
+
+export async function marketPasteCommit(text: string): Promise<MarketCommitResult> {
+	return invokeCommand('market_paste_commit', { text });
+}
+
+export async function marketOverview(): Promise<MarketOverviewRow[]> {
+	return invokeCommand('market_overview', {});
+}
+
+export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {
+	return invokeCommand('market_item_history', { item_name: itemName, horizon });
 }
 
 export async function scanStatus(): Promise<ScanStatus> {
