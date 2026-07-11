@@ -58,6 +58,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "daily rollups",
         sql: include_str!("../../migrations/0004_daily_rollups.sql"),
     },
+    Migration {
+        version: 5,
+        description: "market observations",
+        sql: include_str!("../../migrations/0005_market_observations.sql"),
+    },
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

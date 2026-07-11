@@ -31,6 +31,9 @@ use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildRe
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use crate::market::{
+    MarketCommitResult, MarketHistoryPoint, MarketHorizon, MarketOverviewRow, MarketPastePreview,
+};
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
 };
@@ -540,6 +543,41 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(InventorySellResult))),
+        },
+        CommandSpec {
+            name: "market_paste_preview",
+            args: vec![ArgSpec {
+                name: "text",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(MarketPastePreview))),
+        },
+        CommandSpec {
+            name: "market_paste_commit",
+            args: vec![ArgSpec {
+                name: "text",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(MarketCommitResult))),
+        },
+        CommandSpec {
+            name: "market_overview",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<MarketOverviewRow>))),
+        },
+        CommandSpec {
+            name: "market_item_history",
+            args: vec![
+                ArgSpec {
+                    name: "item_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "horizon",
+                    schema: schema(schema_for!(MarketHorizon)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<MarketHistoryPoint>))),
         },
         CommandSpec {
             name: "scan_status",

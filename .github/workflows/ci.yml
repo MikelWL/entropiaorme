@@ -178,18 +178,20 @@ jobs:
         # binds the parity check at PR and merge-queue time, not just locally.
         run: cargo run -q -p xtask -- version-stamps
 
-      - name: Check the frontend source disciplines
+      - name: Check the source disciplines
         working-directory: app/src-tauri
-        # Whole-tree guards over the tracked frontend source: the
-        # visibility-gated polling discipline, the frozen svelte/store
-        # legacy surface (new shared state is runes-native), and the route
-        # line ceilings (routes stay thin shells over feature modules;
-        # ceilings only ratchet down). All bind at PR and merge-queue time
-        # through this required job.
+        # Whole-tree guards over the tracked source: the visibility-gated
+        # polling discipline, the frozen svelte/store legacy surface (new
+        # shared state is runes-native), the route line ceilings (routes
+        # stay thin shells over feature modules; ceilings only ratchet
+        # down), and the market accounting boundary (estimated markup is
+        # informational and never joins a realised figure). All bind at PR
+        # and merge-queue time through this required job.
         run: |
           cargo run -q -p xtask -- no-bare-setinterval
           cargo run -q -p xtask -- no-new-writable
           cargo run -q -p xtask -- route-ceilings
+          cargo run -q -p xtask -- market-isolation
 
   frontend:
     name: Frontend (build + check + test)

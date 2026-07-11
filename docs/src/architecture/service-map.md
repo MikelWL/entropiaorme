@@ -38,6 +38,7 @@ Defined by `app/src-tauri/eo-services/src/lib.rs`. This crate carries the servic
 - **Live tracking.** `tracker` (the `HuntTracker` producer spine), `chatlog_watcher` and `chatlog_parser` (the tailing watcher and line grammar), `session_summary`, `tracking_reads` (the session list/detail reads and the post-hoc session edits), `tracking_models`, `loot_filter`, and `mob_lookup_service`.
 - **Quests and codex.** `quests`, `codex`, and `codex_categories`.
 - **Ledger analytics.** `analytics` (the Overview/Activity aggregates and the ledger, preset, and inventory CRUD) and `daily_rollup` (the read-model projection those aggregates scale on).
+- **Market data.** `market_paste` (the parser over the game's market-ledger clipboard export) and `market_service` (the paste feed and its overview/history reads). An informational layer: estimated markup never joins the ledger or the analytics aggregates, a boundary the `market-isolation` CI guard enforces.
 - **Character and cost analytics.** `character_calc`, `cost_engine` (the pure-arithmetic leaf service), `equipment_pricing` (the per-shot and per-use cost lookups over the equipment library), `trifecta_service`, `tt_value_curve`, and `tool_inference`.
 - **Configuration.** `config_service` (the settings reader and writer).
 - **Scanning and OCR.** `ocr_engine` (the recogniser, EP-agnostic; the runtime wiring is a composition-root concern), `screen_capture`, `skill_scan_manual`, `skill_panel`, `scan_completion`, `scan_drift`, `scan_presets`, and `repair_ocr`. The fuzzy text matching used by these services lives in `fuzzy_match` and `difflib`.
@@ -67,6 +68,7 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 | Quests | quest list and create; `mobs`; `analytics`; playlists list/create, playlist analytics, playlist update/delete; quest read/update/delete; quest `start`, `complete`, `cancel` |
 | Codex | `species`; species `ranks`; `recommend`; `calibrate`; `claim`; meta `claim`; meta `attributes` |
 | Analytics | `overview`; `activity`; the ledger (list, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
+| Market | paste `preview` and `commit`; `overview`; item `history` |
 | Tracking (reads) | `sessions`; session read; `tag-suggestions`; `snapshot` |
 | Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `tag-lock` |
 | Tracking (session edits) | session `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `quest-link`, `repair-scan`, session delete; `quest-link-suggestion` |
