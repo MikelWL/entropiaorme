@@ -76,17 +76,39 @@ pub struct MarketPastePreviewRow {
 
 impl MarketPastePreviewRow {
     fn from_row(row: &MarketPasteRow) -> Self {
-        let [day, week, month, year, decade] = row.readings;
+        let (day, week, month, year, decade) = horizon_fields(row.readings);
         Self {
             item_name: row.item_name.clone(),
             tier: row.tier,
-            day: day.into(),
-            week: week.into(),
-            month: month.into(),
-            year: year.into(),
-            decade: decade.into(),
+            day,
+            week,
+            month,
+            year,
+            decade,
         }
     }
+}
+
+/// The five converted readings in horizon order, ready to land on the
+/// named DTO fields; the one place the array-to-fields mapping lives,
+/// so the preview and overview rows stay in lock-step.
+fn horizon_fields(
+    readings: [market_paste::MarketReading; 5],
+) -> (
+    MarketReading,
+    MarketReading,
+    MarketReading,
+    MarketReading,
+    MarketReading,
+) {
+    let [day, week, month, year, decade] = readings;
+    (
+        day.into(),
+        week.into(),
+        month.into(),
+        year.into(),
+        decade.into(),
+    )
 }
 
 /// One line the parser could not use, for the review flow.
@@ -201,16 +223,16 @@ impl Api {
         Ok(rows
             .into_iter()
             .map(|row| {
-                let [day, week, month, year, decade] = row.readings;
+                let (day, week, month, year, decade) = horizon_fields(row.readings);
                 MarketOverviewRow {
                     item_name: row.item_name,
                     tier: row.tier,
                     observed_at: row.observed_at,
-                    day: day.into(),
-                    week: week.into(),
-                    month: month.into(),
-                    year: year.into(),
-                    decade: decade.into(),
+                    day,
+                    week,
+                    month,
+                    year,
+                    decade,
                 }
             })
             .collect())
