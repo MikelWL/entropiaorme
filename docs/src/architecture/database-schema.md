@@ -431,6 +431,42 @@ Notable in-session events (for example globals and Hall-of-Fame drops).
 | `value_ped` | REAL | Not null. |
 | `timestamp` | REAL | Not null. |
 
+### Market data
+
+The manually-fed market-markup layer: the user pastes the game's auction-house
+market-ledger export (a tab-separated table of per-item markup and sales
+volume over five aggregation horizons), and each accepted paste is stored as
+one submission with its per-item, per-horizon observations. This layer is
+informational only: estimated markup never contributes to the ledger, the
+analytics aggregates, or any realised profit-and-loss figure (a boundary the
+`market-isolation` CI guard enforces mechanically).
+
+#### `market_submissions`
+
+One accepted paste.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `submitted_at` | REAL | Not null; Unix-epoch seconds. |
+| `source` | TEXT | Not null; `paste` (room for future feeds). |
+| `item_count` | INTEGER | Not null; the number of items the paste carried. |
+
+#### `market_observations`
+
+The per-item, per-horizon readings of a submission (five rows per item, one
+per aggregation horizon).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `submission_id` | INTEGER | Not null; references `market_submissions(id)`. Indexed (`idx_market_observations_submission`). |
+| `item_name` | TEXT | Not null. Indexed with `horizon` and `submission_id` (`idx_market_observations_item`). |
+| `tier` | INTEGER | Not null; the item tier the export reported. |
+| `horizon` | TEXT | Not null; one of `day`, `week`, `month`, `year`, `decade`. |
+| `markup_pct` | REAL | Null where the export reported `N/A` (no sales in that horizon). |
+| `sales_ped` | REAL | Not null; the horizon's sales volume, normalised to PED. |
+
 ### Derived caches
 
 #### `session_summaries`
@@ -543,7 +579,8 @@ in `eo-services/src/db/migrate.rs`) over the migration set in
 test pins the embedded chain to the directory's contents). The set carries the
 version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
 additions (`0002_analytical_indexes.sql`,
-`0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`); the runner
+`0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
+`0005_market_observations.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
