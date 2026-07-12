@@ -2138,7 +2138,10 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(claim, (1, "Rifle".to_string(), 25.0, now, "mastery".to_string()));
+        assert_eq!(
+            claim,
+            (1, "Rifle".to_string(), 25.0, now, "mastery".to_string())
+        );
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 25);
 
         // The reward priced onto the curve from the newest calibration
@@ -2225,9 +2228,8 @@ mod tests {
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 25);
         let remaining: Vec<String> = db
             .with_reader(|conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT skill_name FROM skill_calibrations WHERE source = 'codex'",
-                )?;
+                let mut stmt = conn
+                    .prepare("SELECT skill_name FROM skill_calibrations WHERE source = 'codex'")?;
                 let mut rows = stmt.query([])?;
                 let mut names = Vec::new();
                 while let Some(row) = rows.next()? {
