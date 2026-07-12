@@ -65,6 +65,9 @@ export type RefreshResult = { ok: true; changed: boolean } | { ok: false; reason
 /// Fetch the published snapshot, replaying the cached ETag; a 304 keeps
 /// the cache and only refreshes its fetch timestamp.
 export async function fetchMarketSnapshot(): Promise<RefreshResult> {
+	if (!marketDataOptIn.current) {
+		return { ok: false, reason: 'opt-in is off' };
+	}
 	const cached = marketSnapshotCache.current;
 	const headers: Record<string, string> = {};
 	if (cached?.etag) {

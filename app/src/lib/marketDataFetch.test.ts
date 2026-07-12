@@ -74,7 +74,14 @@ beforeEach(() => {
 });
 
 describe('fetchMarketSnapshot', () => {
+	it('refuses a direct call while the opt-in is off', async () => {
+		const result = await fetchMarketSnapshot();
+		expect(result).toEqual({ ok: false, reason: 'opt-in is off' });
+		expect(httpsFetchMock).not.toHaveBeenCalled();
+	});
+
 	it('stores a valid snapshot with its etag', async () => {
+		marketDataOptIn.current = true;
 		httpsFetchMock.mockResolvedValue(response(200, wireSnapshot()));
 		const result = await fetchMarketSnapshot();
 		expect(result).toEqual({ ok: true, changed: true });
@@ -84,6 +91,7 @@ describe('fetchMarketSnapshot', () => {
 	});
 
 	it('replays the cached etag and keeps the cache on a 304', async () => {
+		marketDataOptIn.current = true;
 		const cached: MarketSnapshotCache = {
 			generatedAt: '2026-07-12T11:49:43Z',
 			contributorCount: 1,
@@ -101,6 +109,7 @@ describe('fetchMarketSnapshot', () => {
 	});
 
 	it('rejects a payload that fails the snapshot guard', async () => {
+		marketDataOptIn.current = true;
 		httpsFetchMock.mockResolvedValue(response(200, wireSnapshot({ schemaVersion: 2 })));
 		const result = await fetchMarketSnapshot();
 		expect(result).toEqual({ ok: false, reason: 'snapshot schema rejected' });
@@ -108,6 +117,7 @@ describe('fetchMarketSnapshot', () => {
 	});
 
 	it('reports transport failures without touching the cache', async () => {
+		marketDataOptIn.current = true;
 		httpsFetchMock.mockRejectedValue(new Error('HTTP 500 for url'));
 		const result = await fetchMarketSnapshot();
 		expect(result).toEqual({ ok: false, reason: 'HTTP 500 for url' });
