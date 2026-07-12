@@ -250,62 +250,51 @@
 		}
 	}
 
-	// ── Claim ───────────────────────────────────────────────────────────────────
+	// ── Claim / unclaim (ranks and mastery) ─────────────────────────────────────
+
+	/** Shared claim-action shell: guide/selection guard, success message,
+	 *  species reload, panel refresh, and error feedback. */
+	async function runClaimAction(action: (speciesName: string) => Promise<string>) {
+		if (guideState.isActive) return;
+		if (!selectedSpecies) return;
+		const speciesName = selectedSpecies;
+		try {
+			claimMessage = await action(speciesName);
+			species = await getCodexSpecies();
+			await refreshPanel(speciesName);
+		} catch (err: any) {
+			claimMessage = `Error: ${err.message}`;
+		}
+	}
 
 	async function handleClaim(skillName: string) {
-		if (guideState.isActive) return;
-		if (!selectedSpecies || !nextRankData) return;
-		try {
-			const result = await claimCodexRank(selectedSpecies, nextRankData.rank, skillName);
-			claimMessage = `Claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
-			species = await getCodexSpecies();
-			await refreshPanel(selectedSpecies);
-		} catch (err: any) {
-			claimMessage = `Error: ${err.message}`;
-		}
+		if (!nextRankData) return;
+		const rank = nextRankData.rank;
+		await runClaimAction(async (speciesName) => {
+			const result = await claimCodexRank(speciesName, rank, skillName);
+			return `Claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
+		});
 	}
-
-	// ── Unclaim (undo the most recent claim) ─────────────────────────────────────
 
 	async function handleUnclaim() {
-		if (guideState.isActive) return;
-		if (!selectedSpecies) return;
-		try {
-			const result = await unclaimCodexRank(selectedSpecies);
-			claimMessage = `Undid rank ${result.rank}: ${result.skillName}`;
-			species = await getCodexSpecies();
-			await refreshPanel(selectedSpecies);
-		} catch (err: any) {
-			claimMessage = `Error: ${err.message}`;
-		}
+		await runClaimAction(async (speciesName) => {
+			const result = await unclaimCodexRank(speciesName);
+			return `Undid rank ${result.rank}: ${result.skillName}`;
+		});
 	}
 
-	// ── Mastery (repeatable claims past rank 25) ─────────────────────────────────
-
 	async function handleMasteryClaim(skillName: string) {
-		if (guideState.isActive) return;
-		if (!selectedSpecies) return;
-		try {
-			const result = await claimCodexMastery(selectedSpecies, skillName);
-			claimMessage = `Mastery ${result.masteryLevel} claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
-			species = await getCodexSpecies();
-			await refreshPanel(selectedSpecies);
-		} catch (err: any) {
-			claimMessage = `Error: ${err.message}`;
-		}
+		await runClaimAction(async (speciesName) => {
+			const result = await claimCodexMastery(speciesName, skillName);
+			return `Mastery ${result.masteryLevel} claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
+		});
 	}
 
 	async function handleMasteryUnclaim() {
-		if (guideState.isActive) return;
-		if (!selectedSpecies) return;
-		try {
-			const result = await unclaimCodexMastery(selectedSpecies);
-			claimMessage = `Undid mastery ${result.masteryLevel}: ${result.skillName}`;
-			species = await getCodexSpecies();
-			await refreshPanel(selectedSpecies);
-		} catch (err: any) {
-			claimMessage = `Error: ${err.message}`;
-		}
+		await runClaimAction(async (speciesName) => {
+			const result = await unclaimCodexMastery(speciesName);
+			return `Undid mastery ${result.masteryLevel}: ${result.skillName}`;
+		});
 	}
 
 	// ── Calibrate ───────────────────────────────────────────────────────────────
@@ -315,10 +304,14 @@
 		const sp = species.find(s => s.name === speciesName);
 		if (!sp) return;
 		const newRank = Math.max(0, Math.min(25, sp.currentRank + delta));
-		await calibrateCodex(speciesName, newRank);
-		species = await getCodexSpecies();
-		if (selectedSpecies === speciesName) {
-			await refreshPanel(speciesName);
+		try {
+			await calibrateCodex(speciesName, newRank);
+			species = await getCodexSpecies();
+			if (selectedSpecies === speciesName) {
+				await refreshPanel(speciesName);
+			}
+		} catch (err: any) {
+			claimMessage = `Error: ${err.message}`;
 		}
 	}
 
@@ -326,10 +319,14 @@
 
 	async function onProfessionChange() {
 		if (!selectedSpecies) return;
-		if (nextRankData) {
-			await loadRecommendations(selectedSpecies, nextRankData.rank);
-		} else if (rankBreakdown && rankBreakdown.currentRank >= 25) {
-			await loadMasteryOptions();
+		try {
+			if (nextRankData) {
+				await loadRecommendations(selectedSpecies, nextRankData.rank);
+			} else if (rankBreakdown && rankBreakdown.currentRank >= 25) {
+				await loadMasteryOptions();
+			}
+		} catch (err: any) {
+			claimMessage = `Error: ${err.message}`;
 		}
 	}
 </script>
@@ -375,7 +372,7 @@
 						<span class="text-xs text-text-tertiary tabular-nums">Lv {opt.currentLevel.toFixed(0)}, +{opt.levelsGained.toFixed(1)}</span>
 					{/if}
 					<button
-						class="px-2 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+						class="px-2 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
 						onclick={() => onClaim(opt.skillName)}
 					>Claim</button>
 				</div>
@@ -457,7 +454,7 @@
 								{/if}
 							</div>
 							<button
-								class="px-3 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+								class="px-3 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
 								onclick={() => handleMetaClaim(attr.name)}
 							>Claim 1 PES</button>
 						</div>
@@ -571,7 +568,6 @@
 					</div>
 
 					{#if rankBreakdown.currentRank >= 25}
-						<!-- Mastery claim card: the repeatable post-25 reward -->
 						<Card class="p-4 space-y-3">
 							<div class="flex items-center justify-between">
 								<div class="flex items-center gap-2">

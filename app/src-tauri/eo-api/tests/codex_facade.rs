@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use eo_api::codex::CodexRecommendTarget;
+use eo_api::codex::{CodexMasteryClaimResult, CodexRecommendTarget};
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -185,6 +185,23 @@ async fn the_mastery_writes_map_their_refusals_to_bad_request() {
     assert_eq!(
         api.codex_mastery_unclaim("Notaspecies").await.unwrap_err(),
         ApiError::bad_request("No mastery claim to unclaim for 'Notaspecies'")
+    );
+}
+
+#[test]
+fn the_mastery_claim_result_serialises_the_wire_shape() {
+    // The claim and unclaim writes need a species at rank 25, which the
+    // empty-catalogue substrate cannot seed; the wire contract is still
+    // pinnable directly (field names and declaration order).
+    let result = CodexMasteryClaimResult {
+        species_name: "Sp".to_string(),
+        mastery_level: 3,
+        skill_name: "Aim".to_string(),
+        ped_value: 25.0,
+    };
+    assert_eq!(
+        serde_json::to_string(&result).unwrap(),
+        "{\"speciesName\":\"Sp\",\"masteryLevel\":3,\"skillName\":\"Aim\",\"pedValue\":25.0}"
     );
 }
 

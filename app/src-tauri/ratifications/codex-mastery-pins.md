@@ -53,7 +53,7 @@ shapes, and a `kind = 'rank'` filter on the rank-claim overlay reader.
 - **Frozen corpus goldens.** Untouched: the corpus pins only the
   meta-attributes read for codex, which this change does not disturb.
 
-```
+```text
 ORACLE-RATIFICATION
 range: 95065ee..4f40ee0
 goldens: eo-services codex byte-shape pins, codex_categories mastery pins, codex mastery service tests, eo-api codex_facade tests

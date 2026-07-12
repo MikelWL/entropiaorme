@@ -200,6 +200,9 @@ enum UnclaimOutcome {
     AlreadyUnclaimed {
         rank: i64,
     },
+    MasteryBlocks {
+        mastery_level: i64,
+    },
     Done {
         rank: i64,
         skill_name: String,
@@ -560,6 +563,20 @@ impl CodexService {
                     return Ok(UnclaimOutcome::NotClaimed { rank });
                 };
 
+                // Mastery history sits on top of rank 25: its claims (and
+                // any calibrations they priced from this claim's level)
+                // depend on the species being complete, so the rank-25
+                // claim only reverts once the mastery claims are undone.
+                let mastery_level: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM codex_claims \
+                     WHERE species_name = ? AND kind = 'mastery'",
+                    rusqlite::params![species_owned],
+                    |row| row.get(0),
+                )?;
+                if mastery_level > 0 {
+                    return Ok(UnclaimOutcome::MasteryBlocks { mastery_level });
+                }
+
                 // Step the rank back, gated on it still being `rank`, so of two
                 // racing unclaims exactly one steps it and the loser aborts
                 // before deleting anything (the mirror of claim_rank's guard).
@@ -613,6 +630,9 @@ impl CodexService {
             ))),
             UnclaimOutcome::AlreadyUnclaimed { rank } => Err(CodexError::Invalid(format!(
                 "Rank {rank} for '{species_name}' was already unclaimed"
+            ))),
+            UnclaimOutcome::MasteryBlocks { mastery_level } => Err(CodexError::Invalid(format!(
+                "Undo the {mastery_level} mastery claim(s) for '{species_name}' before unclaiming rank 25"
             ))),
             UnclaimOutcome::Done {
                 rank,
@@ -1098,9 +1118,11 @@ impl CodexService {
             .await?)
     }
 
-    /// The latest calibrated level for a skill, by scan instant (no
-    /// further tiebreak, as the original; both engines resolve equal
-    /// instants identically over the same schema and index).
+    /// The latest calibrated level for a skill, by scan instant with
+    /// the row id as tiebreak: repeat claims within one instant (a
+    /// mastery claim streak lands several same-skill rewards on the
+    /// same timestamp) must read the newest insert, not an arbitrary
+    /// tied row.
     async fn skill_level(&self, skill_name: &str) -> Result<Option<f64>, CodexError> {
         let skill_owned = skill_name.to_string();
         Ok(self
@@ -1109,7 +1131,7 @@ impl CodexService {
                 Ok(conn
                     .query_row(
                         "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-                         ORDER BY scanned_at DESC LIMIT 1",
+                         ORDER BY scanned_at DESC, id DESC LIMIT 1",
                         rusqlite::params![skill_owned],
                         |row| row.get::<_, f64>(0),
                     )
@@ -1130,10 +1152,12 @@ fn write_codex_calibration(
     ped_value: f64,
     now: f64,
 ) -> Result<(), rusqlite::Error> {
+    // The id tiebreak keeps repeat claims within one instant reading
+    // the newest insert (see `skill_level`).
     let current_level: Option<f64> = tx
         .query_row(
             "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-             ORDER BY scanned_at DESC LIMIT 1",
+             ORDER BY scanned_at DESC, id DESC LIMIT 1",
             rusqlite::params![skill_name],
             |row| row.get::<_, f64>(0),
         )
@@ -2063,6 +2087,78 @@ mod tests {
                 .unwrap();
             assert_eq!(progress, 0, "rank steps back exactly once");
         }
+    }
+
+    #[tokio::test]
+    async fn mastery_history_blocks_the_rank_25_unclaim() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _db) = service(dir.path()).await;
+
+        // A claimed rank 25 with mastery claims on top only reverts
+        // once the mastery history is undone: its calibration is what
+        // the mastery rewards priced from.
+        svc.calibrate("Boar", 24).await.unwrap();
+        svc.claim_rank("Boar", 25, "Evade").await.unwrap();
+        svc.mastery_claim("Boar", "Rifle").await.unwrap();
+
+        let error = svc.unclaim_rank("Boar").await.unwrap_err();
+        assert_eq!(
+            invalid(error),
+            "Undo the 1 mastery claim(s) for 'Boar' before unclaiming rank 25"
+        );
+        assert_eq!(svc.current_rank("Boar").await.unwrap(), 25);
+
+        svc.mastery_unclaim("Boar").await.unwrap();
+        let reverted = svc.unclaim_rank("Boar").await.unwrap();
+        assert_eq!(reverted.rank, 25);
+        assert_eq!(svc.current_rank("Boar").await.unwrap(), 24);
+    }
+
+    #[tokio::test]
+    async fn repeat_same_skill_mastery_claims_price_from_the_newest_calibration() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
+        svc.calibrate("Boar", 25).await.unwrap();
+
+        // Three same-skill claims share one clock instant; each must
+        // price from the previous claim's level (the id tiebreak on the
+        // calibration read), not an arbitrary tied row.
+        let mut expected = 100.0;
+        for _ in 0..3 {
+            svc.mastery_claim("Boar", "Rifle").await.unwrap();
+            expected += levels_for_tt_value(expected, 25.0);
+        }
+        let top: f64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT level FROM skill_calibrations WHERE skill_name = 'Rifle' \
+                     ORDER BY scanned_at DESC, id DESC LIMIT 1",
+                    [],
+                    |row| row.get::<_, f64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(top, expected);
+
+        // Unclaiming steps back through the same ladder: the newest
+        // calibration is removed and the next claim re-prices from the
+        // level beneath it.
+        svc.mastery_unclaim("Boar").await.unwrap();
+        let renewed = svc.mastery_claim("Boar", "Rifle").await.unwrap();
+        assert_eq!(renewed.mastery_level, 3);
+        let count: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 3);
     }
 
     #[tokio::test]
