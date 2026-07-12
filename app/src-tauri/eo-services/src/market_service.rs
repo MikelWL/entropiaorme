@@ -69,6 +69,25 @@ pub struct HistoryPoint {
     pub sales_ped: f64,
 }
 
+/// One species' estimated-markup row: the recorded loot composition
+/// TT-weighted by the latest markup observations on one horizon.
+/// `est_markup_pct` is None when no composing item has an observation;
+/// the coverage fields keep a thin sample from masquerading as a
+/// verdict (estimates are weighted over the covered TT only).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MobRankingRow {
+    pub mob_species: String,
+    /// Total active recorded loot TT for the species (PED).
+    pub loot_tt: f64,
+    /// The share of that TT whose items have a markup observation (PED).
+    pub covered_tt: f64,
+    pub item_count: i64,
+    pub covered_item_count: i64,
+    /// TT-weighted average of the latest markup observations over the
+    /// covered composition. Estimated markup: informational only.
+    pub est_markup_pct: Option<f64>,
+}
+
 /// The modelled TT-return rate (percent) of a hunting loadout: the
 /// community returns model, roughly linear in weapon efficiency and
 /// looter profession level (86% baseline, ~7pp each across 0-100).
@@ -233,6 +252,90 @@ impl MarketService {
             })
             .await
     }
+
+    /// Every hunted species' estimated loot markup on one horizon: the
+    /// species' recorded loot composition (active items across all
+    /// recorded kills) TT-weighted by each item's latest markup
+    /// observation. Reading the accounting tables here is the sanctioned
+    /// direction of the market boundary; nothing flows back.
+    pub async fn mob_ranking(&self, horizon: MarketHorizon) -> Result<Vec<MobRankingRow>, DbError> {
+        self.db
+            .with_reader(move |connection| {
+                // The latest markup observation per item on the horizon.
+                let mut markup_stmt = connection.prepare(
+                    "SELECT o.item_name, o.markup_pct \
+                     FROM market_observations o \
+                     WHERE o.horizon = ?1 \
+                       AND o.submission_id = (SELECT MAX(o2.submission_id) \
+                                              FROM market_observations o2 \
+                                              WHERE o2.item_name = o.item_name)",
+                )?;
+                let mut markups: std::collections::HashMap<String, Option<f64>> =
+                    std::collections::HashMap::new();
+                let mut rows = markup_stmt.query(rusqlite::params![horizon.as_str()])?;
+                while let Some(row) = rows.next()? {
+                    markups.insert(row.get(0)?, row.get(1)?);
+                }
+
+                // The per-species, per-item composition over active loot
+                // (enhancer-shrapnel returns are enhancer accounting, not
+                // loot composition).
+                let mut comp_stmt = connection.prepare(
+                    "SELECT k.mob_species, li.item_name, SUM(li.value_ped) \
+                     FROM kill_loot_items li \
+                     JOIN kills k ON k.id = li.kill_id \
+                     WHERE li.deactivated_at IS NULL \
+                       AND li.is_enhancer_shrapnel = 0 \
+                       AND k.mob_species != '' \
+                     GROUP BY k.mob_species, li.item_name",
+                )?;
+                let mut ranking: std::collections::BTreeMap<String, MobRankingRow> =
+                    std::collections::BTreeMap::new();
+                let mut weighted: std::collections::HashMap<String, f64> =
+                    std::collections::HashMap::new();
+                let mut rows = comp_stmt.query([])?;
+                while let Some(row) = rows.next()? {
+                    let species: String = row.get(0)?;
+                    let item: String = row.get(1)?;
+                    let tt: f64 = row.get(2)?;
+                    let entry = ranking
+                        .entry(species.clone())
+                        .or_insert_with(|| MobRankingRow {
+                            mob_species: species.clone(),
+                            loot_tt: 0.0,
+                            covered_tt: 0.0,
+                            item_count: 0,
+                            covered_item_count: 0,
+                            est_markup_pct: None,
+                        });
+                    entry.loot_tt += tt;
+                    entry.item_count += 1;
+                    if let Some(Some(markup)) = markups.get(&item) {
+                        entry.covered_tt += tt;
+                        entry.covered_item_count += 1;
+                        *weighted.entry(species).or_insert(0.0) += tt * markup;
+                    }
+                }
+                let mut result: Vec<MobRankingRow> = ranking
+                    .into_values()
+                    .map(|mut row| {
+                        if row.covered_tt > 0.0 {
+                            row.est_markup_pct = Some(weighted[&row.mob_species] / row.covered_tt);
+                        }
+                        row
+                    })
+                    .collect();
+                // Best estimated markup first; no-data species last, by TT.
+                result.sort_by(|a, b| match (a.est_markup_pct, b.est_markup_pct) {
+                    (Some(x), Some(y)) => y.total_cmp(&x),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => b.loot_tt.total_cmp(&a.loot_tt),
+                });
+                Ok(result)
+            })
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -364,6 +467,63 @@ Carabok Leg Fur\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t109.380%\t6.
             .block_on(service.item_history("Unseen Item", MarketHorizon::Day))
             .unwrap();
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn mob_ranking_weights_composition_by_latest_markup_with_coverage() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, service, _clock) = rig(dir.path());
+        // Seed loot composition: Carabok drops 100 PED of Hide (observed)
+        // and 100 PED of Leg Fur (unobserved); Atrox drops 50 PED of an
+        // item with no observation at all. Foreign keys are declarative
+        // in this schema, so kills can seed without sessions.
+        runtime
+            .block_on(service.db.with_writer(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO kills (id, session_id, mob_species, timestamp) VALUES \
+                       ('k1', 's1', 'Carabok', 0), ('k2', 's1', 'Atrox', 0), \
+                       ('k3', 's1', '', 0); \
+                     INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) VALUES \
+                       ('k1', 'Carabok Hide', 1, 60.0, 0), \
+                       ('k1', 'Carabok Hide', 1, 40.0, 0), \
+                       ('k1', 'Carabok Leg Fur', 1, 100.0, 0), \
+                       ('k1', 'Shrapnel', 1, 999.0, 1), \
+                       ('k2', 'Animal Oil Residue', 1, 50.0, 0), \
+                       ('k3', 'Orphan Loot', 1, 10.0, 0);",
+                )?;
+                Ok(())
+            }))
+            .unwrap();
+        runtime.block_on(service.commit_paste(SAMPLE)).unwrap();
+
+        let ranking = runtime
+            .block_on(service.mob_ranking(MarketHorizon::Day))
+            .unwrap();
+        assert_eq!(ranking.len(), 2, "unattributed kills are excluded");
+
+        // Carabok: half covered (Hide day 106.880; Leg Fur's day is N/A,
+        // which is no observation, not zero). Atrox: no observed items at
+        // all, so no estimate, and it sorts after the estimated species.
+        assert_eq!(ranking[0].mob_species, "Carabok");
+        assert_eq!(ranking[0].loot_tt, 200.0);
+        assert_eq!(ranking[0].covered_tt, 100.0);
+        assert_eq!(ranking[0].item_count, 2);
+        assert_eq!(ranking[0].covered_item_count, 1);
+        assert_eq!(ranking[0].est_markup_pct, Some(106.88));
+        assert_eq!(ranking[1].mob_species, "Atrox");
+        assert_eq!(ranking[1].loot_tt, 50.0);
+        assert_eq!(ranking[1].covered_tt, 0.0);
+        assert_eq!(ranking[1].est_markup_pct, None);
+
+        // On the decade horizon both Carabok items carry observations,
+        // so the estimate TT-weights across the full composition.
+        let decade = runtime
+            .block_on(service.mob_ranking(MarketHorizon::Decade))
+            .unwrap();
+        assert_eq!(decade[0].mob_species, "Carabok");
+        assert_eq!(decade[0].covered_tt, 200.0);
+        let est = decade[0].est_markup_pct.unwrap();
+        assert!((est - 249.01).abs() < 1e-9, "got {est}");
     }
 
     #[test]

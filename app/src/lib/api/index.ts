@@ -27,6 +27,7 @@ export type {
 	MarketHistoryPoint,
 	MarketHorizon,
 	MarketLooterLevel,
+	MarketMobRankingRow,
 	MarketOverviewRow,
 	MarketPastePreview,
 	MarketPastePreviewRow,

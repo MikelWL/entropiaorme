@@ -2,11 +2,13 @@
 	import Tabs from '$lib/components/Tabs.svelte';
 	import OverviewTab from './OverviewTab.svelte';
 	import BreakEvenTab from './BreakEvenTab.svelte';
+	import MobsTab from './MobsTab.svelte';
 	import ImportTab from './ImportTab.svelte';
 	import HistoryTab from './HistoryTab.svelte';
 
 	const tabs = [
 		{ id: 'overview', label: 'Overview' },
+		{ id: 'mobs', label: 'Mobs' },
 		{ id: 'break-even', label: 'Break-even' },
 		{ id: 'import', label: 'Import' },
 		{ id: 'history', label: 'History' }
@@ -37,6 +39,8 @@
 	<div>
 		{#if activeTab === 'overview'}
 			<OverviewTab />
+		{:else if activeTab === 'mobs'}
+			<MobsTab />
 		{:else if activeTab === 'break-even'}
 			<BreakEvenTab />
 		{:else if activeTab === 'import'}

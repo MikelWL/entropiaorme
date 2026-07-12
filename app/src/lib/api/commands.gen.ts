@@ -676,6 +676,21 @@ export interface MarketLooterLevel {
 }
 
 /**
+ * One species' estimated-markup row: recorded loot composition
+ * TT-weighted by the latest markup observations on one horizon.
+ * Coverage keeps a thin sample honest: the estimate weights only the
+ * covered TT, and the row says how much that is.
+ */
+export interface MarketMobRankingRow {
+	mobSpecies: string;
+	lootTt: number;
+	coveredTt: number;
+	itemCount: number;
+	coveredItemCount: number;
+	estMarkupPct: number | null;
+}
+
+/**
  * One overview row: an item's latest readings (from the most recent
  * submission that carried it) and when they were observed.
  */
@@ -1922,6 +1937,10 @@ export async function marketOverview(): Promise<MarketOverviewRow[]> {
 
 export async function marketBreakEven(): Promise<MarketBreakEven> {
 	return invokeCommand('market_break_even', {});
+}
+
+export async function marketMobRanking(horizon: MarketHorizon): Promise<MarketMobRankingRow[]> {
+	return invokeCommand('market_mob_ranking', { horizon });
 }
 
 export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {

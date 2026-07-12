@@ -14,3 +14,4 @@ export const commitMarketPaste = commands.marketPasteCommit;
 export const getMarketBreakEven = commands.marketBreakEven;
 export const getMarketOverview = commands.marketOverview;
 export const getMarketItemHistory = commands.marketItemHistory;
+export const getMarketMobRanking = commands.marketMobRanking;

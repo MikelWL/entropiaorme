@@ -173,6 +173,21 @@ pub struct MarketHistoryPoint {
     pub sales_ped: f64,
 }
 
+/// One species' estimated-markup row: recorded loot composition
+/// TT-weighted by the latest markup observations on one horizon.
+/// Coverage keeps a thin sample honest: the estimate weights only the
+/// covered TT, and the row says how much that is.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketMobRankingRow {
+    pub mob_species: String,
+    pub loot_tt: f64,
+    pub covered_tt: f64,
+    pub item_count: i64,
+    pub covered_item_count: i64,
+    pub est_markup_pct: Nullable<f64>,
+}
+
 /// One looter profession and its believed-current level.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -365,5 +380,29 @@ impl Api {
             .collect();
 
         Ok(MarketBreakEven { looters, weapons })
+    }
+
+    /// Every hunted species' estimated loot markup on one horizon,
+    /// best estimate first (species with no observed items last).
+    pub async fn market_mob_ranking(
+        &self,
+        horizon: MarketHorizon,
+    ) -> Result<Vec<MarketMobRankingRow>, ApiError> {
+        let rows = self
+            .market
+            .mob_ranking(horizon.into())
+            .await
+            .map_err(ApiError::internal("market mob ranking"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| MarketMobRankingRow {
+                mob_species: row.mob_species,
+                loot_tt: row.loot_tt,
+                covered_tt: row.covered_tt,
+                item_count: row.item_count,
+                covered_item_count: row.covered_item_count,
+                est_markup_pct: row.est_markup_pct.into(),
+            })
+            .collect())
     }
 }
