@@ -173,6 +173,31 @@ pub struct MarketHistoryPoint {
     pub sales_ped: f64,
 }
 
+/// One item of a contributable batch: the pasted readings verbatim,
+/// by horizon name.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketContributionItem {
+    pub item_name: String,
+    pub tier: i64,
+    pub day: MarketReading,
+    pub week: MarketReading,
+    pub month: MarketReading,
+    pub year: MarketReading,
+    pub decade: MarketReading,
+}
+
+/// The most recent accepted paste as a contributable batch: exactly
+/// what an opted-in contributor shares, nothing more. The frontend
+/// owns the send, strictly behind the contribution opt-in.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketContributionBatch {
+    /// Epoch seconds of the submission.
+    pub observed_at: f64,
+    pub items: Vec<MarketContributionItem>,
+}
+
 /// One species' estimated-markup row: recorded loot composition
 /// TT-weighted by the latest markup observations on one horizon.
 /// Coverage keeps a thin sample honest: the estimate weights only the
@@ -317,6 +342,39 @@ impl Api {
                 sales_ped: point.sales_ped,
             })
             .collect())
+    }
+
+    /// The most recent accepted paste as a contributable batch, or null
+    /// before the first commit.
+    pub async fn market_contribution_batch(
+        &self,
+    ) -> Result<Nullable<MarketContributionBatch>, ApiError> {
+        let batch = self
+            .market
+            .latest_submission()
+            .await
+            .map_err(ApiError::internal("market contribution batch"))?;
+        Ok(batch
+            .map(|batch| MarketContributionBatch {
+                observed_at: batch.observed_at,
+                items: batch
+                    .items
+                    .into_iter()
+                    .map(|item| {
+                        let (day, week, month, year, decade) = horizon_fields(item.readings);
+                        MarketContributionItem {
+                            item_name: item.item_name,
+                            tier: item.tier,
+                            day,
+                            week,
+                            month,
+                            year,
+                            decade,
+                        }
+                    })
+                    .collect(),
+            })
+            .into())
     }
 
     /// The break-even markup readout: for every weapon in the equipment

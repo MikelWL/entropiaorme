@@ -30,8 +30,8 @@ use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
 use eo_api::market::{
-    MarketBreakEven, MarketCommitResult, MarketHistoryPoint, MarketHorizon, MarketMobRankingRow,
-    MarketOverviewRow, MarketPastePreview,
+    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
+    MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -536,6 +536,13 @@ pub async fn market_overview(app: tauri::AppHandle) -> Result<Vec<MarketOverview
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn market_contribution_batch(
+    app: tauri::AppHandle,
+) -> Result<eo_api::Nullable<MarketContributionBatch>, ApiError> {
+    facade(&app)?.market_contribution_batch().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn market_break_even(app: tauri::AppHandle) -> Result<MarketBreakEven, ApiError> {
     facade(&app)?.market_break_even().await
 }
@@ -965,6 +972,7 @@ mod tests {
         "market_paste_preview",
         "market_paste_commit",
         "market_overview",
+        "market_contribution_batch",
         "market_break_even",
         "market_mob_ranking",
         "market_item_history",

@@ -5,13 +5,15 @@
 	import MobsTab from './MobsTab.svelte';
 	import ImportTab from './ImportTab.svelte';
 	import HistoryTab from './HistoryTab.svelte';
+	import SharedTab from './SharedTab.svelte';
 
 	const tabs = [
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'mobs', label: 'Mobs' },
 		{ id: 'break-even', label: 'Break-even' },
 		{ id: 'import', label: 'Import' },
-		{ id: 'history', label: 'History' }
+		{ id: 'history', label: 'History' },
+		{ id: 'shared', label: 'Shared' }
 	];
 
 	let activeTab = $state('overview');
@@ -47,6 +49,8 @@
 			<ImportTab onimported={() => (activeTab = 'overview')} />
 		{:else if activeTab === 'history'}
 			<HistoryTab />
+		{:else if activeTab === 'shared'}
+			<SharedTab />
 		{/if}
 	</div>
 </div>

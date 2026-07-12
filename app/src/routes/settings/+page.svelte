@@ -3,6 +3,7 @@
 	import { Button, Divider, Toggle, Input, SegmentedControl } from '$lib/components';
 	import { theme, setTheme, type Theme } from '$lib/theme.svelte';
 	import { newsOptIn, setNewsOptIn } from '$lib/news.svelte';
+	import MarketDataSettings from '$lib/features/market/MarketDataSettings.svelte';
 	import { autoUpdateEnabled, setAutoUpdateEnabled } from '$lib/updater.svelte';
 	import { goto } from '$app/navigation';
 	import { getSettings, updateSettings } from '$lib/api';
@@ -486,8 +487,8 @@
 					<p class="text-sm text-text">News</p>
 					<p class="text-xs text-text-tertiary mt-0.5">
 						On by default. The app fetches a small list of articles and release notices from the
-						project website (<code>entropiaorme.com</code>). Download-only, sends none of your data,
-						no background polling, no telemetry. Turn it off to make no news requests at all.
+						project website (<code>entropiaorme.com</code>). Download-only, sends none of your
+						data, no background polling. Turn it off to make no news requests at all.
 					</p>
 				</div>
 				<Toggle
@@ -516,6 +517,8 @@
 					label="Enable automatic updates"
 				/>
 			</div>
+
+			<MarketDataSettings />
 		</div>
 	</section>
 
