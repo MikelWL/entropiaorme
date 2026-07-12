@@ -1,5 +1,6 @@
 export { default as IconConsumables } from './IconConsumables.svelte';
 export { default as IconHealing } from './IconHealing.svelte';
+export { default as IconStar } from './IconStar.svelte';
 export { default as IconWeapons } from './IconWeapons.svelte';
 export { default as NavAnalytics } from './NavAnalytics.svelte';
 export { default as NavCharacter } from './NavCharacter.svelte';

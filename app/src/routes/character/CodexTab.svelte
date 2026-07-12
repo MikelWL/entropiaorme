@@ -14,6 +14,9 @@
 		unclaimCodexRank,
 		calibrateCodex,
 		getCodexRecommendation,
+		getCodexMasteryOptions,
+		claimCodexMastery,
+		unclaimCodexMastery,
 		getCharacterProfessions,
 		getCodexMetaAttributes,
 		claimCodexMeta,
@@ -21,6 +24,7 @@
 	import { formatPed } from '$lib/utils/format';
 	import Card from '$lib/components/Card.svelte';
 	import Badge from '$lib/components/Badge.svelte';
+	import { IconStar } from '$lib/icons';
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { guideState } from '$lib/guide/state.svelte';
@@ -65,6 +69,7 @@
 	let selectedSpecies = $state<string | null>(null);
 	let rankBreakdown = $state<CodexRankBreakdown | null>(null);
 	let skillOptions = $state([] as CodexSkillOption[]);
+	let masteryOptions = $state([] as CodexSkillOption[]);
 	let panelLoading = $state(false);
 	let claimMessage = $state<string | null>(null);
 
@@ -200,6 +205,26 @@
 		);
 	}
 
+	async function loadMasteryOptions() {
+		if (guideState.isActive) return;
+		masteryOptions = await getCodexMasteryOptions(getRecommendationRequest());
+	}
+
+	/** Refresh the selected species' panel and load whichever option
+	 *  list its rank calls for (the next rank's, or mastery past 25). */
+	async function refreshPanel(speciesName: string) {
+		rankBreakdown = await getCodexSpeciesRanks(speciesName);
+		const nextRank = rankBreakdown?.ranks.find(r => r.isNext);
+		if (nextRank) {
+			await loadRecommendations(speciesName, nextRank.rank);
+		} else {
+			skillOptions = [];
+			if (rankBreakdown && rankBreakdown.currentRank >= 25) {
+				await loadMasteryOptions();
+			}
+		}
+	}
+
 	// ── Select species → load detail + auto-select next rank ────────────────────
 
 	async function selectSpecies(name: string) {
@@ -214,14 +239,10 @@
 		selectedSpecies = name;
 		panelLoading = true;
 		skillOptions = [];
+		masteryOptions = [];
 		claimMessage = null;
 		try {
-			rankBreakdown = await getCodexSpeciesRanks(name);
-			// Auto-load skill options for the next rank
-			const nextRank = rankBreakdown?.ranks.find(r => r.isNext);
-			if (nextRank) {
-				await loadRecommendations(name, nextRank.rank);
-			}
+			await refreshPanel(name);
 		} catch {
 			rankBreakdown = null;
 		} finally {
@@ -237,16 +258,8 @@
 		try {
 			const result = await claimCodexRank(selectedSpecies, nextRankData.rank, skillName);
 			claimMessage = `Claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
-			// Refresh
-			rankBreakdown = await getCodexSpeciesRanks(selectedSpecies);
 			species = await getCodexSpecies();
-			// Load new next rank options
-			const newNext = rankBreakdown?.ranks.find(r => r.isNext);
-			if (newNext) {
-				await loadRecommendations(selectedSpecies, newNext.rank);
-			} else {
-				skillOptions = [];
-			}
+			await refreshPanel(selectedSpecies);
 		} catch (err: any) {
 			claimMessage = `Error: ${err.message}`;
 		}
@@ -260,15 +273,36 @@
 		try {
 			const result = await unclaimCodexRank(selectedSpecies);
 			claimMessage = `Undid rank ${result.rank}: ${result.skillName}`;
-			// Refresh
-			rankBreakdown = await getCodexSpeciesRanks(selectedSpecies);
 			species = await getCodexSpecies();
-			const newNext = rankBreakdown?.ranks.find(r => r.isNext);
-			if (newNext) {
-				await loadRecommendations(selectedSpecies, newNext.rank);
-			} else {
-				skillOptions = [];
-			}
+			await refreshPanel(selectedSpecies);
+		} catch (err: any) {
+			claimMessage = `Error: ${err.message}`;
+		}
+	}
+
+	// ── Mastery (repeatable claims past rank 25) ─────────────────────────────────
+
+	async function handleMasteryClaim(skillName: string) {
+		if (guideState.isActive) return;
+		if (!selectedSpecies) return;
+		try {
+			const result = await claimCodexMastery(selectedSpecies, skillName);
+			claimMessage = `Mastery ${result.masteryLevel} claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
+			species = await getCodexSpecies();
+			await refreshPanel(selectedSpecies);
+		} catch (err: any) {
+			claimMessage = `Error: ${err.message}`;
+		}
+	}
+
+	async function handleMasteryUnclaim() {
+		if (guideState.isActive) return;
+		if (!selectedSpecies) return;
+		try {
+			const result = await unclaimCodexMastery(selectedSpecies);
+			claimMessage = `Undid mastery ${result.masteryLevel}: ${result.skillName}`;
+			species = await getCodexSpecies();
+			await refreshPanel(selectedSpecies);
 		} catch (err: any) {
 			claimMessage = `Error: ${err.message}`;
 		}
@@ -284,24 +318,81 @@
 		await calibrateCodex(speciesName, newRank);
 		species = await getCodexSpecies();
 		if (selectedSpecies === speciesName) {
-			rankBreakdown = await getCodexSpeciesRanks(speciesName);
-			const nextRank = rankBreakdown?.ranks.find(r => r.isNext);
-			if (nextRank) {
-				await loadRecommendations(speciesName, nextRank.rank);
-			} else {
-				skillOptions = [];
-			}
+			await refreshPanel(speciesName);
 		}
 	}
 
 	// ── Reload skill options when profession changes ────────────────────────────
 
 	async function onProfessionChange() {
-		if (selectedSpecies && nextRankData) {
+		if (!selectedSpecies) return;
+		if (nextRankData) {
 			await loadRecommendations(selectedSpecies, nextRankData.rank);
+		} else if (rankBreakdown && rankBreakdown.currentRank >= 25) {
+			await loadMasteryOptions();
 		}
 	}
 </script>
+
+{#snippet optionRows(options: CodexSkillOption[], onClaim: (skillName: string) => void)}
+	<div class="space-y-0.5">
+		{#each options as opt}
+			{@const rank = opt.recommendRank}
+			<div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-surface-hover/50 transition-colors group">
+				<div class="flex items-center gap-2 min-w-0">
+					{#if rank != null}
+						<span class="text-xs font-medium tabular-nums w-5 text-center shrink-0
+							{rank === 1 ? 'text-success' : rank <= 3 ? 'text-accent' : 'text-text-tertiary'}">
+							#{rank}
+						</span>
+					{:else}
+						<span class="w-5 shrink-0"></span>
+					{/if}
+					<span class="text-sm text-text truncate">{opt.skillName}</span>
+				</div>
+				<div class="flex items-center gap-3 shrink-0 ml-2">
+					{#if isHpMode}
+						<div class="text-right text-xs tabular-nums">
+							{#if opt.hpIncrease != null}
+								<span class="text-text-secondary">+{opt.levelsGained.toFixed(1)} lvl</span>
+								<span class="text-text-tertiary mx-0.5">/</span>
+								<span class="text-text-secondary">{opt.hpIncrease.toFixed(0)} lvl/HP</span>
+								<span class="text-accent font-medium ml-1">= +{opt.hpGain.toFixed(3)} HP</span>
+							{:else}
+								<span class="text-text-tertiary">No HP gain</span>
+							{/if}
+						</div>
+					{:else if opt.professionWeight > 0}
+						<div class="text-right text-xs tabular-nums">
+							<span class="text-text-secondary">+{opt.levelsGained.toFixed(1)} lvl</span>
+							<span class="text-text-tertiary mx-0.5">&times;</span>
+							<span class="text-text-secondary">w{opt.professionWeight}</span>
+							{#if opt.profContribution > 0}
+								<span class="text-accent font-medium ml-1">= +{(opt.profContribution * 100).toFixed(3)}%</span>
+							{/if}
+						</div>
+					{:else if opt.currentLevel != null}
+						<span class="text-xs text-text-tertiary tabular-nums">Lv {opt.currentLevel.toFixed(0)}, +{opt.levelsGained.toFixed(1)}</span>
+					{/if}
+					<button
+						class="px-2 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+						onclick={() => onClaim(opt.skillName)}
+					>Claim</button>
+				</div>
+			</div>
+		{/each}
+	</div>
+{/snippet}
+
+{#snippet rankedByHint(options: CodexSkillOption[])}
+	<p class="text-xs text-text-tertiary">
+		{#if isHpMode && options.some(o => o.recommendRank === 1)}
+			Ranked by expected HP gain from this codex reward at your current level. HP gain uses the skill's HP increase stat: every N skill levels adds 1 HP.
+		{:else if selectedProfession && options.some(o => o.recommendRank === 1)}
+			Ranked by profession contribution: +levels &times; weight. Accounts for diminishing returns at higher skill levels.
+		{/if}
+	</p>
+{/snippet}
 
 <div class="space-y-3">
 	<!-- Top bar: Mode toggle + Search + Profession + Calibrate -->
@@ -419,6 +510,10 @@
 										disabled={sp.currentRank >= 25}
 										onclick={(e) => { e.stopPropagation(); handleCalibrate(sp.name, 1); }}
 									>+</button>
+								{:else if sp.currentRank >= 25 && sp.masteryLevel > 0}
+									<span class="text-xs tabular-nums text-positive" title="Mastery level {sp.masteryLevel}">
+										<IconStar /> {sp.masteryLevel}
+									</span>
 								{:else}
 									<span class="text-xs tabular-nums {sp.currentRank >= 25 ? 'text-positive' : sp.currentRank > 0 ? 'text-text-secondary' : 'text-text-tertiary/50'}">
 										{sp.currentRank}/25
@@ -476,9 +571,40 @@
 					</div>
 
 					{#if rankBreakdown.currentRank >= 25}
-						<Card class="p-4">
-							<p class="text-sm text-positive font-medium">Codex complete</p>
+						<!-- Mastery claim card: the repeatable post-25 reward -->
+						<Card class="p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<div class="flex items-center gap-2">
+									<span class="text-sm font-medium text-text">Mastery</span>
+									<span class="text-sm font-medium text-positive tabular-nums">
+										<IconStar /> x {rankBreakdown.masteryLevel}
+									</span>
+								</div>
+								{#if rankBreakdown.masteryLevel > 0}
+									<button
+										class="text-xs text-text-tertiary hover:text-negative transition-colors cursor-pointer"
+										title="Undo the latest mastery claim"
+										onclick={handleMasteryUnclaim}
+									>Undo last</button>
+								{/if}
+							</div>
+
+							{@render optionRows(masteryOptions, handleMasteryClaim)}
+
+							{@render rankedByHint(masteryOptions)}
+
+							<p class="text-xs text-text-tertiary/70">
+								Mastery choices and values reflect limited in-game observation and may
+								vary by creature; if the game offers different options, please report
+								it on the project's GitHub issues.
+							</p>
 						</Card>
+
+						{#if claimMessage}
+							<div class="text-sm text-center {claimMessage.startsWith('Error') ? 'text-negative' : 'text-positive'}">
+								{claimMessage}
+							</div>
+						{/if}
 					{:else if nextRankData}
 						<!-- Next rank claim card -->
 						<Card class="p-4 space-y-3">
@@ -502,62 +628,9 @@
 									Claimed: {nextRankData.claimedSkill} ({formatPed(nextRankData.claimedPed ?? 0)} PES)
 								</div>
 							{:else}
-								<!-- Skill options list -->
-								<div class="space-y-0.5">
-									{#each skillOptions as opt}
-										{@const rank = opt.recommendRank}
-										<div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-surface-hover/50 transition-colors group">
-											<div class="flex items-center gap-2 min-w-0">
-												{#if rank != null}
-													<span class="text-xs font-medium tabular-nums w-5 text-center shrink-0
-														{rank === 1 ? 'text-success' : rank <= 3 ? 'text-accent' : 'text-text-tertiary'}">
-														#{rank}
-													</span>
-												{:else}
-													<span class="w-5 shrink-0"></span>
-												{/if}
-												<span class="text-sm text-text truncate">{opt.skillName}</span>
-											</div>
-											<div class="flex items-center gap-3 shrink-0 ml-2">
-												{#if isHpMode}
-													<div class="text-right text-xs tabular-nums">
-														{#if opt.hpIncrease != null}
-															<span class="text-text-secondary">+{opt.levelsGained.toFixed(1)} lvl</span>
-															<span class="text-text-tertiary mx-0.5">/</span>
-															<span class="text-text-secondary">{opt.hpIncrease.toFixed(0)} lvl/HP</span>
-															<span class="text-accent font-medium ml-1">= +{opt.hpGain.toFixed(3)} HP</span>
-														{:else}
-															<span class="text-text-tertiary">No HP gain</span>
-														{/if}
-													</div>
-												{:else if opt.professionWeight > 0}
-													<div class="text-right text-xs tabular-nums">
-														<span class="text-text-secondary">+{opt.levelsGained.toFixed(1)} lvl</span>
-														<span class="text-text-tertiary mx-0.5">&times;</span>
-														<span class="text-text-secondary">w{opt.professionWeight}</span>
-														{#if opt.profContribution > 0}
-															<span class="text-accent font-medium ml-1">= +{(opt.profContribution * 100).toFixed(3)}%</span>
-														{/if}
-													</div>
-												{:else if opt.currentLevel != null}
-													<span class="text-xs text-text-tertiary tabular-nums">Lv {opt.currentLevel.toFixed(0)}, +{opt.levelsGained.toFixed(1)}</span>
-												{/if}
-												<button
-													class="px-2 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
-													onclick={() => handleClaim(opt.skillName)}
-												>Claim</button>
-											</div>
-										</div>
-									{/each}
-								</div>
+								{@render optionRows(skillOptions, handleClaim)}
 
-								<p class="text-xs text-text-tertiary">
-									{#if isHpMode && skillOptions.some(o => o.recommendRank === 1)}
-										Ranked by expected HP gain from this codex reward at your current level. HP gain uses the skill's HP increase stat: every N skill levels adds 1 HP.
-									{:else if selectedProfession && skillOptions.some(o => o.recommendRank === 1)}
-										Ranked by profession contribution: +levels &times; weight. Accounts for diminishing returns at higher skill levels.
-									{/if}
-								</p>
+								{@render rankedByHint(skillOptions)}
 							{/if}
 						</Card>
 
