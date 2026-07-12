@@ -131,6 +131,30 @@ pub fn get_reward_ped(rank: i64, base_cost: f64, category: &str) -> f64 {
     round_half_even(cost / divisor, 4)
 }
 
+/// The mastery reward's fixed cost basis. The in-game mastery skill
+/// picks (observed values 25 / 15.62 / 7.81 PED, display-rounded)
+/// decode exactly as 5000 divided by the skill's category divisor
+/// (5000/200, 5000/320, 5000/640), so the reward derives from the
+/// same divisors as ranks 1-25 with this species-independent cost.
+pub const MASTERY_COST: f64 = 5000.0;
+
+/// The categories whose skills are mastery-eligible. Cat4 skills were
+/// absent from the observed in-game mastery picker; if a species ever
+/// offers them, they would price through the cat4 divisor (5 PED).
+pub const MASTERY_CATEGORIES: [&str; 3] = ["cat1", "cat2", "cat3"];
+
+/// The fixed mastery reward for a skill: `MASTERY_COST` over the
+/// skill's category divisor. `None` when the skill is not
+/// mastery-eligible (cat4 skills and skills outside the codex).
+pub fn mastery_reward_ped(skill_name: &str) -> Option<f64> {
+    let category = get_codex_category(skill_name)?;
+    if !MASTERY_CATEGORIES.contains(&category) {
+        return None;
+    }
+    let divisor = reward_divisor(category).expect("known category") as f64;
+    Some(round_half_even(MASTERY_COST / divisor, 4))
+}
+
 /// One rank's derived fields, serialising to the exact camelCase wire
 /// shape the backend's breakdown dicts carry, in the same key order.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -223,6 +247,26 @@ mod tests {
             get_reward_ped(5, 10.0, "cat3"),
             round_half_even(60.0 / 640.0, 4)
         );
+    }
+
+    #[test]
+    fn mastery_rewards_pin_the_observed_per_category_values() {
+        // The three in-game value tiers, exact (the game UI shows the
+        // 2dp roundings 25 / 15.62 / 7.81).
+        assert_eq!(mastery_reward_ped("Aim"), Some(25.0));
+        assert_eq!(mastery_reward_ped("Rifle"), Some(25.0));
+        assert_eq!(mastery_reward_ped("Melee Combat"), Some(15.625));
+        assert_eq!(mastery_reward_ped("Courage"), Some(15.625));
+        assert_eq!(mastery_reward_ped("Evade"), Some(7.8125));
+        assert_eq!(mastery_reward_ped("First Aid"), Some(7.8125));
+    }
+
+    #[test]
+    fn mastery_rewards_exclude_cat4_and_unknown_skills() {
+        assert_eq!(mastery_reward_ped("Zoology"), None);
+        assert_eq!(mastery_reward_ped("Animal Lore"), None);
+        assert_eq!(mastery_reward_ped("Fishing Rod Technology"), None);
+        assert_eq!(mastery_reward_ped(""), None);
     }
 
     #[test]

@@ -34,7 +34,7 @@ use serde_json::Value;
 use crate::clock::Clock;
 use crate::codex_categories::{
     build_rank_breakdown, get_category_for_rank, get_rank_cost, get_reward_ped, is_cat4_rank,
-    skills_for_category, RankBreakdown, CAT4_SKILLS,
+    mastery_reward_ped, skills_for_category, RankBreakdown, CAT4_SKILLS, MASTERY_CATEGORIES,
 };
 use crate::db::Db;
 use crate::game_data_store::GameDataStore;
@@ -86,6 +86,7 @@ pub struct SpeciesEntry {
     pub next_rank: Option<i64>,
     pub next_category: Option<&'static str>,
     pub next_cost: Option<f64>,
+    pub mastery_level: i64,
 }
 
 /// One rank of a species' breakdown with the player's claim overlay:
@@ -110,6 +111,7 @@ pub struct SpeciesRanks {
     pub base_cost: f64,
     pub codex_type: Option<String>,
     pub current_rank: i64,
+    pub mastery_level: i64,
     pub ranks: Vec<RankEntry>,
 }
 
@@ -165,6 +167,18 @@ pub struct MetaClaimRecord {
     pub ped_value: f64,
 }
 
+/// The record a mastery claim (or its reversal) reports.
+/// `mastery_level` is the per-species claim sequence number (the Nth
+/// mastery claim for that species).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MasteryClaimRecord {
+    pub species_name: String,
+    pub mastery_level: i64,
+    pub skill_name: String,
+    pub ped_value: f64,
+}
+
 /// Codex operations: species listing, rank breakdowns, claim recording.
 pub struct CodexService {
     db: Db,
@@ -188,6 +202,25 @@ enum UnclaimOutcome {
     },
     Done {
         rank: i64,
+        skill_name: String,
+        ped_value: f64,
+    },
+}
+
+/// The result of the `mastery_claim` writer transaction: the rank-25
+/// gate re-checked inside the transaction (the authoritative read; the
+/// pre-check outside it is advisory), or the completed claim carrying
+/// its sequence number.
+enum MasteryClaimOutcome {
+    NotAt25 { current_rank: i64 },
+    Done { mastery_level: i64 },
+}
+
+/// The result of the `mastery_unclaim` writer transaction.
+enum MasteryUnclaimOutcome {
+    NothingClaimed,
+    Done {
+        mastery_level: i64,
         skill_name: String,
         ped_value: f64,
     },
@@ -241,23 +274,33 @@ impl CodexService {
             ));
         }
 
-        let rank_map: HashMap<String, i64> = self
+        let (rank_map, mastery_map): (HashMap<String, i64>, HashMap<String, i64>) = self
             .db
             .with_reader(|conn| {
                 let mut stmt =
                     conn.prepare("SELECT species_name, current_rank FROM codex_progress")?;
                 let mut rows = stmt.query([])?;
-                let mut map: HashMap<String, i64> = HashMap::new();
+                let mut ranks: HashMap<String, i64> = HashMap::new();
                 while let Some(row) = rows.next()? {
-                    map.insert(row.get::<_, String>(0)?, row.get::<_, i64>(1)?);
+                    ranks.insert(row.get::<_, String>(0)?, row.get::<_, i64>(1)?);
                 }
-                Ok(map)
+                let mut stmt = conn.prepare(
+                    "SELECT species_name, COUNT(*) FROM codex_claims \
+                     WHERE kind = 'mastery' GROUP BY species_name",
+                )?;
+                let mut rows = stmt.query([])?;
+                let mut masteries: HashMap<String, i64> = HashMap::new();
+                while let Some(row) = rows.next()? {
+                    masteries.insert(row.get::<_, String>(0)?, row.get::<_, i64>(1)?);
+                }
+                Ok((ranks, masteries))
             })
             .await?;
 
         let mut result: Vec<SpeciesEntry> = Vec::new();
         for (name, base_cost, codex_type) in listed {
             let rank = rank_map.get(&name).copied().unwrap_or(0);
+            let mastery_level = mastery_map.get(&name).copied().unwrap_or(0);
             let next_rank = if rank < 25 { Some(rank + 1) } else { None };
             // The derived fields gate on the next rank's truthiness (an
             // inherited rule), so a (hand-edited) rank of -1 yields a
@@ -271,6 +314,7 @@ impl CodexService {
                 next_rank,
                 next_category: derivable.map(get_category_for_rank),
                 next_cost: derivable.map(|next| round_half_even(get_rank_cost(next, base_cost), 2)),
+                mastery_level,
             });
         }
         result.sort_by(|a, b| {
@@ -294,15 +338,17 @@ impl CodexService {
 
         let species_owned = species_name.to_string();
         // Built in query order so a duplicate rank's later row wins,
-        // as the original's dict comprehension does.
-        let claims_map: HashMap<i64, (String, f64)> = self
+        // as the original's dict comprehension does. Rank claims only:
+        // mastery claims share the table and species name but reuse the
+        // rank column as their own sequence number.
+        let (claims_map, mastery_level): (HashMap<i64, (String, f64)>, i64) = self
             .db
             .with_reader(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT rank, skill_name, ped_value, claimed_at FROM codex_claims \
-                     WHERE species_name = ? ORDER BY rank",
+                     WHERE species_name = ? AND kind = 'rank' ORDER BY rank",
                 )?;
-                let mut rows = stmt.query(rusqlite::params![species_owned])?;
+                let mut rows = stmt.query(rusqlite::params![&species_owned])?;
                 let mut map: HashMap<i64, (String, f64)> = HashMap::new();
                 while let Some(row) = rows.next()? {
                     map.insert(
@@ -310,7 +356,13 @@ impl CodexService {
                         (row.get::<_, String>(1)?, row.get::<_, f64>(2)?),
                     );
                 }
-                Ok(map)
+                let mastery_level: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM codex_claims \
+                     WHERE species_name = ? AND kind = 'mastery'",
+                    rusqlite::params![&species_owned],
+                    |row| row.get(0),
+                )?;
+                Ok((map, mastery_level))
             })
             .await?;
 
@@ -336,6 +388,7 @@ impl CodexService {
             base_cost: species.base_cost,
             codex_type: species.codex_type,
             current_rank,
+            mastery_level,
             ranks,
         }))
     }
@@ -433,26 +486,7 @@ impl CodexService {
                 )?;
                 crate::daily_rollup::refresh_days(&tx, [crate::daily_rollup::epoch_day(now)])?;
 
-                let current_level: Option<f64> = tx
-                    .query_row(
-                        "SELECT level FROM skill_calibrations WHERE skill_name = ? \
-                         ORDER BY scanned_at DESC LIMIT 1",
-                        rusqlite::params![skill_owned],
-                        |row| row.get::<_, f64>(0),
-                    )
-                    .optional()?;
-                if let Some(current_level) = current_level {
-                    // The reward's TT value buys levels at the current point on
-                    // the curve. A skill with no calibration history skips this
-                    // entirely (see the module doc).
-                    let levels_gained = levels_for_tt_value(current_level, ped_value);
-                    let new_level = current_level + levels_gained;
-                    tx.execute(
-                        "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
-                         VALUES (?, ?, 'codex', ?)",
-                        rusqlite::params![skill_owned, new_level, now],
-                    )?;
-                }
+                write_codex_calibration(&tx, &skill_owned, ped_value, now)?;
                 tx.commit()?;
                 Ok(true)
             })
@@ -655,6 +689,38 @@ impl CodexService {
             }
         }
 
+        self.rank_options(skill_entries, profession, target).await
+    }
+
+    /// Skill choices for the mastery reward, ranked exactly as the
+    /// per-rank recommendation is. Species-independent: the eligible
+    /// skills and their fixed rewards are the same for every species.
+    pub async fn get_mastery_skill_options(
+        &self,
+        profession: Option<&str>,
+        target: &str,
+    ) -> Result<Vec<SkillOption>, CodexError> {
+        let mut skill_entries: Vec<(&'static str, &'static str, f64)> = Vec::new();
+        for category in MASTERY_CATEGORIES {
+            for &skill_name in skills_for_category(category).expect("known category") {
+                let ped = mastery_reward_ped(skill_name).expect("mastery-eligible category");
+                skill_entries.push((skill_name, category, ped));
+            }
+        }
+        self.rank_options(skill_entries, profession, target).await
+    }
+
+    /// Enrich `(skill, category, reward)` entries with the current
+    /// calibrated level, the levels the reward buys on the curve, and
+    /// the profession / HP contribution, then sort and assign the
+    /// 1-based recommendation rank (the shared tail of the per-rank and
+    /// mastery recommendations).
+    async fn rank_options(
+        &self,
+        skill_entries: Vec<(&'static str, &'static str, f64)>,
+        profession: Option<&str>,
+        target: &str,
+    ) -> Result<Vec<SkillOption>, CodexError> {
         // Profession weights, when a (non-empty) profession is named:
         // the first matching profession's skill list, weight defaults
         // applied as the original's `or 0`.
@@ -777,6 +843,173 @@ impl CodexService {
         Ok(skills)
     }
 
+    /// Claim a mastery reward for a species whose 25 ranks are
+    /// complete: a repeatable claim with no ceiling, into any
+    /// mastery-eligible skill, for that skill's fixed reward.
+    ///
+    /// Persists in `codex_claims` with `kind='mastery'`, the rank
+    /// column carrying the per-species claim sequence number (1-based),
+    /// and updates the skill calibration exactly as a rank claim does
+    /// (including the silent skip for an uncalibrated skill; see the
+    /// module doc). `codex_progress` stays at 25.
+    ///
+    /// The rank-25 gate is re-checked inside the writer transaction, so
+    /// a concurrent unclaim of rank 25 cannot slip a mastery claim
+    /// under it; the sequence number is computed in the same
+    /// transaction, so racing mastery claims serialise cleanly.
+    pub async fn mastery_claim(
+        &self,
+        species_name: &str,
+        skill_name: &str,
+    ) -> Result<MasteryClaimRecord, CodexError> {
+        if self.find_species(species_name).is_none() {
+            return Err(CodexError::Invalid(format!(
+                "Species '{species_name}' not found in game-data catalogue"
+            )));
+        }
+        let Some(ped_value) = mastery_reward_ped(skill_name) else {
+            return Err(CodexError::Invalid(format!(
+                "Skill '{skill_name}' not valid for mastery"
+            )));
+        };
+
+        let now = naive_to_epoch(self.clock.now());
+        let species_owned = species_name.to_string();
+        let skill_owned = skill_name.to_string();
+        let outcome = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+
+                let current_rank: i64 = tx
+                    .query_row(
+                        "SELECT current_rank FROM codex_progress WHERE species_name = ?",
+                        rusqlite::params![&species_owned],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .unwrap_or(0);
+                if current_rank != 25 {
+                    return Ok(MasteryClaimOutcome::NotAt25 { current_rank });
+                }
+
+                let mastery_level: i64 = tx.query_row(
+                    "SELECT COUNT(*) + 1 FROM codex_claims \
+                     WHERE species_name = ? AND kind = 'mastery'",
+                    rusqlite::params![&species_owned],
+                    |row| row.get(0),
+                )?;
+                tx.execute(
+                    "INSERT INTO codex_claims \
+                     (species_name, rank, skill_name, ped_value, claimed_at, kind) \
+                     VALUES (?, ?, ?, ?, ?, 'mastery')",
+                    rusqlite::params![&species_owned, mastery_level, &skill_owned, ped_value, now],
+                )?;
+                crate::daily_rollup::refresh_days(&tx, [crate::daily_rollup::epoch_day(now)])?;
+
+                write_codex_calibration(&tx, &skill_owned, ped_value, now)?;
+                tx.commit()?;
+                Ok(MasteryClaimOutcome::Done { mastery_level })
+            })
+            .await?;
+
+        match outcome {
+            MasteryClaimOutcome::NotAt25 { current_rank } => Err(CodexError::Invalid(format!(
+                "Mastery for '{species_name}' requires rank 25 (current rank {current_rank})"
+            ))),
+            MasteryClaimOutcome::Done { mastery_level } => Ok(MasteryClaimRecord {
+                species_name: species_name.to_string(),
+                mastery_level,
+                skill_name: skill_name.to_string(),
+                ped_value,
+            }),
+        }
+    }
+
+    /// Revert a species' most recent mastery claim: delete the claim
+    /// record and remove the codex-sourced calibration it wrote (the
+    /// mirror of `unclaim_rank`, without a rank step: `codex_progress`
+    /// stays at 25). The latest claim is the one with the highest
+    /// sequence number, read and deleted inside one writer transaction,
+    /// so racing unclaims serialise cleanly.
+    pub async fn mastery_unclaim(
+        &self,
+        species_name: &str,
+    ) -> Result<MasteryClaimRecord, CodexError> {
+        let species_owned = species_name.to_string();
+        let outcome = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+
+                let claim: Option<(i64, i64, String, f64, f64)> = tx
+                    .query_row(
+                        "SELECT id, rank, skill_name, ped_value, claimed_at FROM codex_claims \
+                         WHERE species_name = ? AND kind = 'mastery' \
+                         ORDER BY rank DESC, id DESC LIMIT 1",
+                        rusqlite::params![&species_owned],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, f64>(4)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((id, mastery_level, skill_name, ped_value, claimed_at)) = claim else {
+                    return Ok(MasteryUnclaimOutcome::NothingClaimed);
+                };
+
+                tx.execute(
+                    "DELETE FROM codex_claims WHERE id = ?",
+                    rusqlite::params![id],
+                )?;
+
+                // Remove the codex-sourced calibration this claim wrote,
+                // matched on the instant the two inserts share; an
+                // uncalibrated-skill claim (which wrote none) removes
+                // nothing here.
+                tx.execute(
+                    "DELETE FROM skill_calibrations WHERE id = ( \
+                        SELECT id FROM skill_calibrations \
+                        WHERE skill_name = ? AND source = 'codex' AND scanned_at = ? \
+                        ORDER BY id DESC LIMIT 1)",
+                    rusqlite::params![&skill_name, claimed_at],
+                )?;
+                crate::daily_rollup::refresh_days(
+                    &tx,
+                    [crate::daily_rollup::epoch_day(claimed_at)],
+                )?;
+
+                tx.commit()?;
+                Ok(MasteryUnclaimOutcome::Done {
+                    mastery_level,
+                    skill_name,
+                    ped_value,
+                })
+            })
+            .await?;
+
+        match outcome {
+            MasteryUnclaimOutcome::NothingClaimed => Err(CodexError::Invalid(format!(
+                "No mastery claim to unclaim for '{species_name}'"
+            ))),
+            MasteryUnclaimOutcome::Done {
+                mastery_level,
+                skill_name,
+                ped_value,
+            } => Ok(MasteryClaimRecord {
+                species_name: species_name.to_string(),
+                mastery_level,
+                skill_name,
+                ped_value,
+            }),
+        }
+    }
+
     /// Claim a meta codex reward: 1 PES into an attribute, persisted
     /// in `codex_claims` with `kind='meta'` and sentinel species and
     /// skill columns (no calibration update; no attribute curve
@@ -884,6 +1117,37 @@ impl CodexService {
             })
             .await?)
     }
+}
+
+/// Price a claimed reward onto the skill curve inside the claim's
+/// transaction: the reward's TT value buys levels at the current point
+/// on the curve, appended as a codex-sourced calibration row. A skill
+/// with no calibration history skips the write entirely (the silent
+/// calibration skip; see the module doc).
+fn write_codex_calibration(
+    tx: &rusqlite::Transaction<'_>,
+    skill_name: &str,
+    ped_value: f64,
+    now: f64,
+) -> Result<(), rusqlite::Error> {
+    let current_level: Option<f64> = tx
+        .query_row(
+            "SELECT level FROM skill_calibrations WHERE skill_name = ? \
+             ORDER BY scanned_at DESC LIMIT 1",
+            rusqlite::params![skill_name],
+            |row| row.get::<_, f64>(0),
+        )
+        .optional()?;
+    if let Some(current_level) = current_level {
+        let levels_gained = levels_for_tt_value(current_level, ped_value);
+        let new_level = current_level + levels_gained;
+        tx.execute(
+            "INSERT INTO skill_calibrations (skill_name, level, source, scanned_at) \
+             VALUES (?, ?, 'codex', ?)",
+            rusqlite::params![skill_name, new_level, now],
+        )?;
+    }
+    Ok(())
 }
 
 /// The mob's `species` mapping, skipping absent, null, and empty ones
@@ -1029,11 +1293,11 @@ mod tests {
             initial,
             json!([
                 json!({"name": "Boar", "baseCost": 37.5, "codexType": "Mob", "currentRank": 0,
-                       "nextRank": 1, "nextCategory": "cat1", "nextCost": 37.5}),
+                       "nextRank": 1, "nextCategory": "cat1", "nextCost": 37.5, "masteryLevel": 0}),
                 json!({"name": "Ghost", "baseCost": 7.0, "codexType": null, "currentRank": 0,
-                       "nextRank": 1, "nextCategory": "cat1", "nextCost": 7.0}),
+                       "nextRank": 1, "nextCategory": "cat1", "nextCost": 7.0, "masteryLevel": 0}),
                 json!({"name": "Looter Bird", "baseCost": 10.0, "codexType": "MobLooter",
-                       "currentRank": 0, "nextRank": 1, "nextCategory": "cat1", "nextCost": 10.0}),
+                       "currentRank": 0, "nextRank": 1, "nextCategory": "cat1", "nextCost": 10.0, "masteryLevel": 0}),
             ])
         );
 
@@ -1046,11 +1310,11 @@ mod tests {
             ranked,
             json!([
                 json!({"name": "Looter Bird", "baseCost": 10.0, "codexType": "MobLooter",
-                       "currentRank": 5, "nextRank": 6, "nextCategory": "cat1", "nextCost": 80.0}),
+                       "currentRank": 5, "nextRank": 6, "nextCategory": "cat1", "nextCost": 80.0, "masteryLevel": 0}),
                 json!({"name": "Boar", "baseCost": 37.5, "codexType": "Mob", "currentRank": 2,
-                       "nextRank": 3, "nextCategory": "cat2", "nextCost": 112.5}),
+                       "nextRank": 3, "nextCategory": "cat2", "nextCost": 112.5, "masteryLevel": 0}),
                 json!({"name": "Ghost", "baseCost": 7.0, "codexType": null, "currentRank": 0,
-                       "nextRank": 1, "nextCategory": "cat1", "nextCost": 7.0}),
+                       "nextRank": 1, "nextCategory": "cat1", "nextCost": 7.0, "masteryLevel": 0}),
             ])
         );
 
@@ -1799,5 +2063,281 @@ mod tests {
                 .unwrap();
             assert_eq!(progress, 0, "rank steps back exactly once");
         }
+    }
+
+    #[tokio::test]
+    async fn mastery_claims_gate_on_species_rank_and_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _db) = service(dir.path()).await;
+
+        let error = svc.mastery_claim("Nessie", "Rifle").await.unwrap_err();
+        assert_eq!(
+            invalid(error),
+            "Species 'Nessie' not found in game-data catalogue"
+        );
+
+        // Skill eligibility refuses cat4 and unknown skills before any
+        // rank check (the reward has no defined value for them).
+        let error = svc.mastery_claim("Boar", "Zoology").await.unwrap_err();
+        assert_eq!(invalid(error), "Skill 'Zoology' not valid for mastery");
+        let error = svc
+            .mastery_claim("Boar", "Fishing Rod Technology")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            invalid(error),
+            "Skill 'Fishing Rod Technology' not valid for mastery"
+        );
+
+        // The rank-25 gate, from unranked and from a mid-codex rank.
+        let error = svc.mastery_claim("Boar", "Rifle").await.unwrap_err();
+        assert_eq!(
+            invalid(error),
+            "Mastery for 'Boar' requires rank 25 (current rank 0)"
+        );
+        svc.calibrate("Boar", 24).await.unwrap();
+        let error = svc.mastery_claim("Boar", "Rifle").await.unwrap_err();
+        assert_eq!(
+            invalid(error),
+            "Mastery for 'Boar' requires rank 25 (current rank 24)"
+        );
+    }
+
+    #[tokio::test]
+    async fn mastery_claims_sequence_calibrate_and_surface_the_tally() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
+        svc.calibrate("Boar", 25).await.unwrap();
+
+        let first = to_json(svc.mastery_claim("Boar", "Rifle").await.unwrap());
+        assert_eq!(
+            first,
+            json!({"speciesName": "Boar", "masteryLevel": 1, "skillName": "Rifle",
+                   "pedValue": 25.0})
+        );
+
+        // The claim row carries the mastery kind and the sequence in
+        // the rank column; progress stays pinned at 25.
+        let now = naive_to_epoch(start_instant());
+        let claim = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT rank, skill_name, ped_value, claimed_at, kind FROM codex_claims",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, f64>(2)?,
+                            row.get::<_, f64>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(claim, (1, "Rifle".to_string(), 25.0, now, "mastery".to_string()));
+        assert_eq!(svc.current_rank("Boar").await.unwrap(), 25);
+
+        // The reward priced onto the curve from the newest calibration
+        // (level 100), exactly as a rank claim does.
+        let calibration: (f64, f64) = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT level, scanned_at FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(calibration.0, 100.0 + levels_for_tt_value(100.0, 25.0));
+        assert_eq!(calibration.1, now);
+
+        // Repeat claims sequence 2, 3, ... with per-category values.
+        let second = to_json(svc.mastery_claim("Boar", "Courage").await.unwrap());
+        assert_eq!(second["masteryLevel"], json!(2));
+        assert_eq!(second["pedValue"], json!(15.625));
+        let third = to_json(svc.mastery_claim("Boar", "Dodge").await.unwrap());
+        assert_eq!(third["masteryLevel"], json!(3));
+        assert_eq!(third["pedValue"], json!(7.8125));
+
+        // The tally surfaces on the listing and the rank breakdown, and
+        // the mastery rows never pollute the 1-25 claim overlay.
+        let listing = to_json(svc.get_all_species().await.unwrap());
+        assert_eq!(listing[0]["name"], "Boar");
+        assert_eq!(listing[0]["masteryLevel"], json!(3));
+        let ranks = svc.get_species_ranks("Boar").await.unwrap().unwrap();
+        assert_eq!(ranks.mastery_level, 3);
+        assert!(
+            ranks.ranks.iter().all(|rank| !rank.claimed),
+            "mastery claims must not read as rank claims"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_uncalibrated_skill_mastery_claim_skips_the_calibration_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
+        svc.calibrate("Boar", 25).await.unwrap();
+
+        // Anatomy has no calibration history: the claim records but the
+        // reward never reaches the skill curve (see the module doc).
+        svc.mastery_claim("Boar", "Anatomy").await.unwrap();
+        let codex_rows: i64 = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM skill_calibrations WHERE source = 'codex'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(codex_rows, 0);
+    }
+
+    #[tokio::test]
+    async fn mastery_unclaims_revert_the_latest_claim_and_its_calibration() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
+        svc.calibrate("Boar", 25).await.unwrap();
+
+        // Nothing to unclaim yet.
+        let error = svc.mastery_unclaim("Boar").await.unwrap_err();
+        assert_eq!(invalid(error), "No mastery claim to unclaim for 'Boar'");
+
+        svc.mastery_claim("Boar", "Rifle").await.unwrap();
+        svc.mastery_claim("Boar", "Dodge").await.unwrap();
+
+        // The latest claim (Dodge, sequence 2) reverts first, removing
+        // its calibration but not Rifle's; progress stays at 25.
+        let reverted = to_json(svc.mastery_unclaim("Boar").await.unwrap());
+        assert_eq!(
+            reverted,
+            json!({"speciesName": "Boar", "masteryLevel": 2, "skillName": "Dodge",
+                   "pedValue": 7.8125})
+        );
+        assert_eq!(svc.current_rank("Boar").await.unwrap(), 25);
+        let remaining: Vec<String> = db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT skill_name FROM skill_calibrations WHERE source = 'codex'",
+                )?;
+                let mut rows = stmt.query([])?;
+                let mut names = Vec::new();
+                while let Some(row) = rows.next()? {
+                    names.push(row.get::<_, String>(0)?);
+                }
+                Ok(names)
+            })
+            .await
+            .unwrap();
+        assert_eq!(remaining, vec!["Rifle".to_string()]);
+
+        // The next claim reuses the freed sequence number.
+        let renewed = to_json(svc.mastery_claim("Boar", "Courage").await.unwrap());
+        assert_eq!(renewed["masteryLevel"], json!(2));
+    }
+
+    #[tokio::test]
+    async fn mastery_claims_land_in_the_daily_rollup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, db) = service(dir.path()).await;
+        svc.calibrate("Boar", 25).await.unwrap();
+
+        svc.mastery_claim("Boar", "Rifle").await.unwrap();
+
+        // Two days later the claim day is behind the heal watermark.
+        let claim_epoch = naive_to_epoch(start_instant());
+        let claim_day = crate::daily_rollup::epoch_day(claim_epoch);
+        svc.db()
+            .with_writer(move |conn| {
+                crate::daily_rollup::heal_rollups(conn, claim_epoch + 2.0 * 86_400.0)
+            })
+            .await
+            .unwrap();
+        let day = claim_day.clone();
+        let codex_pes: Option<f64> = db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT codex_pes FROM daily_rollups WHERE day = ?1",
+                    rusqlite::params![day],
+                    |row| row.get::<_, Option<f64>>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(codex_pes, Some(25.0));
+
+        // The unclaim deletes the claim and relands its day inside the
+        // same transaction.
+        svc.mastery_unclaim("Boar").await.unwrap();
+        let codex_pes: Option<f64> = db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT codex_pes FROM daily_rollups WHERE day = ?1",
+                    rusqlite::params![claim_day],
+                    |row| row.get::<_, Option<f64>>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(codex_pes, None, "no claims remain on the day");
+    }
+
+    #[tokio::test]
+    async fn mastery_options_span_the_eligible_skills_and_rank_like_ranks_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
+
+        let options = svc
+            .get_mastery_skill_options(Some("Sniper"), "profession")
+            .await
+            .unwrap();
+
+        // Every cat1-cat3 skill exactly once, no cat4.
+        assert_eq!(options.len(), 36);
+        assert!(options.iter().all(|option| option.category != "cat4"));
+
+        // Fixed per-category rewards, independent of any species.
+        let reward = |name: &str| {
+            options
+                .iter()
+                .find(|option| option.skill_name == name)
+                .unwrap_or_else(|| panic!("{name} missing"))
+                .reward_ped
+        };
+        assert_eq!(reward("Aim"), 25.0);
+        assert_eq!(reward("Courage"), 15.625);
+        assert_eq!(reward("Evade"), 7.8125);
+
+        // Recommendation ranks assign to the profession-weighted skills
+        // only (Rifle and Aim carry Sniper weights; Zoology's weight is
+        // out of reach as cat4), exactly as the per-rank options do.
+        let ranked: Vec<&str> = options
+            .iter()
+            .filter(|option| option.recommend_rank.is_some())
+            .map(|option| option.skill_name)
+            .collect();
+        assert_eq!(ranked.len(), 2);
+        assert!(ranked.contains(&"Rifle") && ranked.contains(&"Aim"));
+        let first = options
+            .iter()
+            .find(|option| option.recommend_rank == Some(1))
+            .unwrap();
+        assert!(
+            first.prof_contribution
+                >= options
+                    .iter()
+                    .find(|option| option.recommend_rank == Some(2))
+                    .unwrap()
+                    .prof_contribution
+        );
     }
 }

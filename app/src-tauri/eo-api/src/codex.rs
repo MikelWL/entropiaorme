@@ -63,6 +63,7 @@ pub struct CodexSpecies {
     pub next_rank: Nullable<i64>,
     pub next_category: Nullable<String>,
     pub next_cost: Nullable<f64>,
+    pub mastery_level: i64,
 }
 
 /// One rank in a species' breakdown: the derived cost / reward / category
@@ -94,6 +95,7 @@ pub struct CodexSpeciesRanks {
     pub base_cost: f64,
     pub codex_type: Nullable<String>,
     pub current_rank: i64,
+    pub mastery_level: i64,
     pub ranks: Vec<CodexRank>,
 }
 
@@ -146,6 +148,18 @@ pub struct CodexCalibrateResult {
 #[serde(rename_all = "camelCase")]
 pub struct CodexMetaClaimResult {
     pub attribute_name: String,
+    pub ped_value: f64,
+}
+
+/// The record a mastery claim (or its reversal) returns.
+/// `mastery_level` is the per-species claim sequence number (the Nth
+/// mastery claim for that species).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexMasteryClaimResult {
+    pub species_name: String,
+    pub mastery_level: i64,
+    pub skill_name: String,
     pub ped_value: f64,
 }
 
@@ -272,6 +286,58 @@ impl Api {
         Ok(claim_dto(result))
     }
 
+    /// The mastery skill options, ranked by profession contribution or HP
+    /// gain exactly as the per-rank recommendation is. Species-independent:
+    /// the eligible skills and their fixed rewards are the same for every
+    /// species whose 25 ranks are complete.
+    pub async fn codex_mastery_options(
+        &self,
+        profession: Option<&str>,
+        target: CodexRecommendTarget,
+    ) -> Result<Vec<CodexSkillOption>, ApiError> {
+        let options = self
+            .codex
+            .get_mastery_skill_options(profession, target.as_str())
+            .await
+            .map_err(ApiError::internal("codex mastery options read"))?;
+        Ok(options.into_iter().map(skill_option_dto).collect())
+    }
+
+    /// Claim a mastery reward for a species whose 25 ranks are complete:
+    /// a repeatable claim into any mastery-eligible skill for that skill's
+    /// fixed reward. On success, an active session suppresses the claimed
+    /// skill's next gain, exactly as a rank claim does.
+    pub async fn codex_mastery_claim(
+        &self,
+        species_name: &str,
+        skill_name: &str,
+    ) -> Result<CodexMasteryClaimResult, ApiError> {
+        let result = self
+            .codex
+            .mastery_claim(species_name, skill_name)
+            .await
+            .map_err(codex_write_error("codex mastery claim"))?;
+        if self.tracker.is_tracking() {
+            self.skill_tracker
+                .suppress_next(skill_name, SUPPRESS_TIMEOUT_SECONDS);
+        }
+        Ok(mastery_claim_dto(result))
+    }
+
+    /// Revert a species' most recent mastery claim. No session suppression:
+    /// an unclaim removes a calibration rather than producing a gain.
+    pub async fn codex_mastery_unclaim(
+        &self,
+        species_name: &str,
+    ) -> Result<CodexMasteryClaimResult, ApiError> {
+        let result = self
+            .codex
+            .mastery_unclaim(species_name)
+            .await
+            .map_err(codex_write_error("codex mastery unclaim"))?;
+        Ok(mastery_claim_dto(result))
+    }
+
     /// Claim a meta codex reward (1 PES into an attribute). On success, an
     /// active session suppresses the attribute's next gain.
     pub async fn codex_meta_claim(
@@ -305,6 +371,7 @@ fn species_dto(entry: codex::SpeciesEntry) -> CodexSpecies {
         next_rank: entry.next_rank.into(),
         next_category: entry.next_category.map(str::to_string).into(),
         next_cost: entry.next_cost.into(),
+        mastery_level: entry.mastery_level,
     }
 }
 
@@ -314,6 +381,7 @@ fn species_ranks_dto(ranks: codex::SpeciesRanks) -> CodexSpeciesRanks {
         base_cost: ranks.base_cost,
         codex_type: ranks.codex_type.into(),
         current_rank: ranks.current_rank,
+        mastery_level: ranks.mastery_level,
         ranks: ranks.ranks.into_iter().map(rank_dto).collect(),
     }
 }
@@ -354,6 +422,15 @@ fn claim_dto(record: codex::ClaimRecord) -> CodexClaimResult {
     CodexClaimResult {
         species_name: record.species_name,
         rank: record.rank,
+        skill_name: record.skill_name,
+        ped_value: record.ped_value,
+    }
+}
+
+fn mastery_claim_dto(record: codex::MasteryClaimRecord) -> CodexMasteryClaimResult {
+    CodexMasteryClaimResult {
+        species_name: record.species_name,
+        mastery_level: record.mastery_level,
         skill_name: record.skill_name,
         ped_value: record.ped_value,
     }

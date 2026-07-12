@@ -22,8 +22,8 @@ use eo_api::character::{
     SkillLevel,
 };
 use eo_api::codex::{
-    CodexCalibrateResult, CodexClaimResult, CodexMetaAttribute, CodexMetaClaimResult,
-    CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
+    CodexCalibrateResult, CodexClaimResult, CodexMasteryClaimResult, CodexMetaAttribute,
+    CodexMetaClaimResult, CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
 };
 use eo_api::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildReport};
 use eo_api::equipment::{
@@ -285,6 +285,36 @@ pub async fn codex_meta_claim(
     attribute_name: String,
 ) -> Result<CodexMetaClaimResult, ApiError> {
     facade(&app)?.codex_meta_claim(&attribute_name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_mastery_options(
+    app: tauri::AppHandle,
+    profession: Option<String>,
+    target: CodexRecommendTarget,
+) -> Result<Vec<CodexSkillOption>, ApiError> {
+    facade(&app)?
+        .codex_mastery_options(profession.as_deref(), target)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_mastery_claim(
+    app: tauri::AppHandle,
+    species_name: String,
+    skill_name: String,
+) -> Result<CodexMasteryClaimResult, ApiError> {
+    facade(&app)?
+        .codex_mastery_claim(&species_name, &skill_name)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn codex_mastery_unclaim(
+    app: tauri::AppHandle,
+    species_name: String,
+) -> Result<CodexMasteryClaimResult, ApiError> {
+    facade(&app)?.codex_mastery_unclaim(&species_name).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -941,6 +971,9 @@ mod tests {
         "codex_claim",
         "codex_unclaim",
         "codex_meta_claim",
+        "codex_mastery_options",
+        "codex_mastery_claim",
+        "codex_mastery_unclaim",
         "quests_list",
         "quest_get",
         "quest_create",

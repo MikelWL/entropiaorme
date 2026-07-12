@@ -24,8 +24,8 @@ use crate::character::{
     SkillLevel,
 };
 use crate::codex::{
-    CodexCalibrateResult, CodexClaimResult, CodexMetaAttribute, CodexMetaClaimResult,
-    CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
+    CodexCalibrateResult, CodexClaimResult, CodexMasteryClaimResult, CodexMetaAttribute,
+    CodexMetaClaimResult, CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
 };
 use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildReport};
 use crate::equipment::{
@@ -309,6 +309,42 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(String)),
             }],
             returns: Some(schema(schema_for!(CodexMetaClaimResult))),
+        },
+        CommandSpec {
+            name: "codex_mastery_options",
+            args: vec![
+                ArgSpec {
+                    name: "profession",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "target",
+                    schema: schema(schema_for!(CodexRecommendTarget)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<CodexSkillOption>))),
+        },
+        CommandSpec {
+            name: "codex_mastery_claim",
+            args: vec![
+                ArgSpec {
+                    name: "species_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "skill_name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(CodexMasteryClaimResult))),
+        },
+        CommandSpec {
+            name: "codex_mastery_unclaim",
+            args: vec![ArgSpec {
+                name: "species_name",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(CodexMasteryClaimResult))),
         },
         CommandSpec {
             name: "quests_list",
