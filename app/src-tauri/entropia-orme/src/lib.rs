@@ -263,6 +263,7 @@ pub fn run() {
             commands::market_paste_commit,
             commands::market_overview,
             commands::market_break_even,
+            commands::market_mob_ranking,
             commands::market_item_history,
             commands::scan_status,
             commands::scan_start,
