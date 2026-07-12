@@ -32,7 +32,8 @@ use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
 use crate::market::{
-    MarketCommitResult, MarketHistoryPoint, MarketHorizon, MarketOverviewRow, MarketPastePreview,
+    MarketBreakEven, MarketCommitResult, MarketHistoryPoint, MarketHorizon, MarketOverviewRow,
+    MarketPastePreview,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -564,6 +565,11 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "market_overview",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Vec<MarketOverviewRow>))),
+        },
+        CommandSpec {
+            name: "market_break_even",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(MarketBreakEven))),
         },
         CommandSpec {
             name: "market_item_history",
