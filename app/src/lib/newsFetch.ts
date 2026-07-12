@@ -6,33 +6,15 @@ import {
 	persistNewsCache,
 } from './news.svelte';
 
-// This file is the sole site of outbound non-loopback HTTP in the app.
-// The CSP `connect-src` entry in app/src-tauri/entropia-orme/tauri.conf.json gates
-// the host allowlist at the webview boundary; this constant declares it.
+import { httpsFetch } from './outboundHttp';
+
+// The news feed client. All outbound HTTP routes through the hardened
+// gateway in outboundHttp.ts; the CSP `connect-src` entry in
+// app/src-tauri/entropia-orme/tauri.conf.json gates the host allowlist
+// at the webview boundary, and this constant declares this feature's
+// pinned origin.
 const NEWS_SOURCE_BASE = 'https://entropiaorme.com';
 const FEED_URL = `${NEWS_SOURCE_BASE}/news.json`;
-const REQUEST_TIMEOUT_MS = 10_000;
-
-async function httpsFetch(url: string): Promise<Response> {
-	if (!url.startsWith('https://')) {
-		throw new Error(`refusing non-HTTPS URL: ${url}`);
-	}
-	const ctl = new AbortController();
-	const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
-	try {
-		const res = await fetch(url, {
-			credentials: 'omit',
-			cache: 'no-store',
-			signal: ctl.signal,
-		});
-		if (!res.ok) {
-			throw new Error(`HTTP ${res.status} for ${url}`);
-		}
-		return res;
-	} finally {
-		clearTimeout(timer);
-	}
-}
 
 function isEntry(value: unknown): value is NewsEntry {
 	if (!value || typeof value !== 'object') return false;

@@ -653,6 +653,31 @@ export interface MarketCommitResult {
 }
 
 /**
+ * The most recent accepted paste as a contributable batch: exactly
+ * what an opted-in contributor shares, nothing more. The frontend
+ * owns the send, strictly behind the contribution opt-in.
+ */
+export interface MarketContributionBatch {
+	/** Epoch seconds of the submission. */
+	observedAt: number;
+	items: MarketContributionItem[];
+}
+
+/**
+ * One item of a contributable batch: the pasted readings verbatim,
+ * by horizon name.
+ */
+export interface MarketContributionItem {
+	itemName: string;
+	tier: number;
+	day: MarketReading;
+	week: MarketReading;
+	month: MarketReading;
+	year: MarketReading;
+	decade: MarketReading;
+}
+
+/**
  * One point of an item's per-horizon history, oldest first.
  */
 export interface MarketHistoryPoint {
@@ -1933,6 +1958,10 @@ export async function marketPasteCommit(text: string): Promise<MarketCommitResul
 
 export async function marketOverview(): Promise<MarketOverviewRow[]> {
 	return invokeCommand('market_overview', {});
+}
+
+export async function marketContributionBatch(): Promise<MarketContributionBatch | null> {
+	return invokeCommand('market_contribution_batch', {});
 }
 
 export async function marketBreakEven(): Promise<MarketBreakEven> {

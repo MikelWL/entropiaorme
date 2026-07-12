@@ -69,6 +69,25 @@ pub struct HistoryPoint {
     pub sales_ped: f64,
 }
 
+/// One item of a contributable batch: the pasted readings verbatim.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchItem {
+    pub item_name: String,
+    pub tier: i64,
+    /// Indexed in [`MarketHorizon::ALL`] order.
+    pub readings: [MarketReading; 5],
+}
+
+/// The most recent accepted paste, verbatim: what a user who opts in
+/// to contributing shares, nothing more. Sending it anywhere is the
+/// caller's decision behind its own explicit consent gate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubmissionBatch {
+    /// Epoch seconds of the submission.
+    pub observed_at: f64,
+    pub items: Vec<BatchItem>,
+}
+
 /// One species' estimated-markup row: the recorded loot composition
 /// TT-weighted by the latest markup observations on one horizon.
 /// `est_markup_pct` is None when no composing item has an observation;
@@ -249,6 +268,60 @@ impl MarketService {
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(points)
+            })
+            .await
+    }
+
+    /// The most recent accepted paste as a contributable batch, or None
+    /// before the first commit. Rows come back exactly as stored; the
+    /// batch never blends submissions, so what a contributor shares is
+    /// precisely the export they pasted.
+    pub async fn latest_submission(&self) -> Result<Option<SubmissionBatch>, DbError> {
+        self.db
+            .with_reader(|connection| {
+                let mut stmt = connection.prepare(
+                    "SELECT o.item_name, o.tier, s.submitted_at, o.horizon, \
+                            o.markup_pct, o.sales_ped \
+                     FROM market_observations o \
+                     JOIN market_submissions s ON s.id = o.submission_id \
+                     WHERE o.submission_id = (SELECT MAX(id) FROM market_submissions) \
+                     ORDER BY o.item_name, o.id",
+                )?;
+                let mut rows = stmt.query([])?;
+                let mut observed_at = 0.0;
+                let mut items: Vec<BatchItem> = Vec::new();
+                while let Some(row) = rows.next()? {
+                    let item_name: String = row.get(0)?;
+                    let horizon: String = row.get(3)?;
+                    let Some(horizon) = MarketHorizon::from_stored(&horizon) else {
+                        // A vocabulary value outside the enum never gets
+                        // written; tolerate rather than fail the read.
+                        continue;
+                    };
+                    observed_at = row.get(2)?;
+                    if items.last().map(|entry| entry.item_name.as_str())
+                        != Some(item_name.as_str())
+                    {
+                        items.push(BatchItem {
+                            item_name,
+                            tier: row.get(1)?,
+                            readings: [MarketReading {
+                                markup_pct: None,
+                                sales_ped: 0.0,
+                            }; 5],
+                        });
+                    }
+                    let entry = items.last_mut().expect("pushed above");
+                    entry.readings[horizon as usize] = MarketReading {
+                        markup_pct: row.get(4)?,
+                        sales_ped: row.get(5)?,
+                    };
+                }
+                Ok(if items.is_empty() {
+                    None
+                } else {
+                    Some(SubmissionBatch { observed_at, items })
+                })
             })
             .await
     }
@@ -467,6 +540,33 @@ Carabok Leg Fur\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t109.380%\t6.
             .block_on(service.item_history("Unseen Item", MarketHorizon::Day))
             .unwrap();
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn latest_submission_serves_the_newest_batch_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, service, clock) = rig(dir.path());
+
+        // Before any commit there is nothing to contribute.
+        assert_eq!(runtime.block_on(service.latest_submission()).unwrap(), None);
+
+        runtime.block_on(service.commit_paste(SAMPLE)).unwrap();
+        clock.advance(7.0 * 24.0 * 3600.0).unwrap();
+        let later = "Carabok Hide\t0\t101.000%\t10.000 PED\t101.000%\t10.000 PED\t\
+101.000%\t10.000 PED\t101.000%\t10.000 PED\t101.000%\t10.000 PED";
+        let second = runtime.block_on(service.commit_paste(later)).unwrap();
+
+        // The newest paste only, verbatim: never a blend across
+        // submissions (the earlier batch's other item is absent).
+        let batch = runtime
+            .block_on(service.latest_submission())
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.observed_at, second.observed_at);
+        assert_eq!(batch.items.len(), 1);
+        assert_eq!(batch.items[0].item_name, "Carabok Hide");
+        assert_eq!(batch.items[0].readings[0].markup_pct, Some(101.000));
+        assert_eq!(batch.items[0].readings[4].sales_ped, 10.0);
     }
 
     #[test]

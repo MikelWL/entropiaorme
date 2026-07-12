@@ -32,8 +32,8 @@ use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
 use crate::market::{
-    MarketBreakEven, MarketCommitResult, MarketHistoryPoint, MarketHorizon, MarketMobRankingRow,
-    MarketOverviewRow, MarketPastePreview,
+    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
+    MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -49,6 +49,7 @@ use crate::tracking::{
     StartResult, StopResult, TagLockResult, TrackingSession, TrackingSnapshot,
 };
 use crate::ApiError;
+use crate::Nullable;
 
 /// One argument of a typed command.
 pub struct ArgSpec {
@@ -565,6 +566,11 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "market_overview",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Vec<MarketOverviewRow>))),
+        },
+        CommandSpec {
+            name: "market_contribution_batch",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Nullable<MarketContributionBatch>))),
         },
         CommandSpec {
             name: "market_break_even",

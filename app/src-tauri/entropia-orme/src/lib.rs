@@ -262,6 +262,7 @@ pub fn run() {
             commands::market_paste_preview,
             commands::market_paste_commit,
             commands::market_overview,
+            commands::market_contribution_batch,
             commands::market_break_even,
             commands::market_mob_ranking,
             commands::market_item_history,
@@ -788,6 +789,10 @@ mod tests {
         assert!(
             csp.contains("https://entropiaorme.com"),
             "the external news origin must survive the loopback strip: {csp}"
+        );
+        assert!(
+            csp.contains("https://market-data.entropiaorme.com"),
+            "the market-data origin must stay pinned in connect-src: {csp}"
         );
         assert!(csp.contains("ipc:"), "the IPC scheme must remain: {csp}");
         assert!(

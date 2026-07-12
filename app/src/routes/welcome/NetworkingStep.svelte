@@ -1,21 +1,29 @@
 <script lang="ts">
-	// The networking and privacy onboarding panel. Both features are on by
-	// default; the user opts out here. The promise is about user data (which
-	// never leaves the machine), worded so it stays true even though the app
-	// makes two narrow outbound calls (the news and update checks) that send
-	// nothing about the user.
-	let { news = $bindable(true), autoUpdate = $bindable(true) } = $props<{
+	// The networking and privacy onboarding panel. The three features here
+	// are download-only and on by default; the user opts out here. The
+	// promise is worded to stay exactly true: none of these send anything
+	// about the user, and the one feature that does send data (contributing
+	// market observations) is a separate, default-off opt-in in Settings
+	// that never appears pre-enabled anywhere.
+	let {
+		news = $bindable(true),
+		autoUpdate = $bindable(true),
+		marketData = $bindable(true),
+	} = $props<{
 		news?: boolean;
 		autoUpdate?: boolean;
+		marketData?: boolean;
 	}>();
 </script>
 
 <div class="block">
 	<header class="step-header">
 		<span class="eyebrow">Privacy &amp; networking</span>
-		<h2 class="step-title">EntropiaOrme works offline, and your data is never shared.</h2>
+		<h2 class="step-title">
+			EntropiaOrme works offline; nothing is sent anywhere unless you choose it.
+		</h2>
 	</header>
-	<p class="body">The following are optional online features:</p>
+	<p class="body">The following are optional, download-only online features:</p>
 	<label class="toggle">
 		<input type="checkbox" bind:checked={news} />
 		<span class="toggle-copy">
@@ -30,7 +38,17 @@
 			<span class="toggle-sub">Check for new updates and install them with your permission.</span>
 		</span>
 	</label>
-	<span class="footnote">Change either of these any time from Settings.</span>
+	<label class="toggle">
+		<input type="checkbox" bind:checked={marketData} />
+		<span class="toggle-copy">
+			<span class="toggle-title">Market data</span>
+			<span class="toggle-sub">
+				Fetch the shared market snapshot from market-data.entropiaorme.com. Download-only;
+				contributing your own observations is a separate opt-in in Settings.
+			</span>
+		</span>
+	</label>
+	<span class="footnote">Change any of these at any time from Settings.</span>
 </div>
 
 <style>
