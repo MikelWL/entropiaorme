@@ -39,12 +39,18 @@ function wireSnapshot(overrides: Record<string, unknown> = {}): Record<string, u
 	};
 }
 
-function response(status: number, body: unknown, etag: string | null = '"abc"'): Response {
+function response(
+	status: number,
+	body: unknown,
+	etag: string | null = '"abc"',
+	rawText?: string,
+): Response {
 	return {
 		status,
 		ok: status >= 200 && status < 300,
 		headers: { get: (name: string) => (name.toLowerCase() === 'etag' ? etag : null) },
 		json: async () => body,
+		text: async () => rawText ?? JSON.stringify(body),
 	} as unknown as Response;
 }
 
@@ -106,6 +112,25 @@ describe('fetchMarketSnapshot', () => {
 		const [, init] = httpsFetchMock.mock.calls[0];
 		expect(init?.headers?.['If-None-Match']).toBe('"abc"');
 		expect(marketSnapshotCache.current?.generatedAt).toBe(cached.generatedAt);
+	});
+
+	it('rejects an oversized response body', async () => {
+		marketDataOptIn.current = true;
+		httpsFetchMock.mockResolvedValue(response(200, null, '"abc"', 'x'.repeat(4_000_001)));
+		const result = await fetchMarketSnapshot();
+		expect(result).toEqual({ ok: false, reason: 'snapshot rejected: response too large' });
+		expect(marketSnapshotCache.current).toBeNull();
+	});
+
+	it('rejects a snapshot with an absurd item count', async () => {
+		marketDataOptIn.current = true;
+		const item = { itemName: 'x', tier: 0, observedAt: '2026-07-12T11:00:00Z', readings };
+		httpsFetchMock.mockResolvedValue(
+			response(200, wireSnapshot({ items: Array(10_001).fill(item) })),
+		);
+		const result = await fetchMarketSnapshot();
+		expect(result).toEqual({ ok: false, reason: 'snapshot rejected: too many items' });
+		expect(marketSnapshotCache.current).toBeNull();
 	});
 
 	it('rejects a payload that fails the snapshot guard', async () => {

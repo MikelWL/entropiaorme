@@ -22,6 +22,12 @@ const SUBMISSIONS_URL = `${MARKET_DATA_BASE}/v1/submissions`;
 
 const HORIZONS = ['day', 'week', 'month', 'year', 'decade'] as const;
 
+// Defence-in-depth bounds on the fetched snapshot: the origin is
+// first-party and pinned, but a compromised or regressed service must
+// not be able to exhaust client memory or bloat the preferences store.
+const MAX_SNAPSHOT_BYTES = 4_000_000;
+const MAX_SNAPSHOT_ITEMS = 10_000;
+
 function isReading(value: unknown): value is SnapshotReading {
 	if (!value || typeof value !== 'object') return false;
 	const r = value as Partial<SnapshotReading>;
@@ -79,9 +85,21 @@ export async function fetchMarketSnapshot(): Promise<RefreshResult> {
 			await persistMarketSnapshotCache({ ...cached, fetchedAt: new Date().toISOString() });
 			return { ok: true, changed: false };
 		}
-		const raw: unknown = await res.json();
+		const text = await res.text();
+		if (text.length > MAX_SNAPSHOT_BYTES) {
+			return { ok: false, reason: 'snapshot rejected: response too large' };
+		}
+		let raw: unknown;
+		try {
+			raw = JSON.parse(text);
+		} catch {
+			return { ok: false, reason: 'snapshot rejected: not JSON' };
+		}
 		if (!isSnapshot(raw)) {
 			return { ok: false, reason: 'snapshot schema rejected' };
+		}
+		if (raw.items.length > MAX_SNAPSHOT_ITEMS) {
+			return { ok: false, reason: 'snapshot rejected: too many items' };
 		}
 		await persistMarketSnapshotCache({
 			generatedAt: raw.generatedAt,
