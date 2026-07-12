@@ -128,5 +128,9 @@ describe('createImportModel', () => {
 		resolveFirst(preview());
 		await first;
 		expect(model.preview).toBeNull();
+		// The stale response must not leave the model wedged: the flag
+		// clears and a new preview is immediately possible.
+		expect(model.previewing).toBe(false);
+		expect(model.canPreview).toBe(true);
 	});
 });

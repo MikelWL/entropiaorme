@@ -76,6 +76,17 @@ describe('initMarketData', () => {
 		expect(marketSnapshotCache.current?.etag).toBe('"abc"');
 	});
 
+	it('discards a cache whose items carry an earlier nested shape', async () => {
+		primePreferences({
+			[MARKET_DATA_PREFERENCE_KEYS.snapshotCache]: {
+				...makeCache(),
+				items: [{ itemName: 'x', tier: 0, observedAt: 't', readings: { day: {} } }],
+			},
+		});
+		await initMarketData();
+		expect(marketSnapshotCache.current).toBeNull();
+	});
+
 	it('discards a cache written under an earlier shape', async () => {
 		primePreferences({
 			[MARKET_DATA_PREFERENCE_KEYS.snapshotCache]: { some: 'older-shape' },

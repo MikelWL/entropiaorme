@@ -11,10 +11,10 @@
 	import { theme, initTheme } from '$lib/theme.svelte';
 	import { initStatsCustomisation } from '$lib/statsCustomisation.svelte';
 	import { initActivityArchive } from '$lib/activityArchive.svelte';
-	import { initNews, newsOptIn, newsHasUnread } from '$lib/news.svelte';
+	import { initNews, newsOptIn, newsHasUnread, NEWS_PREFERENCE_KEYS } from '$lib/news.svelte';
 	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater.svelte';
 	import { maybeRefreshOnMount } from '$lib/newsFetch';
-	import { initMarketData } from '$lib/marketData.svelte';
+	import { initMarketData, MARKET_DATA_PREFERENCE_KEYS } from '$lib/marketData.svelte';
 	import { maybeRefreshMarketSnapshotOnMount } from '$lib/marketDataFetch';
 	import { getPreference } from '$lib/preferences';
 	import { startEventRelay } from '$lib/realtime/eventRelay';
@@ -74,8 +74,8 @@
 			} else if (!(await isTosAccepted())) {
 				await goto('/welcome/terms', { replaceState: true });
 			} else if (
-				!(await getPreference<boolean>('news_opt_in_seen', false)) ||
-				!(await getPreference<boolean>('market_data_opt_in_seen', false))
+				!(await getPreference<boolean>(NEWS_PREFERENCE_KEYS.optInSeen, false)) ||
+				!(await getPreference<boolean>(MARKET_DATA_PREFERENCE_KEYS.optInSeen, false))
 			) {
 				// The networking-consent reprompt: shown until every online
 				// feature's choice has been seen, so features added after a

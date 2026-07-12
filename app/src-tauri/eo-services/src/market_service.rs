@@ -9,8 +9,10 @@
 //!
 //! Everything here is the INFORMATIONAL market layer: estimated markup
 //! never joins the ledger, the analytics aggregates, or any realised
-//! P&L figure. This service touches only the `market_*` tables and
-//! deliberately has no view into the accounting ones.
+//! P&L figure. Writes stay on the `market_*` tables; the one sanctioned
+//! read of the accounting tables is `mob_ranking`'s loot-composition
+//! join, the one-way direction of the market boundary, and nothing
+//! flows back.
 
 use std::sync::Arc;
 

@@ -36,7 +36,11 @@ export function createImportModel() {
 		preview = null;
 		committed = null;
 		error = null;
+		// Invalidate any in-flight preview AND clear its flag here: the
+		// stale request's finally block deliberately no-ops once the
+		// epoch moved, so this is the only place left to reset it.
 		previewEpoch++;
+		previewing = false;
 	}
 
 	async function runPreview() {

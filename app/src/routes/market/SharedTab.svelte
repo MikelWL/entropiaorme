@@ -16,10 +16,10 @@
 	const nowEpoch = Date.now() / 1000;
 
 	const columns = [
-		{ key: 'itemName', label: 'Item', sortable: true },
-		{ key: 'markupPct', label: 'Markup', align: 'right' as const, sortable: true },
-		{ key: 'salesPed', label: 'Sales volume', align: 'right' as const, sortable: true },
-		{ key: 'observedAt', label: 'Observed', align: 'right' as const, sortable: true }
+		{ key: 'itemName', label: 'Item' },
+		{ key: 'markupPct', label: 'Markup', align: 'right' as const },
+		{ key: 'salesPed', label: 'Sales volume', align: 'right' as const },
+		{ key: 'observedAt', label: 'Observed', align: 'right' as const }
 	];
 </script>
 

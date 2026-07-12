@@ -5,14 +5,13 @@
 
 import type { MarketContributionBatch } from './api/commands.gen';
 import {
+	isSnapshotItem,
 	marketContributionOptIn,
 	marketContributorToken,
 	marketDataOptIn,
 	marketSnapshotCache,
 	persistMarketSnapshotCache,
 	type SnapshotItem,
-	type SnapshotReading,
-	type SnapshotReadings,
 } from './marketData.svelte';
 import { httpsFetch } from './outboundHttp';
 
@@ -20,34 +19,41 @@ const MARKET_DATA_BASE = 'https://market-data.entropiaorme.com';
 const SNAPSHOT_URL = `${MARKET_DATA_BASE}/v1/latest.json`;
 const SUBMISSIONS_URL = `${MARKET_DATA_BASE}/v1/submissions`;
 
-const HORIZONS = ['day', 'week', 'month', 'year', 'decade'] as const;
-
 // Defence-in-depth bounds on the fetched snapshot: the origin is
 // first-party and pinned, but a compromised or regressed service must
 // not be able to exhaust client memory or bloat the preferences store.
 const MAX_SNAPSHOT_BYTES = 4_000_000;
 const MAX_SNAPSHOT_ITEMS = 10_000;
 
-function isReading(value: unknown): value is SnapshotReading {
-	if (!value || typeof value !== 'object') return false;
-	const r = value as Partial<SnapshotReading>;
-	if (r.markupPct !== null && typeof r.markupPct !== 'number') return false;
-	return typeof r.salesPed === 'number';
-}
-
-function isReadings(value: unknown): value is SnapshotReadings {
-	if (!value || typeof value !== 'object') return false;
-	const r = value as Record<string, unknown>;
-	return HORIZONS.every((horizon) => isReading(r[horizon]));
-}
-
-function isItem(value: unknown): value is SnapshotItem {
-	if (!value || typeof value !== 'object') return false;
-	const i = value as Partial<SnapshotItem>;
-	if (typeof i.itemName !== 'string' || !i.itemName) return false;
-	if (typeof i.tier !== 'number') return false;
-	if (typeof i.observedAt !== 'string') return false;
-	return isReadings(i.readings);
+/** Read the body while counting BYTES, abandoning the stream the moment
+ * it exceeds the cap, so an oversized response is never fully buffered.
+ * Falls back to text() (with a post-hoc length check) where the body
+ * stream is unavailable. Returns null when the cap is exceeded. */
+async function readBoundedBody(res: Response, maxBytes: number): Promise<string | null> {
+	const reader = res.body?.getReader?.();
+	if (!reader) {
+		const text = await res.text();
+		return text.length > maxBytes ? null : text;
+	}
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		total += value.byteLength;
+		if (total > maxBytes) {
+			await reader.cancel();
+			return null;
+		}
+		chunks.push(value);
+	}
+	const joined = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		joined.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(joined);
 }
 
 type WireSnapshot = {
@@ -63,7 +69,7 @@ function isSnapshot(value: unknown): value is WireSnapshot {
 	if (s.schemaVersion !== 1) return false;
 	if (typeof s.generatedAt !== 'string') return false;
 	if (s.contributorCount !== undefined && typeof s.contributorCount !== 'number') return false;
-	return Array.isArray(s.items) && s.items.every(isItem);
+	return Array.isArray(s.items) && s.items.every(isSnapshotItem);
 }
 
 export type RefreshResult = { ok: true; changed: boolean } | { ok: false; reason: string };
@@ -85,8 +91,8 @@ export async function fetchMarketSnapshot(): Promise<RefreshResult> {
 			await persistMarketSnapshotCache({ ...cached, fetchedAt: new Date().toISOString() });
 			return { ok: true, changed: false };
 		}
-		const text = await res.text();
-		if (text.length > MAX_SNAPSHOT_BYTES) {
+		const text = await readBoundedBody(res, MAX_SNAPSHOT_BYTES);
+		if (text === null) {
 			return { ok: false, reason: 'snapshot rejected: response too large' };
 		}
 		let raw: unknown;

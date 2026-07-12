@@ -44,6 +44,30 @@ export type MarketSnapshotCache = {
 	etag: string | null;
 };
 
+const HORIZONS = ['day', 'week', 'month', 'year', 'decade'] as const;
+
+export function isSnapshotReading(value: unknown): value is SnapshotReading {
+	if (!value || typeof value !== 'object') return false;
+	const r = value as Partial<SnapshotReading>;
+	if (r.markupPct !== null && typeof r.markupPct !== 'number') return false;
+	return typeof r.salesPed === 'number';
+}
+
+export function isSnapshotReadings(value: unknown): value is SnapshotReadings {
+	if (!value || typeof value !== 'object') return false;
+	const r = value as Record<string, unknown>;
+	return HORIZONS.every((horizon) => isSnapshotReading(r[horizon]));
+}
+
+export function isSnapshotItem(value: unknown): value is SnapshotItem {
+	if (!value || typeof value !== 'object') return false;
+	const i = value as Partial<SnapshotItem>;
+	if (typeof i.itemName !== 'string' || !i.itemName) return false;
+	if (typeof i.tier !== 'number') return false;
+	if (typeof i.observedAt !== 'string') return false;
+	return isSnapshotReadings(i.readings);
+}
+
 const KEY_FETCH_OPT_IN = 'market_data_opt_in';
 const KEY_OPT_IN_SEEN = 'market_data_opt_in_seen';
 const KEY_CONTRIBUTE_OPT_IN = 'market_contribution_opt_in';
@@ -112,7 +136,10 @@ function isCache(value: unknown): value is MarketSnapshotCache {
 	if (typeof c.contributorCount !== 'number') return false;
 	if (typeof c.fetchedAt !== 'string') return false;
 	if (c.etag !== null && typeof c.etag !== 'string') return false;
-	return Array.isArray(c.items);
+	// Deep-validate the items too: a persisted cache crossing an app
+	// version is external input, and a shape drift below the top level
+	// would otherwise throw inside the derived table recomputation.
+	return Array.isArray(c.items) && c.items.every(isSnapshotItem);
 }
 
 export async function initMarketData(): Promise<void> {
