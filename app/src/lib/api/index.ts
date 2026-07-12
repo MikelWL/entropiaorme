@@ -21,10 +21,24 @@ export type {
 	AnalyticsActivity as ActivityData,
 	ApiErrorKind,
 	ManualMobSuggestion,
+	MarketBreakEven,
+	MarketBreakEvenCell,
+	MarketCommitResult,
+	MarketHistoryPoint,
+	MarketHorizon,
+	MarketLooterLevel,
+	MarketMobRankingRow,
+	MarketOverviewRow,
+	MarketPastePreview,
+	MarketPastePreviewRow,
+	MarketReading,
+	MarketSkippedLine,
+	MarketWeaponBreakEven,
 	SessionQuestLinkSuggestion,
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';
+export * from './market';
 export * from './quests';
 export * from './scan';
 export * from './settings';

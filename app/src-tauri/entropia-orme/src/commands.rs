@@ -29,6 +29,10 @@ use eo_api::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildR
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use eo_api::market::{
+    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
+    MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+};
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
 };
@@ -511,6 +515,56 @@ pub async fn inventory_sell(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn market_paste_preview(
+    app: tauri::AppHandle,
+    text: String,
+) -> Result<MarketPastePreview, ApiError> {
+    facade(&app)?.market_paste_preview(text).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_paste_commit(
+    app: tauri::AppHandle,
+    text: String,
+) -> Result<MarketCommitResult, ApiError> {
+    facade(&app)?.market_paste_commit(text).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_overview(app: tauri::AppHandle) -> Result<Vec<MarketOverviewRow>, ApiError> {
+    facade(&app)?.market_overview().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_contribution_batch(
+    app: tauri::AppHandle,
+) -> Result<eo_api::Nullable<MarketContributionBatch>, ApiError> {
+    facade(&app)?.market_contribution_batch().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_break_even(app: tauri::AppHandle) -> Result<MarketBreakEven, ApiError> {
+    facade(&app)?.market_break_even().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_mob_ranking(
+    app: tauri::AppHandle,
+    horizon: MarketHorizon,
+) -> Result<Vec<MarketMobRankingRow>, ApiError> {
+    facade(&app)?.market_mob_ranking(horizon).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_item_history(
+    app: tauri::AppHandle,
+    item_name: String,
+    horizon: MarketHorizon,
+) -> Result<Vec<MarketHistoryPoint>, ApiError> {
+    facade(&app)?.market_item_history(item_name, horizon).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn scan_status(app: tauri::AppHandle) -> Result<ScanStatus, ApiError> {
     facade(&app)?.scan_status()
 }
@@ -915,6 +969,13 @@ mod tests {
         "inventory_update",
         "inventory_delete",
         "inventory_sell",
+        "market_paste_preview",
+        "market_paste_commit",
+        "market_overview",
+        "market_contribution_batch",
+        "market_break_even",
+        "market_mob_ranking",
+        "market_item_history",
         "scan_status",
         "scan_start",
         "scan_capture",

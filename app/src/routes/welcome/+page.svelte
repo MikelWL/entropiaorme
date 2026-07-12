@@ -8,7 +8,12 @@
 	import { theme, setTheme, type Theme } from '$lib/theme.svelte';
 	import { markNewsOptInSeen, setNewsOptIn } from '$lib/news.svelte';
 	import { setAutoUpdateEnabled } from '$lib/updater.svelte';
+	import {
+		markMarketDataOptInSeen,
+		setMarketDataOptIn,
+	} from '$lib/marketData.svelte';
 	import { refreshNews } from '$lib/newsFetch';
+	import { fetchMarketSnapshot } from '$lib/marketDataFetch';
 	import NetworkingStep from './NetworkingStep.svelte';
 	import TermsStep from './TermsStep.svelte';
 	import { externalLinks } from '$lib/utils/openExternal';
@@ -19,6 +24,7 @@
 	// opt out on the networking step, not in.
 	let newsOptedIn = $state(true);
 	let autoUpdateOptedIn = $state(true);
+	let marketDataOptedIn = $state(true);
 	let exiting = $state(false);
 	const totalSteps = 6;
 
@@ -41,10 +47,15 @@
 		await markNewsOptInSeen();
 		await setNewsOptIn(newsOptedIn);
 		await setAutoUpdateEnabled(autoUpdateOptedIn);
+		await markMarketDataOptInSeen();
+		await setMarketDataOptIn(marketDataOptedIn);
 		await setAcceptedTosVersion(CURRENT_TOS_VERSION);
 		await setOnboardingComplete(true);
 		if (newsOptedIn) {
 			void refreshNews();
+		}
+		if (marketDataOptedIn) {
+			void fetchMarketSnapshot();
 		}
 		if (typeof sessionStorage !== 'undefined') {
 			sessionStorage.setItem('welcome_just_finished', '1');
@@ -269,7 +280,11 @@
 						</a>
 					</div>
 				{:else if step === 5}
-					<NetworkingStep bind:news={newsOptedIn} bind:autoUpdate={autoUpdateOptedIn} />
+					<NetworkingStep
+						bind:news={newsOptedIn}
+						bind:autoUpdate={autoUpdateOptedIn}
+						bind:marketData={marketDataOptedIn}
+					/>
 				{:else if step === 6}
 					<TermsStep bind:accepted={tosAccepted} />
 				{/if}

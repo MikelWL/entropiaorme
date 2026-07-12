@@ -621,6 +621,170 @@ export interface ManualMobSuggestion {
 }
 
 /**
+ * The break-even readout: the player's looter professions and every
+ * library weapon's modelled break-even markup against each of them.
+ */
+export interface MarketBreakEven {
+	looters: MarketLooterLevel[];
+	weapons: MarketWeaponBreakEven[];
+}
+
+/**
+ * One (weapon, looter) break-even cell: the modelled TT-return rate
+ * and the overall loot markup that loadout needs to break even. Both
+ * figures are MODELLED ESTIMATES (community returns model, roughly a
+ * one-percentage-point error bar), never measured rates.
+ */
+export interface MarketBreakEvenCell {
+	looterName: string;
+	ttReturnPct: number;
+	breakEvenMarkupPct: number;
+}
+
+/**
+ * A committed paste: the submission it created.
+ */
+export interface MarketCommitResult {
+	submissionId: number;
+	itemCount: number;
+	skippedCount: number;
+	/** Epoch seconds. */
+	observedAt: number;
+}
+
+/**
+ * The most recent accepted paste as a contributable batch: exactly
+ * what an opted-in contributor shares, nothing more. The frontend
+ * owns the send, strictly behind the contribution opt-in.
+ */
+export interface MarketContributionBatch {
+	/** Epoch seconds of the submission. */
+	observedAt: number;
+	items: MarketContributionItem[];
+}
+
+/**
+ * One item of a contributable batch: the pasted readings verbatim,
+ * by horizon name.
+ */
+export interface MarketContributionItem {
+	itemName: string;
+	tier: number;
+	day: MarketReading;
+	week: MarketReading;
+	month: MarketReading;
+	year: MarketReading;
+	decade: MarketReading;
+}
+
+/**
+ * One point of an item's per-horizon history, oldest first.
+ */
+export interface MarketHistoryPoint {
+	/** Epoch seconds. */
+	observedAt: number;
+	markupPct: number | null;
+	salesPed: number;
+}
+
+/**
+ * One of the export's five aggregation horizons.
+ */
+export type MarketHorizon = 'day' | 'week' | 'month' | 'year' | 'decade';
+
+/**
+ * One looter profession and its believed-current level.
+ */
+export interface MarketLooterLevel {
+	name: string;
+	level: number;
+}
+
+/**
+ * One species' estimated-markup row: recorded loot composition
+ * TT-weighted by the latest markup observations on one horizon.
+ * Coverage keeps a thin sample honest: the estimate weights only the
+ * covered TT, and the row says how much that is.
+ */
+export interface MarketMobRankingRow {
+	mobSpecies: string;
+	lootTt: number;
+	coveredTt: number;
+	itemCount: number;
+	coveredItemCount: number;
+	estMarkupPct: number | null;
+}
+
+/**
+ * One overview row: an item's latest readings (from the most recent
+ * submission that carried it) and when they were observed.
+ */
+export interface MarketOverviewRow {
+	itemName: string;
+	tier: number;
+	/** Epoch seconds of the submission the readings came from (the staleness signal). */
+	observedAt: number;
+	day: MarketReading;
+	week: MarketReading;
+	month: MarketReading;
+	year: MarketReading;
+	decade: MarketReading;
+}
+
+/**
+ * The parse preview: what a commit of the same text would store, and
+ * what it would ignore.
+ */
+export interface MarketPastePreview {
+	rows: MarketPastePreviewRow[];
+	skipped: MarketSkippedLine[];
+}
+
+/**
+ * One parsed item row: the five horizon readings by name.
+ */
+export interface MarketPastePreviewRow {
+	itemName: string;
+	tier: number;
+	day: MarketReading;
+	week: MarketReading;
+	month: MarketReading;
+	year: MarketReading;
+	decade: MarketReading;
+}
+
+/**
+ * One horizon's reading: the markup percentage (null where the game
+ * reported N/A, meaning no sales in that horizon) and the sales
+ * volume in PED.
+ */
+export interface MarketReading {
+	markupPct: number | null;
+	salesPed: number;
+}
+
+/**
+ * One line the parser could not use, for the review flow.
+ */
+export interface MarketSkippedLine {
+	/** 1-based line number within the paste. */
+	lineNumber: number;
+	content: string;
+	reason: string;
+}
+
+/**
+ * One library weapon's break-even row: its catalogue efficiency (null
+ * when the bundled catalogue does not carry the weapon) and the cells
+ * across the player's looter professions.
+ */
+export interface MarketWeaponBreakEven {
+	name: string;
+	efficiencyPct: number | null;
+	cells: MarketBreakEvenCell[];
+}
+
+/**
  * A point-in-time read of the process telemetry registry: event
  * throughput, the OCR / database latency histograms, and the
  * resource-drift gauges. Counts and durations only; no PII. Mirrors
@@ -1782,6 +1946,34 @@ export async function inventoryDelete(itemId: string): Promise<void> {
 
 export async function inventorySell(itemId: string, sale: InventorySellInput): Promise<InventorySellResult> {
 	return invokeCommand('inventory_sell', { item_id: itemId, sale });
+}
+
+export async function marketPastePreview(text: string): Promise<MarketPastePreview> {
+	return invokeCommand('market_paste_preview', { text });
+}
+
+export async function marketPasteCommit(text: string): Promise<MarketCommitResult> {
+	return invokeCommand('market_paste_commit', { text });
+}
+
+export async function marketOverview(): Promise<MarketOverviewRow[]> {
+	return invokeCommand('market_overview', {});
+}
+
+export async function marketContributionBatch(): Promise<MarketContributionBatch | null> {
+	return invokeCommand('market_contribution_batch', {});
+}
+
+export async function marketBreakEven(): Promise<MarketBreakEven> {
+	return invokeCommand('market_break_even', {});
+}
+
+export async function marketMobRanking(horizon: MarketHorizon): Promise<MarketMobRankingRow[]> {
+	return invokeCommand('market_mob_ranking', { horizon });
+}
+
+export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {
+	return invokeCommand('market_item_history', { item_name: itemName, horizon });
 }
 
 export async function scanStatus(): Promise<ScanStatus> {

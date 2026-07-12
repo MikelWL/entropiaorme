@@ -11,9 +11,11 @@
 	import { theme, initTheme } from '$lib/theme.svelte';
 	import { initStatsCustomisation } from '$lib/statsCustomisation.svelte';
 	import { initActivityArchive } from '$lib/activityArchive.svelte';
-	import { initNews, newsOptIn, newsHasUnread } from '$lib/news.svelte';
+	import { initNews, newsOptIn, newsHasUnread, NEWS_PREFERENCE_KEYS } from '$lib/news.svelte';
 	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater.svelte';
 	import { maybeRefreshOnMount } from '$lib/newsFetch';
+	import { initMarketData, MARKET_DATA_PREFERENCE_KEYS } from '$lib/marketData.svelte';
+	import { maybeRefreshMarketSnapshotOnMount } from '$lib/marketDataFetch';
 	import { getPreference } from '$lib/preferences';
 	import { startEventRelay } from '$lib/realtime/eventRelay';
 	import {
@@ -22,6 +24,7 @@
 		NavCharacter,
 		NavQuests,
 		NavEquipment,
+		NavMarket,
 		NavSettings,
 		NavNews,
 		NavUpdates,
@@ -49,8 +52,10 @@
 			initActivityArchive(),
 			initNews(),
 			initUpdater(),
+			initMarketData(),
 		]);
 		void maybeRefreshOnMount();
+		void maybeRefreshMarketSnapshotOnMount();
 		if (
 			typeof sessionStorage !== 'undefined' &&
 			sessionStorage.getItem('welcome_just_finished') === '1'
@@ -68,7 +73,13 @@
 				await goto('/welcome', { replaceState: true });
 			} else if (!(await isTosAccepted())) {
 				await goto('/welcome/terms', { replaceState: true });
-			} else if (!(await getPreference<boolean>('news_opt_in_seen', false))) {
+			} else if (
+				!(await getPreference<boolean>(NEWS_PREFERENCE_KEYS.optInSeen, false)) ||
+				!(await getPreference<boolean>(MARKET_DATA_PREFERENCE_KEYS.optInSeen, false))
+			) {
+				// The networking-consent reprompt: shown until every online
+				// feature's choice has been seen, so features added after a
+				// user onboarded still get an explicit yes/no.
 				await goto('/welcome/news-opt-in', { replaceState: true });
 			} else {
 				// Fully onboarded and past the networking-consent step: it is now
@@ -86,6 +97,7 @@
 		{ id: '/character', label: 'Character', icon: NavCharacter },
 		{ id: '/quests', label: 'Quests', icon: NavQuests },
 		{ id: '/equipment', label: 'Equipment', icon: NavEquipment },
+		{ id: '/market', label: 'Market', icon: NavMarket },
 	];
 
 	let footerNavItems = $derived([

@@ -31,6 +31,10 @@ use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildRe
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use crate::market::{
+    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
+    MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+};
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
 };
@@ -45,6 +49,7 @@ use crate::tracking::{
     StartResult, StopResult, TagLockResult, TrackingSession, TrackingSnapshot,
 };
 use crate::ApiError;
+use crate::Nullable;
 
 /// One argument of a typed command.
 pub struct ArgSpec {
@@ -540,6 +545,59 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(InventorySellResult))),
+        },
+        CommandSpec {
+            name: "market_paste_preview",
+            args: vec![ArgSpec {
+                name: "text",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(MarketPastePreview))),
+        },
+        CommandSpec {
+            name: "market_paste_commit",
+            args: vec![ArgSpec {
+                name: "text",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(MarketCommitResult))),
+        },
+        CommandSpec {
+            name: "market_overview",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<MarketOverviewRow>))),
+        },
+        CommandSpec {
+            name: "market_contribution_batch",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Nullable<MarketContributionBatch>))),
+        },
+        CommandSpec {
+            name: "market_break_even",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(MarketBreakEven))),
+        },
+        CommandSpec {
+            name: "market_mob_ranking",
+            args: vec![ArgSpec {
+                name: "horizon",
+                schema: schema(schema_for!(MarketHorizon)),
+            }],
+            returns: Some(schema(schema_for!(Vec<MarketMobRankingRow>))),
+        },
+        CommandSpec {
+            name: "market_item_history",
+            args: vec![
+                ArgSpec {
+                    name: "item_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "horizon",
+                    schema: schema(schema_for!(MarketHorizon)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<MarketHistoryPoint>))),
         },
         CommandSpec {
             name: "scan_status",

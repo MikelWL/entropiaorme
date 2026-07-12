@@ -259,6 +259,13 @@ pub fn run() {
             commands::inventory_update,
             commands::inventory_delete,
             commands::inventory_sell,
+            commands::market_paste_preview,
+            commands::market_paste_commit,
+            commands::market_overview,
+            commands::market_contribution_batch,
+            commands::market_break_even,
+            commands::market_mob_ranking,
+            commands::market_item_history,
             commands::scan_status,
             commands::scan_start,
             commands::scan_capture,
@@ -782,6 +789,16 @@ mod tests {
         assert!(
             csp.contains("https://entropiaorme.com"),
             "the external news origin must survive the loopback strip: {csp}"
+        );
+        let connect_src = csp
+            .split(';')
+            .find(|directive| directive.trim_start().starts_with("connect-src "))
+            .expect("connect-src is configured");
+        assert!(
+            connect_src
+                .split_whitespace()
+                .any(|source| source == "https://market-data.entropiaorme.com"),
+            "the market-data origin must stay pinned in connect-src: {csp}"
         );
         assert!(csp.contains("ipc:"), "the IPC scheme must remain: {csp}");
         assert!(
