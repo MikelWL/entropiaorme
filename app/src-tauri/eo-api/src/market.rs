@@ -8,7 +8,12 @@
 //! them by accident.
 
 use eo_services::market_paste::{self, MarketPasteRow};
-use eo_services::market_service::{self, MarketError};
+use eo_services::market_service::{
+    self, break_even_markup_pct, modelled_tt_return_pct, MarketError,
+};
+use serde_json::Value;
+
+use crate::equipment::EquipmentKind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -168,6 +173,46 @@ pub struct MarketHistoryPoint {
     pub sales_ped: f64,
 }
 
+/// One looter profession and its believed-current level.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketLooterLevel {
+    pub name: String,
+    pub level: f64,
+}
+
+/// One (weapon, looter) break-even cell: the modelled TT-return rate
+/// and the overall loot markup that loadout needs to break even. Both
+/// figures are MODELLED ESTIMATES (community returns model, roughly a
+/// one-percentage-point error bar), never measured rates.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketBreakEvenCell {
+    pub looter_name: String,
+    pub tt_return_pct: f64,
+    pub break_even_markup_pct: f64,
+}
+
+/// One library weapon's break-even row: its catalogue efficiency (null
+/// when the bundled catalogue does not carry the weapon) and the cells
+/// across the player's looter professions.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketWeaponBreakEven {
+    pub name: String,
+    pub efficiency_pct: Nullable<f64>,
+    pub cells: Vec<MarketBreakEvenCell>,
+}
+
+/// The break-even readout: the player's looter professions and every
+/// library weapon's modelled break-even markup against each of them.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketBreakEven {
+    pub looters: Vec<MarketLooterLevel>,
+    pub weapons: Vec<MarketWeaponBreakEven>,
+}
+
 // ── Operations ──────────────────────────────────────────────────────
 
 impl Api {
@@ -257,5 +302,68 @@ impl Api {
                 sales_ped: point.sales_ped,
             })
             .collect())
+    }
+
+    /// The break-even markup readout: for every weapon in the equipment
+    /// library, the modelled TT-return rate and required break-even
+    /// markup against each of the player's looter professions.
+    /// Efficiency comes from the bundled game-data catalogue by exact
+    /// name (null, with no cells, when the catalogue lacks the weapon);
+    /// looter levels ride the same believed-current derivation as the
+    /// character professions read.
+    pub async fn market_break_even(&self) -> Result<MarketBreakEven, ApiError> {
+        let looters: Vec<MarketLooterLevel> = self
+            .character_professions()
+            .await?
+            .into_iter()
+            .filter(|profession| profession.name.contains("Looter"))
+            .map(|profession| MarketLooterLevel {
+                name: profession.name,
+                level: profession.level,
+            })
+            .collect();
+
+        let catalogue = self.game_data.get_entities("weapons");
+        let efficiency_of = |name: &str| -> Option<f64> {
+            catalogue
+                .iter()
+                .find(|entry| entry.get("name").and_then(Value::as_str) == Some(name))
+                .and_then(|entry| entry.get("economy"))
+                .and_then(|economy| economy.get("efficiency"))
+                .and_then(Value::as_f64)
+        };
+
+        let weapons = self
+            .equipment_library()
+            .await?
+            .into_iter()
+            .filter(|item| matches!(item.kind, EquipmentKind::Weapon))
+            .map(|item| {
+                let efficiency = efficiency_of(&item.name);
+                let cells = efficiency
+                    .map(|efficiency_pct| {
+                        looters
+                            .iter()
+                            .map(|looter| {
+                                let tt_return_pct =
+                                    modelled_tt_return_pct(efficiency_pct, looter.level);
+                                MarketBreakEvenCell {
+                                    looter_name: looter.name.clone(),
+                                    tt_return_pct,
+                                    break_even_markup_pct: break_even_markup_pct(tt_return_pct),
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                MarketWeaponBreakEven {
+                    name: item.name,
+                    efficiency_pct: efficiency.into(),
+                    cells,
+                }
+            })
+            .collect();
+
+        Ok(MarketBreakEven { looters, weapons })
     }
 }

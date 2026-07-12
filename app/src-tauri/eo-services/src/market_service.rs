@@ -69,6 +69,22 @@ pub struct HistoryPoint {
     pub sales_ped: f64,
 }
 
+/// The modelled TT-return rate (percent) of a hunting loadout: the
+/// community returns model, roughly linear in weapon efficiency and
+/// looter profession level (86% baseline, ~7pp each across 0-100).
+/// A MODELLED ESTIMATE with an error bar of about one percentage point
+/// against observed loot-only returns; never present it as a measured
+/// figure, and never let it near a realised rate.
+pub fn modelled_tt_return_pct(efficiency_pct: f64, looter_level: f64) -> f64 {
+    86.0 + 7.0 * (efficiency_pct / 100.0) + 7.0 * (looter_level / 100.0)
+}
+
+/// The overall loot markup (percent premium over TT) an activity needs
+/// to break even at the given modelled TT-return rate: mu* = 1/R - 1.
+pub fn break_even_markup_pct(tt_return_pct: f64) -> f64 {
+    (100.0 / tt_return_pct - 1.0) * 100.0
+}
+
 impl MarketService {
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self { db, clock }
@@ -218,6 +234,26 @@ impl MarketService {
 mod tests {
     use super::*;
     use crate::clock::MockClock;
+
+    #[test]
+    fn the_returns_model_matches_its_calibration_points() {
+        // The calibration sanity check: ~55%-efficiency weapons at looter
+        // ~37 predicted ~92.4%, observed loot-only returns within ~1pp.
+        let r = modelled_tt_return_pct(55.0, 37.0);
+        assert!((r - 92.44).abs() < 0.01, "got {r}");
+        // The model endpoints: 86 baseline, 100 at both maxima.
+        assert_eq!(modelled_tt_return_pct(0.0, 0.0), 86.0);
+        assert_eq!(modelled_tt_return_pct(100.0, 100.0), 100.0);
+    }
+
+    #[test]
+    fn break_even_markup_inverts_the_return_rate() {
+        // mu* = 1/R - 1: a 92.44% modelled return needs ~8.18% markup.
+        let mu = break_even_markup_pct(92.44);
+        assert!((mu - 8.178).abs() < 0.01, "got {mu}");
+        // A 100% return breaks even with no markup at all.
+        assert_eq!(break_even_markup_pct(100.0), 0.0);
+    }
 
     const SAMPLE: &str = "Carabok Hide\t0\t106.880%\t451.900 PED\t107.160%\t531.900 PED\t\
 106.020%\t979.040 PED\t108.280%\t13.500K PED\t158.920%\t35.300K PED\n\
