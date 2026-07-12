@@ -76,7 +76,12 @@ pub struct HistoryPoint {
 /// against observed loot-only returns; never present it as a measured
 /// figure, and never let it near a realised rate.
 pub fn modelled_tt_return_pct(efficiency_pct: f64, looter_level: f64) -> f64 {
-    86.0 + 7.0 * (efficiency_pct / 100.0) + 7.0 * (looter_level / 100.0)
+    // The model is calibrated across 0-100 on both axes; outside that
+    // range the contributions saturate (a looter past level 100 gains
+    // no further modelled return) rather than extrapolating.
+    let efficiency = efficiency_pct.clamp(0.0, 100.0);
+    let looter = looter_level.clamp(0.0, 100.0);
+    86.0 + 7.0 * (efficiency / 100.0) + 7.0 * (looter / 100.0)
 }
 
 /// The overall loot markup (percent premium over TT) an activity needs
@@ -244,6 +249,9 @@ mod tests {
         // The model endpoints: 86 baseline, 100 at both maxima.
         assert_eq!(modelled_tt_return_pct(0.0, 0.0), 86.0);
         assert_eq!(modelled_tt_return_pct(100.0, 100.0), 100.0);
+        // Outside the calibrated range the contributions saturate.
+        assert_eq!(modelled_tt_return_pct(120.0, 130.0), 100.0);
+        assert_eq!(modelled_tt_return_pct(-5.0, -5.0), 86.0);
     }
 
     #[test]
