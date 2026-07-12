@@ -4,7 +4,8 @@
     "name": "Zorra's Blessed Laser Amp (L)",
     "economy": {
       "decay": 0.15,
-      "ammo_burn": 1707
+      "ammo_burn": 1707,
+      "efficiency": 59
     },
     "damage": {
       "impact": 0,
@@ -23,7 +24,8 @@
     "name": "Block Rocker BLP Mk I (L)",
     "economy": {
       "decay": 3.297,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 62.4
     },
     "damage": {
       "impact": 1,
@@ -42,7 +44,8 @@
     "name": "Block Rocker BLP Mk II (L)",
     "economy": {
       "decay": 6.865,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 61.2
     },
     "damage": {
       "impact": 2,
@@ -61,7 +64,8 @@
     "name": "Bust-A-BLP Mk I (L)",
     "economy": {
       "decay": null,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": null
     },
     "damage": {
       "impact": null,
@@ -80,7 +84,8 @@
     "name": "Bust-A-BLP Mk II (L)",
     "economy": {
       "decay": null,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 68.2
     },
     "damage": {
       "impact": 2,
@@ -99,7 +104,8 @@
     "name": "Chahen BLP V1 (L)",
     "economy": {
       "decay": 0.66,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": null
     },
     "damage": {
       "impact": 4,
@@ -118,7 +124,8 @@
     "name": "Chahen BLP V2 (L)",
     "economy": {
       "decay": 1.25,
-      "ammo_burn": 68
+      "ammo_burn": 68,
+      "efficiency": 57.1
     },
     "damage": {
       "impact": 8,
@@ -137,7 +144,8 @@
     "name": "Chahen BLP V3 (L)",
     "economy": {
       "decay": null,
-      "ammo_burn": 110
+      "ammo_burn": 110,
+      "efficiency": 56.7
     },
     "damage": {
       "impact": 12,
@@ -156,7 +164,8 @@
     "name": "Fi/Ra/Co Cause",
     "economy": {
       "decay": 4.522,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 49.3
     },
     "damage": {
       "impact": 2,
@@ -175,7 +184,8 @@
     "name": "MC-Matrix Mk. 2, TWEN Edition",
     "economy": {
       "decay": 0.03,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 77
     },
     "damage": {
       "impact": null,
@@ -194,7 +204,8 @@
     "name": "MC-Matrix Mk. 3, TWEN Edition",
     "economy": {
       "decay": 0.033,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 80
     },
     "damage": {
       "impact": null,
@@ -213,7 +224,8 @@
     "name": "Rage 20 (L)",
     "economy": {
       "decay": 1.063,
-      "ammo_burn": 415
+      "ammo_burn": 415,
+      "efficiency": 61
     },
     "damage": {
       "impact": 5,
@@ -232,7 +244,8 @@
     "name": "Rage 25 (L)",
     "economy": {
       "decay": 1.255,
-      "ammo_burn": 515
+      "ammo_burn": 515,
+      "efficiency": 60.8
     },
     "damage": {
       "impact": 6,
@@ -251,7 +264,8 @@
     "name": "M-Matrix, TWEN Edition",
     "economy": {
       "decay": 0.025,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 75
     },
     "damage": {
       "impact": null,
@@ -270,7 +284,8 @@
     "name": "Roadie BLP Mk I (L)",
     "economy": {
       "decay": 0.477,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 59.6
     },
     "damage": {
       "impact": null,
@@ -289,7 +304,8 @@
     "name": "Roadie BLP Mk II (L)",
     "economy": {
       "decay": 1.194,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 59.1
     },
     "damage": {
       "impact": null,
@@ -308,7 +324,8 @@
     "name": "Mayhem MC-Matrix Mk.1",
     "economy": {
       "decay": 0.025,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 75
     },
     "damage": {
       "impact": null,
@@ -327,7 +344,8 @@
     "name": "Exceptional Mayhem MC-Matrix Mk.2 (L)",
     "economy": {
       "decay": 0.025,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": 85
     },
     "damage": {
       "impact": null,
@@ -346,7 +364,8 @@
     "name": "Stable Turrelion Amp",
     "economy": {
       "decay": 2.2,
-      "ammo_burn": 2000
+      "ammo_burn": 2000,
+      "efficiency": 82
     },
     "damage": {
       "impact": 0,
@@ -365,7 +384,8 @@
     "name": "ArMatrix EXPA-50 (L)",
     "economy": {
       "decay": 0.5,
-      "ammo_burn": 900
+      "ammo_burn": 900,
+      "efficiency": 90
     },
     "damage": {
       "impact": 25,
@@ -384,7 +404,8 @@
     "name": "ArMatrix EXPA-75 (L)",
     "economy": {
       "decay": 0.75,
-      "ammo_burn": 1350
+      "ammo_burn": 1350,
+      "efficiency": 90
     },
     "damage": {
       "impact": 25,
@@ -403,7 +424,8 @@
     "name": "ArMatrix EXPA-125 (L)",
     "economy": {
       "decay": 1.25,
-      "ammo_burn": 2250
+      "ammo_burn": 2250,
+      "efficiency": 90
     },
     "damage": {
       "impact": 50,
@@ -422,7 +444,8 @@
     "name": "ArMatrix EXPA-100 (L)",
     "economy": {
       "decay": 1,
-      "ammo_burn": 1800
+      "ammo_burn": 1800,
+      "efficiency": 90
     },
     "damage": {
       "impact": 25,
@@ -441,7 +464,8 @@
     "name": "RDI Trauma Amplifier E2 (L)",
     "economy": {
       "decay": 0.25,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 80
     },
     "damage": {
       "impact": 0,
@@ -460,7 +484,8 @@
     "name": "ArMatrix EXPA-200 (L)",
     "economy": {
       "decay": 2,
-      "ammo_burn": 3600
+      "ammo_burn": 3600,
+      "efficiency": 90
     },
     "damage": {
       "impact": 75,
@@ -479,7 +504,8 @@
     "name": "Muzwed Energy V1 (L)",
     "economy": {
       "decay": 0.8,
-      "ammo_burn": 40
+      "ammo_burn": 40,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": null,
@@ -498,7 +524,8 @@
     "name": "Muzwed Energy V2 (L)",
     "economy": {
       "decay": null,
-      "ammo_burn": 110
+      "ammo_burn": 110,
+      "efficiency": 56.7
     },
     "damage": {
       "impact": 0,
@@ -517,7 +544,8 @@
     "name": "Muzwed Energy V3 (L)",
     "economy": {
       "decay": null,
-      "ammo_burn": 166
+      "ammo_burn": 166,
+      "efficiency": 57.1
     },
     "damage": {
       "impact": null,
@@ -536,7 +564,8 @@
     "name": "Omegaton A105 Hypercharged",
     "economy": {
       "decay": 2.47,
-      "ammo_burn": 228
+      "ammo_burn": 228,
+      "efficiency": 72.1
     },
     "damage": {
       "impact": null,
@@ -555,7 +584,8 @@
     "name": "Omegaton A105 Overcharged",
     "economy": {
       "decay": 2.47,
-      "ammo_burn": 175
+      "ammo_burn": 175,
+      "efficiency": 76.9
     },
     "damage": {
       "impact": null,
@@ -574,7 +604,8 @@
     "name": "Omegaton A204 Hypercharged",
     "economy": {
       "decay": 3.315,
-      "ammo_burn": 374
+      "ammo_burn": 374,
+      "efficiency": 78.9
     },
     "damage": {
       "impact": null,
@@ -593,7 +624,8 @@
     "name": "Omegaton A204 Overcharged",
     "economy": {
       "decay": 3.31,
-      "ammo_burn": 242
+      "ammo_burn": 242,
+      "efficiency": 79
     },
     "damage": {
       "impact": null,
@@ -612,7 +644,8 @@
     "name": "Mayhem Trauma Amplifier E-137 (L)",
     "economy": {
       "decay": 25,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 95
     },
     "damage": {
       "impact": 0,
@@ -631,7 +664,8 @@
     "name": "Melee Trauma Amplifier 8",
     "economy": {
       "decay": 8.001,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -650,7 +684,8 @@
     "name": "Mestawy Melee V1 (L)",
     "economy": {
       "decay": null,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -669,7 +704,8 @@
     "name": "Melee Trauma Amplifier 4",
     "economy": {
       "decay": 4.445,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -688,7 +724,8 @@
     "name": "Melee Trauma Amplifier 8, Modified",
     "economy": {
       "decay": 7.766,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -707,7 +744,8 @@
     "name": "Kismet Premium Laser Booster 3 (L)",
     "economy": {
       "decay": 0.4,
-      "ammo_burn": 3800
+      "ammo_burn": 3800,
+      "efficiency": 80
     },
     "damage": {
       "impact": 200,
@@ -726,7 +764,8 @@
     "name": "Kismet Decay Deflector 4 (L)",
     "economy": {
       "decay": 0.5,
-      "ammo_burn": 1000
+      "ammo_burn": 1000,
+      "efficiency": 70
     },
     "damage": {
       "impact": 1,
@@ -745,7 +784,8 @@
     "name": "Kismet Damage Amplifier 4 (L)",
     "economy": {
       "decay": 0.061,
-      "ammo_burn": 1159
+      "ammo_burn": 1159,
+      "efficiency": 70
     },
     "damage": {
       "impact": 50,
@@ -764,7 +804,8 @@
     "name": "Kismet Damage Amplifier 3 (L)",
     "economy": {
       "decay": 0.031,
-      "ammo_burn": 587
+      "ammo_burn": 587,
+      "efficiency": 70
     },
     "damage": {
       "impact": 25,
@@ -783,7 +824,8 @@
     "name": "MC-Matrix Mk. 1, TWEN Edition",
     "economy": {
       "decay": 0.0257,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 75
     },
     "damage": {
       "impact": null,
@@ -802,7 +844,8 @@
     "name": "Bull Tac40 (L)",
     "economy": {
       "decay": 1.093,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 57.5
     },
     "damage": {
       "impact": 4,
@@ -821,7 +864,8 @@
     "name": "Xent Tech Light Amplification Vine (L)",
     "economy": {
       "decay": 1.2,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 5,
@@ -840,7 +884,8 @@
     "name": "Mayhem M-Matrix Alpha (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": null,
@@ -859,7 +904,8 @@
     "name": "Mayhem M-Matrix Beta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": null,
@@ -878,7 +924,8 @@
     "name": "Mayhem M-Matrix Delta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": null,
@@ -897,7 +944,8 @@
     "name": "Mayhem M-Matrix Gamma (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": null,
@@ -916,7 +964,8 @@
     "name": "Kismet Premium Laser Booster 1 (L)",
     "economy": {
       "decay": 0.05,
-      "ammo_burn": 475
+      "ammo_burn": 475,
+      "efficiency": 80
     },
     "damage": {
       "impact": 25,
@@ -935,7 +984,8 @@
     "name": "Kismet Premium Laser Booster 2 (L)",
     "economy": {
       "decay": 0.19,
-      "ammo_burn": 1805
+      "ammo_burn": 1805,
+      "efficiency": 80
     },
     "damage": {
       "impact": 95,
@@ -954,7 +1004,8 @@
     "name": "Omegaton Decay Absorber 3 (L)",
     "economy": {
       "decay": 0.6,
-      "ammo_burn": 85
+      "ammo_burn": 85,
+      "efficiency": 60
     },
     "damage": {
       "impact": 1,
@@ -973,7 +1024,8 @@
     "name": "Kismet Assistance Module 4 (L)",
     "economy": {
       "decay": 0.3,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 70
     },
     "damage": {
       "impact": 1,
@@ -992,7 +1044,8 @@
     "name": "Rage 20",
     "economy": {
       "decay": 1.063,
-      "ammo_burn": 415
+      "ammo_burn": 415,
+      "efficiency": null
     },
     "damage": {
       "impact": 5,
@@ -1011,7 +1064,8 @@
     "name": "ArMatrix EXPA-150 (L)",
     "economy": {
       "decay": 1.5,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 90
     },
     "damage": {
       "impact": 50,
@@ -1030,7 +1084,8 @@
     "name": "ArMatrix B-Amplifier 4P (L)",
     "economy": {
       "decay": 0.064,
-      "ammo_burn": 84
+      "ammo_burn": 84,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1049,7 +1104,8 @@
     "name": "ArMatrix B-Amplifier 6P (L)",
     "economy": {
       "decay": 0.096,
-      "ammo_burn": 126
+      "ammo_burn": 126,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1068,7 +1124,8 @@
     "name": "ArMatrix B-Amplifier 8P (L)",
     "economy": {
       "decay": 0.128,
-      "ammo_burn": 168
+      "ammo_burn": 168,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1087,7 +1144,8 @@
     "name": "ArMatrix B-Amplifier 10P (L)",
     "economy": {
       "decay": 0.16,
-      "ammo_burn": 210
+      "ammo_burn": 210,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1106,7 +1164,8 @@
     "name": "ArMatrix B-Amplifier 13P (L)",
     "economy": {
       "decay": 0.208,
-      "ammo_burn": 273
+      "ammo_burn": 273,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1125,7 +1184,8 @@
     "name": "ArMatrix B-Amplifier 17P (L)",
     "economy": {
       "decay": 0.272,
-      "ammo_burn": 357
+      "ammo_burn": 357,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1144,7 +1204,8 @@
     "name": "ArMatrix B-Amplifier 20P (L)",
     "economy": {
       "decay": 0.32,
-      "ammo_burn": 420
+      "ammo_burn": 420,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1163,7 +1224,8 @@
     "name": "ArMatrix B-Amplifier 23P (L)",
     "economy": {
       "decay": 0.368,
-      "ammo_burn": 483
+      "ammo_burn": 483,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1182,7 +1244,8 @@
     "name": "ArMatrix B-Amplifier 25P (L)",
     "economy": {
       "decay": 0.4,
-      "ammo_burn": 525
+      "ammo_burn": 525,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1201,7 +1264,8 @@
     "name": "ArMatrix B-Amplifier 28P (L)",
     "economy": {
       "decay": 0.448,
-      "ammo_burn": 588
+      "ammo_burn": 588,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1220,7 +1284,8 @@
     "name": "ArMatrix B-Amplifier 33P (L)",
     "economy": {
       "decay": 0.528,
-      "ammo_burn": 693
+      "ammo_burn": 693,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1239,7 +1304,8 @@
     "name": "ArMatrix B-Amplifier 37P (L)",
     "economy": {
       "decay": 0.592,
-      "ammo_burn": 777
+      "ammo_burn": 777,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1258,7 +1324,8 @@
     "name": "ArMatrix B-Amplifier 42P (L)",
     "economy": {
       "decay": 0.672,
-      "ammo_burn": 882
+      "ammo_burn": 882,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1277,7 +1344,8 @@
     "name": "ArMatrix B-Amplifier 45P (L)",
     "economy": {
       "decay": 0.72,
-      "ammo_burn": 945
+      "ammo_burn": 945,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1296,7 +1364,8 @@
     "name": "ArMatrix B-Amplifier 50P (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1315,7 +1384,8 @@
     "name": "ArMatrix B-Amplifier 55P (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1334,7 +1404,8 @@
     "name": "ArMatrix B-Amplifier 60P (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1353,7 +1424,8 @@
     "name": "ArMatrix B-Amplifier 65P (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1372,7 +1444,8 @@
     "name": "ArMatrix B-Amplifier 70P (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1391,7 +1464,8 @@
     "name": "ArMatrix B-Amplifier 75P (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -1410,7 +1484,8 @@
     "name": "Bull Tac10 (L)",
     "economy": {
       "decay": 0.477,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 59.6
     },
     "damage": {
       "impact": 1,
@@ -1429,7 +1504,8 @@
     "name": "Bull Tac20 (L)",
     "economy": {
       "decay": 1.195,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 59.1
     },
     "damage": {
       "impact": 2,
@@ -1448,7 +1524,8 @@
     "name": "Loughlin NanoRep M-Amp 1 (L)",
     "economy": {
       "decay": 0.25,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 50
     },
     "damage": {
       "impact": 0,
@@ -1467,7 +1544,8 @@
     "name": "Bull Tac30 (L)",
     "economy": {
       "decay": 1.139,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 56.9
     },
     "damage": {
       "impact": 4,
@@ -1486,7 +1564,8 @@
     "name": "Mayhem Trauma Amplifier 6",
     "economy": {
       "decay": 22.105,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 79
     },
     "damage": {
       "impact": 0,
@@ -1505,7 +1584,8 @@
     "name": "Bull Tac50 (L)",
     "economy": {
       "decay": 1.311,
-      "ammo_burn": 400
+      "ammo_burn": 400,
+      "efficiency": 57
     },
     "damage": {
       "impact": 5,
@@ -1524,7 +1604,8 @@
     "name": "Bull Tac60 (L)",
     "economy": {
       "decay": 1.779,
-      "ammo_burn": 400
+      "ammo_burn": 400,
+      "efficiency": 57.5
     },
     "damage": {
       "impact": 7,
@@ -1543,7 +1624,8 @@
     "name": "Melee Bimodal Amplifier 2 (L)",
     "economy": {
       "decay": 0.952,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 60.05
     },
     "damage": {
       "impact": 0,
@@ -1562,7 +1644,8 @@
     "name": "Melee Bimodal Amplifier 3 (L)",
     "economy": {
       "decay": 1.428,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 60.05
     },
     "damage": {
       "impact": 0,
@@ -1581,7 +1664,8 @@
     "name": "Bull TacElite (L)",
     "economy": {
       "decay": 3.207,
-      "ammo_burn": 900
+      "ammo_burn": 900,
+      "efficiency": 54.6
     },
     "damage": {
       "impact": 10,
@@ -1600,7 +1684,8 @@
     "name": "CDF BLP Power Amp 1 (L)",
     "economy": {
       "decay": 0.22,
-      "ammo_burn": 409
+      "ammo_burn": 409,
+      "efficiency": 58.7
     },
     "damage": {
       "impact": 8,
@@ -1619,7 +1704,8 @@
     "name": "Melee Durability Amplifier 3 (L)",
     "economy": {
       "decay": 0.25,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 49.91
     },
     "damage": {
       "impact": 0,
@@ -1638,7 +1724,8 @@
     "name": "Melee Durability Amplifier 92 (L)",
     "economy": {
       "decay": 0.99,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 51.9
     },
     "damage": {
       "impact": 0,
@@ -1657,7 +1744,8 @@
     "name": "NeoPsion Kinetic Amplifier 3",
     "economy": {
       "decay": 0.152,
-      "ammo_burn": 169
+      "ammo_burn": 169,
+      "efficiency": 67.7
     },
     "damage": {
       "impact": 8,
@@ -1676,7 +1764,8 @@
     "name": "NeoPsion Kinetic Amplifier 5 (L)",
     "economy": {
       "decay": 0.36,
-      "ammo_burn": 353
+      "ammo_burn": 353,
+      "efficiency": 84.5
     },
     "damage": {
       "impact": 18,
@@ -1695,7 +1784,8 @@
     "name": "NeoPsion Kinetic Amplifier 6 (L)",
     "economy": {
       "decay": 0.533,
-      "ammo_burn": 530
+      "ammo_burn": 530,
+      "efficiency": 84.6
     },
     "damage": {
       "impact": 27,
@@ -1714,7 +1804,8 @@
     "name": "Enkidd Black Widow (L)",
     "economy": {
       "decay": 1.6,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -1733,7 +1824,8 @@
     "name": "Enkidd Brown Recluse (L)",
     "economy": {
       "decay": 1.8,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -1752,7 +1844,8 @@
     "name": "Enkidd Camel Spider (L)",
     "economy": {
       "decay": 1.4,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -1771,7 +1864,8 @@
     "name": "Enkidd Red-Back (L)",
     "economy": {
       "decay": 1.2,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -1790,7 +1884,8 @@
     "name": "NeoPsion Kinetic Amplifier Mk.1, TWEN Edition",
     "economy": {
       "decay": 0.67,
-      "ammo_burn": 850
+      "ammo_burn": 850,
+      "efficiency": 88
     },
     "damage": {
       "impact": 45,
@@ -1809,7 +1904,8 @@
     "name": "Fi/Ra/Co Beast",
     "economy": {
       "decay": 2.366,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 68.2
     },
     "damage": {
       "impact": 2,
@@ -1828,7 +1924,8 @@
     "name": "Fi/Ra/Co Beast, SGA Edition",
     "economy": {
       "decay": 2.826,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 68.2
     },
     "damage": {
       "impact": 3,
@@ -1847,7 +1944,8 @@
     "name": "Fi/Ra/Co Cause, Adjusted",
     "economy": {
       "decay": 4.102,
-      "ammo_burn": 245
+      "ammo_burn": 245,
+      "efficiency": 55.9
     },
     "damage": {
       "impact": 3,
@@ -1866,7 +1964,8 @@
     "name": "Fi/Ra/Co Cause, Improved",
     "economy": {
       "decay": 3.88,
-      "ammo_burn": 276
+      "ammo_burn": 276,
+      "efficiency": 60.9
     },
     "damage": {
       "impact": 4,
@@ -1885,7 +1984,8 @@
     "name": "Fi/Ra/Co Cause, Modified",
     "economy": {
       "decay": 3.83,
-      "ammo_burn": 292
+      "ammo_burn": 292,
+      "efficiency": 65.1
     },
     "damage": {
       "impact": 5,
@@ -1904,7 +2004,8 @@
     "name": "Fi/Ra/Co Dante",
     "economy": {
       "decay": 4,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 72.6
     },
     "damage": {
       "impact": 3,
@@ -1923,7 +2024,8 @@
     "name": "Fi/Ra/Co Evil",
     "economy": {
       "decay": 5.95,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 51
     },
     "damage": {
       "impact": 3,
@@ -1942,7 +2044,8 @@
     "name": "Fi/Ra/Co Evil, Adjusted",
     "economy": {
       "decay": 5.95,
-      "ammo_burn": 320
+      "ammo_burn": 320,
+      "efficiency": 63.3
     },
     "damage": {
       "impact": 4,
@@ -1961,7 +2064,8 @@
     "name": "Fi/Ra/Co Evil, Improved",
     "economy": {
       "decay": 5.95,
-      "ammo_burn": 354
+      "ammo_burn": 354,
+      "efficiency": 66.5
     },
     "damage": {
       "impact": 5,
@@ -1980,7 +2084,8 @@
     "name": "Fi/Ra/Co Evil, Modified",
     "economy": {
       "decay": 5.95,
-      "ammo_burn": 386
+      "ammo_burn": 386,
+      "efficiency": 70
     },
     "damage": {
       "impact": 6,
@@ -1999,7 +2104,8 @@
     "name": "Fi/Ra/Co Evil, Augmented",
     "economy": {
       "decay": 0.6,
-      "ammo_burn": 954
+      "ammo_burn": 954,
+      "efficiency": 75
     },
     "damage": {
       "impact": 7,
@@ -2018,7 +2124,8 @@
     "name": "Low Rider BLP Amp Mk II (L)",
     "economy": {
       "decay": 10.1,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 68.5
     },
     "damage": {
       "impact": 9,
@@ -2037,7 +2144,8 @@
     "name": "Mayhem B-Amplifier Alpha (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 998
+      "ammo_burn": 998,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -2056,7 +2164,8 @@
     "name": "Mayhem B-Amplifier Beta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 998
+      "ammo_burn": 998,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -2075,7 +2184,8 @@
     "name": "Mayhem B-Amplifier Delta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 998
+      "ammo_burn": 998,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -2094,7 +2204,8 @@
     "name": "Mayhem B-Amplifier Gamma (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 998
+      "ammo_burn": 998,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -2113,7 +2224,8 @@
     "name": "Rage 5 (L)",
     "economy": {
       "decay": 0.226,
-      "ammo_burn": 70
+      "ammo_burn": 70,
+      "efficiency": 66.4
     },
     "damage": {
       "impact": 1,
@@ -2132,7 +2244,8 @@
     "name": "Rage 10 (L)",
     "economy": {
       "decay": 0.467,
-      "ammo_burn": 165
+      "ammo_burn": 165,
+      "efficiency": 62.7
     },
     "damage": {
       "impact": 2,
@@ -2151,7 +2264,8 @@
     "name": "Rage 15 (L)",
     "economy": {
       "decay": 0.781,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 61.6
     },
     "damage": {
       "impact": 4,
@@ -2170,7 +2284,8 @@
     "name": "Rage 30 (L)",
     "economy": {
       "decay": 1.459,
-      "ammo_burn": 590
+      "ammo_burn": 590,
+      "efficiency": 60.6
     },
     "damage": {
       "impact": 7,
@@ -2189,7 +2304,8 @@
     "name": "Rage 35 (L)",
     "economy": {
       "decay": 1.574,
-      "ammo_burn": 650
+      "ammo_burn": 650,
+      "efficiency": 60.5
     },
     "damage": {
       "impact": 8,
@@ -2208,7 +2324,8 @@
     "name": "Rage 40 (L)",
     "economy": {
       "decay": 1.778,
-      "ammo_burn": 725
+      "ammo_burn": 725,
+      "efficiency": 60.4
     },
     "damage": {
       "impact": 9,
@@ -2227,7 +2344,8 @@
     "name": "Rage 45 (L)",
     "economy": {
       "decay": 2.098,
-      "ammo_burn": 860
+      "ammo_burn": 860,
+      "efficiency": 60.3
     },
     "damage": {
       "impact": 10,
@@ -2246,7 +2364,8 @@
     "name": "Rage 50 (L)",
     "economy": {
       "decay": 2.302,
-      "ammo_burn": 935
+      "ammo_burn": 935,
+      "efficiency": 60.2
     },
     "damage": {
       "impact": 11,
@@ -2265,7 +2384,8 @@
     "name": "Omegaton A204, Supercharged",
     "economy": {
       "decay": 0.5,
-      "ammo_burn": 788
+      "ammo_burn": 788,
+      "efficiency": 78.5
     },
     "damage": {
       "impact": 0,
@@ -2284,7 +2404,8 @@
     "name": "Rapper (L)",
     "economy": {
       "decay": 1.437,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 55
     },
     "damage": {
       "impact": 3,
@@ -2303,7 +2424,8 @@
     "name": "Rapper Snapper (L)",
     "economy": {
       "decay": 1.843,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 56.3
     },
     "damage": {
       "impact": 6,
@@ -2322,7 +2444,8 @@
     "name": "RapSTAR (L)",
     "economy": {
       "decay": 2.757,
-      "ammo_burn": 800
+      "ammo_burn": 800,
+      "efficiency": 54.3
     },
     "damage": {
       "impact": 9,
@@ -2341,7 +2464,8 @@
     "name": "RDI Binary Amplifier (L)",
     "economy": {
       "decay": 0.02,
-      "ammo_burn": 700
+      "ammo_burn": 700,
+      "efficiency": 98.5
     },
     "damage": {
       "impact": 30,
@@ -2360,7 +2484,8 @@
     "name": "T-Rap (L)",
     "economy": {
       "decay": 0.969,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 56.2
     },
     "damage": {
       "impact": 1,
@@ -2379,7 +2504,8 @@
     "name": "ArMatrix L-Amplifier 4B (L)",
     "economy": {
       "decay": 0.064,
-      "ammo_burn": 84
+      "ammo_burn": 84,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2398,7 +2524,8 @@
     "name": "ArMatrix EXPA-175 (L)",
     "economy": {
       "decay": 1.75,
-      "ammo_burn": 3150
+      "ammo_burn": 3150,
+      "efficiency": 90
     },
     "damage": {
       "impact": 50,
@@ -2417,7 +2544,8 @@
     "name": "ArMatrix L-Amplifier 13B (L)",
     "economy": {
       "decay": 0.208,
-      "ammo_burn": 273
+      "ammo_burn": 273,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2436,7 +2564,8 @@
     "name": "ArMatrix L-Amplifier 23B (L)",
     "economy": {
       "decay": 0.368,
-      "ammo_burn": 483
+      "ammo_burn": 483,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2455,7 +2584,8 @@
     "name": "ArMatrix L-Amplifier 25B (L)",
     "economy": {
       "decay": 0.4,
-      "ammo_burn": 525
+      "ammo_burn": 525,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2474,7 +2604,8 @@
     "name": "ArMatrix L-Amplifier 33B (L)",
     "economy": {
       "decay": 0.528,
-      "ammo_burn": 693
+      "ammo_burn": 693,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2493,7 +2624,8 @@
     "name": "ArMatrix L-Amplifier 37B (L)",
     "economy": {
       "decay": 0.592,
-      "ammo_burn": 777
+      "ammo_burn": 777,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2512,7 +2644,8 @@
     "name": "ArMatrix L-Amplifier 42B (L)",
     "economy": {
       "decay": 0.672,
-      "ammo_burn": 882
+      "ammo_burn": 882,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2531,7 +2664,8 @@
     "name": "ArMatrix L-Amplifier 45B (L)",
     "economy": {
       "decay": 0.72,
-      "ammo_burn": 945
+      "ammo_burn": 945,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2550,7 +2684,8 @@
     "name": "ArMatrix L-Amplifier 50B (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2569,7 +2704,8 @@
     "name": "ArMatrix L-Amplifier 55B (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2588,7 +2724,8 @@
     "name": "ArMatrix L-Amplifier 60B (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2607,7 +2744,8 @@
     "name": "ArMatrix L-Amplifier 65B (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2626,7 +2764,8 @@
     "name": "ArMatrix L-Amplifier 70B (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2645,7 +2784,8 @@
     "name": "ArMatrix L-Amplifier 75B (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1032
+      "ammo_burn": 1032,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -2664,7 +2804,8 @@
     "name": "Boom ACC (L)",
     "economy": {
       "decay": 1.437,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 55
     },
     "damage": {
       "impact": 0,
@@ -2683,7 +2824,8 @@
     "name": "Boom BBC (L)",
     "economy": {
       "decay": 4.751,
-      "ammo_burn": 1200
+      "ammo_burn": 1200,
+      "efficiency": 55.8
     },
     "damage": {
       "impact": 0,
@@ -2702,7 +2844,8 @@
     "name": "Boom CCC (L)",
     "economy": {
       "decay": 0.969,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 56.2
     },
     "damage": {
       "impact": 0,
@@ -2721,7 +2864,8 @@
     "name": "CDF Laser Power Amp 1 (L)",
     "economy": {
       "decay": 0.26,
-      "ammo_burn": 402
+      "ammo_burn": 402,
+      "efficiency": 60.3
     },
     "damage": {
       "impact": 0,
@@ -2740,7 +2884,8 @@
     "name": "Omegaton Amplifier, Modified",
     "economy": {
       "decay": 7.68,
-      "ammo_burn": 400
+      "ammo_burn": 400,
+      "efficiency": 89.7
     },
     "damage": {
       "impact": 0,
@@ -2759,7 +2904,8 @@
     "name": "E-Amp 15",
     "economy": {
       "decay": 5.633,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 27.6
     },
     "damage": {
       "impact": 0,
@@ -2778,7 +2924,8 @@
     "name": "Hotfoot 5 (L)",
     "economy": {
       "decay": 0.182,
-      "ammo_burn": 75
+      "ammo_burn": 75,
+      "efficiency": 64.9
     },
     "damage": {
       "impact": 0,
@@ -2797,7 +2944,8 @@
     "name": "Hotfoot 10 (L)",
     "economy": {
       "decay": 0.465,
-      "ammo_burn": 190
+      "ammo_burn": 190,
+      "efficiency": 61.5
     },
     "damage": {
       "impact": 0,
@@ -2816,7 +2964,8 @@
     "name": "Hotfoot 15 (L)",
     "economy": {
       "decay": 0.79,
-      "ammo_burn": 325
+      "ammo_burn": 325,
+      "efficiency": 60.4
     },
     "damage": {
       "impact": 0,
@@ -2835,7 +2984,8 @@
     "name": "Hotfoot 20 (L)",
     "economy": {
       "decay": 1.066,
-      "ammo_burn": 465
+      "ammo_burn": 465,
+      "efficiency": 59.9
     },
     "damage": {
       "impact": 0,
@@ -2854,7 +3004,8 @@
     "name": "Hotfoot 25 (L)",
     "economy": {
       "decay": 1.261,
-      "ammo_burn": 565
+      "ammo_burn": 565,
+      "efficiency": 59.8
     },
     "damage": {
       "impact": 0,
@@ -2873,7 +3024,8 @@
     "name": "Hotfoot 30 (L)",
     "economy": {
       "decay": 1.589,
-      "ammo_burn": 700
+      "ammo_burn": 700,
+      "efficiency": 59.5
     },
     "damage": {
       "impact": 0,
@@ -2892,7 +3044,8 @@
     "name": "Hotfoot 35 (L)",
     "economy": {
       "decay": 1.826,
-      "ammo_burn": 820
+      "ammo_burn": 820,
+      "efficiency": 59.4
     },
     "damage": {
       "impact": 0,
@@ -2911,7 +3064,8 @@
     "name": "Hotfoot 40 (L)",
     "economy": {
       "decay": 2.077,
-      "ammo_burn": 915
+      "ammo_burn": 915,
+      "efficiency": 59.2
     },
     "damage": {
       "impact": 0,
@@ -2930,7 +3084,8 @@
     "name": "Hotfoot 45 (L)",
     "economy": {
       "decay": 2.351,
-      "ammo_burn": 1055
+      "ammo_burn": 1055,
+      "efficiency": 59.2
     },
     "damage": {
       "impact": 0,
@@ -2949,7 +3104,8 @@
     "name": "Hotfoot 50 (L)",
     "economy": {
       "decay": 2.509,
-      "ammo_burn": 1135
+      "ammo_burn": 1135,
+      "efficiency": 59.2
     },
     "damage": {
       "impact": 0,
@@ -2968,7 +3124,8 @@
     "name": "Marshall Laser Amp Mk I (L)",
     "economy": {
       "decay": 2.331,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 64.8
     },
     "damage": {
       "impact": 0,
@@ -2987,7 +3144,8 @@
     "name": "Mayhem L-Amplifier Beta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 998
+      "ammo_burn": 998,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -3006,7 +3164,8 @@
     "name": "Mayhem L-Amplifier Delta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 998
+      "ammo_burn": 998,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -3025,7 +3184,8 @@
     "name": "Mayhem L-Amplifier Gamma (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 998
+      "ammo_burn": 998,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -3044,7 +3204,8 @@
     "name": "Omegaton A101",
     "economy": {
       "decay": 0.652,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 82.9
     },
     "damage": {
       "impact": 0,
@@ -3063,7 +3224,8 @@
     "name": "Omegaton A102",
     "economy": {
       "decay": 0.521,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 83
     },
     "damage": {
       "impact": 0,
@@ -3082,7 +3244,8 @@
     "name": "Omegaton A103",
     "economy": {
       "decay": 1.606,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 83.1
     },
     "damage": {
       "impact": 0,
@@ -3101,7 +3264,8 @@
     "name": "Omegaton A104",
     "economy": {
       "decay": 2.039,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 83.3
     },
     "damage": {
       "impact": 0,
@@ -3120,7 +3284,8 @@
     "name": "Omegaton A104, SGA Edition",
     "economy": {
       "decay": 2.267,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 82.3
     },
     "damage": {
       "impact": 0,
@@ -3139,7 +3304,8 @@
     "name": "Omegaton A105",
     "economy": {
       "decay": 2.47,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 83.5
     },
     "damage": {
       "impact": 0,
@@ -3158,7 +3324,8 @@
     "name": "Omegaton A105, Adjusted",
     "economy": {
       "decay": 2.476,
-      "ammo_burn": 121
+      "ammo_burn": 121,
+      "efficiency": 83.6
     },
     "damage": {
       "impact": 0,
@@ -3177,7 +3344,8 @@
     "name": "Omegaton A105, Improved",
     "economy": {
       "decay": 2.473,
-      "ammo_burn": 143
+      "ammo_burn": 143,
+      "efficiency": 83.6
     },
     "damage": {
       "impact": 0,
@@ -3196,7 +3364,8 @@
     "name": "Omegaton A106",
     "economy": {
       "decay": 2.902,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 83.6
     },
     "damage": {
       "impact": 0,
@@ -3215,7 +3384,8 @@
     "name": "Omegaton A201",
     "economy": {
       "decay": 0.521,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 83
     },
     "damage": {
       "impact": 0,
@@ -3234,7 +3404,8 @@
     "name": "Omegaton A202",
     "economy": {
       "decay": 1.164,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 84.1
     },
     "damage": {
       "impact": 0,
@@ -3253,7 +3424,8 @@
     "name": "Omegaton A203",
     "economy": {
       "decay": 2.243,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 84.4
     },
     "damage": {
       "impact": 0,
@@ -3272,7 +3444,8 @@
     "name": "Omegaton A204",
     "economy": {
       "decay": 3.31,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 85.3
     },
     "damage": {
       "impact": 0,
@@ -3291,7 +3464,8 @@
     "name": "Omegaton A204, Adjusted",
     "economy": {
       "decay": 3.316,
-      "ammo_burn": 121
+      "ammo_burn": 121,
+      "efficiency": 85.3
     },
     "damage": {
       "impact": 0,
@@ -3310,7 +3484,8 @@
     "name": "Omegaton A204, Improved",
     "economy": {
       "decay": 3.311,
-      "ammo_burn": 143
+      "ammo_burn": 143,
+      "efficiency": 85.3
     },
     "damage": {
       "impact": 0,
@@ -3329,7 +3504,8 @@
     "name": "Omegaton A204, SGA Edition",
     "economy": {
       "decay": 3.793,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 82.2
     },
     "damage": {
       "impact": 0,
@@ -3348,7 +3524,8 @@
     "name": "RDI Energy Amplifier Gamma",
     "economy": {
       "decay": 0.02,
-      "ammo_burn": 1100
+      "ammo_burn": 1100,
+      "efficiency": 70
     },
     "damage": {
       "impact": 0,
@@ -3367,7 +3544,8 @@
     "name": "Omegaton B101 (L)",
     "economy": {
       "decay": 0.002,
-      "ammo_burn": 23
+      "ammo_burn": 23,
+      "efficiency": 65.9
     },
     "damage": {
       "impact": 0,
@@ -3386,7 +3564,8 @@
     "name": "RDI Energy Amplifier Alpha (L)",
     "economy": {
       "decay": 0.01,
-      "ammo_burn": 350
+      "ammo_burn": 350,
+      "efficiency": 98.5
     },
     "damage": {
       "impact": 0,
@@ -3405,7 +3584,8 @@
     "name": "RDI Energy Amplifier Beta (L)",
     "economy": {
       "decay": 0.02,
-      "ammo_burn": 700
+      "ammo_burn": 700,
+      "efficiency": 98.5
     },
     "damage": {
       "impact": 0,
@@ -3424,7 +3604,8 @@
     "name": "Road-Monkey Laser Amp Mk I (L)",
     "economy": {
       "decay": 0.478,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 59.1
     },
     "damage": {
       "impact": 0,
@@ -3443,7 +3624,8 @@
     "name": "Road-Monkey Laser Amp Mk IV (L)",
     "economy": {
       "decay": 3,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 67.2
     },
     "damage": {
       "impact": 0,
@@ -3462,7 +3644,8 @@
     "name": "Rookie Laser Amp (L)",
     "economy": {
       "decay": 0.046,
-      "ammo_burn": 20
+      "ammo_burn": 20,
+      "efficiency": 53.1
     },
     "damage": {
       "impact": 0,
@@ -3481,7 +3664,8 @@
     "name": "Shack-A-Lacka Laser Amp Mk I (L)",
     "economy": {
       "decay": 6.5,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 65.8
     },
     "damage": {
       "impact": 0,
@@ -3500,7 +3684,8 @@
     "name": "Shack-A-Lacka Laser Amp Mk II (L)",
     "economy": {
       "decay": 2.34,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 63.9
     },
     "damage": {
       "impact": 0,
@@ -3519,7 +3704,8 @@
     "name": "Shear Pro600 (L)",
     "economy": {
       "decay": 1.975,
-      "ammo_burn": 600
+      "ammo_burn": 600,
+      "efficiency": 56.7
     },
     "damage": {
       "impact": 0,
@@ -3538,7 +3724,8 @@
     "name": "Shear Pro700 (L)",
     "economy": {
       "decay": 2.451,
-      "ammo_burn": 700
+      "ammo_burn": 700,
+      "efficiency": 56.2
     },
     "damage": {
       "impact": 0,
@@ -3557,7 +3744,8 @@
     "name": "RDI Energy Amplifier Gamma (L)",
     "economy": {
       "decay": 0.02,
-      "ammo_burn": 1000
+      "ammo_burn": 1000,
+      "efficiency": 90
     },
     "damage": {
       "impact": 0,
@@ -3576,7 +3764,8 @@
     "name": "Shear Pro900 (L)",
     "economy": {
       "decay": 3.207,
-      "ammo_burn": 900
+      "ammo_burn": 900,
+      "efficiency": 54.6
     },
     "damage": {
       "impact": 0,
@@ -3595,7 +3784,8 @@
     "name": "Shear XR40 (L)",
     "economy": {
       "decay": 0.478,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 59.1
     },
     "damage": {
       "impact": 0,
@@ -3614,7 +3804,8 @@
     "name": "Shear XR55 (L)",
     "economy": {
       "decay": 0.931,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 57
     },
     "damage": {
       "impact": 0,
@@ -3633,7 +3824,8 @@
     "name": "Shear XR60 (L)",
     "economy": {
       "decay": 1.139,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 56.9
     },
     "damage": {
       "impact": 0,
@@ -3652,7 +3844,8 @@
     "name": "Shear XR70 (L)",
     "economy": {
       "decay": 1.093,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 57.5
     },
     "damage": {
       "impact": 0,
@@ -3671,7 +3864,8 @@
     "name": "Shear XR90 (L)",
     "economy": {
       "decay": 1.779,
-      "ammo_burn": 400
+      "ammo_burn": 400,
+      "efficiency": 57.5
     },
     "damage": {
       "impact": 0,
@@ -3690,7 +3884,8 @@
     "name": "Xent Tech Light Amplification Crenshaw (L)",
     "economy": {
       "decay": 1.8,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -3709,7 +3904,8 @@
     "name": "Xent Tech Light Amplification Sunset (L)",
     "economy": {
       "decay": 1.4,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -3728,7 +3924,8 @@
     "name": "Xent Tech Light Amplification Wilshire (L)",
     "economy": {
       "decay": 1.6,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 58.2
     },
     "damage": {
       "impact": 0,
@@ -3747,7 +3944,8 @@
     "name": "Loughlin HyperEdge M-Amp 1 (L)",
     "economy": {
       "decay": 0.889,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -3766,7 +3964,8 @@
     "name": "Bull Tac70 (L)",
     "economy": {
       "decay": 1.975,
-      "ammo_burn": 600
+      "ammo_burn": 600,
+      "efficiency": 56.7
     },
     "damage": {
       "impact": 7,
@@ -3785,7 +3984,8 @@
     "name": "DSEC BLP Amp v1 (L)",
     "economy": {
       "decay": 1.18,
-      "ammo_burn": 351
+      "ammo_burn": 351,
+      "efficiency": 52.4
     },
     "damage": {
       "impact": 5,
@@ -3804,7 +4004,8 @@
     "name": "DSEC BLP Amp v2 (L)",
     "economy": {
       "decay": 3.1,
-      "ammo_burn": 524
+      "ammo_burn": 524,
+      "efficiency": 53.7
     },
     "damage": {
       "impact": 9,
@@ -3823,7 +4024,8 @@
     "name": "Fi/Ra/Co Angst",
     "economy": {
       "decay": 1.897,
-      "ammo_burn": 200
+      "ammo_burn": 200,
+      "efficiency": 42.9
     },
     "damage": {
       "impact": 1,
@@ -3842,7 +4044,8 @@
     "name": "Rage 25",
     "economy": {
       "decay": 1.255,
-      "ammo_burn": 515
+      "ammo_burn": 515,
+      "efficiency": 60.8
     },
     "damage": {
       "impact": 6,
@@ -3861,7 +4064,8 @@
     "name": "Rage 35",
     "economy": {
       "decay": 1.574,
-      "ammo_burn": 650
+      "ammo_burn": 650,
+      "efficiency": 60.5
     },
     "damage": {
       "impact": 8,
@@ -3880,7 +4084,8 @@
     "name": "ArMatrix L-Amplifier 6B (L)",
     "economy": {
       "decay": 0.096,
-      "ammo_burn": 126
+      "ammo_burn": 126,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -3899,7 +4104,8 @@
     "name": "ArMatrix L-Amplifier 8B (L)",
     "economy": {
       "decay": 0.128,
-      "ammo_burn": 168
+      "ammo_burn": 168,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -3918,7 +4124,8 @@
     "name": "Mayhem Trauma Amplifier 1",
     "economy": {
       "decay": 12,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 77
     },
     "damage": {
       "impact": 0,
@@ -3937,7 +4144,8 @@
     "name": "Mayhem Trauma Amplifier 2",
     "economy": {
       "decay": 14,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 77.5
     },
     "damage": {
       "impact": 0,
@@ -3956,7 +4164,8 @@
     "name": "Mayhem Trauma Amplifier 3",
     "economy": {
       "decay": 16,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 78
     },
     "damage": {
       "impact": 0,
@@ -3975,7 +4184,8 @@
     "name": "Mayhem Trauma Amplifier 4",
     "economy": {
       "decay": 18,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 78.5
     },
     "damage": {
       "impact": 0,
@@ -3994,7 +4204,8 @@
     "name": "Mayhem Trauma Amplifier 5",
     "economy": {
       "decay": 20,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 79
     },
     "damage": {
       "impact": 0,
@@ -4013,7 +4224,8 @@
     "name": "ArMatrix L-Amplifier 10B (L)",
     "economy": {
       "decay": 0.16,
-      "ammo_burn": 210
+      "ammo_burn": 210,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -4032,7 +4244,8 @@
     "name": "Mayhem Trauma Amplifier 7",
     "economy": {
       "decay": 24.21,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 79
     },
     "damage": {
       "impact": 0,
@@ -4051,7 +4264,8 @@
     "name": "ArMatrix L-Amplifier 17B (L)",
     "economy": {
       "decay": 0.272,
-      "ammo_burn": 357
+      "ammo_burn": 357,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -4070,7 +4284,8 @@
     "name": "ArMatrix L-Amplifier 20B (L)",
     "economy": {
       "decay": 0.32,
-      "ammo_burn": 420
+      "ammo_burn": 420,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -4089,7 +4304,8 @@
     "name": "ArMatrix L-Amplifier 28B (L)",
     "economy": {
       "decay": 0.448,
-      "ammo_burn": 588
+      "ammo_burn": 588,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -4108,7 +4324,8 @@
     "name": "DSEC Laser Amp v1 (L)",
     "economy": {
       "decay": 1.02,
-      "ammo_burn": 312
+      "ammo_burn": 312,
+      "efficiency": 55.1
     },
     "damage": {
       "impact": 0,
@@ -4127,7 +4344,8 @@
     "name": "DSEC Laser Amp v2 (L)",
     "economy": {
       "decay": 2.7,
-      "ammo_burn": 483
+      "ammo_burn": 483,
+      "efficiency": 55.7
     },
     "damage": {
       "impact": 0,
@@ -4146,7 +4364,8 @@
     "name": "E-Amp 11",
     "economy": {
       "decay": 0.711,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 54.4
     },
     "damage": {
       "impact": 0,
@@ -4165,7 +4384,8 @@
     "name": "ZX Sinkadus",
     "economy": {
       "decay": 0.032,
-      "ammo_burn": 40
+      "ammo_burn": 40,
+      "efficiency": 84.7
     },
     "damage": {
       "impact": 0,
@@ -4184,7 +4404,8 @@
     "name": "E-Amp 14",
     "economy": {
       "decay": 4.311,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 39.3
     },
     "damage": {
       "impact": 0,
@@ -4203,7 +4424,8 @@
     "name": "Melee Trauma Amplifier 1",
     "economy": {
       "decay": 0.889,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4222,7 +4444,8 @@
     "name": "Melee Trauma Amplifier 1 (L)",
     "economy": {
       "decay": 0.889,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4241,7 +4464,8 @@
     "name": "Melee Trauma Amplifier 2",
     "economy": {
       "decay": 1.778,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4260,7 +4484,8 @@
     "name": "Omegaton A104, Ancient",
     "economy": {
       "decay": 3.012,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85.8
     },
     "damage": {
       "impact": 0,
@@ -4279,7 +4504,8 @@
     "name": "Loughlin HyperEdge M-Amp 2 (L)",
     "economy": {
       "decay": 1.778,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4298,7 +4524,8 @@
     "name": "Melee Trauma Amplifier 2, FEN Edition",
     "economy": {
       "decay": 2.667,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -4317,7 +4544,8 @@
     "name": "Melee Trauma Amplifier 3",
     "economy": {
       "decay": 3.556,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4336,7 +4564,8 @@
     "name": "Loughlin NanoRep M-Amp 2 (L)",
     "economy": {
       "decay": 0.25,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 50
     },
     "damage": {
       "impact": 0,
@@ -4355,7 +4584,8 @@
     "name": "Melee Bimodal Amplifier 1 (L)",
     "economy": {
       "decay": 0.476,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": 60.05
     },
     "damage": {
       "impact": 0,
@@ -4374,7 +4604,8 @@
     "name": "Melee Durability Amplifier 1 (L)",
     "economy": {
       "decay": 0.25,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": 49.91
     },
     "damage": {
       "impact": 0,
@@ -4393,7 +4624,8 @@
     "name": "Melee Durability Amplifier 2 (L)",
     "economy": {
       "decay": 0.25,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 49.91
     },
     "damage": {
       "impact": 0,
@@ -4412,7 +4644,8 @@
     "name": "Melee Trauma Amplifier 6, Improved",
     "economy": {
       "decay": 6.108,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 81.9
     },
     "damage": {
       "impact": 0,
@@ -4431,7 +4664,8 @@
     "name": "Melee Trauma Amplifier 7",
     "economy": {
       "decay": 7.112,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4450,7 +4684,8 @@
     "name": "Melee Trauma Amplifier 7, TWEN Edition",
     "economy": {
       "decay": 7.112,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -4469,7 +4704,8 @@
     "name": "Melee Trauma Amplifier 2 (L)",
     "economy": {
       "decay": 1.778,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4488,7 +4724,8 @@
     "name": "Melee Trauma Amplifier 2, Adjusted",
     "economy": {
       "decay": 1.768,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 78.26
     },
     "damage": {
       "impact": 0,
@@ -4507,7 +4744,8 @@
     "name": "Melee Trauma Amplifier 3 (L)",
     "economy": {
       "decay": 3.556,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4526,7 +4764,8 @@
     "name": "Melee Trauma Amplifier 10, FEN Edition",
     "economy": {
       "decay": 10.668,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -4545,7 +4784,8 @@
     "name": "Mayhem Kinetic Amplifier 1",
     "economy": {
       "decay": 1.2,
-      "ammo_burn": 1080
+      "ammo_burn": 1080,
+      "efficiency": 77
     },
     "damage": {
       "impact": 55,
@@ -4564,7 +4804,8 @@
     "name": "Mayhem Kinetic Amplifier 2",
     "economy": {
       "decay": 1.4,
-      "ammo_burn": 1260
+      "ammo_burn": 1260,
+      "efficiency": 77.5
     },
     "damage": {
       "impact": 65,
@@ -4583,7 +4824,8 @@
     "name": "Mayhem Kinetic Amplifier 3",
     "economy": {
       "decay": 1.6,
-      "ammo_burn": 1440
+      "ammo_burn": 1440,
+      "efficiency": 78
     },
     "damage": {
       "impact": 75,
@@ -4602,7 +4844,8 @@
     "name": "Mayhem Kinetic Amplifier 4",
     "economy": {
       "decay": 1.8,
-      "ammo_burn": 1620
+      "ammo_burn": 1620,
+      "efficiency": 78.5
     },
     "damage": {
       "impact": 85,
@@ -4621,7 +4864,8 @@
     "name": "Mayhem Kinetic Amplifier 5",
     "economy": {
       "decay": 2,
-      "ammo_burn": 1800
+      "ammo_burn": 1800,
+      "efficiency": 79
     },
     "damage": {
       "impact": 95,
@@ -4640,7 +4884,8 @@
     "name": "Mayhem MF-Amplifier Alpha (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 898
+      "ammo_burn": 898,
+      "efficiency": 75
     },
     "damage": {
       "impact": 42,
@@ -4659,7 +4904,8 @@
     "name": "Mayhem MF-Amplifier Beta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 898
+      "ammo_burn": 898,
+      "efficiency": 75
     },
     "damage": {
       "impact": 47,
@@ -4678,7 +4924,8 @@
     "name": "Mayhem MF-Amplifier Delta (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 898
+      "ammo_burn": 898,
+      "efficiency": 75
     },
     "damage": {
       "impact": 57,
@@ -4697,7 +4944,8 @@
     "name": "Mayhem MF-Amplifier Gamma (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 898
+      "ammo_burn": 898,
+      "efficiency": 75
     },
     "damage": {
       "impact": 52,
@@ -4716,7 +4964,8 @@
     "name": "NeoPsion Kinetic Amplifier 1",
     "economy": {
       "decay": 0.042,
-      "ammo_burn": 42
+      "ammo_burn": 42,
+      "efficiency": 66.9
     },
     "damage": {
       "impact": 2,
@@ -4735,7 +4984,8 @@
     "name": "NeoPsion Kinetic Amplifier 1 (L)",
     "economy": {
       "decay": 0.045,
-      "ammo_burn": 39
+      "ammo_burn": 39,
+      "efficiency": 82.7
     },
     "damage": {
       "impact": 2,
@@ -4754,7 +5004,8 @@
     "name": "NeoPsion Kinetic Amplifier 2",
     "economy": {
       "decay": 0.083,
-      "ammo_burn": 84
+      "ammo_burn": 84,
+      "efficiency": 67.2
     },
     "damage": {
       "impact": 4,
@@ -4773,7 +5024,8 @@
     "name": "NeoPsion Kinetic Amplifier 2 (L)",
     "economy": {
       "decay": 0.088,
-      "ammo_burn": 78
+      "ammo_burn": 78,
+      "efficiency": 83.3
     },
     "damage": {
       "impact": 4,
@@ -4792,7 +5044,8 @@
     "name": "NeoPsion Kinetic Amplifier 3 (L)",
     "economy": {
       "decay": 0.164,
-      "ammo_burn": 157
+      "ammo_burn": 157,
+      "efficiency": 83.7
     },
     "damage": {
       "impact": 8,
@@ -4811,7 +5064,8 @@
     "name": "NeoPsion Kinetic Amplifier 4",
     "economy": {
       "decay": 0.23,
-      "ammo_burn": 253
+      "ammo_burn": 253,
+      "efficiency": 68
     },
     "damage": {
       "impact": 12,
@@ -4830,7 +5084,8 @@
     "name": "NeoPsion Kinetic Amplifier 4 (L)",
     "economy": {
       "decay": 0.245,
-      "ammo_burn": 235
+      "ammo_burn": 235,
+      "efficiency": 84.3
     },
     "damage": {
       "impact": 12,
@@ -4849,7 +5104,8 @@
     "name": "NeoPsion Kinetic Amplifier 5",
     "economy": {
       "decay": 0.333,
-      "ammo_burn": 380
+      "ammo_burn": 380,
+      "efficiency": 68.4
     },
     "damage": {
       "impact": 18,
@@ -4868,7 +5124,8 @@
     "name": "Melee Trauma Amplifier 5",
     "economy": {
       "decay": 5.334,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4887,7 +5144,8 @@
     "name": "NeoPsion Kinetic Amplifier 6",
     "economy": {
       "decay": 0.5,
-      "ammo_burn": 570
+      "ammo_burn": 570,
+      "efficiency": 68.4
     },
     "damage": {
       "impact": 27,
@@ -4906,7 +5164,8 @@
     "name": "Melee Trauma Amplifier 6",
     "economy": {
       "decay": 6.223,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -4925,7 +5184,8 @@
     "name": "NeoPsion Kinetic Amplifier 7",
     "economy": {
       "decay": 0.67,
-      "ammo_burn": 758
+      "ammo_burn": 758,
+      "efficiency": 68.9
     },
     "damage": {
       "impact": 36,
@@ -4944,7 +5204,8 @@
     "name": "NeoPsion Kinetic Amplifier 7 (L)",
     "economy": {
       "decay": 0.71,
-      "ammo_burn": 706
+      "ammo_burn": 706,
+      "efficiency": 84.9
     },
     "damage": {
       "impact": 36,
@@ -4963,7 +5224,8 @@
     "name": "NeoPsion Kinetic Amplifier 7, FEN Edition",
     "economy": {
       "decay": 0.744,
-      "ammo_burn": 842
+      "ammo_burn": 842,
+      "efficiency": 85
     },
     "damage": {
       "impact": 40,
@@ -4982,7 +5244,8 @@
     "name": "NeoPsion Kinetic Amplifier Mk.2, TWEN Edition",
     "economy": {
       "decay": 0.8,
-      "ammo_burn": 1142
+      "ammo_burn": 1142,
+      "efficiency": 89
     },
     "damage": {
       "impact": 60,
@@ -5001,7 +5264,8 @@
     "name": "NeoPsion Kinetic Amplifier Mk.3, TWEN Edition",
     "economy": {
       "decay": 0.9,
-      "ammo_burn": 1742
+      "ammo_burn": 1742,
+      "efficiency": 90
     },
     "damage": {
       "impact": 90,
@@ -5020,7 +5284,8 @@
     "name": "Melee Trauma Amplifier 9",
     "economy": {
       "decay": 8.89,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -5039,7 +5304,8 @@
     "name": "Melee Trauma Amplifier 10",
     "economy": {
       "decay": 9.779,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 76.7
     },
     "damage": {
       "impact": 0,
@@ -5058,7 +5324,8 @@
     "name": "Melee Durability Amplifier 94 (L)",
     "economy": {
       "decay": 0.99,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": 51.87
     },
     "damage": {
       "impact": 0,
@@ -5077,7 +5344,8 @@
     "name": "Melee Durability Amplifier 96 (L)",
     "economy": {
       "decay": 0.99,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": 51.87
     },
     "damage": {
       "impact": 0,
@@ -5096,7 +5364,8 @@
     "name": "Melee Trauma Amplifier 9, TWEN Edition",
     "economy": {
       "decay": 9.34,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -5115,7 +5384,8 @@
     "name": "Omegaton A105, Modified",
     "economy": {
       "decay": 0.473,
-      "ammo_burn": 362
+      "ammo_burn": 362,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -5134,7 +5404,8 @@
     "name": "Omegaton A204, Modified",
     "economy": {
       "decay": 0.5,
-      "ammo_burn": 444
+      "ammo_burn": 444,
+      "efficiency": 87
     },
     "damage": {
       "impact": 0,
@@ -5153,7 +5424,8 @@
     "name": "Bull Tac25 (L)",
     "economy": {
       "decay": 0.929,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 57.2
     },
     "damage": {
       "impact": 2,
@@ -5172,7 +5444,8 @@
     "name": "Bull Tac80 (L)",
     "economy": {
       "decay": 2.451,
-      "ammo_burn": 700
+      "ammo_burn": 700,
+      "efficiency": 56.2
     },
     "damage": {
       "impact": 8,
@@ -5191,7 +5464,8 @@
     "name": "CDF BLP Power Amp 2 (L)",
     "economy": {
       "decay": 0.37,
-      "ammo_burn": 632
+      "ammo_burn": 632,
+      "efficiency": 59.2
     },
     "damage": {
       "impact": 11,
@@ -5210,7 +5484,8 @@
     "name": "CDF BLP Power Amp 3 (L)",
     "economy": {
       "decay": 0.44,
-      "ammo_burn": 810
+      "ammo_burn": 810,
+      "efficiency": 60.8
     },
     "damage": {
       "impact": 16,
@@ -5229,7 +5504,8 @@
     "name": "CDF BLP Power Amp 4 (L)",
     "economy": {
       "decay": 0.74,
-      "ammo_burn": 1400
+      "ammo_burn": 1400,
+      "efficiency": 60.3
     },
     "damage": {
       "impact": 24,
@@ -5248,7 +5524,8 @@
     "name": "Low Rider BLP Amp Mk I (L)",
     "economy": {
       "decay": 4.643,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": null
     },
     "damage": {
       "impact": 6,
@@ -5267,7 +5544,8 @@
     "name": "Mayhem B-Amplifier 110P (L)",
     "economy": {
       "decay": 0.787,
-      "ammo_burn": 1600
+      "ammo_burn": 1600,
+      "efficiency": 85
     },
     "damage": {
       "impact": 0,
@@ -5286,7 +5564,8 @@
     "name": "RapMan (L)",
     "economy": {
       "decay": 1.831,
-      "ammo_burn": 500
+      "ammo_burn": 500,
+      "efficiency": 54.8
     },
     "damage": {
       "impact": 6,
@@ -5305,7 +5584,8 @@
     "name": "Boom AAC (L)",
     "economy": {
       "decay": 1.831,
-      "ammo_burn": 500
+      "ammo_burn": 500,
+      "efficiency": 54.8
     },
     "damage": {
       "impact": 0,
@@ -5324,7 +5604,8 @@
     "name": "Boom BCC (L)",
     "economy": {
       "decay": 1.847,
-      "ammo_burn": 300
+      "ammo_burn": 300,
+      "efficiency": 56.1
     },
     "damage": {
       "impact": 0,
@@ -5343,7 +5624,8 @@
     "name": "CDF Laser Power Amp 2 (L)",
     "economy": {
       "decay": 0.35,
-      "ammo_burn": 530
+      "ammo_burn": 530,
+      "efficiency": 62.5
     },
     "damage": {
       "impact": 0,
@@ -5362,7 +5644,8 @@
     "name": "CDF Laser Power Amp 3 (L)",
     "economy": {
       "decay": 0.52,
-      "ammo_burn": 880
+      "ammo_burn": 880,
+      "efficiency": 64.9
     },
     "damage": {
       "impact": 0,
@@ -5381,7 +5664,8 @@
     "name": "CDF Laser Power Amp 4 (L)",
     "economy": {
       "decay": 0.96,
-      "ammo_burn": 1722
+      "ammo_burn": 1722,
+      "efficiency": 64.8
     },
     "damage": {
       "impact": 0,
@@ -5400,7 +5684,8 @@
     "name": "E-Amp 12",
     "economy": {
       "decay": 1.555,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 45.9
     },
     "damage": {
       "impact": 0,
@@ -5419,7 +5704,8 @@
     "name": "E-Amp 13",
     "economy": {
       "decay": 2.943,
-      "ammo_burn": 100
+      "ammo_burn": 100,
+      "efficiency": 41
     },
     "damage": {
       "impact": 0,
@@ -5438,7 +5724,8 @@
     "name": "Marshall Laser Amp Mk II (L)",
     "economy": {
       "decay": 3.943,
-      "ammo_burn": null
+      "ammo_burn": null,
+      "efficiency": null
     },
     "damage": {
       "impact": 0,
@@ -5457,7 +5744,8 @@
     "name": "Mayhem L-Amplifier Alpha (L)",
     "economy": {
       "decay": 0.019,
-      "ammo_burn": 898
+      "ammo_burn": 898,
+      "efficiency": 75
     },
     "damage": {
       "impact": 0,
@@ -5476,7 +5764,8 @@
     "name": "Shear ProM (L)",
     "economy": {
       "decay": 3.773,
-      "ammo_burn": 1000
+      "ammo_burn": 1000,
+      "efficiency": null
     },
     "damage": {
       "impact": 0,
@@ -5495,7 +5784,8 @@
     "name": "Shear ProMC (L)",
     "economy": {
       "decay": 4.847,
-      "ammo_burn": 1400
+      "ammo_burn": 1400,
+      "efficiency": 56.8
     },
     "damage": {
       "impact": 0,
@@ -5514,7 +5804,8 @@
     "name": "Shear XR50 (L)",
     "economy": {
       "decay": 1.195,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 59.1
     },
     "damage": {
       "impact": 0,
@@ -5533,7 +5824,8 @@
     "name": "Shear XR80 (L)",
     "economy": {
       "decay": 1.311,
-      "ammo_burn": 400
+      "ammo_burn": 400,
+      "efficiency": 57
     },
     "damage": {
       "impact": 0,
@@ -5552,7 +5844,8 @@
     "name": "Teenie Weenie Laser Amp Mk I (L)",
     "economy": {
       "decay": 0.692,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 67.3
     },
     "damage": {
       "impact": 0,
@@ -5571,7 +5864,8 @@
     "name": "Teenie Weenie Laser Amp Mk II (L)",
     "economy": {
       "decay": 1.621,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 66.3
     },
     "damage": {
       "impact": 0,
@@ -5590,7 +5884,8 @@
     "name": "Loughlin Master M-Amp 1 (L)",
     "economy": {
       "decay": 0.476,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 60.1
     },
     "damage": {
       "impact": 0,
@@ -5609,7 +5904,8 @@
     "name": "Loughlin Master M-Amp 2 (L)",
     "economy": {
       "decay": 0.952,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 60.1
     },
     "damage": {
       "impact": 0,
@@ -5628,7 +5924,8 @@
     "name": "Loughlin Master M-Amp 4 (L)",
     "economy": {
       "decay": 1.904,
-      "ammo_burn": 0
+      "ammo_burn": 0,
+      "efficiency": 60.1
     },
     "damage": {
       "impact": 0,

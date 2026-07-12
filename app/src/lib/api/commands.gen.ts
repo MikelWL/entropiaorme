@@ -621,6 +621,27 @@ export interface ManualMobSuggestion {
 }
 
 /**
+ * The break-even readout: the player's looter professions and every
+ * library weapon's modelled break-even markup against each of them.
+ */
+export interface MarketBreakEven {
+	looters: MarketLooterLevel[];
+	weapons: MarketWeaponBreakEven[];
+}
+
+/**
+ * One (weapon, looter) break-even cell: the modelled TT-return rate
+ * and the overall loot markup that loadout needs to break even. Both
+ * figures are MODELLED ESTIMATES (community returns model, roughly a
+ * one-percentage-point error bar), never measured rates.
+ */
+export interface MarketBreakEvenCell {
+	looterName: string;
+	ttReturnPct: number;
+	breakEvenMarkupPct: number;
+}
+
+/**
  * A committed paste: the submission it created.
  */
 export interface MarketCommitResult {
@@ -645,6 +666,14 @@ export interface MarketHistoryPoint {
  * One of the export's five aggregation horizons.
  */
 export type MarketHorizon = 'day' | 'week' | 'month' | 'year' | 'decade';
+
+/**
+ * One looter profession and its believed-current level.
+ */
+export interface MarketLooterLevel {
+	name: string;
+	level: number;
+}
 
 /**
  * One overview row: an item's latest readings (from the most recent
@@ -702,6 +731,17 @@ export interface MarketSkippedLine {
 	lineNumber: number;
 	content: string;
 	reason: string;
+}
+
+/**
+ * One library weapon's break-even row: its catalogue efficiency (null
+ * when the bundled catalogue does not carry the weapon) and the cells
+ * across the player's looter professions.
+ */
+export interface MarketWeaponBreakEven {
+	name: string;
+	efficiencyPct: number | null;
+	cells: MarketBreakEvenCell[];
 }
 
 /**
@@ -1878,6 +1918,10 @@ export async function marketPasteCommit(text: string): Promise<MarketCommitResul
 
 export async function marketOverview(): Promise<MarketOverviewRow[]> {
 	return invokeCommand('market_overview', {});
+}
+
+export async function marketBreakEven(): Promise<MarketBreakEven> {
+	return invokeCommand('market_break_even', {});
 }
 
 export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {

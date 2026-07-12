@@ -1,11 +1,13 @@
 <script lang="ts">
 	import Tabs from '$lib/components/Tabs.svelte';
 	import OverviewTab from './OverviewTab.svelte';
+	import BreakEvenTab from './BreakEvenTab.svelte';
 	import ImportTab from './ImportTab.svelte';
 	import HistoryTab from './HistoryTab.svelte';
 
 	const tabs = [
 		{ id: 'overview', label: 'Overview' },
+		{ id: 'break-even', label: 'Break-even' },
 		{ id: 'import', label: 'Import' },
 		{ id: 'history', label: 'History' }
 	];
@@ -35,6 +37,8 @@
 	<div>
 		{#if activeTab === 'overview'}
 			<OverviewTab />
+		{:else if activeTab === 'break-even'}
+			<BreakEvenTab />
 		{:else if activeTab === 'import'}
 			<ImportTab onimported={() => (activeTab = 'overview')} />
 		{:else if activeTab === 'history'}
