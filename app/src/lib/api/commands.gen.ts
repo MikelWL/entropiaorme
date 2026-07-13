@@ -51,6 +51,30 @@ export interface AcceptResult {
 }
 
 /**
+ * The activity-recommender query. `professions` carries the target
+ * profession name(s) for a `profession` target (one name, or several
+ * for a family) and is ignored for `hp`.
+ */
+export interface ActivityRecommenderQuery {
+	target: RecommenderTargetKind;
+	professions?: string[];
+}
+
+/**
+ * GET activity-recommender: candidates ranked by PES-to-+1 on the
+ * target, plus the direct-grind reference for single-profession
+ * targets. `error` is present only on the soft-error path (an unknown
+ * profession name), matching the family's inline-render convention.
+ */
+export interface ActivityRecommenderResult {
+	error?: string | null;
+	pesCap: number;
+	sampleStep: number;
+	direct: RecommenderActivity | null;
+	candidates: RecommenderActivity[];
+}
+
+/**
  * The Activity aggregate: the three comparison tables.
  */
 export interface AnalyticsActivity {
@@ -1317,6 +1341,35 @@ export interface RecentEvent {
 }
 
 /**
+ * One activity's projection toward the recommender target.
+ */
+export interface RecommenderActivity {
+	activity: string;
+	professions: string[];
+	pesToPlusOne: number | null;
+	gainAtCap: number;
+	series: number[];
+	contributors: RecommenderContribution[];
+}
+
+/**
+ * One skill's share of a recommended activity's projected gain.
+ */
+export interface RecommenderContribution {
+	name: string;
+	currentLevel: number;
+	levelGain: number;
+	targetGain: number;
+}
+
+/**
+ * What the activity recommender optimises toward. A closed vocabulary:
+ * the bindings expose only these two, so an out-of-vocabulary target is
+ * unrepresentable rather than validated.
+ */
+export type RecommenderTargetKind = 'hp' | 'profession';
+
+/**
  * The reject verb's result: `{ok: true}` on success, the lone `error`
  * on a refusal.
  */
@@ -1823,6 +1876,10 @@ export async function characterPathOptimizer(profession: string, targetLevel: nu
 
 export async function characterHpOptimizer(): Promise<HpOptimizerResult> {
 	return invokeCommand('character_hp_optimizer', {});
+}
+
+export async function characterActivityRecommender(query: ActivityRecommenderQuery): Promise<ActivityRecommenderResult> {
+	return invokeCommand('character_activity_recommender', { query });
 }
 
 export async function settingsGet(): Promise<AppSettings> {

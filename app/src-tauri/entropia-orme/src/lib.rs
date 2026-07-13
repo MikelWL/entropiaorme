@@ -219,6 +219,7 @@ pub fn run() {
             commands::character_profession_optimizer,
             commands::character_path_optimizer,
             commands::character_hp_optimizer,
+            commands::character_activity_recommender,
             commands::settings_get,
             commands::settings_overlay_position,
             commands::settings_set_overlay_position,
