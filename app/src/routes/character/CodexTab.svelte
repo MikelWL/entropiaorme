@@ -373,6 +373,7 @@
 		{#if codexMode === 'mobs'}
 			<SearchInput bind:value={table.search} placeholder="Search species..." class="flex-1" />
 
+			<span class="text-xs text-text-secondary whitespace-nowrap shrink-0">Codex Optimiser:</span>
 			<CodexProfessionPicker
 				professions={professions.map(prof => prof.name)}
 				target={rankingTarget}
