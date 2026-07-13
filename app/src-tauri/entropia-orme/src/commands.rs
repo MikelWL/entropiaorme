@@ -17,9 +17,9 @@ use eo_api::analytics::{
     LedgerPreset, LedgerPresetInput,
 };
 use eo_api::character::{
-    CalibrationStatus, CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult,
-    PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
-    SkillLevel,
+    ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
+    CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult, PathOptimizerResult,
+    ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult, SkillLevel,
 };
 use eo_api::codex::{
     CodexCalibrateResult, CodexClaimResult, CodexMasteryClaimResult, CodexMetaAttribute,
@@ -188,6 +188,14 @@ pub async fn character_path_optimizer(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn character_hp_optimizer(app: tauri::AppHandle) -> Result<HpOptimizerResult, ApiError> {
     facade(&app)?.character_hp_optimizer().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn character_activity_recommender(
+    app: tauri::AppHandle,
+    query: ActivityRecommenderQuery,
+) -> Result<ActivityRecommenderResult, ApiError> {
+    facade(&app)?.character_activity_recommender(&query).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -959,6 +967,7 @@ mod tests {
         "character_profession_optimizer",
         "character_path_optimizer",
         "character_hp_optimizer",
+        "character_activity_recommender",
         "settings_get",
         "settings_overlay_position",
         "settings_set_overlay_position",

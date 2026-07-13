@@ -190,7 +190,7 @@ pub(crate) fn python_float_bare(value: &Value) -> Option<f64> {
 /// `(skill_name, weight)` for each usable skill entry on a profession;
 /// entries with no usable name are skipped and a missing weight
 /// surfaces as 0, exactly as the backend's iterator documents.
-fn iter_profession_skills(profession: &Value) -> Vec<(String, f64)> {
+pub(crate) fn iter_profession_skills(profession: &Value) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     let entries = profession
         .get("skills")
@@ -217,7 +217,7 @@ fn iter_profession_skills(profession: &Value) -> Vec<(String, f64)> {
 
 /// `(skill_name, hp_increase)` for skills that contribute to HP;
 /// unconvertible or non-positive contributions skip the entry.
-fn iter_hp_skills(skills_data: &[Value]) -> Vec<(String, f64)> {
+pub(crate) fn iter_hp_skills(skills_data: &[Value]) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     for skill in skills_data {
         let Some(skill) = skill.as_object() else {

@@ -18,6 +18,10 @@
 //! skill-progress list retires unconverted: it has no frontend caller,
 //! exactly as the equipment cost endpoint retired with its family.
 
+use eo_services::activity_recommender::{
+    activity_recommender, ActivityProjection, RecommenderTarget, RECOMMENDER_PES_CAP,
+    RECOMMENDER_SAMPLE_STEP,
+};
 use eo_services::character_calc::{
     all_profession_levels, effective_points, hp_skill_optimizer, is_attribute, profession_level,
     profession_path_optimizer, profession_skill_optimizer, skill_rank,
@@ -334,6 +338,64 @@ pub struct HpOptimizerResult {
     pub current_hp: f64,
     pub skills: Vec<HpOptimizerSkill>,
     pub attributes: Vec<HpOptimizerAttribute>,
+}
+
+/// What the activity recommender optimises toward. A closed vocabulary:
+/// the bindings expose only these two, so an out-of-vocabulary target is
+/// unrepresentable rather than validated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RecommenderTargetKind {
+    Hp,
+    Profession,
+}
+
+/// The activity-recommender query. `professions` carries the target
+/// profession name(s) for a `profession` target (one name, or several
+/// for a family) and is ignored for `hp`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityRecommenderQuery {
+    pub target: RecommenderTargetKind,
+    #[serde(default)]
+    pub professions: Vec<String>,
+}
+
+/// One skill's share of a recommended activity's projected gain.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecommenderContribution {
+    pub name: String,
+    pub current_level: f64,
+    pub level_gain: f64,
+    pub target_gain: f64,
+}
+
+/// One activity's projection toward the recommender target.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecommenderActivity {
+    pub activity: String,
+    pub professions: Vec<String>,
+    pub pes_to_plus_one: Nullable<f64>,
+    pub gain_at_cap: f64,
+    pub series: Vec<f64>,
+    pub contributors: Vec<RecommenderContribution>,
+}
+
+/// GET activity-recommender: candidates ranked by PES-to-+1 on the
+/// target, plus the direct-grind reference for single-profession
+/// targets. `error` is present only on the soft-error path (an unknown
+/// profession name), matching the family's inline-render convention.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityRecommenderResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub pes_cap: f64,
+    pub sample_step: f64,
+    pub direct: Nullable<RecommenderActivity>,
+    pub candidates: Vec<RecommenderActivity>,
 }
 
 // ── Facade methods ──────────────────────────────────────────────────
@@ -753,6 +815,60 @@ impl Api {
         })
     }
 
+    /// The activity recommender: every performable activity projected
+    /// against the target (a profession, a profession family, or HP)
+    /// and ranked by skilling-PES-to-+1, with the direct-grind
+    /// reference for single-profession targets.
+    pub async fn character_activity_recommender(
+        &self,
+        query: &ActivityRecommenderQuery,
+    ) -> Result<ActivityRecommenderResult, ApiError> {
+        let professions = self.game_data.get_entities("professions");
+        let target = match query.target {
+            RecommenderTargetKind::Hp => RecommenderTarget::Hp,
+            RecommenderTargetKind::Profession => {
+                if query.professions.is_empty() {
+                    return Err(ApiError::bad_request(
+                        "professions is required for a profession target",
+                    ));
+                }
+                if let Some(unknown) = query.professions.iter().find(|name| {
+                    !professions
+                        .iter()
+                        .any(|p| p.get("name").and_then(Value::as_str) == Some(name.as_str()))
+                }) {
+                    // A missing profession is the family's soft-error
+                    // shape, rendered inline rather than thrown.
+                    return Ok(ActivityRecommenderResult {
+                        error: Some(format!("Profession '{unknown}' not found")),
+                        pes_cap: RECOMMENDER_PES_CAP,
+                        sample_step: RECOMMENDER_SAMPLE_STEP,
+                        direct: None.into(),
+                        candidates: Vec::new(),
+                    });
+                }
+                RecommenderTarget::Professions(query.professions.clone())
+            }
+        };
+        let skill_levels = self
+            .skill_calibrations(None)
+            .await
+            .map_err(ApiError::internal("recommender skill calibrations"))?;
+        let skills_data = self.game_data.get_entities("skills");
+        let breakdown = activity_recommender(&skill_levels, professions, skills_data, &target);
+        Ok(ActivityRecommenderResult {
+            error: None,
+            pes_cap: breakdown.pes_cap,
+            sample_step: breakdown.sample_step,
+            direct: breakdown.direct.map(recommender_activity_dto).into(),
+            candidates: breakdown
+                .candidates
+                .into_iter()
+                .map(recommender_activity_dto)
+                .collect(),
+        })
+    }
+
     /// Latest calibrated level per skill: believed-current when `source`
     /// is None, the scan anchor when `source='scan'` (the
     /// `MAX(scanned_at)` / `MAX(id)` tiebreaker read behind
@@ -780,6 +896,26 @@ impl Api {
 }
 
 // ── Shaping helpers ─────────────────────────────────────────────────
+
+fn recommender_activity_dto(projection: ActivityProjection) -> RecommenderActivity {
+    RecommenderActivity {
+        activity: projection.activity,
+        professions: projection.professions,
+        pes_to_plus_one: projection.pes_to_plus_one.into(),
+        gain_at_cap: projection.gain_at_cap,
+        series: projection.series,
+        contributors: projection
+            .contributors
+            .into_iter()
+            .map(|row| RecommenderContribution {
+                name: row.name,
+                current_level: row.current_level,
+                level_gain: row.level_gain,
+                target_gain: row.target_gain,
+            })
+            .collect(),
+    }
+}
 
 fn optimizer_skill_dto(row: eo_services::character_calc::OptimizerSkillRow) -> OptimizerSkill {
     OptimizerSkill {

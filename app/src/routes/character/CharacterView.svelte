@@ -10,6 +10,7 @@
 	import OptimizerView from '$lib/features/character/OptimizerView.svelte';
 	import ProfessionsTable from '$lib/features/character/ProfessionsTable.svelte';
 	import ProspectView from '$lib/features/character/ProspectView.svelte';
+	import RecommenderView from '$lib/features/character/RecommenderView.svelte';
 	import SkillsTable from '$lib/features/character/SkillsTable.svelte';
 	import {
 		characterDemoOptimizerProfession,
@@ -35,7 +36,7 @@
 
 	// ── Tab state ───────────────────────────────────────────────────────────
 
-	let mainTab = $state<'stats' | 'prospect' | 'optimizer' | 'codex'>('stats');
+	let mainTab = $state<'stats' | 'prospect' | 'optimizer' | 'recommender' | 'codex'>('stats');
 	let statsSubTab = $state<'attributes' | 'skills' | 'professions'>('attributes');
 
 	// Guide-mode fake skill scanner (only consulted when guideState.isActive)
@@ -46,7 +47,7 @@
 	onMount(() => {
 		registerDemoApi('character', {
 			setMainTab: (tab: string) => {
-				mainTab = tab as 'stats' | 'prospect' | 'optimizer' | 'codex';
+				mainTab = tab as 'stats' | 'prospect' | 'optimizer' | 'recommender' | 'codex';
 			},
 			setStatsSubTab: (tab: string) => {
 				statsSubTab = tab as 'attributes' | 'skills' | 'professions';
@@ -169,10 +170,11 @@
 			{ id: 'stats', label: 'Stats' },
 			{ id: 'prospect', label: 'Prospect' },
 			{ id: 'optimizer', label: 'Optimiser' },
+			{ id: 'recommender', label: 'Activity Recommender' },
 			{ id: 'codex', label: 'Codex' }
 		]}
 		active={mainTab}
-		onchange={(id) => (mainTab = id as 'stats' | 'prospect' | 'optimizer' | 'codex')}
+		onchange={(id) => (mainTab = id as 'stats' | 'prospect' | 'optimizer' | 'recommender' | 'codex')}
 	/>
 
 	<ErrorNotice message={model.error} />
@@ -244,6 +246,10 @@
 
 	{#if mainTab === 'optimizer'}
 		<OptimizerView {model} />
+	{/if}
+
+	{#if mainTab === 'recommender'}
+		<RecommenderView {model} />
 	{/if}
 
 	{#if mainTab === 'codex'}

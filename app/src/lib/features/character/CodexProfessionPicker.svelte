@@ -18,12 +18,16 @@
 		professions,
 		target,
 		onchange,
+		align = 'right',
 		class: className = '',
 	}: {
 		/** Profession names available as ranking targets. */
 		professions: string[];
 		target: CodexRankingTarget;
 		onchange: (target: CodexRankingTarget) => void;
+		/** Which edge the dropdown panel hangs from: match the picker's
+		 *  side of the page so the panel never leaves the window. */
+		align?: 'left' | 'right';
 		class?: string;
 	} = $props();
 
@@ -143,10 +147,12 @@
 	{/if}
 
 	{#if open}
-		<!-- Right-aligned: the picker sits near the window's right edge,
-		     so the panel expands leftwards to stay on screen. -->
+		<!-- The panel hangs from the edge named by `align` and expands
+		     toward the page's centre to stay on screen (right for the
+		     codex picker at the window's right edge, left for the
+		     recommender picker at the left). -->
 		<div
-			class="absolute right-0 top-full mt-1 w-72 z-20 bg-surface border border-border rounded-md shadow-lg p-2"
+			class="absolute {align === 'right' ? 'right-0' : 'left-0'} top-full mt-1 w-72 z-20 bg-surface border border-border rounded-md shadow-lg p-2"
 		>
 			<PickerInput id="codex-profession-picker" placeholder="Search professions..." {model}>
 				{#snippet result({ item }: { item: PickerRow })}

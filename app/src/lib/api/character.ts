@@ -14,6 +14,7 @@ export const getCharacterProfessions = commands.characterProfessions;
 export const getProfessionOptimizer = commands.characterProfessionOptimizer;
 export const getHpOptimizer = commands.characterHpOptimizer;
 export const getCharacterProspectOptions = commands.characterProspectOptions;
+export const getActivityRecommender = commands.characterActivityRecommender;
 
 export async function getProfessionPathOptimizer(
 	profession: string,

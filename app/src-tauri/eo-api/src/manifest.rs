@@ -19,9 +19,9 @@ use crate::analytics::{
     LedgerPreset, LedgerPresetInput,
 };
 use crate::character::{
-    CalibrationStatus, CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult,
-    PathOptimizerResult, ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult,
-    SkillLevel,
+    ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
+    CharacterProspectOptions, ComputedCharacterStats, HpOptimizerResult, PathOptimizerResult,
+    ProfessionLevel, ProfessionOptimizerResult, ProspectQuery, ProspectResult, SkillLevel,
 };
 use crate::codex::{
     CodexCalibrateResult, CodexClaimResult, CodexMasteryClaimResult, CodexMetaAttribute,
@@ -189,6 +189,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "character_hp_optimizer",
             args: Vec::new(),
             returns: Some(schema(schema_for!(HpOptimizerResult))),
+        },
+        CommandSpec {
+            name: "character_activity_recommender",
+            args: vec![ArgSpec {
+                name: "query",
+                schema: schema(schema_for!(ActivityRecommenderQuery)),
+            }],
+            returns: Some(schema(schema_for!(ActivityRecommenderResult))),
         },
         CommandSpec {
             name: "settings_get",

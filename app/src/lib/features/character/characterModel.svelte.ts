@@ -25,6 +25,7 @@ import { describeError } from '$lib/view/errorState';
 import { createTableModel } from '$lib/view/tableModel.svelte';
 import { createOptimizerModel, type PageErrorSlot } from './optimizerModel.svelte';
 import { createProspectModel } from './prospectModel.svelte';
+import { createRecommenderModel } from './recommenderModel.svelte';
 
 export const PAGE_SIZE = 12;
 
@@ -44,6 +45,7 @@ export function createCharacterModel() {
 	const errors = createErrorSlot();
 	const optimizer = createOptimizerModel(errors);
 	const prospect = createProspectModel(optimizer, errors);
+	const recommender = createRecommenderModel(errors);
 
 	let calibration = $state({
 		calibrated: false,
@@ -115,6 +117,7 @@ export function createCharacterModel() {
 	return {
 		optimizer,
 		prospect,
+		recommender,
 		skillsTable,
 		professionsTable,
 
