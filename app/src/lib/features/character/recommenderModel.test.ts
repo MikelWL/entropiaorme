@@ -142,9 +142,7 @@ describe('overlapping loads', () => {
 		await secondLoad;
 		expect(model.selected?.activity).toBe('Resource Gatherer');
 
-		first.resolve(
-			recommenderResult({ candidates: [activity({ activity: 'Stale Winner' })] }),
-		);
+		first.resolve(recommenderResult({ candidates: [activity({ activity: 'Stale Winner' })] }));
 		await firstLoad;
 		// The stale resolution neither replaces the result nor clears the
 		// newer load's state.
