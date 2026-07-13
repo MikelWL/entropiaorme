@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use eo_api::codex::CodexRecommendTarget;
+use eo_api::codex::{CodexMasteryClaimResult, CodexRecommendTarget};
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -164,4 +164,69 @@ async fn the_write_error_ladder_maps_invalid_to_bad_request() {
         serde_json::to_string(&result).unwrap(),
         "{\"attributeName\":\"Health\",\"pedValue\":1.0}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_mastery_writes_map_their_refusals_to_bad_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = codex_api(dir.path()).await;
+
+    // A mastery claim against a species absent from the catalogue (idle
+    // session, so no suppression fires).
+    assert!(matches!(
+        api.codex_mastery_claim("Notaspecies", "Aim")
+            .await
+            .unwrap_err(),
+        ApiError::BadRequest { .. }
+    ));
+
+    // A mastery unclaim with nothing claimed: the service's message,
+    // verbatim.
+    assert_eq!(
+        api.codex_mastery_unclaim("Notaspecies").await.unwrap_err(),
+        ApiError::bad_request("No mastery claim to unclaim for 'Notaspecies'")
+    );
+}
+
+#[test]
+fn the_mastery_claim_result_serialises_the_wire_shape() {
+    // The claim and unclaim writes need a species at rank 25, which the
+    // empty-catalogue substrate cannot seed; the wire contract is still
+    // pinnable directly (field names and declaration order).
+    let result = CodexMasteryClaimResult {
+        species_name: "Sp".to_string(),
+        mastery_level: 3,
+        skill_name: "Aim".to_string(),
+        ped_value: 25.0,
+    };
+    assert_eq!(
+        serde_json::to_string(&result).unwrap(),
+        "{\"speciesName\":\"Sp\",\"masteryLevel\":3,\"skillName\":\"Aim\",\"pedValue\":25.0}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_mastery_options_are_catalogue_independent() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = codex_api(dir.path()).await;
+
+    // The eligible skills and their fixed rewards derive from constants,
+    // so the full set answers even over an empty catalogue: every
+    // cat1-cat3 skill once, no cat4, the three per-category value tiers.
+    let options = api
+        .codex_mastery_options(None, CodexRecommendTarget::Profession)
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 36);
+    assert!(options.iter().all(|option| option.category != "cat4"));
+    let reward = |name: &str| {
+        options
+            .iter()
+            .find(|option| option.skill_name == name)
+            .unwrap_or_else(|| panic!("{name} missing"))
+            .reward_ped
+    };
+    assert_eq!(reward("Aim"), 25.0);
+    assert_eq!(reward("Melee Combat"), 15.625);
+    assert_eq!(reward("Evade"), 7.8125);
 }

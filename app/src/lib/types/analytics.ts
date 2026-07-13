@@ -10,6 +10,7 @@ export type {
 	CalibrationStatus,
 	CharacterProspectOptions,
 	CodexClaimResult,
+	CodexMasteryClaimResult,
 	CodexMetaAttribute,
 	CodexMetaClaimResult,
 	CodexRank as CodexRankItem,

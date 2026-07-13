@@ -3,6 +3,20 @@ export function formatPed(value: number): string {
 	return value.toFixed(2);
 }
 
+/** Format a PED value to 2 decimal places with half-to-even rounding,
+ *  matching the game's own display (15.625 → "15.62", where toFixed
+ *  would give "15.63"). */
+export function formatPedHalfEven(value: number): string {
+	const scaled = value * 100;
+	const floor = Math.floor(scaled);
+	const diff = scaled - floor;
+	let cents: number;
+	if (diff > 0.5) cents = floor + 1;
+	else if (diff < 0.5) cents = floor;
+	else cents = floor % 2 === 0 ? floor : floor + 1;
+	return (cents / 100).toFixed(2);
+}
+
 /** Format a ratio as a percentage (0.917 → "91.7%") */
 export function formatPercent(ratio: number): string {
 	return `${(ratio * 100).toFixed(1)}%`;

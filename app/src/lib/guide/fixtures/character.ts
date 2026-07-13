@@ -351,6 +351,7 @@ export const characterDemoCodexSpecies: CodexSpecies[] = [
 		nextRank: 1,
 		nextCategory: 'cat1',
 		nextCost: 100,
+		masteryLevel: 0,
 	},
 	{
 		name: 'Atrax',
@@ -360,6 +361,7 @@ export const characterDemoCodexSpecies: CodexSpecies[] = [
 		nextRank: 3,
 		nextCategory: 'cat1',
 		nextCost: 150,
+		masteryLevel: 0,
 	},
 	{
 		name: 'Atrox',
@@ -369,6 +371,7 @@ export const characterDemoCodexSpecies: CodexSpecies[] = [
 		nextRank: 6,
 		nextCategory: 'cat2',
 		nextCost: 500,
+		masteryLevel: 0,
 	},
 	{
 		name: 'Berycled',
@@ -378,6 +381,7 @@ export const characterDemoCodexSpecies: CodexSpecies[] = [
 		nextRank: 13,
 		nextCategory: 'cat3',
 		nextCost: 1200,
+		masteryLevel: 0,
 	},
 	{
 		name: 'Combibo',
@@ -387,6 +391,7 @@ export const characterDemoCodexSpecies: CodexSpecies[] = [
 		nextRank: null,
 		nextCategory: null,
 		nextCost: null,
+		masteryLevel: 2,
 	},
 	{
 		name: 'Daikiba',
@@ -396,6 +401,7 @@ export const characterDemoCodexSpecies: CodexSpecies[] = [
 		nextRank: 4,
 		nextCategory: 'cat1',
 		nextCost: 200,
+		masteryLevel: 0,
 	},
 	{
 		name: 'Equus',
@@ -405,6 +411,7 @@ export const characterDemoCodexSpecies: CodexSpecies[] = [
 		nextRank: 9,
 		nextCategory: 'cat2',
 		nextCost: 700,
+		masteryLevel: 0,
 	},
 ];
 
@@ -413,6 +420,8 @@ export const characterDemoCodexRankBreakdown: CodexRankBreakdown = {
 	baseCost: 100,
 	codexType: 'standard',
 	currentRank: 5,
+	masteryLevel: 0,
+	masteryClaims: [],
 	ranks: [
 		{
 			rank: 1,

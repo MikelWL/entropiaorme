@@ -14,6 +14,15 @@ export const unclaimCodexRank = commands.codexUnclaim;
 export const calibrateCodex = commands.codexCalibrate;
 export const getCodexMetaAttributes = commands.codexMetaAttributes;
 export const claimCodexMeta = commands.codexMetaClaim;
+export const claimCodexMastery = commands.codexMasteryClaim;
+export const unclaimCodexMastery = commands.codexMasteryUnclaim;
+
+export async function getCodexMasteryOptions(options?: {
+	target?: CodexRecommendTarget;
+	profession?: string;
+}): Promise<CodexSkillOption[]> {
+	return commands.codexMasteryOptions(options?.profession ?? null, options?.target ?? 'profession');
+}
 
 export async function getCodexRecommendation(
 	speciesName: string,

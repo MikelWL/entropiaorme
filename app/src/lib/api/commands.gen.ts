@@ -161,6 +161,28 @@ export interface CodexClaimResult {
 }
 
 /**
+ * One recorded mastery claim in a species' breakdown, in claim order
+ * (`mastery_level` is the 1-based per-species sequence number).
+ */
+export interface CodexMasteryClaim {
+	masteryLevel: number;
+	skillName: string;
+	pedValue: number;
+}
+
+/**
+ * The record a mastery claim (or its reversal) returns.
+ * `mastery_level` is the per-species claim sequence number (the Nth
+ * mastery claim for that species).
+ */
+export interface CodexMasteryClaimResult {
+	speciesName: string;
+	masteryLevel: number;
+	skillName: string;
+	pedValue: number;
+}
+
+/**
  * One meta attribute with its current calibrated level.
  */
 export interface CodexMetaAttribute {
@@ -234,6 +256,7 @@ export interface CodexSpecies {
 	nextRank: number | null;
 	nextCategory: string | null;
 	nextCost: number | null;
+	masteryLevel: number;
 }
 
 /**
@@ -245,6 +268,8 @@ export interface CodexSpeciesRanks {
 	baseCost: number;
 	codexType: string | null;
 	currentRank: number;
+	masteryLevel: number;
+	masteryClaims: CodexMasteryClaim[];
 	ranks: CodexRank[];
 }
 
@@ -1834,6 +1859,18 @@ export async function codexUnclaim(speciesName: string): Promise<CodexClaimResul
 
 export async function codexMetaClaim(attributeName: string): Promise<CodexMetaClaimResult> {
 	return invokeCommand('codex_meta_claim', { attribute_name: attributeName });
+}
+
+export async function codexMasteryOptions(profession: string | null, target: CodexRecommendTarget): Promise<CodexSkillOption[]> {
+	return invokeCommand('codex_mastery_options', { profession, target });
+}
+
+export async function codexMasteryClaim(speciesName: string, skillName: string): Promise<CodexMasteryClaimResult> {
+	return invokeCommand('codex_mastery_claim', { species_name: speciesName, skill_name: skillName });
+}
+
+export async function codexMasteryUnclaim(speciesName: string): Promise<CodexMasteryClaimResult> {
+	return invokeCommand('codex_mastery_unclaim', { species_name: speciesName });
 }
 
 export async function questsList(): Promise<Quest[]> {
