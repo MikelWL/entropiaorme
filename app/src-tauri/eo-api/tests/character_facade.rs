@@ -343,3 +343,62 @@ async fn prospect_validates_and_converges_on_a_missing_profession() {
     assert!(result.rows.is_empty());
     assert_eq!(result.sample.sessions, 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_activity_recommender_ranks_arbitrage_and_validates() {
+    use eo_api::character::{ActivityRecommenderQuery, RecommenderTargetKind};
+
+    let dir = tempfile::tempdir().unwrap();
+    let api = seeded_api(dir.path()).await;
+
+    // Healer trains Anatomy at weight 50 while Marksman holds it at 10:
+    // the arbitrage the recommender exists to surface. Marksman itself
+    // is the direct reference, excluded from the candidates.
+    let query = ActivityRecommenderQuery {
+        target: RecommenderTargetKind::Profession,
+        professions: vec!["Marksman".into()],
+    };
+    let result = api.character_activity_recommender(&query).await.unwrap();
+    assert!(result.error.is_none());
+    assert_eq!(result.pes_cap, 1000.0);
+    assert_eq!(result.sample_step, 20.0);
+    let direct = result.direct.as_ref().expect("direct reference present");
+    assert_eq!(direct.activity, "Marksman");
+    assert_eq!(result.candidates.len(), 1);
+    let healer = &result.candidates[0];
+    assert_eq!(healer.activity, "Healer");
+    assert_eq!(healer.professions, vec!["Healer".to_string()]);
+    assert!(healer.gain_at_cap > 0.0);
+    assert_eq!(healer.series.len(), 51);
+    // The whole transfer rides Anatomy (Rifle is not on Healer's panel).
+    assert_eq!(healer.contributors.len(), 1);
+    assert_eq!(healer.contributors[0].name, "Anatomy");
+
+    // A profession target with no professions is a bad request.
+    let query = ActivityRecommenderQuery {
+        target: RecommenderTargetKind::Profession,
+        professions: Vec::new(),
+    };
+    assert!(api.character_activity_recommender(&query).await.is_err());
+
+    // A missing profession converges on the family's soft-error shape.
+    let query = ActivityRecommenderQuery {
+        target: RecommenderTargetKind::Profession,
+        professions: vec!["Nope".into()],
+    };
+    let missing = api.character_activity_recommender(&query).await.unwrap();
+    assert_eq!(missing.error.as_deref(), Some("Profession 'Nope' not found"));
+    assert!(missing.candidates.is_empty());
+    assert!(missing.direct.is_none());
+
+    // The seeded skills carry no hp_increase, so an HP target finds no
+    // candidates and defines no direct activity.
+    let query = ActivityRecommenderQuery {
+        target: RecommenderTargetKind::Hp,
+        professions: Vec::new(),
+    };
+    let hp = api.character_activity_recommender(&query).await.unwrap();
+    assert!(hp.error.is_none());
+    assert!(hp.candidates.is_empty());
+    assert!(hp.direct.is_none());
+}
