@@ -2287,18 +2287,7 @@ mod tests {
                 .execute_batch(include_str!("../migrations/0001_schema_baseline.sql"))
                 .unwrap();
             connection
-                .execute_batch(
-                    "DROP TABLE codex_claims; \
-                     CREATE TABLE codex_claims ( \
-                         id             INTEGER PRIMARY KEY AUTOINCREMENT, \
-                         species_name   TEXT NOT NULL, \
-                         rank           INTEGER NOT NULL, \
-                         skill_name     TEXT NOT NULL, \
-                         ped_value      REAL NOT NULL, \
-                         claimed_at     REAL NOT NULL DEFAULT (unixepoch('now')) \
-                     ); \
-                     CREATE INDEX idx_codex_claims_species ON codex_claims(species_name);",
-                )
+                .execute_batch(crate::db::LEGACY_CODEX_CLAIMS_DDL)
                 .unwrap();
         }
         let db = Db::open(&path).await.unwrap();

@@ -791,6 +791,23 @@ fn upgrade_to_baseline(tx: &rusqlite::Transaction<'_>, version: i64) -> Result<(
     Ok(())
 }
 
+/// The pre-mastery `codex_claims` shape (no `kind` / `attribute_name`), as an
+/// earlier schema lineage left it. The single canonical fixture the db-layer
+/// and codex-service tests both reproduce the adopted-legacy drift from, so the
+/// two cannot silently diverge and mask a healing regression.
+#[cfg(test)]
+pub(crate) const LEGACY_CODEX_CLAIMS_DDL: &str = "\
+    DROP TABLE codex_claims; \
+    CREATE TABLE codex_claims ( \
+        id             INTEGER PRIMARY KEY AUTOINCREMENT, \
+        species_name   TEXT NOT NULL, \
+        rank           INTEGER NOT NULL, \
+        skill_name     TEXT NOT NULL, \
+        ped_value      REAL NOT NULL, \
+        claimed_at     REAL NOT NULL DEFAULT (unixepoch('now')) \
+    ); \
+    CREATE INDEX idx_codex_claims_species ON codex_claims(species_name);";
+
 /// Heal an adopted database that predates a column the baseline declares.
 ///
 /// [`adopt_or_refuse`] stamps a version-33 (or v32-bridged) Python-lineage
@@ -817,6 +834,13 @@ fn upgrade_to_baseline(tx: &rusqlite::Transaction<'_>, version: i64) -> Result<(
 /// transaction, so a failure rolls the file back to exactly as it was found,
 /// honouring the [`Db::open_adopted`] "left untouched on a decline" contract.
 fn reconcile_baseline_columns(connection: &mut rusqlite::Connection) -> Result<(), DbError> {
+    if !table_exists_sync(connection, "db_metadata")? {
+        // A fresh (or empty) database: the migration chain creates the schema
+        // whole, so there is nothing to reconcile. Short-circuit before the
+        // in-memory reference is built, off the common fresh-install path.
+        return Ok(());
+    }
+
     let reference = rusqlite::Connection::open_in_memory()?;
     let baseline = migrate::MIGRATIONS
         .first()
@@ -1483,18 +1507,7 @@ mod tests {
     /// without the columns the Rust baseline declares.
     fn drop_codex_mastery_columns(connection: &rusqlite::Connection) {
         connection
-            .execute_batch(
-                "DROP TABLE codex_claims; \
-                 CREATE TABLE codex_claims ( \
-                     id             INTEGER PRIMARY KEY AUTOINCREMENT, \
-                     species_name   TEXT NOT NULL, \
-                     rank           INTEGER NOT NULL, \
-                     skill_name     TEXT NOT NULL, \
-                     ped_value      REAL NOT NULL, \
-                     claimed_at     REAL NOT NULL DEFAULT (unixepoch('now')) \
-                 ); \
-                 CREATE INDEX idx_codex_claims_species ON codex_claims(species_name);",
-            )
+            .execute_batch(super::LEGACY_CODEX_CLAIMS_DDL)
             .unwrap();
     }
 
@@ -1541,17 +1554,30 @@ mod tests {
         assert!(has_attr, "the missing attribute_name column is healed");
         assert_eq!(backfilled, "rank", "the existing rank claim backfills");
 
-        // The exact species read that failed on the drifted database now runs,
-        // and mastery/meta claims (which write the healed columns) record.
+        // The exact species read that failed on the drifted database now runs:
+        // no mastery claims yet, so it returns no rows rather than erroring on
+        // the once-missing column.
+        let mastery_rows = db
+            .with_reader(|connection| {
+                connection
+                    .query_row(
+                        "SELECT species_name, COUNT(*) FROM codex_claims \
+                         WHERE kind = 'mastery' GROUP BY species_name",
+                        [],
+                        |row| row.get::<_, i64>(1),
+                    )
+                    .optional()
+                    .map_err(DbError::from)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            mastery_rows, None,
+            "the healed read runs and finds no mastery claims"
+        );
+
+        // Mastery/meta claims (which write the healed columns) record.
         db.with_writer(|connection| {
-            connection
-                .query_row(
-                    "SELECT species_name, COUNT(*) FROM codex_claims \
-                 WHERE kind = 'mastery' GROUP BY species_name",
-                    [],
-                    |row| row.get::<_, i64>(1),
-                )
-                .optional()?;
             connection.execute(
                 "INSERT INTO codex_claims \
                  (species_name, rank, skill_name, ped_value, claimed_at, kind) \
