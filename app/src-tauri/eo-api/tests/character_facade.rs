@@ -387,7 +387,10 @@ async fn the_activity_recommender_ranks_arbitrage_and_validates() {
         professions: vec!["Nope".into()],
     };
     let missing = api.character_activity_recommender(&query).await.unwrap();
-    assert_eq!(missing.error.as_deref(), Some("Profession 'Nope' not found"));
+    assert_eq!(
+        missing.error.as_deref(),
+        Some("Profession 'Nope' not found")
+    );
     assert!(missing.candidates.is_empty());
     assert!(missing.direct.is_none());
 
