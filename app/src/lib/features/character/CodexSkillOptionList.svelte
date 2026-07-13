@@ -9,7 +9,7 @@
 		mastery = false,
 		family = false,
 		justClaimedSkill = null,
-	} = $props<{
+	}: {
 		options: CodexSkillOption[];
 		rankedBy: 'hp' | 'profession' | null;
 		onClaim: (skillName: string) => void;
@@ -22,7 +22,7 @@
 		 *  when only one member profession is affected by a skill. */
 		family?: boolean;
 		justClaimedSkill?: string | null;
-	}>();
+	} = $props();
 </script>
 
 <div class="space-y-0.5">
