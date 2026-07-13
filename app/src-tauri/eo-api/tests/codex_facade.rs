@@ -11,7 +11,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use eo_api::codex::{CodexMasteryClaimResult, CodexRecommendTarget};
+use eo_api::codex::{
+    CodexMasteryClaimResult, CodexProfessionContribution, CodexRecommendTarget, CodexSkillOption,
+};
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -61,7 +63,7 @@ async fn the_reads_answer_the_empty_catalogue_the_backend_way() {
     // over a catalogue with no codex data.
     assert!(api.codex_species().await.unwrap().is_empty());
     assert!(api
-        .codex_recommend("X", 4, None, CodexRecommendTarget::Profession)
+        .codex_recommend("X", 4, &[], CodexRecommendTarget::Profession)
         .await
         .unwrap()
         .is_empty());
@@ -101,7 +103,7 @@ async fn the_recommend_rank_bound_is_a_typed_bad_request() {
     // on the i64 argument.
     for rank in [0, 26] {
         assert_eq!(
-            api.codex_recommend("X", rank, None, CodexRecommendTarget::Profession)
+            api.codex_recommend("X", rank, &[], CodexRecommendTarget::Profession)
                 .await
                 .unwrap_err(),
             ApiError::bad_request("rank must be between 1 and 25")
@@ -205,6 +207,45 @@ fn the_mastery_claim_result_serialises_the_wire_shape() {
     );
 }
 
+#[test]
+fn the_skill_option_serialises_the_profession_split_wire_shape() {
+    // Real per-profession contributions need a seeded professions
+    // catalogue, which the empty-catalogue substrate cannot provide (the
+    // split's values are pinned at the service layer); the wire contract
+    // is still pinnable directly (field names and declaration order).
+    let option = CodexSkillOption {
+        skill_name: "Aim".to_string(),
+        category: "cat1".to_string(),
+        reward_ped: 0.1875,
+        current_level: None.into(),
+        levels_gained: 143.75,
+        profession_weight: 50,
+        prof_contribution: 0.718725,
+        profession_contributions: vec![
+            CodexProfessionContribution {
+                profession: "Sniper".to_string(),
+                prof_contribution: 0.28749,
+            },
+            CodexProfessionContribution {
+                profession: "Scout".to_string(),
+                prof_contribution: 0.431235,
+            },
+        ],
+        hp_increase: None.into(),
+        hp_gain: 0.0,
+        recommend_rank: Some(1).into(),
+    };
+    assert_eq!(
+        serde_json::to_string(&option).unwrap(),
+        "{\"skillName\":\"Aim\",\"category\":\"cat1\",\"rewardPed\":0.1875,\
+         \"currentLevel\":null,\"levelsGained\":143.75,\"professionWeight\":50,\
+         \"profContribution\":0.718725,\"professionContributions\":\
+         [{\"profession\":\"Sniper\",\"profContribution\":0.28749},\
+         {\"profession\":\"Scout\",\"profContribution\":0.431235}],\
+         \"hpIncrease\":null,\"hpGain\":0.0,\"recommendRank\":1}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_mastery_options_are_catalogue_independent() {
     let dir = tempfile::tempdir().unwrap();
@@ -214,7 +255,7 @@ async fn the_mastery_options_are_catalogue_independent() {
     // so the full set answers even over an empty catalogue: every
     // cat1-cat3 skill once, no cat4, the three per-category value tiers.
     let options = api
-        .codex_mastery_options(None, CodexRecommendTarget::Profession)
+        .codex_mastery_options(&[], CodexRecommendTarget::Profession)
         .await
         .unwrap();
     assert_eq!(options.len(), 36);

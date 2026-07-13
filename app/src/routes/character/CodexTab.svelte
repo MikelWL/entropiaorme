@@ -26,8 +26,12 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import { IconStar } from '$lib/icons';
 	import SearchInput from '$lib/components/SearchInput.svelte';
-	import Select from '$lib/components/Select.svelte';
+	import CodexProfessionPicker from '$lib/features/character/CodexProfessionPicker.svelte';
 	import CodexSkillOptionList from '$lib/features/character/CodexSkillOptionList.svelte';
+	import {
+		targetProfessions,
+		type CodexRankingTarget,
+	} from '$lib/features/character/codexRankingTarget';
 	import { guideState } from '$lib/guide/state.svelte';
 	import { createTableModel } from '$lib/view/tableModel.svelte';
 	import {
@@ -42,7 +46,6 @@
 	let { seedActive = false } = $props<{ seedActive?: boolean }>();
 
 	const PAGE_SIZE = 20;
-	const HP_GAIN_OPTION = '__hp__';
 
 	// ── Top-level mode ──────────────────────────────────────────────────────────
 
@@ -62,7 +65,7 @@
 
 	// ── Controls ────────────────────────────────────────────────────────────────
 
-	let selectedProfession = $state('');
+	let rankingTarget = $state<CodexRankingTarget>({ kind: 'none' });
 	let calibrateMode = $state(false);
 
 	// ── Selected species (right panel) ──────────────────────────────────────────
@@ -94,10 +97,14 @@
 		return next ?? null;
 	});
 
-	let isHpMode = $derived(selectedProfession === HP_GAIN_OPTION);
 	let rankedBy = $derived<'hp' | 'profession' | null>(
-		isHpMode ? 'hp' : selectedProfession ? 'profession' : null,
+		rankingTarget.kind === 'hp'
+			? 'hp'
+			: targetProfessions(rankingTarget).length > 0
+				? 'profession'
+				: null,
 	);
+	let familyTarget = $derived(rankingTarget.kind === 'family');
 
 	// ── Load on mount ───────────────────────────────────────────────────────────
 
@@ -132,14 +139,14 @@
 	$effect(() => {
 		if (seedActive) {
 			selectedSpecies = characterDemoCodexSelectedSpecies;
-			selectedProfession = characterDemoCodexSelectedProfession;
+			rankingTarget = { kind: 'profession', name: characterDemoCodexSelectedProfession };
 			rankBreakdown = characterDemoCodexRankBreakdown;
 			skillOptions = characterDemoCodexSkillOptions;
 			panelLoading = false;
 			loading = false;
 		} else if (selectedSpecies === characterDemoCodexSelectedSpecies) {
 			selectedSpecies = null;
-			selectedProfession = '';
+			rankingTarget = { kind: 'none' };
 			rankBreakdown = null;
 			skillOptions = [];
 		}
@@ -200,14 +207,12 @@
 	};
 
 	function getRecommendationRequest() {
-		if (selectedProfession === HP_GAIN_OPTION) {
+		if (rankingTarget.kind === 'hp') {
 			return { target: 'hp' as const };
 		}
-		if (selectedProfession) {
-			return {
-				target: 'profession' as const,
-				profession: selectedProfession,
-			};
+		const professions = targetProfessions(rankingTarget);
+		if (professions.length > 0) {
+			return { target: 'profession' as const, professions };
 		}
 		return undefined;
 	}
@@ -332,9 +337,10 @@
 		}
 	}
 
-	// ── Reload skill options when profession changes ────────────────────────────
+	// ── Reload skill options when the ranking target changes ───────────────────
 
-	async function onProfessionChange() {
+	async function onTargetChange(target: CodexRankingTarget) {
+		rankingTarget = target;
 		if (!selectedSpecies) return;
 		try {
 			if (nextRankData) {
@@ -367,17 +373,12 @@
 		{#if codexMode === 'mobs'}
 			<SearchInput bind:value={table.search} placeholder="Search species..." class="flex-1" />
 
-			<Select
-				bind:value={selectedProfession}
-				onchange={onProfessionChange}
-				data-guide-anchor="character-codex-profession-select"
-			>
-				<option value="">No profession</option>
-				<option value={HP_GAIN_OPTION}>HP gain</option>
-				{#each professions as prof}
-					<option value={prof.name}>{prof.name}</option>
-			{/each}
-			</Select>
+			<span class="text-xs text-text-secondary whitespace-nowrap shrink-0">Codex Optimiser:</span>
+			<CodexProfessionPicker
+				professions={professions.map(prof => prof.name)}
+				target={rankingTarget}
+				onchange={onTargetChange}
+			/>
 
 			<button
 				class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap
@@ -538,6 +539,7 @@
 								rankedBy={rankedBy}
 								onClaim={handleMasteryClaim}
 								mastery
+								family={familyTarget}
 								{justClaimedSkill}
 							/>
 
@@ -580,6 +582,7 @@
 									options={skillOptions}
 									rankedBy={rankedBy}
 									onClaim={handleClaim}
+									family={familyTarget}
 								/>
 							{/if}
 						</Card>

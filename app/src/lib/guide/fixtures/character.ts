@@ -525,6 +525,9 @@ export const characterDemoCodexSkillOptions: CodexSkillOption[] = [
 		levelsGained: 4.2,
 		professionWeight: 8,
 		profContribution: 0.0035,
+		professionContributions: [
+			{ profession: characterDemoCodexSelectedProfession, profContribution: 0.0035 },
+		],
 		hpIncrease: null,
 		hpGain: 0,
 		recommendRank: 1,
@@ -537,6 +540,9 @@ export const characterDemoCodexSkillOptions: CodexSkillOption[] = [
 		levelsGained: 5.8,
 		professionWeight: 6,
 		profContribution: 0.0028,
+		professionContributions: [
+			{ profession: characterDemoCodexSelectedProfession, profContribution: 0.0028 },
+		],
 		hpIncrease: null,
 		hpGain: 0,
 		recommendRank: 2,
@@ -549,6 +555,9 @@ export const characterDemoCodexSkillOptions: CodexSkillOption[] = [
 		levelsGained: 2.1,
 		professionWeight: 10,
 		profContribution: 0.0024,
+		professionContributions: [
+			{ profession: characterDemoCodexSelectedProfession, profContribution: 0.0024 },
+		],
 		hpIncrease: null,
 		hpGain: 0,
 		recommendRank: 3,
@@ -561,6 +570,9 @@ export const characterDemoCodexSkillOptions: CodexSkillOption[] = [
 		levelsGained: 7.3,
 		professionWeight: 4,
 		profContribution: 0.0018,
+		professionContributions: [
+			{ profession: characterDemoCodexSelectedProfession, profContribution: 0.0018 },
+		],
 		hpIncrease: null,
 		hpGain: 0,
 		recommendRank: 4,
@@ -573,6 +585,9 @@ export const characterDemoCodexSkillOptions: CodexSkillOption[] = [
 		levelsGained: 8.5,
 		professionWeight: 2,
 		profContribution: 0.0008,
+		professionContributions: [
+			{ profession: characterDemoCodexSelectedProfession, profContribution: 0.0008 },
+		],
 		hpIncrease: null,
 		hpGain: 0,
 		recommendRank: 5,

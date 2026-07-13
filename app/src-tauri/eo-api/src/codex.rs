@@ -110,9 +110,20 @@ pub struct CodexSpeciesRanks {
     pub ranks: Vec<CodexRank>,
 }
 
+/// One requested profession's share of a skill option's contribution
+/// (professions with no weight on the skill are omitted).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexProfessionContribution {
+    pub profession: String,
+    pub prof_contribution: f64,
+}
+
 /// One skill option in a rank recommendation: the reward it grants, the
 /// levels that buys at the current point on the curve, and the profession
-/// / HP contribution used to rank the list.
+/// / HP contribution used to rank the list. The weight and contribution
+/// sum over the requested professions; `profession_contributions` carries
+/// the per-profession split.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexSkillOption {
@@ -123,6 +134,7 @@ pub struct CodexSkillOption {
     pub levels_gained: f64,
     pub profession_weight: i64,
     pub prof_contribution: f64,
+    pub profession_contributions: Vec<CodexProfessionContribution>,
     pub hp_increase: Nullable<f64>,
     pub hp_gain: f64,
     pub recommend_rank: Nullable<i64>,
@@ -210,14 +222,15 @@ impl Api {
 
     /// The skill options for a rank, ranked by profession contribution or
     /// HP gain. An empty list when the species is not in the catalogue
-    /// (the pinned soft-miss shape). The rank is bound to the codex
-    /// table's 1..=25 domain; an out-of-domain rank is a typed
-    /// `bad_request`.
+    /// (the pinned soft-miss shape). Several professions rank by summed
+    /// weights (a profession family targeted together). The rank is
+    /// bound to the codex table's 1..=25 domain; an out-of-domain rank
+    /// is a typed `bad_request`.
     pub async fn codex_recommend(
         &self,
         species_name: &str,
         rank: i64,
-        profession: Option<&str>,
+        professions: &[String],
         target: CodexRecommendTarget,
     ) -> Result<Vec<CodexSkillOption>, ApiError> {
         if !(1..=25).contains(&rank) {
@@ -225,7 +238,7 @@ impl Api {
         }
         let options = self
             .codex
-            .get_skill_options(species_name, rank, profession, target.as_str())
+            .get_skill_options(species_name, rank, professions, target.as_str())
             .await
             .map_err(ApiError::internal("codex recommend read"))?;
         Ok(options.into_iter().map(skill_option_dto).collect())
@@ -298,17 +311,18 @@ impl Api {
     }
 
     /// The mastery skill options, ranked by profession contribution or HP
-    /// gain exactly as the per-rank recommendation is. Species-independent:
-    /// the eligible skills and their fixed rewards are the same for every
-    /// species whose 25 ranks are complete.
+    /// gain exactly as the per-rank recommendation is (several professions
+    /// rank by summed weights). Species-independent: the eligible skills
+    /// and their fixed rewards are the same for every species whose 25
+    /// ranks are complete.
     pub async fn codex_mastery_options(
         &self,
-        profession: Option<&str>,
+        professions: &[String],
         target: CodexRecommendTarget,
     ) -> Result<Vec<CodexSkillOption>, ApiError> {
         let options = self
             .codex
-            .get_mastery_skill_options(profession, target.as_str())
+            .get_mastery_skill_options(professions, target.as_str())
             .await
             .map_err(ApiError::internal("codex mastery options read"))?;
         Ok(options.into_iter().map(skill_option_dto).collect())
@@ -432,6 +446,14 @@ fn skill_option_dto(option: codex::SkillOption) -> CodexSkillOption {
         levels_gained: option.levels_gained,
         profession_weight: option.profession_weight,
         prof_contribution: option.prof_contribution,
+        profession_contributions: option
+            .profession_contributions
+            .into_iter()
+            .map(|entry| CodexProfessionContribution {
+                profession: entry.profession,
+                prof_contribution: entry.prof_contribution,
+            })
+            .collect(),
         hp_increase: option.hp_increase.into(),
         hp_gain: option.hp_gain,
         recommend_rank: option.recommend_rank.into(),
