@@ -2271,6 +2271,55 @@ mod tests {
         assert_eq!(svc.current_rank("Boar").await.unwrap(), 24);
     }
 
+    /// Build the service over a Python-lineage version-33 database whose
+    /// `codex_claims` predates the mastery columns (`kind`/`attribute_name`):
+    /// exactly the drifted shape adoption used to stamp as-is, leaving every
+    /// codex read to fail on the missing `kind` column. `Db::open` heals the
+    /// drift, so the service must serve reads and record mastery/meta claims.
+    async fn legacy_service(dir: &Path) -> (CodexService, Db) {
+        let snapshot = dir.join("snapshot");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        write_snapshot(&snapshot);
+        let path = dir.join("entropia_orme.db");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .execute_batch(include_str!("../migrations/0001_schema_baseline.sql"))
+                .unwrap();
+            connection
+                .execute_batch(crate::db::LEGACY_CODEX_CLAIMS_DDL)
+                .unwrap();
+        }
+        let db = Db::open(&path).await.unwrap();
+        let game_data = Arc::new(GameDataStore::new(&snapshot).unwrap());
+        let clock = Arc::new(MockClock::new(Some(start_instant()), 0.0));
+        (CodexService::new(db.clone(), game_data, clock), db)
+    }
+
+    #[tokio::test]
+    async fn adopted_legacy_database_serves_codex_reads_and_mastery_claims() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, _db) = legacy_service(dir.path()).await;
+
+        // The species read that failed with `no such column: kind` on the
+        // drifted database now succeeds after the open-time heal.
+        let species = svc.get_all_species().await.unwrap();
+        assert!(species.iter().any(|s| s.name == "Boar"));
+
+        // The mastery and meta writers target the healed columns; both record.
+        svc.calibrate("Boar", 24).await.unwrap();
+        svc.claim_rank("Boar", 25, "Evade").await.unwrap();
+        let mastery = svc.mastery_claim("Boar", "Rifle").await.unwrap();
+        assert_eq!(mastery.mastery_level, 1);
+        let meta = svc.meta_claim("Agility").await.unwrap();
+        assert_eq!(meta.attribute_name, "Agility");
+
+        // The mastery read reflects the recorded claim.
+        let after = svc.get_all_species().await.unwrap();
+        let boar = after.iter().find(|s| s.name == "Boar").unwrap();
+        assert_eq!(boar.mastery_level, 1);
+    }
+
     #[tokio::test]
     async fn repeat_same_skill_mastery_claims_price_from_the_newest_calibration() {
         let dir = tempfile::tempdir().unwrap();
