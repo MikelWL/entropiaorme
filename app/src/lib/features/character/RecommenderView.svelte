@@ -40,7 +40,7 @@
 		</p>
 	{:else if recommender.loading}
 		<p class="text-sm text-text-tertiary py-8 text-center">Projecting activities...</p>
-	{:else if recommender.candidates.length === 0}
+	{:else if recommender.result && recommender.candidates.length === 0}
 		<p class="text-sm text-text-tertiary py-8 text-center">
 			No activity trains the skills behind {targetLabel(recommender.target)} from your current
 			calibration. Scan your skills first if you have not yet.

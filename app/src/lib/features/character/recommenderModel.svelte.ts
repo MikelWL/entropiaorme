@@ -26,12 +26,21 @@ export function createRecommenderModel(errors: PageErrorSlot) {
 			null,
 	);
 
+	// Each load claims a generation; a resolution from a superseded load
+	// (a newer target picked meanwhile, including 'none') is discarded so
+	// out-of-order responses can never repopulate the current state.
+	let generation = 0;
+
 	async function load(next: CodexRankingTarget) {
+		const claimed = ++generation;
 		target = next;
 		result = null;
 		selectedActivity = '';
-		if (next.kind === 'none') return;
 		errors.error = null;
+		if (next.kind === 'none') {
+			loading = false;
+			return;
+		}
 		loading = true;
 		try {
 			const loaded = await getActivityRecommender(
@@ -39,6 +48,7 @@ export function createRecommenderModel(errors: PageErrorSlot) {
 					? { target: 'hp', professions: [] }
 					: { target: 'profession', professions: targetProfessions(next) },
 			);
+			if (claimed !== generation) return;
 			if (loaded.error) {
 				errors.error = loaded.error;
 				return;
@@ -46,9 +56,10 @@ export function createRecommenderModel(errors: PageErrorSlot) {
 			result = loaded;
 			selectedActivity = loaded.candidates[0]?.activity ?? '';
 		} catch (e) {
+			if (claimed !== generation) return;
 			errors.error = describeError(e, 'Failed to load the activity recommender');
 		} finally {
-			loading = false;
+			if (claimed === generation) loading = false;
 		}
 	}
 

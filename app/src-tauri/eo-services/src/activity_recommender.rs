@@ -278,10 +278,9 @@ fn evaluate(rows: &[ProjectionRow], pes: f64) -> f64 {
 /// PES to reach +1 on the target metric: locate the bracketing sample,
 /// then bisect the exact evaluation inside it.
 fn pes_to_plus_one(rows: &[ProjectionRow], series: &[f64]) -> Option<f64> {
+    // A zero budget buys zero gain, so the first sample is always 0.0
+    // and any crossing sits at index 1 or later.
     let crossing = series.iter().position(|gain| *gain >= 1.0)?;
-    if crossing == 0 {
-        return Some(0.0);
-    }
     let mut lo = (crossing as f64 - 1.0) * RECOMMENDER_SAMPLE_STEP;
     let mut hi = crossing as f64 * RECOMMENDER_SAMPLE_STEP;
     for _ in 0..32 {

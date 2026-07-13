@@ -117,6 +117,75 @@ describe('load', () => {
 	});
 });
 
+describe('overlapping loads', () => {
+	function deferred<T>() {
+		let resolve!: (value: T) => void;
+		let reject!: (reason: unknown) => void;
+		const promise = new Promise<T>((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		return { promise, resolve, reject };
+	}
+
+	it('discards a stale response that resolves after a newer load', async () => {
+		const { model, errors } = makeModel();
+		const first = deferred<ActivityRecommenderResult>();
+		const second = deferred<ActivityRecommenderResult>();
+		mocked.getActivityRecommender
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+
+		const firstLoad = model.load({ kind: 'profession', name: 'Animal Looter' });
+		const secondLoad = model.load({ kind: 'hp' });
+		second.resolve(recommenderResult({ direct: null, candidates: [activity()] }));
+		await secondLoad;
+		expect(model.selected?.activity).toBe('Resource Gatherer');
+
+		first.resolve(
+			recommenderResult({ candidates: [activity({ activity: 'Stale Winner' })] }),
+		);
+		await firstLoad;
+		// The stale resolution neither replaces the result nor clears the
+		// newer load's state.
+		expect(model.selected?.activity).toBe('Resource Gatherer');
+		expect(model.loading).toBe(false);
+		expect(errors.error).toBeNull();
+	});
+
+	it('ignores a stale failure after a newer load succeeded', async () => {
+		const { model, errors } = makeModel();
+		const first = deferred<ActivityRecommenderResult>();
+		mocked.getActivityRecommender
+			.mockReturnValueOnce(first.promise)
+			.mockResolvedValueOnce(recommenderResult({ direct: null }));
+
+		const firstLoad = model.load({ kind: 'profession', name: 'Animal Looter' });
+		await model.load({ kind: 'hp' });
+		first.reject(new Error('stale failure'));
+		await firstLoad;
+		expect(errors.error).toBeNull();
+		expect(model.result).not.toBeNull();
+	});
+
+	it('selecting none while a load is pending keeps the cleared state', async () => {
+		const { model, errors } = makeModel();
+		const pending = deferred<ActivityRecommenderResult>();
+		mocked.getActivityRecommender.mockReturnValueOnce(pending.promise);
+
+		const pendingLoad = model.load({ kind: 'profession', name: 'Animal Looter' });
+		await model.load({ kind: 'none' });
+		expect(model.loading).toBe(false);
+
+		pending.resolve(recommenderResult());
+		await pendingLoad;
+		expect(model.result).toBeNull();
+		expect(model.selected).toBeNull();
+		expect(model.loading).toBe(false);
+		expect(errors.error).toBeNull();
+	});
+});
+
 describe('select', () => {
 	it('switches the selected candidate and falls back to the top for unknown names', async () => {
 		const { model } = makeModel();
