@@ -707,7 +707,7 @@ impl CodexService {
         &self,
         species_name: &str,
         rank: i64,
-        profession: Option<&str>,
+        professions: &[String],
         target: &str,
     ) -> Result<Vec<SkillOption>, CodexError> {
         let Some(species) = self.find_species(species_name) else {
@@ -729,7 +729,7 @@ impl CodexService {
             }
         }
 
-        self.rank_options(skill_entries, profession, target).await
+        self.rank_options(skill_entries, professions, target).await
     }
 
     /// Skill choices for the mastery reward, ranked exactly as the
@@ -737,7 +737,7 @@ impl CodexService {
     /// skills and their fixed rewards are the same for every species.
     pub async fn get_mastery_skill_options(
         &self,
-        profession: Option<&str>,
+        professions: &[String],
         target: &str,
     ) -> Result<Vec<SkillOption>, CodexError> {
         let mut skill_entries: Vec<(&'static str, &'static str, f64)> = Vec::new();
@@ -747,7 +747,7 @@ impl CodexService {
                 skill_entries.push((skill_name, category, ped));
             }
         }
-        self.rank_options(skill_entries, profession, target).await
+        self.rank_options(skill_entries, professions, target).await
     }
 
     /// Enrich `(skill, category, reward)` entries with the current
@@ -758,18 +758,33 @@ impl CodexService {
     async fn rank_options(
         &self,
         skill_entries: Vec<(&'static str, &'static str, f64)>,
-        profession: Option<&str>,
+        professions: &[String],
         target: &str,
     ) -> Result<Vec<SkillOption>, CodexError> {
-        // Profession weights, when a (non-empty) profession is named:
-        // the first matching profession's skill list, weight defaults
-        // applied as the original's `or 0`.
+        // Profession weights: per requested (non-empty) profession, the
+        // first matching catalogue entry's skill list, weight defaults
+        // applied as the original's `or 0`. Several professions (a
+        // family targeted together) sum their weights per skill, which
+        // ranks by total progress across the family: contribution is
+        // linear in weight, so a summed map equals summed per-profession
+        // contributions. One profession reproduces the original ranking
+        // exactly.
         let mut weight_map: HashMap<&str, i64> = HashMap::new();
-        if let Some(profession) = profession.filter(|name| !name.is_empty()) {
+        let mut requested: Vec<&str> = Vec::new();
+        for name in professions.iter().filter(|name| !name.is_empty()) {
+            if !requested.contains(&name.as_str()) {
+                requested.push(name.as_str());
+            }
+        }
+        for profession in requested {
             for entry in self.game_data.get_entities("professions") {
                 if entry.get("name").and_then(Value::as_str) != Some(profession) {
                     continue;
                 }
+                // Within one profession a duplicate skill entry's later
+                // weight wins (the original's dict insertion), so the
+                // profession resolves its own map before summing in.
+                let mut profession_map: HashMap<&str, i64> = HashMap::new();
                 for skill_entry in entry
                     .get("skills")
                     .and_then(Value::as_array)
@@ -786,8 +801,11 @@ impl CodexService {
                         .and_then(Value::as_i64)
                         .unwrap_or(0);
                     if !name.is_empty() {
-                        weight_map.insert(name, weight);
+                        profession_map.insert(name, weight);
                     }
+                }
+                for (name, weight) in profession_map {
+                    *weight_map.entry(name).or_insert(0) += weight;
                 }
                 break;
             }
@@ -1265,6 +1283,10 @@ mod tests {
                     {"skill": {"name": ""}, "weight": 7},
                 ]},
                 {"name": "Sniper", "skills": [{"skill": {"name": "Rifle"}, "weight": 1}]},
+                {"name": "Scout", "skills": [
+                    {"skill": {"name": "Aim"}, "weight": 30},
+                    {"skill": {"name": "Dodge"}, "weight": 15},
+                ]},
             ]))
             .unwrap(),
         )
@@ -1387,7 +1409,7 @@ mod tests {
         assert_eq!(svc.get_species_ranks("Nessie").await.unwrap(), None);
         assert_eq!(
             to_json(
-                svc.get_skill_options("Nessie", 1, None, "profession")
+                svc.get_skill_options("Nessie", 1, &[], "profession")
                     .await
                     .unwrap(),
             ),
@@ -1727,7 +1749,7 @@ mod tests {
         svc.claim_rank("Boar", 1, "Rifle").await.unwrap();
 
         let options = to_json(
-            svc.get_skill_options("Boar", 1, Some("Sniper"), "profession")
+            svc.get_skill_options("Boar", 1, &["Sniper".to_string()], "profession")
                 .await
                 .unwrap(),
         );
@@ -1797,7 +1819,7 @@ mod tests {
 
         // A MobLooter rank 5 offers cat3 plus the cat4 bonus skills.
         let options = to_json(
-            svc.get_skill_options("Looter Bird", 5, None, "hp")
+            svc.get_skill_options("Looter Bird", 5, &[], "hp")
                 .await
                 .unwrap(),
         );
@@ -2107,6 +2129,65 @@ mod tests {
                 .unwrap();
             assert_eq!(progress, 0, "rank steps back exactly once");
         }
+    }
+
+    #[tokio::test]
+    async fn several_professions_rank_by_summed_weights() {
+        let dir = tempfile::tempdir().unwrap();
+        let (svc, db) = service(dir.path()).await;
+        seed_calibrations(&db).await;
+
+        // A family of professions targeted together sums weights per
+        // skill (contribution is linear in weight, so this equals the
+        // sum of per-profession contributions): rank 1 is cat1, where
+        // Sniper carries Rifle 50 / Aim 20 and Scout adds Aim 30.
+        let options = svc
+            .get_skill_options(
+                "Boar",
+                1,
+                &["Sniper".to_string(), "Scout".to_string()],
+                "profession",
+            )
+            .await
+            .unwrap();
+        let weight = |name: &str| {
+            options
+                .iter()
+                .find(|option| option.skill_name == name)
+                .unwrap_or_else(|| panic!("{name} missing"))
+                .profession_weight
+        };
+        assert_eq!(weight("Aim"), 50);
+        assert_eq!(weight("Rifle"), 50);
+        assert_eq!(weight("Anatomy"), 0);
+
+        // Aim outranks Rifle at equal weight: Rifle's calibrated level
+        // 100 buys far fewer levels per PED than uncalibrated Aim.
+        let rank_of = |name: &str| {
+            options
+                .iter()
+                .find(|option| option.skill_name == name)
+                .unwrap()
+                .recommend_rank
+        };
+        assert_eq!(rank_of("Aim"), Some(1));
+        assert_eq!(rank_of("Rifle"), Some(2));
+
+        // A duplicated name never double-counts its weights.
+        let deduped = svc
+            .get_skill_options(
+                "Boar",
+                1,
+                &["Sniper".to_string(), "Sniper".to_string()],
+                "profession",
+            )
+            .await
+            .unwrap();
+        let rifle = deduped
+            .iter()
+            .find(|option| option.skill_name == "Rifle")
+            .unwrap();
+        assert_eq!(rifle.profession_weight, 50);
     }
 
     #[tokio::test]
@@ -2423,7 +2504,7 @@ mod tests {
         seed_calibrations(&db).await;
 
         let options = svc
-            .get_mastery_skill_options(Some("Sniper"), "profession")
+            .get_mastery_skill_options(&["Sniper".to_string()], "profession")
             .await
             .unwrap();
 

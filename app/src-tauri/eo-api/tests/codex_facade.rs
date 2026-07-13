@@ -61,7 +61,7 @@ async fn the_reads_answer_the_empty_catalogue_the_backend_way() {
     // over a catalogue with no codex data.
     assert!(api.codex_species().await.unwrap().is_empty());
     assert!(api
-        .codex_recommend("X", 4, None, CodexRecommendTarget::Profession)
+        .codex_recommend("X", 4, &[], CodexRecommendTarget::Profession)
         .await
         .unwrap()
         .is_empty());
@@ -101,7 +101,7 @@ async fn the_recommend_rank_bound_is_a_typed_bad_request() {
     // on the i64 argument.
     for rank in [0, 26] {
         assert_eq!(
-            api.codex_recommend("X", rank, None, CodexRecommendTarget::Profession)
+            api.codex_recommend("X", rank, &[], CodexRecommendTarget::Profession)
                 .await
                 .unwrap_err(),
             ApiError::bad_request("rank must be between 1 and 25")
@@ -214,7 +214,7 @@ async fn the_mastery_options_are_catalogue_independent() {
     // so the full set answers even over an empty catalogue: every
     // cat1-cat3 skill once, no cat4, the three per-category value tiers.
     let options = api
-        .codex_mastery_options(None, CodexRecommendTarget::Profession)
+        .codex_mastery_options(&[], CodexRecommendTarget::Profession)
         .await
         .unwrap();
     assert_eq!(options.len(), 36);

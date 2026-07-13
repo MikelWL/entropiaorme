@@ -19,20 +19,20 @@ export const unclaimCodexMastery = commands.codexMasteryUnclaim;
 
 export async function getCodexMasteryOptions(options?: {
 	target?: CodexRecommendTarget;
-	profession?: string;
+	professions?: string[];
 }): Promise<CodexSkillOption[]> {
-	return commands.codexMasteryOptions(options?.profession ?? null, options?.target ?? 'profession');
+	return commands.codexMasteryOptions(options?.professions ?? [], options?.target ?? 'profession');
 }
 
 export async function getCodexRecommendation(
 	speciesName: string,
 	rank: number,
-	options?: { target?: CodexRecommendTarget; profession?: string },
+	options?: { target?: CodexRecommendTarget; professions?: string[] },
 ): Promise<CodexSkillOption[]> {
 	return commands.codexRecommend(
 		speciesName,
 		rank,
-		options?.profession ?? null,
+		options?.professions ?? [],
 		options?.target ?? 'profession',
 	);
 }

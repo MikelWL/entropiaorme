@@ -397,16 +397,32 @@ describe('codex wrappers dispatch typed commands', () => {
 			{ species_name: 'Atrox', rank: 3 },
 		],
 		[
-			'getCodexRecommendation passes an explicit target and profession',
-			() => api.getCodexRecommendation('Atrox', 3, { target: 'hp', profession: 'Sniper (Hit)' }),
+			'getCodexRecommendation passes an explicit target and professions',
+			() =>
+				api.getCodexRecommendation('Atrox', 3, {
+					target: 'hp',
+					professions: ['Sniper (Hit)', 'Ranger (Hit)'],
+				}),
 			'codex_recommend',
-			{ species_name: 'Atrox', rank: 3, profession: 'Sniper (Hit)', target: 'hp' },
+			{ species_name: 'Atrox', rank: 3, professions: ['Sniper (Hit)', 'Ranger (Hit)'], target: 'hp' },
 		],
 		[
-			'getCodexRecommendation defaults to the profession target and a null profession',
+			'getCodexRecommendation defaults to the profession target and no professions',
 			() => api.getCodexRecommendation('Atrox', 3),
 			'codex_recommend',
-			{ species_name: 'Atrox', rank: 3, profession: null, target: 'profession' },
+			{ species_name: 'Atrox', rank: 3, professions: [], target: 'profession' },
+		],
+		[
+			'getCodexMasteryOptions passes professions and defaults the target',
+			() => api.getCodexMasteryOptions({ professions: ['Evader'] }),
+			'codex_mastery_options',
+			{ professions: ['Evader'], target: 'profession' },
+		],
+		[
+			'getCodexMasteryOptions defaults to no professions',
+			() => api.getCodexMasteryOptions(),
+			'codex_mastery_options',
+			{ professions: [], target: 'profession' },
 		],
 		['getCodexMetaAttributes', () => api.getCodexMetaAttributes(), 'codex_meta_attributes', {}],
 		[

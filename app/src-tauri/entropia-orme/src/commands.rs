@@ -235,11 +235,11 @@ pub async fn codex_recommend(
     app: tauri::AppHandle,
     species_name: String,
     rank: i64,
-    profession: Option<String>,
+    professions: Vec<String>,
     target: CodexRecommendTarget,
 ) -> Result<Vec<CodexSkillOption>, ApiError> {
     facade(&app)?
-        .codex_recommend(&species_name, rank, profession.as_deref(), target)
+        .codex_recommend(&species_name, rank, &professions, target)
         .await
 }
 
@@ -290,11 +290,11 @@ pub async fn codex_meta_claim(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn codex_mastery_options(
     app: tauri::AppHandle,
-    profession: Option<String>,
+    professions: Vec<String>,
     target: CodexRecommendTarget,
 ) -> Result<Vec<CodexSkillOption>, ApiError> {
     facade(&app)?
-        .codex_mastery_options(profession.as_deref(), target)
+        .codex_mastery_options(&professions, target)
         .await
 }
 

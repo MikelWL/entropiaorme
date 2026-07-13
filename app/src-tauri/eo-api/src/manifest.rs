@@ -247,8 +247,8 @@ pub fn manifest() -> Vec<CommandSpec> {
                     schema: schema(schema_for!(i64)),
                 },
                 ArgSpec {
-                    name: "profession",
-                    schema: schema(schema_for!(Option<String>)),
+                    name: "professions",
+                    schema: schema(schema_for!(Vec<String>)),
                 },
                 ArgSpec {
                     name: "target",
@@ -314,8 +314,8 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "codex_mastery_options",
             args: vec![
                 ArgSpec {
-                    name: "profession",
-                    schema: schema(schema_for!(Option<String>)),
+                    name: "professions",
+                    schema: schema(schema_for!(Vec<String>)),
                 },
                 ArgSpec {
                     name: "target",

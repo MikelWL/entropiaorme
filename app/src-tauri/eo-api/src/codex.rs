@@ -210,14 +210,15 @@ impl Api {
 
     /// The skill options for a rank, ranked by profession contribution or
     /// HP gain. An empty list when the species is not in the catalogue
-    /// (the pinned soft-miss shape). The rank is bound to the codex
-    /// table's 1..=25 domain; an out-of-domain rank is a typed
-    /// `bad_request`.
+    /// (the pinned soft-miss shape). Several professions rank by summed
+    /// weights (a profession family targeted together). The rank is
+    /// bound to the codex table's 1..=25 domain; an out-of-domain rank
+    /// is a typed `bad_request`.
     pub async fn codex_recommend(
         &self,
         species_name: &str,
         rank: i64,
-        profession: Option<&str>,
+        professions: &[String],
         target: CodexRecommendTarget,
     ) -> Result<Vec<CodexSkillOption>, ApiError> {
         if !(1..=25).contains(&rank) {
@@ -225,7 +226,7 @@ impl Api {
         }
         let options = self
             .codex
-            .get_skill_options(species_name, rank, profession, target.as_str())
+            .get_skill_options(species_name, rank, professions, target.as_str())
             .await
             .map_err(ApiError::internal("codex recommend read"))?;
         Ok(options.into_iter().map(skill_option_dto).collect())
@@ -298,17 +299,18 @@ impl Api {
     }
 
     /// The mastery skill options, ranked by profession contribution or HP
-    /// gain exactly as the per-rank recommendation is. Species-independent:
-    /// the eligible skills and their fixed rewards are the same for every
-    /// species whose 25 ranks are complete.
+    /// gain exactly as the per-rank recommendation is (several professions
+    /// rank by summed weights). Species-independent: the eligible skills
+    /// and their fixed rewards are the same for every species whose 25
+    /// ranks are complete.
     pub async fn codex_mastery_options(
         &self,
-        profession: Option<&str>,
+        professions: &[String],
         target: CodexRecommendTarget,
     ) -> Result<Vec<CodexSkillOption>, ApiError> {
         let options = self
             .codex
-            .get_mastery_skill_options(profession, target.as_str())
+            .get_mastery_skill_options(professions, target.as_str())
             .await
             .map_err(ApiError::internal("codex mastery options read"))?;
         Ok(options.into_iter().map(skill_option_dto).collect())

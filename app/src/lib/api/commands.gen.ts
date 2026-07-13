@@ -1837,8 +1837,8 @@ export async function codexSpeciesRanks(speciesName: string): Promise<CodexSpeci
 	return invokeCommand('codex_species_ranks', { species_name: speciesName });
 }
 
-export async function codexRecommend(speciesName: string, rank: number, profession: string | null, target: CodexRecommendTarget): Promise<CodexSkillOption[]> {
-	return invokeCommand('codex_recommend', { species_name: speciesName, rank, profession, target });
+export async function codexRecommend(speciesName: string, rank: number, professions: string[], target: CodexRecommendTarget): Promise<CodexSkillOption[]> {
+	return invokeCommand('codex_recommend', { species_name: speciesName, rank, professions, target });
 }
 
 export async function codexMetaAttributes(): Promise<CodexMetaAttribute[]> {
@@ -1861,8 +1861,8 @@ export async function codexMetaClaim(attributeName: string): Promise<CodexMetaCl
 	return invokeCommand('codex_meta_claim', { attribute_name: attributeName });
 }
 
-export async function codexMasteryOptions(profession: string | null, target: CodexRecommendTarget): Promise<CodexSkillOption[]> {
-	return invokeCommand('codex_mastery_options', { profession, target });
+export async function codexMasteryOptions(professions: string[], target: CodexRecommendTarget): Promise<CodexSkillOption[]> {
+	return invokeCommand('codex_mastery_options', { professions, target });
 }
 
 export async function codexMasteryClaim(speciesName: string, skillName: string): Promise<CodexMasteryClaimResult> {
