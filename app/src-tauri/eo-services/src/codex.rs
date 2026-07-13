@@ -116,9 +116,20 @@ pub struct SpeciesRanks {
     pub ranks: Vec<RankEntry>,
 }
 
+/// One requested profession's share of a skill option's contribution
+/// (professions with no weight on the skill are omitted).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfessionContribution {
+    pub profession: String,
+    pub prof_contribution: f64,
+}
+
 /// One skill option in a rank recommendation. Numeric fields hold the
 /// rendered (rounded) figures, so ordering and output read the same
-/// values.
+/// values. `profession_weight` / `prof_contribution` are summed over
+/// the requested professions; `profession_contributions` carries the
+/// per-profession split (one entry per weighted requested profession).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillOption {
@@ -129,6 +140,7 @@ pub struct SkillOption {
     pub levels_gained: f64,
     pub profession_weight: i64,
     pub prof_contribution: f64,
+    pub profession_contributions: Vec<ProfessionContribution>,
     pub hp_increase: Option<f64>,
     pub hp_gain: f64,
     pub recommend_rank: Option<i64>,
@@ -776,6 +788,7 @@ impl CodexService {
                 requested.push(name.as_str());
             }
         }
+        let mut per_profession: Vec<(String, HashMap<&str, i64>)> = Vec::new();
         for profession in requested {
             for entry in self.game_data.get_entities("professions") {
                 if entry.get("name").and_then(Value::as_str) != Some(profession) {
@@ -804,9 +817,10 @@ impl CodexService {
                         profession_map.insert(name, weight);
                     }
                 }
-                for (name, weight) in profession_map {
+                for (&name, &weight) in &profession_map {
                     *weight_map.entry(name).or_insert(0) += weight;
                 }
+                per_profession.push((profession.to_string(), profession_map));
                 break;
             }
         }
@@ -841,6 +855,19 @@ impl CodexService {
             } else {
                 0.0
             };
+            let profession_contributions: Vec<ProfessionContribution> = per_profession
+                .iter()
+                .filter_map(|(profession, map)| {
+                    let weight = map.get(skill_name).copied().unwrap_or(0);
+                    (weight > 0).then(|| ProfessionContribution {
+                        profession: profession.clone(),
+                        prof_contribution: round_half_even(
+                            levels_gained * weight as f64 / 10000.0,
+                            6,
+                        ),
+                    })
+                })
+                .collect();
 
             skills.push(SkillOption {
                 skill_name,
@@ -850,6 +877,7 @@ impl CodexService {
                 levels_gained: round_half_even(levels_gained, 2),
                 profession_weight: weight,
                 prof_contribution,
+                profession_contributions,
                 hp_increase: (hp_increase > 0.0).then(|| round_half_even(hp_increase, 2)),
                 hp_gain,
                 recommend_rank: None,
@@ -1763,21 +1791,26 @@ mod tests {
             options[0],
             json!({"skillName": "Rifle", "category": "cat1", "rewardPed": 0.1875,
                    "currentLevel": 217.7, "levelsGained": 93.75, "professionWeight": 50,
-                   "profContribution": 0.46875, "hpIncrease": null, "hpGain": 0.0,
+                   "profContribution": 0.46875,
+                   "professionContributions": [{"profession": "Sniper", "profContribution": 0.46875}],
+                   "hpIncrease": null, "hpGain": 0.0,
                    "recommendRank": 1})
         );
         assert_eq!(
             options[1],
             json!({"skillName": "Aim", "category": "cat1", "rewardPed": 0.1875,
                    "currentLevel": null, "levelsGained": 143.75, "professionWeight": 20,
-                   "profContribution": 0.28749, "hpIncrease": null, "hpGain": 0.0,
+                   "profContribution": 0.28749,
+                   "professionContributions": [{"profession": "Sniper", "profContribution": 0.28749}],
+                   "hpIncrease": null, "hpGain": 0.0,
                    "recommendRank": 2})
         );
         assert_eq!(
             options[3],
             json!({"skillName": "Athletics", "category": "cat1", "rewardPed": 0.1875,
                    "currentLevel": 5.0, "levelsGained": 145.75, "professionWeight": 0,
-                   "profContribution": 0.0, "hpIncrease": 20.0, "hpGain": 7.28725,
+                   "profContribution": 0.0, "professionContributions": [],
+                   "hpIncrease": 20.0, "hpGain": 7.28725,
                    "recommendRank": null})
         );
         let names: Vec<&str> = options
@@ -1829,14 +1862,16 @@ mod tests {
             options[0],
             json!({"skillName": "Zoology", "category": "cat4", "rewardPed": 0.06,
                    "currentLevel": null, "levelsGained": 44.99, "professionWeight": 0,
-                   "profContribution": 0.0, "hpIncrease": 5.5, "hpGain": 8.180909,
+                   "profContribution": 0.0, "professionContributions": [],
+                   "hpIncrease": 5.5, "hpGain": 8.180909,
                    "recommendRank": 1})
         );
         assert_eq!(
             options[1],
             json!({"skillName": "Dodge", "category": "cat3", "rewardPed": 0.0938,
                    "currentLevel": 30.0, "levelsGained": 78.38, "professionWeight": 0,
-                   "profContribution": 0.0, "hpIncrease": 12.0, "hpGain": 6.53125,
+                   "profContribution": 0.0, "professionContributions": [],
+                   "hpIncrease": 12.0, "hpGain": 6.53125,
                    "recommendRank": 2})
         );
 
@@ -2160,6 +2195,27 @@ mod tests {
         assert_eq!(weight("Aim"), 50);
         assert_eq!(weight("Rifle"), 50);
         assert_eq!(weight("Anatomy"), 0);
+
+        // The per-profession split carries one entry per weighted
+        // requested profession, in request order, each computed from
+        // the same unrounded levels as the summed figure.
+        let aim = options
+            .iter()
+            .find(|option| option.skill_name == "Aim")
+            .unwrap();
+        assert_eq!(
+            to_json(&aim.profession_contributions),
+            json!([
+                {"profession": "Sniper", "profContribution": 0.28749},
+                {"profession": "Scout", "profContribution": 0.431235},
+            ])
+        );
+        let rifle_only = options
+            .iter()
+            .find(|option| option.skill_name == "Rifle")
+            .unwrap();
+        assert_eq!(rifle_only.profession_contributions.len(), 1);
+        assert_eq!(rifle_only.profession_contributions[0].profession, "Sniper");
 
         // Aim outranks Rifle at equal weight: Rifle's calibrated level
         // 100 buys far fewer levels per PED than uncalibrated Aim.

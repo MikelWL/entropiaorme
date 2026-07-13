@@ -110,9 +110,20 @@ pub struct CodexSpeciesRanks {
     pub ranks: Vec<CodexRank>,
 }
 
+/// One requested profession's share of a skill option's contribution
+/// (professions with no weight on the skill are omitted).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexProfessionContribution {
+    pub profession: String,
+    pub prof_contribution: f64,
+}
+
 /// One skill option in a rank recommendation: the reward it grants, the
 /// levels that buys at the current point on the curve, and the profession
-/// / HP contribution used to rank the list.
+/// / HP contribution used to rank the list. The weight and contribution
+/// sum over the requested professions; `profession_contributions` carries
+/// the per-profession split.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexSkillOption {
@@ -123,6 +134,7 @@ pub struct CodexSkillOption {
     pub levels_gained: f64,
     pub profession_weight: i64,
     pub prof_contribution: f64,
+    pub profession_contributions: Vec<CodexProfessionContribution>,
     pub hp_increase: Nullable<f64>,
     pub hp_gain: f64,
     pub recommend_rank: Nullable<i64>,
@@ -434,6 +446,14 @@ fn skill_option_dto(option: codex::SkillOption) -> CodexSkillOption {
         levels_gained: option.levels_gained,
         profession_weight: option.profession_weight,
         prof_contribution: option.prof_contribution,
+        profession_contributions: option
+            .profession_contributions
+            .into_iter()
+            .map(|entry| CodexProfessionContribution {
+                profession: entry.profession,
+                prof_contribution: entry.prof_contribution,
+            })
+            .collect(),
         hp_increase: option.hp_increase.into(),
         hp_gain: option.hp_gain,
         recommend_rank: option.recommend_rank.into(),

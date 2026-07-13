@@ -143,8 +143,10 @@
 	{/if}
 
 	{#if open}
+		<!-- Right-aligned: the picker sits near the window's right edge,
+		     so the panel expands leftwards to stay on screen. -->
 		<div
-			class="absolute left-0 top-full mt-1 w-72 z-20 bg-surface border border-border rounded-md shadow-lg p-2"
+			class="absolute right-0 top-full mt-1 w-72 z-20 bg-surface border border-border rounded-md shadow-lg p-2"
 		>
 			<PickerInput id="codex-profession-picker" placeholder="Search professions..." {model}>
 				{#snippet result({ item }: { item: PickerRow })}

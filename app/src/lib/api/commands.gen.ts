@@ -199,6 +199,15 @@ export interface CodexMetaClaimResult {
 }
 
 /**
+ * One requested profession's share of a skill option's contribution
+ * (professions with no weight on the skill are omitted).
+ */
+export interface CodexProfessionContribution {
+	profession: string;
+	profContribution: number;
+}
+
+/**
  * One rank in a species' breakdown: the derived cost / reward / category
  * fields, plus the player's claim state for that rank. Field order is
  * the wire order (the breakdown's own fields, then the claim overlay).
@@ -228,7 +237,9 @@ export type CodexRecommendTarget = 'profession' | 'hp';
 /**
  * One skill option in a rank recommendation: the reward it grants, the
  * levels that buys at the current point on the curve, and the profession
- * / HP contribution used to rank the list.
+ * / HP contribution used to rank the list. The weight and contribution
+ * sum over the requested professions; `profession_contributions` carries
+ * the per-profession split.
  */
 export interface CodexSkillOption {
 	skillName: string;
@@ -238,6 +249,7 @@ export interface CodexSkillOption {
 	levelsGained: number;
 	professionWeight: number;
 	profContribution: number;
+	professionContributions: CodexProfessionContribution[];
 	hpIncrease: number | null;
 	hpGain: number;
 	recommendRank: number | null;
