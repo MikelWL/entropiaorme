@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	filterRows,
+	type PickerRow,
 	PROFESSION_FAMILIES,
 	rowToTarget,
 	targetLabel,
 	targetProfessions,
-	type PickerRow,
 } from './codexRankingTarget';
 
 const NAMES = ['Animal Looter', 'Dodger', 'Evader', 'Ranger (Hit)', 'Sniper (Hit)'];
@@ -38,14 +38,14 @@ describe('targetLabel', () => {
 });
 
 describe('filterRows', () => {
-	const kindsOf = (rows: PickerRow[]) => rows.map(row => row.kind);
+	const kindsOf = (rows: PickerRow[]) => rows.map((row) => row.kind);
 	const labelOf = (row: PickerRow) => (row.kind === 'profession' ? row.name : row.label);
 
 	it('lists everything for an empty query: fixed targets, families, favourites, the rest', () => {
 		const rows = filterRows(NAMES, ['Evader'], '');
 		expect(kindsOf(rows).slice(0, 2)).toEqual(['none', 'hp']);
-		expect(rows.filter(row => row.kind === 'family')).toHaveLength(PROFESSION_FAMILIES.length);
-		const professions = rows.filter(row => row.kind === 'profession');
+		expect(rows.filter((row) => row.kind === 'family')).toHaveLength(PROFESSION_FAMILIES.length);
+		const professions = rows.filter((row) => row.kind === 'profession');
 		expect(professions[0]).toEqual({ kind: 'profession', name: 'Evader', favourite: true });
 		expect(professions).toHaveLength(NAMES.length);
 	});

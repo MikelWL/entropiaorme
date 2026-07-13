@@ -404,7 +404,12 @@ describe('codex wrappers dispatch typed commands', () => {
 					professions: ['Sniper (Hit)', 'Ranger (Hit)'],
 				}),
 			'codex_recommend',
-			{ species_name: 'Atrox', rank: 3, professions: ['Sniper (Hit)', 'Ranger (Hit)'], target: 'hp' },
+			{
+				species_name: 'Atrox',
+				rank: 3,
+				professions: ['Sniper (Hit)', 'Ranger (Hit)'],
+				target: 'hp',
+			},
 		],
 		[
 			'getCodexRecommendation defaults to the profession target and no professions',

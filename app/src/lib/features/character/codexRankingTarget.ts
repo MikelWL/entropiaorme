@@ -34,7 +34,7 @@ export const PROFESSION_FAMILIES: ProfessionFamily[] = [
 ];
 
 export function familyByKey(key: string): ProfessionFamily | undefined {
-	return PROFESSION_FAMILIES.find(family => family.key === key);
+	return PROFESSION_FAMILIES.find((family) => family.key === key);
 }
 
 /** The professions a target ranks against (empty for none / HP gain). */
@@ -99,15 +99,15 @@ export function filterRows(
 	if (matches('No profession')) rows.push({ kind: 'none', label: 'No profession' });
 	if (matches('HP gain')) rows.push({ kind: 'hp', label: 'HP gain' });
 	for (const family of PROFESSION_FAMILIES) {
-		if (matches(family.label) || family.professions.some(name => matches(name))) {
+		if (matches(family.label) || family.professions.some((name) => matches(name))) {
 			rows.push({ kind: 'family', ...family });
 		}
 	}
 	const favouriteSet = new Set(favourites);
-	for (const name of professionNames.filter(name => favouriteSet.has(name) && matches(name))) {
+	for (const name of professionNames.filter((name) => favouriteSet.has(name) && matches(name))) {
 		rows.push({ kind: 'profession', name, favourite: true });
 	}
-	for (const name of professionNames.filter(name => !favouriteSet.has(name) && matches(name))) {
+	for (const name of professionNames.filter((name) => !favouriteSet.has(name) && matches(name))) {
 		rows.push({ kind: 'profession', name, favourite: false });
 	}
 	return rows;
