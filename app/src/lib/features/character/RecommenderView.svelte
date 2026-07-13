@@ -23,6 +23,7 @@
 			<CodexProfessionPicker
 				professions={model.professions.map((prof) => prof.name)}
 				target={recommender.target}
+				align="left"
 				onchange={(next) => void recommender.load(next)}
 			/>
 		</div>
