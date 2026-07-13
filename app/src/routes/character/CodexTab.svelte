@@ -303,7 +303,7 @@
 		await runClaimAction(async (speciesName) => {
 			const result = await claimCodexMastery(speciesName, skillName);
 			flashClaimed(result.skillName);
-			return `Mastery ${result.masteryLevel} claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
+			return `Mastery ${result.masteryLevel} claimed! ${result.skillName} +${formatPedHalfEven(result.pedValue)} PES`;
 		});
 	}
 
