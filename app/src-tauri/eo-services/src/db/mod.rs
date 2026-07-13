@@ -35,6 +35,12 @@
 //!   Databases on older schema versions are refused: the pre-baseline
 //!   upgrade chain was never carried across (the retired implementation
 //!   owned those upgrades), so composition declines such a database loudly.
+//! - **Column reconciliation**: because adoption trusts the existing schema
+//!   rather than running the baseline DDL, a Python-lineage database can be
+//!   missing a column the Rust baseline declares (the retired ladder never
+//!   added it). [`reconcile_baseline_columns`] heals that drift in place on
+//!   every open, adding any baseline column an adopted table lacks, so the gap
+//!   cannot outlive the first query that references the column.
 
 mod migrate;
 mod pool;
@@ -321,6 +327,7 @@ impl Db {
     pub async fn open(path: &Path) -> Result<Db, DbError> {
         let mut write_connection = pool::open_configured(path)?;
         adopt_or_refuse(&mut write_connection)?;
+        reconcile_baseline_columns(&mut write_connection)?;
         migrate::run(&mut write_connection)?;
         let core = SyncCore::start(path, write_connection)?;
         Ok(Db {
@@ -782,6 +789,141 @@ fn upgrade_to_baseline(tx: &rusqlite::Transaction<'_>, version: i64) -> Result<(
         rusqlite::params![BASELINE_SCHEMA_VERSION.to_string()],
     )?;
     Ok(())
+}
+
+/// Heal an adopted database that predates a column the baseline declares.
+///
+/// [`adopt_or_refuse`] stamps a version-33 (or v32-bridged) Python-lineage
+/// database as baseline-applied *without ever running the baseline DDL*: it
+/// trusts the existing schema to already match. But the Rust baseline carries
+/// columns the retired ladder never added (`codex_claims.kind` and
+/// `attribute_name`), so on such a database those columns are silently absent.
+/// The gap stays latent until a query first references a missing column: no
+/// always-run read touched `kind` until the codex mastery reads, whereupon the
+/// species list fails to load with `no such column: kind`.
+///
+/// The fix heals in place, on every open, for *already-adopted* databases too
+/// (they carry `_sqlx_migrations` and so never re-enter the adopt path): for
+/// each baseline table present in the database, add any column the baseline
+/// declares but the table lacks. It is reference-driven rather than a
+/// hand-maintained list: the baseline SQL is applied to a throwaway in-memory
+/// database whose `PRAGMA table_info` is the authority, so this stays correct
+/// as the baseline moves and covers the whole class of column drift, not just
+/// the two codex columns that surfaced it.
+///
+/// A no-op on a healthy database: a freshly-created one has no tables yet at
+/// this point in [`Db::open`] (the chain runs next), and a correctly-adopted
+/// one already carries every baseline column. The heal is wrapped in one
+/// transaction, so a failure rolls the file back to exactly as it was found,
+/// honouring the [`Db::open_adopted`] "left untouched on a decline" contract.
+fn reconcile_baseline_columns(connection: &mut rusqlite::Connection) -> Result<(), DbError> {
+    let reference = rusqlite::Connection::open_in_memory()?;
+    let baseline = migrate::MIGRATIONS
+        .first()
+        .expect("the migration chain carries the baseline");
+    reference.execute_batch(baseline.sql)?;
+
+    let mut additions: Vec<String> = Vec::new();
+    for table in baseline_tables(&reference)? {
+        // Only a table that already exists can be missing a column; a fresh
+        // database has none of them yet, so it is untouched here and the
+        // migration chain creates it whole.
+        if !table_exists_sync(connection, &table)? {
+            continue;
+        }
+        let present = column_names_sync(connection, &table)?;
+        for column in baseline_columns(&reference, &table)? {
+            if !present.contains(&column.name) {
+                additions.push(column.add_column_ddl(&table));
+            }
+        }
+    }
+    if additions.is_empty() {
+        return Ok(());
+    }
+
+    let tx = connection.transaction()?;
+    for ddl in &additions {
+        tx.execute_batch(ddl)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// One column the baseline declares, read back from the reference database's
+/// `PRAGMA table_info` so its type, nullability, and default survive verbatim
+/// when the column is re-added to a drifted table.
+struct BaselineColumn {
+    name: String,
+    type_decl: String,
+    not_null: bool,
+    default: Option<String>,
+}
+
+impl BaselineColumn {
+    /// The `ALTER TABLE ... ADD COLUMN` that re-creates this column. The
+    /// default (`PRAGMA table_info` returns it as a ready-to-reparse literal,
+    /// e.g. `'rank'`) precedes the `NOT NULL`; SQLite requires a default to add
+    /// a `NOT NULL` column to a populated table, which every drifted baseline
+    /// column here carries (`kind DEFAULT 'rank'`; `attribute_name` is
+    /// nullable).
+    fn add_column_ddl(&self, table: &str) -> String {
+        let mut ddl = format!(
+            "ALTER TABLE {table} ADD COLUMN {} {}",
+            self.name, self.type_decl
+        );
+        if let Some(default) = &self.default {
+            ddl.push_str(&format!(" DEFAULT {default}"));
+        }
+        if self.not_null {
+            ddl.push_str(" NOT NULL");
+        }
+        ddl
+    }
+}
+
+/// The baseline's own table names (its declared user tables; the migration
+/// ledger and SQLite's internal tables are excluded).
+fn baseline_tables(connection: &rusqlite::Connection) -> Result<Vec<String>, DbError> {
+    let mut statement = connection.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' \
+         AND name != '_sqlx_migrations' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    )?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(names)
+}
+
+/// The columns a baseline table declares, in declaration order.
+fn baseline_columns(
+    connection: &rusqlite::Connection,
+    table: &str,
+) -> Result<Vec<BaselineColumn>, DbError> {
+    let mut columns = Vec::new();
+    connection.pragma(None, "table_info", table, |row| {
+        columns.push(BaselineColumn {
+            name: row.get("name")?,
+            type_decl: row.get("type")?,
+            not_null: row.get::<_, i64>("notnull")? != 0,
+            default: row.get::<_, Option<String>>("dflt_value")?,
+        });
+        Ok(())
+    })?;
+    Ok(columns)
+}
+
+/// The set of column names a live table currently carries.
+fn column_names_sync(
+    connection: &rusqlite::Connection,
+    table: &str,
+) -> Result<std::collections::HashSet<String>, DbError> {
+    let mut names = std::collections::HashSet::new();
+    connection.pragma(None, "table_info", table, |row| {
+        names.insert(row.get::<_, String>("name")?);
+        Ok(())
+    })?;
+    Ok(names)
 }
 
 fn table_exists_sync(connection: &rusqlite::Connection, name: &str) -> Result<bool, DbError> {
@@ -1333,6 +1475,132 @@ mod tests {
         );
         // The user's data survives the upgrade untouched.
         assert_eq!((description.as_str(), amount), ("survives upgrade", 4.2));
+    }
+
+    /// Rebuild `codex_claims` in its pre-mastery shape (no `kind` /
+    /// `attribute_name`) on a backend baseline, reproducing the real
+    /// Python-lineage drift: a version-33 database the retired ladder left
+    /// without the columns the Rust baseline declares.
+    fn drop_codex_mastery_columns(connection: &rusqlite::Connection) {
+        connection
+            .execute_batch(
+                "DROP TABLE codex_claims; \
+                 CREATE TABLE codex_claims ( \
+                     id             INTEGER PRIMARY KEY AUTOINCREMENT, \
+                     species_name   TEXT NOT NULL, \
+                     rank           INTEGER NOT NULL, \
+                     skill_name     TEXT NOT NULL, \
+                     ped_value      REAL NOT NULL, \
+                     claimed_at     REAL NOT NULL DEFAULT (unixepoch('now')) \
+                 ); \
+                 CREATE INDEX idx_codex_claims_species ON codex_claims(species_name);",
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn adopted_database_missing_baseline_columns_is_healed_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entropia_orme.db");
+        // A version-33 database as the retired ladder left it: the baseline
+        // schema, but codex_claims still lacks kind/attribute_name, with an
+        // existing rank claim (no kind) to prove the 'rank' default backfills.
+        {
+            let connection = backend_baseline_db(&path);
+            drop_codex_mastery_columns(&connection);
+            connection
+                .execute(
+                    "INSERT INTO codex_claims (species_name, rank, skill_name, ped_value) \
+                     VALUES ('Boar', 1, 'Rifle', 1.0)",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let db = Db::open(&path).await.unwrap();
+
+        // The columns the baseline declares are present after open, and the
+        // pre-existing row backfilled to the 'rank' default.
+        let (has_kind, has_attr, backfilled) = db
+            .with_reader(|connection| {
+                let columns = column_names_sync(connection, "codex_claims")?;
+                let backfilled: String = connection.query_row(
+                    "SELECT kind FROM codex_claims WHERE species_name = 'Boar' AND rank = 1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((
+                    columns.contains("kind"),
+                    columns.contains("attribute_name"),
+                    backfilled,
+                ))
+            })
+            .await
+            .unwrap();
+        assert!(has_kind, "the missing kind column is healed");
+        assert!(has_attr, "the missing attribute_name column is healed");
+        assert_eq!(backfilled, "rank", "the existing rank claim backfills");
+
+        // The exact species read that failed on the drifted database now runs,
+        // and mastery/meta claims (which write the healed columns) record.
+        db.with_writer(|connection| {
+            connection
+                .query_row(
+                    "SELECT species_name, COUNT(*) FROM codex_claims \
+                 WHERE kind = 'mastery' GROUP BY species_name",
+                    [],
+                    |row| row.get::<_, i64>(1),
+                )
+                .optional()?;
+            connection.execute(
+                "INSERT INTO codex_claims \
+                 (species_name, rank, skill_name, ped_value, claimed_at, kind) \
+                 VALUES ('Boar', 26, 'Rifle', 2.0, 1.0, 'mastery')",
+                [],
+            )?;
+            connection.execute(
+                "INSERT INTO codex_claims \
+                 (species_name, rank, skill_name, ped_value, claimed_at, kind, attribute_name) \
+                 VALUES ('', 0, '', 0.5, 1.0, 'meta', 'Agility')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconcile_leaves_a_healthy_adopted_database_untouched() {
+        // A correctly-adopted database already carries every baseline column;
+        // reconciliation must not attempt to re-add one (a duplicate ADD COLUMN
+        // would error). Adoption succeeding with the mastery claim intact proves
+        // the no-op.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entropia_orme.db");
+        {
+            let connection = backend_baseline_db(&path);
+            connection
+                .execute(
+                    "INSERT INTO codex_claims \
+                     (species_name, rank, skill_name, ped_value, kind) \
+                     VALUES ('Boar', 26, 'Rifle', 2.0, 'mastery')",
+                    [],
+                )
+                .unwrap();
+        }
+        let db = Db::open(&path).await.unwrap();
+        let kept: String = db
+            .with_reader(|connection| {
+                Ok(connection.query_row(
+                    "SELECT kind FROM codex_claims WHERE species_name = 'Boar'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(kept, "mastery");
     }
 
     #[tokio::test]
