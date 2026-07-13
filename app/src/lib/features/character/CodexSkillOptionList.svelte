@@ -7,6 +7,7 @@
 		rankedBy,
 		onClaim,
 		mastery = false,
+		family = false,
 		justClaimedSkill = null,
 	} = $props<{
 		options: CodexSkillOption[];
@@ -17,6 +18,9 @@
 		 *  in place: the mastery panel stays on screen after a claim,
 		 *  unlike a rank claim which advances the whole card. */
 		mastery?: boolean;
+		/** A family target always reads as the per-profession split, even
+		 *  when only one member profession is affected by a skill. */
+		family?: boolean;
 		justClaimedSkill?: string | null;
 	}>();
 </script>
@@ -24,7 +28,7 @@
 <div class="space-y-0.5">
 	{#each options as opt}
 		{@const rank = opt.recommendRank}
-		{@const familyStrip = rankedBy !== 'hp' && opt.professionContributions.length > 1}
+		{@const familyStrip = rankedBy !== 'hp' && family && opt.professionContributions.length > 0}
 		<div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-surface-hover/50 transition-colors group">
 			<div class="flex items-center gap-2 min-w-0 shrink-0">
 				{#if rank != null}
@@ -38,11 +42,6 @@
 				<span class="text-sm text-text truncate">{opt.skillName}</span>
 			</div>
 			<div class="flex items-center gap-3 ml-2 {familyStrip ? 'min-w-0 flex-1 justify-end' : 'shrink-0'}">
-				{#if mastery}
-					<span class="text-xs tabular-nums text-text font-medium">
-						{formatPedHalfEven(opt.rewardPed)} PES
-					</span>
-				{/if}
 				{#if rankedBy === 'hp'}
 					<div class="text-right text-xs tabular-nums">
 						{#if opt.hpIncrease != null}
@@ -77,6 +76,13 @@
 					</div>
 				{:else if opt.currentLevel != null}
 					<span class="text-xs text-text-tertiary tabular-nums">Lv {opt.currentLevel.toFixed(0)}, +{opt.levelsGained.toFixed(1)}</span>
+				{/if}
+				{#if mastery}
+					<!-- After the contribution info, so the values right-align
+					     as one column however many professions a row lists. -->
+					<span class="text-xs tabular-nums text-text font-medium shrink-0 w-20 text-right">
+						{formatPedHalfEven(opt.rewardPed)} PES
+					</span>
 				{/if}
 				{#if mastery && justClaimedSkill === opt.skillName}
 					<span class="px-2 py-1 text-xs font-medium text-positive">Claimed &check;</span>

@@ -104,6 +104,7 @@
 				? 'profession'
 				: null,
 	);
+	let familyTarget = $derived(rankingTarget.kind === 'family');
 
 	// ── Load on mount ───────────────────────────────────────────────────────────
 
@@ -537,6 +538,7 @@
 								rankedBy={rankedBy}
 								onClaim={handleMasteryClaim}
 								mastery
+								family={familyTarget}
 								{justClaimedSkill}
 							/>
 
@@ -579,6 +581,7 @@
 									options={skillOptions}
 									rankedBy={rankedBy}
 									onClaim={handleClaim}
+									family={familyTarget}
 								/>
 							{/if}
 						</Card>
