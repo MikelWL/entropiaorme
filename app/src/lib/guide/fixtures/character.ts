@@ -421,6 +421,7 @@ export const characterDemoCodexRankBreakdown: CodexRankBreakdown = {
 	codexType: 'standard',
 	currentRank: 5,
 	masteryLevel: 0,
+	masteryClaims: [],
 	ranks: [
 		{
 			rank: 1,

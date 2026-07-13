@@ -21,7 +21,7 @@
 		getCodexMetaAttributes,
 		claimCodexMeta,
 	} from '$lib/api';
-	import { formatPed } from '$lib/utils/format';
+	import { formatPed, formatPedHalfEven } from '$lib/utils/format';
 	import Card from '$lib/components/Card.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import { IconStar } from '$lib/icons';
@@ -72,6 +72,18 @@
 	let masteryOptions = $state([] as CodexSkillOption[]);
 	let panelLoading = $state(false);
 	let claimMessage = $state<string | null>(null);
+
+	// Transient per-row confirmation for mastery claims: unlike a rank
+	// claim (whose whole card advances to the next rank), a mastery
+	// claim leaves the same panel on screen, so the clicked row itself
+	// must acknowledge the claim.
+	let justClaimedSkill = $state<string | null>(null);
+	let justClaimedTimer: ReturnType<typeof setTimeout> | undefined;
+	function flashClaimed(skillName: string) {
+		justClaimedSkill = skillName;
+		clearTimeout(justClaimedTimer);
+		justClaimedTimer = setTimeout(() => (justClaimedSkill = null), 2000);
+	}
 
 	// ── Derived: next rank data for the selected species ────────────────────────
 
@@ -286,6 +298,7 @@
 	async function handleMasteryClaim(skillName: string) {
 		await runClaimAction(async (speciesName) => {
 			const result = await claimCodexMastery(speciesName, skillName);
+			flashClaimed(result.skillName);
 			return `Mastery ${result.masteryLevel} claimed! ${result.skillName} +${formatPed(result.pedValue)} PES`;
 		});
 	}
@@ -331,7 +344,7 @@
 	}
 </script>
 
-{#snippet optionRows(options: CodexSkillOption[], onClaim: (skillName: string) => void)}
+{#snippet optionRows(options: CodexSkillOption[], onClaim: (skillName: string) => void, mastery: boolean)}
 	<div class="space-y-0.5">
 		{#each options as opt}
 			{@const rank = opt.recommendRank}
@@ -348,6 +361,13 @@
 					<span class="text-sm text-text truncate">{opt.skillName}</span>
 				</div>
 				<div class="flex items-center gap-3 shrink-0 ml-2">
+					{#if mastery}
+						<!-- Mastery rewards vary per skill (the rank card's single
+						     header value does not apply), so each row carries its own. -->
+						<span class="text-xs tabular-nums text-text font-medium">
+							{formatPedHalfEven(opt.rewardPed)} PES
+						</span>
+					{/if}
 					{#if isHpMode}
 						<div class="text-right text-xs tabular-nums">
 							{#if opt.hpIncrease != null}
@@ -371,10 +391,14 @@
 					{:else if opt.currentLevel != null}
 						<span class="text-xs text-text-tertiary tabular-nums">Lv {opt.currentLevel.toFixed(0)}, +{opt.levelsGained.toFixed(1)}</span>
 					{/if}
-					<button
-						class="px-2 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-						onclick={() => onClaim(opt.skillName)}
-					>Claim</button>
+					{#if mastery && justClaimedSkill === opt.skillName}
+						<span class="px-2 py-1 text-xs font-medium text-positive">Claimed &check;</span>
+					{:else}
+						<button
+							class="px-2 py-1 text-xs font-medium text-accent bg-accent/10 hover:bg-accent/20 rounded transition-colors cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+							onclick={() => onClaim(opt.skillName)}
+						>Claim</button>
+					{/if}
 				</div>
 			</div>
 		{/each}
@@ -569,23 +593,14 @@
 
 					{#if rankBreakdown.currentRank >= 25}
 						<Card class="p-4 space-y-3">
-							<div class="flex items-center justify-between">
-								<div class="flex items-center gap-2">
-									<span class="text-sm font-medium text-text">Mastery</span>
-									<span class="text-sm font-medium text-positive tabular-nums">
-										<IconStar /> x {rankBreakdown.masteryLevel}
-									</span>
-								</div>
-								{#if rankBreakdown.masteryLevel > 0}
-									<button
-										class="text-xs text-text-tertiary hover:text-negative transition-colors cursor-pointer"
-										title="Undo the latest mastery claim"
-										onclick={handleMasteryUnclaim}
-									>Undo last</button>
-								{/if}
+							<div class="flex items-center gap-2">
+								<span class="text-sm font-medium text-text">Mastery</span>
+								<span class="text-sm font-medium text-positive tabular-nums">
+									<IconStar /> x {rankBreakdown.masteryLevel}
+								</span>
 							</div>
 
-							{@render optionRows(masteryOptions, handleMasteryClaim)}
+							{@render optionRows(masteryOptions, handleMasteryClaim, true)}
 
 							{@render rankedByHint(masteryOptions)}
 
@@ -624,7 +639,7 @@
 									Claimed: {nextRankData.claimedSkill} ({formatPed(nextRankData.claimedPed ?? 0)} PES)
 								</div>
 							{:else}
-								{@render optionRows(skillOptions, handleClaim)}
+								{@render optionRows(skillOptions, handleClaim, false)}
 
 								{@render rankedByHint(skillOptions)}
 							{/if}
@@ -636,6 +651,31 @@
 								{claimMessage}
 							</div>
 						{/if}
+					{/if}
+
+					<!-- Mastery history (compact); the latest claim carries the undo,
+					     mirroring the rank history below. -->
+					{#if rankBreakdown.masteryClaims.length > 0}
+						<div>
+							<p class="text-xs text-text-tertiary font-medium uppercase tracking-wide mb-2">Mastery claims</p>
+							<div class="flex flex-wrap gap-1">
+								{#each rankBreakdown.masteryClaims as claim}
+									<div class="flex items-center gap-1.5 bg-surface-hover/50 rounded px-2 py-1 text-xs">
+										<span class="text-text-secondary tabular-nums"><IconStar /> {claim.masteryLevel}.</span>
+										<span class="text-text">{claim.skillName}</span>
+										<span class="text-text-tertiary tabular-nums">{formatPedHalfEven(claim.pedValue)}</span>
+										{#if claim.masteryLevel === rankBreakdown.masteryLevel}
+											<button
+												class="ml-0.5 leading-none text-text-tertiary hover:text-negative transition-colors cursor-pointer"
+												title="Undo this claim"
+												aria-label="Undo mastery {claim.masteryLevel} claim"
+												onclick={handleMasteryUnclaim}
+											>&times;</button>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						</div>
 					{/if}
 
 					<!-- Rank history (compact) -->

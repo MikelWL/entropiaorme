@@ -7,8 +7,23 @@ import {
 	formatLedgerDate,
 	formatMultiplier,
 	formatPed,
+	formatPedHalfEven,
 	formatPercent,
 } from '$lib/utils/format';
+
+describe('formatPedHalfEven', () => {
+	it('rounds exact halves to the even cent, matching the game display', () => {
+		expect(formatPedHalfEven(15.625)).toBe('15.62');
+		expect(formatPedHalfEven(15.635)).toBe('15.64');
+		expect(formatPedHalfEven(7.8125)).toBe('7.81');
+		expect(formatPedHalfEven(25)).toBe('25.00');
+	});
+
+	it('rounds non-halves to the nearest cent', () => {
+		expect(formatPedHalfEven(12.3456)).toBe('12.35');
+		expect(formatPedHalfEven(1.504)).toBe('1.50');
+	});
+});
 
 describe('formatPed', () => {
 	it('formats positive values to 2 decimals', () => {

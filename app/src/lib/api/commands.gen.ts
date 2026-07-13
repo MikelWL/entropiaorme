@@ -161,6 +161,16 @@ export interface CodexClaimResult {
 }
 
 /**
+ * One recorded mastery claim in a species' breakdown, in claim order
+ * (`mastery_level` is the 1-based per-species sequence number).
+ */
+export interface CodexMasteryClaim {
+	masteryLevel: number;
+	skillName: string;
+	pedValue: number;
+}
+
+/**
  * The record a mastery claim (or its reversal) returns.
  * `mastery_level` is the per-species claim sequence number (the Nth
  * mastery claim for that species).
@@ -259,6 +269,7 @@ export interface CodexSpeciesRanks {
 	codexType: string | null;
 	currentRank: number;
 	masteryLevel: number;
+	masteryClaims: CodexMasteryClaim[];
 	ranks: CodexRank[];
 }
 

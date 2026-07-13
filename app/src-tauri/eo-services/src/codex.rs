@@ -112,6 +112,7 @@ pub struct SpeciesRanks {
     pub codex_type: Option<String>,
     pub current_rank: i64,
     pub mastery_level: i64,
+    pub mastery_claims: Vec<MasteryClaimEntry>,
     pub ranks: Vec<RankEntry>,
 }
 
@@ -131,6 +132,16 @@ pub struct SkillOption {
     pub hp_increase: Option<f64>,
     pub hp_gain: f64,
     pub recommend_rank: Option<i64>,
+}
+
+/// One recorded mastery claim in a species' breakdown, in claim order
+/// (`mastery_level` is the 1-based per-species sequence number).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MasteryClaimEntry {
+    pub mastery_level: i64,
+    pub skill_name: String,
+    pub ped_value: f64,
 }
 
 /// One meta attribute with its current calibrated level.
@@ -343,31 +354,39 @@ impl CodexService {
         // Built in query order so a duplicate rank's later row wins,
         // as the original's dict comprehension does. Rank claims only:
         // mastery claims share the table and species name but reuse the
-        // rank column as their own sequence number.
-        let (claims_map, mastery_level): (HashMap<i64, (String, f64)>, i64) = self
-            .db
-            .with_reader(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT rank, skill_name, ped_value, claimed_at FROM codex_claims \
-                     WHERE species_name = ? AND kind = 'rank' ORDER BY rank",
-                )?;
-                let mut rows = stmt.query(rusqlite::params![&species_owned])?;
-                let mut map: HashMap<i64, (String, f64)> = HashMap::new();
-                while let Some(row) = rows.next()? {
-                    map.insert(
-                        row.get::<_, i64>(0)?,
-                        (row.get::<_, String>(1)?, row.get::<_, f64>(2)?),
-                    );
-                }
-                let mastery_level: i64 = conn.query_row(
-                    "SELECT COUNT(*) FROM codex_claims \
-                     WHERE species_name = ? AND kind = 'mastery'",
-                    rusqlite::params![&species_owned],
-                    |row| row.get(0),
-                )?;
-                Ok((map, mastery_level))
-            })
-            .await?;
+        // rank column as their own sequence number, so they list
+        // separately, in claim order.
+        let (claims_map, mastery_claims): (HashMap<i64, (String, f64)>, Vec<MasteryClaimEntry>) =
+            self.db
+                .with_reader(move |conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT rank, skill_name, ped_value, claimed_at FROM codex_claims \
+                         WHERE species_name = ? AND kind = 'rank' ORDER BY rank",
+                    )?;
+                    let mut rows = stmt.query(rusqlite::params![&species_owned])?;
+                    let mut map: HashMap<i64, (String, f64)> = HashMap::new();
+                    while let Some(row) = rows.next()? {
+                        map.insert(
+                            row.get::<_, i64>(0)?,
+                            (row.get::<_, String>(1)?, row.get::<_, f64>(2)?),
+                        );
+                    }
+                    let mut stmt = conn.prepare(
+                        "SELECT rank, skill_name, ped_value FROM codex_claims \
+                         WHERE species_name = ? AND kind = 'mastery' ORDER BY rank",
+                    )?;
+                    let mut rows = stmt.query(rusqlite::params![&species_owned])?;
+                    let mut mastery: Vec<MasteryClaimEntry> = Vec::new();
+                    while let Some(row) = rows.next()? {
+                        mastery.push(MasteryClaimEntry {
+                            mastery_level: row.get::<_, i64>(0)?,
+                            skill_name: row.get::<_, String>(1)?,
+                            ped_value: row.get::<_, f64>(2)?,
+                        });
+                    }
+                    Ok((map, mastery))
+                })
+                .await?;
 
         let current_rank = self.current_rank(species_name).await?;
 
@@ -391,7 +410,8 @@ impl CodexService {
             base_cost: species.base_cost,
             codex_type: species.codex_type,
             current_rank,
-            mastery_level,
+            mastery_level: mastery_claims.len() as i64,
+            mastery_claims,
             ranks,
         }))
     }
@@ -2270,6 +2290,14 @@ mod tests {
         assert_eq!(listing[0]["masteryLevel"], json!(3));
         let ranks = svc.get_species_ranks("Boar").await.unwrap().unwrap();
         assert_eq!(ranks.mastery_level, 3);
+        assert_eq!(
+            to_json(&ranks.mastery_claims),
+            json!([
+                {"masteryLevel": 1, "skillName": "Rifle", "pedValue": 25.0},
+                {"masteryLevel": 2, "skillName": "Courage", "pedValue": 15.625},
+                {"masteryLevel": 3, "skillName": "Dodge", "pedValue": 7.8125},
+            ])
+        );
         assert!(
             ranks.ranks.iter().all(|rank| !rank.claimed),
             "mastery claims must not read as rank claims"

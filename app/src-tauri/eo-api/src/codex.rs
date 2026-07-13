@@ -86,6 +86,16 @@ pub struct CodexRank {
     pub is_next: bool,
 }
 
+/// One recorded mastery claim in a species' breakdown, in claim order
+/// (`mastery_level` is the 1-based per-species sequence number).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexMasteryClaim {
+    pub mastery_level: i64,
+    pub skill_name: String,
+    pub ped_value: f64,
+}
+
 /// A species' full 25-rank breakdown, cross-referenced with the player's
 /// claims and current rank.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -96,6 +106,7 @@ pub struct CodexSpeciesRanks {
     pub codex_type: Nullable<String>,
     pub current_rank: i64,
     pub mastery_level: i64,
+    pub mastery_claims: Vec<CodexMasteryClaim>,
     pub ranks: Vec<CodexRank>,
 }
 
@@ -382,6 +393,15 @@ fn species_ranks_dto(ranks: codex::SpeciesRanks) -> CodexSpeciesRanks {
         codex_type: ranks.codex_type.into(),
         current_rank: ranks.current_rank,
         mastery_level: ranks.mastery_level,
+        mastery_claims: ranks
+            .mastery_claims
+            .into_iter()
+            .map(|claim| CodexMasteryClaim {
+                mastery_level: claim.mastery_level,
+                skill_name: claim.skill_name,
+                ped_value: claim.ped_value,
+            })
+            .collect(),
         ranks: ranks.ranks.into_iter().map(rank_dto).collect(),
     }
 }
