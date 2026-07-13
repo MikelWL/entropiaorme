@@ -65,7 +65,7 @@
 							</span>
 						{/each}
 					</div>
-				{:else if opt.professionWeight > 0}
+				{:else if rankedBy === 'profession' && opt.professionWeight > 0}
 					<div class="text-right text-xs tabular-nums">
 						<span class="text-text-secondary">+{opt.levelsGained.toFixed(1)} lvl</span>
 						<span class="text-text-tertiary mx-0.5">&times;</span>
@@ -74,6 +74,9 @@
 							<span class="text-accent font-medium ml-1">= +{(opt.profContribution * 100).toFixed(3)}%</span>
 						{/if}
 					</div>
+				{:else if rankedBy === 'profession'}
+					<!-- The profession-mode sibling of "No HP gain". -->
+					<span class="text-xs text-text-tertiary">No contribution</span>
 				{:else if opt.currentLevel != null}
 					<span class="text-xs text-text-tertiary tabular-nums">Lv {opt.currentLevel.toFixed(0)}, +{opt.levelsGained.toFixed(1)}</span>
 				{/if}
