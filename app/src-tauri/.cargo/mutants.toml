@@ -76,4 +76,33 @@ exclude_re = [
     #     shots are non-negative, so at total_shots == 0 the top share is 0/0 =
     #     NaN, which fails the threshold either way; `>` and `>=` coincide.
     "analytics\\.rs.*replace > with >= in raw_session_agg",
+    # Provable equivalences in the activity recommender's projection maths:
+    # guard clauses and a bisection whose mutants compute an identical result
+    # on every reachable input.
+    #   activity_recommender.rs:208  `if is_attribute(name) || weight <= 0.0`
+    #     in target_weights. The mutant (`&&`) admits attributes and zero-weight
+    #     skills the original skips, but both consumers re-guard: projection_rows
+    #     independently skips is_attribute before reading a target weight, and a
+    #     weight contributes only via `level_gain * target_weight`, so a zero
+    #     weight adds nothing. Reachable profession weights are non-negative, so
+    #     the output is identical.
+    "activity_recommender\\.rs.*replace \\|\\| with && in target_weights",
+    #   activity_recommender.rs:284  `lo = (crossing - 1.0) * STEP` in
+    #     pes_to_plus_one. `lo` is the bisection's lower bound; correctness needs
+    #     only evaluate(lo) < 1 with the crossing above it. The mutant (`/`) only
+    #     lowers lo further below the crossing, so the bisection converges to the
+    #     same threshold. Line-anchored because the sibling `* with /` at :285:
+    #     (the upper bound) is NOT equivalent and stays caught in the campaign.
+    "activity_recommender\\.rs:284:.*replace \\* with / in pes_to_plus_one",
+    #   activity_recommender.rs:288  `if evaluate(rows, mid) < 1.0` in
+    #     pes_to_plus_one. `<` and `<=` differ only when the evaluation is exactly
+    #     1.0, a measure-zero point the bisection never lands on; the returned
+    #     bound is unchanged.
+    "activity_recommender\\.rs.*replace < with <= in pes_to_plus_one",
+    #   activity_recommender.rs:308  `(target_gain > 0.0).then(...)` in project.
+    #     A row reaches here only with target_weight > 0 (zero/negative weights
+    #     are excluded upstream) and level_gain > 0 (positive share and budget on
+    #     a strictly increasing curve), so target_gain is strictly positive; the
+    #     target_gain == 0 case where `>`/`>=` differ is unreachable.
+    "activity_recommender\\.rs.*replace > with >= in project",
 ]

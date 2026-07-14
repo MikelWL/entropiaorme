@@ -321,6 +321,38 @@ Month Markup\tMonth Sales\tYear Markup\tYear Sales\tDecade Markup\tDecade Sales\
     }
 
     #[test]
+    fn a_data_row_named_item_is_not_mistaken_for_the_header() {
+        // The header is recognised by BOTH "Item" and "Tier" in the first
+        // two columns; a real 12-column row whose item is literally
+        // "Item" (tier 0) must parse as data, not be dropped as a header.
+        let line = "Item\t0\t106.880%\t451.900 PED\t107.160%\t531.900 PED\t\
+106.020%\t979.040 PED\t108.280%\t13.500K PED\t158.920%\t35.300K PED";
+        let parse = parse_market_paste(line);
+        assert_eq!(parse.rows.len(), 1);
+        assert_eq!(parse.rows[0].item_name, "Item");
+    }
+
+    #[test]
+    fn sales_apply_both_the_scale_and_the_unit() {
+        // K/M scale (x1000/x1_000_000) and the PEC unit (1/100 PED) are
+        // independent multipliers that must both land: a value carrying
+        // both distinguishes a dropped unit arm or a divided factor.
+        assert!((parse_sales("5.000K PEC").unwrap() - 50.0).abs() < 1e-9);
+        assert!((parse_sales("5.000 PEC").unwrap() - 0.05).abs() < 1e-9);
+        assert_eq!(parse_sales("5.000 PED"), Ok(5.0));
+        assert_eq!(parse_sales("2.000M PED"), Ok(2_000_000.0));
+    }
+
+    #[test]
+    fn numbers_accept_integers_and_reject_multiple_separators() {
+        // A separator-free integer must parse (the dot-count guard fires
+        // only on two or more separators, never on zero).
+        assert_eq!(parse_number("150"), Ok(150.0));
+        assert!((parse_number("106,880").unwrap() - 106.880).abs() < 1e-9);
+        assert!(parse_number("1.2.3").is_err());
+    }
+
+    #[test]
     fn horizon_vocabulary_round_trips() {
         for horizon in MarketHorizon::ALL {
             assert_eq!(MarketHorizon::from_stored(horizon.as_str()), Some(horizon));
