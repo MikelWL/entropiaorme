@@ -1,13 +1,20 @@
-//! Port of the original Python implementation.
-//!
 //! Reads one or more cargo-mutants `outcomes.json` files (the flag repeats,
 //! once per campaign shard; per-file counts are summed across them) and
-//! enforces the per-file mutation score floors below. Scoring matches the
-//! campaign's conventions: a mutant counts as caught when a test failed on it
-//! OR the mutated build timed out; missed mutants count against the score;
-//! unviable mutants (the mutation does not compile) leave the denominator
-//! entirely. Files without an adopted floor are held to the strictest bar
-//! (any missed mutant fails). Floors only ever ratchet up.
+//! enforces the per-file mutation score floors below. Scoring: a mutant
+//! counts as caught when a test failed on it OR the mutated build timed out;
+//! missed mutants count against the score; unviable mutants (the mutation
+//! does not compile) leave the denominator entirely.
+//!
+//! The floor map is the explicit register of surfaces under mutation
+//! coverage. A file WITH an adopted floor must hold its score, and floors
+//! only ever ratchet up. A file WITHOUT a floor is unadopted: it is still
+//! measured and counted in the aggregate badge, and reported as awaiting
+//! coverage, but it is NON-BLOCKING (its surviving mutants do not fail the
+//! gate). Bringing a file into the map (killing its survivors, excluding the
+//! provable equivalents, recording its floor) is the job of a periodic,
+//! user-invoked upkeep pass, not of the feature PR that first added the file.
+//! This keeps day-to-day feature work off the slow mutation campaign while
+//! the aggregate score stays honest and the backlog stays visible.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -96,7 +103,7 @@ struct Counts {
 ///
 /// Returns the counts keyed by file. Errors (Err) on an unreadable file, invalid
 /// JSON, a missing `outcomes` array, or an unrecognised outcome summary, so a
-/// malformed campaign output fails closed exactly as the Python `SystemExit`.
+/// malformed campaign output fails closed rather than scoring a partial run.
 fn score_outcomes(text: &str) -> Result<BTreeMap<String, Counts>, String> {
     let data: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("cannot parse outcomes.json: {e}"))?;
@@ -158,6 +165,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
 
     let floors: BTreeMap<&str, f64> = FLOORS.iter().copied().collect();
     let mut failures: Vec<String> = Vec::new();
+    let mut awaiting: Vec<String> = Vec::new();
     let mut total_caught: u32 = 0;
     let mut total_considered: u32 = 0;
 
@@ -178,7 +186,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
         let floor = floors.get(file.as_str()).copied();
         let bar = match floor {
             Some(f) => format!("{f:.1}"),
-            None => "no-missed".to_string(),
+            None => "unadopted".to_string(),
         };
         println!(
             "{file:45} {caught:6} {missed:6} {score:7.1} {bar:>9}",
@@ -191,9 +199,12 @@ pub fn run(args: &[String]) -> Result<i32, String> {
                 }
             }
             None => {
+                // Unadopted files are non-blocking: their survivors are a
+                // coverage backlog for the next upkeep pass, never a gate
+                // failure. Report them so the backlog stays visible.
                 if counts.missed > 0 {
-                    failures.push(format!(
-                        "{file}: {} missed mutant(s) and no adopted floor",
+                    awaiting.push(format!(
+                        "{file}: {} surviving mutant(s), score {score:.1}",
                         counts.missed
                     ));
                 }
@@ -203,7 +214,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
 
     // A floor whose file produced no scored mutants is a silently vacuous gate
     // (a rename or deletion would otherwise pass unnoticed). Walked in sorted
-    // file order, matching the Python's `sorted(FLOORS.items())`.
+    // file order.
     for (file, floor) in &floors {
         if !per_file.contains_key(*file) {
             failures.push(format!(
@@ -239,17 +250,30 @@ pub fn run(args: &[String]) -> Result<i32, String> {
         return Ok(0);
     }
 
+    // The unadopted backlog is informational, not a verdict: print it (in the
+    // enforce invocation; badge-only mode has already returned) so an upkeep
+    // pass has its worklist, then enforce only the adopted floors.
+    if !awaiting.is_empty() {
+        println!(
+            "\nawaiting mutation upkeep (non-blocking): {} unadopted file(s) with surviving mutants",
+            awaiting.len()
+        );
+        for item in &awaiting {
+            println!("  - {item}");
+        }
+    }
+
     if !failures.is_empty() {
-        eprintln!("\nmutation floors violated:");
-        // Match the Python ordering: per-file failures are appended during the
-        // sorted per_file walk (BTreeMap iterates sorted), then the
-        // missing-floor failures during the sorted-by-file FLOORS walk.
+        eprintln!("\nadopted mutation floors violated:");
+        // Per-file failures are appended during the sorted per_file walk
+        // (BTreeMap iterates sorted), then the vacuous-floor failures during
+        // the sorted-by-file FLOORS walk.
         for failure in &failures {
             eprintln!("  - {failure}");
         }
         return Ok(1);
     }
-    println!("\nall mutation floors hold");
+    println!("\nall adopted mutation floors hold");
     Ok(0)
 }
 
@@ -351,6 +375,59 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&badge).unwrap()).unwrap();
         assert_eq!(rendered["message"], "75.0%");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Write an outcomes.json in a fresh temp dir and run the enforce gate
+    /// (no --badge-out) over it, returning the exit code. Every adopted floor
+    /// is given a caught mutant first so the vacuous-floor guard is satisfied
+    /// and the caller can isolate the file under test.
+    fn enforce_with(extra: &[serde_json::Value], label: &str) -> i32 {
+        let dir =
+            std::env::temp_dir().join(format!("xtask-mutation-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("outcomes.json");
+        let mut outcomes = vec![serde_json::json!({"scenario": "Baseline", "summary": "Success"})];
+        for (file, _) in FLOORS {
+            outcomes.push(outcome(file, "CaughtMutant"));
+        }
+        outcomes.extend_from_slice(extra);
+        std::fs::write(&path, serde_json::json!({"outcomes": outcomes}).to_string()).unwrap();
+        let args = vec!["--outcomes".to_string(), path.to_str().unwrap().to_string()];
+        let code = run(&args).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        code
+    }
+
+    #[test]
+    fn unadopted_file_with_survivors_is_non_blocking() {
+        // A brand-new file with no adopted floor and a surviving mutant is a
+        // coverage backlog item, not a gate failure: the run passes.
+        let code = enforce_with(
+            &[
+                outcome("eo-services/src/brand_new_feature.rs", "CaughtMutant"),
+                outcome("eo-services/src/brand_new_feature.rs", "MissedMutant"),
+            ],
+            "unadopted",
+        );
+        assert_eq!(
+            code, 0,
+            "an unadopted file's survivors must not fail the gate"
+        );
+    }
+
+    #[test]
+    fn adopted_file_below_its_floor_still_fails() {
+        // Regression teeth on adopted surface: cost_engine.rs carries a 92.0
+        // floor. The helper gives it one caught mutant; this adds one missed,
+        // scoring it 50.0, well below the floor, so the gate fails.
+        let code = enforce_with(
+            &[outcome("eo-services/src/cost_engine.rs", "MissedMutant")],
+            "below-floor",
+        );
+        assert_eq!(
+            code, 1,
+            "an adopted file below its floor must fail the gate"
+        );
     }
 
     #[test]
