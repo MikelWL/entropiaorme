@@ -487,6 +487,20 @@ Carabok Leg Fur\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t109.380%\t6.
     }
 
     #[test]
+    fn preview_returns_the_real_parse_without_touching_the_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_runtime, service, _clock) = rig(dir.path());
+
+        // preview delegates to the parser and returns its rows verbatim;
+        // it never yields an empty default parse.
+        let parse = service.preview(SAMPLE);
+        assert_eq!(parse.rows.len(), 2);
+        assert!(parse.skipped.is_empty());
+        assert_eq!(parse.rows[0].item_name, "Carabok Hide");
+        assert_eq!(parse.rows[0].readings[0].markup_pct, Some(106.880));
+    }
+
+    #[test]
     fn overview_serves_each_items_latest_submission() {
         let dir = tempfile::tempdir().unwrap();
         let (runtime, service, clock) = rig(dir.path());

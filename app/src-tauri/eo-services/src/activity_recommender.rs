@@ -621,4 +621,69 @@ mod tests {
             .iter()
             .all(|c| c.name != "Wounding" && c.name != "Strength"));
     }
+
+    /// Build the sampled series the way [`project`] does, so a
+    /// [`pes_to_plus_one`] threshold can be checked against the exact
+    /// evaluation it is meant to invert.
+    fn series_for(rows: &[ProjectionRow]) -> Vec<f64> {
+        let step = RECOMMENDER_SAMPLE_STEP;
+        let count = (RECOMMENDER_PES_CAP / step) as usize + 1;
+        (0..count)
+            .map(|i| round4(evaluate(rows, i as f64 * step)))
+            .collect()
+    }
+
+    /// A single row calibrated so the gain equals exactly +1 at
+    /// `crossing_pes` (target weight is the reciprocal of the curve gain
+    /// there), placing the true crossing at a known interior point.
+    fn row_crossing_at(crossing_pes: f64) -> Vec<ProjectionRow> {
+        vec![ProjectionRow {
+            name: "X".to_string(),
+            share: 1.0,
+            start_level: 0.0,
+            target_weight: 1.0 / levels_for_tt_value(0.0, crossing_pes),
+        }]
+    }
+
+    #[test]
+    fn pes_to_plus_one_lands_mid_first_bracket() {
+        // Crossing calibrated to the middle of the (0, step] bracket. A
+        // correct bisection reports a threshold there; every mangled
+        // variant (a return-value swap, a collapsed bracket bound, or a
+        // broken bisection step) instead reports 0, a sample edge, or a
+        // negative, all outside the interior band asserted here.
+        let step = RECOMMENDER_SAMPLE_STEP;
+        let rows = row_crossing_at(step / 2.0);
+        let series = series_for(&rows);
+        assert_eq!(series[0], 0.0);
+        assert!(series[1] >= 1.0, "crossing must land at index 1");
+
+        let threshold = pes_to_plus_one(&rows, &series).expect("a crossing exists");
+        assert!(
+            threshold > step * 0.25 && threshold < step * 0.75,
+            "threshold {threshold} outside the interior band"
+        );
+    }
+
+    #[test]
+    fn pes_to_plus_one_lands_mid_later_bracket() {
+        // Crossing calibrated to the middle of the (step, 2*step] bracket:
+        // the gain stays below +1 through the first sample and crosses in
+        // the second. This pins the upper bracket bound specifically; a
+        // bound that collapses toward the lower sample reports a threshold
+        // well below the true interior crossing.
+        let step = RECOMMENDER_SAMPLE_STEP;
+        let rows = row_crossing_at(step * 1.5);
+        let series = series_for(&rows);
+        assert!(
+            series[1] < 1.0 && series[2] >= 1.0,
+            "crossing must land at index 2"
+        );
+
+        let threshold = pes_to_plus_one(&rows, &series).expect("a crossing exists");
+        assert!(
+            threshold > step * 1.25 && threshold < step * 1.75,
+            "threshold {threshold} outside the interior band"
+        );
+    }
 }
