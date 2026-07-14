@@ -82,9 +82,11 @@ jobs:
     name: Mutation verdict (floors + badge)
     # Merges the shard outcomes (the floors tool sums per-file counts across
     # repeated --outcomes flags), builds the aggregate-score badge, then
-    # enforces the per-file floor map: files without an adopted floor are held
-    # to no-missed-mutants and floors only ratchet up. Badge before gate, so
-    # the published badge still reflects reality on a regression.
+    # enforces the per-file floor map: adopted files must hold their floor
+    # (floors only ratchet up), while unadopted files are non-blocking and
+    # merely reported as awaiting coverage, so a newly added file never reds
+    # the nightly. Badge before gate, so the published badge still reflects
+    # reality on a regression.
     runs-on: ubuntu-latest
     needs: [rust-mutation]
     defaults:
