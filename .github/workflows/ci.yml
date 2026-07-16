@@ -388,6 +388,14 @@ jobs:
       - name: Run workspace tests
         timeout-minutes: 20
         run: cargo nextest run --workspace
+      # The e2e fixture/DTO drift tripwires only compile under the e2e-stub
+      # feature (the module they test is feature-gated), so the plain
+      # workspace run never sees them; without this leg a typed-command DTO
+      # gaining a field fails as an opaque e2e session error on the Windows
+      # visual job instead of as a named fixture-drift test.
+      - name: Run e2e fixture drift tests
+        timeout-minutes: 10
+        run: cargo nextest run -p entropia-orme --features e2e-stub -E 'test(fixture)'
       # nextest does NOT run doctests; keep them on a dedicated cargo-test leg so
       # doctest coverage is not silently dropped by the migration.
       - name: Run workspace doctests
