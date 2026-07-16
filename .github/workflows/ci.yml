@@ -266,11 +266,23 @@ jobs:
       - name: Fetch the matching WebView2 driver
         shell: pwsh
         run: |
-          $key = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-          $pv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
-          if (-not $pv) { $pv = (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Edge\BLBeacon" -ErrorAction SilentlyContinue).version }
+          # The app runs on the WebView2 Evergreen RUNTIME, whose version can
+          # diverge from the Edge browser's after a runner-image update (the
+          # divergence broke session creation with a DevToolsActivePort error
+          # when Edge 150 landed while the runtime lagged). Resolve the driver
+          # from the runtime's own updater key first; the browser keys are
+          # fallbacks only. Both readings are printed for diagnosis.
+          $runtimeKey = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3C4FE00-EFD5-403B-9569-398A20F1BA4A}"
+          $browserKey = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          $runtime = (Get-ItemProperty $runtimeKey -ErrorAction SilentlyContinue).pv
+          $browser = (Get-ItemProperty $browserKey -ErrorAction SilentlyContinue).pv
+          if (-not $browser) { $browser = (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Edge\BLBeacon" -ErrorAction SilentlyContinue).version }
+          Write-Host "WebView2 runtime version: $runtime"
+          Write-Host "Edge browser version: $browser"
+          $pv = $runtime
+          if (-not $pv) { $pv = $browser }
           if (-not $pv) { throw "could not determine the WebView2 / Edge version" }
-          Write-Host "WebView2 / Edge version: $pv"
+          Write-Host "Driver version selected: $pv"
           New-Item -ItemType Directory -Force -Path e2e/.drivers | Out-Null
           Invoke-WebRequest "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile "$env:RUNNER_TEMP\edgedriver.zip"
           Expand-Archive "$env:RUNNER_TEMP\edgedriver.zip" -DestinationPath e2e/.drivers -Force
