@@ -25,6 +25,14 @@ export default defineConfig({
 	server: {
 		port,
 		strictPort: true,
+		watch: {
+			// Never watch the Rust workspace: cargo's incremental target tree
+			// holds hundreds of thousands of files, so watching it exhausts
+			// the OS file-watcher budget (ENOSPC) as soon as a backend build
+			// runs alongside the dev server. Tauri's own watcher covers the
+			// backend crates; Vite only needs the frontend sources.
+			ignored: ['**/src-tauri/**'],
+		},
 		// The shell pre-spawns its hidden satellite windows (overlay,
 		// scan-overlay) at boot, so their routes are requested while the dev
 		// server is still cold. Under that parallel first load, a component's
