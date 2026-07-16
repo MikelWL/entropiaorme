@@ -95,7 +95,7 @@
 				onpointerup={statsGrid.handlePointerUp}
 				onpointercancel={statsGrid.handlePointerCancel}
 			>
-				<span class="eyebrow truncate">{def?.label ?? pref.id}</span>
+				<span class="eyebrow truncate">{def?.shortLabel ?? def?.label ?? pref.id}</span>
 				<span class="truncate text-[17px] font-semibold tabular-nums leading-none tracking-tight
 					{r.value === '\u2014' ? 'text-text-tertiary' : r.color}">
 					{r.value}

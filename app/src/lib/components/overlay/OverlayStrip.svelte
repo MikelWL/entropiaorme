@@ -315,7 +315,7 @@
 								? 'text-white/85'
 								: r.color}
 						<div class="flex flex-col items-center justify-center gap-0.5 shrink-0">
-							<span class="text-[10px] font-bold text-white/40 tracking-wider uppercase leading-none">{def.label}</span>
+							<span class="text-[10px] font-bold text-white/40 tracking-wider uppercase leading-none">{def.shortLabel ?? def.label}</span>
 							<span class="text-sm font-semibold tabular-nums leading-none {valueColor}">{r.value}</span>
 						</div>
 					{/if}
