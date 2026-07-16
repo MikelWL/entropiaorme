@@ -23,6 +23,7 @@
 
 mod actor;
 mod combat;
+mod harvest;
 mod loot;
 mod mob;
 mod persistence;
@@ -125,6 +126,16 @@ impl Default for HealTool {
             amount_max: None,
         }
     }
+}
+
+/// The equipped harvesting tool. Hotbar-equipment state like
+/// `HealTool`, NOT session state: a tool equipped during one session
+/// stays known into the next. Whether it is currently the *hand* item
+/// (versus a weapon equipped after it) is tracked separately on the
+/// actor, because loot routing follows the hand item.
+pub(super) struct HarvestTool {
+    pub(super) name: String,
+    pub(super) cost_per_use: Ped,
 }
 
 /// The tracker handle: an unbounded sender into the actor plus the

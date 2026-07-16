@@ -36,6 +36,7 @@ pub enum SearchKind {
     Scope,
     Absorber,
     Consumable,
+    Tool,
 }
 
 impl SearchKind {
@@ -47,17 +48,21 @@ impl SearchKind {
             SearchKind::Scope => "weapon_vision_attachments",
             SearchKind::Absorber => "absorbers",
             SearchKind::Consumable => "stimulants",
+            SearchKind::Tool => "harvesting_tools",
         }
     }
 }
 
-/// The stored equipment classes.
+/// The stored equipment classes. `Tool` is a harvesting tool (tree
+/// cutting): a single-entity item like a healing tool, costed as pure
+/// decay per swing with no ammo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum EquipmentKind {
     Weapon,
     Healing,
     Consumable,
+    Tool,
 }
 
 impl EquipmentKind {
@@ -66,6 +71,7 @@ impl EquipmentKind {
             EquipmentKind::Weapon => "weapon",
             EquipmentKind::Healing => "healing",
             EquipmentKind::Consumable => "consumable",
+            EquipmentKind::Tool => "tool",
         }
     }
 }
@@ -335,6 +341,30 @@ fn row_to_summary(
             damage_max: None.into(),
             reload_seconds: None.into(),
             is_limited: false,
+            enrichment_level: 1,
+        });
+    }
+
+    if item_type == "tool" {
+        let tool_e = props
+            .get("tool_entity")
+            .filter(|v| !v.is_null())
+            .ok_or_else(|| {
+                ApiError::invalid_state(format!("stored tool row {id} missing tool_entity"))
+            })?;
+        let markup = props.get("markup").and_then(Value::as_f64).unwrap_or(100.0) / 100.0;
+        // A harvesting tool has no ammo, so the heal per-use recipe
+        // (decay + ammo, markup-weighted) reduces to decay x markup.
+        return Ok(EquipmentSummary {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: EquipmentKind::Tool,
+            amplifier_name: None.into(),
+            cost_per_use: heal_cost_per_use(tool_e, markup),
+            damage_min: None.into(),
+            damage_max: None.into(),
+            reload_seconds: None.into(),
+            is_limited: is_limited(tool_e),
             enrichment_level: 1,
         });
     }
@@ -723,6 +753,24 @@ impl Api {
                     .filter(|id| !id.is_empty())
                     .ok_or_else(|| ApiError::bad_request("catalog_id required for healing"))?;
                 let tool_e = self.fetch_entity("medical_tools", catalog_id)?;
+                let name = tool_e["name"].as_str().unwrap_or_default().to_string();
+                let mut props = Map::new();
+                props.insert("tool_entity".into(), tool_e);
+                props.insert("tool_catalog_id".into(), json!(catalog_id));
+                props.insert("markup".into(), json!(req.weapon_markup));
+                Ok(BuiltProps {
+                    name,
+                    stored_catalog_id: Some(catalog_id.to_string()),
+                    props: Value::Object(props),
+                })
+            }
+            EquipmentKind::Tool => {
+                let catalog_id = req
+                    .catalog_id
+                    .as_deref()
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| ApiError::bad_request("catalog_id required for tool"))?;
+                let tool_e = self.fetch_entity("harvesting_tools", catalog_id)?;
                 let name = tool_e["name"].as_str().unwrap_or_default().to_string();
                 let mut props = Map::new();
                 props.insert("tool_entity".into(), tool_e);

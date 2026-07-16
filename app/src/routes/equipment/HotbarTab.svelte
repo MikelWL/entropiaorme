@@ -22,6 +22,7 @@
 	let weapons = $derived(equipment.filter((e) => e.type === 'weapon'));
 	let healingTools = $derived(equipment.filter((e) => e.type === 'healing'));
 	let consumablesList = $derived(equipment.filter((e) => e.type === 'consumable'));
+	let harvestingToolsList = $derived(equipment.filter((e) => e.type === 'tool'));
 
 	$effect(() => {
 		hotbar = { ...initialHotbar };
@@ -41,7 +42,7 @@
 		return slotItem(slot)?.costPerUse ?? null;
 	}
 
-	function slotType(slot: string): 'weapon' | 'healing' | 'consumable' | null {
+	function slotType(slot: string): 'weapon' | 'healing' | 'consumable' | 'tool' | null {
 		return slotItem(slot)?.type ?? null;
 	}
 
@@ -95,7 +96,7 @@
 		{/if}
 
 		<div class="{enabled ? '' : 'opacity-40 grayscale blur-[2px] pointer-events-none select-none'}">
-		{#if weapons.length === 0 && healingTools.length === 0 && consumablesList.length === 0}
+		{#if weapons.length === 0 && healingTools.length === 0 && consumablesList.length === 0 && harvestingToolsList.length === 0}
 			<p class="text-sm text-text-tertiary py-4">
 				Add equipment in the Library tab first, then assign them to hotbar slots here.
 			</p>
@@ -146,6 +147,13 @@
 									<optgroup label="Healing Tools">
 										{#each healingTools as h}
 											<option value={h.id}>{h.name}</option>
+										{/each}
+									</optgroup>
+								{/if}
+								{#if harvestingToolsList.length > 0}
+									<optgroup label="Harvesting Tools">
+										{#each harvestingToolsList as t}
+											<option value={t.id}>{t.name}</option>
 										{/each}
 									</optgroup>
 								{/if}

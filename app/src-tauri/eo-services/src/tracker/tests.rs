@@ -2656,6 +2656,7 @@ fn prime_demo_activates_a_demo_session_and_stamps_its_mob() {
         start_time: chrono::DateTime::from_timestamp(1_000, 0).unwrap(),
         end_time: None,
         kills: Vec::new(),
+        harvests: Vec::new(),
         dangling_cost: Ped::ZERO,
     };
     rig.wait(tracker.prime_demo(
@@ -2683,6 +2684,7 @@ fn on_tool_changed_ensures_a_bucket_before_merging_the_unknown_stats() {
         start_time: chrono::DateTime::from_timestamp(1_000, 0).unwrap(),
         end_time: None,
         kills: Vec::new(),
+        harvests: Vec::new(),
         dangling_cost: Ped::ZERO,
     };
     rig.wait(tracker.prime_demo(
@@ -2742,5 +2744,127 @@ fn on_tool_changed_ensures_a_bucket_before_merging_the_unknown_stats() {
             .find(|(key, _)| key == "Rifle")
             .unwrap();
         assert_eq!(rifle.1.shots_fired, 5, "Unknown shots folded into Rifle");
+    });
+}
+
+#[test]
+fn harvest_tool_equip_prices_wood_swings_and_fails() {
+    use crate::bus_events::{ActiveHarvestToolChangedPayload, HarvestFailPayload, HarvestFailTag};
+
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.bus.publish(&BusEvent::ActiveHarvestToolChanged(
+        ActiveHarvestToolChangedPayload {
+            tool_name: "Terratech PH-3".into(),
+            cost_per_use_ped: 0.1,
+            source: Some("hotbar:4".into()),
+        },
+    ));
+    // A wood group is a swing, priced at the equipped tool's per-use cost.
+    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+        kind: LootTag,
+        timestamp: Some("2026-01-01T00:00:02".into()),
+        items: vec![
+            LootItem {
+                item_name: "Short Moonleaf Board".into(),
+                quantity: 9,
+                value_ped: 0.09,
+                is_enhancer_shrapnel: false,
+            },
+            LootItem {
+                item_name: "Wood Shavings".into(),
+                quantity: 8,
+                value_ped: 0.008,
+                is_enhancer_shrapnel: false,
+            },
+        ],
+        total_ped: 0.098,
+    }));
+    // The explicit failed swing costs the same decay.
+    rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+        kind: HarvestFailTag,
+        timestamp: "2026-01-01T00:00:04".into(),
+    }));
+    // A non-wood group still lands on the kill path.
+    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+        kind: LootTag,
+        timestamp: Some("2026-01-01T00:00:06".into()),
+        items: vec![LootItem {
+            item_name: "Animal Hide".into(),
+            quantity: 1,
+            value_ped: 1.0,
+            is_enhancer_shrapnel: false,
+        }],
+        total_ped: 1.0,
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        let harvests = &active.session.harvests;
+        assert_eq!(harvests.len(), 2, "one success + one fail");
+        assert!(harvests[0].success);
+        assert_eq!(harvests[0].tool_name.as_deref(), Some("Terratech PH-3"));
+        assert_eq!(harvests[0].cost_ped, Ped(0.1));
+        assert_eq!(harvests[0].loot_total_ped, Ped(0.098));
+        assert_eq!(harvests[0].loot_items.len(), 2);
+        assert!(!harvests[1].success);
+        assert_eq!(harvests[1].cost_ped, Ped(0.1));
+        assert!(harvests[1].loot_items.is_empty());
+        assert_eq!(active.session.kills.len(), 1, "the hide group is a kill");
+        assert!(
+            active.warnings.is_empty(),
+            "no no-tool warning when the tool is equipped"
+        );
+    });
+
+    // Both swings persisted with their loot rows.
+    let (events, items): (i64, i64) = rig.wait(rig.db.with_reader(|conn| {
+        Ok((
+            conn.query_row("SELECT COUNT(*) FROM harvest_events", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM harvest_loot_items", [], |row| {
+                row.get(0)
+            })?,
+        ))
+    }))
+    .unwrap();
+    assert_eq!(events, 2);
+    assert_eq!(items, 2);
+}
+
+#[test]
+fn wood_loot_with_no_tool_records_zero_cost_and_warns_once() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    for (ts, quantity) in [("2026-01-01T00:00:02", 9), ("2026-01-01T00:00:05", 7)] {
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some(ts.into()),
+            items: vec![LootItem {
+                item_name: "Short Moonleaf Board".into(),
+                quantity,
+                value_ped: 0.01 * quantity as f64,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: 0.01 * quantity as f64,
+        }));
+    }
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        assert_eq!(active.session.harvests.len(), 2);
+        for harvest in &active.session.harvests {
+            assert_eq!(harvest.tool_name, None);
+            assert_eq!(harvest.cost_ped, Ped::ZERO, "never guess a cost");
+        }
+        assert_eq!(active.session.kills.len(), 0, "no phantom kill from wood");
+        assert_eq!(
+            active.warnings,
+            vec!["Harvesting detected: no harvesting tool equipped via hotbar".to_string()],
+            "the no-tool warning is one-shot"
+        );
     });
 }

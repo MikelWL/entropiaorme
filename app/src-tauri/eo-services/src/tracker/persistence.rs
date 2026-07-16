@@ -6,7 +6,7 @@ use eo_wire::normalizer::round_half_even;
 
 use crate::db::DbError;
 use crate::session_summary::write_session_summary;
-use crate::tracking_models::Kill;
+use crate::tracking_models::{HarvestEvent, Kill};
 
 use super::actor::TrackerActor;
 use super::time::{epoch_to_instant, local_isoformat};
@@ -145,6 +145,50 @@ impl TrackerActor {
             })
             .await;
         // Contained like the original's handler exception.
+        let _ = result;
+    }
+
+    /// Write a harvesting swing to the database: the event row and its
+    /// loot items, under one commit, mirroring `persist_kill`.
+    pub(super) async fn persist_harvest(&self, harvest: &HarvestEvent) {
+        let harvest = harvest.clone();
+        let result = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO harvest_events \
+                     (id, session_id, timestamp, success, tool_name, \
+                      cost_ped, loot_total_ped) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        harvest.id,
+                        harvest.session_id,
+                        harvest.timestamp,
+                        i64::from(harvest.success),
+                        harvest.tool_name,
+                        harvest.cost_ped.value(),
+                        harvest.loot_total_ped.value(),
+                    ],
+                )?;
+                for item in &harvest.loot_items {
+                    tx.execute(
+                        "INSERT INTO harvest_loot_items \
+                         (harvest_id, item_name, quantity, value_ped) \
+                         VALUES (?, ?, ?, ?)",
+                        rusqlite::params![
+                            harvest.id,
+                            item.item_name,
+                            item.quantity,
+                            item.value_ped,
+                        ],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await;
+        // Contained like the kill path's persistence failure.
         let _ = result;
     }
 

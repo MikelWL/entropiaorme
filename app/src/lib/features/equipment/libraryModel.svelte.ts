@@ -28,7 +28,7 @@ import { describeError } from '$lib/view/errorState';
 import { createTypeahead } from '$lib/view/typeahead.svelte';
 import { previewCostPerUse } from './costPreview';
 
-export type EquipmentFormType = 'weapon' | 'healing' | 'consumable';
+export type EquipmentFormType = 'weapon' | 'healing' | 'consumable' | 'tool';
 
 export function createLibraryModel() {
 	// ── Data ──
@@ -36,6 +36,7 @@ export function createLibraryModel() {
 	let equipmentList = $state<Equipment[]>([]);
 	let healingTools = $state<HealingTool[]>([]);
 	let consumables = $state<Equipment[]>([]);
+	let harvestingTools = $state<Equipment[]>([]);
 	let hotbar = $state<Hotbar>({});
 	let hotbarHooksEnabled = $state(true);
 	let trifecta = $state<TrifectaSettings>({
@@ -92,6 +93,10 @@ export function createLibraryModel() {
 		search: (q) => searchEquipmentItems(q, 'consumable'),
 		labelOf: label,
 	});
+	const toolPicker = createTypeahead<EquipmentSearchResult>({
+		search: (q) => searchEquipmentItems(q, 'tool'),
+		labelOf: label,
+	});
 	const pickers = [
 		weaponPicker,
 		ampPicker,
@@ -99,6 +104,7 @@ export function createLibraryModel() {
 		scopePicker,
 		absorberPicker,
 		consumablePicker,
+		toolPicker,
 	];
 
 	// ── Computed ──
@@ -130,6 +136,9 @@ export function createLibraryModel() {
 			.sort((a, b) => a.name.localeCompare(b.name));
 		consumables = library
 			.filter((e) => e.type === 'consumable')
+			.sort((a, b) => a.name.localeCompare(b.name));
+		harvestingTools = library
+			.filter((e) => e.type === 'tool')
 			.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
@@ -263,13 +272,20 @@ export function createLibraryModel() {
 		addType = type;
 		if (type === 'weapon') {
 			healerPicker.clear();
+			toolPicker.clear();
 		} else if (type === 'healing') {
 			weaponPicker.clear();
 			ampPicker.clear();
+			toolPicker.clear();
+		} else if (type === 'tool') {
+			weaponPicker.clear();
+			ampPicker.clear();
+			healerPicker.clear();
 		} else {
 			weaponPicker.clear();
 			ampPicker.clear();
 			healerPicker.clear();
+			toolPicker.clear();
 		}
 	}
 
@@ -338,6 +354,15 @@ export function createLibraryModel() {
 					weapon_markup: healer.isLimited ? markupPercent : 100,
 				});
 				replaceEquipment(item);
+			} else if (addType === 'tool') {
+				const tool = toolPicker.selected;
+				if (!tool?.catalogId) return;
+				const item = await addToLibrary({
+					type: 'tool',
+					catalog_id: tool.catalogId,
+					weapon_markup: tool.isLimited ? markupPercent : 100,
+				});
+				replaceEquipment(item);
 			} else {
 				const consumable = consumablePicker.selected;
 				if (!consumable) return;
@@ -366,6 +391,8 @@ export function createLibraryModel() {
 				healingTools = healingTools.filter((e) => e.id !== id);
 			} else if (type === 'consumable') {
 				consumables = consumables.filter((e) => e.id !== id);
+			} else if (type === 'tool') {
+				harvestingTools = harvestingTools.filter((e) => e.id !== id);
 			} else {
 				equipmentList = equipmentList.filter((e) => e.id !== id);
 			}
@@ -393,6 +420,9 @@ export function createLibraryModel() {
 		},
 		get consumables() {
 			return consumables;
+		},
+		get harvestingTools() {
+			return harvestingTools;
 		},
 		get hotbar() {
 			return hotbar;
@@ -486,6 +516,7 @@ export function createLibraryModel() {
 		scopePicker,
 		absorberPicker,
 		consumablePicker,
+		toolPicker,
 
 		loadData,
 		openAddModal,

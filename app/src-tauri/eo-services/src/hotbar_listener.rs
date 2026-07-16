@@ -11,7 +11,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 
-use crate::bus_events::{ActiveHealToolChangedPayload, ActiveToolChangedPayload, BusEvent};
+use crate::bus_events::{
+    ActiveHarvestToolChangedPayload, ActiveHealToolChangedPayload, ActiveToolChangedPayload,
+    BusEvent,
+};
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::keystroke_source::{KeystrokeEvent, KeystrokeKind, KeystrokeSource};
 
@@ -261,6 +264,17 @@ fn resolve_hotbar_slot(bus: &EventBus, resolver: &HotbarResolver, slot: &str) {
         // Consumables are one-off actions: never switch the active
         // weapon in cost tracking.
         "consumable" => {}
+        // A harvesting tool becomes the hand item: subsequent loot
+        // groups are swings, costed at this tool's per-use decay.
+        "tool" => {
+            bus.publish(&BusEvent::ActiveHarvestToolChanged(
+                ActiveHarvestToolChangedPayload {
+                    tool_name: name,
+                    cost_per_use_ped: cost,
+                    source: Some(format!("hotbar:{slot}")),
+                },
+            ));
+        }
         _ => {
             bus.publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
                 tool_name: name,

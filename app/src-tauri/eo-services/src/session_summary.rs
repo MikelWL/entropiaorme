@@ -25,8 +25,10 @@ fn is_missing_table(error: &rusqlite::Error) -> bool {
 
 // Bumped to 2 when the Activity/session-list read columns (dominant kill
 // counts, raw session skill-TT, primary mob/weapon lists, global/HOF counts)
-// were added: a below-version row heals on the next read.
-pub const SUMMARY_VERSION: i64 = 2;
+// were added; to 3 when harvesting (tree cutting) joined the session economy
+// (harvest loot inside lootTt, swing decay inside cycledPed, plus the four
+// harvest columns). A below-version row heals on the next read.
+pub const SUMMARY_VERSION: i64 = 3;
 pub const DOMINANCE_THRESHOLD: f64 = 0.6;
 
 /// The computed summary for one completed session, or None when the
@@ -76,7 +78,7 @@ pub fn compute_session_summary(
         Err(error) => return Err(error.into()),
     }
 
-    let (kills, loot_tt, enhancer_cost) = conn.query_row(
+    let (kills, kill_loot_tt, enhancer_cost) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(loot_total_ped), 0), COALESCE(SUM(enhancer_cost), 0) \
          FROM kills WHERE session_id = ?",
         rusqlite::params![session_id],
@@ -88,6 +90,26 @@ pub fn compute_session_summary(
             ))
         },
     )?;
+
+    // Harvesting (tree cutting) swings: wood TT is liquid loot and
+    // swing decay is cycled spend, so both join the session economy
+    // (`lootTt` / `cycledPed`) beside their own explicit columns.
+    let (harvest_swings, harvest_successes, harvest_loot_tt, harvest_cost) = conn.query_row(
+        "SELECT COUNT(*), \
+           COALESCE(SUM(CASE WHEN success != 0 THEN 1 ELSE 0 END), 0), \
+           COALESCE(SUM(loot_total_ped), 0), COALESCE(SUM(cost_ped), 0) \
+         FROM harvest_events WHERE session_id = ?",
+        rusqlite::params![session_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        },
+    )?;
+    let loot_tt = kill_loot_tt + harvest_loot_tt;
 
     let weapon_cost: f64 = conn.query_row(
         "SELECT COALESCE(SUM(COALESCE(ts.cost_per_shot, 0) * COALESCE(ts.shots_fired, 0)), 0) \
@@ -248,7 +270,8 @@ pub fn compute_session_summary(
     }
 
     let duration_hours = ((ended_at - started_at) / 3600.0).max(0.0);
-    let cycled_ped = weapon_cost + enhancer_cost + armour_cost + heal_cost + dangling_cost;
+    let cycled_ped =
+        weapon_cost + enhancer_cost + armour_cost + heal_cost + dangling_cost + harvest_cost;
     let regular_skill_tt: f64 = regular_skill_ped.values().filter_map(Value::as_f64).sum();
     let attribute_levels_total: f64 = attribute_levels.values().filter_map(Value::as_f64).sum();
 
@@ -311,6 +334,17 @@ pub fn compute_session_summary(
     );
     summary.insert("globals".into(), Value::from(globals));
     summary.insert("hofs".into(), Value::from(hofs));
+    // Harvesting columns (SUMMARY_VERSION 3).
+    summary.insert("harvestSwings".into(), Value::from(harvest_swings));
+    summary.insert("harvestSuccesses".into(), Value::from(harvest_successes));
+    summary.insert(
+        "harvestLootTt".into(),
+        Value::from(round_half_even(harvest_loot_tt, 4)),
+    );
+    summary.insert(
+        "harvestCost".into(),
+        Value::from(round_half_even(harvest_cost, 4)),
+    );
     Ok(Some(summary))
 }
 
@@ -340,9 +374,10 @@ pub fn write_session_summary(conn: &rusqlite::Connection, session_id: &str) -> R
          dangling_cost, cycled_ped, regular_skill_ped_json, attribute_levels_json, \
          regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, \
          dominant_weapon, dominant_mob_kills, dominant_tag_kills, activity_skill_tt, \
-         primary_mobs_json, primary_weapons_json, globals, hofs, computed_at) \
+         primary_mobs_json, primary_weapons_json, globals, hofs, \
+         harvest_swings, harvest_successes, harvest_loot_tt, harvest_cost, computed_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-         ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
         rusqlite::params![
             summary["id"].as_str(),
             SUMMARY_VERSION,
@@ -371,6 +406,10 @@ pub fn write_session_summary(conn: &rusqlite::Connection, session_id: &str) -> R
             primary_weapons_json,
             summary["globals"].as_i64(),
             summary["hofs"].as_i64(),
+            summary["harvestSwings"].as_i64(),
+            summary["harvestSuccesses"].as_i64(),
+            summary["harvestLootTt"].as_f64(),
+            summary["harvestCost"].as_f64(),
         ],
     )?;
     Ok(())

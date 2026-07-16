@@ -334,6 +334,8 @@ export interface CostBreakdown {
 	healCost: number;
 	enhancerCost: number;
 	armourCost: number;
+	/** Harvesting (tree cutting) swing decay. */
+	harvestCost: number;
 }
 
 /**
@@ -391,9 +393,11 @@ export interface EquipmentDetail {
 }
 
 /**
- * The stored equipment classes.
+ * The stored equipment classes. `Tool` is a harvesting tool (tree
+ * cutting): a single-entity item like a healing tool, costed as pure
+ * decay per swing with no ammo.
  */
-export type EquipmentKind = 'weapon' | 'healing' | 'consumable';
+export type EquipmentKind = 'weapon' | 'healing' | 'consumable' | 'tool';
 
 /**
  * An add or update request. Field names stay in the request casing the
@@ -460,6 +464,18 @@ export interface GameConnection {
 	chatLogPath: string;
 	chatLogValid: boolean;
 	playerName: string;
+}
+
+/**
+ * A session's harvesting (tree cutting) totals: every swing is a
+ * counted event (successes arrive as wood loot groups, fails as the
+ * explicit harvest-fail line).
+ */
+export interface HarvestSummary {
+	swings: number;
+	successes: number;
+	lootTt: number;
+	cost: number;
 }
 
 /**
@@ -1446,7 +1462,7 @@ export interface ScanStatus {
  * bindings expose the closed union), so the old unknown-type reply
  * class is unrepresentable rather than handled.
  */
-export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable';
+export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable' | 'tool';
 
 /**
  * The full session detail.
@@ -1454,6 +1470,7 @@ export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'c
 export interface SessionDetail {
 	sessionId: string;
 	summary: SessionSummary;
+	harvest: HarvestSummary;
 	mobEntryMode: MobEntryMode;
 	notableEvents: NotableEvent[];
 	lootBreakdown: LootEntry[];
@@ -1697,6 +1714,11 @@ export interface TrackingSnapshot {
 	multiplierMax?: number | null;
 	multiplierHistory?: number[] | null;
 	cumulativeNetHistory?: number[] | null;
+	/** Harvesting swings this session (successes plus explicit fails). */
+	harvestSwings?: number | null;
+	harvestSuccesses?: number | null;
+	harvestLoot?: number | null;
+	harvestCost?: number | null;
 	warnings?: Warning[] | null;
 }
 

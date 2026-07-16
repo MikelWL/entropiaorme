@@ -489,6 +489,7 @@ impl DemoState {
             start_time: epoch_to_instant(started_epoch),
             end_time: None,
             kills,
+            harvests: Vec::new(),
             dangling_cost: Ped(session.dangling_cost),
         };
         self.tracker

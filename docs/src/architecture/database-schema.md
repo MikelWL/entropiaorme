@@ -13,9 +13,12 @@ migration, `0001_schema_baseline.sql`, which creates the complete base schema
 schema-version row, followed by forward-only additions:
 `0002_analytical_indexes.sql` (analytical read-path indexes plus a one-time
 `ANALYZE`), `0003_session_summary_read_columns.sql` (extra
-`session_summaries` columns for the Activity and session-list reads), and
+`session_summaries` columns for the Activity and session-list reads),
 `0004_daily_rollups.sql` (the per-day analytics rollup projection behind the
-Overview, plus a ledger date index). The
+Overview, plus a ledger date index), `0005_market_observations.sql` (the
+market-markup observation feed), and `0006_harvest_events.sql` (the
+harvesting activity tables plus the harvest columns on the summary and
+rollup projections). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
@@ -417,6 +420,39 @@ The individual loot items dropped by a kill.
 | `is_enhancer_shrapnel` | INTEGER | Not null; defaults to 0 (boolean flag). |
 | `deactivated_at` | REAL | Null when active (included in aggregates); a Unix-epoch timestamp when the entry has been deactivated by a post-hoc edit. Recoverable: clearing the timestamp reactivates the entry. |
 
+#### `harvest_events`
+
+One row per harvesting (tree cutting) swing, the second tracked activity
+beside hunting (migration `0006`). A successful swing arrives as a wood loot
+group; a failed swing arrives as the explicit "Harvest attempt failed" chat
+line, so every swing is directly counted rather than inferred. The tool
+identity and per-swing cost are captured at swing time, so later equipment
+edits cannot rewrite history; `tool_name` is null when no harvesting tool was
+known and the swing recorded at zero cost.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | TEXT | Primary key. |
+| `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed (`idx_harvest_session`). |
+| `timestamp` | REAL | Not null. |
+| `success` | INTEGER | Not null; defaults to 1 (boolean flag). |
+| `tool_name` | TEXT | Optional; the harvesting tool equipped via the hotbar at swing time. |
+| `cost_ped` | REAL | Defaults to 0; the tool's per-use decay (markup-weighted) at swing time. |
+| `loot_total_ped` | REAL | Defaults to 0; denormalised per-swing loot total beside the per-item rows. |
+
+#### `harvest_loot_items`
+
+The individual wood items a successful swing dropped.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `harvest_id` | TEXT | Not null; references `harvest_events(id)`. Indexed (`idx_harvest_loot_items_harvest`). |
+| `item_name` | TEXT | Not null. |
+| `quantity` | INTEGER | Defaults to 1. |
+| `value_ped` | REAL | Defaults to 0. |
+| `deactivated_at` | REAL | Null when active; mirrors `kill_loot_items` so the loot-edit flow can extend to harvest loot without a schema move. |
+
 #### `notable_events`
 
 Notable in-session events (for example globals and Hall-of-Fame drops).
@@ -477,8 +513,9 @@ cache rather than a source of truth: a row is filled when a session ends and is
 lazily rebuilt on read when missing or below the current `summary_version`.
 
 The base columns are created by the baseline; the read columns below the
-`computed_at` row are added by migration `0003` and healed in by the version
-bump (the code's `SUMMARY_VERSION` is 2).
+`computed_at` row are added by migration `0003`, and the harvest columns by
+migration `0006`, each healed in by a version bump (the code's
+`SUMMARY_VERSION` is 3).
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -510,6 +547,10 @@ bump (the code's `SUMMARY_VERSION` is 2).
 | `primary_weapons_json` | TEXT | Not null; defaults to `'[]'` (migration `0003`). The session-list top-three weapon names as a JSON array. |
 | `globals` | INTEGER | Not null; defaults to 0 (migration `0003`). The session's global count. |
 | `hofs` | INTEGER | Not null; defaults to 0 (migration `0003`). The session's Hall-of-Fame count. |
+| `harvest_swings` | INTEGER | Defaults to 0 (migration `0006`). Harvesting swings, successes plus explicit fails. |
+| `harvest_successes` | INTEGER | Defaults to 0 (migration `0006`). |
+| `harvest_loot_tt` | REAL | Defaults to 0 (migration `0006`). Wood loot TT; also included in `loot_tt`. |
+| `harvest_cost` | REAL | Defaults to 0 (migration `0006`). Swing decay; also included in `cycled_ped`. |
 
 #### `daily_rollups`
 
@@ -544,6 +585,8 @@ point sets.
 | `codex_pes` | REAL | Nullable; `SUM(codex_claims.ped_value)`. |
 | `quest_pes` | REAL | Nullable; `SUM(quest_claims.ped_value)`. |
 | `computed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+| `harvest_loot_tt` | REAL | Nullable (migration `0006`); `SUM(harvest_events.loot_total_ped)`. |
+| `harvest_cost` | REAL | Nullable (migration `0006`); `SUM(harvest_events.cost_ped)`. |
 
 #### `daily_ledger_rollups`
 
@@ -580,7 +623,7 @@ test pins the embedded chain to the directory's contents). The set carries the
 version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
 additions (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
-`0005_market_observations.sql`); the runner
+`0005_market_observations.sql`, `0006_harvest_events.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
@@ -642,6 +685,7 @@ The bundled snapshot files are:
 | --- | --- |
 | `absorbers.json` | `absorbers` |
 | `enhancers.json` | `enhancers` |
+| `harvesting_tools.json` | `harvesting_tools` |
 | `medical_tools.json` | `medical_tools` |
 | `mobs.json` | `mobs` |
 | `professions.json` | `professions` |

@@ -1,0 +1,35 @@
+name: tree_harvesting_session
+flavour: scripted
+description: >
+  A tree-harvesting (Resource Gathering) burst mixed with one mob
+  kill. Pins the loot router: wood loot groups (board + shavings
+  pairs, one board-only bundle) become harvest events, the explicit
+  "Harvest attempt failed" line records a failed swing, harvesting
+  skill gains flow through the ordinary skill pipeline, and a
+  non-wood loot group during the same session still becomes a kill.
+  With no hotbar signal in replay, swings record at zero cost with
+  the one-shot no-tool session warning.
+surfaces:
+  - tracking-harvest-loot-routing
+  - tracking-harvest-fail
+  - tracking-harvest-skill-gain
+  - tracking-kill-beside-harvest
+events: 15
+expected_kills: 1
+character_context:
+  profession_set: ""
+  location: ""
+  mob_species: ""
+notes: >
+  Authored from a real tree-cutting chat.log capture (timestamps and
+  values re-scripted): board + shavings bundles at the observed swing
+  cadence, an explicit failed swing between successes, and a
+  Resource Gathering rank-up window's skill spread.
+
+# The committed clock plan: the frozen, driver-advanced instant schedule a
+# replay of this scenario runs on (parsed by load_clock_plan in the corpus
+# replay test). The start instant is chosen away from the scenario's chat-log
+# instants so a plan-stamped timestamp never collides with a domain timestamp.
+clock:
+  start: 2026-01-01T00:00:00
+  step_seconds: 1.0

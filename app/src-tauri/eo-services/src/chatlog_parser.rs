@@ -35,6 +35,7 @@ pub enum EventType {
     Deflect,
     SelfHeal,
     Loot,
+    HarvestFail,
     SkillGain,
     EnhancerBreak,
     GlobalKill,
@@ -51,7 +52,7 @@ impl EventType {
     /// scenario). Kept in step with the compiler-exhaustive `as_str`
     /// match below; the `all_lists_every_variant_once` test guards it
     /// against drift.
-    pub const ALL: [EventType; 21] = [
+    pub const ALL: [EventType; 22] = [
         EventType::DamageDealt,
         EventType::CriticalHit,
         EventType::TargetDodge,
@@ -65,6 +66,7 @@ impl EventType {
         EventType::Deflect,
         EventType::SelfHeal,
         EventType::Loot,
+        EventType::HarvestFail,
         EventType::SkillGain,
         EventType::EnhancerBreak,
         EventType::GlobalKill,
@@ -91,6 +93,7 @@ impl EventType {
             EventType::Deflect => "deflect",
             EventType::SelfHeal => "self_heal",
             EventType::Loot => "loot",
+            EventType::HarvestFail => "harvest_fail",
             EventType::SkillGain => "skill_gain",
             EventType::EnhancerBreak => "enhancer_break",
             EventType::GlobalKill => "global_kill",
@@ -302,6 +305,12 @@ fn system_rules() -> &'static [Rule] {
                 )),
                 extract: enhancer_data,
                 prefix: Some("Your enhancer"),
+            },
+            Rule {
+                event_type: EventType::HarvestFail,
+                pattern: regex(r"^Harvest attempt failed to generate useable resources$"),
+                extract: empty_data,
+                prefix: Some("Harvest attempt failed"),
             },
             Rule {
                 event_type: EventType::MissionComplete,
@@ -546,7 +555,23 @@ mod tests {
         // the corpus 21/21 coverage assertion) to grow alongside it.
         let names: BTreeSet<&str> = EventType::ALL.iter().map(|e| e.as_str()).collect();
         assert_eq!(names.len(), EventType::ALL.len());
-        assert_eq!(names.len(), 21);
+        assert_eq!(names.len(), 22);
+    }
+
+    #[test]
+    fn harvest_fail_line_parses_with_no_data() {
+        let event = parse(
+            "2026-07-16 16:55:18 [System] [] Harvest attempt failed to generate useable resources",
+        );
+        assert_eq!(event.event_type, EventType::HarvestFail);
+        assert!(event.data.is_empty());
+
+        // The prefix is not enough on its own: a longer or divergent tail
+        // is a different message and yields no event.
+        assert!(parse_line(
+            "2026-07-16 16:55:18 [System] [] Harvest attempt failed to generate useable resources today",
+        )
+        .is_none());
     }
 
     #[test]

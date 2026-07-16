@@ -221,6 +221,22 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
     let actual_fingerprint = recorder.serialize(&mut normalizer);
     let actual_snapshot = runtime.block_on(catalogue_snapshot(&db, &mut normalizer));
 
+    // Deliberate re-ratification hook (see TESTING.md "Goldens
+    // regeneration", and the demo-goldens UPDATE hook it mirrors): write
+    // what the pipeline currently produces instead of asserting. Every
+    // write is still gated behind the ratification guard at push time.
+    if std::env::var_os("UPDATE_CORPUS_GOLDENS").is_some() {
+        std::fs::create_dir_all(scenario.join("expected")).expect("expected dir");
+        std::fs::write(
+            scenario.join("expected/fingerprint.jsonl"),
+            &actual_fingerprint,
+        )
+        .expect("fingerprint golden writes");
+        std::fs::write(scenario.join("expected/db_state.json"), &actual_snapshot)
+            .expect("db_state golden writes");
+        return;
+    }
+
     let expected_fingerprint = std::fs::read_to_string(scenario.join("expected/fingerprint.jsonl"))
         .expect("fingerprint golden");
     assert_eq!(
@@ -305,6 +321,11 @@ fn global_item_drop_matches_the_goldens() {
 #[test]
 fn hof_kill_correlated_matches_the_goldens() {
     replay_against_goldens("scripted", "hof_kill_correlated", "TestPlayer");
+}
+
+#[test]
+fn tree_harvesting_session_matches_the_goldens() {
+    replay_against_goldens("scripted", "tree_harvesting_session", "");
 }
 
 #[test]

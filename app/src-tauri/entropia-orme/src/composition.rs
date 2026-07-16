@@ -1105,6 +1105,13 @@ fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
                     (name, cost_ped, "healing".to_string(), reload_seconds)
                 }
                 "consumable" => (name, 0.0, "consumable".to_string(), 0.0),
+                // A harvesting tool stores the same single-entity props
+                // shape as a healing tool (tool_entity + markup), so the
+                // heal per-use recipe prices it; no reload semantics.
+                "tool" => {
+                    let (cost_ped, _) = heal_cost_from_props(&properties_json);
+                    (name, cost_ped, "tool".to_string(), 0.0)
+                }
                 _ => {
                     let cost = weapon_cost_by_name(conn, &name);
                     (name, cost, "weapon".to_string(), 0.0)

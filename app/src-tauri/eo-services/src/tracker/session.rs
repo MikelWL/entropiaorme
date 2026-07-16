@@ -36,6 +36,7 @@ pub(super) struct ActiveSession {
     /// cost per counted activation).
     pub(super) heal_cost: Ped,
     pub(super) heal_warning_emitted: bool,
+    pub(super) harvest_warning_emitted: bool,
     pub(super) warnings: Vec<String>,
     /// The mob/tag selection kills stamp from.
     pub(super) mob: MobSelection,
@@ -59,6 +60,7 @@ impl ActiveSession {
             dirty: false,
             heal_cost: Ped::ZERO,
             heal_warning_emitted: false,
+            harvest_warning_emitted: false,
             warnings: Vec::new(),
             mob: MobSelection::Unset,
             mode,
@@ -106,6 +108,10 @@ pub(super) struct SessionAggregate {
     pub(super) mob_name: Option<String>,
     pub(super) mob_source: Option<MobSource>,
     pub(super) mob_entry_mode: TrackingMode,
+    pub(super) harvest_swings: i64,
+    pub(super) harvest_successes: i64,
+    pub(super) harvest_loot: Ped,
+    pub(super) harvest_cost: Ped,
     pub(super) warnings: Vec<String>,
 }
 
@@ -128,8 +134,16 @@ impl TrackerActor {
         weapon_cost += active.accumulator.weapon_cost();
         enhancer_cost += active.accumulator.enhancer_cost;
         let heal_cost = active.heal_cost;
-        let cost = weapon_cost + heal_cost + enhancer_cost;
-        let returns: Ped = kills.iter().map(|kill| kill.loot_total_ped).sum();
+
+        // Harvesting joins the session economy: swing decay is cycled
+        // spend, wood TT is liquid loot (no new accounting class).
+        let harvests = &active.session.harvests;
+        let harvest_cost: Ped = harvests.iter().map(|harvest| harvest.cost_ped).sum();
+        let harvest_loot: Ped = harvests.iter().map(|harvest| harvest.loot_total_ped).sum();
+
+        let cost = weapon_cost + heal_cost + enhancer_cost + harvest_cost;
+        let returns: Ped =
+            kills.iter().map(|kill| kill.loot_total_ped).sum::<Ped>() + harvest_loot;
 
         let damage_total: f64 = kills.iter().map(|kill| kill.damage_dealt).sum();
         let live_weapon_damage = damage_total + active.accumulator.damage_dealt;
@@ -225,6 +239,10 @@ impl TrackerActor {
             mob_name: active.stamped_mob_name().map(str::to_string),
             mob_source: active.mob.source(),
             mob_entry_mode: active.mode,
+            harvest_swings: harvests.len() as i64,
+            harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
+            harvest_loot,
+            harvest_cost,
             warnings: active.warnings.clone(),
         };
         (current_tool, Some(aggregate))
@@ -326,6 +344,7 @@ impl TrackerActor {
             start_time: resolve_local(self.clock.now()),
             end_time: None,
             kills: Vec::new(),
+            harvests: Vec::new(),
             dangling_cost: Ped::ZERO,
         };
         let start_ts = instant_to_epoch(session.start_time);
@@ -612,6 +631,13 @@ impl HuntTracker {
                 None
             },
             mob_entry_mode: aggregated.mob_entry_mode.as_str().to_string(),
+            harvest_swings: aggregated.harvest_swings,
+            harvest_successes: aggregated.harvest_successes,
+            // + 0.0 normalises the sign: an empty f64 sum is -0.0 (the
+            // std identity), which the Python-repr writer would render
+            // as "-0.0".
+            harvest_loot: aggregated.harvest_loot.round_half_even(4).value() + 0.0,
+            harvest_cost: aggregated.harvest_cost.round_half_even(4).value() + 0.0,
             notable_event_rows: notable_rows,
             warnings: aggregated.warnings,
         };
