@@ -86,7 +86,10 @@ impl TrackerActor {
             // A wood group is a harvesting swing, not a kill. The
             // combat accumulator is untouched: pending shots stay
             // pending toward the next kill (or dangling cost).
-            if is_harvest_loot_group(&items) {
+            // Classification reads the RAW group, not the blacklist-
+            // filtered items: a user filter must trim what gets
+            // recorded, never flip what kind of event happened.
+            if is_harvest_loot_group(&group.items) {
                 let (tool_name, cost) = Self::harvest_swing_cost(active, harvest_tool.as_ref());
                 let harvest = HarvestEvent {
                     id: uuid::Uuid::new_v4().to_string(),

@@ -186,10 +186,13 @@ impl TrackerActor {
             .map(|value| round_half_even(*value, 4))
             .collect();
 
-        // Cumulative-net history (per kill), distributing the
-        // session-level heal cost pro-rata across kills by their
-        // weapon-cost share so the curve's final point reconciles
-        // with the displayed Net stat (returns - cost).
+        // Cumulative-net history (per kill and per harvesting swing,
+        // merged in timestamp order), distributing the session-level
+        // heal cost pro-rata across kills by their weapon-cost share
+        // so the curve's final point reconciles with the displayed
+        // Net stat (returns - cost). Harvest swings carry their own
+        // exact per-event net (wood TT minus swing decay), so they
+        // take no heal share.
         let per_kill_weapon: Vec<Ped> = kills
             .iter()
             .map(|kill| {
@@ -200,15 +203,28 @@ impl TrackerActor {
             })
             .collect();
         let total_weapon: Ped = per_kill_weapon.iter().copied().sum();
-        let mut cumulative_net = Vec::new();
-        let mut running = Ped::ZERO;
+        let mut net_events: Vec<(f64, Ped)> = Vec::with_capacity(kills.len() + harvests.len());
         for (kill, weapon) in kills.iter().zip(per_kill_weapon.iter()) {
             let heal_share = if total_weapon.is_positive() {
                 heal_cost * (*weapon / total_weapon)
             } else {
                 Ped::ZERO
             };
-            running += kill.loot_total_ped - *weapon - kill.enhancer_cost - heal_share;
+            net_events.push((
+                kill.timestamp,
+                kill.loot_total_ped - *weapon - kill.enhancer_cost - heal_share,
+            ));
+        }
+        for harvest in harvests {
+            net_events.push((harvest.timestamp, harvest.loot_total_ped - harvest.cost_ped));
+        }
+        // Both sources arrive chronologically; the sort only interleaves
+        // them (stable, so same-second events keep their arrival order).
+        net_events.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut cumulative_net = Vec::with_capacity(net_events.len());
+        let mut running = Ped::ZERO;
+        for (_, net) in &net_events {
+            running += *net;
             cumulative_net.push(running.round_half_even(2).value());
         }
         let cumulative_net: Vec<f64> = cumulative_net

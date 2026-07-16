@@ -2912,3 +2912,123 @@ fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
         "a weapon equip takes the hand back"
     );
 }
+
+#[test]
+fn a_blacklisted_wood_group_still_routes_to_harvest_not_a_kill() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            blacklist: vec![
+                "Wood Shavings".to_string(),
+                "Short Moonleaf Board".to_string(),
+            ],
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    rig.wait(tracker.start_session()).unwrap();
+
+    // Every item filtered: the swing still happened (classification
+    // reads the raw group), only the recorded loot is trimmed.
+    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+        kind: LootTag,
+        timestamp: Some("2026-01-01T00:00:02".into()),
+        items: vec![
+            LootItem {
+                item_name: "Short Moonleaf Board".into(),
+                quantity: 9,
+                value_ped: 0.09,
+                is_enhancer_shrapnel: false,
+            },
+            LootItem {
+                item_name: "Wood Shavings".into(),
+                quantity: 8,
+                value_ped: 0.008,
+                is_enhancer_shrapnel: false,
+            },
+        ],
+        total_ped: 0.098,
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        assert_eq!(active.session.kills.len(), 0, "no phantom kill");
+        assert_eq!(active.session.harvests.len(), 1);
+        assert!(active.session.harvests[0].loot_items.is_empty());
+        assert_eq!(active.session.harvests[0].loot_total_ped, Ped::ZERO);
+    });
+}
+
+#[test]
+fn the_cumulative_net_history_includes_harvest_swings() {
+    use crate::bus_events::ActiveHarvestToolChangedPayload;
+
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.bus.publish(&BusEvent::ActiveHarvestToolChanged(
+        ActiveHarvestToolChangedPayload {
+            tool_name: "Terratech PH-1 (L)".into(),
+            cost_per_use_ped: 0.02,
+            source: Some("hotbar:4".into()),
+        },
+    ));
+    for (ts, value) in [("2026-01-01T00:00:02", 0.1), ("2026-01-01T00:00:05", 0.06)] {
+        rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+            kind: LootTag,
+            timestamp: Some(ts.into()),
+            items: vec![LootItem {
+                item_name: "Short Moonleaf Board".into(),
+                quantity: 1,
+                value_ped: value,
+                is_enhancer_shrapnel: false,
+            }],
+            total_ped: value,
+        }));
+    }
+
+    let (_, aggregate) = rig.wait(tracker.aggregate());
+    let aggregate = aggregate.expect("active aggregate");
+    // Two swings: +0.08, then +0.04 -> running 0.08, 0.12; the curve's
+    // endpoint reconciles with the displayed Net (returns - cost).
+    assert_eq!(aggregate.cumulative_net, vec![0.08, 0.12]);
+    assert_eq!(
+        (aggregate.returns - aggregate.cost)
+            .round_half_even(2)
+            .value(),
+        0.12
+    );
+}
+
+#[test]
+fn a_weapon_equip_clears_the_harvest_hand_even_in_trifecta_mode() {
+    use crate::bus_events::ActiveHarvestToolChangedPayload;
+
+    let rig = rig();
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            trifecta_mode: true,
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.bus.publish(&BusEvent::ActiveHarvestToolChanged(
+        ActiveHarvestToolChangedPayload {
+            tool_name: "Terratech PH-1 (L)".into(),
+            cost_per_use_ped: 0.02,
+            source: Some("hotbar:4".into()),
+        },
+    ));
+    rig.probe(&tracker, |actor| assert!(actor.hand_is_harvest));
+
+    // The trifecta early-return must not preserve the stale hand flag.
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "Rifle".into(),
+            source: Some("hotbar:1".into()),
+        }));
+    rig.probe(&tracker, |actor| assert!(!actor.hand_is_harvest));
+}
