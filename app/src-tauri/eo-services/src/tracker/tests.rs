@@ -2868,3 +2868,46 @@ fn wood_loot_with_no_tool_records_zero_cost_and_warns_once() {
         );
     });
 }
+
+#[test]
+fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
+    use crate::bus_events::ActiveHarvestToolChangedPayload;
+
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "Rifle".into(),
+            source: Some("hotbar:1".into()),
+        }));
+    let (tool, _) = rig.wait(tracker.aggregate());
+    assert_eq!(tool.as_deref(), Some("Rifle"));
+
+    rig.bus.publish(&BusEvent::ActiveHarvestToolChanged(
+        ActiveHarvestToolChangedPayload {
+            tool_name: "Terratech PH-3".into(),
+            cost_per_use_ped: 0.1,
+            source: Some("hotbar:4".into()),
+        },
+    ));
+    let (tool, _) = rig.wait(tracker.aggregate());
+    assert_eq!(
+        tool.as_deref(),
+        Some("Terratech PH-3"),
+        "a harvest equip takes the displayed hand item"
+    );
+
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "Rifle".into(),
+            source: Some("hotbar:1".into()),
+        }));
+    let (tool, _) = rig.wait(tracker.aggregate());
+    assert_eq!(
+        tool.as_deref(),
+        Some("Rifle"),
+        "a weapon equip takes the hand back"
+    );
+}

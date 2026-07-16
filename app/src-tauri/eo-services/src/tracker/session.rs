@@ -122,7 +122,16 @@ impl TrackerActor {
         let Some(active) = self.session.active() else {
             return (None, None);
         };
-        let current_tool = active.weapons.hotbar_tool.clone();
+        // The displayed hand item: the harvesting tool when it was the
+        // last hand equip, otherwise the hotbar weapon.
+        let current_tool = if self.hand_is_harvest {
+            self.harvest_tool
+                .as_ref()
+                .map(|tool| tool.name.clone())
+                .or_else(|| active.weapons.hotbar_tool.clone())
+        } else {
+            active.weapons.hotbar_tool.clone()
+        };
 
         let kills = &active.session.kills;
         let mut weapon_cost: Ped = kills

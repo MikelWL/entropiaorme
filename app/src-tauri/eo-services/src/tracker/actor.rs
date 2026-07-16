@@ -105,6 +105,11 @@ pub(super) struct TrackerActor {
     /// loot groups and failed swings price against it; routing itself
     /// is by the wood taxonomy, so it works with no hotbar signal.
     pub(super) harvest_tool: Option<HarvestTool>,
+    /// Whether the hand item is currently the harvesting tool (set by
+    /// a harvest-tool equip, cleared by a weapon equip). Display-only:
+    /// it picks which name the snapshot's `current_tool` shows and
+    /// never feeds shot or swing cost attribution.
+    pub(super) hand_is_harvest: bool,
     /// The actor's own sender, cloned into the bus forwarders it
     /// installs at session start.
     sender: mpsc::UnboundedSender<TrackerMsg>,
@@ -137,6 +142,7 @@ impl TrackerActor {
             loot_blacklist: BTreeSet::new(),
             heal_tool: HealTool::default(),
             harvest_tool: None,
+            hand_is_harvest: false,
             sender,
             subscriptions: Vec::new(),
             status,

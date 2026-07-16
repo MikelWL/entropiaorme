@@ -54,13 +54,15 @@ impl TrackerActor {
             name: payload.tool_name.clone(),
             cost_per_use: Ped(payload.cost_per_use_ped),
         });
+        let hand_changed = !self.hand_is_harvest;
+        self.hand_is_harvest = true;
 
         let nudge_session_id = {
             let Some(active) = self.session.active_mut() else {
                 return;
             };
             active.harvest_warning_emitted = false;
-            if changed {
+            if changed || hand_changed {
                 Some(active.session.id.clone())
             } else {
                 None
