@@ -2820,15 +2820,16 @@ fn harvest_tool_equip_prices_wood_swings_and_fails() {
     });
 
     // Both swings persisted with their loot rows.
-    let (events, items): (i64, i64) = rig.wait(rig.db.with_reader(|conn| {
-        Ok((
-            conn.query_row("SELECT COUNT(*) FROM harvest_events", [], |row| row.get(0))?,
-            conn.query_row("SELECT COUNT(*) FROM harvest_loot_items", [], |row| {
-                row.get(0)
-            })?,
-        ))
-    }))
-    .unwrap();
+    let (events, items): (i64, i64) = rig
+        .wait(rig.db.with_reader(|conn| {
+            Ok((
+                conn.query_row("SELECT COUNT(*) FROM harvest_events", [], |row| row.get(0))?,
+                conn.query_row("SELECT COUNT(*) FROM harvest_loot_items", [], |row| {
+                    row.get(0)
+                })?,
+            ))
+        }))
+        .unwrap();
     assert_eq!(events, 2);
     assert_eq!(items, 2);
 }

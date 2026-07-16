@@ -101,44 +101,45 @@ impl TrackerActor {
                 active.session.harvests.push(harvest.clone());
                 RoutedLoot::Harvest(harvest)
             } else {
-            // Snapshot the mob/tag stamp from the selection (the
-            // variant carries the source, so the stamp cannot drift
-            // from where it came from).
-            let mob_name = active.stamped_mob_name().unwrap_or("Unknown").to_string();
-            let (mob_species, mob_maturity) = active.mob.species_maturity();
-            let (mob_species, mob_maturity) = (mob_species.to_string(), mob_maturity.to_string());
+                // Snapshot the mob/tag stamp from the selection (the
+                // variant carries the source, so the stamp cannot drift
+                // from where it came from).
+                let mob_name = active.stamped_mob_name().unwrap_or("Unknown").to_string();
+                let (mob_species, mob_maturity) = active.mob.species_maturity();
+                let (mob_species, mob_maturity) =
+                    (mob_species.to_string(), mob_maturity.to_string());
 
-            let session_id = active.session.id.clone();
-            let accumulator = &mut active.accumulator;
-            let kill = Kill {
-                id: uuid::Uuid::new_v4().to_string(),
-                session_id,
-                mob_name,
-                mob_species,
-                mob_maturity,
-                timestamp: now_epoch,
-                shots_fired: accumulator.shots_fired,
-                damage_dealt: accumulator.damage_dealt,
-                damage_taken: accumulator.damage_taken,
-                critical_hits: accumulator.critical_hits,
-                cost_ped: accumulator.weapon_cost(),
-                enhancer_cost: accumulator.enhancer_cost,
-                loot_total_ped: filtered_total_ped,
-                loot_items: items,
-                tool_stats: std::mem::take(&mut accumulator.tool_stats),
-                is_global: false,
-                is_hof: false,
-            };
+                let session_id = active.session.id.clone();
+                let accumulator = &mut active.accumulator;
+                let kill = Kill {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id,
+                    mob_name,
+                    mob_species,
+                    mob_maturity,
+                    timestamp: now_epoch,
+                    shots_fired: accumulator.shots_fired,
+                    damage_dealt: accumulator.damage_dealt,
+                    damage_taken: accumulator.damage_taken,
+                    critical_hits: accumulator.critical_hits,
+                    cost_ped: accumulator.weapon_cost(),
+                    enhancer_cost: accumulator.enhancer_cost,
+                    loot_total_ped: filtered_total_ped,
+                    loot_items: items,
+                    tool_stats: std::mem::take(&mut accumulator.tool_stats),
+                    is_global: false,
+                    is_hof: false,
+                };
 
-            // Reset accumulator for next kill (tool_stats moved into
-            // the kill above, exactly the original's shallow copy
-            // followed by a fresh dict).
-            accumulator.reset();
+                // Reset accumulator for next kill (tool_stats moved into
+                // the kill above, exactly the original's shallow copy
+                // followed by a fresh dict).
+                accumulator.reset();
 
-            // Append the finalised kill to the session; the list tail
-            // doubles as the original's `_last_kill` alias.
-            active.session.kills.push(kill.clone());
-            RoutedLoot::Kill(kill)
+                // Append the finalised kill to the session; the list tail
+                // doubles as the original's `_last_kill` alias.
+                active.session.kills.push(kill.clone());
+                RoutedLoot::Kill(kill)
             }
         };
 

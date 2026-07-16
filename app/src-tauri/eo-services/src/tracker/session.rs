@@ -151,8 +151,7 @@ impl TrackerActor {
         let harvest_loot: Ped = harvests.iter().map(|harvest| harvest.loot_total_ped).sum();
 
         let cost = weapon_cost + heal_cost + enhancer_cost + harvest_cost;
-        let returns: Ped =
-            kills.iter().map(|kill| kill.loot_total_ped).sum::<Ped>() + harvest_loot;
+        let returns: Ped = kills.iter().map(|kill| kill.loot_total_ped).sum::<Ped>() + harvest_loot;
 
         let damage_total: f64 = kills.iter().map(|kill| kill.damage_dealt).sum();
         let live_weapon_damage = damage_total + active.accumulator.damage_dealt;

@@ -29,7 +29,10 @@ pub(super) fn is_harvest_loot_item(name: &str) -> bool {
 /// Whether a whole loot group is harvesting output: non-empty and all
 /// wood (a harvest bundle never mixes wood with mob loot).
 pub(super) fn is_harvest_loot_group(items: &[LootItem]) -> bool {
-    !items.is_empty() && items.iter().all(|item| is_harvest_loot_item(&item.item_name))
+    !items.is_empty()
+        && items
+            .iter()
+            .all(|item| is_harvest_loot_item(&item.item_name))
 }
 
 impl TrackerActor {
