@@ -38,10 +38,10 @@ export type {
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';
+export * from './maps';
 export * from './market';
 export * from './quests';
 export * from './scan';
-export * from './maps';
 export * from './settings';
 // The shell's updater commands stay out of this barrel: $lib/updater
 // owns that flow (phases, progress, stores) and imports them directly.
