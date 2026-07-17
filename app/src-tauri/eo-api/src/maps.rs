@@ -165,7 +165,7 @@ impl Api {
             return Err(ApiError::bad_request("a pin needs a name"));
         }
         if let Some(radius) = pin.radius_m {
-            if !(radius > 0.0) {
+            if !radius.is_finite() || radius <= 0.0 {
                 return Err(ApiError::bad_request("a pin radius must be positive"));
             }
         }
@@ -196,7 +196,7 @@ impl Api {
             }
         }
         if let Some(Some(radius)) = patch.radius_m {
-            if !(radius > 0.0) {
+            if !radius.is_finite() || radius <= 0.0 {
                 return Err(ApiError::bad_request("a pin radius must be positive"));
             }
         }
