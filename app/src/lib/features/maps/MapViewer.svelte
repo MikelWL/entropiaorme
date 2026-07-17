@@ -7,6 +7,7 @@
 	 * buttons (hover and keyboard focus both raise the detail card).
 	 * Arrow keys pan, +/- zoom about the centre, 0 re-fits.
 	 */
+	import { untrack } from 'svelte';
 	import type { MapPin, PlanetMap } from '$lib/api';
 	import { gameToImage, imageToGame, type GamePoint } from './coords';
 	import { pinGlyph } from './pinIcons';
@@ -87,10 +88,22 @@
 		};
 	});
 
-	// Re-clamp on container resize (bindings change on layout).
+	// Re-clamp on container resize. The current viewport is read
+	// untracked and reassigned only when the clamp actually moves it:
+	// tracking `vp` here would make the effect its own trigger (each
+	// reassignment is a fresh object), which pegs the flush loop and
+	// wedges the whole page.
 	$effect(() => {
-		if (!image || viewW === 0 || viewH === 0) return;
-		vp = zoomAt(vp, 1, viewW / 2, viewH / 2, image.naturalWidth, image.naturalHeight, viewW, viewH);
+		const w = viewW;
+		const h = viewH;
+		const img = image;
+		if (!img || w === 0 || h === 0) return;
+		untrack(() => {
+			const next = zoomAt(vp, 1, w / 2, h / 2, img.naturalWidth, img.naturalHeight, w, h);
+			if (next.zoom !== vp.zoom || next.panX !== vp.panX || next.panY !== vp.panY) {
+				vp = next;
+			}
+		});
 	});
 
 	// Draw on dirty: re-runs only when the transform, raster, or size
