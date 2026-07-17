@@ -44,8 +44,8 @@ afterEach(() => {
 describe('DEFAULT_STAT_PREFS / DEFAULT_OVERLAY_PREFS', () => {
 	it('both have one entry per registered stat id, in registry order', async () => {
 		const { DEFAULT_STAT_PREFS, DEFAULT_OVERLAY_PREFS } = await loadModule();
-		expect(DEFAULT_STAT_PREFS).toHaveLength(19);
-		expect(DEFAULT_OVERLAY_PREFS).toHaveLength(19);
+		expect(DEFAULT_STAT_PREFS).toHaveLength(20);
+		expect(DEFAULT_OVERLAY_PREFS).toHaveLength(20);
 		expect(ids(DEFAULT_STAT_PREFS)).toEqual(ALL_STAT_IDS);
 		expect(ids(DEFAULT_OVERLAY_PREFS)).toEqual(ALL_STAT_IDS);
 	});
@@ -107,7 +107,7 @@ describe('initStatsCustomisation', () => {
 		expect(getPreference).toHaveBeenCalledWith('overlayStats', DEFAULT_OVERLAY_PREFS);
 	});
 
-	it('cleans a valid partial array and appends missing ids disabled (always 19, no dupes)', async () => {
+	it('cleans a valid partial array and appends missing ids disabled (always 20, no dupes)', async () => {
 		// Dashboard: a partial list out of registry order, overlay: a different partial.
 		getPreference.mockImplementation(async (key: string) => {
 			if (key === 'dashboardStats') {
@@ -122,19 +122,19 @@ describe('initStatsCustomisation', () => {
 		await initStatsCustomisation();
 
 		const dash = dashboardStats.current;
-		expect(dash).toHaveLength(19);
+		expect(dash).toHaveLength(20);
 		// Provided ids keep their position/order; the rest appended in registry order.
 		expect(dash[0]).toEqual({ id: 'net', enabled: true });
 		expect(dash[1]).toEqual({ id: 'cycled', enabled: false });
 		// No duplicate ids.
-		expect(new Set(ids(dash)).size).toBe(19);
+		expect(new Set(ids(dash)).size).toBe(20);
 		// Appended ids are disabled.
 		const appended = dash.slice(2);
 		for (const p of appended) expect(p.enabled).toBe(false);
 
 		// Overlay output is reorderToMatch'd to the dashboard's id order.
 		const ov = overlayStats.current;
-		expect(ov).toHaveLength(19);
+		expect(ov).toHaveLength(20);
 		expect(ids(ov)).toEqual(ids(dash));
 		// Its own enabled flag (multiplier_last:true) is preserved through the reorder.
 		expect(ov.find((p) => p.id === 'multiplier_last')?.enabled).toBe(true);
@@ -162,8 +162,8 @@ describe('initStatsCustomisation', () => {
 		await initStatsCustomisation();
 
 		const dash = dashboardStats.current;
-		expect(dash).toHaveLength(19);
-		expect(new Set(ids(dash)).size).toBe(19);
+		expect(dash).toHaveLength(20);
+		expect(new Set(ids(dash)).size).toBe(20);
 		// cycled kept from the FIRST occurrence (enabled:1 -> Boolean -> true).
 		expect(dash[0]).toEqual({ id: 'cycled', enabled: true });
 		// loot_tt kept, enabled:0 -> false.
@@ -174,7 +174,7 @@ describe('initStatsCustomisation', () => {
 		for (const p of dash.slice(2)) expect(p.enabled).toBe(false);
 	});
 
-	it('produces all 19 ids exactly once even from an empty array', async () => {
+	it('produces all 20 ids exactly once even from an empty array', async () => {
 		getPreference.mockResolvedValue([]);
 		const { initStatsCustomisation, dashboardStats, overlayStats } = await loadModule();
 		await initStatsCustomisation();
@@ -187,7 +187,7 @@ describe('initStatsCustomisation', () => {
 });
 
 describe('setDashboardStats', () => {
-	it('normalises the value to the canonical 19-stat list (not the raw reference)', async () => {
+	it('normalises the value to the canonical 20-stat list (not the raw reference)', async () => {
 		const value = [
 			{ id: 'net' as StatId, enabled: true },
 			{ id: 'cycled' as StatId, enabled: false },
@@ -195,12 +195,12 @@ describe('setDashboardStats', () => {
 		const { setDashboardStats, dashboardStats } = await loadModule();
 		await setDashboardStats(value);
 		const dash = dashboardStats.current;
-		// Sanitised: a fresh array of all 19 ids, the provided ones kept first in order.
+		// Sanitised: a fresh array of all 20 ids, the provided ones kept first in order.
 		expect(dash).not.toBe(value);
-		expect(dash).toHaveLength(19);
+		expect(dash).toHaveLength(20);
 		expect(dash[0]).toEqual({ id: 'net', enabled: true });
 		expect(dash[1]).toEqual({ id: 'cycled', enabled: false });
-		expect(new Set(ids(dash)).size).toBe(19);
+		expect(new Set(ids(dash)).size).toBe(20);
 		for (const p of dash.slice(2)) expect(p.enabled).toBe(false);
 	});
 
@@ -210,7 +210,7 @@ describe('setDashboardStats', () => {
 		await setDashboardStats(value);
 		// The persisted payload is the sanitised state value, not the raw input.
 		expect(setPreference).toHaveBeenCalledWith('dashboardStats', dashboardStats.current);
-		expect(dashboardStats.current).toHaveLength(19);
+		expect(dashboardStats.current).toHaveLength(20);
 	});
 
 	it('reslaves the overlay to the new dashboard order, preserving overlay enabled flags', async () => {
@@ -223,8 +223,8 @@ describe('setDashboardStats', () => {
 		await setDashboardStats(value);
 
 		const ov = overlayStats.current;
-		// Overlay is the full 19 in the sanitised dashboard order (provided ids first).
-		expect(ov).toHaveLength(19);
+		// Overlay is the full 20 in the sanitised dashboard order (provided ids first).
+		expect(ov).toHaveLength(20);
 		expect(ids(ov).slice(0, 2)).toEqual(['multiplier_last', 'net']);
 		// Enabled flags come from the overlay's PRIOR state, not from `value`.
 		expect(ov.find((p) => p.id === 'multiplier_last')?.enabled).toBe(true);
@@ -249,7 +249,7 @@ describe('setDashboardStats', () => {
 		expect(emit).toHaveBeenCalledTimes(1);
 		expect(emit).toHaveBeenCalledWith(OVERLAY_STATS_CHANGED_EVENT, reordered);
 		// The reordered overlay matches the sanitised dashboard id order (provided first).
-		expect(reordered).toHaveLength(19);
+		expect(reordered).toHaveLength(20);
 		expect(ids(reordered).slice(0, 2)).toEqual(['cycled', 'net']);
 	});
 
@@ -272,13 +272,13 @@ describe('setDashboardStats', () => {
 		const { setDashboardStats, dashboardStats, overlayStats } = await loadModule();
 		await setDashboardStats(value);
 
-		// Dashboard: net appears exactly once (first occurrence, enabled:true); 19 total.
+		// Dashboard: net appears exactly once (first occurrence, enabled:true); 20 total.
 		const dash = dashboardStats.current;
-		expect(dash).toHaveLength(19);
+		expect(dash).toHaveLength(20);
 		expect(ids(dash).filter((id) => id === 'net')).toEqual(['net']);
 		expect(dash[0]).toEqual({ id: 'net', enabled: true });
 		// The overlay reslave is likewise free of the duplicate.
-		expect(overlayStats.current).toHaveLength(19);
+		expect(overlayStats.current).toHaveLength(20);
 		expect(ids(overlayStats.current).filter((id) => id === 'net')).toEqual(['net']);
 	});
 });
@@ -286,7 +286,7 @@ describe('setDashboardStats', () => {
 describe('setOverlayStats', () => {
 	it('clamps the overlay to the current dashboard order (overlay never owns ordering)', async () => {
 		const { setOverlayStats, overlayStats } = await loadModule();
-		// dashboardStats starts at DEFAULT_STAT_PREFS (full 19, registry order).
+		// dashboardStats starts at DEFAULT_STAT_PREFS (full 20, registry order).
 		// Pass an overlay value in a scrambled order with a couple enabled.
 		const value = [
 			{ id: 'net' as StatId, enabled: true },
@@ -295,9 +295,9 @@ describe('setOverlayStats', () => {
 		await setOverlayStats(value);
 
 		const ov = overlayStats.current;
-		// Output is the full dashboard order (19 ids), not the 2 passed.
+		// Output is the full dashboard order (20 ids), not the 2 passed.
 		expect(ids(ov)).toEqual(ALL_STAT_IDS);
-		expect(ov).toHaveLength(19);
+		expect(ov).toHaveLength(20);
 		// The two enabled ids from `value` are preserved; everything else disabled.
 		expect(ov.find((p) => p.id === 'net')?.enabled).toBe(true);
 		expect(ov.find((p) => p.id === 'cycled')?.enabled).toBe(true);
@@ -331,8 +331,8 @@ describe('setOverlayStats', () => {
 			{ id: 'rate' as StatId, enabled: false },
 		]);
 		const ov = overlayStats.current;
-		// Sanitised dashboard order leads with rate, net (the provided ids); 19 total.
-		expect(ov).toHaveLength(19);
+		// Sanitised dashboard order leads with rate, net (the provided ids); 20 total.
+		expect(ov).toHaveLength(20);
 		expect(ids(ov).slice(0, 2)).toEqual(['rate', 'net']);
 		// Enabled flags come from the overlay value passed (rate:false, net:true).
 		expect(ov.find((p) => p.id === 'rate')?.enabled).toBe(false);

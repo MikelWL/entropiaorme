@@ -6,26 +6,34 @@ use eo_wire::normalizer::round_half_even;
 use crate::bus_events::{BusEvent, GlobalPayload};
 use crate::loot_filter::is_tracked_loot;
 use crate::ped::Ped;
-use crate::tracking_models::Kill;
+use crate::tracking_models::{HarvestEvent, Kill};
 
 use super::actor::TrackerActor;
+use super::harvest::is_harvest_loot_group;
 use super::time::{instant_to_epoch, parse_timestamp_instant, python_total_seconds, resolve_local};
 use super::{GLOBAL_CORRELATION_WINDOW_SECONDS, LOOT_DEDUP_WINDOW_SECONDS};
 
+/// Where one loot group lands: a mob kill, or a harvesting swing.
+enum RoutedLoot {
+    Kill(Kill),
+    Harvest(HarvestEvent),
+}
+
 impl TrackerActor {
-    /// Handle a loot group from chat.log: creates a Kill record. The
-    /// kill is built from the accumulator, the accumulator reset, and
-    /// the kill appended to the session under the guard; the kill is
-    /// a detached value by then, so the persisting DB write runs
-    /// after release.
+    /// Handle a loot group from chat.log. A wood group (the harvest
+    /// taxonomy) records a harvesting swing; anything else creates a
+    /// Kill record from the accumulator, which then resets. Either
+    /// record is a detached value by the end of the guard block, so
+    /// the persisting DB write runs after release.
     pub(super) async fn on_loot(&mut self, event: &BusEvent) {
         let BusEvent::LootGroup(group) = event else {
             return;
         };
-        let kill = {
+        let routed = {
             let Self {
                 session,
                 loot_blacklist,
+                harvest_tool,
                 clock,
                 ..
             } = &mut *self;
@@ -75,49 +83,75 @@ impl TrackerActor {
                 4,
             ));
 
-            // Snapshot the mob/tag stamp from the selection (the
-            // variant carries the source, so the stamp cannot drift
-            // from where it came from).
-            let mob_name = active.stamped_mob_name().unwrap_or("Unknown").to_string();
-            let (mob_species, mob_maturity) = active.mob.species_maturity();
-            let (mob_species, mob_maturity) = (mob_species.to_string(), mob_maturity.to_string());
+            // A wood group is a harvesting swing, not a kill. The
+            // combat accumulator is untouched: pending shots stay
+            // pending toward the next kill (or dangling cost).
+            // Classification reads the RAW group, not the blacklist-
+            // filtered items: a user filter must trim what gets
+            // recorded, never flip what kind of event happened.
+            if is_harvest_loot_group(&group.items) {
+                let (tool_name, cost) = Self::harvest_swing_cost(active, harvest_tool.as_ref());
+                let harvest = HarvestEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: active.session.id.clone(),
+                    timestamp: now_epoch,
+                    success: true,
+                    tool_name,
+                    cost_ped: cost,
+                    loot_total_ped: filtered_total_ped,
+                    loot_items: items,
+                };
+                active.session.harvests.push(harvest.clone());
+                RoutedLoot::Harvest(harvest)
+            } else {
+                // Snapshot the mob/tag stamp from the selection (the
+                // variant carries the source, so the stamp cannot drift
+                // from where it came from).
+                let mob_name = active.stamped_mob_name().unwrap_or("Unknown").to_string();
+                let (mob_species, mob_maturity) = active.mob.species_maturity();
+                let (mob_species, mob_maturity) =
+                    (mob_species.to_string(), mob_maturity.to_string());
 
-            let session_id = active.session.id.clone();
-            let accumulator = &mut active.accumulator;
-            let kill = Kill {
-                id: uuid::Uuid::new_v4().to_string(),
-                session_id,
-                mob_name,
-                mob_species,
-                mob_maturity,
-                timestamp: now_epoch,
-                shots_fired: accumulator.shots_fired,
-                damage_dealt: accumulator.damage_dealt,
-                damage_taken: accumulator.damage_taken,
-                critical_hits: accumulator.critical_hits,
-                cost_ped: accumulator.weapon_cost(),
-                enhancer_cost: accumulator.enhancer_cost,
-                loot_total_ped: filtered_total_ped,
-                loot_items: items,
-                tool_stats: std::mem::take(&mut accumulator.tool_stats),
-                is_global: false,
-                is_hof: false,
-            };
+                let session_id = active.session.id.clone();
+                let accumulator = &mut active.accumulator;
+                let kill = Kill {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id,
+                    mob_name,
+                    mob_species,
+                    mob_maturity,
+                    timestamp: now_epoch,
+                    shots_fired: accumulator.shots_fired,
+                    damage_dealt: accumulator.damage_dealt,
+                    damage_taken: accumulator.damage_taken,
+                    critical_hits: accumulator.critical_hits,
+                    cost_ped: accumulator.weapon_cost(),
+                    enhancer_cost: accumulator.enhancer_cost,
+                    loot_total_ped: filtered_total_ped,
+                    loot_items: items,
+                    tool_stats: std::mem::take(&mut accumulator.tool_stats),
+                    is_global: false,
+                    is_hof: false,
+                };
 
-            // Reset accumulator for next kill (tool_stats moved into
-            // the kill above, exactly the original's shallow copy
-            // followed by a fresh dict).
-            accumulator.reset();
+                // Reset accumulator for next kill (tool_stats moved into
+                // the kill above, exactly the original's shallow copy
+                // followed by a fresh dict).
+                accumulator.reset();
 
-            // Append the finalised kill to the session; the list tail
-            // doubles as the original's `_last_kill` alias.
-            active.session.kills.push(kill.clone());
-            kill
+                // Append the finalised kill to the session; the list tail
+                // doubles as the original's `_last_kill` alias.
+                active.session.kills.push(kill.clone());
+                RoutedLoot::Kill(kill)
+            }
         };
 
-        // `kill` is a detached value by here; the borrow of the live
-        // session ended with the block above.
-        self.persist_kill(&kill).await;
+        // The routed record is a detached value by here; the borrow of
+        // the live session ended with the block above.
+        match routed {
+            RoutedLoot::Kill(kill) => self.persist_kill(&kill).await,
+            RoutedLoot::Harvest(harvest) => self.persist_harvest(&harvest).await,
+        }
     }
 
     /// Handle a global/HoF event from chat.log: tags the most

@@ -29,7 +29,7 @@ use crate::tracking_models::TrackingSession;
 use super::mob::MobSelection;
 use super::providers::Providers;
 use super::session::SessionAggregate;
-use super::{HealTool, SessionState, TrackerCommandError, TrackingMode};
+use super::{HarvestTool, HealTool, SessionState, TrackerCommandError, TrackingMode};
 
 /// The cheap, always-current readout of the actor's session phase,
 /// published on every transition so callers answer `is_tracking` /
@@ -101,6 +101,15 @@ pub(super) struct TrackerActor {
     pub(super) session: SessionState,
     pub(super) loot_blacklist: BTreeSet<String>,
     pub(super) heal_tool: HealTool,
+    /// The last harvesting tool seen (hotbar-equipment state). Wood
+    /// loot groups and failed swings price against it; routing itself
+    /// is by the wood taxonomy, so it works with no hotbar signal.
+    pub(super) harvest_tool: Option<HarvestTool>,
+    /// Whether the hand item is currently the harvesting tool (set by
+    /// a harvest-tool equip, cleared by a weapon equip). Display-only:
+    /// it picks which name the snapshot's `current_tool` shows and
+    /// never feeds shot or swing cost attribution.
+    pub(super) hand_is_harvest: bool,
     /// The actor's own sender, cloned into the bus forwarders it
     /// installs at session start.
     sender: mpsc::UnboundedSender<TrackerMsg>,
@@ -132,6 +141,8 @@ impl TrackerActor {
             session: SessionState::Idle,
             loot_blacklist: BTreeSet::new(),
             heal_tool: HealTool::default(),
+            harvest_tool: None,
+            hand_is_harvest: false,
             sender,
             subscriptions: Vec::new(),
             status,
@@ -209,6 +220,8 @@ impl TrackerActor {
             BusEvent::LootGroup(_) => self.on_loot(event).await,
             BusEvent::ActiveToolChanged(_) => self.on_tool_changed(event),
             BusEvent::ActiveHealToolChanged(_) => self.on_heal_tool_changed(event),
+            BusEvent::ActiveHarvestToolChanged(_) => self.on_harvest_tool_changed(event),
+            BusEvent::HarvestFail(_) => self.on_harvest_fail(event).await,
             BusEvent::Global(_) => self.on_global(event).await,
             BusEvent::EnhancerBreak(_) => self.on_enhancer_break(event),
             BusEvent::TickFlushed(_) => self.on_tick_flushed(event),
@@ -243,6 +256,8 @@ impl TrackerActor {
             Topic::LootGroup,
             Topic::ActiveToolChanged,
             Topic::ActiveHealToolChanged,
+            Topic::ActiveHarvestToolChanged,
+            Topic::HarvestFail,
             Topic::Global,
             Topic::EnhancerBreak,
             Topic::TickFlushed,

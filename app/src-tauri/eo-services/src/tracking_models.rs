@@ -80,6 +80,25 @@ pub struct Kill {
     pub is_hof: bool,
 }
 
+/// One harvesting swing (tree cutting): a successful swing arrives as
+/// a wood loot group, a failed swing as the explicit harvest-fail
+/// line, so every swing is directly countable. The tool identity and
+/// per-swing cost are captured at swing time (immune to later
+/// equipment edits); `tool_name` is None when no harvesting tool was
+/// known (the swing recorded at zero cost with a session warning).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestEvent {
+    pub id: String,
+    pub session_id: String,
+    /// Epoch seconds (UTC), same representation as `Kill::timestamp`.
+    pub timestamp: f64,
+    pub success: bool,
+    pub tool_name: Option<String>,
+    pub cost_ped: Ped,
+    pub loot_total_ped: Ped,
+    pub loot_items: Vec<LootItem>,
+}
+
 /// A tracking session, started and stopped by the user. The instants
 /// are UTC; wall-clock renderings happen at the read surfaces.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +107,7 @@ pub struct TrackingSession {
     pub start_time: DateTime<Utc>,
     pub end_time: Option<DateTime<Utc>>,
     pub kills: Vec<Kill>,
+    pub harvests: Vec<HarvestEvent>,
     /// Unresolved shots at session end.
     pub dangling_cost: Ped,
 }
@@ -123,6 +143,11 @@ pub struct ActiveSessionView {
     pub current_mob: Option<String>,
     pub mob_source: Option<String>,
     pub mob_entry_mode: String,
+    /// Harvesting swings this session (successes + explicit fails).
+    pub harvest_swings: i64,
+    pub harvest_successes: i64,
+    pub harvest_loot: f64,
+    pub harvest_cost: f64,
     /// Raw rows (event_type, mob_or_item, value_ped, timestamp): the
     /// presentation mapping lives in the HTTP layer.
     pub notable_event_rows: Vec<(String, String, f64, Option<f64>)>,

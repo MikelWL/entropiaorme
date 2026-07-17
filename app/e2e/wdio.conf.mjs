@@ -13,6 +13,7 @@
 // feature (the committed fixtures over the typed read commands), not a separate
 // process, since `invoke` cannot be intercepted from the test.
 import { execSync, spawn } from 'node:child_process';
+import { mkdirSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -38,6 +39,12 @@ export const DEV_URL = 'http://tauri.localhost/';
 
 const APP_BINARY = join(FRONTEND_DIR, 'src-tauri', 'target', 'debug', 'entropia-orme.exe');
 const MSEDGEDRIVER = join(E2E_DIR, '.drivers', 'msedgedriver.exe');
+// The shell's backend data directory for the run: recreated fresh in onPrepare
+// so every run starts from the same clean state CI gets from its pristine
+// image, and a local run can never open (or migrate) the developer's own
+// repo-default data directory. Passed to the app through the tauri-driver
+// spawn environment below.
+const E2E_DATA_DIR = join(E2E_DIR, '.data');
 const TAURI_DRIVER =
 	process.env.TAURI_DRIVER_PATH || join(homedir(), '.cargo', 'bin', 'tauri-driver.exe');
 
@@ -150,6 +157,9 @@ export const config = {
 	],
 
 	onPrepare: async () => {
+		// 0. A fresh backend data directory for the run (see E2E_DATA_DIR above).
+		rmSync(E2E_DATA_DIR, { recursive: true, force: true });
+		mkdirSync(E2E_DATA_DIR, { recursive: true });
 		// 1. Vite dev server at the shell's dev origin. Every backend call
 		//    dispatches in-process over invoke, not to a socket, so there is no
 		//    backend port to bake.
@@ -169,7 +179,24 @@ export const config = {
 		//    `e2e-stub` feature, which serves the committed fixtures from the
 		//    in-process typed read commands (WebDriver cannot intercept `invoke`,
 		//    so the stub lives in the shell, not the harness).
-		spawnProc('tauri-driver', TAURI_DRIVER, ['--native-driver', MSEDGEDRIVER]);
+		//
+		//    Note on WebView2 150 (MicrosoftEdge/WebView2Feedback#5640): the
+		//    DevTools remote-debugging endpoint does not come up when the app
+		//    shell runs at high integrity, so session creation fails with
+		//    "DevToolsActivePort file doesn't exist" on hosts that run
+		//    everything elevated (the GitHub Windows runner: administrator,
+		//    UAC disabled). The CI job caps the shell binary's integrity label
+		//    to medium before this suite runs; a normal developer session is
+		//    already medium integrity and needs nothing.
+		spawnProc('tauri-driver', TAURI_DRIVER, ['--native-driver', MSEDGEDRIVER], {
+			env: {
+				...process.env,
+				// The app shell inherits this through msedgedriver and resolves its
+				// backend state (database, settings, logs) here instead of the
+				// repo-default data directory.
+				ENTROPIAORME_DATA_DIR: E2E_DATA_DIR,
+			},
+		});
 
 		await Promise.all([
 			waitForHttp('vite', `http://localhost:${FRONTEND_PORT}/`),

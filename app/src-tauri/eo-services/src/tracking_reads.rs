@@ -454,8 +454,33 @@ pub fn get_session_read(
         .map(|(_, _, _, _, cost_attr)| cost_attr)
         .sum();
 
-    let merged_loot = loot_agg(conn, session_id, "l.deactivated_at IS NULL")?;
-    let merged_deactivated_loot = loot_agg(conn, session_id, "l.deactivated_at IS NOT NULL")?;
+    // Harvesting swings join the session economy: wood TT is loot,
+    // swing decay is cost.
+    let (harvest_swings, harvest_successes, harvest_loot, harvest_cost) = conn.query_row(
+        "SELECT COUNT(*), \
+           COALESCE(SUM(CASE WHEN success != 0 THEN 1 ELSE 0 END), 0), \
+           COALESCE(SUM(loot_total_ped), 0), COALESCE(SUM(cost_ped), 0) \
+         FROM harvest_events WHERE session_id = ?",
+        rusqlite::params![session_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                as_f64(&sql_number(row, 2)),
+                as_f64(&sql_number(row, 3)),
+            ))
+        },
+    )?;
+    let total_returns = total_returns + harvest_loot;
+
+    let merged_loot = merge_loot_aggs(
+        loot_agg(conn, session_id, "l.deactivated_at IS NULL")?,
+        harvest_loot_agg(conn, session_id, "l.deactivated_at IS NULL")?,
+    );
+    let merged_deactivated_loot = merge_loot_aggs(
+        loot_agg(conn, session_id, "l.deactivated_at IS NOT NULL")?,
+        harvest_loot_agg(conn, session_id, "l.deactivated_at IS NOT NULL")?,
+    );
 
     let mob_breakdown: Vec<Value> = {
         let mut stmt = conn.prepare(
@@ -473,8 +498,12 @@ pub fn get_session_read(
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
 
-    let total_cost =
-        weapon_cost + session_heal_cost + total_enhancer_cost + armour_cost + dangling_cost;
+    let total_cost = weapon_cost
+        + session_heal_cost
+        + total_enhancer_cost
+        + armour_cost
+        + dangling_cost
+        + harvest_cost;
 
     let detail_skill_tt = as_f64(&scalar(
         conn,
@@ -547,7 +576,14 @@ pub fn get_session_read(
                 "healCost": round(session_heal_cost, 2),
                 "enhancerCost": round(total_enhancer_cost, 2),
                 "armourCost": round(armour_cost, 2),
+                "harvestCost": round(harvest_cost, 2),
             },
+        },
+        "harvest": {
+            "swings": harvest_swings,
+            "successes": harvest_successes,
+            "lootTt": round(harvest_loot, 2),
+            "cost": round(harvest_cost, 2),
         },
         "mobEntryMode": mob_entry_mode,
         "notableEvents": notable_events,
@@ -580,6 +616,49 @@ pub fn loot_agg(
         ))
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// The harvest half of the session loot aggregation: same shape as
+/// [`loot_agg`], over the harvest tables (no shrapnel concept there).
+pub fn harvest_loot_agg(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    deactivated_clause: &str,
+) -> Result<Vec<(String, i64, f64)>, DbError> {
+    let sql = format!(
+        "SELECT l.item_name, SUM(l.quantity), SUM(l.value_ped) \
+         FROM harvest_loot_items l JOIN harvest_events h ON h.id = l.harvest_id \
+         WHERE h.session_id = ? AND {deactivated_clause} \
+         GROUP BY l.item_name"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1).unwrap_or(0),
+            as_f64(&sql_number(row, 2)),
+        ))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Merge two per-item aggregations by item name (kill loot + harvest
+/// loot into one session loot list), preserving the first list's order
+/// for shared names and appending the second's new names.
+pub fn merge_loot_aggs(
+    mut base: Vec<(String, i64, f64)>,
+    extra: Vec<(String, i64, f64)>,
+) -> Vec<(String, i64, f64)> {
+    for (name, qty, val) in extra {
+        match base.iter_mut().find(|(existing, _, _)| *existing == name) {
+            Some(entry) => {
+                entry.1 += qty;
+                entry.2 += val;
+            }
+            None => base.push((name, qty, val)),
+        }
+    }
+    base
 }
 
 pub fn loot_breakdown_sorted(rows: &[(String, i64, f64)]) -> Vec<Value> {
@@ -1994,7 +2073,14 @@ mod tests {
                         "healCost": 2.0,
                         "enhancerCost": 3.0,
                         "armourCost": 4.0,
+                        "harvestCost": 0.0,
                     },
+                },
+                "harvest": {
+                    "swings": 0,
+                    "successes": 0,
+                    "lootTt": 0.0,
+                    "cost": 0.0,
                 },
                 "mobEntryMode": "mob",
                 "notableEvents": [

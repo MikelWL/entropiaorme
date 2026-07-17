@@ -25,8 +25,8 @@ use serde_json::Value;
 
 use crate::bus_events::{
     BusEvent, CombatPayload, EnhancerBreakPayload, EnhancerBreakTag, GlobalPayload,
-    LootGroupPayload, LootItem, LootTag, MissionReceivedPayload, MissionReceivedTag,
-    SkillGainPayload, SkillGainTag, TickFlushedPayload,
+    HarvestFailPayload, HarvestFailTag, LootGroupPayload, LootItem, LootTag,
+    MissionReceivedPayload, MissionReceivedTag, SkillGainPayload, SkillGainTag, TickFlushedPayload,
 };
 use crate::chatlog_parser::{parse_line, ChatEvent, EventType};
 use crate::event_bus::{EventBus, Topic};
@@ -74,6 +74,7 @@ fn bus_topic(event_type: EventType) -> Option<Topic> {
         | EventType::Deflect
         | EventType::SelfHeal => Some(Topic::Combat),
         EventType::Loot => Some(Topic::LootGroup),
+        EventType::HarvestFail => Some(Topic::HarvestFail),
         EventType::SkillGain => Some(Topic::SkillGain),
         EventType::EnhancerBreak => Some(Topic::EnhancerBreak),
         EventType::GlobalKill | EventType::HofKill | EventType::GlobalItem | EventType::HofItem => {
@@ -175,6 +176,10 @@ fn typed_bus_event(event: &ChatEvent) -> Option<BusEvent> {
             kind: MissionReceivedTag,
             timestamp,
             mission_name: text("mission_name"),
+        })),
+        EventType::HarvestFail => Some(BusEvent::HarvestFail(HarvestFailPayload {
+            kind: HarvestFailTag,
+            timestamp,
         })),
         EventType::Loot | EventType::MissionComplete => None,
     }

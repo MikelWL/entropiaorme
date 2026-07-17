@@ -138,3 +138,54 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Harvesting tools section -->
+<Divider />
+<div>
+	<div class="mb-4 flex items-center gap-3">
+		<h2 class="text-lg font-semibold text-text">Harvesting Tools</h2>
+	</div>
+
+	{#if model.harvestingTools.length === 0}
+		<p class="text-sm text-text-tertiary py-4">
+			No harvesting tools configured.
+		</p>
+	{:else}
+		<div class="space-y-1">
+			{#each model.harvestingTools as tool (tool.id)}
+				<div
+					class="flex items-center gap-3 px-4 py-3 rounded-md hover:bg-surface-hover/50
+						transition-colors duration-[var(--duration-fast)]"
+				>
+					<div class="shrink-0 h-8 w-8 rounded-md bg-surface flex items-center justify-center">
+						<div class="h-2 w-2 rounded-full bg-accent"></div>
+					</div>
+					<div class="flex-1 min-w-0">
+						<div class="flex items-center gap-2">
+							<span class="text-sm font-medium text-text">{tool.name}</span>
+							{#if tool.isLimited}
+								<span class="text-xs text-text-tertiary">(L)</span>
+							{/if}
+						</div>
+					</div>
+					<div class="text-right shrink-0">
+						<span class="text-sm font-medium tabular-nums text-text">
+							{formatPec(tool.costPerUse)}
+						</span>
+						<span class="text-xs text-text-tertiary ml-0.5">PEC/swing</span>
+					</div>
+					<button
+						type="button" class="linklet linklet-danger shrink-0"
+						aria-label="Remove {tool.name}"
+						onclick={() => model.removeEquipment(tool.id, 'tool')}
+						title="Remove"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5" aria-hidden="true">
+							<path d="M5.28 4.22a.75.75 0 00-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 101.06 1.06L8 9.06l2.72 2.72a.75.75 0 101.06-1.06L9.06 8l2.72-2.72a.75.75 0 00-1.06-1.06L8 6.94 5.28 4.22z" />
+						</svg>
+					</button>
+				</div>
+			{/each}
+		</div>
+	{/if}
+</div>

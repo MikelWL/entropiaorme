@@ -44,7 +44,10 @@ use crate::db::DbError;
 
 /// Bump when a rollup column's meaning changes: below-version rows heal
 /// on the next read.
-pub const ROLLUP_VERSION: i64 = 1;
+// Bumped to 2 when the harvest family columns (harvest_loot_tt,
+// harvest_cost) joined the projection: below-version rows heal on the
+// next read.
+pub const ROLLUP_VERSION: i64 = 2;
 
 /// The UTC day of an epoch second, rendered as SQLite's
 /// `date(epoch, 'unixepoch')` renders it (`YYYY-MM-DD`).
@@ -110,7 +113,7 @@ fn window_sums(
 /// hooks run this inside their transaction; the heal wraps its own).
 pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbError> {
     let mut has_rows = false;
-    let mut families: [Option<f64>; 9] = [None; 9];
+    let mut families: [Option<f64>; 11] = [None; 11];
 
     if let Some(date) = canonical_day(day) {
         let (start, end) = day_bounds(date);
@@ -164,6 +167,14 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
             end,
             1,
         )?;
+        let (harvest_count, harvest_sums) = window_sums(
+            conn,
+            "SELECT COUNT(*), SUM(loot_total_ped), SUM(cost_ped) \
+             FROM harvest_events WHERE timestamp >= ? AND timestamp < ?",
+            start,
+            end,
+            2,
+        )?;
 
         families = [
             kill_sums[0],   // loot_tt
@@ -175,13 +186,16 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
             skill_sums[0],
             codex_sums[0],
             quest_sums[0],
+            harvest_sums[0], // harvest_loot_tt
+            harvest_sums[1], // harvest_cost
         ];
         has_rows = kill_count > 0
             || weapon_count > 0
             || session_count > 0
             || skill_count > 0
             || codex_count > 0
-            || quest_count > 0;
+            || quest_count > 0
+            || harvest_count > 0;
     }
 
     conn.execute(
@@ -200,8 +214,8 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
         "INSERT OR REPLACE INTO daily_rollups (\
          day, rollup_version, dirty, has_rows, loot_tt, weapon_cost, \
          enhancer_cost, armour_cost, heal_cost, dangling_cost, skill_tt, \
-         codex_pes, quest_pes, computed_at) \
-         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
+         codex_pes, quest_pes, harvest_loot_tt, harvest_cost, computed_at) \
+         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
         rusqlite::params![
             day,
             ROLLUP_VERSION,
@@ -215,6 +229,8 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
             families[6],
             families[7],
             families[8],
+            families[9],
+            families[10],
         ],
     )?;
     Ok(())
@@ -269,12 +285,13 @@ pub fn refresh_session_days(conn: &rusqlite::Connection, session_id: &str) -> Re
         let mut stmt = conn.prepare(
             "SELECT DISTINCT date(timestamp, 'unixepoch') FROM kills WHERE session_id = ? \
              UNION SELECT DISTINCT date(timestamp, 'unixepoch') FROM skill_gains WHERE session_id = ? \
+             UNION SELECT DISTINCT date(timestamp, 'unixepoch') FROM harvest_events WHERE session_id = ? \
              UNION SELECT date(started_at, 'unixepoch') FROM tracking_sessions WHERE id = ? \
              UNION SELECT date(ended_at, 'unixepoch') FROM tracking_sessions \
                    WHERE id = ? AND ended_at IS NOT NULL",
         )?;
         let rows = stmt.query_map(
-            rusqlite::params![session_id, session_id, session_id, session_id],
+            rusqlite::params![session_id, session_id, session_id, session_id, session_id],
             |row| row.get::<_, String>(0),
         )?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
@@ -301,6 +318,7 @@ fn earliest_data_day(conn: &rusqlite::Connection) -> Result<Option<NaiveDate>, D
          SELECT MIN(timestamp) AS t FROM kills \
          UNION ALL SELECT MIN(started_at) FROM tracking_sessions \
          UNION ALL SELECT MIN(timestamp) FROM skill_gains \
+         UNION ALL SELECT MIN(timestamp) FROM harvest_events \
          UNION ALL SELECT MIN(claimed_at) FROM codex_claims \
          UNION ALL SELECT MIN(claimed_at) FROM quest_claims)",
         [],

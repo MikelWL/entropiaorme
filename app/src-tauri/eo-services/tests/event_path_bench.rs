@@ -206,11 +206,13 @@ fn label(event: &BusEvent) -> &'static str {
     match event {
         BusEvent::Combat(_) => "combat",
         BusEvent::LootGroup(_) => "loot_group",
+        BusEvent::HarvestFail(_) => "harvest_fail",
         BusEvent::SkillGain(_) => "skill_gain",
         BusEvent::EnhancerBreak(_) => "enhancer_break",
         BusEvent::Global(_) => "global",
         BusEvent::ActiveToolChanged(_) => "active_tool",
         BusEvent::ActiveHealToolChanged(_) => "active_heal_tool",
+        BusEvent::ActiveHarvestToolChanged(_) => "active_harvest_tool",
         BusEvent::SessionStarted(_) => "session_started",
         BusEvent::SessionStopped(_) => "session_stopped",
         BusEvent::MissionReceived(_) => "mission_received",

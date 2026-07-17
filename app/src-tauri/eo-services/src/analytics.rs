@@ -134,6 +134,8 @@ pub struct CycledData {
     pub enhancer: SqlNumber,
     pub armour: SqlNumber,
     pub dangling: SqlNumber,
+    /// Harvesting (tree cutting) swing decay.
+    pub harvest: SqlNumber,
 }
 
 /// One day or month of the Overview timeline; the caller labels the
@@ -376,13 +378,14 @@ fn hybrid_window(start: Option<f64>, end: Option<f64>, watermark: &str) -> Hybri
     }
 }
 
-/// The nine aggregate-family sums of one window part, position-matched
+/// The eleven aggregate-family sums of one window part, position-matched
 /// to the `daily_rollups` family columns (loot, weapon, enhancer,
-/// armour, heal, dangling, skill, codex, quest). A sum stays None when
-/// the part had no contributing rows, so the merged result reproduces
-/// the raw engine typing: an all-empty window leaves the wire as an
-/// integer zero, exactly as `COALESCE(SUM(...), 0)` does.
-type FamilySums = [Option<f64>; 9];
+/// armour, heal, dangling, skill, codex, quest, harvest loot, harvest
+/// cost). A sum stays None when the part had no contributing rows, so
+/// the merged result reproduces the raw engine typing: an all-empty
+/// window leaves the wire as an integer zero, exactly as
+/// `COALESCE(SUM(...), 0)` does.
+type FamilySums = [Option<f64>; 11];
 
 fn merge_family_sums(into: &mut FamilySums, from: FamilySums) {
     for (slot, value) in into.iter_mut().zip(from) {
@@ -395,7 +398,7 @@ fn merge_family_sums(into: &mut FamilySums, from: FamilySums) {
 /// The `daily_rollups` family-sum columns, position-matched to
 /// [`FamilySums`] (loot, weapon, enhancer, armour, heal, dangling, skill,
 /// codex, quest).
-const ROLLUP_FAMILY_COLS: [&str; 9] = [
+const ROLLUP_FAMILY_COLS: [&str; 11] = [
     "loot_tt",
     "weapon_cost",
     "enhancer_cost",
@@ -405,6 +408,8 @@ const ROLLUP_FAMILY_COLS: [&str; 9] = [
     "skill_tt",
     "codex_pes",
     "quest_pes",
+    "harvest_loot_tt",
+    "harvest_cost",
 ];
 
 /// The rollup-side family sums for several windows in ONE conditional-
@@ -426,7 +431,7 @@ fn rollup_family_sums_multi(
     conn: &rusqlite::Connection,
     windows: &[HybridWindow],
 ) -> Result<Vec<FamilySums>, DbError> {
-    let mut out: Vec<FamilySums> = vec![[None; 9]; windows.len()];
+    let mut out: Vec<FamilySums> = vec![[None; 11]; windows.len()];
 
     // The windows that actually cover full rollup days, paired with their
     // index back into `out`.
@@ -447,7 +452,7 @@ fn rollup_family_sums_multi(
     // One CASE-guarded SUM per (window, family): the conditional-aggregation
     // pass. Columns are emitted window-major, family-minor, matching the
     // read-back below.
-    let mut cols: Vec<String> = Vec::with_capacity(active.len() * 9);
+    let mut cols: Vec<String> = Vec::with_capacity(active.len() * 11);
     for (_, lo, hi) in &active {
         for col in ROLLUP_FAMILY_COLS {
             let guard = match lo {
@@ -478,9 +483,9 @@ fn rollup_family_sums_multi(
         cols.join(", ")
     );
     let per_slot = conn.query_row(&sql, [], |row| {
-        let mut per_slot: Vec<FamilySums> = vec![[None; 9]; active.len()];
+        let mut per_slot: Vec<FamilySums> = vec![[None; 11]; active.len()];
         for (slot, sums) in per_slot.iter_mut().enumerate() {
-            let base = slot * 9;
+            let base = slot * 11;
             for (family, value) in sums.iter_mut().enumerate() {
                 *value = row.get::<_, Option<f64>>(base + family)?;
             }
@@ -515,7 +520,7 @@ fn raw_family_sums(
     }
 
     let (start, end) = range;
-    let mut sums: FamilySums = [None; 9];
+    let mut sums: FamilySums = [None; 11];
     let (w, p) = where_epoch("timestamp", start, end);
     let kills = fetch(
         conn,
@@ -573,6 +578,15 @@ fn raw_family_sums(
         &p,
         1,
     )?[0];
+    let (w, p) = where_epoch("timestamp", start, end);
+    let harvest = fetch(
+        conn,
+        format!("SELECT SUM(loot_total_ped), SUM(cost_ped) FROM harvest_events WHERE {w}"),
+        &p,
+        2,
+    )?;
+    sums[9] = harvest[0];
+    sums[10] = harvest[1];
     Ok(sums)
 }
 
@@ -597,6 +611,7 @@ fn bucketed_epoch(
 
 /// The gains/losses breakdown for one window (`_compute_metrics`).
 struct Metrics {
+    /// Liquid loot TT: kill loot plus harvest (wood) loot.
     loot_tt: SqlNumber,
     skill_tt: SqlNumber,
     codex_pes: SqlNumber,
@@ -606,6 +621,7 @@ struct Metrics {
     enhancer: SqlNumber,
     armour: SqlNumber,
     dangling: SqlNumber,
+    harvest: SqlNumber,
     tracking_cost: SqlNumber,
     ledger_gains: std::collections::BTreeMap<String, f64>,
     ledger_losses: std::collections::BTreeMap<String, f64>,
@@ -702,7 +718,7 @@ fn assemble_metrics(
         merge_family_sums(&mut sums, raw_family_sums(conn, *range)?);
     }
 
-    let loot_tt = SqlNumber::from_family(sums[0]);
+    let kill_loot = SqlNumber::from_family(sums[0]);
     let weapon = SqlNumber::from_family(sums[1]);
     let enhancer = SqlNumber::from_family(sums[2]);
     let armour = SqlNumber::from_family(sums[3]);
@@ -711,9 +727,21 @@ fn assemble_metrics(
     let skill_tt = SqlNumber::from_family(sums[6]);
     let codex_pes = SqlNumber::from_family(sums[7]);
     let quest_pes = SqlNumber::from_family(sums[8]);
+    let harvest_loot = SqlNumber::from_family(sums[9]);
+    let harvest = SqlNumber::from_family(sums[10]);
 
-    // weapon + heal + enhancer + armour + dangling (the pinned order).
-    let tracking_cost = weapon.sum(healing).sum(enhancer).sum(armour).sum(dangling);
+    // Wood TT is liquid loot; the headline Loot TT carries both
+    // activities.
+    let loot_tt = kill_loot.sum(harvest_loot);
+
+    // weapon + heal + enhancer + armour + dangling (the pinned order),
+    // then harvest swing decay.
+    let tracking_cost = weapon
+        .sum(healing)
+        .sum(enhancer)
+        .sum(armour)
+        .sum(dangling)
+        .sum(harvest);
 
     let ledger_gains = ledger_by_tag(conn, "markup", epoch_start, epoch_end, watermark)?;
     let ledger_losses = ledger_by_tag(conn, "expense", epoch_start, epoch_end, watermark)?;
@@ -728,6 +756,7 @@ fn assemble_metrics(
         enhancer,
         armour,
         dangling,
+        harvest,
         tracking_cost,
         ledger_gains,
         ledger_losses,
@@ -939,6 +968,7 @@ fn overview_read(
                 enhancer: m.enhancer.rounded(2),
                 armour: m.armour.rounded(2),
                 dangling: m.dangling.rounded(2),
+                harvest: m.harvest.rounded(2),
             },
             ledger: m.ledger_losses,
         },
@@ -969,6 +999,8 @@ struct BreakdownMaps {
     skill: std::collections::BTreeMap<String, SqlNumber>,
     codex: std::collections::BTreeMap<String, SqlNumber>,
     quest: std::collections::BTreeMap<String, SqlNumber>,
+    /// Harvest swing decay (wood loot merges into `loot`).
+    harvest_cost: std::collections::BTreeMap<String, SqlNumber>,
     members: BTreeSet<String>,
 }
 
@@ -1006,13 +1038,15 @@ fn rollup_breakdown(
     let sql = match kind {
         BucketKind::Day => format!(
             "SELECT day AS bucket, has_rows, loot_tt, weapon_cost, enhancer_cost, \
-             armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes \
+             armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes, \
+             harvest_loot_tt, harvest_cost \
              FROM daily_rollups WHERE day <= ?{extra} ORDER BY bucket"
         ),
         BucketKind::Month => format!(
             "SELECT strftime('%Y-%m', day) AS bucket, MAX(has_rows), SUM(loot_tt), \
              SUM(weapon_cost), SUM(enhancer_cost), SUM(armour_cost), SUM(heal_cost), \
-             SUM(dangling_cost), SUM(skill_tt), SUM(codex_pes), SUM(quest_pes) \
+             SUM(dangling_cost), SUM(skill_tt), SUM(codex_pes), SUM(quest_pes), \
+             SUM(harvest_loot_tt), SUM(harvest_cost) \
              FROM daily_rollups WHERE day <= ?{extra} GROUP BY bucket ORDER BY bucket"
         ),
     };
@@ -1035,10 +1069,16 @@ fn rollup_breakdown(
             (&mut maps.skill, 8),
             (&mut maps.codex, 9),
             (&mut maps.quest, 10),
+            (&mut maps.harvest_cost, 12),
         ] {
             if let Some(value) = family(index)? {
                 BreakdownMaps::merge(map, &bucket, SqlNumber::Float(value));
             }
+        }
+        // Wood loot joins the loot family (a second merge into the
+        // same map, so it sits outside the disjoint-borrow loop).
+        if let Some(value) = family(11)? {
+            BreakdownMaps::merge(&mut maps.loot, &bucket, SqlNumber::Float(value));
         }
         // The session-cost leg mirrors the raw query's
         // COALESCE(SUM(armour),0) + COALESCE(SUM(heal),0) +
@@ -1076,12 +1116,13 @@ fn raw_breakdown(
     let (cc_w, cc_p) = where_epoch("cc.claimed_at", start, end);
     let (qc_w, qc_p) = where_epoch("qc.claimed_at", start, end);
     let (sess_w, sess_p) = where_epoch("s.started_at", start, end);
+    let (hv_w, hv_p) = where_epoch("h.timestamp", start, end);
 
     let sources: [(
         &mut std::collections::BTreeMap<String, SqlNumber>,
         String,
         &Vec<f64>,
-    ); 7] = [
+    ); 8] = [
         (
             &mut maps.loot,
             format!(
@@ -1140,6 +1181,14 @@ fn raw_breakdown(
             ),
             &qc_p,
         ),
+        (
+            &mut maps.harvest_cost,
+            format!(
+                "SELECT {} as bucket, COALESCE(SUM(h.cost_ped), 0) FROM harvest_events h WHERE {hv_w} GROUP BY bucket",
+                ts_bucket("h.timestamp")
+            ),
+            &hv_p,
+        ),
     ];
     for (map, sql, params) in sources {
         let buckets = bucketed_epoch(conn, sql, params)?;
@@ -1147,6 +1196,21 @@ fn raw_breakdown(
             maps.members.insert(bucket.clone());
             BreakdownMaps::merge(map, &bucket, value);
         }
+    }
+    // Wood loot joins the loot family (the harvest table feeds two
+    // families, so its second source sits outside the disjoint-borrow
+    // array).
+    let wood = bucketed_epoch(
+        conn,
+        format!(
+            "SELECT {} as bucket, COALESCE(SUM(h.loot_total_ped), 0) FROM harvest_events h WHERE {hv_w} GROUP BY bucket",
+            ts_bucket("h.timestamp")
+        ),
+        &hv_p,
+    )?;
+    for (bucket, value) in wood {
+        maps.members.insert(bucket.clone());
+        BreakdownMaps::merge(&mut maps.loot, &bucket, value);
     }
     Ok(())
 }
@@ -1169,7 +1233,8 @@ fn breakdown_points(
         raw_breakdown(conn, &mut maps, kind, *range)?;
     }
 
-    // cost = weapon + enhancer + sess over the union of their buckets.
+    // cost = weapon + enhancer + sess + harvest over the union of
+    // their buckets.
     let mut cost: std::collections::BTreeMap<String, SqlNumber> = std::collections::BTreeMap::new();
     let mut cost_keys: BTreeSet<String> = BTreeSet::new();
     for k in maps
@@ -1177,6 +1242,7 @@ fn breakdown_points(
         .keys()
         .chain(maps.enhancer.keys())
         .chain(maps.sess.keys())
+        .chain(maps.harvest_cost.keys())
     {
         cost_keys.insert(k.clone());
     }
@@ -1188,7 +1254,8 @@ fn breakdown_points(
             .copied()
             .unwrap_or(zero)
             .sum(maps.enhancer.get(key).copied().unwrap_or(zero))
-            .sum(maps.sess.get(key).copied().unwrap_or(zero));
+            .sum(maps.sess.get(key).copied().unwrap_or(zero))
+            .sum(maps.harvest_cost.get(key).copied().unwrap_or(zero));
         cost.insert(key.clone(), total);
     }
 
@@ -2276,7 +2343,7 @@ mod tests {
             "{\"totalReturnRate\":0.0,\"trend\":\"stable\",\"returnsBreakdown\":{\"lootTt\":0.0,\
              \"pes\":0.0,\"codexPes\":0.0,\"questPes\":0.0,\"ledger\":{}},\"lossesBreakdown\":\
              {\"trackingCost\":0.0,\"cycledBreakdown\":{\"weapon\":0,\"healing\":0,\"enhancer\":0,\
-             \"armour\":0,\"dangling\":0},\"ledger\":{}},\"totalGains\":0.0,\"totalLosses\":0.0,\
+             \"armour\":0,\"dangling\":0,\"harvest\":0},\"ledger\":{}},\"totalGains\":0.0,\"totalLosses\":0.0,\
              \"timeline\":[],\"monthlyBreakdown\":[]}"
         );
     }
@@ -3114,12 +3181,16 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         ];
         merge_family_sums(
             &mut into,
             [
                 Some(3.0),
                 Some(4.0),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -3157,6 +3228,7 @@ mod tests {
             enhancer: SqlNumber::Int(0),
             armour: SqlNumber::Int(0),
             dangling: SqlNumber::Int(0),
+            harvest: SqlNumber::Int(0),
             tracking_cost: SqlNumber::Float(cost),
             ledger_gains: map(gains),
             ledger_losses: map(losses),

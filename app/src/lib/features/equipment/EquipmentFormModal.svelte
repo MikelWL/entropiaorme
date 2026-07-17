@@ -10,7 +10,9 @@
 			? !model.weaponPicker.selected
 			: model.addType === 'healing'
 				? !model.healerPicker.selected
-				: !model.consumablePicker.selected) || model.saving,
+				: model.addType === 'tool'
+					? !model.toolPicker.selected
+					: !model.consumablePicker.selected) || model.saving,
 	);
 
 	// The add-custom row appears once the query could have searched (two or
@@ -47,6 +49,7 @@
 				options={[
 					{ id: 'weapon', label: 'Weapon' },
 					{ id: 'healing', label: 'Healing Tool' },
+					{ id: 'tool', label: 'Harvesting Tool' },
 					{ id: 'consumable', label: 'Consumable' }
 				]}
 				active={model.addType}
@@ -234,6 +237,32 @@
 					{/snippet}
 				</PickerInput>
 			</div>
+		{:else if model.addType === 'tool'}
+			<!-- Harvesting tool selection -->
+			<div>
+				<label for="equipment-tool-search" class="block eyebrow mb-1.5">
+					Harvesting Tool
+				</label>
+				<PickerInput id="equipment-tool-search" model={model.toolPicker} placeholder="Search harvesting tools…">
+					{#snippet result({ item })}
+						<span class="text-text">
+							{item.name}
+						</span>
+						<span class="text-xs text-text-tertiary tabular-nums">
+							D:{item.decay.toFixed(3)} PEC
+						</span>
+					{/snippet}
+					{#snippet selection({ item, clear })}
+						<div class="flex items-center justify-between">
+							<span class="text-text font-medium">{item.name}</span>
+							<button type="button" class="linklet" onclick={clear}>Change</button>
+						</div>
+						<div class="flex gap-4 mt-1 text-xs text-text-secondary tabular-nums">
+							<span>Decay: {item.decay.toFixed(3)} PEC/swing</span>
+						</div>
+					{/snippet}
+				</PickerInput>
+			</div>
 		{:else if model.addType === 'consumable'}
 			<!-- Consumable selection -->
 			<div>
@@ -263,7 +292,7 @@
 		{/if}
 
 		<!-- Markup (conditional on limited items; applies to both types) -->
-		{#if (model.addType === 'weapon' && (model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited)) || (model.addType === 'healing' && model.healerPicker.selected?.isLimited)}
+		{#if (model.addType === 'weapon' && (model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited)) || (model.addType === 'healing' && model.healerPicker.selected?.isLimited) || (model.addType === 'tool' && model.toolPicker.selected?.isLimited)}
 			<div>
 				<label for="equipment-item-markup" class="block eyebrow mb-1.5">
 					Item Markup %

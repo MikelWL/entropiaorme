@@ -67,6 +67,24 @@ pub const CATALOGUE: &[TableSpec] = &[
                 JOIN kills k ON kts.kill_id = k.id",
         order_by: &["k.timestamp", "kts.rowid"],
     },
+    // Harvesting (tree cutting) records: a post-port extension of the
+    // catalogue (no Python reference existed), pinned by the harvest
+    // replay scenario from the point the activity landed.
+    TableSpec {
+        name: "harvest_events",
+        query: "SELECT id, session_id, timestamp, success, tool_name, \
+                cost_ped, loot_total_ped \
+                FROM harvest_events",
+        order_by: &["timestamp", "rowid"],
+    },
+    TableSpec {
+        name: "harvest_loot_items",
+        query: "SELECT hli.harvest_id, hli.item_name, hli.quantity, \
+                hli.value_ped \
+                FROM harvest_loot_items hli \
+                JOIN harvest_events h ON hli.harvest_id = h.id",
+        order_by: &["h.timestamp", "hli.rowid"],
+    },
     TableSpec {
         name: "ledger_entries",
         query: "SELECT id, date, type, description, amount, tag FROM ledger_entries",

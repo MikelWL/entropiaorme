@@ -1,0 +1,66 @@
+[
+  {
+    "id": "000000401695",
+    "name": "Reaper III",
+    "economy": {
+      "decay": 10,
+      "max_tt": 30.07
+    }
+  },
+  {
+    "id": "0000004016de",
+    "name": "Zekkonian Tree Feller Neung (L)",
+    "economy": {
+      "decay": 2,
+      "max_tt": 5
+    }
+  },
+  {
+    "id": "0000004016cc",
+    "name": "Zekkonian Tree Feller Soeng (L)",
+    "economy": {
+      "decay": 5,
+      "max_tt": 10
+    }
+  },
+  {
+    "id": "0000004016b5",
+    "name": "Terratech PH-2 (L)",
+    "economy": {
+      "decay": 5,
+      "max_tt": 10
+    }
+  },
+  {
+    "id": "0000004016b7",
+    "name": "Terratech PH-3 (L)",
+    "economy": {
+      "decay": 10,
+      "max_tt": 20
+    }
+  },
+  {
+    "id": "0000004016b6",
+    "name": "Terratech PH-3",
+    "economy": {
+      "decay": 10,
+      "max_tt": 30
+    }
+  },
+  {
+    "id": "0000004016b4",
+    "name": "Terratech PH-1 (L)",
+    "economy": {
+      "decay": 2,
+      "max_tt": 5
+    }
+  },
+  {
+    "id": "0000004016b8",
+    "name": "Terratech PH-4 (L)",
+    "economy": {
+      "decay": 50,
+      "max_tt": 80
+    }
+  }
+]

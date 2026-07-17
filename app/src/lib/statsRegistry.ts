@@ -20,7 +20,8 @@ export type StatId =
 	| 'crit_rate'
 	| 'kills_count'
 	| 'globals_count'
-	| 'hofs_count';
+	| 'hofs_count'
+	| 'uses_tree';
 
 export type StatRender = {
 	value: string;
@@ -29,7 +30,15 @@ export type StatRender = {
 
 export type StatDef = {
 	id: StatId;
+	/** The full name shown in the customise-stats list. */
 	label: string;
+	/**
+	 * Compact name for the dashboard tiles and the overlay strip; the
+	 * customise list keeps the full label. Room is deliberately left in
+	 * this naming family for future activity counters (Shots, Uses
+	 * (Heal), ...) beside Uses (Tree).
+	 */
+	shortLabel?: string;
 	defaultEnabled: boolean;
 	defaultOverlayEnabled?: boolean;
 	render: (status: TrackingStatus | null) => StatRender;
@@ -236,6 +245,14 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		render: (status) =>
 			isActive(status) ? { value: String(status.hofsCount ?? 0), color: PLAIN } : EMPTY,
 	},
+	uses_tree: {
+		id: 'uses_tree',
+		label: 'Uses (Tree)',
+		shortLabel: 'Uses (T)',
+		defaultEnabled: false,
+		render: (status) =>
+			isActive(status) ? { value: String(status.harvestSwings ?? 0), color: PLAIN } : EMPTY,
+	},
 };
 
 export const ALL_STAT_IDS: StatId[] = [
@@ -258,6 +275,7 @@ export const ALL_STAT_IDS: StatId[] = [
 	'kills_count',
 	'globals_count',
 	'hofs_count',
+	'uses_tree',
 ];
 
 export function getStatDef(id: string): StatDef | null {

@@ -36,6 +36,7 @@ macro_rules! event_tag {
 }
 
 event_tag!(LootTag, "loot");
+event_tag!(HarvestFailTag, "harvest_fail");
 event_tag!(SkillGainTag, "skill_gain");
 event_tag!(EnhancerBreakTag, "enhancer_break");
 event_tag!(MissionReceivedTag, "mission_received");
@@ -75,6 +76,17 @@ pub struct LootGroupPayload {
     pub timestamp: Option<String>,
     pub items: Vec<LootItem>,
     pub total_ped: f64,
+}
+
+/// A failed harvesting swing ("Harvest attempt failed to generate
+/// useable resources"): the attempt happened and cost tool decay, it
+/// just dropped nothing. The explicit line makes harvesting swings
+/// directly countable (a successful swing arrives as its loot group).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HarvestFailPayload {
+    #[serde(rename = "type")]
+    pub kind: HarvestFailTag,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -139,6 +151,17 @@ pub struct ActiveToolChangedPayload {
     pub source: Option<String>,
 }
 
+/// The active harvesting tool changed (a hotbar "tool" equip), with
+/// its per-use economics; the tracker routes subsequent loot groups to
+/// harvest events while a harvesting tool is the hand item.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ActiveHarvestToolChangedPayload {
+    pub tool_name: String,
+    pub cost_per_use_ped: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
 /// The active healing tool changed, with its per-use economics.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ActiveHealToolChangedPayload {
@@ -180,11 +203,13 @@ pub struct TickFlushedPayload {
 pub enum BusEvent {
     Combat(CombatPayload),
     LootGroup(LootGroupPayload),
+    HarvestFail(HarvestFailPayload),
     SkillGain(SkillGainPayload),
     EnhancerBreak(EnhancerBreakPayload),
     Global(GlobalPayload),
     ActiveToolChanged(ActiveToolChangedPayload),
     ActiveHealToolChanged(ActiveHealToolChangedPayload),
+    ActiveHarvestToolChanged(ActiveHarvestToolChangedPayload),
     SessionStarted(SessionLifecyclePayload),
     SessionStopped(SessionLifecyclePayload),
     MissionReceived(MissionReceivedPayload),
@@ -199,11 +224,13 @@ impl BusEvent {
         match self {
             BusEvent::Combat(_) => Topic::Combat,
             BusEvent::LootGroup(_) => Topic::LootGroup,
+            BusEvent::HarvestFail(_) => Topic::HarvestFail,
             BusEvent::SkillGain(_) => Topic::SkillGain,
             BusEvent::EnhancerBreak(_) => Topic::EnhancerBreak,
             BusEvent::Global(_) => Topic::Global,
             BusEvent::ActiveToolChanged(_) => Topic::ActiveToolChanged,
             BusEvent::ActiveHealToolChanged(_) => Topic::ActiveHealToolChanged,
+            BusEvent::ActiveHarvestToolChanged(_) => Topic::ActiveHarvestToolChanged,
             BusEvent::SessionStarted(_) => Topic::SessionStarted,
             BusEvent::SessionStopped(_) => Topic::SessionStopped,
             BusEvent::MissionReceived(_) => Topic::MissionReceived,
@@ -252,6 +279,19 @@ mod tests {
             json!({"type": "target_dodge", "timestamp": "2026-01-01T00:00:01"})
         );
         assert!(value.get("amount").is_none());
+    }
+
+    #[test]
+    fn harvest_fail_payload_carries_its_tag_and_timestamp() {
+        let event = BusEvent::HarvestFail(HarvestFailPayload {
+            kind: HarvestFailTag,
+            timestamp: "2026-07-16T16:55:18".into(),
+        });
+        assert_eq!(event.topic(), Topic::HarvestFail);
+        assert_eq!(
+            event.payload_value(),
+            json!({"type": "harvest_fail", "timestamp": "2026-07-16T16:55:18"})
+        );
     }
 
     #[test]

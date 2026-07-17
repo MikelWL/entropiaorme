@@ -308,7 +308,7 @@
 	</div>
 
 	<!-- 1b. Cost breakdown (shown when non-weapon costs exist) -->
-	{#if detail.summary.costBreakdown && (detail.summary.costBreakdown.healCost > 0 || detail.summary.costBreakdown.enhancerCost > 0 || detail.summary.costBreakdown.armourCost > 0)}
+	{#if detail.summary.costBreakdown && (detail.summary.costBreakdown.healCost > 0 || detail.summary.costBreakdown.enhancerCost > 0 || detail.summary.costBreakdown.armourCost > 0 || detail.summary.costBreakdown.harvestCost > 0)}
 		<div class="mt-2 pl-1 flex flex-wrap gap-x-5 gap-y-1 text-xs text-text-secondary">
 			<span>Weapon: <span class="text-text tabular-nums">{formatPed(detail.summary.costBreakdown.weaponCost)}</span></span>
 			{#if detail.summary.costBreakdown.healCost > 0}
@@ -320,6 +320,24 @@
 			{#if detail.summary.costBreakdown.armourCost > 0}
 				<span>Armour: <span class="text-text tabular-nums">{formatPed(detail.summary.costBreakdown.armourCost)}</span></span>
 			{/if}
+			{#if detail.summary.costBreakdown.harvestCost > 0}
+				<span>Harvesting: <span class="text-text tabular-nums">{formatPed(detail.summary.costBreakdown.harvestCost)}</span></span>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- 1b2. Harvesting strip (shown only when the session harvested) -->
+	{#if detail.harvest && detail.harvest.swings > 0}
+		<Divider />
+		<div>
+			<h3 class="eyebrow mb-3">Harvesting</h3>
+			<div class="pl-1 flex flex-wrap gap-x-5 gap-y-1 text-xs text-text-secondary">
+				<span>Swings: <span class="text-text tabular-nums">{detail.harvest.swings}</span></span>
+				<span>Successful: <span class="text-text tabular-nums">{detail.harvest.successes}</span>
+					<span class="text-text-tertiary tabular-nums">({detail.harvest.swings > 0 ? Math.round((detail.harvest.successes / detail.harvest.swings) * 100) : 0}%)</span></span>
+				<span>Wood TT: <span class="text-text tabular-nums">{formatPed(detail.harvest.lootTt)}</span></span>
+				<span>Tool cost: <span class="text-text tabular-nums">{formatPed(detail.harvest.cost)}</span></span>
+			</div>
 		</div>
 	{/if}
 

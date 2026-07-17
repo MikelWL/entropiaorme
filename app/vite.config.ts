@@ -25,6 +25,14 @@ export default defineConfig({
 	server: {
 		port,
 		strictPort: true,
+		watch: {
+			// Never watch the Rust workspace: cargo's incremental target tree
+			// holds hundreds of thousands of files, so watching it exhausts
+			// the OS file-watcher budget (ENOSPC) as soon as a backend build
+			// runs alongside the dev server. Tauri's own watcher covers the
+			// backend crates; Vite only needs the frontend sources.
+			ignored: ['**/src-tauri/**'],
+		},
 		// The shell pre-spawns its hidden satellite windows (overlay,
 		// scan-overlay) at boot, so their routes are requested while the dev
 		// server is still cold. Under that parallel first load, a component's
@@ -44,5 +52,11 @@ export default defineConfig({
 		// in every shipped build, where the freeze branch then folds to a static
 		// false and tree-shakes out. See app/src/lib/motion/testMotion.ts.
 		'import.meta.env.E2E_FREEZE_TWEENS': JSON.stringify(process.env.E2E_FREEZE_TWEENS ?? ''),
+		// Scopes the plugin-store preferences to an e2e-only file so a test shell
+		// can never read or mutate a real installation's preferences (onboarding
+		// state, consent choices) on the same machine. Set to '1' only by the
+		// e2e's own Vite build; unset (so '') in every shipped build. See
+		// app/src/lib/preferences.ts.
+		'import.meta.env.E2E_ISOLATED_PREFS': JSON.stringify(process.env.E2E_ISOLATED_PREFS ?? ''),
 	},
 });

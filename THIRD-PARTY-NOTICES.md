@@ -22,7 +22,7 @@ EntropiaOrme bundles the following third-party assets and libraries. The Softwar
 
 ### Entropia Universe game-data snapshot
 
-- **Files:** `app/src-tauri/entropia-orme/resources/snapshot/*.json` (weapons, weapon_amplifiers, medical_tools, mobs, professions, skills, skill_ranks, stimulants, absorbers, enhancers, weapon_vision_attachments).
+- **Files:** `app/src-tauri/entropia-orme/resources/snapshot/*.json` (weapons, weapon_amplifiers, medical_tools, mobs, professions, skills, skill_ranks, stimulants, absorbers, enhancers, weapon_vision_attachments, harvesting_tools).
 - **Source:** Curated subset re-bundled from [Entropia Nexus](https://entropianexus.com/), a community-maintained wiki for Entropia Universe. The underlying constants (item names, statistics, catalogue identifiers, mob species, profession names, skill names) originate with MindArk PE AB as the publisher of Entropia Universe; Entropia Nexus's contribution is the structured bundling.
 - **Used by:** the native game-data store (`app/src-tauri/eo-services/src/game_data_store.rs`): the equipment library, mob taxonomy, and profession and skill panel scans; loaded at startup as static reference content (no runtime fetch).
 - **Notice:** Bundled with the permission of Entropia Nexus. EntropiaOrme is independent and unofficial; it is not affiliated with, endorsed by, or sponsored by either Entropia Nexus or MindArk PE AB. Item names and statistics are factual references; "Entropia Universe" and related names remain trademarks of MindArk PE AB (see "Game references" below).

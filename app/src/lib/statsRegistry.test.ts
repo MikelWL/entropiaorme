@@ -359,7 +359,19 @@ describe('drift guard', () => {
 		expect(ALL_STAT_IDS).toEqual(Object.keys(STAT_DEFS));
 	});
 
-	it('ALL_STAT_IDS has length 19', () => {
-		expect(ALL_STAT_IDS).toHaveLength(19);
+	it('ALL_STAT_IDS has length 20', () => {
+		expect(ALL_STAT_IDS).toHaveLength(20);
+	});
+});
+
+describe('uses_tree', () => {
+	it('renders the harvest swing count with fallback 0', () => {
+		expect(STAT_DEFS.uses_tree.render(active({ harvestSwings: 42 })).value).toBe('42');
+		expect(STAT_DEFS.uses_tree.render(active({})).value).toBe('0');
+	});
+
+	it('shows the full label in customise and the compact label on tiles', () => {
+		expect(STAT_DEFS.uses_tree.label).toBe('Uses (Tree)');
+		expect(STAT_DEFS.uses_tree.shortLabel).toBe('Uses (T)');
 	});
 });

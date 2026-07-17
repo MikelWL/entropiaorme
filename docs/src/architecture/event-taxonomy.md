@@ -43,11 +43,13 @@ The variants of the `Topic` enum in `app/src-tauri/eo-services/src/event_bus.rs`
 | --- | --- | --- |
 | `Combat` | `combat` | A parsed combat line from chat.log (damage dealt or taken). |
 | `LootGroup` | `loot_group` | A tick's worth of loot lines, grouped into one event. |
+| `HarvestFail` | `harvest_fail` | A failed harvesting swing ("Harvest attempt failed to generate useable resources") parsed from chat.log. |
 | `SkillGain` | `skill_gain` | A skill-gain line parsed from chat.log. |
 | `EnhancerBreak` | `enhancer_break` | An enhancer-break line parsed from chat.log. |
 | `Global` | `global` | A global / hall-of-fame broadcast line. |
 | `ActiveToolChanged` | `active_tool_changed` | The active hotbar tool changed. |
 | `ActiveHealToolChanged` | `active_heal_tool_changed` | The active heal tool changed. |
+| `ActiveHarvestToolChanged` | `active_harvest_tool_changed` | The active harvesting tool changed (a hotbar "tool" equip), carrying its per-use cost. |
 | `SessionStarted` | `session_started` | A tracking session started. |
 | `SessionStopped` | `session_stopped` | A tracking session stopped. |
 | `MissionReceived` | `mission_received` | A mission was received. |

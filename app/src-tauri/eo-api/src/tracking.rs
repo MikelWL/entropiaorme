@@ -51,7 +51,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 35] = [
+const SNAPSHOT_FIELDS: [&str; 39] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -86,6 +86,10 @@ const SNAPSHOT_FIELDS: [&str; 35] = [
     "multiplierMax",
     "multiplierHistory",
     "cumulativeNetHistory",
+    "harvestSwings",
+    "harvestSuccesses",
+    "harvestLoot",
+    "harvestCost",
     "warnings",
 ];
 
@@ -229,6 +233,8 @@ pub struct CostBreakdown {
     pub heal_cost: f64,
     pub enhancer_cost: f64,
     pub armour_cost: f64,
+    /// Harvesting (tree cutting) swing decay.
+    pub harvest_cost: f64,
 }
 
 /// The session-detail headline summary.
@@ -295,12 +301,25 @@ pub struct SkillGain {
     pub tt_value_gained: f64,
 }
 
+/// A session's harvesting (tree cutting) totals: every swing is a
+/// counted event (successes arrive as wood loot groups, fails as the
+/// explicit harvest-fail line).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestSummary {
+    pub swings: i64,
+    pub successes: i64,
+    pub loot_tt: f64,
+    pub cost: f64,
+}
+
 /// The full session detail.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
     pub session_id: String,
     pub summary: SessionSummary,
+    pub harvest: HarvestSummary,
     pub mob_entry_mode: MobEntryMode,
     pub notable_events: Vec<NotableEvent>,
     pub loot_breakdown: Vec<LootEntry>,
@@ -450,6 +469,15 @@ pub struct TrackingSnapshot {
     pub multiplier_history: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cumulative_net_history: Option<Vec<f64>>,
+    /// Harvesting swings this session (successes plus explicit fails).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harvest_swings: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harvest_successes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harvest_loot: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harvest_cost: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<Warning>>,
 }
@@ -1130,6 +1158,10 @@ pub(crate) async fn build_snapshot_value(
                 "multiplierMax": active.multiplier_max,
                 "multiplierHistory": active.multiplier_history.clone(),
                 "cumulativeNetHistory": active.cumulative_net_history.clone(),
+                "harvestSwings": active.harvest_swings,
+                "harvestSuccesses": active.harvest_successes,
+                "harvestLoot": active.harvest_loot,
+                "harvestCost": active.harvest_cost,
                 "hotbarListenerActive": hotbar_active,
                 "weaponAttribution": weapon_attribution,
                 "repairOcrEnabled": config.repair_ocr_enabled,
