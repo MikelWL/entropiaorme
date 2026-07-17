@@ -73,6 +73,8 @@
 	aria-label="Pin detail: {pin.name}"
 	{onpointerenter}
 	{onpointerleave}
+	onfocusin={onpointerenter}
+	onfocusout={onpointerleave}
 >
 	<div class="flex items-start gap-2">
 		<span class="text-lg leading-none" aria-hidden="true">{pinGlyph(pin.icon)}</span>

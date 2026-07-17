@@ -237,6 +237,9 @@ impl Api {
     /// window. An uncatalogued or uncalibrated planet passes (nothing
     /// authoritative to gate against); the facade never invents bounds.
     fn validate_pin_coords(&self, planet: &str, lon: f64, lat: f64) -> Result<(), ApiError> {
+        if !lon.is_finite() || !lat.is_finite() {
+            return Err(ApiError::bad_request("pin coordinates must be finite"));
+        }
         let Some(store) = self.planet_maps.as_ref() else {
             return Ok(());
         };
@@ -247,7 +250,13 @@ impl Api {
         else {
             return Ok(());
         };
-        if !bounds.contains(lon.round() as i64, lat.round() as i64) {
+        // Compared in float space: a coordinate a fraction past the edge
+        // must not round back inside and persist off the map.
+        if lon < bounds.lon_min as f64
+            || lon > bounds.lon_max as f64
+            || lat < bounds.lat_min as f64
+            || lat > bounds.lat_max as f64
+        {
             return Err(ApiError::bad_request(format!(
                 "coordinates ({lon}, {lat}) lie outside {planet}'s map bounds"
             )));

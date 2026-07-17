@@ -69,14 +69,21 @@
 	$effect(() => {
 		const url = imageUrl;
 		const img = new Image();
+		// Drop the previous raster immediately: until the new one loads,
+		// nothing may render or hit-test against mismatched map data.
+		image = null;
 		img.onload = () => {
 			image = img;
 			vp = fitViewport(img.naturalWidth, img.naturalHeight, viewW, viewH);
+		};
+		img.onerror = () => {
+			image = null;
 		};
 		img.src = url;
 		activePin = null;
 		return () => {
 			img.onload = null;
+			img.onerror = null;
 		};
 	});
 
@@ -242,10 +249,6 @@
 			};
 		});
 	});
-
-	const activePlacement = $derived(
-		activePin ? (placedPins.find((placed) => placed.pin.id === activePin!.id) ?? null) : null,
-	);
 </script>
 
 <!-- The viewer is a keyboard-operable application surface (arrows pan,
@@ -312,27 +315,28 @@
 		>
 			{pinGlyph(placed.pin.icon)}
 		</button>
+		<!-- The active card renders immediately after its marker, so Tab
+		     moves from the marker straight into the card's actions; focus
+		     inside the card holds it open exactly like pointer hover. -->
+		{#if activePin?.id === placed.pin.id}
+			<PinCard
+				pin={placed.pin}
+				x={placed.x}
+				y={placed.y}
+				{viewW}
+				{viewH}
+				technicalName={planet.technicalName}
+				onpointerenter={() => raiseCard(placed.pin)}
+				onpointerleave={scheduleCardClose}
+				oncopywaypoint={() => oncopywaypoint(placed.pin)}
+				onedit={() => oneditpin(placed.pin)}
+				ondelete={() => {
+					activePin = null;
+					ondeletepin(placed.pin);
+				}}
+			/>
+		{/if}
 	{/each}
-
-	{#if activePin && activePlacement}
-		<PinCard
-			pin={activePin}
-			x={activePlacement.x}
-			y={activePlacement.y}
-			{viewW}
-			{viewH}
-			technicalName={planet.technicalName}
-			onpointerenter={() => raiseCard(activePin!)}
-			onpointerleave={scheduleCardClose}
-			oncopywaypoint={() => oncopywaypoint(activePin!)}
-			onedit={() => oneditpin(activePin!)}
-			ondelete={() => {
-				const pin = activePin!;
-				activePin = null;
-				ondeletepin(pin);
-			}}
-		/>
-	{/if}
 
 	{#if !cal}
 		<p

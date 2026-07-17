@@ -290,11 +290,30 @@ fn build_calibration(planet: &RawPlanet) -> Option<MapCalibration> {
         lat_min: raw_bounds.lat_min,
         lat_max: raw_bounds.lat_max,
     };
+    // Checked arithmetic: a malformed bundle must degrade to view-only,
+    // never overflow into wrapped bounds (or a panic) at composition.
+    let derive = |origin: i64, tiles: i64| -> Option<(i64, i64)> {
+        let min = origin.checked_mul(GAME_UNITS_PER_TILE)?;
+        let max = origin
+            .checked_add(tiles)?
+            .checked_mul(GAME_UNITS_PER_TILE)?;
+        Some((min, max))
+    };
+    let Some(((lon_min, lon_max), (lat_min, lat_max))) =
+        derive(origin_x, tiles_w).zip(derive(origin_y, tiles_h))
+    else {
+        tracing::warn!(
+            target: "eo::planet_maps",
+            "planet map {} declares a tile window outside the representable range; treated as view-only",
+            planet.name
+        );
+        return None;
+    };
     let derived = MapBounds {
-        lon_min: origin_x * GAME_UNITS_PER_TILE,
-        lon_max: (origin_x + tiles_w) * GAME_UNITS_PER_TILE,
-        lat_min: origin_y * GAME_UNITS_PER_TILE,
-        lat_max: (origin_y + tiles_h) * GAME_UNITS_PER_TILE,
+        lon_min,
+        lon_max,
+        lat_min,
+        lat_max,
     };
     if bounds != derived {
         tracing::warn!(
@@ -309,10 +328,8 @@ fn build_calibration(planet: &RawPlanet) -> Option<MapCalibration> {
         tile_origin_y: origin_y,
         tile_width: tiles_w,
         tile_height: tiles_h,
-        units_per_pixel_x: (tiles_w * GAME_UNITS_PER_TILE) as f64
-            / f64::from(planet.image_width_px),
-        units_per_pixel_y: (tiles_h * GAME_UNITS_PER_TILE) as f64
-            / f64::from(planet.image_height_px),
+        units_per_pixel_x: (lon_max - lon_min) as f64 / f64::from(planet.image_width_px),
+        units_per_pixel_y: (lat_max - lat_min) as f64 / f64::from(planet.image_height_px),
         bounds,
     })
 }

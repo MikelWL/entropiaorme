@@ -20,7 +20,7 @@ CREATE TABLE map_pins (
     kind        TEXT NOT NULL,
     radius_m    REAL,
     notes       TEXT,
-    session_id  TEXT REFERENCES tracking_sessions(id),
+    session_id  TEXT REFERENCES tracking_sessions(id) ON DELETE SET NULL,
     created_at  REAL NOT NULL
 );
 
