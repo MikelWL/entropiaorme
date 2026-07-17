@@ -27,6 +27,7 @@
 //! planet's calibrated bounds the coordinates must fall inside them. An
 //! implausible read is a typed refusal, never a silently-wrong pin.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,9 @@ pub type RegionCapture = Arc<dyn Fn(i64, i64, i64, i64) -> Option<BgrImage> + Se
 pub type FrameReader = Arc<dyn Fn(&BgrImage) -> Option<(String, f64)> + Send + Sync>;
 /// The persistence sink a completed calibration writes through.
 pub type RegionSink = Arc<dyn Fn(CoordRegion) -> Result<(), String> + Send + Sync>;
+/// Where scan debug artefacts (the captured frame and what the
+/// recogniser answered) should be written, or None to write nothing.
+pub type DebugDir = Arc<dyn Fn() -> Option<std::path::PathBuf> + Send + Sync>;
 
 /// The provider seams the composition root wires in.
 pub struct CoordCaptureProviders {
@@ -60,6 +64,7 @@ pub struct CoordCaptureProviders {
     pub capture_region: RegionCapture,
     pub read_text: FrameReader,
     pub persist_region: RegionSink,
+    pub debug_dir: DebugDir,
 }
 
 impl Default for CoordCaptureProviders {
@@ -70,6 +75,7 @@ impl Default for CoordCaptureProviders {
             capture_region: Arc::new(|_, _, _, _| None),
             read_text: Arc::new(|_| None),
             persist_region: Arc::new(|_| Ok(())),
+            debug_dir: Arc::new(|| None),
         }
     }
 }
@@ -318,49 +324,71 @@ impl CoordCaptureService {
             return CoordScanOutcome::CaptureFailed;
         };
 
-        let mut parsed: Option<(i64, i64, Option<i64>, String, f64)> = None;
-        if frame.h >= 2 {
-            let (top, bottom) = split_rows(&frame);
-            let Some((top_text, top_conf)) = (self.providers.read_text)(&top) else {
-                return CoordScanOutcome::EngineUnavailable;
-            };
-            let Some((bottom_text, bottom_conf)) = (self.providers.read_text)(&bottom) else {
-                return CoordScanOutcome::EngineUnavailable;
-            };
-            if let Some((lon, lat)) = trailing_run(&top_text).zip(trailing_run(&bottom_text)) {
-                let raw = format!("{top_text} | {bottom_text}");
-                parsed = Some((lon, lat, None, raw, top_conf.min(bottom_conf)));
-            }
-        }
-        if parsed.is_none() {
-            let Some((text, confidence)) = (self.providers.read_text)(&frame) else {
-                return CoordScanOutcome::EngineUnavailable;
-            };
-            match parse_coordinates(&text) {
-                Some((lon, lat, altitude)) => {
-                    parsed = Some((lon, lat, altitude, text, confidence));
-                }
-                None => {
-                    return CoordScanOutcome::Unreadable {
-                        raw_text: text,
-                        confidence,
-                    };
+        // Every recogniser answer is recorded, so a debug dump (and the
+        // scan log line) shows exactly what the model saw and said.
+        let mut reads: Vec<(&'static str, String, f64)> = Vec::new();
+
+        let outcome = (|| {
+            let mut parsed: Option<(i64, i64, Option<i64>, String, f64)> = None;
+            if frame.h >= 2 {
+                let (top, bottom) = split_rows(&frame);
+                let Some((top_text, top_conf)) = (self.providers.read_text)(&top) else {
+                    return CoordScanOutcome::EngineUnavailable;
+                };
+                let Some((bottom_text, bottom_conf)) = (self.providers.read_text)(&bottom) else {
+                    return CoordScanOutcome::EngineUnavailable;
+                };
+                reads.push(("lon-line", top_text.clone(), top_conf));
+                reads.push(("lat-line", bottom_text.clone(), bottom_conf));
+                if let Some((lon, lat)) = trailing_run(&top_text).zip(trailing_run(&bottom_text)) {
+                    let raw = format!("{top_text} | {bottom_text}");
+                    parsed = Some((lon, lat, None, raw, top_conf.min(bottom_conf)));
                 }
             }
-        }
-        let (lon, lat, altitude, raw_text, confidence) = parsed.expect("parsed set above");
-        if let Some(bounds) = bounds {
-            if !bounds.contains(lon, lat) {
-                return CoordScanOutcome::Implausible { lon, lat, raw_text };
+            if parsed.is_none() {
+                let Some((text, confidence)) = (self.providers.read_text)(&frame) else {
+                    return CoordScanOutcome::EngineUnavailable;
+                };
+                reads.push(("whole", text.clone(), confidence));
+                match parse_coordinates(&text) {
+                    Some((lon, lat, altitude)) => {
+                        parsed = Some((lon, lat, altitude, text, confidence));
+                    }
+                    None => {
+                        return CoordScanOutcome::Unreadable {
+                            raw_text: text,
+                            confidence,
+                        };
+                    }
+                }
             }
+            let (lon, lat, altitude, raw_text, confidence) = parsed.expect("parsed set above");
+            if let Some(bounds) = bounds {
+                if !bounds.contains(lon, lat) {
+                    return CoordScanOutcome::Implausible { lon, lat, raw_text };
+                }
+            }
+            CoordScanOutcome::Read(CoordRead {
+                lon,
+                lat,
+                altitude,
+                raw_text,
+                confidence,
+            })
+        })();
+
+        tracing::info!(
+            target: "eo::coord_capture",
+            outcome = ?summarise(&outcome),
+            reads = ?reads,
+            region_w = region.w,
+            region_h = region.h,
+            "coordinate scan"
+        );
+        if let Some(dir) = (self.providers.debug_dir)() {
+            write_debug_artefacts(&dir, &frame, &reads, &outcome);
         }
-        CoordScanOutcome::Read(CoordRead {
-            lon,
-            lat,
-            altitude,
-            raw_text,
-            confidence,
-        })
+        outcome
     }
 }
 
@@ -510,6 +538,65 @@ impl CoordBounds {
     }
 }
 
+/// A scan outcome's one-word summary for the log line.
+fn summarise(outcome: &CoordScanOutcome) -> &'static str {
+    match outcome {
+        CoordScanOutcome::Read(_) => "read",
+        CoordScanOutcome::NoRegion => "no-region",
+        CoordScanOutcome::CaptureFailed => "capture-failed",
+        CoordScanOutcome::EngineUnavailable => "engine-unavailable",
+        CoordScanOutcome::Unreadable { .. } => "unreadable",
+        CoordScanOutcome::Implausible { .. } => "implausible",
+    }
+}
+
+/// Write the last scan's debug artefacts: the captured frame as
+/// `coord-scan-last.png` (exactly what the recogniser saw) and
+/// `coord-scan-last.txt` (what it answered per line, and the outcome).
+/// Best-effort: a failed write only logs.
+fn write_debug_artefacts(
+    dir: &Path,
+    frame: &BgrImage,
+    reads: &[(&'static str, String, f64)],
+    outcome: &CoordScanOutcome,
+) {
+    use image::ImageEncoder as _;
+    if let Err(err) = std::fs::create_dir_all(dir) {
+        tracing::warn!(target: "eo::coord_capture", %err, "debug dir not creatable");
+        return;
+    }
+    let mut rgb = Vec::with_capacity(frame.w * frame.h * 3);
+    for px in frame.data.chunks_exact(3) {
+        rgb.push(px[2]);
+        rgb.push(px[1]);
+        rgb.push(px[0]);
+    }
+    let mut png = Vec::new();
+    let encoded = image::codecs::png::PngEncoder::new(&mut png).write_image(
+        &rgb,
+        frame.w as u32,
+        frame.h as u32,
+        image::ExtendedColorType::Rgb8,
+    );
+    match encoded {
+        Ok(()) => {
+            if let Err(err) = std::fs::write(dir.join("coord-scan-last.png"), &png) {
+                tracing::warn!(target: "eo::coord_capture", %err, "debug frame not writable");
+            }
+        }
+        Err(err) => {
+            tracing::warn!(target: "eo::coord_capture", %err, "debug frame not encodable");
+        }
+    }
+    let mut report = format!("outcome: {outcome:?}\nframe: {}x{}\n", frame.w, frame.h);
+    for (label, text, confidence) in reads {
+        report.push_str(&format!("{label}: {text:?} (confidence {confidence:.3})\n"));
+    }
+    if let Err(err) = std::fs::write(dir.join("coord-scan-last.txt"), report) {
+        tracing::warn!(target: "eo::coord_capture", %err, "debug report not writable");
+    }
+}
+
 /// Split a frame at mid-height into its two stacked readout lines.
 fn split_rows(frame: &BgrImage) -> (BgrImage, BgrImage) {
     let top_h = frame.h / 2;
@@ -621,6 +708,7 @@ mod tests {
                 Some((text.to_string(), 0.93))
             }),
             persist_region: Arc::new(|_| Ok(())),
+            debug_dir: Arc::new(|| None),
         }
     }
 

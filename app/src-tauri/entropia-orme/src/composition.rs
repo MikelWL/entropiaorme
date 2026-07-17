@@ -751,6 +751,10 @@ async fn compose_with(
         };
         let persist_config = producers.config_service_handle();
         let coord_engine = ocr_engine.clone();
+        // Every scan drops its last frame + recogniser answers under the
+        // data dir's debug/ (tiny, overwritten, local-only): the standing
+        // instrument for diagnosing a readout that will not read.
+        let coord_debug_dir = data_dir.join("debug");
         CoordCaptureService::new(CoordCaptureProviders {
             cursor_position: Arc::new(eu_window::cursor_position),
             region: Arc::new(region_reader),
@@ -774,6 +778,7 @@ async fn compose_with(
                     .map(|_| ())
                     .map_err(|err| err.to_string())
             }),
+            debug_dir: Arc::new(move || Some(coord_debug_dir.clone())),
         })
     };
     let coord_confirm = eo_services::coord_capture::CoordConfirmListener::new(

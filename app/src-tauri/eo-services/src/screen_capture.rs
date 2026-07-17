@@ -213,8 +213,12 @@ mod platform {
     }
 
     /// Open the portal stream (blocking on a private runtime) and return
-    /// the PipeWire node id plus the monitor origin and the restore token.
-    fn open_portal() -> Result<(u32, i64, i64), Box<dyn std::error::Error>> {
+    /// the PipeWire node id, the portal's PipeWire remote fd, and the
+    /// monitor origin. The fd matters: the screencast node lives on the
+    /// portal's own PipeWire remote and is access-restricted to it, so a
+    /// pipeline that connects to the session daemon directly (node path
+    /// alone) can negotiate a stream that never produces a frame.
+    fn open_portal() -> Result<(u32, std::os::fd::OwnedFd, i64, i64), Box<dyn std::error::Error>> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -266,11 +270,13 @@ mod platform {
                 .ok_or("portal returned no stream")?
                 .clone();
             let (ox, oy) = stream.position().unwrap_or((0, 0));
+            let remote_fd: std::os::fd::OwnedFd = proxy.open_pipe_wire_remote(&session).await?;
             // Leak the session so the grant survives for the process
             // lifetime; the OS reclaims it at exit.
             std::mem::forget(session);
             Ok::<_, Box<dyn std::error::Error>>((
                 stream.pipe_wire_node_id(),
+                remote_fd,
                 i64::from(ox),
                 i64::from(oy),
             ))
@@ -279,11 +285,20 @@ mod platform {
 
     fn start_engine() -> Result<Engine, Box<dyn std::error::Error>> {
         gstreamer::init()?;
-        let (node_id, origin_x, origin_y) = open_portal()?;
+        let (node_id, remote_fd, origin_x, origin_y) = open_portal()?;
+        tracing::info!(target: "eo::capture", node_id, "screen-cast portal stream acquired");
 
         let latest: Arc<Mutex<Option<Frame>>> = Arc::new(Mutex::new(None));
         let pipeline = gstreamer::Pipeline::new();
+        // The source rides the portal's own PipeWire remote (its fd),
+        // where the consented node is actually reachable; the fd is
+        // deliberately leaked to the process lifetime alongside the
+        // session grant it belongs to.
         let src = gstreamer::ElementFactory::make("pipewiresrc")
+            .property("fd", {
+                use std::os::fd::IntoRawFd as _;
+                remote_fd.into_raw_fd()
+            })
             .property("path", node_id.to_string())
             .build()?;
         let convert = gstreamer::ElementFactory::make("videoconvert").build()?;
@@ -337,11 +352,13 @@ mod platform {
         // Wait for the first frame so the initial capture does not race
         // the stream startup (bounded; a stream that never produces is a
         // failure, not a hang).
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Cold portal + PipeWire negotiation can take several seconds on
+        // some desktops; the bound exists to fail rather than hang.
+        let deadline = Instant::now() + Duration::from_secs(10);
         while latest.lock().expect("frame slot").is_none() {
             if Instant::now() > deadline {
                 let _ = pipeline.set_state(gstreamer::State::Null);
-                return Err("capture stream produced no frame within 5s".into());
+                return Err("capture stream produced no frame within 10s".into());
             }
             std::thread::sleep(Duration::from_millis(50));
         }

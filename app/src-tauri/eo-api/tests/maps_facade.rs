@@ -56,6 +56,7 @@ fn coord_service(text: &'static str) -> Arc<CoordCaptureService> {
             Some((text.to_string(), 0.9))
         }),
         persist_region: Arc::new(|_| Ok(())),
+        debug_dir: Arc::new(|| None),
     })
 }
 
