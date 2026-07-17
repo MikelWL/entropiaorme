@@ -234,8 +234,20 @@ jobs:
     # viewport (ensureViewport), so the WebView2 inner-viewport collapse is
     # absorbed rather than flaking the gate. A failure uploads the actual + diff
     # PNGs for inspection.
+    #
+    # TEMPORARILY DISABLED: the runner image's WebView2 150 update broke
+    # WebDriver session creation for every run of this job (the DevTools
+    # remote-debugging endpoint does not come up under the runner's elevated
+    # execution context; MicrosoftEdge/WebView2Feedback#5640). An explicit
+    # remote-debugging port, a de-elevated basic-user launch, and a medium
+    # integrity label on the shell binary all failed to restore the endpoint
+    # on the runner, while the identical suite passes on a real Windows
+    # machine. Until the upstream regression is fixed, the suite runs locally
+    # (`npm run test:e2e` / `npm run test:visual`) and the ci-gate tolerates
+    # this job's skip. Re-enable by restoring the change-scope condition:
+    # if: needs.changes.outputs.code == 'true'
     needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    if: false
     defaults:
       run:
         working-directory: app
@@ -711,14 +723,21 @@ jobs:
             echo "Documentation-only change; the frontend build and Rust workspace jobs were skipped. Gate satisfied."
             exit 0
           fi
-          # The native-shell e2e + visual job (frontend-e2e) is a REQUIRED input:
-          # it drives the app at its tauri:// origin (native IPC) with the
-          # deterministic in-process typed read-command stub, and every visual capture is
-          # gated on a recovered inner viewport (ensureViewport), so a failure is a
-          # real regression rather than the old environment flake.
-          if [ "$FRONTEND_RESULT" = "success" ] && [ "$RUST_RESULT" = "success" ] && [ "$RUST_MEMBERS_RESULT" = "success" ] && [ "$RUST_COVERAGE_RESULT" = "success" ] && [ "$FRONTEND_E2E_RESULT" = "success" ] && [ "$LINUX_BUNDLE_RESULT" = "success" ]; then
-            echo "Frontend build, Rust workspace, native-shell e2e, and Linux build+bundle jobs passed. Gate satisfied."
+          # The native-shell e2e + visual job (frontend-e2e) is normally a
+          # REQUIRED input: it drives the app at its tauri:// origin (native
+          # IPC) with the deterministic in-process typed read-command stub. It
+          # is TEMPORARILY DISABLED (see the job's own comment: the runner
+          # image's WebView2 150 update broke WebDriver session creation for
+          # every run, MicrosoftEdge/WebView2Feedback#5640), so the gate
+          # tolerates its skip; a real failure on a run where the job is
+          # re-enabled still fails the gate.
+          if [ "$FRONTEND_E2E_RESULT" != "success" ] && [ "$FRONTEND_E2E_RESULT" != "skipped" ]; then
+            echo "::error::The native-shell e2e suite did not pass (result: $FRONTEND_E2E_RESULT)."
+            exit 1
+          fi
+          if [ "$FRONTEND_RESULT" = "success" ] && [ "$RUST_RESULT" = "success" ] && [ "$RUST_MEMBERS_RESULT" = "success" ] && [ "$RUST_COVERAGE_RESULT" = "success" ] && [ "$LINUX_BUNDLE_RESULT" = "success" ]; then
+            echo "Frontend build, Rust workspace, and Linux build+bundle jobs passed (native-shell e2e temporarily disabled). Gate satisfied."
             exit 0
           fi
-          echo "::error::A code change must pass the frontend build, the Rust workspace jobs, the native-shell e2e suite, and the Linux build+bundle (frontend: $FRONTEND_RESULT, rust: $RUST_RESULT, members: $RUST_MEMBERS_RESULT, coverage: $RUST_COVERAGE_RESULT, e2e: $FRONTEND_E2E_RESULT, linux-bundle: $LINUX_BUNDLE_RESULT)."
+          echo "::error::A code change must pass the frontend build, the Rust workspace jobs, and the Linux build+bundle (frontend: $FRONTEND_RESULT, rust: $RUST_RESULT, members: $RUST_MEMBERS_RESULT, coverage: $RUST_COVERAGE_RESULT, e2e: $FRONTEND_E2E_RESULT, linux-bundle: $LINUX_BUNDLE_RESULT)."
           exit 1
