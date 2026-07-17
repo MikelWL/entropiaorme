@@ -87,8 +87,10 @@
 			</div>
 		{:else if phase === 'awaitTopLeft'}
 			<p class="text-text">
-				Step 1 of 2: switch to the game, hover the mouse over the
-				<strong>top-left corner</strong> of the location numbers on the minimap, and press
+				Step 1 of 2: switch to the game and find the position readout (the stacked
+				<strong>Lon:</strong> and <strong>Lat:</strong> lines). Hover the mouse over the
+				<strong>top-left corner of the Lon line</strong> (including the label is fine) and
+				press
 				<kbd class="rounded border border-border bg-surface px-1">Enter</kbd>.
 			</p>
 			<p>The app stays open; you do not need to switch back between steps.</p>
@@ -97,8 +99,9 @@
 			</div>
 		{:else if phase === 'awaitBottomRight'}
 			<p class="text-text">
-				Step 2 of 2: hover over the <strong>bottom-right corner</strong> of the location
-				numbers and press
+				Step 2 of 2: hover over the
+				<strong>bottom-right corner of the Lat line</strong> (just past the last digit) and
+				press
 				<kbd class="rounded border border-border bg-surface px-1">Enter</kbd>.
 			</p>
 			<div class="flex justify-end">

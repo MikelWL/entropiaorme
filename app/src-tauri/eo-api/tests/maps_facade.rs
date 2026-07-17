@@ -46,7 +46,15 @@ fn coord_service(text: &'static str) -> Arc<CoordCaptureService> {
                 w: 2,
             })
         }),
-        read_text: Arc::new(move |_| Some((text.to_string(), 0.9))),
+        // The split per-line reads answer empty (no digit runs), so the
+        // scan falls through to the whole-frame single-line read, which
+        // is where these tests inject their text.
+        read_text: Arc::new(move |img| {
+            if img.h == 1 {
+                return Some((String::new(), 0.9));
+            }
+            Some((text.to_string(), 0.9))
+        }),
         persist_region: Arc::new(|_| Ok(())),
     })
 }

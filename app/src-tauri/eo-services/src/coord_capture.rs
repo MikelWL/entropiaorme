@@ -298,6 +298,14 @@ impl CoordCaptureService {
 
     /// One coordinate scan through the seams: region -> capture ->
     /// read -> parse -> optional bounds gate.
+    ///
+    /// The game shows the readout as two stacked lines (`Lon: <value>`
+    /// above `Lat: <value>`), and the recogniser is a single-line
+    /// model, so the captured rectangle is split at mid-height and each
+    /// line reads separately, taking the line's trailing digit run (the
+    /// value follows its label, so a label misread such as `L0n` cannot
+    /// inject a spurious value). A whole-rectangle single-line read
+    /// remains the fallback for a readout that is not stacked.
     pub fn scan(&self, bounds: Option<CoordBounds>) -> CoordScanOutcome {
         let Some(region) = (self.providers.region)() else {
             return CoordScanOutcome::NoRegion;
@@ -309,29 +317,48 @@ impl CoordCaptureService {
         else {
             return CoordScanOutcome::CaptureFailed;
         };
-        let Some((text, confidence)) = (self.providers.read_text)(&frame) else {
-            return CoordScanOutcome::EngineUnavailable;
-        };
-        let Some((lon, lat, altitude)) = parse_coordinates(&text) else {
-            return CoordScanOutcome::Unreadable {
-                raw_text: text,
-                confidence,
+
+        let mut parsed: Option<(i64, i64, Option<i64>, String, f64)> = None;
+        if frame.h >= 2 {
+            let (top, bottom) = split_rows(&frame);
+            let Some((top_text, top_conf)) = (self.providers.read_text)(&top) else {
+                return CoordScanOutcome::EngineUnavailable;
             };
-        };
+            let Some((bottom_text, bottom_conf)) = (self.providers.read_text)(&bottom) else {
+                return CoordScanOutcome::EngineUnavailable;
+            };
+            if let Some((lon, lat)) = trailing_run(&top_text).zip(trailing_run(&bottom_text)) {
+                let raw = format!("{top_text} | {bottom_text}");
+                parsed = Some((lon, lat, None, raw, top_conf.min(bottom_conf)));
+            }
+        }
+        if parsed.is_none() {
+            let Some((text, confidence)) = (self.providers.read_text)(&frame) else {
+                return CoordScanOutcome::EngineUnavailable;
+            };
+            match parse_coordinates(&text) {
+                Some((lon, lat, altitude)) => {
+                    parsed = Some((lon, lat, altitude, text, confidence));
+                }
+                None => {
+                    return CoordScanOutcome::Unreadable {
+                        raw_text: text,
+                        confidence,
+                    };
+                }
+            }
+        }
+        let (lon, lat, altitude, raw_text, confidence) = parsed.expect("parsed set above");
         if let Some(bounds) = bounds {
             if !bounds.contains(lon, lat) {
-                return CoordScanOutcome::Implausible {
-                    lon,
-                    lat,
-                    raw_text: text,
-                };
+                return CoordScanOutcome::Implausible { lon, lat, raw_text };
             }
         }
         CoordScanOutcome::Read(CoordRead {
             lon,
             lat,
             altitude,
-            raw_text: text,
+            raw_text,
             confidence,
         })
     }
@@ -483,6 +510,44 @@ impl CoordBounds {
     }
 }
 
+/// Split a frame at mid-height into its two stacked readout lines.
+fn split_rows(frame: &BgrImage) -> (BgrImage, BgrImage) {
+    let top_h = frame.h / 2;
+    let stride = frame.w * 3;
+    (
+        BgrImage {
+            data: frame.data[..top_h * stride].to_vec(),
+            h: top_h,
+            w: frame.w,
+        },
+        BgrImage {
+            data: frame.data[top_h * stride..].to_vec(),
+            h: frame.h - top_h,
+            w: frame.w,
+        },
+    )
+}
+
+/// One readout line's value: the trailing digit run (the value follows
+/// its label, so digits misread inside the label never win).
+pub fn trailing_run(text: &str) -> Option<i64> {
+    let mut last: Option<i64> = None;
+    let mut current: Option<i64> = None;
+    for ch in text.chars() {
+        if let Some(digit) = digit_value(ch) {
+            let digit = i64::from(digit);
+            current = match current {
+                Some(value) if value <= (i64::MAX - digit) / 10 => Some(value * 10 + digit),
+                Some(_) => return None,
+                None => Some(digit),
+            };
+        } else if let Some(done) = current.take() {
+            last = Some(done);
+        }
+    }
+    current.or(last)
+}
+
 /// Parse a coordinate readout: two or three integer runs in order
 /// (longitude, latitude, optional altitude), with everything between
 /// runs treated as separator noise. Fullwidth digits fold by value
@@ -518,15 +583,24 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// A 2x2 capture frame whose rows carry distinct bytes, so a mock
+    /// reader can tell the split top line (h 1, byte 1), the split
+    /// bottom line (h 1, byte 2), and the whole frame (h 2) apart.
     fn frame() -> BgrImage {
         BgrImage {
-            data: vec![0; 12],
+            data: [vec![1u8; 6], vec![2u8; 6]].concat(),
             h: 2,
             w: 2,
         }
     }
 
-    fn providers_reading(text: &'static str) -> CoordCaptureProviders {
+    /// Providers whose reader answers per readout line: `top`/`bottom`
+    /// for the split halves, `whole` for the whole-frame fallback.
+    fn providers_lines(
+        top: &'static str,
+        bottom: &'static str,
+        whole: &'static str,
+    ) -> CoordCaptureProviders {
         CoordCaptureProviders {
             cursor_position: Arc::new(|| Some((10, 20))),
             region: Arc::new(|| {
@@ -538,9 +612,22 @@ mod tests {
                 })
             }),
             capture_region: Arc::new(|_, _, _, _| Some(frame())),
-            read_text: Arc::new(move |_| Some((text.to_string(), 0.93))),
+            read_text: Arc::new(move |img| {
+                let text = match (img.h, img.data[0]) {
+                    (1, 1) => top,
+                    (1, 2) => bottom,
+                    _ => whole,
+                };
+                Some((text.to_string(), 0.93))
+            }),
             persist_region: Arc::new(|_| Ok(())),
         }
+    }
+
+    /// Providers where only the whole-frame single-line read carries
+    /// text (the stacked halves read empty), exercising the fallback.
+    fn providers_reading(text: &'static str) -> CoordCaptureProviders {
+        providers_lines("", "", text)
     }
 
     #[test]
@@ -563,6 +650,45 @@ mod tests {
             parse_coordinates("６１２３４, ７５４５６"),
             Some((61234, 75456, None))
         );
+    }
+
+    #[test]
+    fn a_stacked_readout_reads_per_line() {
+        // The game's actual layout: `Lon: <value>` above `Lat: <value>`,
+        // labels included in the calibrated rectangle.
+        let service = CoordCaptureService::new(providers_lines("Lon: 31915", "Lat: 19999", "junk"));
+        assert!(matches!(
+            service.scan(None),
+            CoordScanOutcome::Read(CoordRead {
+                lon: 31915,
+                lat: 19999,
+                altitude: None,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_label_misread_cannot_inject_a_value() {
+        // OCR reading the label's O as a zero: the trailing run wins.
+        let service = CoordCaptureService::new(providers_lines("L0n: 31915", "Lat: 19999", ""));
+        assert!(matches!(
+            service.scan(None),
+            CoordScanOutcome::Read(CoordRead {
+                lon: 31915,
+                lat: 19999,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn trailing_run_takes_the_last_digit_run() {
+        assert_eq!(trailing_run("Lon: 31915"), Some(31915));
+        assert_eq!(trailing_run("L0n: 31915"), Some(31915));
+        assert_eq!(trailing_run("31915"), Some(31915));
+        assert_eq!(trailing_run("no digits"), None);
+        assert_eq!(trailing_run(""), None);
     }
 
     #[test]
