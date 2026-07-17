@@ -37,7 +37,11 @@ async function settle(browser, el, timeout = 8000) {
 			prev = loc;
 			return stable;
 		},
-		{ timeout, interval: 120, timeoutMsg: 'welcome control never settled (still animating)' },
+		{
+			timeout,
+			interval: 120,
+			timeoutMsg: 'welcome control never settled (still animating)',
+		},
 	);
 }
 
@@ -166,7 +170,10 @@ export async function ensureDashboard(browser, devUrl) {
 			// getWindowSize unsupported on some drivers; the inner viewport read
 			// below still gates the layout.
 		}
-		const inner = await browser.execute(() => ({ w: window.innerWidth, h: window.innerHeight }));
+		const inner = await browser.execute(() => ({
+			w: window.innerWidth,
+			h: window.innerHeight,
+		}));
 		console.log(
 			`[onboarding] window attempt ${attempt}: outer=${outer.width}x${outer.height} inner=${inner.w}x${inner.h}`,
 		);
@@ -186,6 +193,28 @@ export async function ensureDashboard(browser, devUrl) {
 	// app's webviews, so this navigation to the main route is explicit.
 	await browser.url(devUrl);
 
+	// Gate on the backend substrate being composed before any page read fires.
+	// Commands answer the typed unavailable error during the startup window, and
+	// a page whose one-shot load lands in that window parks a "backend substrate
+	// not ready" notice that nothing re-drives, so a capture taken afterwards
+	// carries the stale banner. Polling a cheap typed read until the facade
+	// answers removes that race for every spec that builds on this helper.
+	await browser.waitUntil(
+		() =>
+			browser.executeAsync((done) => {
+				const internals = window.__TAURI_INTERNALS__;
+				if (!internals || typeof internals.invoke !== 'function') {
+					done(false);
+					return;
+				}
+				internals.invoke('settings_get', {}).then(
+					() => done(true),
+					() => done(false),
+				);
+			}),
+		{ timeout: 45000, timeoutMsg: 'backend substrate never became ready' },
+	);
+
 	// Let the app settle: the layout's onMount runs an async init and only THEN
 	// redirects to /welcome (fresh profile) or stays on the dashboard. Waiting
 	// for a stable state avoids racing that redirect.
@@ -194,7 +223,10 @@ export async function ensureDashboard(browser, devUrl) {
 			const s = await probe(browser);
 			return s.path.startsWith('/welcome') ? s.welcomeStep > 0 : s.onDashboard;
 		},
-		{ timeout: 45000, timeoutMsg: 'app never settled into welcome or dashboard' },
+		{
+			timeout: 45000,
+			timeoutMsg: 'app never settled into welcome or dashboard',
+		},
 	);
 
 	if (await browser.execute(() => location.pathname.startsWith('/welcome'))) {
@@ -287,7 +319,10 @@ export async function ensureDashboard(browser, devUrl) {
 						!n.path.startsWith('/welcome') || n.welcomeStep < 0 || n.welcomeStep > s.welcomeStep
 					);
 				},
-				{ timeout: 6000, timeoutMsg: `onboarding step ${s.welcomeStep} never advanced` },
+				{
+					timeout: 6000,
+					timeoutMsg: `onboarding step ${s.welcomeStep} never advanced`,
+				},
 			);
 		}
 	}
@@ -297,7 +332,10 @@ export async function ensureDashboard(browser, devUrl) {
 			const s = await probe(browser);
 			return s.path === '/' && s.onDashboard;
 		},
-		{ timeout: 25000, timeoutMsg: 'never reached the dashboard after onboarding' },
+		{
+			timeout: 25000,
+			timeoutMsg: 'never reached the dashboard after onboarding',
+		},
 	);
 	await browser.$(DASH).waitForExist({ timeout: 10000 });
 }

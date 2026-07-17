@@ -300,6 +300,11 @@ jobs:
         run: npx tauri build --debug --no-bundle --features e2e-stub --config src-tauri/entropia-orme/tauri.e2e.conf.json
         env:
           E2E_FREEZE_TWEENS: '1'
+          # Scope the plugin-store preferences to an e2e-only file so the test
+          # shell never shares preference state with a real installation (a
+          # no-op on the clean runner image; load-bearing for local runs on a
+          # machine that also carries a real profile).
+          E2E_ISOLATED_PREFS: '1'
       - name: Run the native-shell e2e suite
         run: npm run test:e2e
       - name: Run the visual regression suite
