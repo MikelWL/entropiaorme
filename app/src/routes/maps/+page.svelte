@@ -6,15 +6,18 @@
 	 * feature model; geometry lives in the feature's pure modules.
 	 */
 	import { onMount } from 'svelte';
+	import Button from '$lib/components/Button.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import Select from '$lib/components/Select.svelte';
+	import CalibrationModal from '$lib/features/maps/CalibrationModal.svelte';
 	import MapViewer from '$lib/features/maps/MapViewer.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import type { PinFormValues } from '$lib/features/maps/PinEditModal.svelte';
 	import { createMapsModel } from '$lib/features/maps/mapsModel.svelte';
 	import { formatWaypoint } from '$lib/features/maps/waypoint';
-	import type { GamePoint } from '$lib/features/maps/coords';
+	import { formatGamePoint, type GamePoint } from '$lib/features/maps/coords';
 	import type { MapPin } from '$lib/api';
+	import { scanMapCoordinates } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
 
 	const model = createMapsModel();
@@ -22,11 +25,15 @@
 		void model.loadPlanets();
 	});
 
-	// The pin form: create mode carries the clicked drop point, edit mode
-	// the pin being edited (its position is not editable in the form).
+	// The pin form: create mode carries the drop point (from a map click
+	// or a coordinate scan, which may add an altitude), edit mode the pin
+	// being edited (its position is not editable in the form).
 	let formOpen = $state(false);
 	let dropPoint = $state<GamePoint>({ lon: 0, lat: 0 });
+	let dropAltitude = $state<number | null>(null);
 	let editingPin = $state<MapPin | null>(null);
+	let calibrationOpen = $state(false);
+	let scanning = $state(false);
 
 	// Transient action feedback (copy confirmations, CRUD failures).
 	let feedback = $state<string | null>(null);
@@ -37,10 +44,55 @@
 		feedbackTimer = setTimeout(() => (feedback = null), 4000);
 	}
 
-	function openDropForm(point: GamePoint) {
+	function openDropForm(point: GamePoint, altitude: number | null = null) {
 		dropPoint = point;
+		dropAltitude = altitude;
 		editingPin = null;
 		formOpen = true;
+	}
+
+	// One-click pin drop: scan the calibrated on-screen readout, gate it
+	// against the selected planet, and pre-fill the pin form. Every
+	// failure leg gets its own actionable message; a wrong read never
+	// becomes a pin.
+	async function scanMyLocation() {
+		if (scanning) return;
+		scanning = true;
+		try {
+			const result = await scanMapCoordinates(model.selected?.name ?? null);
+			switch (result.status) {
+				case 'read':
+					openDropForm(
+						{ lon: result.lon ?? 0, lat: result.lat ?? 0 },
+						result.altitude ?? null,
+					);
+					break;
+				case 'noRegion':
+					flash('The coordinate capture region is not calibrated yet.');
+					calibrationOpen = true;
+					break;
+				case 'captureFailed':
+					flash('The screen could not be captured; is capture available on this system?');
+					break;
+				case 'engineUnavailable':
+					flash('The text recogniser is unavailable, so the readout cannot be scanned.');
+					break;
+				case 'unreadable':
+					flash(
+						`The capture region did not read as coordinates (saw: "${result.rawText ?? ''}"); recalibrate if the minimap moved.`,
+					);
+					break;
+				case 'implausible':
+					flash(
+						`Read ${formatGamePoint({ lon: result.lon ?? 0, lat: result.lat ?? 0 })}, which is outside ${model.selected?.name}'s map; is the right planet selected?`,
+					);
+					break;
+			}
+		} catch (e) {
+			flash(describeError(e, 'The coordinate scan failed'));
+		} finally {
+			scanning = false;
+		}
 	}
 
 	function openEditForm(pin: MapPin) {
@@ -65,7 +117,7 @@
 					planet: model.selected.name,
 					lon: dropPoint.lon,
 					lat: dropPoint.lat,
-					altitude: null,
+					altitude: dropAltitude,
 					name: values.name,
 					icon: values.icon,
 					kind: values.kind,
@@ -123,20 +175,27 @@
 			</p>
 		</header>
 		{#if model.planets.length > 0}
-			<label class="flex items-center gap-2 shrink-0">
-				<span class="text-xs text-text-secondary">Planet</span>
-				<Select
-					class="w-52"
-					value={model.selected?.name ?? ''}
-					onchange={(event) => model.selectPlanet((event.currentTarget as HTMLSelectElement).value)}
-				>
-					{#each model.planets as planet (planet.name)}
-						<option value={planet.name}>
-							{planet.name}{planet.calibration ? '' : ' (view-only)'}
-						</option>
-					{/each}
-				</Select>
-			</label>
+			<div class="flex items-center gap-2 shrink-0">
+				<Button size="sm" loading={scanning} onclick={scanMyLocation}>Pin my location</Button>
+				<Button size="sm" variant="secondary" onclick={() => (calibrationOpen = true)}>
+					Calibrate capture
+				</Button>
+				<label class="flex items-center gap-2">
+					<span class="text-xs text-text-secondary">Planet</span>
+					<Select
+						class="w-52"
+						value={model.selected?.name ?? ''}
+						onchange={(event) =>
+							model.selectPlanet((event.currentTarget as HTMLSelectElement).value)}
+					>
+						{#each model.planets as planet (planet.name)}
+							<option value={planet.name}>
+								{planet.name}{planet.calibration ? '' : ' (view-only)'}
+							</option>
+						{/each}
+					</Select>
+				</label>
+			</div>
 		{/if}
 	</div>
 
@@ -174,3 +233,4 @@
 </div>
 
 <PinEditModal bind:open={formOpen} point={dropPoint} editing={editingPin} onsubmit={submitPinForm} />
+<CalibrationModal bind:open={calibrationOpen} />
