@@ -505,6 +505,10 @@ pub struct Composed {
     /// OS hook. Held for the spacebar-capture toggle and the exit
     /// seam (its teardown).
     pub spacebar_listener: Arc<SpacebarCaptureListener>,
+    /// The coordinate-calibration Enter listener, on the same shared OS
+    /// hook; enabled only while a calibration flow is live. Held for the
+    /// exit seam (its teardown).
+    pub coord_confirm: Arc<eo_services::coord_capture::CoordConfirmListener>,
 }
 
 /// The outcome of a composition attempt at the substrate's startup: the
@@ -533,15 +537,17 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
     init_ort_runtime(resource_dir.as_ref());
     // The single shared OS keyboard hook, built at this production site and
     // injected down the compose chain. The allowlist filters at the hook
-    // boundary to the hotbar digit keys and the space key, so out-of-scope
-    // keystrokes never enter the event stream. Tests inject a hook-free
-    // `MockKeystrokeSource` through the same parameter instead, so a generic
-    // test run never installs the OS hook (whose attach/detach lifecycle can
+    // boundary to the hotbar digit keys, the space key, and Enter (the
+    // coordinate-calibration confirm key; its listener only acts while a
+    // calibration flow is live), so out-of-scope keystrokes never enter
+    // the event stream. Tests inject a hook-free `MockKeystrokeSource`
+    // through the same parameter instead, so a generic test run never
+    // installs the OS hook (whose attach/detach lifecycle can
     // intermittently wedge a headless run).
     let allowlist: std::collections::BTreeSet<String> = HOTBAR_SLOT_KEYS
         .iter()
         .map(|key| key.to_string())
-        .chain(std::iter::once("space".to_string()))
+        .chain(["space".to_string(), "return".to_string()])
         .collect();
     let keystroke_source: Arc<dyn KeystrokeSource> =
         Arc::new(HookKeystrokeSource::new(Some(allowlist)));
@@ -720,6 +726,53 @@ async fn compose_with(
     )
     .await;
 
+    // Coordinate capture: the maps feature's two-point calibration flow
+    // plus the one-shot coordinate scan, composed over the same seams the
+    // repair scan rides (screen capture, the shared recogniser) plus the
+    // cursor-position lookup and the config-owned capture rectangle. The
+    // region provider and the frame reader are each one narrow closure on
+    // purpose: an automatic UI locator or a specialised digit recogniser
+    // replaces its closure without touching the scan path.
+    let coord_capture = {
+        use eo_services::coord_capture::{CoordCaptureProviders, CoordCaptureService};
+        let region_reader = {
+            let config = producers.config_service_handle();
+            let reader = config.lock().expect("config service").reader();
+            move || reader.current().map_coord_region
+        };
+        let persist_config = producers.config_service_handle();
+        let coord_engine = ocr_engine.clone();
+        CoordCaptureService::new(CoordCaptureProviders {
+            cursor_position: Arc::new(eu_window::cursor_position),
+            region: Arc::new(region_reader),
+            capture_region: Arc::new(capture_region_bgr),
+            read_text: Arc::new(move |frame: &BgrImage| {
+                coord_engine
+                    .as_ref()?
+                    .recognize_bgr(&frame.data, frame.h, frame.w)
+                    .ok()
+            }),
+            persist_region: Arc::new(move |region| {
+                let mut updates = serde_json::Map::new();
+                updates.insert(
+                    "map_coord_region".to_string(),
+                    serde_json::to_value(region).map_err(|err| err.to_string())?,
+                );
+                persist_config
+                    .lock()
+                    .map_err(|_| "config service lock poisoned".to_string())?
+                    .update(&updates)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string())
+            }),
+        })
+    };
+    let coord_confirm = eo_services::coord_capture::CoordConfirmListener::new(
+        coord_capture.clone(),
+        Some(producers.keystroke_source_handle()),
+    );
+    coord_capture.attach_confirm_listener(&coord_confirm);
+
     // The planet-map bundle is optional: a missing or broken bundle stands
     // the maps surface down (an empty catalogue) with a logged reason,
     // never declines composition.
@@ -758,6 +811,7 @@ async fn compose_with(
         producers.quests_handle(),
         demo_db_path,
         planet_maps,
+        Some(coord_capture.clone()),
     ));
     Composition::Ready(Composed {
         db,
@@ -766,6 +820,7 @@ async fn compose_with(
         ocr_engine,
         skill_scan,
         spacebar_listener,
+        coord_confirm,
     })
 }
 

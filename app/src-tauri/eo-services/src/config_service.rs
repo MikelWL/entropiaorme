@@ -70,6 +70,10 @@ pub struct AppConfig {
     pub loot_filter_blacklist: Vec<String>,
     pub overlay_x: Option<i64>,
     pub overlay_y: Option<i64>,
+    /// The calibrated screen rectangle of the game's coordinate readout
+    /// (the maps feature's capture region); None until the user runs
+    /// the two-point calibration flow.
+    pub map_coord_region: Option<crate::coord_capture::CoordRegion>,
     /// Unknown keys read from disk: the visible carry-forward contract.
     /// Excluded from the known-field serialisation; persistence comes
     /// from the save path re-reading the file and merging by position,
@@ -101,6 +105,7 @@ impl Default for AppConfig {
             loot_filter_blacklist: vec!["Universal Ammo".to_string()],
             overlay_x: None,
             overlay_y: None,
+            map_coord_region: None,
             extra: Map::new(),
         }
     }
@@ -375,11 +380,16 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
             .unwrap_or(defaults.loot_filter_blacklist),
         overlay_x: data.get("overlay_x").and_then(Value::as_i64),
         overlay_y: data.get("overlay_y").and_then(Value::as_i64),
+        // A malformed stored region reads as uncalibrated rather than
+        // failing the whole config load.
+        map_coord_region: data
+            .get("map_coord_region")
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
         extra,
     }
 }
 
-const KNOWN_KEYS: [&str; 16] = [
+const KNOWN_KEYS: [&str; 17] = [
     "chatlog_path",
     "player_name",
     "hotbar_hooks_enabled",
@@ -396,6 +406,7 @@ const KNOWN_KEYS: [&str; 16] = [
     "loot_filter_blacklist",
     "overlay_x",
     "overlay_y",
+    "map_coord_region",
 ];
 
 fn json_truthy(value: &Value) -> bool {
@@ -551,6 +562,9 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
             }
             "overlay_x" => config.overlay_x = value.as_i64(),
             "overlay_y" => config.overlay_y = value.as_i64(),
+            "map_coord_region" => {
+                config.map_coord_region = serde_json::from_value(value.clone()).ok();
+            }
             _ => {}
         }
     }

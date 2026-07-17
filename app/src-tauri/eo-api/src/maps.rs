@@ -265,6 +265,196 @@ impl Api {
     }
 }
 
+// ── Coordinate capture ──────────────────────────────────────────────
+
+/// The calibration flow's phase, as the closed wire vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CoordCalibrationPhase {
+    Idle,
+    AwaitTopLeft,
+    AwaitBottomRight,
+}
+
+impl From<eo_services::coord_capture::CalibrationPhase> for CoordCalibrationPhase {
+    fn from(phase: eo_services::coord_capture::CalibrationPhase) -> Self {
+        use eo_services::coord_capture::CalibrationPhase as P;
+        match phase {
+            P::Idle => Self::Idle,
+            P::AwaitTopLeft => Self::AwaitTopLeft,
+            P::AwaitBottomRight { .. } => Self::AwaitBottomRight,
+        }
+    }
+}
+
+/// The persisted capture rectangle, in screen coordinates.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CoordRegionDto {
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+}
+
+/// The closed vocabulary of a coordinate scan's outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CoordScanStatus {
+    Read,
+    NoRegion,
+    CaptureFailed,
+    EngineUnavailable,
+    Unreadable,
+    Implausible,
+}
+
+/// One coordinate scan's answer: `status` names the outcome precisely
+/// (a wrong read never masquerades as a position), and the extras ride
+/// where the outcome carries them (the `CaptureResult` convention):
+/// coordinates on `read` and `implausible`, raw text and confidence
+/// wherever the recogniser produced text.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CoordScanResult {
+    pub status: CoordScanStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lon: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lat: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub altitude: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+}
+
+impl From<eo_services::coord_capture::CoordScanOutcome> for CoordScanResult {
+    fn from(outcome: eo_services::coord_capture::CoordScanOutcome) -> Self {
+        use eo_services::coord_capture::CoordScanOutcome as O;
+        let empty = |status: CoordScanStatus| CoordScanResult {
+            status,
+            lon: None,
+            lat: None,
+            altitude: None,
+            raw_text: None,
+            confidence: None,
+        };
+        match outcome {
+            O::Read(read) => CoordScanResult {
+                lon: Some(read.lon),
+                lat: Some(read.lat),
+                altitude: read.altitude,
+                raw_text: Some(read.raw_text),
+                confidence: Some(read.confidence),
+                ..empty(CoordScanStatus::Read)
+            },
+            O::NoRegion => empty(CoordScanStatus::NoRegion),
+            O::CaptureFailed => empty(CoordScanStatus::CaptureFailed),
+            O::EngineUnavailable => empty(CoordScanStatus::EngineUnavailable),
+            O::Unreadable {
+                raw_text,
+                confidence,
+            } => CoordScanResult {
+                raw_text: Some(raw_text),
+                confidence: Some(confidence),
+                ..empty(CoordScanStatus::Unreadable)
+            },
+            O::Implausible { lon, lat, raw_text } => CoordScanResult {
+                lon: Some(lon),
+                lat: Some(lat),
+                raw_text: Some(raw_text),
+                ..empty(CoordScanStatus::Implausible)
+            },
+        }
+    }
+}
+
+/// The calibration surface's assembled state: the flow phase, the
+/// persisted region (null until a calibration completed), and the
+/// validation read echoed after the last completion.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CoordCalibrationStatus {
+    pub phase: CoordCalibrationPhase,
+    pub region: Nullable<CoordRegionDto>,
+    pub last_validation: Nullable<CoordScanResult>,
+}
+
+impl Api {
+    fn coord_capture(
+        &self,
+    ) -> Result<&std::sync::Arc<eo_services::coord_capture::CoordCaptureService>, ApiError> {
+        self.coord_capture
+            .as_ref()
+            .ok_or_else(|| ApiError::invalid_state("coordinate capture unavailable"))
+    }
+
+    fn coord_status(
+        &self,
+        service: &eo_services::coord_capture::CoordCaptureService,
+    ) -> CoordCalibrationStatus {
+        CoordCalibrationStatus {
+            phase: service.calibration_phase().into(),
+            region: service
+                .region()
+                .map(|region| CoordRegionDto {
+                    x: region.x,
+                    y: region.y,
+                    w: region.w,
+                    h: region.h,
+                })
+                .into(),
+            last_validation: service.last_validation().map(CoordScanResult::from).into(),
+        }
+    }
+
+    /// Begin the two-point capture calibration; Enter arms with it.
+    pub fn maps_calibration_start(&self) -> Result<CoordCalibrationStatus, ApiError> {
+        let service = self.coord_capture()?;
+        service.calibration_start();
+        Ok(self.coord_status(service))
+    }
+
+    /// Abandon an in-flight calibration flow.
+    pub fn maps_calibration_cancel(&self) -> Result<CoordCalibrationStatus, ApiError> {
+        let service = self.coord_capture()?;
+        service.calibration_cancel();
+        Ok(self.coord_status(service))
+    }
+
+    /// The calibration surface's current state (the flow UI polls it).
+    pub fn maps_calibration_status(&self) -> Result<CoordCalibrationStatus, ApiError> {
+        let service = self.coord_capture()?;
+        Ok(self.coord_status(service))
+    }
+
+    /// One coordinate scan, gated against the named planet's calibrated
+    /// map bounds when it has them.
+    pub fn maps_scan_coordinates(
+        &self,
+        planet: Option<String>,
+    ) -> Result<CoordScanResult, ApiError> {
+        let service = self.coord_capture()?;
+        let bounds = planet
+            .as_deref()
+            .and_then(|name| {
+                self.planet_maps
+                    .as_ref()
+                    .and_then(|store| store.record(name))
+                    .and_then(|record| record.calibration.as_ref())
+            })
+            .map(|cal| eo_services::coord_capture::CoordBounds {
+                lon_min: cal.bounds.lon_min,
+                lon_max: cal.bounds.lon_max,
+                lat_min: cal.bounds.lat_min,
+                lat_max: cal.bounds.lat_max,
+            });
+        Ok(service.scan(bounds).into())
+    }
+}
+
 fn pin_to_dto(pin: eo_services::map_pins::MapPin) -> MapPin {
     MapPin {
         id: pin.id,

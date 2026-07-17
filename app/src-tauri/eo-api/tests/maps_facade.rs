@@ -10,9 +10,11 @@ use std::sync::Arc;
 use eo_api::maps::{MapPinInput, MapPinPatch};
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
+use eo_services::coord_capture::{CoordCaptureProviders, CoordCaptureService, CoordRegion};
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::planet_maps::PlanetMapStore;
+use eo_services::skill_panel::BgrImage;
 
 mod common;
 
@@ -25,9 +27,33 @@ fn bundled_maps_dir() -> PathBuf {
         .join("maps")
 }
 
+/// A coordinate-capture service whose seams read a fixed OCR text.
+fn coord_service(text: &'static str) -> Arc<CoordCaptureService> {
+    CoordCaptureService::new(CoordCaptureProviders {
+        cursor_position: Arc::new(|| Some((0, 0))),
+        region: Arc::new(|| {
+            Some(CoordRegion {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 24,
+            })
+        }),
+        capture_region: Arc::new(|_, _, _, _| {
+            Some(BgrImage {
+                data: vec![0; 12],
+                h: 2,
+                w: 2,
+            })
+        }),
+        read_text: Arc::new(move |_| Some((text.to_string(), 0.9))),
+        persist_region: Arc::new(|_| Ok(())),
+    })
+}
+
 /// The composed facade over a fresh migrated database and an empty
 /// catalogue snapshot, with or without the planet-map bundle.
-async fn maps_api(dir: &Path, with_bundle: bool) -> Api {
+async fn maps_api(dir: &Path, with_bundle: bool, coord: Option<Arc<CoordCaptureService>>) -> Api {
     let snapshot = dir.join("snapshot");
     std::fs::create_dir_all(&snapshot).unwrap();
     let data_dir = dir.join("data");
@@ -56,6 +82,7 @@ async fn maps_api(dir: &Path, with_bundle: bool) -> Api {
         handles.quests.clone(),
         None,
         planet_maps,
+        coord,
     )
 }
 
@@ -77,7 +104,7 @@ fn calypso_pin() -> MapPinInput {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_catalogue_serialises_with_its_bundle_shape() {
     let dir = tempfile::tempdir().unwrap();
-    let api = maps_api(dir.path(), true).await;
+    let api = maps_api(dir.path(), true, None).await;
 
     let maps = api.planet_maps().unwrap();
     assert_eq!(maps.len(), 20);
@@ -97,7 +124,7 @@ async fn the_catalogue_serialises_with_its_bundle_shape() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_facade_without_the_bundle_serves_an_empty_catalogue() {
     let dir = tempfile::tempdir().unwrap();
-    let api = maps_api(dir.path(), false).await;
+    let api = maps_api(dir.path(), false, None).await;
     assert!(api.planet_maps().unwrap().is_empty());
     assert!(api.planet_map_image("Calypso").is_err());
 }
@@ -105,7 +132,7 @@ async fn a_facade_without_the_bundle_serves_an_empty_catalogue() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pin_roundtrips_with_its_wire_shape() {
     let dir = tempfile::tempdir().unwrap();
-    let api = maps_api(dir.path(), true).await;
+    let api = maps_api(dir.path(), true, None).await;
 
     let created = api.map_pin_create(calypso_pin()).await.unwrap();
     let listed = api.map_pins_list("Calypso".to_string()).await.unwrap();
@@ -131,7 +158,7 @@ async fn a_pin_roundtrips_with_its_wire_shape() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn implausible_coordinates_are_refused_on_create_and_move() {
     let dir = tempfile::tempdir().unwrap();
-    let api = maps_api(dir.path(), true).await;
+    let api = maps_api(dir.path(), true, None).await;
 
     let mut outside = calypso_pin();
     outside.lat = 999_999.0;
@@ -152,7 +179,7 @@ async fn implausible_coordinates_are_refused_on_create_and_move() {
 
     // Without the bundle there is nothing authoritative to gate against:
     // the same out-of-bounds pin is accepted rather than invented-refused.
-    let bare = maps_api(&dir.path().join("bare"), false).await;
+    let bare = maps_api(&dir.path().join("bare"), false, None).await;
     let mut outside = calypso_pin();
     outside.lat = 999_999.0;
     assert!(bare.map_pin_create(outside).await.is_ok());
@@ -161,7 +188,7 @@ async fn implausible_coordinates_are_refused_on_create_and_move() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_patch_distinguishes_absent_from_explicit_null() {
     let dir = tempfile::tempdir().unwrap();
-    let api = maps_api(dir.path(), true).await;
+    let api = maps_api(dir.path(), true, None).await;
     let created = api.map_pin_create(calypso_pin()).await.unwrap();
 
     // The wire shape: notes explicitly nulled, name changed, the rest
@@ -187,7 +214,7 @@ async fn a_patch_distinguishes_absent_from_explicit_null() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn validation_and_not_found_legs_answer_typed_errors() {
     let dir = tempfile::tempdir().unwrap();
-    let api = maps_api(dir.path(), true).await;
+    let api = maps_api(dir.path(), true, None).await;
 
     let mut nameless = calypso_pin();
     nameless.name = "   ".to_string();
@@ -219,4 +246,67 @@ async fn validation_and_not_found_legs_answer_typed_errors() {
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_coordinate_scan_gates_against_the_selected_planet() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = maps_api(dir.path(), true, Some(coord_service("61234, 75456, 103"))).await;
+
+    // A clean read inside Calypso's bounds, in its wire shape.
+    let wire = serde_json::to_value(
+        api.maps_scan_coordinates(Some("Calypso".to_string()))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(wire["status"], "read");
+    assert_eq!(wire["lon"], 61234);
+    assert_eq!(wire["lat"], 75456);
+    assert_eq!(wire["altitude"], 103);
+    assert_eq!(wire["rawText"], "61234, 75456, 103");
+
+    // The same read is implausible against a small instance's window.
+    let wire = serde_json::to_value(
+        api.maps_scan_coordinates(Some("Monria".to_string()))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(wire["status"], "implausible");
+
+    // No planet named: the raw read answers ungated.
+    let wire = serde_json::to_value(api.maps_scan_coordinates(None).unwrap()).unwrap();
+    assert_eq!(wire["status"], "read");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unreadable_capture_answers_its_typed_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = maps_api(dir.path(), true, Some(coord_service("loading..."))).await;
+    let wire = serde_json::to_value(api.maps_scan_coordinates(None).unwrap()).unwrap();
+    assert_eq!(wire["status"], "unreadable");
+    assert_eq!(wire["rawText"], "loading...");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_calibration_verbs_walk_the_flow_and_report_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = maps_api(dir.path(), true, Some(coord_service("61234, 75456"))).await;
+
+    let status = serde_json::to_value(api.maps_calibration_status().unwrap()).unwrap();
+    assert_eq!(status["phase"], "idle");
+    assert!(status["region"].is_object());
+
+    let started = serde_json::to_value(api.maps_calibration_start().unwrap()).unwrap();
+    assert_eq!(started["phase"], "awaitTopLeft");
+
+    let cancelled = serde_json::to_value(api.maps_calibration_cancel().unwrap()).unwrap();
+    assert_eq!(cancelled["phase"], "idle");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_facade_without_capture_seams_reports_unavailable() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = maps_api(dir.path(), false, None).await;
+    assert!(api.maps_calibration_status().is_err());
+    assert!(api.maps_scan_coordinates(None).is_err());
 }

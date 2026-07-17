@@ -32,6 +32,15 @@ pub fn game_window_present() -> bool {
     find_game_window().is_some()
 }
 
+/// The pointer's current position in screen coordinates, or None where
+/// the platform cannot answer (headless, or a Wayland session without
+/// the X11 bridge). Consumed by the coordinate-capture calibration flow
+/// (the cursor position at the moment of a keypress defines a capture
+/// corner).
+pub fn cursor_position() -> Option<(i64, i64)> {
+    platform::cursor_position()
+}
+
 fn live_region(anchor: &crate::scan_presets::PanelAnchor) -> Option<([i64; 2], [i64; 2])> {
     let handle = find_game_window()?;
     let geometry = get_window_geometry(handle)?;
@@ -64,7 +73,8 @@ mod platform {
     use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClientRect, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
+        EnumWindows, GetClientRect, GetCursorPos, GetWindowTextLengthW, GetWindowTextW,
+        IsWindowVisible,
     };
 
     unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -113,6 +123,14 @@ mod platform {
             }
         }
         Some((i64::from(point.x), i64::from(point.y), width, height))
+    }
+
+    pub fn cursor_position() -> Option<(i64, i64)> {
+        let mut point = POINT { x: 0, y: 0 };
+        unsafe {
+            GetCursorPos(&mut point).ok()?;
+        }
+        Some((i64::from(point.x), i64::from(point.y)))
     }
 }
 
@@ -227,6 +245,13 @@ mod platform {
             height,
         ))
     }
+
+    pub fn cursor_position() -> Option<(i64, i64)> {
+        let (conn, screen_num) = x11rb::connect(None).ok()?;
+        let root = conn.setup().roots[screen_num].root;
+        let pointer = conn.query_pointer(root).ok()?.reply().ok()?;
+        Some((i64::from(pointer.root_x), i64::from(pointer.root_y)))
+    }
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
@@ -238,6 +263,10 @@ mod platform {
     }
 
     pub fn get_window_geometry(_handle: WindowHandle) -> Option<(i64, i64, i64, i64)> {
+        None
+    }
+
+    pub fn cursor_position() -> Option<(i64, i64)> {
         None
     }
 }

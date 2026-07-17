@@ -62,6 +62,7 @@ async fn api_over(dir: &Path) -> (Api, Db) {
             handles.quests.clone(),
             None,
             None,
+            None,
         ),
         db,
     )

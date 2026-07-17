@@ -110,6 +110,11 @@ pub struct Api {
     /// on a facade built without it (the maps family then serves an
     /// empty catalogue and the raster fetch reports unavailable).
     planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
+    /// The coordinate-capture service (the maps calibration flow and
+    /// the one-shot coordinate scan), or `None` on a facade built
+    /// without the native capture seams (those commands then report
+    /// unavailable).
+    coord_capture: Option<Arc<eo_services::coord_capture::CoordCaptureService>>,
     /// The bundled guide-mode demo database path (a shipped resource), or
     /// `None` on a facade built without it (the demo commands then report the
     /// unavailable error). The demo services are a parallel database + tracker
@@ -139,6 +144,7 @@ impl Api {
         quests: Arc<QuestService>,
         demo_db_path: Option<PathBuf>,
         planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
+        coord_capture: Option<Arc<eo_services::coord_capture::CoordCaptureService>>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
@@ -163,6 +169,7 @@ impl Api {
             market,
             map_pins,
             planet_maps,
+            coord_capture,
             demo_db_path,
             demo: tokio::sync::OnceCell::new(),
         }
