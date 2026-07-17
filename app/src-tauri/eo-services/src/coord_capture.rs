@@ -133,6 +133,12 @@ pub enum CoordScanOutcome {
 /// many pixels (a degenerate rectangle reads nothing).
 const MIN_REGION_PX: i64 = 4;
 
+/// The largest rectangle a scan will capture per axis. The readout is a
+/// small strip; a stored region beyond any plausible screen (a
+/// hand-edited config) reads as uncalibrated rather than driving an
+/// enormous grab.
+const MAX_REGION_PX: i64 = 4096;
+
 /// The coordinate-capture service: the calibration state machine plus
 /// the one-shot scan, over the injected seams.
 pub struct CoordCaptureService {
@@ -296,7 +302,7 @@ impl CoordCaptureService {
         let Some(region) = (self.providers.region)() else {
             return CoordScanOutcome::NoRegion;
         };
-        if region.w <= 0 || region.h <= 0 {
+        if region.w <= 0 || region.h <= 0 || region.w > MAX_REGION_PX || region.h > MAX_REGION_PX {
             return CoordScanOutcome::NoRegion;
         }
         let Some(frame) = (self.providers.capture_region)(region.x, region.y, region.w, region.h)

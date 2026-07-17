@@ -312,8 +312,10 @@ pub enum CoordScanStatus {
 /// One coordinate scan's answer: `status` names the outcome precisely
 /// (a wrong read never masquerades as a position), and the extras ride
 /// where the outcome carries them (the `CaptureResult` convention):
-/// coordinates on `read` and `implausible`, raw text and confidence
-/// wherever the recogniser produced text.
+/// coordinates on `read` and `implausible`, the raw capture text only
+/// on `unreadable` (where the UI shows it); a successful read's text is
+/// its digits, so the parsed coordinates already carry everything and
+/// the boundary hands the webview no more screen text than it needs.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CoordScanResult {
@@ -346,7 +348,6 @@ impl From<eo_services::coord_capture::CoordScanOutcome> for CoordScanResult {
                 lon: Some(read.lon),
                 lat: Some(read.lat),
                 altitude: read.altitude,
-                raw_text: Some(read.raw_text),
                 confidence: Some(read.confidence),
                 ..empty(CoordScanStatus::Read)
             },
@@ -361,10 +362,9 @@ impl From<eo_services::coord_capture::CoordScanOutcome> for CoordScanResult {
                 confidence: Some(confidence),
                 ..empty(CoordScanStatus::Unreadable)
             },
-            O::Implausible { lon, lat, raw_text } => CoordScanResult {
+            O::Implausible { lon, lat, .. } => CoordScanResult {
                 lon: Some(lon),
                 lat: Some(lat),
-                raw_text: Some(raw_text),
                 ..empty(CoordScanStatus::Implausible)
             },
         }

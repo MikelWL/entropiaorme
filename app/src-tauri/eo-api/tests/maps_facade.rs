@@ -263,7 +263,9 @@ async fn the_coordinate_scan_gates_against_the_selected_planet() {
     assert_eq!(wire["lon"], 61234);
     assert_eq!(wire["lat"], 75456);
     assert_eq!(wire["altitude"], 103);
-    assert_eq!(wire["rawText"], "61234, 75456, 103");
+    // The successful read's coordinates carry everything; the raw
+    // capture text stays server-side (it only rides the unreadable leg).
+    assert!(wire.get("rawText").is_none());
 
     // The same read is implausible against a small instance's window.
     let wire = serde_json::to_value(

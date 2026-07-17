@@ -356,8 +356,10 @@ export interface CoordRegionDto {
  * One coordinate scan's answer: `status` names the outcome precisely
  * (a wrong read never masquerades as a position), and the extras ride
  * where the outcome carries them (the `CaptureResult` convention):
- * coordinates on `read` and `implausible`, raw text and confidence
- * wherever the recogniser produced text.
+ * coordinates on `read` and `implausible`, the raw capture text only
+ * on `unreadable` (where the UI shows it); a successful read's text is
+ * its digits, so the parsed coordinates already carry everything and
+ * the boundary hands the webview no more screen text than it needs.
  */
 export interface CoordScanResult {
 	status: CoordScanStatus;
