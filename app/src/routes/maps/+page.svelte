@@ -49,7 +49,7 @@
 		formOpen = true;
 	}
 
-	async function submitPinForm(values: PinFormValues) {
+	async function submitPinForm(values: PinFormValues): Promise<boolean> {
 		try {
 			if (editingPin) {
 				await model.editPin(editingPin.id, {
@@ -75,8 +75,10 @@
 				});
 				flash(`Pin "${values.name}" dropped.`);
 			}
+			return true;
 		} catch (e) {
 			flash(describeError(e, 'The pin could not be saved'));
+			return false;
 		}
 	}
 

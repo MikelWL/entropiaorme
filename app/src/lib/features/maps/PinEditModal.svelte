@@ -32,7 +32,9 @@
 		point: GamePoint;
 		/** The pin being edited, or null when creating. */
 		editing?: MapPin | null;
-		onsubmit: (values: PinFormValues) => void;
+		/** Resolves true when the pin persisted; false keeps the modal
+		 * open so a failed save cannot discard the entered form. */
+		onsubmit: (values: PinFormValues) => Promise<boolean>;
 	} = $props();
 
 	const RADIUS_PRESETS = [
@@ -59,18 +61,26 @@
 	});
 
 	const valid = $derived(name.trim().length > 0);
+	let saving = $state(false);
 
-	function submit(event: SubmitEvent) {
+	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		if (!valid) return;
-		onsubmit({
-			name: name.trim(),
-			icon,
-			kind: kind.trim() || 'marker',
-			radiusM: radius === '' ? null : Number(radius),
-			notes: notes.trim(),
-		});
-		open = false;
+		if (!valid || saving) return;
+		saving = true;
+		try {
+			const persisted = await onsubmit({
+				name: name.trim(),
+				icon,
+				kind: kind.trim() || 'marker',
+				radiusM: radius === '' ? null : Number(radius),
+				notes: notes.trim(),
+			});
+			if (persisted) {
+				open = false;
+			}
+		} finally {
+			saving = false;
+		}
 	}
 </script>
 
@@ -121,7 +131,9 @@
 
 		<div class="flex justify-end gap-2">
 			<Button type="button" variant="ghost" onclick={() => (open = false)}>Cancel</Button>
-			<Button type="submit" disabled={!valid}>{editing ? 'Save' : 'Drop pin'}</Button>
+			<Button type="submit" disabled={!valid} loading={saving}>
+				{editing ? 'Save' : 'Drop pin'}
+			</Button>
 		</div>
 	</form>
 </Modal>
