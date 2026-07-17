@@ -305,46 +305,34 @@ jobs:
           # no-op on the clean runner image; load-bearing for local runs on a
           # machine that also carries a real profile).
           E2E_ISOLATED_PREFS: '1'
-      # TEMPORARY diagnostic for the WebView2 150 WebDriver regression
+      # Workaround for the WebView2 150 WebDriver regression
       # (MicrosoftEdge/WebView2Feedback#5640): the DevTools remote-debugging
-      # endpoint reportedly fails to come up when the host process runs at high
-      # integrity, which is this runner's default (administrator, UAC
-      # disabled). Launch the e2e shell at the default integrity and again
-      # under a de-elevated basic-user token (Safer level via
-      # `runas /trustlevel`), probing the endpoint for each, to establish
-      # whether de-elevating the suite is the viable workaround. Informational
-      # only; never fails the job. Remove once the upstream regression is
-      # fixed or the workaround is settled.
-      - name: Probe DevTools endpoint integrity-level sensitivity
+      # endpoint does not come up when the host process runs at high
+      # integrity, this runner's default (administrator, UAC disabled), so
+      # WebDriver session creation fails with "DevToolsActivePort file
+      # doesn't exist". Verified empirically on this runner: the endpoint is
+      # DOWN from an elevated launch, and UP on the same runtime when the
+      # host runs at medium integrity. A process's integrity level is capped
+      # by its executable's integrity label, so labelling the e2e shell
+      # binary medium makes every launch of it (including msedgedriver's)
+      # run at medium integrity, which is also what a real user's session
+      # runs at. Remove once the upstream regression is fixed.
+      - name: Cap the e2e shell to medium integrity (WebView2 150 workaround)
         shell: pwsh
-        continue-on-error: true
         run: |
-          whoami /groups | Select-String 'Mandatory Label' | ForEach-Object { Write-Host "Runner integrity: $_" }
-          $exe = Join-Path (Get-Location) 'src-tauri\target\debug\entropia-orme.exe'
-          function Probe-Endpoint([int]$port) {
-            try {
-              $v = Invoke-RestMethod "http://127.0.0.1:$port/json/version" -TimeoutSec 5
-              return "UP ($($v.Browser))"
-            } catch {
-              return "DOWN ($($_.Exception.Message))"
-            }
-          }
-          # 1. Default (elevated) launch.
+          icacls 'src-tauri\target\debug\entropia-orme.exe' /setintegritylevel medium
+          # Confirm the DevTools endpoint now comes up from an elevated parent.
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9231'
-          $env:ENTROPIAORME_DATA_DIR = "$env:RUNNER_TEMP\ildiag-a"
-          $p = Start-Process $exe -PassThru
+          $env:ENTROPIAORME_DATA_DIR = "$env:RUNNER_TEMP\ildiag"
+          Start-Process (Join-Path (Get-Location) 'src-tauri\target\debug\entropia-orme.exe')
           Start-Sleep -Seconds 20
-          Write-Host "Default-integrity endpoint on 9231: $(Probe-Endpoint 9231)"
+          try {
+            $v = Invoke-RestMethod 'http://127.0.0.1:9231/json/version' -TimeoutSec 5
+            Write-Host "DevTools endpoint after the integrity cap: UP ($($v.Browser))"
+          } catch {
+            Write-Host "DevTools endpoint after the integrity cap: DOWN ($($_.Exception.Message))"
+          }
           Get-Process entropia-orme -ErrorAction SilentlyContinue | Stop-Process -Force
-          # 2. Basic-user (de-elevated) launch. runas /trustlevel spawns without
-          #    waiting and may not inherit this step's environment, so the vars
-          #    are set inside the spawned cmd; give the shell time to start,
-          #    probe, then clean up. Paths on the runner carry no spaces.
-          runas /trustlevel:0x20000 "cmd /c set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9232&& set ENTROPIAORME_DATA_DIR=$env:RUNNER_TEMP\ildiag-b&& $exe"
-          Start-Sleep -Seconds 25
-          Write-Host "Basic-user endpoint on 9232: $(Probe-Endpoint 9232)"
-          $bu = Get-Process entropia-orme -ErrorAction SilentlyContinue
-          if ($bu) { Write-Host "Basic-user shell launched: yes"; $bu | Stop-Process -Force } else { Write-Host "Basic-user shell launched: no (runas launch failed)" }
           exit 0
       - name: Run the native-shell e2e suite
         run: npm run test:e2e

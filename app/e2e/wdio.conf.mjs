@@ -180,19 +180,17 @@ export const config = {
 		//    in-process typed read commands (WebDriver cannot intercept `invoke`,
 		//    so the stub lives in the shell, not the harness).
 		//
-		//    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: WebView2 150 regressed the
-		//    DevTools remote-debugging endpoint for hosts running at high
-		//    integrity (MicrosoftEdge/WebView2Feedback#5640), the default on
-		//    GitHub-hosted Windows runners (UAC disabled), so session creation
-		//    fails with "DevToolsActivePort file doesn't exist". Forcing an
-		//    explicit remote-debugging port through WebView2's
-		//    additional-arguments hook restores the endpoint; the variable is
-		//    inherited by msedgedriver and the app shell it launches. Harmless
-		//    on unaffected (non-elevated) hosts and older runtimes.
+		//    Note on WebView2 150 (MicrosoftEdge/WebView2Feedback#5640): the
+		//    DevTools remote-debugging endpoint does not come up when the app
+		//    shell runs at high integrity, so session creation fails with
+		//    "DevToolsActivePort file doesn't exist" on hosts that run
+		//    everything elevated (the GitHub Windows runner: administrator,
+		//    UAC disabled). The CI job caps the shell binary's integrity label
+		//    to medium before this suite runs; a normal developer session is
+		//    already medium integrity and needs nothing.
 		spawnProc('tauri-driver', TAURI_DRIVER, ['--native-driver', MSEDGEDRIVER], {
 			env: {
 				...process.env,
-				WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=9223',
 				// The app shell inherits this through msedgedriver and resolves its
 				// backend state (database, settings, logs) here instead of the
 				// repo-default data directory.
