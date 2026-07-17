@@ -29,6 +29,7 @@ use eo_api::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildR
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use eo_api::maps::{MapPin, MapPinInput, MapPinPatch, PlanetMap};
 use eo_api::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
     MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
@@ -944,6 +945,35 @@ pub async fn dev_rebuild_projections(app: tauri::AppHandle) -> Result<RebuildRep
     facade(&app)?.dev_rebuild_projections().await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn planet_maps_list(app: tauri::AppHandle) -> Result<Vec<PlanetMap>, ApiError> {
+    facade(&app)?.planet_maps()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pins_list(app: tauri::AppHandle, planet: String) -> Result<Vec<MapPin>, ApiError> {
+    facade(&app)?.map_pins_list(planet).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_create(app: tauri::AppHandle, pin: MapPinInput) -> Result<MapPin, ApiError> {
+    facade(&app)?.map_pin_create(pin).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_update(
+    app: tauri::AppHandle,
+    id: i64,
+    patch: MapPinPatch,
+) -> Result<MapPin, ApiError> {
+    facade(&app)?.map_pin_update(id, patch).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiError> {
+    facade(&app)?.map_pin_delete(id).await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -1060,6 +1090,11 @@ mod tests {
         "dev_set_crash_reporting",
         "dev_compact_database",
         "dev_rebuild_projections",
+        "planet_maps_list",
+        "map_pins_list",
+        "map_pin_create",
+        "map_pin_update",
+        "map_pin_delete",
     ];
 
     #[test]

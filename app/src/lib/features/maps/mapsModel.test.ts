@@ -1,0 +1,140 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MapPin, PlanetMap } from '$lib/api';
+import { createMapsModel } from './mapsModel.svelte';
+
+vi.mock('$lib/api', () => ({
+	getPlanetMaps: vi.fn(),
+	getMapPins: vi.fn(),
+	createMapPin: vi.fn(),
+	updateMapPin: vi.fn(),
+	deleteMapPin: vi.fn(),
+	planetMapImage: vi.fn(),
+}));
+
+import * as api from '$lib/api';
+
+const mocked = vi.mocked(api);
+
+function planet(overrides: Partial<PlanetMap> = {}): PlanetMap {
+	return {
+		name: 'Calypso',
+		technicalName: 'Calypso',
+		imageMime: 'image/jpeg',
+		imageWidthPx: 4608,
+		imageHeightPx: 4608,
+		calibration: {
+			tileOriginX: 2,
+			tileOriginY: 3,
+			tileWidth: 9,
+			tileHeight: 9,
+			unitsPerPixelX: 16,
+			unitsPerPixelY: 16,
+			bounds: { lonMin: 16384, lonMax: 90112, latMin: 24576, latMax: 98304 },
+		},
+		...overrides,
+	};
+}
+
+function pin(overrides: Partial<MapPin> = {}): MapPin {
+	return {
+		id: 1,
+		planet: 'Calypso',
+		lon: 61400,
+		lat: 75800,
+		altitude: 103,
+		name: 'Port Atlantis TP',
+		icon: 'teleporter',
+		kind: 'travel',
+		radiusM: null,
+		notes: null,
+		sessionId: null,
+		createdAt: 1_752_000_000,
+		...overrides,
+	};
+}
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	mocked.planetMapImage.mockResolvedValue('data:image/jpeg;base64,xx');
+	mocked.getMapPins.mockResolvedValue([]);
+});
+
+describe('createMapsModel', () => {
+	it('loads the catalogue and auto-selects the first planet', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet(), planet({ name: 'Arkadia' })]);
+		mocked.getMapPins.mockResolvedValue([pin()]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+
+		expect(model.selected?.name).toBe('Calypso');
+		expect(model.imageUrl).toBe('data:image/jpeg;base64,xx');
+		expect(model.pins).toHaveLength(1);
+		expect(model.loading).toBe(false);
+		expect(mocked.getMapPins).toHaveBeenCalledWith('Calypso');
+	});
+
+	it('surfaces a load failure as the error state', async () => {
+		mocked.getPlanetMaps.mockRejectedValue(new Error('nope'));
+		const model = createMapsModel();
+		await model.loadPlanets();
+		expect(model.error).not.toBeNull();
+		expect(model.loading).toBe(false);
+	});
+
+	it('an empty catalogue settles without a selection', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+		expect(model.selected).toBeNull();
+		expect(model.loading).toBe(false);
+		expect(model.error).toBeNull();
+	});
+
+	it('pin CRUD keeps the local list in step', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet()]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+
+		mocked.createMapPin.mockResolvedValue(pin({ id: 7 }));
+		await model.addPin({
+			planet: 'Calypso',
+			lon: 61400,
+			lat: 75800,
+			altitude: null,
+			name: 'Port Atlantis TP',
+			icon: 'teleporter',
+			kind: 'travel',
+			radiusM: null,
+			notes: null,
+			sessionId: null,
+		});
+		expect(model.pins.map((entry) => entry.id)).toEqual([7]);
+
+		mocked.updateMapPin.mockResolvedValue(pin({ id: 7, name: 'PA' }));
+		await model.editPin(7, { name: 'PA' } as never);
+		expect(model.pins[0].name).toBe('PA');
+
+		mocked.deleteMapPin.mockResolvedValue(undefined);
+		await model.removePin(7);
+		expect(model.pins).toHaveLength(0);
+	});
+
+	it('a stale selection cannot clobber a newer one', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet(), planet({ name: 'Arkadia' })]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+
+		let releaseSlow: (value: string) => void = () => {};
+		mocked.planetMapImage.mockImplementationOnce(
+			() => new Promise((resolve) => (releaseSlow = resolve)),
+		);
+		const slow = model.selectPlanet('Arkadia');
+		mocked.planetMapImage.mockResolvedValueOnce('data:image/jpeg;base64,calypso');
+		await model.selectPlanet('Calypso');
+		releaseSlow('data:image/jpeg;base64,stale-arkadia');
+		await slow;
+
+		expect(model.selected?.name).toBe('Calypso');
+		expect(model.imageUrl).toBe('data:image/jpeg;base64,calypso');
+	});
+});

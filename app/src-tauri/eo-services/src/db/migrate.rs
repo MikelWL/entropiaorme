@@ -68,6 +68,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "harvest events",
         sql: include_str!("../../migrations/0006_harvest_events.sql"),
     },
+    Migration {
+        version: 7,
+        description: "map pins",
+        sql: include_str!("../../migrations/0007_map_pins.sql"),
+    },
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

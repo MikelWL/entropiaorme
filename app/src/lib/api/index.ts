@@ -38,6 +38,7 @@ export type {
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';
+export * from './maps';
 export * from './market';
 export * from './quests';
 export * from './scan';
@@ -47,6 +48,7 @@ export * from './settings';
 export {
 	hideScanOverlay,
 	manualSkillScanCapturePng,
+	planetMapImage,
 	showScanOverlay,
 	toggleOverlay,
 } from './shell';

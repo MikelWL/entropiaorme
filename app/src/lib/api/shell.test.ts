@@ -44,6 +44,16 @@ describe('updater commands', () => {
 	});
 });
 
+describe('planetMapImage', () => {
+	it('fetches the raster over the planet_map_image command as a base64 data URL', async () => {
+		const { planetMapImage } = await loadModule();
+		invokeMock.mockResolvedValue('aGVsbG8=');
+		const url = await planetMapImage('Calypso', 'image/jpeg');
+		expect(invokeMock).toHaveBeenCalledWith('planet_map_image', { planet: 'Calypso' });
+		expect(url).toBe('data:image/jpeg;base64,aGVsbG8=');
+	});
+});
+
 describe('manualSkillScanCapturePng', () => {
 	it('fetches the capture preview over the capture_png command as a base64 data URL', async () => {
 		const { manualSkillScanCapturePng } = await loadModule();

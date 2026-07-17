@@ -85,6 +85,15 @@ pub const CATALOGUE: &[TableSpec] = &[
                 JOIN harvest_events h ON hli.harvest_id = h.id",
         order_by: &["h.timestamp", "hli.rowid"],
     },
+    // Cartography pins: a post-port extension of the catalogue (user
+    // map annotations; no Python reference existed).
+    TableSpec {
+        name: "map_pins",
+        query: "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
+                radius_m, notes, session_id, created_at \
+                FROM map_pins",
+        order_by: &["id"],
+    },
     TableSpec {
         name: "ledger_entries",
         query: "SELECT id, date, type, description, amount, tag FROM ledger_entries",

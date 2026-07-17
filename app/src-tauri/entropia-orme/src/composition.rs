@@ -200,6 +200,23 @@ fn ort_dylib_path(resource_dir: Option<&PathBuf>) -> PathBuf {
     }
 }
 
+/// Where the bundled planet-map bundle lives (per-planet rasters plus
+/// `calibration.json`): the bundled resource dir (`<resource_dir>/maps/`)
+/// in a release build, the repo copy (`entropia-orme/resources/maps/`)
+/// in dev, mirroring `tauri.conf.json`'s bundle map
+/// (`resources/maps/` -> `maps/`).
+fn maps_dir(resource_dir: Option<&PathBuf>) -> PathBuf {
+    match resource_dir {
+        Some(dir) if !cfg!(debug_assertions) => dir.join("maps"),
+        _ => dev_project_root()
+            .join("app")
+            .join("src-tauri")
+            .join("entropia-orme")
+            .join("resources")
+            .join("maps"),
+    }
+}
+
 /// Where the recogniser's model + dict live: the bundled resource dir
 /// (`<resource_dir>/models/`) in a release build, the repo copy
 /// (`entropia-orme/resources/models/`) in dev. The asymmetry mirrors
@@ -533,6 +550,7 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
         snapshot_dir(resource_dir.as_ref()),
         models_dir(resource_dir.as_ref()),
         Some(demo_db_path(resource_dir.as_ref())),
+        maps_dir(resource_dir.as_ref()),
         keystroke_source,
     )
     .await
@@ -548,6 +566,7 @@ async fn compose_with(
     snapshot: PathBuf,
     models: PathBuf,
     demo_db_path: Option<PathBuf>,
+    maps: PathBuf,
     keystroke_source: Arc<dyn KeystrokeSource>,
 ) -> Composition {
     if let Err(err) = std::fs::create_dir_all(&data_dir) {
@@ -701,6 +720,22 @@ async fn compose_with(
     )
     .await;
 
+    // The planet-map bundle is optional: a missing or broken bundle stands
+    // the maps surface down (an empty catalogue) with a logged reason,
+    // never declines composition.
+    let planet_maps = match eo_services::planet_maps::PlanetMapStore::new(&maps) {
+        Ok(store) if !store.is_empty() => Some(Arc::new(store)),
+        Ok(_) => None,
+        Err(err) => {
+            tracing::warn!(
+                target: "eo::composition",
+                "planet-map bundle at {} unusable ({err}); the maps surface stands down",
+                maps.display()
+            );
+            None
+        }
+    };
+
     // The typed-command facade shares the read surface's handles plus the
     // producers the write families signal (the config writer, the hunt
     // tracker, the hotbar gate, the chat-log watcher, the skill tracker
@@ -722,6 +757,7 @@ async fn compose_with(
         repair_ocr.clone(),
         producers.quests_handle(),
         demo_db_path,
+        planet_maps,
     ));
     Composition::Ready(Composed {
         db,
@@ -1311,6 +1347,16 @@ mod tests {
             .join("snapshot")
     }
 
+    /// The repo's planet-map bundle directory (the dev `maps_dir`).
+    fn repo_maps() -> PathBuf {
+        dev_project_root()
+            .join("app")
+            .join("src-tauri")
+            .join("entropia-orme")
+            .join("resources")
+            .join("maps")
+    }
+
     /// The repo's recogniser model+dict directory (the dev `models_dir`).
     fn repo_models() -> PathBuf {
         dev_project_root()
@@ -1336,6 +1382,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1363,6 +1410,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1402,6 +1450,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1419,6 +1468,7 @@ mod tests {
             dir.path().join("no-such-snapshot"),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1426,6 +1476,16 @@ mod tests {
             matches!(composed, Composition::Declined),
             "missing snapshot declines composition"
         );
+    }
+
+    #[test]
+    fn maps_dir_prefers_the_repo_copy_in_dev_builds() {
+        let resolved = maps_dir(Some(&PathBuf::from("X:/resources")));
+        if cfg!(debug_assertions) {
+            assert_eq!(resolved, repo_maps());
+        } else {
+            assert_eq!(resolved, PathBuf::from("X:/resources").join("maps"));
+        }
     }
 
     #[test]
@@ -1599,6 +1659,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1674,6 +1735,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await

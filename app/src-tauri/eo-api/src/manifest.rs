@@ -31,6 +31,7 @@ use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildRe
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use crate::maps::{MapPin, MapPinInput, MapPinPatch, PlanetMap};
 use crate::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
     MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
@@ -981,6 +982,52 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "dev_rebuild_projections",
             args: Vec::new(),
             returns: Some(schema(schema_for!(RebuildReport))),
+        },
+        // The planet-maps family: the catalogue read only. The raster
+        // fetch answers raw bytes and rides a bespoke shell command
+        // outside the manifest, like the manual-scan capture preview.
+        CommandSpec {
+            name: "planet_maps_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<PlanetMap>))),
+        },
+        CommandSpec {
+            name: "map_pins_list",
+            args: vec![ArgSpec {
+                name: "planet",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(Vec<MapPin>))),
+        },
+        CommandSpec {
+            name: "map_pin_create",
+            args: vec![ArgSpec {
+                name: "pin",
+                schema: schema(schema_for!(MapPinInput)),
+            }],
+            returns: Some(schema(schema_for!(MapPin))),
+        },
+        CommandSpec {
+            name: "map_pin_update",
+            args: vec![
+                ArgSpec {
+                    name: "id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "patch",
+                    schema: schema(schema_for!(MapPinPatch)),
+                },
+            ],
+            returns: Some(schema(schema_for!(MapPin))),
+        },
+        CommandSpec {
+            name: "map_pin_delete",
+            args: vec![ArgSpec {
+                name: "id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
         },
     ]
 }
