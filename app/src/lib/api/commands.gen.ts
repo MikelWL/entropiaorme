@@ -698,6 +698,60 @@ export interface ManualMobSuggestion {
 }
 
 /**
+ * One stored cartography pin. Coordinates are game units; `radius_m`
+ * null marks an exact point, a value an area pin of that radius in
+ * metres; `session_id` backlinks the tracked session the pin was
+ * dropped during, when any.
+ */
+export interface MapPin {
+	id: number;
+	planet: string;
+	lon: number;
+	lat: number;
+	altitude: number | null;
+	name: string;
+	icon: string;
+	kind: string;
+	radiusM: number | null;
+	notes: string | null;
+	sessionId: string | null;
+	/** Epoch seconds. */
+	createdAt: number;
+}
+
+/**
+ * A new pin's fields (id and creation time are assigned server-side).
+ */
+export interface MapPinInput {
+	planet: string;
+	lon: number;
+	lat: number;
+	altitude?: number | null;
+	name: string;
+	icon: string;
+	kind: string;
+	radiusM?: number | null;
+	notes?: string | null;
+	sessionId?: string | null;
+}
+
+/**
+ * A partial pin update: absent fields stay untouched. The nullable
+ * fields (altitude, radius, notes) are double options so an explicit
+ * `null` (clear it) stays distinct from an absent field.
+ */
+export interface MapPinPatch {
+	lon?: number | null;
+	lat?: number | null;
+	altitude?: number | null;
+	name?: string | null;
+	icon?: string | null;
+	kind?: string | null;
+	radiusM?: number | null;
+	notes?: string | null;
+}
+
+/**
  * The break-even readout: the player's looter professions and every
  * library weapon's modelled break-even markup against each of them.
  */
@@ -2314,4 +2368,20 @@ export async function devRebuildProjections(): Promise<RebuildReport> {
 
 export async function planetMapsList(): Promise<PlanetMap[]> {
 	return invokeCommand('planet_maps_list', {});
+}
+
+export async function mapPinsList(planet: string): Promise<MapPin[]> {
+	return invokeCommand('map_pins_list', { planet });
+}
+
+export async function mapPinCreate(pin: MapPinInput): Promise<MapPin> {
+	return invokeCommand('map_pin_create', { pin });
+}
+
+export async function mapPinUpdate(id: number, patch: MapPinPatch): Promise<MapPin> {
+	return invokeCommand('map_pin_update', { id, patch });
+}
+
+export async function mapPinDelete(id: number): Promise<void> {
+	return invokeCommand('map_pin_delete', { id });
 }

@@ -16,9 +16,9 @@ schema-version row, followed by forward-only additions:
 `session_summaries` columns for the Activity and session-list reads),
 `0004_daily_rollups.sql` (the per-day analytics rollup projection behind the
 Overview, plus a ledger date index), `0005_market_observations.sql` (the
-market-markup observation feed), and `0006_harvest_events.sql` (the
+market-markup observation feed), `0006_harvest_events.sql` (the
 harvesting activity tables plus the harvest columns on the summary and
-rollup projections). The
+rollup projections), and `0007_map_pins.sql` (the cartography pins). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
@@ -503,6 +503,33 @@ per aggregation horizon).
 | `markup_pct` | REAL | Null where the export reported `N/A` (no sales in that horizon). |
 | `sales_ped` | REAL | Not null; the horizon's sales volume, normalised to PED. |
 
+### Cartography
+
+#### `map_pins`
+
+User-authored pins on the bundled planet maps (migration `0007`): a named,
+icon-carrying location, either an exact point or an area of a given radius.
+Coordinates are game units on the game's global tile grid; the write path
+refuses coordinates outside the selected planet's calibrated map bounds, so
+an implausible pin is never stored. `kind` and `icon` are user-shaped
+presentation vocabulary (the pin palette is user-configured), deliberately
+open text rather than a closed set.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `planet` | TEXT | Not null; the bundled map the pin sits on. Indexed (`idx_map_pins_planet`). |
+| `lon` | REAL | Not null; game units (longitude grows eastward). |
+| `lat` | REAL | Not null; game units (latitude grows northward). |
+| `altitude` | REAL | Optional; carried when the source read included one. |
+| `name` | TEXT | Not null. |
+| `icon` | TEXT | Not null; the pin's icon identifier. |
+| `kind` | TEXT | Not null; the user-shaped pin category. |
+| `radius_m` | REAL | Null for an exact point; an area pin's radius in metres. |
+| `notes` | TEXT | Optional free text. |
+| `session_id` | TEXT | Optional; references `tracking_sessions(id)`, the session the pin was dropped during. |
+| `created_at` | REAL | Not null; Unix-epoch seconds. |
+
 ### Derived caches
 
 #### `session_summaries`
@@ -623,7 +650,8 @@ test pins the embedded chain to the directory's contents). The set carries the
 version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
 additions (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
-`0005_market_observations.sql`, `0006_harvest_events.sql`); the runner
+`0005_market_observations.sql`, `0006_harvest_events.sql`,
+`0007_map_pins.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

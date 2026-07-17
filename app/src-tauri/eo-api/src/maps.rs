@@ -10,9 +10,11 @@
 //! preview. A facade composed without the bundle serves an empty
 //! catalogue: the maps surface stands down, nothing errors at startup.
 
+use eo_services::map_pins::{MapPinsError, NewMapPin};
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use crate::settings::double_option;
 use crate::Nullable;
 use crate::{Api, ApiError};
 
@@ -76,6 +78,209 @@ impl Api {
         store
             .image_bytes(planet_name)
             .ok_or_else(|| ApiError::not_found(format!("no map for planet {planet_name}")))
+    }
+}
+
+// ── Pins ────────────────────────────────────────────────────────────
+
+/// One stored cartography pin. Coordinates are game units; `radius_m`
+/// null marks an exact point, a value an area pin of that radius in
+/// metres; `session_id` backlinks the tracked session the pin was
+/// dropped during, when any.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MapPin {
+    pub id: i64,
+    pub planet: String,
+    pub lon: f64,
+    pub lat: f64,
+    pub altitude: Nullable<f64>,
+    pub name: String,
+    pub icon: String,
+    pub kind: String,
+    pub radius_m: Nullable<f64>,
+    pub notes: Nullable<String>,
+    pub session_id: Nullable<String>,
+    /// Epoch seconds.
+    pub created_at: f64,
+}
+
+/// A new pin's fields (id and creation time are assigned server-side).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MapPinInput {
+    pub planet: String,
+    pub lon: f64,
+    pub lat: f64,
+    #[serde(default)]
+    pub altitude: Option<f64>,
+    pub name: String,
+    pub icon: String,
+    pub kind: String,
+    #[serde(default)]
+    pub radius_m: Option<f64>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+/// A partial pin update: absent fields stay untouched. The nullable
+/// fields (altitude, radius, notes) are double options so an explicit
+/// `null` (clear it) stays distinct from an absent field.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MapPinPatch {
+    #[serde(default)]
+    pub lon: Option<f64>,
+    #[serde(default)]
+    pub lat: Option<f64>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub altitude: Option<Option<f64>>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub radius_m: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub notes: Option<Option<String>>,
+}
+
+impl Api {
+    /// Every pin on a planet, newest first.
+    pub async fn map_pins_list(&self, planet: String) -> Result<Vec<MapPin>, ApiError> {
+        let pins = self.map_pins.list(planet).await.map_err(db_error)?;
+        Ok(pins.into_iter().map(pin_to_dto).collect())
+    }
+
+    /// Create a pin. When the planet is in the bundled catalogue and
+    /// calibrated, the coordinates must lie inside its bounds: an
+    /// implausible pin is refused, never silently stored.
+    pub async fn map_pin_create(&self, pin: MapPinInput) -> Result<MapPin, ApiError> {
+        self.validate_pin_coords(&pin.planet, pin.lon, pin.lat)?;
+        if pin.name.trim().is_empty() {
+            return Err(ApiError::bad_request("a pin needs a name"));
+        }
+        if let Some(radius) = pin.radius_m {
+            if !(radius > 0.0) {
+                return Err(ApiError::bad_request("a pin radius must be positive"));
+            }
+        }
+        let stored = self
+            .map_pins
+            .create(NewMapPin {
+                planet: pin.planet,
+                lon: pin.lon,
+                lat: pin.lat,
+                altitude: pin.altitude,
+                name: pin.name,
+                icon: pin.icon,
+                kind: pin.kind,
+                radius_m: pin.radius_m,
+                notes: pin.notes,
+                session_id: pin.session_id,
+            })
+            .await
+            .map_err(db_error)?;
+        Ok(pin_to_dto(stored))
+    }
+
+    /// Apply a partial update; a moved pin re-clears the bounds gate.
+    pub async fn map_pin_update(&self, id: i64, patch: MapPinPatch) -> Result<MapPin, ApiError> {
+        if let Some(name) = patch.name.as_deref() {
+            if name.trim().is_empty() {
+                return Err(ApiError::bad_request("a pin needs a name"));
+            }
+        }
+        if let Some(Some(radius)) = patch.radius_m {
+            if !(radius > 0.0) {
+                return Err(ApiError::bad_request("a pin radius must be positive"));
+            }
+        }
+        if patch.lon.is_some() || patch.lat.is_some() {
+            // The move gate needs the pin's planet (and its other axis);
+            // read it first so a cross-bounds move is refused untouched.
+            let current = self.map_pins.get(id).await.map_err(pins_error)?;
+            let lon = patch.lon.unwrap_or(current.lon);
+            let lat = patch.lat.unwrap_or(current.lat);
+            self.validate_pin_coords(&current.planet, lon, lat)?;
+        }
+        let stored = self
+            .map_pins
+            .update(
+                id,
+                eo_services::map_pins::MapPinPatch {
+                    lon: patch.lon,
+                    lat: patch.lat,
+                    altitude: patch.altitude,
+                    name: patch.name,
+                    icon: patch.icon,
+                    kind: patch.kind,
+                    radius_m: patch.radius_m,
+                    notes: patch.notes,
+                },
+            )
+            .await
+            .map_err(pins_error)?;
+        Ok(pin_to_dto(stored))
+    }
+
+    /// Delete a pin.
+    pub async fn map_pin_delete(&self, id: i64) -> Result<(), ApiError> {
+        self.map_pins.delete(id).await.map_err(pins_error)
+    }
+
+    /// The bounds gate: refuse coordinates outside a calibrated map's
+    /// window. An uncatalogued or uncalibrated planet passes (nothing
+    /// authoritative to gate against); the facade never invents bounds.
+    fn validate_pin_coords(&self, planet: &str, lon: f64, lat: f64) -> Result<(), ApiError> {
+        let Some(store) = self.planet_maps.as_ref() else {
+            return Ok(());
+        };
+        let Some(bounds) = store
+            .record(planet)
+            .and_then(|record| record.calibration.as_ref())
+            .map(|cal| cal.bounds)
+        else {
+            return Ok(());
+        };
+        if !bounds.contains(lon.round() as i64, lat.round() as i64) {
+            return Err(ApiError::bad_request(format!(
+                "coordinates ({lon}, {lat}) lie outside {planet}'s map bounds"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn pin_to_dto(pin: eo_services::map_pins::MapPin) -> MapPin {
+    MapPin {
+        id: pin.id,
+        planet: pin.planet,
+        lon: pin.lon,
+        lat: pin.lat,
+        altitude: pin.altitude.into(),
+        name: pin.name,
+        icon: pin.icon,
+        kind: pin.kind,
+        radius_m: pin.radius_m.into(),
+        notes: pin.notes.into(),
+        session_id: pin.session_id.into(),
+        created_at: pin.created_at,
+    }
+}
+
+fn db_error(err: eo_services::db::DbError) -> ApiError {
+    ApiError::internal("map pins")(err)
+}
+
+fn pins_error(err: MapPinsError) -> ApiError {
+    match err {
+        MapPinsError::NotFound(id) => ApiError::not_found(format!("map pin {id} not found")),
+        MapPinsError::Db(err) => ApiError::internal("map pins")(err),
     }
 }
 

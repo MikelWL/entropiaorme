@@ -31,6 +31,7 @@ pub mod hotbar_listener;
 pub mod keystroke_source;
 pub mod loot_filter;
 pub mod maintenance;
+pub mod map_pins;
 pub mod market_paste;
 pub mod market_service;
 pub mod mob_lookup_service;

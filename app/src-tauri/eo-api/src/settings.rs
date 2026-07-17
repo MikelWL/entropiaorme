@@ -157,7 +157,7 @@ pub struct SettingsPatch {
 /// Deserialize a present-but-`null` field to `Some(None)` and an absent
 /// field to `None` (paired with `#[serde(default)]`), the distinction a
 /// bare `Option<Option<T>>` collapses.
-fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+pub(crate) fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
     T: Deserialize<'de>,
     D: Deserializer<'de>,
