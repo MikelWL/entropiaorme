@@ -72,7 +72,9 @@
 					calibrationOpen = true;
 					break;
 				case 'captureFailed':
-					flash('The screen could not be captured; is capture available on this system?');
+					flash(
+						'The screen could not be captured. With several monitors, the screen-share grant covers one of them: the game and its readout must be on the shared monitor.',
+					);
 					break;
 				case 'engineUnavailable':
 					flash('The text recogniser is unavailable, so the readout cannot be scanned.');

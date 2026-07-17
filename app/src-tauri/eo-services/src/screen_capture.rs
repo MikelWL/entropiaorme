@@ -168,7 +168,7 @@ mod platform {
 #[cfg(all(target_os = "linux", feature = "linux-capture"))]
 mod platform {
     use std::os::unix::fs::OpenOptionsExt as _;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
@@ -196,16 +196,23 @@ mod platform {
         _pipeline: gstreamer::Pipeline,
     }
 
-    fn engine() -> Option<&'static Engine> {
-        static ENGINE: OnceLock<Option<Engine>> = OnceLock::new();
-        ENGINE.get_or_init(|| match start_engine() {
-            Ok(engine) => Some(engine),
-            Err(error) => {
-                tracing::warn!(target: "eo::capture", %error, "screen capture engine unavailable");
-                None
+    /// The engine slot: built lazily on first use and kept for the
+    /// process, but a FAILED start does not latch. A cold-start portal
+    /// timeout or a declined consent leaves the slot empty, and the next
+    /// user-invoked capture simply tries again.
+    fn engine() -> Option<Arc<Engine>> {
+        static ENGINE: Mutex<Option<Arc<Engine>>> = Mutex::new(None);
+        let mut slot = ENGINE.lock().expect("engine slot");
+        if slot.is_none() {
+            match start_engine() {
+                Ok(engine) => *slot = Some(Arc::new(engine)),
+                Err(error) => {
+                    tracing::warn!(target: "eo::capture", %error, "screen capture engine unavailable");
+                    return None;
+                }
             }
-        })
-        .as_ref()
+        }
+        slot.clone()
     }
 
     fn token_path() -> Option<std::path::PathBuf> {
@@ -300,6 +307,11 @@ mod platform {
                 remote_fd.into_raw_fd()
             })
             .property("path", node_id.to_string())
+            // Compositor frame delivery is damage-driven: a static (or
+            // direct-scanout fullscreen) monitor can produce nothing for
+            // seconds. Keepalive re-pushes the last frame on a timer, so
+            // the first capture and quiet-screen scans never starve.
+            .property("keepalive-time", 500i32)
             .build()?;
         let convert = gstreamer::ElementFactory::make("videoconvert").build()?;
         let caps = gstreamer::Caps::builder("video/x-raw")
@@ -350,18 +362,45 @@ mod platform {
         pipeline.set_state(gstreamer::State::Playing)?;
 
         // Wait for the first frame so the initial capture does not race
-        // the stream startup (bounded; a stream that never produces is a
-        // failure, not a hang).
-        // Cold portal + PipeWire negotiation can take several seconds on
-        // some desktops; the bound exists to fail rather than hang.
+        // the stream startup. Cold portal + PipeWire negotiation can take
+        // several seconds; the bound exists to fail rather than hang, and
+        // the pipeline bus is drained while waiting so a negotiation
+        // failure surfaces as its actual error, never a blind timeout.
+        let bus = pipeline.bus().ok_or("pipeline has no bus")?;
         let deadline = Instant::now() + Duration::from_secs(10);
         while latest.lock().expect("frame slot").is_none() {
+            while let Some(message) = bus.pop() {
+                use gstreamer::MessageView;
+                match message.view() {
+                    MessageView::Error(error) => {
+                        let detail = format!(
+                            "pipeline error from {:?}: {} ({:?})",
+                            message.src().map(|src| src.path_string()),
+                            error.error(),
+                            error.debug()
+                        );
+                        let _ = pipeline.set_state(gstreamer::State::Null);
+                        return Err(detail.into());
+                    }
+                    MessageView::Warning(warning) => {
+                        tracing::warn!(
+                            target: "eo::capture",
+                            source = ?message.src().map(|src| src.path_string()),
+                            warning = %warning.error(),
+                            detail = ?warning.debug(),
+                            "capture pipeline warning"
+                        );
+                    }
+                    _ => {}
+                }
+            }
             if Instant::now() > deadline {
                 let _ = pipeline.set_state(gstreamer::State::Null);
                 return Err("capture stream produced no frame within 10s".into());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+        tracing::info!(target: "eo::capture", "capture stream produced its first frame");
 
         Ok(Engine {
             latest,
@@ -385,6 +424,13 @@ mod platform {
             || (local_x + w) as usize > frame.width
             || (local_y + h) as usize > frame.height
         {
+            tracing::warn!(
+                target: "eo::capture",
+                rect = ?(x, y, w, h),
+                frame = ?(frame.width, frame.height),
+                origin = ?(frame.origin_x, frame.origin_y),
+                "capture rectangle falls outside the captured monitor frame"
+            );
             return None;
         }
 
