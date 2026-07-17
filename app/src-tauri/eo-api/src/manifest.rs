@@ -31,6 +31,7 @@ use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildRe
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use crate::maps::PlanetMap;
 use crate::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
     MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
@@ -981,6 +982,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "dev_rebuild_projections",
             args: Vec::new(),
             returns: Some(schema(schema_for!(RebuildReport))),
+        },
+        // The planet-maps family: the catalogue read only. The raster
+        // fetch answers raw bytes and rides a bespoke shell command
+        // outside the manifest, like the manual-scan capture preview.
+        CommandSpec {
+            name: "planet_maps_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<PlanetMap>))),
         },
     ]
 }

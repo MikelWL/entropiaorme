@@ -72,6 +72,7 @@
     "homepage": "https://entropiaorme.com",
     "resources": {
       "resources/snapshot/": "snapshot/",
+      "resources/maps/": "maps/",
       "resources/panel_geometry.json": "panel_geometry.json",
       "resources/models/": "models/",
       "../../../data/demo/entropia_orme.db": "demo/entropia_orme.db",

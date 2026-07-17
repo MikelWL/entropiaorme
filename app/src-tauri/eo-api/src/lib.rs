@@ -43,6 +43,7 @@ pub mod dev;
 pub mod equipment;
 mod error;
 pub mod manifest;
+pub mod maps;
 pub mod market;
 mod nullable;
 pub mod quests;
@@ -102,6 +103,10 @@ pub struct Api {
     /// over the facade's shared db and clock. An informational layer
     /// only: nothing here feeds the ledger or any realised P&L figure.
     market: MarketService,
+    /// The bundled planet-map catalogue (a shipped resource), or `None`
+    /// on a facade built without it (the maps family then serves an
+    /// empty catalogue and the raster fetch reports unavailable).
+    planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
     /// The bundled guide-mode demo database path (a shipped resource), or
     /// `None` on a facade built without it (the demo commands then report the
     /// unavailable error). The demo services are a parallel database + tracker
@@ -130,6 +135,7 @@ impl Api {
         repair_ocr: Arc<RepairOcrService>,
         quests: Arc<QuestService>,
         demo_db_path: Option<PathBuf>,
+        planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
@@ -151,6 +157,7 @@ impl Api {
             quests,
             analytics,
             market,
+            planet_maps,
             demo_db_path,
             demo: tokio::sync::OnceCell::new(),
         }

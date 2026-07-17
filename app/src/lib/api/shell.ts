@@ -61,3 +61,10 @@ export async function manualSkillScanCapturePng(page: number): Promise<string> {
 	const encoded = await invoke<string>('capture_png', { page });
 	return `data:image/png;base64,${encoded}`;
 }
+
+/** A bundled planet map's raster as a base64 `data:` URL for an `<img>`
+ * `src`. `mime` comes from the planet's `planet_maps_list` record. */
+export async function planetMapImage(planet: string, mime: string): Promise<string> {
+	const encoded = await invoke<string>('planet_map_image', { planet });
+	return `data:${mime};base64,${encoded}`;
+}

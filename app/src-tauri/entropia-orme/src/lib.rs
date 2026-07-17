@@ -120,6 +120,21 @@ async fn capture_png(app: tauri::AppHandle, page: u32) -> Result<String, String>
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// A bundled planet map's raster, base64-encoded for an `<img>` `data:` URL
+/// (the MIME type rides the typed `planet_maps_list` read). The facade
+/// returns raw image bytes, which cannot ride the typed-DTO command surface
+/// (the bindings are JSON), so this stays a bespoke command outside the
+/// manifest, base64-encoding the bytes here.
+#[tauri::command]
+async fn planet_map_image(app: tauri::AppHandle, planet: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let facade = commands::facade(&app).map_err(|error| error.to_string())?;
+    let bytes = facade
+        .planet_map_image(&planet)
+        .map_err(|error| error.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 // Holds the substrate's live producer spine so the Tauri exit seam can
 // stop it deterministically. The substrate task composes the producers
 // inside its own async context (after the database opens) and hands the
@@ -202,6 +217,7 @@ pub fn run() {
             show_scan_overlay,
             hide_scan_overlay,
             capture_png,
+            planet_map_image,
             // The typed IPC commands (held in lock-step with the eo-api
             // manifest by the parity test in `commands`).
             commands::equipment_search,
@@ -312,6 +328,7 @@ pub fn run() {
             commands::dev_set_crash_reporting,
             commands::dev_compact_database,
             commands::dev_rebuild_projections,
+            commands::planet_maps_list,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,

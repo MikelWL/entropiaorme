@@ -83,6 +83,7 @@ fn facade_microbench() {
         handles.repair_ocr,
         handles.quests.clone(),
         None,
+        None,
     );
 
     let mut rows: Vec<(&str, f64, f64, f64, f64)> = Vec::new();

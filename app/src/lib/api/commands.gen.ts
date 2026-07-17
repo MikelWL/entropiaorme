@@ -1019,6 +1019,46 @@ export interface PathOptimizerResult {
 }
 
 /**
+ * One planet/instance map in the bundled catalogue. `calibration` is
+ * null for a view-only map (displayable, but coordinates cannot be
+ * placed on it); `technical_name` is null when the in-game waypoint
+ * name is unknown.
+ */
+export interface PlanetMap {
+	name: string;
+	technicalName: string | null;
+	imageMime: string;
+	imageWidthPx: number;
+	imageHeightPx: number;
+	calibration: PlanetMapCalibration | null;
+}
+
+/**
+ * A map's coordinate window in game units: the plausibility gate for
+ * any coordinate claimed to lie on it.
+ */
+export interface PlanetMapBounds {
+	lonMin: number;
+	lonMax: number;
+	latMin: number;
+	latMax: number;
+}
+
+/**
+ * A calibrated map's placement on the global tile grid, with the
+ * per-axis pixel scales the frontend renders through.
+ */
+export interface PlanetMapCalibration {
+	tileOriginX: number;
+	tileOriginY: number;
+	tileWidth: number;
+	tileHeight: number;
+	unitsPerPixelX: number;
+	unitsPerPixelY: number;
+	bounds: PlanetMapBounds;
+}
+
+/**
  * Per-playlist analytics in the wire shape
  * (`_format_playlist_analytics`).
  */
@@ -2270,4 +2310,8 @@ export async function devCompactDatabase(): Promise<CompactResult> {
 
 export async function devRebuildProjections(): Promise<RebuildReport> {
 	return invokeCommand('dev_rebuild_projections', {});
+}
+
+export async function planetMapsList(): Promise<PlanetMap[]> {
+	return invokeCommand('planet_maps_list', {});
 }
