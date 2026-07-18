@@ -1,15 +1,14 @@
 <script lang="ts">
 	/**
 	 * The pin detail card: one popover surface serving marker hover AND
-	 * keyboard focus, carrying the detail plus the pin's actions (copy
-	 * waypoint, edit, delete). Positioned beside its marker and flipped
+	 * keyboard focus, carrying the detail plus the pin's edit/delete
+	 * actions. Positioned beside its marker and flipped
 	 * to stay inside the view.
 	 */
 	import Button from '$lib/components/Button.svelte';
 	import type { MapPin } from '$lib/api';
 	import { formatGamePoint } from './coords';
 	import { pinGlyph } from './pinIcons';
-	import { formatWaypoint } from './waypoint';
 
 	let {
 		pin,
@@ -20,7 +19,6 @@
 		technicalName,
 		onpointerenter,
 		onpointerleave,
-		oncopywaypoint,
 		onedit,
 		ondelete,
 	}: {
@@ -32,7 +30,6 @@
 		technicalName: string | null;
 		onpointerenter: () => void;
 		onpointerleave: () => void;
-		oncopywaypoint: () => void;
 		onedit: () => void;
 		ondelete: () => void;
 	} = $props();
@@ -45,16 +42,6 @@
 		Math.max(CARD_MARGIN, Math.min(x + 14, viewW - CARD_W - CARD_MARGIN)),
 	);
 	const openUp = $derived(y > viewH * 0.55);
-
-	const waypoint = $derived(
-		formatWaypoint({
-			technicalName,
-			lon: pin.lon,
-			lat: pin.lat,
-			altitude: pin.altitude,
-			label: pin.name,
-		}),
-	);
 
 	const createdLabel = $derived(
 		new Date(pin.createdAt * 1000).toLocaleDateString(undefined, {
@@ -75,6 +62,7 @@
 	{onpointerleave}
 	onfocusin={onpointerenter}
 	onfocusout={onpointerleave}
+	onpointerdown={(event) => event.stopPropagation()}
 >
 	<div class="flex items-start gap-2">
 		<span class="text-lg leading-none" aria-hidden="true">{pinGlyph(pin.icon)}</span>
@@ -105,18 +93,13 @@
 		<p class="mt-2 text-xs text-text-secondary whitespace-pre-wrap break-words">{pin.notes}</p>
 	{/if}
 
-	<div class="mt-3 flex items-center gap-1.5">
-		<Button
-			size="sm"
-			variant="secondary"
-			disabled={waypoint == null}
-			title={waypoint == null
-				? 'This planet has no waypoint name, so a chat waypoint cannot be formed.'
-				: waypoint}
-			onclick={oncopywaypoint}
-		>
-			Copy waypoint
-		</Button>
+	<p class="mt-3 text-xs text-text-secondary">
+		{technicalName
+			? 'Click the pin to copy its waypoint.'
+			: 'This map cannot form an in-game waypoint.'}
+	</p>
+
+	<div class="mt-2 flex items-center gap-1.5">
 		<Button size="sm" variant="ghost" onclick={onedit}>Edit</Button>
 		<Button size="sm" variant="danger" onclick={ondelete}>Delete</Button>
 	</div>

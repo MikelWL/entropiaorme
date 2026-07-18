@@ -159,9 +159,9 @@
 		}
 		try {
 			await navigator.clipboard.writeText(waypoint);
-			flash(`Copied: ${waypoint}`);
+			flash('Waypoint copied.');
 		} catch {
-			flash('The clipboard refused the copy; select and copy the waypoint from the pin card.');
+			flash('The clipboard refused the waypoint copy.');
 		}
 	}
 </script>
@@ -172,8 +172,8 @@
 			<h1 class="text-xl font-semibold text-text tracking-tight">Maps</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
 			<p class="text-sm text-text-secondary mt-0.5">
-				Planet maps with your own pins. Click the map to drop a pin; click a pin for its
-				details and waypoint.
+				Planet maps with your own pins. Click the map to drop a pin; hover a pin for details,
+				or click it to copy its waypoint.
 			</p>
 		</header>
 		{#if model.planets.length > 0}

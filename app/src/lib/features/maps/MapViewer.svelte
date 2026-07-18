@@ -4,7 +4,8 @@
 	 * rendered through the one viewport transform (`./viewport`). Wheel
 	 * zoom anchors under the cursor; drag pans; a still click on the map
 	 * reports the game coordinate for a pin drop; pin markers are real
-	 * buttons (hover and keyboard focus both raise the detail card).
+	 * buttons (hover and keyboard focus raise the detail card, activation
+	 * copies the in-game waypoint).
 	 * Arrow keys pan, +/- zoom about the centre, 0 re-fits.
 	 */
 	import { untrack } from 'svelte';
@@ -309,13 +310,13 @@
 	{/if}
 
 	<!-- Pin markers: real buttons, so hover and keyboard focus share one
-	     detail surface. -->
+	     detail surface while click/Enter copies the waypoint. -->
 	{#each placedPins as placed (placed.pin.id)}
 		<button
 			type="button"
 			class="absolute -translate-x-1/2 -translate-y-full cursor-pointer text-xl leading-none drop-shadow-md transition-transform hover:scale-125 focus-visible:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
 			style="left: {placed.x}px; top: {placed.y}px;"
-			aria-label="Pin: {placed.pin.name}"
+			aria-label="Copy waypoint for {placed.pin.name}"
 			onmouseenter={() => raiseCard(placed.pin)}
 			onmouseleave={scheduleCardClose}
 			onfocus={() => raiseCard(placed.pin)}
@@ -324,6 +325,7 @@
 			onclick={(event) => {
 				event.stopPropagation();
 				raiseCard(placed.pin);
+				oncopywaypoint(placed.pin);
 			}}
 		>
 			{pinGlyph(placed.pin.icon)}
@@ -341,7 +343,6 @@
 				technicalName={planet.technicalName}
 				onpointerenter={() => raiseCard(placed.pin)}
 				onpointerleave={scheduleCardClose}
-				oncopywaypoint={() => oncopywaypoint(placed.pin)}
 				onedit={() => oneditpin(placed.pin)}
 				ondelete={() => {
 					activePin = null;
