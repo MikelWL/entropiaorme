@@ -361,6 +361,8 @@
 				{copyFeedback}
 				onpointerenter={() => raiseCard(placed.pin)}
 				onpointerleave={scheduleCardClose}
+				onfocusin={() => raiseCard(placed.pin)}
+				onfocusout={scheduleCardClose}
 				oncopy={() => void copyPinWaypoint(placed.pin)}
 				onedit={() => oneditpin(placed.pin)}
 				ondelete={() => {

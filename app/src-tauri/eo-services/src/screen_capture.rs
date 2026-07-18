@@ -180,6 +180,7 @@ mod platform {
 #[cfg(all(target_os = "linux", feature = "linux-capture"))]
 mod platform {
     use std::os::unix::fs::OpenOptionsExt as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
@@ -203,22 +204,30 @@ mod platform {
 
     struct Engine {
         latest: Arc<Mutex<Option<Frame>>>,
+        healthy: AtomicBool,
         // Kept alive for the process: dropping the pipeline tears down
         // the PipeWire stream, and dropping the session revokes the
         // portal grant.
         _pipeline: gstreamer::Pipeline,
     }
 
+    static ENGINE: Mutex<Option<Arc<Engine>>> = Mutex::new(None);
+
     /// The engine slot: built lazily on first use and kept for the
     /// process, but a FAILED start does not latch. A cold-start portal
     /// timeout or a declined consent leaves the slot empty, and the next
     /// user-invoked capture simply tries again.
     fn engine() -> Option<Arc<Engine>> {
-        static ENGINE: Mutex<Option<Arc<Engine>>> = Mutex::new(None);
         let mut slot = ENGINE.lock().expect("engine slot");
+        if slot
+            .as_ref()
+            .is_some_and(|engine| !engine.healthy.load(Ordering::Acquire))
+        {
+            *slot = None;
+        }
         if slot.is_none() {
             match start_engine() {
-                Ok(engine) => *slot = Some(Arc::new(engine)),
+                Ok(engine) => *slot = Some(engine),
                 Err(error) => {
                     tracing::warn!(target: "eo::capture", %error, "screen capture engine unavailable");
                     return None;
@@ -322,7 +331,7 @@ mod platform {
         })
     }
 
-    fn start_engine() -> Result<Engine, Box<dyn std::error::Error>> {
+    fn start_engine() -> Result<Arc<Engine>, Box<dyn std::error::Error>> {
         gstreamer::init()?;
         let (node_id, remote_fd, origin_x, origin_y) = open_portal()?;
         tracing::info!(target: "eo::capture", node_id, "screen-cast portal stream acquired");
@@ -449,10 +458,68 @@ mod platform {
             .unwrap_or_default();
         tracing::info!(target: "eo::capture", generation, "capture stream produced its first frame");
 
-        Ok(Engine {
+        let engine = Arc::new(Engine {
             latest,
+            healthy: AtomicBool::new(true),
             _pipeline: pipeline,
-        })
+        });
+        monitor_pipeline(engine.clone(), bus);
+        Ok(engine)
+    }
+
+    /// Keep observing the pipeline after its first frame. A revoked portal
+    /// grant or downstream failure must evict the cached engine and frame so
+    /// the next user scan opens a fresh portal stream instead of cropping
+    /// stale pixels indefinitely.
+    fn monitor_pipeline(engine: Arc<Engine>, bus: gstreamer::Bus) {
+        std::thread::Builder::new()
+            .name("eo-capture-bus".to_string())
+            .spawn(move || {
+                for message in bus.iter_timed(gstreamer::ClockTime::NONE) {
+                    use gstreamer::MessageView;
+                    let reason = match message.view() {
+                        MessageView::Error(error) => Some(format!(
+                            "pipeline error from {:?}: {} ({:?})",
+                            message.src().map(|src| src.path_string()),
+                            error.error(),
+                            error.debug()
+                        )),
+                        MessageView::Eos(..) => {
+                            Some("capture pipeline reached end of stream".into())
+                        }
+                        MessageView::Warning(warning) => {
+                            tracing::warn!(
+                                target: "eo::capture",
+                                source = ?message.src().map(|src| src.path_string()),
+                                warning = %warning.error(),
+                                detail = ?warning.debug(),
+                                "capture pipeline warning"
+                            );
+                            None
+                        }
+                        _ => None,
+                    };
+                    if let Some(reason) = reason {
+                        invalidate_engine(&engine, &reason);
+                        break;
+                    }
+                }
+            })
+            .expect("capture bus monitor thread");
+    }
+
+    fn invalidate_engine(engine: &Arc<Engine>, reason: &str) {
+        tracing::warn!(target: "eo::capture", %reason, "screen capture engine invalidated");
+        engine.healthy.store(false, Ordering::Release);
+        *engine.latest.lock().expect("frame slot") = None;
+        let _ = engine._pipeline.set_state(gstreamer::State::Null);
+        let mut slot = ENGINE.lock().expect("engine slot");
+        if slot
+            .as_ref()
+            .is_some_and(|cached| Arc::ptr_eq(cached, engine))
+        {
+            *slot = None;
+        }
     }
 
     pub fn capture_bgra(x: i64, y: i64, w: i64, h: i64) -> Option<Vec<u8>> {
@@ -460,6 +527,9 @@ mod platform {
             return None;
         }
         let engine = engine()?;
+        if !engine.healthy.load(Ordering::Acquire) {
+            return None;
+        }
         let guard = engine.latest.lock().expect("frame slot");
         let frame = guard.as_ref()?;
 
@@ -505,6 +575,31 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn invalidation_clears_the_frame_and_cached_engine() {
+            gstreamer::init().expect("gstreamer");
+            let latest = Arc::new(Mutex::new(Some(Frame {
+                bgra: vec![0; 4],
+                width: 1,
+                height: 1,
+                generation: 1,
+                origin_x: 0,
+                origin_y: 0,
+            })));
+            let engine = Arc::new(Engine {
+                latest: latest.clone(),
+                healthy: AtomicBool::new(true),
+                _pipeline: gstreamer::Pipeline::new(),
+            });
+            *ENGINE.lock().expect("engine slot") = Some(engine.clone());
+
+            invalidate_engine(&engine, "test failure");
+
+            assert!(!engine.healthy.load(Ordering::Acquire));
+            assert!(latest.lock().expect("frame slot").is_none());
+            assert!(ENGINE.lock().expect("engine slot").is_none());
+        }
 
         #[test]
         fn portal_runtime_drives_spawned_work_after_block_on_returns() {

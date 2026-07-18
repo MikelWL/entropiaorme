@@ -21,6 +21,8 @@
 		copyFeedback,
 		onpointerenter,
 		onpointerleave,
+		onfocusin,
+		onfocusout,
 		oncopy,
 		onedit,
 		ondelete,
@@ -34,10 +36,19 @@
 		copyFeedback: WaypointCopyResult | null;
 		onpointerenter: () => void;
 		onpointerleave: () => void;
+		onfocusin: () => void;
+		onfocusout: () => void;
 		oncopy: () => void;
 		onedit: () => void;
 		ondelete: () => void;
 	} = $props();
+
+	function handleFocusOut(event: FocusEvent) {
+		const next = event.relatedTarget;
+		if (!(next instanceof Node) || !(event.currentTarget as HTMLElement).contains(next)) {
+			onfocusout();
+		}
+	}
 
 	const CARD_W = 232;
 	const CARD_MARGIN = 8;
@@ -67,8 +78,8 @@
 	aria-label="Pin detail: {pin.name}"
 	{onpointerenter}
 	{onpointerleave}
-	onfocusin={onpointerenter}
-	onfocusout={onpointerleave}
+	onfocusin={onfocusin}
+	onfocusout={handleFocusOut}
 	onpointerdown={(event) => event.stopPropagation()}
 	onclick={oncopy}
 >

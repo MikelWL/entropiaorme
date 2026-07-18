@@ -101,4 +101,24 @@ describe('MapViewer pin interactions', () => {
 		expect(oncopywaypoint).not.toHaveBeenCalled();
 		expect(onmapclick).not.toHaveBeenCalled();
 	});
+
+	it('keeps the pin card open while keyboard focus moves into its actions', async () => {
+		vi.useFakeTimers();
+		try {
+			setup();
+			const marker = screen.getByRole('button', {
+				name: 'Copy waypoint for Port Atlantis TP',
+			});
+			await fireEvent.focus(marker);
+			const edit = screen.getByRole('button', { name: 'Edit' });
+
+			await fireEvent.blur(marker, { relatedTarget: edit });
+			await fireEvent.focusIn(edit, { relatedTarget: marker });
+			vi.advanceTimersByTime(251);
+
+			expect(screen.getByRole('dialog', { name: 'Pin detail: Port Atlantis TP' })).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
