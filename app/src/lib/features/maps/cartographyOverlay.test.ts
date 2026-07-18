@@ -30,6 +30,7 @@ describe('cartography overlay preferences', () => {
 		const { sanitiseCartographyOverlayConfig, DEFAULT_CARTOGRAPHY_BUTTONS } = await loadModule();
 		expect(sanitiseCartographyOverlayConfig(null)).toEqual({
 			planet: null,
+			mapViewId: null,
 			buttons: DEFAULT_CARTOGRAPHY_BUTTONS,
 		});
 	});
@@ -46,8 +47,13 @@ describe('cartography overlay preferences', () => {
 		const clean = sanitiseCartographyOverlayConfig({ planet: ' Calypso ', buttons });
 		expect(clean.planet).toBe('Calypso');
 		expect(clean.buttons).toHaveLength(MAX_CARTOGRAPHY_BUTTONS);
-		expect(clean.buttons[0]).toMatchObject({ name: 'Pin', kind: 'mining', radiusM: 10_000 });
-		expect(clean.buttons[1].icon).toBe('pin');
+		expect(clean.buttons[0]).toMatchObject({
+			name: 'Pin',
+			icon: '⛏️',
+			kind: 'marker',
+			radiusM: 10_000,
+		});
+		expect(clean.buttons[1].icon).toBe('📍');
 		expect(clean.buttons[2].radiusM).toBeNull();
 	});
 
@@ -59,11 +65,13 @@ describe('cartography overlay preferences', () => {
 		} = await loadModule();
 		await setCartographyOverlayConfig({
 			planet: 'Calypso',
+			mapViewId: 42,
 			buttons: [{ id: 'one', name: ' North ', icon: 'star', kind: '', radiusM: 50 }],
 		});
 		const expected = {
 			planet: 'Calypso',
-			buttons: [{ id: 'one', name: 'North', icon: 'star', kind: 'favourite', radiusM: 50 }],
+			mapViewId: 42,
+			buttons: [{ id: 'one', name: 'North', icon: '⭐', kind: 'marker', radiusM: 50 }],
 		};
 		expect(cartographyOverlayConfig.current).toEqual(expected);
 		expect(setPreference).toHaveBeenCalledWith('cartographyOverlay', expected);
@@ -78,7 +86,7 @@ describe('cartography overlay preferences', () => {
 		const { initCartographyOverlay, cartographyOverlayConfig } = await loadModule();
 		await initCartographyOverlay();
 		expect(getPreference).toHaveBeenCalledWith('cartographyOverlay', expect.any(Object));
-		expect(cartographyOverlayConfig.current.buttons[0].icon).toBe('pin');
+		expect(cartographyOverlayConfig.current.buttons[0].icon).toBe('📍');
 	});
 
 	it('maps a successful scan and configured button to the exact typed pin input', async () => {
@@ -86,6 +94,7 @@ describe('cartography overlay preferences', () => {
 		expect(
 			cartographyPinInput(
 				'Calypso',
+				42,
 				{ id: 'ore', name: 'Claim', icon: 'ore', kind: 'mining', radiusM: 50 },
 				{ status: 'read', lon: 61_234, lat: 75_456, altitude: 103, rawText: '61234 75456 103' },
 			),
@@ -100,6 +109,7 @@ describe('cartography overlay preferences', () => {
 			radiusM: 50,
 			notes: null,
 			sessionId: null,
+			mapViewId: 42,
 		});
 	});
 
@@ -108,6 +118,7 @@ describe('cartography overlay preferences', () => {
 		expect(
 			cartographyPinInput(
 				'Calypso',
+				null,
 				{ id: 'pin', name: 'Pin', icon: 'pin', kind: 'marker', radiusM: null },
 				{ status: 'read', lon: null, lat: 75_456, altitude: null, rawText: null },
 			),

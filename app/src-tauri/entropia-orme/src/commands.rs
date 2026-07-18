@@ -30,7 +30,7 @@ use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
 use eo_api::maps::{
-    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, PlanetMap,
+    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, MapView, PlanetMap,
 };
 use eo_api::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
@@ -953,8 +953,43 @@ pub async fn planet_maps_list(app: tauri::AppHandle) -> Result<Vec<PlanetMap>, A
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn map_pins_list(app: tauri::AppHandle, planet: String) -> Result<Vec<MapPin>, ApiError> {
-    facade(&app)?.map_pins_list(planet).await
+pub async fn map_pins_list(
+    app: tauri::AppHandle,
+    planet: String,
+    map_view_id: Option<i64>,
+) -> Result<Vec<MapPin>, ApiError> {
+    facade(&app)?.map_pins_list(planet, map_view_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_views_list(
+    app: tauri::AppHandle,
+    planet: String,
+) -> Result<Vec<MapView>, ApiError> {
+    facade(&app)?.map_views_list(planet).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_view_create(
+    app: tauri::AppHandle,
+    planet: String,
+    name: String,
+) -> Result<MapView, ApiError> {
+    facade(&app)?.map_view_create(planet, name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_view_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    name: String,
+) -> Result<MapView, ApiError> {
+    facade(&app)?.map_view_rename(id, name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_view_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiError> {
+    facade(&app)?.map_view_delete(id).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1128,6 +1163,10 @@ mod tests {
         "dev_rebuild_projections",
         "planet_maps_list",
         "map_pins_list",
+        "map_views_list",
+        "map_view_create",
+        "map_view_rename",
+        "map_view_delete",
         "map_pin_create",
         "map_pin_update",
         "map_pin_delete",

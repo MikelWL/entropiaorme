@@ -65,6 +65,10 @@ pub const APP_COMMANDS: &[&str] = &[
     "map_pin_delete",
     "map_pin_update",
     "map_pins_list",
+    "map_view_create",
+    "map_view_delete",
+    "map_view_rename",
+    "map_views_list",
     "maps_calibration_cancel",
     "maps_calibration_start",
     "maps_calibration_status",
@@ -134,6 +138,7 @@ pub const APP_COMMANDS: &[&str] = &[
 
 pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
     "map_pin_create",
+    "map_views_list",
     "maps_scan_coordinates",
     "planet_maps_list",
 ];

@@ -32,7 +32,7 @@ use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
 use crate::maps::{
-    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, PlanetMap,
+    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, MapView, PlanetMap,
 };
 use crate::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
@@ -995,11 +995,61 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "map_pins_list",
+            args: vec![
+                ArgSpec {
+                    name: "planet",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "map_view_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<MapPin>))),
+        },
+        CommandSpec {
+            name: "map_views_list",
             args: vec![ArgSpec {
                 name: "planet",
                 schema: schema(schema_for!(String)),
             }],
-            returns: Some(schema(schema_for!(Vec<MapPin>))),
+            returns: Some(schema(schema_for!(Vec<MapView>))),
+        },
+        CommandSpec {
+            name: "map_view_create",
+            args: vec![
+                ArgSpec {
+                    name: "planet",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(MapView))),
+        },
+        CommandSpec {
+            name: "map_view_rename",
+            args: vec![
+                ArgSpec {
+                    name: "id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "name",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(MapView))),
+        },
+        CommandSpec {
+            name: "map_view_delete",
+            args: vec![ArgSpec {
+                name: "id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
         },
         CommandSpec {
             name: "map_pin_create",

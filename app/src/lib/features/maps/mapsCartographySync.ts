@@ -19,13 +19,23 @@ export function startMapsCartographySync(model: MapsModel): () => void {
 	void (async () => {
 		await model.loadPlanets();
 		if (!mounted) return;
-		const preferred = cartographyOverlayConfig.current.planet;
-		if (preferred && model.planets.some((planet) => planet.name === preferred)) {
-			await model.selectPlanet(preferred);
-		} else if (model.selected) {
+		const preferredPlanet = cartographyOverlayConfig.current.planet;
+		const preferredViewId = cartographyOverlayConfig.current.mapViewId;
+		if (preferredPlanet && model.planets.some((planet) => planet.name === preferredPlanet)) {
+			await model.selectPlanet(preferredPlanet);
+		}
+		if (preferredViewId !== null && model.views.some((view) => view.id === preferredViewId)) {
+			await model.selectView(preferredViewId);
+		}
+		if (
+			model.selected &&
+			(cartographyOverlayConfig.current.planet !== model.selected.name ||
+				cartographyOverlayConfig.current.mapViewId !== model.selectedViewId)
+		) {
 			await setCartographyOverlayConfig({
 				...cartographyOverlayConfig.current,
 				planet: model.selected.name,
+				mapViewId: model.selectedViewId,
 			});
 		}
 		if (!mounted) return;

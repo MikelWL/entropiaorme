@@ -1,8 +1,7 @@
 /**
- * The pin-icon catalogue: the closed set of glyphs a pin can carry on
- * the map. Stored pins reference an icon by id; an unknown id (an
- * import from a newer version, say) renders the fallback rather than
- * nothing, so a pin never becomes invisible.
+ * Legacy pin-icon ids and the Unicode emoji compatibility boundary.
+ * New pins persist an emoji directly; older id-based pins continue to
+ * render through this map.
  */
 
 export interface PinIconDef {
@@ -26,13 +25,22 @@ export const PIN_ICONS: PinIconDef[] = [
 ];
 
 const FALLBACK = PIN_ICONS[0];
+const EMOJI_COMPONENT = /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3/u;
 
-/** The glyph for an icon id, with the fallback for unknown ids. */
-export function pinGlyph(iconId: string): string {
-	return PIN_ICONS.find((icon) => icon.id === iconId)?.glyph ?? FALLBACK.glyph;
+export function normalisePinEmoji(value: unknown): string {
+	if (typeof value !== 'string') return FALLBACK.glyph;
+	const legacy = PIN_ICONS.find((icon) => icon.id === value);
+	if (legacy) return legacy.glyph;
+	const emoji = value.trim();
+	return emoji.length <= 32 && EMOJI_COMPONENT.test(emoji) ? emoji : FALLBACK.glyph;
 }
 
-/** The stable persisted category implied by a marker choice. */
-export function pinKind(iconId: string): string {
-	return PIN_ICONS.find((icon) => icon.id === iconId)?.kind ?? FALLBACK.kind;
+/** The display glyph for either a current emoji or a legacy icon id. */
+export function pinGlyph(icon: string): string {
+	return normalisePinEmoji(icon);
+}
+
+/** Legacy ids retain their old category; free emoji are neutral markers. */
+export function pinKind(icon: string): string {
+	return PIN_ICONS.find((definition) => definition.id === icon)?.kind ?? FALLBACK.kind;
 }

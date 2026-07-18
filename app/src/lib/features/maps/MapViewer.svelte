@@ -9,10 +9,12 @@
 	 * Arrow keys pan, +/- zoom about the centre, 0 re-fits.
 	 */
 	import { untrack } from 'svelte';
-	import type { MapPin, PlanetMap } from '$lib/api';
+	import type { MapPin, MapView, PlanetMap } from '$lib/api';
 	import Button from '$lib/components/Button.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { formatGamePoint, gameToImage, imageToGame, type GamePoint } from './coords';
 	import type { MapFocusRequest } from './mapTools';
+	import MapViewSelector from './MapViewSelector.svelte';
 	import { pinGlyph } from './pinIcons';
 	import PinCard from './PinCard.svelte';
 	import type { WaypointCopyResult } from './waypoint';
@@ -29,24 +31,38 @@
 
 	let {
 		planet,
+		planets,
 		imageUrl,
 		pins,
+		views,
+		selectedViewId,
 		onmapclick,
 		oncopywaypoint,
 		oneditpin,
 		ondeletepin,
-		showGrid = false,
+		onselectplanet,
+		onselectview,
+		onaddview,
+		onrenameview,
+		ondeleteview,
 		focusRequest = null,
 	}: {
 		planet: PlanetMap;
+		planets: PlanetMap[];
 		imageUrl: string;
 		pins: MapPin[];
+		views: MapView[];
+		selectedViewId: number | null;
 		/** A still click on a calibrated map, in game units. */
 		onmapclick: (point: GamePoint) => void;
 		oncopywaypoint: (pin: MapPin) => Promise<WaypointCopyResult>;
 		oneditpin: (pin: MapPin) => void;
 		ondeletepin: (pin: MapPin) => void;
-		showGrid?: boolean;
+		onselectplanet: (name: string) => void;
+		onselectview: (id: number | null) => void;
+		onaddview: () => Promise<MapView | null>;
+		onrenameview: (id: number, name: string) => Promise<boolean>;
+		ondeleteview: (view: MapView) => Promise<boolean>;
 		focusRequest?: MapFocusRequest | null;
 	} = $props();
 
@@ -323,19 +339,6 @@
 		});
 	});
 
-	const gridLines = $derived.by<{ vertical: number[]; horizontal: number[] }>(() => {
-		if (!showGrid || !cal) return { vertical: [], horizontal: [] };
-		const tile = 8192;
-		const vertical: number[] = [];
-		const horizontal: number[] = [];
-		for (let lon = Math.ceil(cal.bounds.lonMin / tile) * tile; lon < cal.bounds.lonMax; lon += tile) {
-			vertical.push(imageToView(vp, gameToImage(cal, { lon, lat: cal.bounds.latMin }).x, 0).x);
-		}
-		for (let lat = Math.ceil(cal.bounds.latMin / tile) * tile; lat < cal.bounds.latMax; lat += tile) {
-			horizontal.push(imageToView(vp, 0, gameToImage(cal, { lon: cal.bounds.lonMin, lat }).y).y);
-		}
-		return { vertical, horizontal };
-	});
 </script>
 
 <!-- The viewer is a keyboard-operable application surface (arrows pan,
@@ -363,16 +366,29 @@
 >
 	<canvas class="absolute inset-0" bind:this={canvas} aria-hidden="true"></canvas>
 
-	{#if showGrid && cal}
-		<svg class="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true" viewBox="0 0 {viewW} {viewH}">
-			{#each gridLines.vertical as x}
-				<line x1={x} y1="0" x2={x} y2={viewH} class="stroke-accent/35" stroke-width="1" />
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="absolute left-2 top-2 z-10 w-48 space-y-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur"
+		onpointerdown={(event) => event.stopPropagation()}
+	>
+		<Select
+			value={planet.name}
+			aria-label="Planet map"
+			onchange={(event) => onselectplanet((event.currentTarget as HTMLSelectElement).value)}
+		>
+			{#each planets as option (option.name)}
+				<option value={option.name}>{option.name}{option.calibration ? '' : ' (view-only)'}</option>
 			{/each}
-			{#each gridLines.horizontal as y}
-				<line x1="0" y1={y} x2={viewW} y2={y} class="stroke-accent/35" stroke-width="1" />
-			{/each}
-		</svg>
-	{/if}
+		</Select>
+		<MapViewSelector
+			{views}
+			selectedId={selectedViewId}
+			onselect={onselectview}
+			onadd={onaddview}
+			onrename={onrenameview}
+			ondelete={ondeleteview}
+		/>
+	</div>
 
 	<div
 		class="absolute right-2 top-2 z-10 flex gap-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur"

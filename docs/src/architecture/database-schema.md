@@ -18,7 +18,8 @@ schema-version row, followed by forward-only additions:
 Overview, plus a ledger date index), `0005_market_observations.sql` (the
 market-markup observation feed), `0006_harvest_events.sql` (the
 harvesting activity tables plus the harvest columns on the summary and
-rollup projections), and `0007_map_pins.sql` (the cartography pins). The
+rollup projections), `0007_map_pins.sql` (the cartography pins), and
+`0008_map_views.sql` (independent named pin sets over each planet map). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
@@ -505,6 +506,22 @@ per aggregation horizon).
 
 ### Cartography
 
+#### `map_views`
+
+User-named pin sets over a bundled planet map (migration `0008`). The
+permanent Default set is represented by a null `map_view_id` on `map_pins`,
+so it needs no row and every pin created before this migration remains on
+Default. Names are unique per planet without regard to case. Deleting a
+named map and its pins is an explicit transaction in `map_pins`, because
+foreign-key enforcement is intentionally disabled for this database.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `planet` | TEXT | Not null; the bundled planet map this pin set overlays. Indexed with `created_at` and `id` (`idx_map_views_planet`). |
+| `name` | TEXT | Not null, case-insensitive; unique with `planet`. |
+| `created_at` | REAL | Not null; Unix-epoch seconds. |
+
 #### `map_pins`
 
 User-authored pins on the bundled planet maps (migration `0007`): a named,
@@ -518,7 +535,7 @@ open text rather than a closed set.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | INTEGER | Primary key, autoincrement. |
-| `planet` | TEXT | Not null; the bundled map the pin sits on. Indexed (`idx_map_pins_planet`). |
+| `planet` | TEXT | Not null; the bundled map the pin sits on. Indexed (`idx_map_pins_planet`), and indexed with `map_view_id` and `created_at` (`idx_map_pins_planet_view`). |
 | `lon` | REAL | Not null; game units (longitude grows eastward). |
 | `lat` | REAL | Not null; game units (latitude grows northward). |
 | `altitude` | REAL | Optional; carried when the source read included one. |
@@ -528,6 +545,7 @@ open text rather than a closed set.
 | `radius_m` | REAL | Null for an exact point; an area pin's radius in metres. |
 | `notes` | TEXT | Optional free text. |
 | `session_id` | TEXT | Optional; references `tracking_sessions(id)`, the session the pin was dropped during. |
+| `map_view_id` | INTEGER | Optional; references `map_views(id)`. Null means the permanent Default map. |
 | `created_at` | REAL | Not null; Unix-epoch seconds. |
 
 ### Derived caches
@@ -651,7 +669,7 @@ version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
 additions (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
 `0005_market_observations.sql`, `0006_harvest_events.sql`,
-`0007_map_pins.sql`); the runner
+`0007_map_pins.sql`, `0008_map_views.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

@@ -101,6 +101,7 @@ pub struct MapPin {
     pub radius_m: Nullable<f64>,
     pub notes: Nullable<String>,
     pub session_id: Nullable<String>,
+    pub map_view_id: Nullable<i64>,
     /// Epoch seconds.
     pub created_at: f64,
 }
@@ -123,6 +124,19 @@ pub struct MapPinInput {
     pub notes: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub map_view_id: Option<i64>,
+}
+
+/// One user-named pin set over a planet map. Default is represented by
+/// a null view id and therefore has no row of its own.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MapView {
+    pub id: i64,
+    pub planet: String,
+    pub name: String,
+    pub created_at: f64,
 }
 
 /// A partial pin update: absent fields stay untouched. The nullable
@@ -151,8 +165,17 @@ pub struct MapPinPatch {
 
 impl Api {
     /// Every pin on a planet, newest first.
-    pub async fn map_pins_list(&self, planet: String) -> Result<Vec<MapPin>, ApiError> {
-        let pins = self.map_pins.list(planet).await.map_err(db_error)?;
+    pub async fn map_pins_list(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+    ) -> Result<Vec<MapPin>, ApiError> {
+        self.validate_map_view(&planet, map_view_id).await?;
+        let pins = self
+            .map_pins
+            .list(planet, map_view_id)
+            .await
+            .map_err(db_error)?;
         Ok(pins.into_iter().map(pin_to_dto).collect())
     }
 
@@ -161,6 +184,7 @@ impl Api {
     /// implausible pin is refused, never silently stored.
     pub async fn map_pin_create(&self, pin: MapPinInput) -> Result<MapPin, ApiError> {
         self.validate_pin_coords(&pin.planet, pin.lon, pin.lat)?;
+        self.validate_map_view(&pin.planet, pin.map_view_id).await?;
         if pin.name.trim().is_empty() {
             return Err(ApiError::bad_request("a pin needs a name"));
         }
@@ -182,6 +206,7 @@ impl Api {
                 radius_m: pin.radius_m,
                 notes: pin.notes,
                 session_id: pin.session_id,
+                map_view_id: pin.map_view_id,
             })
             .await
             .map_err(db_error)?;
@@ -231,6 +256,70 @@ impl Api {
     /// Delete a pin.
     pub async fn map_pin_delete(&self, id: i64) -> Result<(), ApiError> {
         self.map_pins.delete(id).await.map_err(pins_error)
+    }
+
+    /// Named views for a planet. The permanent Default view is virtual
+    /// and is added by the frontend.
+    pub async fn map_views_list(&self, planet: String) -> Result<Vec<MapView>, ApiError> {
+        self.map_pins
+            .list_views(planet)
+            .await
+            .map(|views| views.into_iter().map(view_to_dto).collect())
+            .map_err(db_error)
+    }
+
+    /// Create a named view and return it as stored.
+    pub async fn map_view_create(&self, planet: String, name: String) -> Result<MapView, ApiError> {
+        self.validate_planet(&planet)?;
+        let name = validate_view_name(name)?;
+        self.map_pins
+            .create_view(planet, name)
+            .await
+            .map(view_to_dto)
+            .map_err(pins_error)
+    }
+
+    /// Rename a named view.
+    pub async fn map_view_rename(&self, id: i64, name: String) -> Result<MapView, ApiError> {
+        let name = validate_view_name(name)?;
+        self.map_pins
+            .rename_view(id, name)
+            .await
+            .map(view_to_dto)
+            .map_err(pins_error)
+    }
+
+    /// Delete a named view and its pins.
+    pub async fn map_view_delete(&self, id: i64) -> Result<(), ApiError> {
+        self.map_pins.delete_view(id).await.map_err(pins_error)
+    }
+
+    async fn validate_map_view(
+        &self,
+        planet: &str,
+        map_view_id: Option<i64>,
+    ) -> Result<(), ApiError> {
+        let Some(id) = map_view_id else {
+            return Ok(());
+        };
+        let view = self.map_pins.get_view(id).await.map_err(pins_error)?;
+        if view.planet != planet {
+            return Err(ApiError::bad_request(format!(
+                "map view {id} does not belong to {planet}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_planet(&self, planet: &str) -> Result<(), ApiError> {
+        if let Some(store) = self.planet_maps.as_ref() {
+            if store.record(planet).is_none() {
+                return Err(ApiError::bad_request(format!(
+                    "no bundled map for planet {planet}"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// The bounds gate: when the catalogue is composed, require a known,
@@ -471,8 +560,34 @@ fn pin_to_dto(pin: eo_services::map_pins::MapPin) -> MapPin {
         radius_m: pin.radius_m.into(),
         notes: pin.notes.into(),
         session_id: pin.session_id.into(),
+        map_view_id: pin.map_view_id.into(),
         created_at: pin.created_at,
     }
+}
+
+fn view_to_dto(view: eo_services::map_pins::MapView) -> MapView {
+    MapView {
+        id: view.id,
+        planet: view.planet,
+        name: view.name,
+        created_at: view.created_at,
+    }
+}
+
+fn validate_view_name(name: String) -> Result<String, ApiError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ApiError::bad_request("a map view needs a name"));
+    }
+    if name.chars().count() > 40 {
+        return Err(ApiError::bad_request(
+            "a map view name cannot exceed 40 characters",
+        ));
+    }
+    if name.eq_ignore_ascii_case("default") {
+        return Err(ApiError::bad_request("Default is reserved"));
+    }
+    Ok(name.to_owned())
 }
 
 fn db_error(err: eo_services::db::DbError) -> ApiError {
@@ -482,6 +597,10 @@ fn db_error(err: eo_services::db::DbError) -> ApiError {
 fn pins_error(err: MapPinsError) -> ApiError {
     match err {
         MapPinsError::NotFound(id) => ApiError::not_found(format!("map pin {id} not found")),
+        MapPinsError::ViewNotFound(id) => ApiError::not_found(format!("map view {id} not found")),
+        MapPinsError::ViewNameTaken(name, planet) => ApiError::bad_request(format!(
+            "a map view named {name:?} already exists on {planet}"
+        )),
         MapPinsError::Db(err) => ApiError::internal("map pins")(err),
     }
 }

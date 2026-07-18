@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import CartographyOverlayModal from './CartographyOverlayModal.svelte';
 
@@ -30,13 +30,14 @@ beforeAll(() => {
 });
 
 describe('CartographyOverlayModal', () => {
-	it('reorders compact marker definitions and derives their categories on save', async () => {
+	it('searches for an emoji and saves neutral marker definitions', async () => {
 		mocks.setCartographyOverlayConfig.mockClear();
 		render(CartographyOverlayModal, {
 			props: {
 				open: true,
 				config: {
 					planet: 'Calypso',
+					mapViewId: null,
 					buttons: [
 						{ id: 'ore', name: 'Claim', icon: 'ore', kind: 'custom', radiusM: null },
 						{ id: 'home', name: 'Camp', icon: 'home', kind: 'custom', radiusM: 50 },
@@ -46,16 +47,37 @@ describe('CartographyOverlayModal', () => {
 		});
 
 		expect(screen.queryByText('Category')).toBeNull();
+		expect(screen.queryByText('Ore claim')).toBeNull();
 		expect(screen.getAllByRole('option', { name: '10 m area' })).toHaveLength(2);
 		expect(screen.getByRole('button', { name: 'Remove Claim' })).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: 'Choose emoji for Claim' }));
+		const picker = within(screen.getAllByRole('dialog', { name: 'Choose emoji' })[0]);
+		expect(
+			picker.getAllByRole('option').map((option) => option.getAttribute('aria-label')),
+		).toEqual([
+			'round pushpin',
+			'triangular flag',
+			'star',
+			'pick',
+			'alien monster',
+			'deciduous tree',
+			'cyclone',
+			'house',
+			'droplet',
+		]);
+		await fireEvent.input(picker.getByRole('textbox', { name: 'Search emoji' }), {
+			target: { value: 'dragon' },
+		});
+		await fireEvent.click(picker.getByRole('option', { name: 'dragon' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Move Claim down' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
 		expect(mocks.setCartographyOverlayConfig).toHaveBeenCalledWith({
 			planet: 'Calypso',
+			mapViewId: null,
 			buttons: [
-				{ id: 'home', name: 'Camp', icon: 'home', kind: 'location', radiusM: 50 },
-				{ id: 'ore', name: 'Claim', icon: 'ore', kind: 'mining', radiusM: null },
+				{ id: 'home', name: 'Camp', icon: '🏠', kind: 'marker', radiusM: 50 },
+				{ id: 'ore', name: 'Claim', icon: '🐉', kind: 'marker', radiusM: null },
 			],
 		});
 	});

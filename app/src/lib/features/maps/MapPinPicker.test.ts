@@ -17,6 +17,7 @@ const pin = (id: number, name: string, notes: string | null): MapPin => ({
 	radiusM: null,
 	notes,
 	sessionId: null,
+	mapViewId: null,
 	createdAt: 1,
 });
 

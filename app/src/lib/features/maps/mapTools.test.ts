@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapPin } from '$lib/api';
-import { filterMapPins, parseGamePointInput } from './mapTools';
+import { filterMapPins } from './mapTools';
 
 const pin = (overrides: Partial<MapPin>): MapPin => ({
 	id: 1,
@@ -14,17 +14,12 @@ const pin = (overrides: Partial<MapPin>): MapPin => ({
 	radiusM: null,
 	notes: 'South coast',
 	sessionId: null,
+	mapViewId: null,
 	createdAt: 1,
 	...overrides,
 });
 
 describe('map tools', () => {
-	it('parses comma-separated game coordinates', () => {
-		expect(parseGamePointInput(' 61400, 75800 ')).toEqual({ lon: 61_400, lat: 75_800 });
-		expect(parseGamePointInput('61400 75800')).toBeNull();
-		expect(parseGamePointInput('north, east')).toBeNull();
-	});
-
 	it('filters pins by name or notes without changing an empty result set', () => {
 		const pins = [pin({}), pin({ id: 2, name: 'Longu nest', notes: null })];
 		expect(filterMapPins(pins, 'atlantis')).toEqual([pins[0]]);

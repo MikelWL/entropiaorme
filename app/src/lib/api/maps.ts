@@ -13,6 +13,7 @@ export type {
 	MapPin,
 	MapPinInput,
 	MapPinPatch,
+	MapView,
 	PlanetMap,
 	PlanetMapBounds,
 	PlanetMapCalibration,
@@ -20,6 +21,10 @@ export type {
 
 export const getPlanetMaps = commands.planetMapsList;
 export const getMapPins = commands.mapPinsList;
+export const getMapViews = commands.mapViewsList;
+export const createMapView = commands.mapViewCreate;
+export const renameMapView = commands.mapViewRename;
+export const deleteMapView = commands.mapViewDelete;
 export const createMapPin = commands.mapPinCreate;
 export const updateMapPin = commands.mapPinUpdate;
 export const deleteMapPin = commands.mapPinDelete;

@@ -107,6 +107,7 @@ fn calypso_pin() -> MapPinInput {
         radius_m: None,
         notes: Some("the sanity anchor".to_string()),
         session_id: None,
+        map_view_id: None,
     }
 }
 
@@ -144,7 +145,10 @@ async fn a_pin_roundtrips_with_its_wire_shape() {
     let api = maps_api(dir.path(), true, None).await;
 
     let created = api.map_pin_create(calypso_pin()).await.unwrap();
-    let listed = api.map_pins_list("Calypso".to_string()).await.unwrap();
+    let listed = api
+        .map_pins_list("Calypso".to_string(), None)
+        .await
+        .unwrap();
     assert_eq!(listed.len(), 1);
 
     let wire = serde_json::to_value(&listed[0]).unwrap();
@@ -158,10 +162,81 @@ async fn a_pin_roundtrips_with_its_wire_shape() {
 
     // Another planet's list stays empty (planet-scoped reads).
     assert!(api
-        .map_pins_list("Arkadia".to_string())
+        .map_pins_list("Arkadia".to_string(), None)
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn named_map_views_isolate_and_cascade_their_pins() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = maps_api(dir.path(), true, None).await;
+
+    let view = api
+        .map_view_create("Calypso".to_string(), "Tree map".to_string())
+        .await
+        .unwrap();
+    assert_eq!(view.planet, "Calypso");
+    assert_eq!(view.name, "Tree map");
+
+    let default_pin = api.map_pin_create(calypso_pin()).await.unwrap();
+    let mut tree_pin = calypso_pin();
+    tree_pin.name = "Papplon tree".to_string();
+    tree_pin.map_view_id = Some(view.id);
+    let tree_pin = api.map_pin_create(tree_pin).await.unwrap();
+
+    let default_pins = api
+        .map_pins_list("Calypso".to_string(), None)
+        .await
+        .unwrap();
+    assert_eq!(default_pins.len(), 1);
+    assert_eq!(default_pins[0].id, default_pin.id);
+
+    let tree_pins = api
+        .map_pins_list("Calypso".to_string(), Some(view.id))
+        .await
+        .unwrap();
+    assert_eq!(tree_pins.len(), 1);
+    assert_eq!(tree_pins[0].id, tree_pin.id);
+    assert_eq!(tree_pins[0].map_view_id, Some(view.id));
+
+    let renamed = api
+        .map_view_rename(view.id, "Trees".to_string())
+        .await
+        .unwrap();
+    assert_eq!(renamed.name, "Trees");
+    assert_eq!(
+        api.map_views_list("Calypso".to_string())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    api.map_view_delete(view.id).await.unwrap();
+    assert!(api
+        .map_views_list("Calypso".to_string())
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(matches!(
+        api.map_pins_list("Calypso".to_string(), Some(view.id))
+            .await,
+        Err(ApiError::NotFound { .. })
+    ));
+    assert!(matches!(
+        api.map_pin_update(tree_pin.id, MapPinPatch::default())
+            .await,
+        Err(ApiError::NotFound { .. })
+    ));
+    assert_eq!(
+        api.map_pins_list("Calypso".to_string(), None)
+            .await
+            .unwrap()[0]
+            .id,
+        default_pin.id
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -258,7 +333,7 @@ async fn validation_and_not_found_legs_answer_typed_errors() {
     let created = api.map_pin_create(calypso_pin()).await.unwrap();
     api.map_pin_delete(created.id).await.unwrap();
     assert!(api
-        .map_pins_list("Calypso".to_string())
+        .map_pins_list("Calypso".to_string(), None)
         .await
         .unwrap()
         .is_empty());

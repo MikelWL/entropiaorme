@@ -13,6 +13,8 @@
 
 use std::sync::Arc;
 
+use rusqlite::OptionalExtension;
+
 use crate::clock::Clock;
 use crate::db::{Db, DbError};
 use crate::time::naive_to_epoch;
@@ -28,8 +30,24 @@ pub enum MapPinsError {
     /// The addressed pin does not exist.
     #[error("map pin {0} not found")]
     NotFound(i64),
+    /// The addressed named map view does not exist.
+    #[error("map view {0} not found")]
+    ViewNotFound(i64),
+    /// Names are unique within one planet, ignoring case.
+    #[error("a map view named {0:?} already exists on {1}")]
+    ViewNameTaken(String, String),
     #[error(transparent)]
     Db(#[from] DbError),
+}
+
+/// One named pin-set view over a planet's bundled raster.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapView {
+    pub id: i64,
+    pub planet: String,
+    pub name: String,
+    /// Epoch seconds.
+    pub created_at: f64,
 }
 
 /// One stored pin, as read back.
@@ -46,6 +64,7 @@ pub struct MapPin {
     pub radius_m: Option<f64>,
     pub notes: Option<String>,
     pub session_id: Option<String>,
+    pub map_view_id: Option<i64>,
     /// Epoch seconds.
     pub created_at: f64,
 }
@@ -63,6 +82,7 @@ pub struct NewMapPin {
     pub radius_m: Option<f64>,
     pub notes: Option<String>,
     pub session_id: Option<String>,
+    pub map_view_id: Option<i64>,
 }
 
 /// A partial update: `None` leaves a field untouched. The nullable
@@ -85,17 +105,22 @@ impl MapPinsService {
         Self { db, clock }
     }
 
-    /// Every pin on a planet, newest first.
-    pub async fn list(&self, planet: String) -> Result<Vec<MapPin>, DbError> {
+    /// Every pin in one planet view, newest first. `None` is Default.
+    pub async fn list(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+    ) -> Result<Vec<MapPin>, DbError> {
         self.db
             .with_reader(move |connection| {
                 let mut stmt = connection.prepare(
                     "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
-                            radius_m, notes, session_id, created_at \
+                            radius_m, notes, session_id, map_view_id, created_at \
                      FROM map_pins WHERE planet = ?1 \
+                       AND ((?2 IS NULL AND map_view_id IS NULL) OR map_view_id = ?2) \
                      ORDER BY created_at DESC, id DESC",
                 )?;
-                let mut rows = stmt.query([&planet])?;
+                let mut rows = stmt.query(rusqlite::params![planet, map_view_id])?;
                 let mut pins = Vec::new();
                 while let Some(row) = rows.next()? {
                     pins.push(read_pin(row)?);
@@ -111,7 +136,7 @@ impl MapPinsService {
             .with_reader(move |connection| {
                 let mut stmt = connection.prepare(
                     "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
-                            radius_m, notes, session_id, created_at \
+                            radius_m, notes, session_id, map_view_id, created_at \
                      FROM map_pins WHERE id = ?1",
                 )?;
                 let mut rows = stmt.query([id])?;
@@ -131,8 +156,8 @@ impl MapPinsService {
             .with_writer(move |connection| {
                 connection.execute(
                     "INSERT INTO map_pins (planet, lon, lat, altitude, name, icon, \
-                                           kind, radius_m, notes, session_id, created_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                           kind, radius_m, notes, session_id, map_view_id, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     rusqlite::params![
                         pin.planet,
                         pin.lon,
@@ -144,6 +169,7 @@ impl MapPinsService {
                         pin.radius_m,
                         pin.notes,
                         pin.session_id,
+                        pin.map_view_id,
                         created_at,
                     ],
                 )?;
@@ -160,6 +186,7 @@ impl MapPinsService {
                     radius_m: pin.radius_m,
                     notes: pin.notes,
                     session_id: pin.session_id,
+                    map_view_id: pin.map_view_id,
                     created_at,
                 })
             })
@@ -173,7 +200,7 @@ impl MapPinsService {
                 let existing = {
                     let mut stmt = connection.prepare(
                         "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
-                                radius_m, notes, session_id, created_at \
+                                radius_m, notes, session_id, map_view_id, created_at \
                          FROM map_pins WHERE id = ?1",
                     )?;
                     let mut rows = stmt.query([id])?;
@@ -228,6 +255,151 @@ impl MapPinsService {
         }
         Ok(())
     }
+
+    /// Named views on a planet, oldest first. Default is virtual and is
+    /// therefore not returned here.
+    pub async fn list_views(&self, planet: String) -> Result<Vec<MapView>, DbError> {
+        self.db
+            .with_reader(move |connection| {
+                let mut stmt = connection.prepare(
+                    "SELECT id, planet, name, created_at FROM map_views \
+                     WHERE planet = ?1 ORDER BY created_at ASC, id ASC",
+                )?;
+                let rows = stmt.query_map([planet], |row| {
+                    Ok(MapView {
+                        id: row.get(0)?,
+                        planet: row.get(1)?,
+                        name: row.get(2)?,
+                        created_at: row.get(3)?,
+                    })
+                })?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+    }
+
+    /// One named view by id.
+    pub async fn get_view(&self, id: i64) -> Result<MapView, MapPinsError> {
+        self.db
+            .with_reader(move |connection| {
+                Ok(connection
+                    .query_row(
+                        "SELECT id, planet, name, created_at FROM map_views WHERE id = ?1",
+                        [id],
+                        |row| {
+                            Ok(MapView {
+                                id: row.get(0)?,
+                                planet: row.get(1)?,
+                                name: row.get(2)?,
+                                created_at: row.get(3)?,
+                            })
+                        },
+                    )
+                    .optional()?)
+            })
+            .await?
+            .ok_or(MapPinsError::ViewNotFound(id))
+    }
+
+    /// Create a named view. Names are unique per planet, ignoring case.
+    pub async fn create_view(&self, planet: String, name: String) -> Result<MapView, MapPinsError> {
+        let created_at = naive_to_epoch(self.clock.now());
+        let duplicate_name = name.clone();
+        let duplicate_planet = planet.clone();
+        self.db
+            .with_writer(move |connection| {
+                let exists: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM map_views WHERE planet = ?1 AND name = ?2 COLLATE NOCASE)",
+                    rusqlite::params![planet, name],
+                    |row| row.get(0),
+                )?;
+                if exists {
+                    return Ok(None);
+                }
+                connection.execute(
+                    "INSERT INTO map_views (planet, name, created_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![planet, name, created_at],
+                )?;
+                Ok(Some(MapView {
+                    id: connection.last_insert_rowid(),
+                    planet,
+                    name,
+                    created_at,
+                }))
+            })
+            .await?
+            .ok_or(MapPinsError::ViewNameTaken(
+                duplicate_name,
+                duplicate_planet,
+            ))
+    }
+
+    /// Rename a named view.
+    pub async fn rename_view(&self, id: i64, name: String) -> Result<MapView, MapPinsError> {
+        self.db
+            .with_writer(move |connection| {
+                let existing = connection
+                    .query_row(
+                        "SELECT id, planet, name, created_at FROM map_views WHERE id = ?1",
+                        [id],
+                        |row| {
+                            Ok(MapView {
+                                id: row.get(0)?,
+                                planet: row.get(1)?,
+                                name: row.get(2)?,
+                                created_at: row.get(3)?,
+                            })
+                        },
+                    )
+                    .optional()?;
+                let Some(mut view) = existing else {
+                    return Ok(Err(MapPinsError::ViewNotFound(id)));
+                };
+                let exists: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM map_views WHERE planet = ?1 AND name = ?2 COLLATE NOCASE AND id != ?3)",
+                    rusqlite::params![view.planet, name, id],
+                    |row| row.get(0),
+                )?;
+                if exists {
+                    return Ok(Err(MapPinsError::ViewNameTaken(name, view.planet)));
+                }
+                connection.execute("UPDATE map_views SET name = ?2 WHERE id = ?1", rusqlite::params![id, name])?;
+                view.name = name;
+                Ok(Ok(view))
+            })
+            .await?
+    }
+
+    /// Delete a named view and all its pins in one writer transaction.
+    ///
+    /// The database deliberately runs with foreign-key enforcement off,
+    /// so the service owns the cascade rather than relying on the
+    /// declarative reference in the schema.
+    pub async fn delete_view(&self, id: i64) -> Result<(), MapPinsError> {
+        let changed = self
+            .db
+            .with_writer(move |connection| {
+                let transaction = connection.transaction()?;
+                let exists: bool = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM map_views WHERE id = ?1)",
+                    [id],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    transaction.commit()?;
+                    return Ok(0);
+                }
+                transaction.execute("DELETE FROM map_pins WHERE map_view_id = ?1", [id])?;
+                let changed = transaction.execute("DELETE FROM map_views WHERE id = ?1", [id])?;
+                transaction.commit()?;
+                Ok(changed)
+            })
+            .await?;
+        if changed == 0 {
+            return Err(MapPinsError::ViewNotFound(id));
+        }
+        Ok(())
+    }
 }
 
 fn read_pin(row: &rusqlite::Row<'_>) -> Result<MapPin, rusqlite::Error> {
@@ -243,6 +415,7 @@ fn read_pin(row: &rusqlite::Row<'_>) -> Result<MapPin, rusqlite::Error> {
         radius_m: row.get(8)?,
         notes: row.get(9)?,
         session_id: row.get(10)?,
-        created_at: row.get(11)?,
+        map_view_id: row.get(11)?,
+        created_at: row.get(12)?,
     })
 }
