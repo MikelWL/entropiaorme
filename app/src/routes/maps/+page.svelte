@@ -10,6 +10,8 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import CalibrationModal from '$lib/features/maps/CalibrationModal.svelte';
+	import CartographyOverlayModal from '$lib/features/maps/CartographyOverlayModal.svelte';
+	import { startMapsCartographySync } from '$lib/features/maps/mapsCartographySync';
 	import MapViewer from '$lib/features/maps/MapViewer.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import type { PinFormValues } from '$lib/features/maps/PinEditModal.svelte';
@@ -22,11 +24,14 @@
 	import type { MapPin } from '$lib/api';
 	import { scanMapCoordinates } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
+	import { toggleCartographyOverlay } from '$lib/api';
+	import {
+		cartographyOverlayConfig,
+		setCartographyOverlayConfig,
+	} from '$lib/features/maps/cartographyOverlay.svelte';
 
 	const model = createMapsModel();
-	onMount(() => {
-		void model.loadPlanets();
-	});
+	onMount(() => startMapsCartographySync(model));
 
 	// The pin form: create mode carries the drop point (from a map click
 	// or a coordinate scan, which may add an altitude), edit mode the pin
@@ -36,7 +41,15 @@
 	let dropAltitude = $state<number | null>(null);
 	let editingPin = $state<MapPin | null>(null);
 	let calibrationOpen = $state(false);
+	let overlayConfigOpen = $state(false);
 	let scanning = $state(false);
+
+	async function selectPlanet(name: string) {
+		await model.selectPlanet(name);
+		if (model.selected?.calibration) {
+			await setCartographyOverlayConfig({ ...cartographyOverlayConfig.current, planet: name });
+		}
+	}
 
 	// Transient action feedback (copy confirmations, CRUD failures).
 	let feedback = $state<string | null>(null);
@@ -181,6 +194,12 @@
 		{#if model.planets.length > 0}
 			<div class="flex items-center gap-2 shrink-0">
 				<Button size="sm" loading={scanning} onclick={scanMyLocation}>Pin my location</Button>
+				<Button size="sm" variant="secondary" onclick={toggleCartographyOverlay}>
+					Pin overlay
+				</Button>
+				<Button size="sm" variant="ghost" onclick={() => (overlayConfigOpen = true)}>
+					Configure
+				</Button>
 				<Button size="sm" variant="secondary" onclick={() => (calibrationOpen = true)}>
 					Calibrate capture
 				</Button>
@@ -190,7 +209,7 @@
 						class="w-52"
 						value={model.selected?.name ?? ''}
 						onchange={(event) =>
-							model.selectPlanet((event.currentTarget as HTMLSelectElement).value)}
+							selectPlanet((event.currentTarget as HTMLSelectElement).value)}
 					>
 						{#each model.planets as planet (planet.name)}
 							<option value={planet.name}>
@@ -235,6 +254,11 @@
 		{/if}
 	</div>
 </div>
+
+<CartographyOverlayModal
+	bind:open={overlayConfigOpen}
+	config={cartographyOverlayConfig.current}
+/>
 
 <PinEditModal bind:open={formOpen} point={dropPoint} editing={editingPin} onsubmit={submitPinForm} />
 <CalibrationModal bind:open={calibrationOpen} />

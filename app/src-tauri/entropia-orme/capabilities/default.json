@@ -4,6 +4,7 @@
   "description": "Default capabilities for EntropiaOrme. The `windows` list includes runtime-spawned overlay popups (overlay-menu, overlay-armour-cost) that are created on-demand via WebviewWindow from app/src/routes/overlay.",
   "windows": ["main", "overlay", "overlay-menu", "overlay-armour-cost", "scan-overlay"],
   "permissions": [
+    "trusted-commands",
     "core:default",
     "core:webview:allow-create-webview-window",
     "core:window:allow-create",

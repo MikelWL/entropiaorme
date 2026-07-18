@@ -1145,4 +1145,25 @@ mod tests {
             .collect();
         assert_eq!(TYPED_COMMANDS, manifest.as_slice());
     }
+
+    #[test]
+    fn the_application_acl_covers_exactly_the_registered_command_surface() {
+        let mut expected = TYPED_COMMANDS.to_vec();
+        expected.extend([
+            "toggle_overlay",
+            "toggle_cartography_overlay",
+            "show_scan_overlay",
+            "hide_scan_overlay",
+            "capture_png",
+            "planet_map_image",
+            "check_for_update",
+            "download_update",
+            "install_update",
+            "get_update_channel",
+            "set_update_channel",
+        ]);
+        expected.sort_unstable();
+        expected.dedup();
+        assert_eq!(crate::command_acl::APP_COMMANDS, expected.as_slice());
+    }
 }

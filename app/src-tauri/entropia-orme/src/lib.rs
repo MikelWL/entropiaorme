@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod command_acl;
 mod commands;
 mod composition;
 mod crash;
@@ -82,6 +84,19 @@ async fn toggle_overlay(app: tauri::AppHandle) {
             // show explicitly so it can re-read config/runtime state that no
             // backend event announces (otherwise it stays stale until restart).
             let _ = app.emit("overlay-shown", ());
+        }
+    }
+}
+
+#[tauri::command]
+fn toggle_cartography_overlay(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("cartography-overlay") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let position = monitor_anchor(&window, (60, 150));
+            let _ = window.set_position(position);
+            let _ = window.show();
         }
     }
 }
@@ -215,6 +230,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             toggle_overlay,
+            toggle_cartography_overlay,
             show_scan_overlay,
             hide_scan_overlay,
             capture_png,
@@ -375,7 +391,7 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // The overlay + scan-overlay windows are configured invisible
+            // The tracking, scan, and cartography overlay windows are configured invisible
             // but still count toward Tauri's "exit when all windows close"
             // tally — closing main alone leaves them open and the app
             // keeps running headless. Treat main-window close as a
@@ -860,5 +876,40 @@ mod tests {
             capabilities.contains("shell:allow-open"),
             "the shell open capability must survive for external links: {capabilities}"
         );
+    }
+
+    #[test]
+    fn the_cartography_overlay_has_a_dedicated_least_privilege_capability() {
+        let default_capability = include_str!("../capabilities/default.json");
+        let cartography_capability = include_str!("../capabilities/cartography-overlay.json");
+        assert!(
+            !default_capability.contains("cartography-overlay"),
+            "the cartography webview must not inherit the main capability: {default_capability}"
+        );
+        assert!(cartography_capability.contains("\"windows\": [\"cartography-overlay\"]"));
+        assert!(cartography_capability.contains("cartography-commands"));
+        for forbidden in [
+            "shell:allow-open",
+            "core:window:allow-create",
+            "core:webview:allow-create-webview-window",
+            "trusted-commands",
+        ] {
+            assert!(
+                !cartography_capability.contains(forbidden),
+                "the cartography capability must not grant {forbidden}: {cartography_capability}"
+            );
+        }
+        assert!(crate::command_acl::APP_COMMANDS.contains(&"map_pin_create"));
+        assert!(crate::command_acl::APP_COMMANDS.contains(&"settings_update"));
+        assert_eq!(
+            crate::command_acl::CARTOGRAPHY_COMMANDS,
+            [
+                "map_pin_create",
+                "maps_scan_coordinates",
+                "planet_maps_list"
+            ]
+        );
+        assert!(!crate::command_acl::CARTOGRAPHY_COMMANDS.contains(&"map_pin_delete"));
+        assert!(!crate::command_acl::CARTOGRAPHY_COMMANDS.contains(&"settings_update"));
     }
 }

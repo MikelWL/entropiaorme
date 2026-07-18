@@ -50,6 +50,7 @@ export {
 	manualSkillScanCapturePng,
 	planetMapImage,
 	showScanOverlay,
+	toggleCartographyOverlay,
 	toggleOverlay,
 } from './shell';
 export * from './tracking';
