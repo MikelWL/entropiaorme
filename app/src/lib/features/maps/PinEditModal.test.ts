@@ -46,6 +46,7 @@ describe('PinEditModal', () => {
 		});
 
 		expect(screen.queryByText('Category')).toBeNull();
+		expect(screen.getByRole('option', { name: '10 m area' })).toBeTruthy();
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
 		expect(onsubmit).toHaveBeenCalledWith({

@@ -3,39 +3,36 @@
 	import Input from '$lib/components/Input.svelte';
 	import Menu from '$lib/components/Menu.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import type { PlanetMap } from '$lib/api';
+	import type { MapPin, PlanetMap } from '$lib/api';
+	import MapPinPicker from './MapPinPicker.svelte';
 
 	let {
 		planets,
 		selectedName,
 		scanning,
-		search = $bindable(''),
 		coordinate = $bindable(''),
 		showGrid = $bindable(false),
-		visiblePins,
-		totalPins,
+		pins,
 		onselectplanet,
 		onscan,
 		ontoggleoverlay,
 		onconfigure,
 		oncalibrate,
-		onsearchenter,
+		onselectpin,
 		ongoto,
 	}: {
 		planets: PlanetMap[];
 		selectedName: string;
 		scanning: boolean;
-		search?: string;
 		coordinate?: string;
 		showGrid?: boolean;
-		visiblePins: number;
-		totalPins: number;
+		pins: MapPin[];
 		onselectplanet: (name: string) => void;
 		onscan: () => void;
 		ontoggleoverlay: () => void;
 		onconfigure: () => void;
 		oncalibrate: () => void;
-		onsearchenter: () => void;
+		onselectpin: (pin: MapPin) => void;
 		ongoto: () => void;
 	} = $props();
 
@@ -65,20 +62,9 @@
 		</Menu>
 	</div>
 
-	<label class="min-w-44 flex-1 space-y-1 sm:max-w-64">
-		<span class="text-[11px] text-text-secondary">Search pins</span>
-		<Input
-			type="search"
-			bind:value={search}
-			placeholder="Name or notes"
-			onkeydown={(event) => {
-				if (event.key === 'Enter') onsearchenter();
-			}}
-		/>
-	</label>
-	<span class="self-center whitespace-nowrap text-[11px] tabular-nums text-text-tertiary">
-		{visiblePins}/{totalPins}
-	</span>
+	<div class="min-w-44 flex-1 sm:max-w-64">
+		<MapPinPicker {pins} onselect={onselectpin} />
+	</div>
 
 	<form class="flex min-w-64 flex-1 items-end gap-1 sm:max-w-80" onsubmit={(event) => {
 		event.preventDefault();

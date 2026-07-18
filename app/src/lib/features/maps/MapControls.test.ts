@@ -19,7 +19,6 @@ const planets: PlanetMap[] = [
 describe('MapControls', () => {
 	it('exposes the primary, setup, search, coordinate, and grid actions', async () => {
 		const onscan = vi.fn();
-		const onsearchenter = vi.fn();
 		const ongoto = vi.fn();
 		const onconfigure = vi.fn();
 		render(MapControls, {
@@ -27,14 +26,13 @@ describe('MapControls', () => {
 				planets,
 				selectedName: 'Calypso',
 				scanning: false,
-				visiblePins: 1,
-				totalPins: 3,
+				pins: [],
 				onselectplanet: vi.fn(),
 				onscan,
 				ontoggleoverlay: vi.fn(),
 				onconfigure,
 				oncalibrate: vi.fn(),
-				onsearchenter,
+				onselectpin: vi.fn(),
 				ongoto,
 			},
 		});
@@ -42,8 +40,7 @@ describe('MapControls', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Pin my location' }));
 		expect(onscan).toHaveBeenCalledOnce();
 
-		await fireEvent.keyDown(screen.getByPlaceholderText('Name or notes'), { key: 'Enter' });
-		expect(onsearchenter).toHaveBeenCalledOnce();
+		expect(screen.getByRole('combobox', { name: 'Search pins' })).toBeTruthy();
 
 		await fireEvent.input(screen.getByPlaceholderText('61400, 75800'), {
 			target: { value: '61400, 75800' },
@@ -59,6 +56,5 @@ describe('MapControls', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Setup' }));
 		await fireEvent.click(screen.getByRole('menuitem', { name: 'Configure pin overlay' }));
 		expect(onconfigure).toHaveBeenCalledOnce();
-		expect(screen.getByText('1/3')).toBeTruthy();
 	});
 });

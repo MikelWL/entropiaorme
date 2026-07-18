@@ -21,7 +21,6 @@
 	} from '$lib/features/maps/waypoint';
 	import { formatGamePoint, inBounds, type GamePoint } from '$lib/features/maps/coords';
 	import {
-		filterMapPins,
 		parseGamePointInput,
 		type MapFocusRequest,
 	} from '$lib/features/maps/mapTools';
@@ -47,15 +46,12 @@
 	let calibrationOpen = $state(false);
 	let overlayConfigOpen = $state(false);
 	let scanning = $state(false);
-	let searchQuery = $state('');
 	let coordinateInput = $state('');
 	let showGrid = $state(false);
 	let focusRequest = $state<MapFocusRequest | null>(null);
 	let focusNonce = 0;
-	const visiblePins = $derived(filterMapPins(model.pins, searchQuery));
 
 	async function selectPlanet(name: string) {
-		searchQuery = '';
 		focusRequest = null;
 		await model.selectPlanet(name);
 		if (model.selected?.calibration) {
@@ -65,11 +61,6 @@
 
 	function focusMap(point: GamePoint) {
 		focusRequest = { point, nonce: ++focusNonce };
-	}
-
-	function focusFirstSearchResult() {
-		const first = visiblePins[0];
-		if (first) focusMap({ lon: first.lon, lat: first.lat });
 	}
 
 	function goToCoordinate() {
@@ -230,17 +221,15 @@
 			planets={model.planets}
 			selectedName={model.selected?.name ?? ''}
 			{scanning}
-			bind:search={searchQuery}
 			bind:coordinate={coordinateInput}
 			bind:showGrid
-			visiblePins={visiblePins.length}
-			totalPins={model.pins.length}
+			pins={model.pins}
 			onselectplanet={(name) => void selectPlanet(name)}
 			onscan={() => void scanMyLocation()}
 			ontoggleoverlay={() => void toggleCartographyOverlay()}
 			onconfigure={() => (overlayConfigOpen = true)}
 			oncalibrate={() => (calibrationOpen = true)}
-			onsearchenter={focusFirstSearchResult}
+			onselectpin={(pin) => focusMap({ lon: pin.lon, lat: pin.lat })}
 			ongoto={goToCoordinate}
 		/>
 	{/if}
@@ -262,7 +251,7 @@
 			<MapViewer
 				planet={model.selected}
 				imageUrl={model.imageUrl}
-				pins={visiblePins}
+				pins={model.pins}
 				{showGrid}
 				{focusRequest}
 				onmapclick={openDropForm}

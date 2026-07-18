@@ -24,7 +24,8 @@
 		result,
 		selection,
 		extraRow,
-		class: className = ''
+		class: className = '',
+		dropdownClass = '',
 	}: {
 		id: string;
 		placeholder?: string;
@@ -36,6 +37,8 @@
 		/** Optional trailing dropdown row (e.g. an "Add custom" affordance). */
 		extraRow?: Snippet;
 		class?: string;
+		/** Optional placement classes for surfaces that need an anchored popover. */
+		dropdownClass?: string;
 	} = $props();
 
 	const listboxId = $derived(`${id}-listbox`);
@@ -104,7 +107,7 @@
 			id={listboxId}
 			role="listbox"
 			aria-label="Suggestions"
-			class="mt-1 bg-surface border border-border rounded-md overflow-hidden max-h-48 overflow-y-auto"
+			class="mt-1 bg-surface border border-border rounded-md overflow-hidden max-h-48 overflow-y-auto {dropdownClass}"
 		>
 			{#each model.results as item, i}
 				<button

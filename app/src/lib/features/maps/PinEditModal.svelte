@@ -39,9 +39,9 @@
 
 	const RADIUS_PRESETS = [
 		{ value: '', label: 'Exact spot' },
-		{ value: '10', label: '10 m radius' },
-		{ value: '50', label: '50 m radius' },
-		{ value: '100', label: '100 m radius' },
+		{ value: '10', label: '10 m area' },
+		{ value: '50', label: '50 m area' },
+		{ value: '100', label: '100 m area' },
 	];
 
 	let name = $state('');
