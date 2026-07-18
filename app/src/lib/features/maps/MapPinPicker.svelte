@@ -53,8 +53,8 @@
 	onDestroy(() => picker.destroy());
 </script>
 
-<label class="block space-y-1">
-	<span class="text-[11px] text-text-secondary">Search pins</span>
+<div class="space-y-1">
+	<label for="map-pin-search" class="block text-[11px] text-text-secondary">Search pins</label>
 	<PickerInput
 		id="map-pin-search"
 		placeholder="Name or notes"
@@ -73,4 +73,4 @@
 		{/snippet}
 		{#snippet selection({ item })}<span>{item.name}</span>{/snippet}
 	</PickerInput>
-</label>
+</div>
