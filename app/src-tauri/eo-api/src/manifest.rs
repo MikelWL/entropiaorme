@@ -31,7 +31,9 @@ use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildRe
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
-use crate::maps::{MapPin, MapPinInput, MapPinPatch, PlanetMap};
+use crate::maps::{
+    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, PlanetMap,
+};
 use crate::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
     MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
@@ -1028,6 +1030,29 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(i64)),
             }],
             returns: None,
+        },
+        CommandSpec {
+            name: "maps_calibration_start",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CoordCalibrationStatus))),
+        },
+        CommandSpec {
+            name: "maps_calibration_cancel",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CoordCalibrationStatus))),
+        },
+        CommandSpec {
+            name: "maps_calibration_status",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(CoordCalibrationStatus))),
+        },
+        CommandSpec {
+            name: "maps_scan_coordinates",
+            args: vec![ArgSpec {
+                name: "planet",
+                schema: schema(schema_for!(Option<String>)),
+            }],
+            returns: Some(schema(schema_for!(CoordScanResult))),
         },
     ]
 }

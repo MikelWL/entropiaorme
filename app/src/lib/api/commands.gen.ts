@@ -327,6 +327,55 @@ export interface ComputedCharacterStats {
 }
 
 /**
+ * The calibration flow's phase, as the closed wire vocabulary.
+ */
+export type CoordCalibrationPhase = 'idle' | 'awaitTopLeft' | 'awaitBottomRight';
+
+/**
+ * The calibration surface's assembled state: the flow phase, the
+ * persisted region (null until a calibration completed), and the
+ * validation read echoed after the last completion.
+ */
+export interface CoordCalibrationStatus {
+	phase: CoordCalibrationPhase;
+	region: CoordRegionDto | null;
+	lastValidation: CoordScanResult | null;
+}
+
+/**
+ * The persisted capture rectangle, in screen coordinates.
+ */
+export interface CoordRegionDto {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+/**
+ * One coordinate scan's answer: `status` names the outcome precisely
+ * (a wrong read never masquerades as a position), and the extras ride
+ * where the outcome carries them (the `CaptureResult` convention):
+ * coordinates on `read` and `implausible`, the raw capture text only
+ * on `unreadable` (where the UI shows it); a successful read's text is
+ * its digits, so the parsed coordinates already carry everything and
+ * the boundary hands the webview no more screen text than it needs.
+ */
+export interface CoordScanResult {
+	status: CoordScanStatus;
+	lon?: number | null;
+	lat?: number | null;
+	altitude?: number | null;
+	rawText?: string | null;
+	confidence?: number | null;
+}
+
+/**
+ * The closed vocabulary of a coordinate scan's outcome.
+ */
+export type CoordScanStatus = 'read' | 'noRegion' | 'captureFailed' | 'engineUnavailable' | 'unreadable' | 'implausible';
+
+/**
  * The session-detail cost split.
  */
 export interface CostBreakdown {
@@ -2384,4 +2433,20 @@ export async function mapPinUpdate(id: number, patch: MapPinPatch): Promise<MapP
 
 export async function mapPinDelete(id: number): Promise<void> {
 	return invokeCommand('map_pin_delete', { id });
+}
+
+export async function mapsCalibrationStart(): Promise<CoordCalibrationStatus> {
+	return invokeCommand('maps_calibration_start', {});
+}
+
+export async function mapsCalibrationCancel(): Promise<CoordCalibrationStatus> {
+	return invokeCommand('maps_calibration_cancel', {});
+}
+
+export async function mapsCalibrationStatus(): Promise<CoordCalibrationStatus> {
+	return invokeCommand('maps_calibration_status', {});
+}
+
+export async function mapsScanCoordinates(planet: string | null): Promise<CoordScanResult> {
+	return invokeCommand('maps_scan_coordinates', { planet });
 }

@@ -51,6 +51,7 @@ async fn analytics_api(dir: &Path) -> Api {
         handles.quests.clone(),
         None,
         None,
+        None,
     )
 }
 

@@ -8,6 +8,8 @@
 import * as commands from './commands.gen';
 
 export type {
+	CoordCalibrationStatus,
+	CoordScanResult,
 	MapPin,
 	MapPinInput,
 	MapPinPatch,
@@ -21,3 +23,7 @@ export const getMapPins = commands.mapPinsList;
 export const createMapPin = commands.mapPinCreate;
 export const updateMapPin = commands.mapPinUpdate;
 export const deleteMapPin = commands.mapPinDelete;
+export const startMapsCalibration = commands.mapsCalibrationStart;
+export const cancelMapsCalibration = commands.mapsCalibrationCancel;
+export const getMapsCalibrationStatus = commands.mapsCalibrationStatus;
+export const scanMapCoordinates = commands.mapsScanCoordinates;

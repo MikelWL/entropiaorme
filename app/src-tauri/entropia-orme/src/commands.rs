@@ -29,7 +29,9 @@ use eo_api::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildR
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
-use eo_api::maps::{MapPin, MapPinInput, MapPinPatch, PlanetMap};
+use eo_api::maps::{
+    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, PlanetMap,
+};
 use eo_api::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
     MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
@@ -974,6 +976,40 @@ pub async fn map_pin_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiErr
     facade(&app)?.map_pin_delete(id).await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_calibration_start(
+    app: tauri::AppHandle,
+) -> Result<CoordCalibrationStatus, ApiError> {
+    facade(&app)?.maps_calibration_start()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_calibration_cancel(
+    app: tauri::AppHandle,
+) -> Result<CoordCalibrationStatus, ApiError> {
+    facade(&app)?.maps_calibration_cancel()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_calibration_status(
+    app: tauri::AppHandle,
+) -> Result<CoordCalibrationStatus, ApiError> {
+    facade(&app)?.maps_calibration_status()
+}
+
+// The scan runs a synchronous screen grab + OCR read; offload it so a
+// slow grab never ties up an async runtime worker.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_scan_coordinates(
+    app: tauri::AppHandle,
+    planet: Option<String>,
+) -> Result<CoordScanResult, ApiError> {
+    let api = facade(&app)?;
+    tokio::task::spawn_blocking(move || api.maps_scan_coordinates(planet))
+        .await
+        .map_err(|_| ApiError::invalid_state("coordinate scan task failed"))?
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -1095,6 +1131,10 @@ mod tests {
         "map_pin_create",
         "map_pin_update",
         "map_pin_delete",
+        "maps_calibration_start",
+        "maps_calibration_cancel",
+        "maps_calibration_status",
+        "maps_scan_coordinates",
     ];
 
     #[test]

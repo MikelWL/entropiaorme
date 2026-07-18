@@ -152,6 +152,7 @@ struct Producers(Mutex<Option<composition::ProducerState>>);
 struct ScanInput {
     spacebar: std::sync::Arc<composition::SpacebarCaptureListener>,
     skill_scan: std::sync::Arc<composition::SkillScanManual>,
+    coord_confirm: std::sync::Arc<eo_services::coord_capture::CoordConfirmListener>,
 }
 
 // Holds the composed database handle so the exit seam can run the
@@ -333,6 +334,10 @@ pub fn run() {
             commands::map_pin_create,
             commands::map_pin_update,
             commands::map_pin_delete,
+            commands::maps_calibration_start,
+            commands::maps_calibration_cancel,
+            commands::maps_calibration_status,
+            commands::maps_scan_coordinates,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -416,6 +421,7 @@ pub(crate) fn run_exit_teardown(app: &tauri::AppHandle) {
     // listener detaches its share of the shared OS hook.
     if let Some(state) = app.try_state::<ScanInput>() {
         state.spacebar.stop();
+        state.coord_confirm.stop();
         state.skill_scan.shutdown();
     }
 
@@ -538,6 +544,7 @@ fn install_native_services(app: &tauri::AppHandle, composed: composition::Compos
     // the shared OS hook and the scan resets in-flight state on close.
     let exit_spacebar = composed.spacebar_listener.clone();
     let exit_skill_scan = composed.skill_scan.clone();
+    let exit_coord_confirm = composed.coord_confirm.clone();
     // The typed-command facade, published to its managed slot below.
     let composed_api = composed.api.clone();
     // The composed database handle, held so the exit seam can run the
@@ -561,6 +568,7 @@ fn install_native_services(app: &tauri::AppHandle, composed: composition::Compos
     app.manage(ScanInput {
         spacebar: exit_spacebar,
         skill_scan: exit_skill_scan,
+        coord_confirm: exit_coord_confirm,
     });
     // Hold the database handle for the exit-seam `PRAGMA optimize`.
     app.manage(ShutdownDb(shutdown_db));

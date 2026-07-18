@@ -4,13 +4,16 @@
 	 * rendered through the one viewport transform (`./viewport`). Wheel
 	 * zoom anchors under the cursor; drag pans; a still click on the map
 	 * reports the game coordinate for a pin drop; pin markers are real
-	 * buttons (hover and keyboard focus both raise the detail card).
+	 * buttons (hover and keyboard focus raise the detail card, activation
+	 * copies the in-game waypoint).
 	 * Arrow keys pan, +/- zoom about the centre, 0 re-fits.
 	 */
+	import { untrack } from 'svelte';
 	import type { MapPin, PlanetMap } from '$lib/api';
 	import { gameToImage, imageToGame, type GamePoint } from './coords';
 	import { pinGlyph } from './pinIcons';
 	import PinCard from './PinCard.svelte';
+	import type { WaypointCopyResult } from './waypoint';
 	import {
 		ZOOM_STEP,
 		fitViewport,
@@ -35,7 +38,7 @@
 		pins: MapPin[];
 		/** A still click on a calibrated map, in game units. */
 		onmapclick: (point: GamePoint) => void;
-		oncopywaypoint: (pin: MapPin) => void;
+		oncopywaypoint: (pin: MapPin) => Promise<WaypointCopyResult>;
 		oneditpin: (pin: MapPin) => void;
 		ondeletepin: (pin: MapPin) => void;
 	} = $props();
@@ -52,16 +55,33 @@
 	// while the pointer is over the card itself, closed on a short delay
 	// so travelling marker -> card does not dismiss it.
 	let activePin = $state<MapPin | null>(null);
+	let copyFeedback = $state<WaypointCopyResult | null>(null);
+	let copyRequest = 0;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function raiseCard(pin: MapPin) {
 		if (closeTimer) clearTimeout(closeTimer);
+		if (activePin?.id !== pin.id) {
+			copyFeedback = null;
+			copyRequest += 1;
+		}
 		activePin = pin;
+	}
+
+	async function copyPinWaypoint(pin: MapPin) {
+		raiseCard(pin);
+		const request = ++copyRequest;
+		const feedback = await oncopywaypoint(pin);
+		if (request === copyRequest && activePin?.id === pin.id) copyFeedback = feedback;
 	}
 
 	function scheduleCardClose() {
 		if (closeTimer) clearTimeout(closeTimer);
-		closeTimer = setTimeout(() => (activePin = null), 250);
+		closeTimer = setTimeout(() => {
+			activePin = null;
+			copyFeedback = null;
+			copyRequest += 1;
+		}, 250);
 	}
 
 	// Load the raster whenever the planet's data URL changes, and re-fit
@@ -87,10 +107,22 @@
 		};
 	});
 
-	// Re-clamp on container resize (bindings change on layout).
+	// Re-clamp on container resize. The current viewport is read
+	// untracked and reassigned only when the clamp actually moves it:
+	// tracking `vp` here would make the effect its own trigger (each
+	// reassignment is a fresh object), which pegs the flush loop and
+	// wedges the whole page.
 	$effect(() => {
-		if (!image || viewW === 0 || viewH === 0) return;
-		vp = zoomAt(vp, 1, viewW / 2, viewH / 2, image.naturalWidth, image.naturalHeight, viewW, viewH);
+		const w = viewW;
+		const h = viewH;
+		const img = image;
+		if (!img || w === 0 || h === 0) return;
+		untrack(() => {
+			const next = zoomAt(vp, 1, w / 2, h / 2, img.naturalWidth, img.naturalHeight, w, h);
+			if (next.zoom !== vp.zoom || next.panX !== vp.panX || next.panY !== vp.panY) {
+				vp = next;
+			}
+		});
 	});
 
 	// Draw on dirty: re-runs only when the transform, raster, or size
@@ -296,13 +328,13 @@
 	{/if}
 
 	<!-- Pin markers: real buttons, so hover and keyboard focus share one
-	     detail surface. -->
+	     detail surface while click/Enter copies the waypoint. -->
 	{#each placedPins as placed (placed.pin.id)}
 		<button
 			type="button"
 			class="absolute -translate-x-1/2 -translate-y-full cursor-pointer text-xl leading-none drop-shadow-md transition-transform hover:scale-125 focus-visible:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
 			style="left: {placed.x}px; top: {placed.y}px;"
-			aria-label="Pin: {placed.pin.name}"
+			aria-label="Copy waypoint for {placed.pin.name}"
 			onmouseenter={() => raiseCard(placed.pin)}
 			onmouseleave={scheduleCardClose}
 			onfocus={() => raiseCard(placed.pin)}
@@ -310,7 +342,7 @@
 			onpointerdown={(event) => event.stopPropagation()}
 			onclick={(event) => {
 				event.stopPropagation();
-				raiseCard(placed.pin);
+				void copyPinWaypoint(placed.pin);
 			}}
 		>
 			{pinGlyph(placed.pin.icon)}
@@ -326,9 +358,12 @@
 				{viewW}
 				{viewH}
 				technicalName={planet.technicalName}
+				{copyFeedback}
 				onpointerenter={() => raiseCard(placed.pin)}
 				onpointerleave={scheduleCardClose}
-				oncopywaypoint={() => oncopywaypoint(placed.pin)}
+				onfocusin={() => raiseCard(placed.pin)}
+				onfocusout={scheduleCardClose}
+				oncopy={() => void copyPinWaypoint(placed.pin)}
 				onedit={() => oneditpin(placed.pin)}
 				ondelete={() => {
 					activePin = null;

@@ -17,6 +17,7 @@ pub mod clock;
 pub mod codex;
 pub mod codex_categories;
 pub mod config_service;
+pub mod coord_capture;
 pub mod cost_engine;
 pub mod daily_rollup;
 pub mod db;
