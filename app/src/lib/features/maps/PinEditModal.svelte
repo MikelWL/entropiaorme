@@ -11,7 +11,7 @@
 	import Select from '$lib/components/Select.svelte';
 	import type { MapPin } from '$lib/api';
 	import { formatGamePoint, type GamePoint } from './coords';
-	import { PIN_ICONS } from './pinIcons';
+	import { PIN_ICONS, pinKind } from './pinIcons';
 
 	export interface PinFormValues {
 		name: string;
@@ -46,7 +46,6 @@
 
 	let name = $state('');
 	let icon = $state('pin');
-	let kind = $state('');
 	let radius = $state('');
 	let notes = $state('');
 
@@ -55,7 +54,6 @@
 		if (!open) return;
 		name = editing?.name ?? '';
 		icon = editing?.icon ?? 'pin';
-		kind = editing?.kind ?? '';
 		radius = editing?.radiusM == null ? '' : String(editing.radiusM);
 		notes = editing?.notes ?? '';
 	});
@@ -71,7 +69,7 @@
 			const persisted = await onsubmit({
 				name: name.trim(),
 				icon,
-				kind: kind.trim() || 'marker',
+				kind: pinKind(icon),
 				radiusM: radius === '' ? null : Number(radius),
 				notes: notes.trim(),
 			});
@@ -95,9 +93,9 @@
 			<Input bind:value={name} placeholder="e.g. Ore claim north ridge" required />
 		</label>
 
-		<div class="grid grid-cols-2 gap-3">
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 			<label class="block space-y-1">
-				<span class="text-xs text-text-secondary">Icon</span>
+				<span class="text-xs text-text-secondary">Marker</span>
 				<Select bind:value={icon}>
 					{#each PIN_ICONS as def (def.id)}
 						<option value={def.id}>{def.glyph} {def.label}</option>
@@ -105,19 +103,14 @@
 				</Select>
 			</label>
 			<label class="block space-y-1">
-				<span class="text-xs text-text-secondary">Category</span>
-				<Input bind:value={kind} placeholder="e.g. mining" />
+				<span class="text-xs text-text-secondary">Area</span>
+				<Select bind:value={radius}>
+					{#each RADIUS_PRESETS as preset (preset.value)}
+						<option value={preset.value}>{preset.label}</option>
+					{/each}
+				</Select>
 			</label>
 		</div>
-
-		<label class="block space-y-1">
-			<span class="text-xs text-text-secondary">Marks</span>
-			<Select bind:value={radius}>
-				{#each RADIUS_PRESETS as preset (preset.value)}
-					<option value={preset.value}>{preset.label}</option>
-				{/each}
-			</Select>
-		</label>
 
 		<label class="block space-y-1">
 			<span class="text-xs text-text-secondary">Notes</span>

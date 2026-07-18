@@ -9,19 +9,20 @@ export interface PinIconDef {
 	id: string;
 	label: string;
 	glyph: string;
+	kind: string;
 }
 
 export const PIN_ICONS: PinIconDef[] = [
-	{ id: 'pin', label: 'Pin', glyph: '📍' },
-	{ id: 'teleporter', label: 'Teleporter', glyph: '🌀' },
-	{ id: 'ore', label: 'Ore claim', glyph: '⛏️' },
-	{ id: 'enemy', label: 'Mob spawn', glyph: '👾' },
-	{ id: 'boss', label: 'Boss', glyph: '💀' },
-	{ id: 'vendor', label: 'Vendor', glyph: '🏪' },
-	{ id: 'sweat', label: 'Sweat circle', glyph: '💧' },
-	{ id: 'home', label: 'Base', glyph: '🏠' },
-	{ id: 'star', label: 'Favourite', glyph: '⭐' },
-	{ id: 'flag', label: 'Flag', glyph: '🚩' },
+	{ id: 'pin', label: 'Pin', glyph: '📍', kind: 'marker' },
+	{ id: 'teleporter', label: 'Teleporter', glyph: '🌀', kind: 'travel' },
+	{ id: 'ore', label: 'Ore claim', glyph: '⛏️', kind: 'mining' },
+	{ id: 'enemy', label: 'Mob spawn', glyph: '👾', kind: 'hunting' },
+	{ id: 'boss', label: 'Boss', glyph: '💀', kind: 'hunting' },
+	{ id: 'vendor', label: 'Vendor', glyph: '🏪', kind: 'service' },
+	{ id: 'sweat', label: 'Sweat circle', glyph: '💧', kind: 'gathering' },
+	{ id: 'home', label: 'Base', glyph: '🏠', kind: 'location' },
+	{ id: 'star', label: 'Favourite', glyph: '⭐', kind: 'favourite' },
+	{ id: 'flag', label: 'Flag', glyph: '🚩', kind: 'marker' },
 ];
 
 const FALLBACK = PIN_ICONS[0];
@@ -29,4 +30,9 @@ const FALLBACK = PIN_ICONS[0];
 /** The glyph for an icon id, with the fallback for unknown ids. */
 export function pinGlyph(iconId: string): string {
 	return PIN_ICONS.find((icon) => icon.id === iconId)?.glyph ?? FALLBACK.glyph;
+}
+
+/** The stable persisted category implied by a marker choice. */
+export function pinKind(iconId: string): string {
+	return PIN_ICONS.find((icon) => icon.id === iconId)?.kind ?? FALLBACK.kind;
 }

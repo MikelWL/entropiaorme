@@ -6,11 +6,10 @@
 	 * feature model; geometry lives in the feature's pure modules.
 	 */
 	import { onMount } from 'svelte';
-	import Button from '$lib/components/Button.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
-	import Select from '$lib/components/Select.svelte';
 	import CalibrationModal from '$lib/features/maps/CalibrationModal.svelte';
 	import CartographyOverlayModal from '$lib/features/maps/CartographyOverlayModal.svelte';
+	import MapControls from '$lib/features/maps/MapControls.svelte';
 	import { startMapsCartographySync } from '$lib/features/maps/mapsCartographySync';
 	import MapViewer from '$lib/features/maps/MapViewer.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
@@ -20,7 +19,12 @@
 		formatWaypoint,
 		type WaypointCopyResult,
 	} from '$lib/features/maps/waypoint';
-	import { formatGamePoint, type GamePoint } from '$lib/features/maps/coords';
+	import { formatGamePoint, inBounds, type GamePoint } from '$lib/features/maps/coords';
+	import {
+		filterMapPins,
+		parseGamePointInput,
+		type MapFocusRequest,
+	} from '$lib/features/maps/mapTools';
 	import type { MapPin } from '$lib/api';
 	import { scanMapCoordinates } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
@@ -43,12 +47,43 @@
 	let calibrationOpen = $state(false);
 	let overlayConfigOpen = $state(false);
 	let scanning = $state(false);
+	let searchQuery = $state('');
+	let coordinateInput = $state('');
+	let showGrid = $state(false);
+	let focusRequest = $state<MapFocusRequest | null>(null);
+	let focusNonce = 0;
+	const visiblePins = $derived(filterMapPins(model.pins, searchQuery));
 
 	async function selectPlanet(name: string) {
+		searchQuery = '';
+		focusRequest = null;
 		await model.selectPlanet(name);
 		if (model.selected?.calibration) {
 			await setCartographyOverlayConfig({ ...cartographyOverlayConfig.current, planet: name });
 		}
+	}
+
+	function focusMap(point: GamePoint) {
+		focusRequest = { point, nonce: ++focusNonce };
+	}
+
+	function focusFirstSearchResult() {
+		const first = visiblePins[0];
+		if (first) focusMap({ lon: first.lon, lat: first.lat });
+	}
+
+	function goToCoordinate() {
+		const point = parseGamePointInput(coordinateInput);
+		if (!point) {
+			flash('Enter coordinates as longitude, latitude.');
+			return;
+		}
+		const calibration = model.selected?.calibration;
+		if (!calibration || !inBounds(calibration, point)) {
+			flash(`That coordinate is outside ${model.selected?.name ?? 'the selected map'}.`);
+			return;
+		}
+		focusMap(point);
 	}
 
 	// Transient action feedback (copy confirmations, CRUD failures).
@@ -181,50 +216,38 @@
 	}
 </script>
 
-<div class="flex h-full flex-col px-6 pb-6 gap-4">
-	<div class="flex items-end justify-between gap-4">
-		<header class="flex flex-col gap-1.5">
+<div class="flex h-full flex-col gap-3 px-4 pb-4 sm:px-6 sm:pb-6">
+	<header class="flex flex-col gap-1.5">
 			<h1 class="text-xl font-semibold text-text tracking-tight">Maps</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
 			<p class="text-sm text-text-secondary mt-0.5">
-				Planet maps with your own pins. Click the map to drop a pin; hover a pin for details,
-				or click it to copy its waypoint.
+				Explore planet maps, record locations, and copy waypoints back into the game.
 			</p>
-		</header>
-		{#if model.planets.length > 0}
-			<div class="flex items-center gap-2 shrink-0">
-				<Button size="sm" loading={scanning} onclick={scanMyLocation}>Pin my location</Button>
-				<Button size="sm" variant="secondary" onclick={toggleCartographyOverlay}>
-					Pin overlay
-				</Button>
-				<Button size="sm" variant="ghost" onclick={() => (overlayConfigOpen = true)}>
-					Configure
-				</Button>
-				<Button size="sm" variant="secondary" onclick={() => (calibrationOpen = true)}>
-					Calibrate capture
-				</Button>
-				<label class="flex items-center gap-2">
-					<span class="text-xs text-text-secondary">Planet</span>
-					<Select
-						class="w-52"
-						value={model.selected?.name ?? ''}
-						onchange={(event) =>
-							selectPlanet((event.currentTarget as HTMLSelectElement).value)}
-					>
-						{#each model.planets as planet (planet.name)}
-							<option value={planet.name}>
-								{planet.name}{planet.calibration ? '' : ' (view-only)'}
-							</option>
-						{/each}
-					</Select>
-				</label>
-			</div>
-		{/if}
-	</div>
+	</header>
 
-	{#if feedback}
-		<p class="text-xs text-text-secondary" role="status">{feedback}</p>
+	{#if model.planets.length > 0}
+		<MapControls
+			planets={model.planets}
+			selectedName={model.selected?.name ?? ''}
+			{scanning}
+			bind:search={searchQuery}
+			bind:coordinate={coordinateInput}
+			bind:showGrid
+			visiblePins={visiblePins.length}
+			totalPins={model.pins.length}
+			onselectplanet={(name) => void selectPlanet(name)}
+			onscan={() => void scanMyLocation()}
+			ontoggleoverlay={() => void toggleCartographyOverlay()}
+			onconfigure={() => (overlayConfigOpen = true)}
+			oncalibrate={() => (calibrationOpen = true)}
+			onsearchenter={focusFirstSearchResult}
+			ongoto={goToCoordinate}
+		/>
 	{/if}
+
+	<div class="h-4 shrink-0">
+		{#if feedback}<p class="truncate text-xs text-text-secondary" role="status">{feedback}</p>{/if}
+	</div>
 
 	{#if model.error}
 		<ErrorNotice message={model.error} />
@@ -239,7 +262,9 @@
 			<MapViewer
 				planet={model.selected}
 				imageUrl={model.imageUrl}
-				pins={model.pins}
+				pins={visiblePins}
+				{showGrid}
+				{focusRequest}
 				onmapclick={openDropForm}
 				oncopywaypoint={copyWaypoint}
 				oneditpin={openEditForm}

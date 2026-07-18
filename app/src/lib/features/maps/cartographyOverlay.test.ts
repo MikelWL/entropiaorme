@@ -46,7 +46,7 @@ describe('cartography overlay preferences', () => {
 		const clean = sanitiseCartographyOverlayConfig({ planet: ' Calypso ', buttons });
 		expect(clean.planet).toBe('Calypso');
 		expect(clean.buttons).toHaveLength(MAX_CARTOGRAPHY_BUTTONS);
-		expect(clean.buttons[0]).toMatchObject({ name: 'Pin', kind: 'marker', radiusM: 10_000 });
+		expect(clean.buttons[0]).toMatchObject({ name: 'Pin', kind: 'mining', radiusM: 10_000 });
 		expect(clean.buttons[1].icon).toBe('pin');
 		expect(clean.buttons[2].radiusM).toBeNull();
 	});
@@ -63,7 +63,7 @@ describe('cartography overlay preferences', () => {
 		});
 		const expected = {
 			planet: 'Calypso',
-			buttons: [{ id: 'one', name: 'North', icon: 'star', kind: 'marker', radiusM: 50 }],
+			buttons: [{ id: 'one', name: 'North', icon: 'star', kind: 'favourite', radiusM: 50 }],
 		};
 		expect(cartographyOverlayConfig.current).toEqual(expected);
 		expect(setPreference).toHaveBeenCalledWith('cartographyOverlay', expected);

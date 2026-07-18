@@ -1,7 +1,7 @@
 import { emit } from '@tauri-apps/api/event';
 import type { CoordScanResult, MapPinInput } from '$lib/api';
 import { getPreference, setPreference } from '$lib/preferences';
-import { PIN_ICONS } from './pinIcons';
+import { PIN_ICONS, pinKind } from './pinIcons';
 
 export type CartographyButton = {
 	id: string;
@@ -59,11 +59,12 @@ export function sanitiseCartographyOverlayConfig(value: unknown): CartographyOve
 			if (seen.has(id)) continue;
 			seen.add(id);
 			const radius = item.radiusM;
+			const icon = typeof item.icon === 'string' && iconIds.has(item.icon) ? item.icon : 'pin';
 			buttons.push({
 				id,
 				name: cleanText(item.name, 'Pin', 40),
-				icon: typeof item.icon === 'string' && iconIds.has(item.icon) ? item.icon : 'pin',
-				kind: cleanText(item.kind, 'marker', 32),
+				icon,
+				kind: pinKind(icon),
 				radiusM:
 					typeof radius === 'number' && Number.isFinite(radius) && radius > 0
 						? Math.min(radius, 10_000)

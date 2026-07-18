@@ -105,6 +105,31 @@ export function zoomAt(
 	return clampPan(next, imgW, imgH, viewW, viewH);
 }
 
+/** Centre an image point, increasing a fitted view to a useful inspection
+ * zoom while preserving any closer zoom the user already chose. */
+export function centreOnImage(
+	vp: Viewport,
+	point: { x: number; y: number },
+	imgW: number,
+	imgH: number,
+	viewW: number,
+	viewH: number,
+): Viewport {
+	const bounds = zoomBounds(imgW, imgH, viewW, viewH);
+	const zoom = Math.min(bounds.max, Math.max(vp.zoom, bounds.min * 2.5));
+	return clampPan(
+		{
+			zoom,
+			panX: point.x - viewW / (2 * zoom),
+			panY: point.y - viewH / (2 * zoom),
+		},
+		imgW,
+		imgH,
+		viewW,
+		viewH,
+	);
+}
+
 /**
  * Clamp the pan so the image stays in view: on an axis where the scaled
  * image exceeds the view, panning stops at the image edges; on an axis

@@ -143,15 +143,15 @@
 				</button>
 			{/each}
 		</div>
-		{#if feedback}
-			<p
-				role="status"
-				class="border-t px-2 py-1.5 text-center text-xs {feedback.success
+		<p
+			role="status"
+			class="min-h-7 border-t px-2 py-1.5 text-center text-xs {feedback?.success
 					? 'border-success/40 bg-success/10 text-success'
-					: 'border-danger/30 text-text-secondary'}"
-			>
-				{feedback.text}
-			</p>
-		{/if}
+					: feedback
+						? 'border-danger/30 text-text-secondary'
+						: 'invisible border-border/70'}"
+		>
+			{feedback?.text ?? 'Ready'}
+		</p>
 	</div>
 </div>

@@ -4,7 +4,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { PIN_ICONS } from './pinIcons';
+	import { PIN_ICONS, pinKind } from './pinIcons';
 	import {
 		MAX_CARTOGRAPHY_BUTTONS,
 		setCartographyOverlayConfig,
@@ -35,10 +35,21 @@
 		];
 	}
 
+	function moveButton(index: number, offset: -1 | 1) {
+		const target = index + offset;
+		if (target < 0 || target >= buttons.length) return;
+		const reordered = [...buttons];
+		[reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+		buttons = reordered;
+	}
+
 	async function save() {
 		saving = true;
 		try {
-			await setCartographyOverlayConfig({ planet: config.planet, buttons });
+			await setCartographyOverlayConfig({
+				planet: config.planet,
+				buttons: buttons.map((button) => ({ ...button, kind: pinKind(button.icon) })),
+			});
 			open = false;
 		} finally {
 			saving = false;
@@ -53,27 +64,27 @@
 				<div class="rounded-md border border-border bg-surface/40 p-3">
 					<div class="mb-2 flex items-center justify-between gap-3">
 						<span class="text-xs font-medium text-text-secondary">Button {index + 1}</span>
-						<Button
-							size="sm"
-							variant="ghost"
-							disabled={buttons.length === 1}
-							onclick={() => (buttons = buttons.filter((_, itemIndex) => itemIndex !== index))}
-						>
-							Remove
-						</Button>
+						<div class="flex items-center gap-1">
+							<Button size="sm" variant="ghost" disabled={index === 0} aria-label="Move {button.name} up" onclick={() => moveButton(index, -1)}>↑</Button>
+							<Button size="sm" variant="ghost" disabled={index === buttons.length - 1} aria-label="Move {button.name} down" onclick={() => moveButton(index, 1)}>↓</Button>
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={buttons.length === 1}
+								onclick={() => (buttons = buttons.filter((_, itemIndex) => itemIndex !== index))}
+							>
+								Remove
+							</Button>
+						</div>
 					</div>
 
-					<div class="grid grid-cols-2 gap-3">
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
 						<label class="min-w-0 space-y-1">
 							<span class="text-xs text-text-secondary">Name</span>
 							<Input bind:value={button.name} maxlength={40} />
 						</label>
 						<label class="min-w-0 space-y-1">
-							<span class="text-xs text-text-secondary">Category</span>
-							<Input bind:value={button.kind} maxlength={32} />
-						</label>
-						<label class="min-w-0 space-y-1">
-							<span class="text-xs text-text-secondary">Icon</span>
+							<span class="text-xs text-text-secondary">Marker</span>
 							<Select bind:value={button.icon}>
 								{#each PIN_ICONS as icon (icon.id)}
 									<option value={icon.id}>{icon.glyph} {icon.label}</option>
@@ -81,7 +92,7 @@
 							</Select>
 						</label>
 						<label class="min-w-0 space-y-1">
-							<span class="text-xs text-text-secondary">Marks</span>
+							<span class="text-xs text-text-secondary">Area</span>
 							<Select
 								value={button.radiusM == null ? '' : String(button.radiusM)}
 								onchange={(event) => {
