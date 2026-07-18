@@ -53,7 +53,7 @@ describe('CartographyOverlayModal', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Choose emoji for Claim' }));
 		const picker = within(screen.getAllByRole('dialog', { name: 'Choose emoji' })[0]);
 		expect(
-			picker.getAllByRole('option').map((option) => option.getAttribute('aria-label')),
+			picker.getAllByRole('button').map((option) => option.getAttribute('aria-label')),
 		).toEqual([
 			'round pushpin',
 			'triangular flag',
@@ -68,7 +68,7 @@ describe('CartographyOverlayModal', () => {
 		await fireEvent.input(picker.getByRole('textbox', { name: 'Search emoji' }), {
 			target: { value: 'dragon' },
 		});
-		await fireEvent.click(picker.getByRole('option', { name: 'dragon' }));
+		await fireEvent.click(picker.getByRole('button', { name: 'dragon' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Move Claim down' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
