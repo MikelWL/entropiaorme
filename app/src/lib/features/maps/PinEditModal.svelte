@@ -42,6 +42,9 @@
 		{ value: '10', label: '10 m area' },
 		{ value: '50', label: '50 m area' },
 		{ value: '100', label: '100 m area' },
+		{ value: '250', label: '250 m area' },
+		{ value: '500', label: '500 m area' },
+		{ value: '1000', label: '1 km area' },
 	];
 
 	let name = $state('');

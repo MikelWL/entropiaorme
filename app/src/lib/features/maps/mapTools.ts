@@ -6,14 +6,6 @@ export interface MapFocusRequest {
 	nonce: number;
 }
 
-export function parseGamePointInput(value: string): GamePoint | null {
-	const match = /^\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*$/.exec(value);
-	if (!match) return null;
-	const lon = Number(match[1]);
-	const lat = Number(match[2]);
-	return Number.isFinite(lon) && Number.isFinite(lat) ? { lon, lat } : null;
-}
-
 export function filterMapPins(pins: MapPin[], query: string): MapPin[] {
 	const needle = query.trim().toLowerCase();
 	if (!needle) return pins;

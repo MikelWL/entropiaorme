@@ -39,6 +39,7 @@ describe('PinEditModal', () => {
 					radiusM: null,
 					notes: null,
 					sessionId: null,
+					mapViewId: null,
 					createdAt: 1,
 				},
 				onsubmit,

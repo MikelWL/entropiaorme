@@ -6,13 +6,17 @@
  * module owns the data and its loading/error state.
  */
 
-import type { MapPin, MapPinInput, MapPinPatch, PlanetMap } from '$lib/api';
+import type { MapPin, MapPinInput, MapPinPatch, MapView, PlanetMap } from '$lib/api';
 import {
 	createMapPin,
+	createMapView,
 	deleteMapPin,
+	deleteMapView,
 	getMapPins,
+	getMapViews,
 	getPlanetMaps,
 	planetMapImage,
+	renameMapView,
 	updateMapPin,
 } from '$lib/api';
 import { describeError } from '$lib/view/errorState';
@@ -21,6 +25,8 @@ export function createMapsModel() {
 	let planets = $state<PlanetMap[]>([]);
 	let selectedName = $state<string | null>(null);
 	let imageUrl = $state<string | null>(null);
+	let views = $state<MapView[]>([]);
+	let selectedViewId = $state<number | null>(null);
 	let pins = $state<MapPin[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -50,12 +56,17 @@ export function createMapsModel() {
 	async function refreshPins(): Promise<void> {
 		const planet = selectedName;
 		if (!planet) return;
+		const viewId = selectedViewId;
 		const epoch = selectEpoch;
 		try {
-			const loadedPins = await getMapPins(planet);
-			if (epoch === selectEpoch && selectedName === planet) pins = loadedPins;
+			const loadedPins = await getMapPins(planet, viewId);
+			if (epoch === selectEpoch && selectedName === planet && selectedViewId === viewId) {
+				pins = loadedPins;
+			}
 		} catch (e) {
-			if (epoch === selectEpoch) error = describeError(e, `Failed to refresh the ${planet} pins`);
+			if (epoch === selectEpoch && selectedName === planet && selectedViewId === viewId) {
+				error = describeError(e, `Failed to refresh the ${planet} pins`);
+			}
 		}
 	}
 
@@ -63,18 +74,19 @@ export function createMapsModel() {
 		const epoch = ++selectEpoch;
 		const planet = planets.find((candidate) => candidate.name === name);
 		if (!planet) return;
-		selectedName = name;
-		imageUrl = null;
-		pins = [];
 		loading = true;
 		error = null;
 		try {
-			const [url, loadedPins] = await Promise.all([
+			const [url, loadedViews, loadedPins] = await Promise.all([
 				planetMapImage(planet.name, planet.imageMime),
-				getMapPins(planet.name),
+				getMapViews(planet.name),
+				getMapPins(planet.name, null),
 			]);
 			if (epoch !== selectEpoch) return;
+			selectedName = name;
+			selectedViewId = null;
 			imageUrl = url;
+			views = loadedViews;
 			pins = loadedPins;
 		} catch (e) {
 			if (epoch !== selectEpoch) return;
@@ -84,9 +96,58 @@ export function createMapsModel() {
 		}
 	}
 
+	async function selectView(id: number | null) {
+		const planet = selectedName;
+		if (!planet || (id !== null && !views.some((view) => view.id === id))) return;
+		const epoch = ++selectEpoch;
+		error = null;
+		try {
+			const loadedPins = await getMapPins(planet, id);
+			if (epoch === selectEpoch && selectedName === planet) {
+				selectedViewId = id;
+				pins = loadedPins;
+			}
+		} catch (e) {
+			if (epoch === selectEpoch) error = describeError(e, `Failed to load the ${planet} map view`);
+		}
+	}
+
+	async function addView(): Promise<MapView | null> {
+		if (!selectedName) return null;
+		const planet = selectedName;
+		const epoch = selectEpoch;
+		let suffix = 1;
+		let name = 'New map';
+		const names = new Set(views.map((view) => view.name.toLowerCase()));
+		while (names.has(name.toLowerCase())) name = `New map ${++suffix}`;
+		const created = await createMapView(planet, name);
+		if (selectedName !== planet || selectEpoch !== epoch) return null;
+		views = [...views, created];
+		await selectView(created.id);
+		return created;
+	}
+
+	async function renameView(id: number, name: string): Promise<MapView> {
+		const planet = selectedName;
+		const epoch = selectEpoch;
+		const renamed = await renameMapView(id, name);
+		if (selectedName !== planet || selectEpoch !== epoch) return renamed;
+		views = views.map((view) => (view.id === id ? renamed : view));
+		return renamed;
+	}
+
+	async function removeView(id: number): Promise<void> {
+		const planet = selectedName;
+		const epoch = selectEpoch;
+		await deleteMapView(id);
+		if (selectedName !== planet || selectEpoch !== epoch) return;
+		views = views.filter((view) => view.id !== id);
+		if (selectedViewId === id) await selectView(null);
+	}
+
 	async function addPin(input: MapPinInput): Promise<MapPin> {
 		const created = await createMapPin(input);
-		if (created.planet === selectedName) {
+		if (created.planet === selectedName && created.mapViewId === selectedViewId) {
 			pins = [created, ...pins];
 		}
 		return created;
@@ -116,6 +177,12 @@ export function createMapsModel() {
 		get pins() {
 			return pins;
 		},
+		get views() {
+			return views;
+		},
+		get selectedViewId() {
+			return selectedViewId;
+		},
 		get loading() {
 			return loading;
 		},
@@ -124,6 +191,10 @@ export function createMapsModel() {
 		},
 		loadPlanets,
 		selectPlanet,
+		selectView,
+		addView,
+		renameView,
+		removeView,
 		refreshPins,
 		addPin,
 		editPin,

@@ -1,7 +1,7 @@
 import { emit } from '@tauri-apps/api/event';
 import type { CoordScanResult, MapPinInput } from '$lib/api';
 import { getPreference, setPreference } from '$lib/preferences';
-import { PIN_ICONS, pinKind } from './pinIcons';
+import { normalisePinEmoji } from './pinIcons';
 
 export type CartographyButton = {
 	id: string;
@@ -13,6 +13,7 @@ export type CartographyButton = {
 
 export type CartographyOverlayConfig = {
 	planet: string | null;
+	mapViewId: number | null;
 	buttons: CartographyButton[];
 };
 
@@ -22,13 +23,14 @@ export const MAP_PINS_CHANGED_EVENT = 'map-pins-changed';
 export const MAX_CARTOGRAPHY_BUTTONS = 8;
 
 export const DEFAULT_CARTOGRAPHY_BUTTONS: CartographyButton[] = [
-	{ id: 'ore-claim', name: 'Ore claim', icon: 'ore', kind: 'mining', radiusM: null },
-	{ id: 'mob-spawn', name: 'Mob spawn', icon: 'enemy', kind: 'mob', radiusM: 50 },
-	{ id: 'favourite', name: 'Favourite', icon: 'star', kind: 'marker', radiusM: null },
+	{ id: 'ore-claim', name: 'Ore claim', icon: '⛏️', kind: 'marker', radiusM: null },
+	{ id: 'mob-spawn', name: 'Mob spawn', icon: '👾', kind: 'marker', radiusM: 50 },
+	{ id: 'favourite', name: 'Favourite', icon: '⭐', kind: 'marker', radiusM: null },
 ];
 
 const DEFAULT_CONFIG: CartographyOverlayConfig = {
 	planet: null,
+	mapViewId: null,
 	buttons: DEFAULT_CARTOGRAPHY_BUTTONS,
 };
 
@@ -48,7 +50,6 @@ function cleanText(value: unknown, fallback: string, max: number): string {
 export function sanitiseCartographyOverlayConfig(value: unknown): CartographyOverlayConfig {
 	if (!value || typeof value !== 'object') return structuredClone(DEFAULT_CONFIG);
 	const candidate = value as Partial<CartographyOverlayConfig>;
-	const iconIds = new Set(PIN_ICONS.map((icon) => icon.id));
 	const seen = new Set<string>();
 	const buttons: CartographyButton[] = [];
 	if (Array.isArray(candidate.buttons)) {
@@ -59,12 +60,12 @@ export function sanitiseCartographyOverlayConfig(value: unknown): CartographyOve
 			if (seen.has(id)) continue;
 			seen.add(id);
 			const radius = item.radiusM;
-			const icon = typeof item.icon === 'string' && iconIds.has(item.icon) ? item.icon : 'pin';
+			const icon = normalisePinEmoji(item.icon);
 			buttons.push({
 				id,
 				name: cleanText(item.name, 'Pin', 40),
 				icon,
-				kind: pinKind(icon),
+				kind: 'marker',
 				radiusM:
 					typeof radius === 'number' && Number.isFinite(radius) && radius > 0
 						? Math.min(radius, 10_000)
@@ -76,6 +77,12 @@ export function sanitiseCartographyOverlayConfig(value: unknown): CartographyOve
 		planet:
 			typeof candidate.planet === 'string' && candidate.planet.trim()
 				? candidate.planet.trim().slice(0, 80)
+				: null,
+		mapViewId:
+			typeof candidate.mapViewId === 'number' &&
+			Number.isSafeInteger(candidate.mapViewId) &&
+			candidate.mapViewId > 0
+				? candidate.mapViewId
 				: null,
 		buttons: buttons.length ? buttons : structuredClone(DEFAULT_CARTOGRAPHY_BUTTONS),
 	};
@@ -114,6 +121,7 @@ export function cartographyScanFailureMessage(
 
 export function cartographyPinInput(
 	planet: string,
+	mapViewId: number | null,
 	button: CartographyButton,
 	result: CoordScanResult,
 ): MapPinInput | null {
@@ -129,5 +137,6 @@ export function cartographyPinInput(
 		radiusM: button.radiusM,
 		notes: null,
 		sessionId: null,
+		mapViewId,
 	};
 }

@@ -4,7 +4,8 @@
 	import Input from '$lib/components/Input.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { PIN_ICONS, pinKind } from './pinIcons';
+	import EmojiPicker from './EmojiPicker.svelte';
+	import { pinGlyph } from './pinIcons';
 	import {
 		MAX_CARTOGRAPHY_BUTTONS,
 		setCartographyOverlayConfig,
@@ -18,7 +19,9 @@
 	let saving = $state(false);
 
 	$effect(() => {
-		if (open) buttons = untrack(() => config.buttons.map((button) => ({ ...button })));
+		if (open) {
+			buttons = untrack(() => config.buttons.map((button) => ({ ...button })));
+		}
 	});
 
 	function addButton() {
@@ -28,7 +31,7 @@
 			{
 				id: globalThis.crypto?.randomUUID?.() ?? `button-${Date.now()}`,
 				name: 'Pin',
-				icon: 'pin',
+				icon: '📍',
 				kind: 'marker',
 				radiusM: null,
 			},
@@ -48,7 +51,12 @@
 		try {
 			await setCartographyOverlayConfig({
 				planet: config.planet,
-				buttons: buttons.map((button) => ({ ...button, kind: pinKind(button.icon) })),
+				mapViewId: config.mapViewId,
+				buttons: buttons.map((button) => ({
+					...button,
+					icon: pinGlyph(button.icon),
+					kind: 'marker',
+				})),
 			});
 			open = false;
 		} finally {
@@ -57,7 +65,7 @@
 	}
 </script>
 
-<Modal bind:open title="Configure pin overlay" class="max-w-2xl! overflow-hidden">
+<Modal bind:open title="Configure pin overlay" class="max-w-xl! overflow-hidden">
 	<div class="flex max-h-[calc(100vh-12rem)] min-h-0 flex-col">
 		<div class="min-h-0 space-y-3 overflow-y-auto pr-2">
 			{#each buttons as button, index (button.id)}
@@ -79,21 +87,18 @@
 						</div>
 					</div>
 
-					<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_2.25rem_minmax(0,1fr)]">
 						<label class="min-w-0 space-y-1">
-							<span class="text-xs text-text-secondary">Name</span>
+							<span class="block text-xs text-text-secondary">Name</span>
 							<Input bind:value={button.name} maxlength={40} />
 						</label>
+						<EmojiPicker
+							value={button.icon}
+							label="Choose emoji for {button.name}"
+							onselect={(emoji) => (button.icon = emoji)}
+						/>
 						<label class="min-w-0 space-y-1">
-							<span class="text-xs text-text-secondary">Marker</span>
-							<Select bind:value={button.icon}>
-								{#each PIN_ICONS as icon (icon.id)}
-									<option value={icon.id}>{icon.glyph} {icon.label}</option>
-								{/each}
-							</Select>
-						</label>
-						<label class="min-w-0 space-y-1">
-							<span class="text-xs text-text-secondary">Area</span>
+							<span class="block text-xs text-text-secondary">Area</span>
 							<Select
 								value={button.radiusM == null ? '' : String(button.radiusM)}
 								onchange={(event) => {
@@ -105,6 +110,9 @@
 								<option value="10">10 m area</option>
 								<option value="50">50 m area</option>
 								<option value="100">100 m area</option>
+								<option value="250">250 m area</option>
+								<option value="500">500 m area</option>
+								<option value="1000">1 km area</option>
 							</Select>
 						</label>
 					</div>

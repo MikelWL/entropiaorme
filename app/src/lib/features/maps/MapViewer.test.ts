@@ -34,6 +34,7 @@ const pin: MapPin = {
 	radiusM: null,
 	notes: null,
 	sessionId: null,
+	mapViewId: null,
 	createdAt: 1_752_000_000,
 };
 
@@ -45,12 +46,20 @@ function setup() {
 	render(MapViewer, {
 		props: {
 			planet,
+			planets: [planet],
 			imageUrl: 'data:image/jpeg;base64,xx',
 			pins: [pin],
+			views: [],
+			selectedViewId: null,
 			onmapclick,
 			oncopywaypoint,
 			oneditpin,
 			ondeletepin,
+			onselectplanet: vi.fn(),
+			onselectview: vi.fn(),
+			onaddview: vi.fn().mockResolvedValue(null),
+			onrenameview: vi.fn().mockResolvedValue(true),
+			ondeleteview: vi.fn().mockResolvedValue(true),
 		},
 	});
 	return { onmapclick, oncopywaypoint, oneditpin };

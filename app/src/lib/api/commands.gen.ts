@@ -764,6 +764,7 @@ export interface MapPin {
 	radiusM: number | null;
 	notes: string | null;
 	sessionId: string | null;
+	mapViewId: number | null;
 	/** Epoch seconds. */
 	createdAt: number;
 }
@@ -782,6 +783,7 @@ export interface MapPinInput {
 	radiusM?: number | null;
 	notes?: string | null;
 	sessionId?: string | null;
+	mapViewId?: number | null;
 }
 
 /**
@@ -798,6 +800,17 @@ export interface MapPinPatch {
 	kind?: string | null;
 	radiusM?: number | null;
 	notes?: string | null;
+}
+
+/**
+ * One user-named pin set over a planet map. Default is represented by
+ * a null view id and therefore has no row of its own.
+ */
+export interface MapView {
+	id: number;
+	planet: string;
+	name: string;
+	createdAt: number;
 }
 
 /**
@@ -2419,8 +2432,24 @@ export async function planetMapsList(): Promise<PlanetMap[]> {
 	return invokeCommand('planet_maps_list', {});
 }
 
-export async function mapPinsList(planet: string): Promise<MapPin[]> {
-	return invokeCommand('map_pins_list', { planet });
+export async function mapPinsList(planet: string, mapViewId: number | null): Promise<MapPin[]> {
+	return invokeCommand('map_pins_list', { planet, map_view_id: mapViewId });
+}
+
+export async function mapViewsList(planet: string): Promise<MapView[]> {
+	return invokeCommand('map_views_list', { planet });
+}
+
+export async function mapViewCreate(planet: string, name: string): Promise<MapView> {
+	return invokeCommand('map_view_create', { planet, name });
+}
+
+export async function mapViewRename(id: number, name: string): Promise<MapView> {
+	return invokeCommand('map_view_rename', { id, name });
+}
+
+export async function mapViewDelete(id: number): Promise<void> {
+	return invokeCommand('map_view_delete', { id });
 }
 
 export async function mapPinCreate(pin: MapPinInput): Promise<MapPin> {

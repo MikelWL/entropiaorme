@@ -19,13 +19,9 @@
 		formatWaypoint,
 		type WaypointCopyResult,
 	} from '$lib/features/maps/waypoint';
-	import { formatGamePoint, inBounds, type GamePoint } from '$lib/features/maps/coords';
-	import {
-		parseGamePointInput,
-		type MapFocusRequest,
-	} from '$lib/features/maps/mapTools';
-	import type { MapPin } from '$lib/api';
-	import { scanMapCoordinates } from '$lib/api';
+	import type { GamePoint } from '$lib/features/maps/coords';
+	import type { MapFocusRequest } from '$lib/features/maps/mapTools';
+	import type { MapPin, MapView } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
 	import { toggleCartographyOverlay } from '$lib/api';
 	import {
@@ -45,36 +41,74 @@
 	let editingPin = $state<MapPin | null>(null);
 	let calibrationOpen = $state(false);
 	let overlayConfigOpen = $state(false);
-	let scanning = $state(false);
-	let coordinateInput = $state('');
-	let showGrid = $state(false);
 	let focusRequest = $state<MapFocusRequest | null>(null);
 	let focusNonce = 0;
 
 	async function selectPlanet(name: string) {
 		focusRequest = null;
 		await model.selectPlanet(name);
-		if (model.selected?.calibration) {
-			await setCartographyOverlayConfig({ ...cartographyOverlayConfig.current, planet: name });
+		if (model.selected?.name === name && model.selected.calibration) {
+			await setCartographyOverlayConfig({
+				...cartographyOverlayConfig.current,
+				planet: model.selected.name,
+				mapViewId: null,
+			});
+		}
+	}
+
+	async function selectView(id: number | null) {
+		await model.selectView(id);
+		await setCartographyOverlayConfig({
+			...cartographyOverlayConfig.current,
+			mapViewId: model.selectedViewId,
+		});
+	}
+
+	async function addView(): Promise<MapView | null> {
+		try {
+			const created = await model.addView();
+			if (created) {
+				await setCartographyOverlayConfig({
+					...cartographyOverlayConfig.current,
+					mapViewId: created.id,
+				});
+			}
+			return created;
+		} catch (e) {
+			flash(describeError(e, 'The map could not be created'));
+			return null;
+		}
+	}
+
+	async function renameView(id: number, name: string): Promise<boolean> {
+		try {
+			await model.renameView(id, name);
+			// The overlay owns a separate window and reloads its view names
+			// when the shared configuration changes.
+			await setCartographyOverlayConfig({ ...cartographyOverlayConfig.current });
+			return true;
+		} catch (e) {
+			flash(describeError(e, 'The map could not be renamed'));
+			return false;
+		}
+	}
+
+	async function deleteView(view: MapView): Promise<boolean> {
+		try {
+			await model.removeView(view.id);
+			await setCartographyOverlayConfig({
+				...cartographyOverlayConfig.current,
+				mapViewId: model.selectedViewId,
+			});
+			return true;
+		} catch (e) {
+			flash(describeError(e, 'The map could not be deleted'));
+			return false;
 		}
 	}
 
 	function focusMap(point: GamePoint) {
 		focusRequest = { point, nonce: ++focusNonce };
-	}
-
-	function goToCoordinate() {
-		const point = parseGamePointInput(coordinateInput);
-		if (!point) {
-			flash('Enter coordinates as longitude, latitude.');
-			return;
-		}
-		const calibration = model.selected?.calibration;
-		if (!calibration || !inBounds(calibration, point)) {
-			flash(`That coordinate is outside ${model.selected?.name ?? 'the selected map'}.`);
-			return;
-		}
-		focusMap(point);
 	}
 
 	// Transient action feedback (copy confirmations, CRUD failures).
@@ -91,52 +125,6 @@
 		dropAltitude = altitude;
 		editingPin = null;
 		formOpen = true;
-	}
-
-	// One-click pin drop: scan the calibrated on-screen readout, gate it
-	// against the selected planet, and pre-fill the pin form. Every
-	// failure leg gets its own actionable message; a wrong read never
-	// becomes a pin.
-	async function scanMyLocation() {
-		if (scanning) return;
-		scanning = true;
-		try {
-			const result = await scanMapCoordinates(model.selected?.name ?? null);
-			switch (result.status) {
-				case 'read':
-					openDropForm(
-						{ lon: result.lon ?? 0, lat: result.lat ?? 0 },
-						result.altitude ?? null,
-					);
-					break;
-				case 'noRegion':
-					flash('The coordinate capture region is not calibrated yet.');
-					calibrationOpen = true;
-					break;
-				case 'captureFailed':
-					flash(
-						'The screen could not be captured. With several monitors, the screen-share grant covers one of them: the game and its readout must be on the shared monitor.',
-					);
-					break;
-				case 'engineUnavailable':
-					flash('The text recogniser is unavailable, so the readout cannot be scanned.');
-					break;
-				case 'unreadable':
-					flash(
-						`The capture region did not read as coordinates (saw: "${result.rawText ?? ''}"); recalibrate if the minimap moved.`,
-					);
-					break;
-				case 'implausible':
-					flash(
-						`Read ${formatGamePoint({ lon: result.lon ?? 0, lat: result.lat ?? 0 })}, which is outside ${model.selected?.name}'s map; is the right planet selected?`,
-					);
-					break;
-			}
-		} catch (e) {
-			flash(describeError(e, 'The coordinate scan failed'));
-		} finally {
-			scanning = false;
-		}
 	}
 
 	function openEditForm(pin: MapPin) {
@@ -168,6 +156,7 @@
 					radiusM: values.radiusM,
 					notes: values.notes || null,
 					sessionId: null,
+					mapViewId: model.selectedViewId,
 				});
 				flash(`Pin "${values.name}" dropped.`);
 			}
@@ -208,31 +197,24 @@
 </script>
 
 <div class="flex h-full flex-col gap-3 px-4 pb-4 sm:px-6 sm:pb-6">
-	<header class="flex flex-col gap-1.5">
+	<header class="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-end">
+		<div class="flex min-w-0 flex-col gap-1.5">
 			<h1 class="text-xl font-semibold text-text tracking-tight">Maps</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
-			<p class="text-sm text-text-secondary mt-0.5">
+			<p class="mt-0.5 text-sm text-text-secondary">
 				Explore planet maps, record locations, and copy waypoints back into the game.
 			</p>
+		</div>
+		{#if model.planets.length > 0}
+			<MapControls
+				pins={model.pins}
+				ontoggleoverlay={() => void toggleCartographyOverlay()}
+				onconfigure={() => (overlayConfigOpen = true)}
+				oncalibrate={() => (calibrationOpen = true)}
+				onselectpin={(pin) => focusMap({ lon: pin.lon, lat: pin.lat })}
+			/>
+		{/if}
 	</header>
-
-	{#if model.planets.length > 0}
-		<MapControls
-			planets={model.planets}
-			selectedName={model.selected?.name ?? ''}
-			{scanning}
-			bind:coordinate={coordinateInput}
-			bind:showGrid
-			pins={model.pins}
-			onselectplanet={(name) => void selectPlanet(name)}
-			onscan={() => void scanMyLocation()}
-			ontoggleoverlay={() => void toggleCartographyOverlay()}
-			onconfigure={() => (overlayConfigOpen = true)}
-			oncalibrate={() => (calibrationOpen = true)}
-			onselectpin={(pin) => focusMap({ lon: pin.lon, lat: pin.lat })}
-			ongoto={goToCoordinate}
-		/>
-	{/if}
 
 	<div class="h-4 shrink-0">
 		{#if feedback}<p class="truncate text-xs text-text-secondary" role="status">{feedback}</p>{/if}
@@ -250,14 +232,21 @@
 		{#if model.selected && model.imageUrl}
 			<MapViewer
 				planet={model.selected}
+				planets={model.planets}
 				imageUrl={model.imageUrl}
 				pins={model.pins}
-				{showGrid}
+				views={model.views}
+				selectedViewId={model.selectedViewId}
 				{focusRequest}
 				onmapclick={openDropForm}
 				oncopywaypoint={copyWaypoint}
 				oneditpin={openEditForm}
 				ondeletepin={deletePin}
+				onselectplanet={(name) => void selectPlanet(name)}
+				onselectview={(id) => void selectView(id)}
+				onaddview={addView}
+				onrenameview={renameView}
+				ondeleteview={deleteView}
 			/>
 		{:else if model.loading}
 			<div

@@ -347,6 +347,10 @@ pub fn run() {
             commands::dev_rebuild_projections,
             commands::planet_maps_list,
             commands::map_pins_list,
+            commands::map_views_list,
+            commands::map_view_create,
+            commands::map_view_rename,
+            commands::map_view_delete,
             commands::map_pin_create,
             commands::map_pin_update,
             commands::map_pin_delete,
@@ -905,6 +909,7 @@ mod tests {
             crate::command_acl::CARTOGRAPHY_COMMANDS,
             [
                 "map_pin_create",
+                "map_views_list",
                 "maps_scan_coordinates",
                 "planet_maps_list"
             ]
