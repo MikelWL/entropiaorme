@@ -145,7 +145,7 @@
 		}
 	}
 
-	async function copyWaypoint(pin: MapPin) {
+	async function copyWaypoint(pin: MapPin): Promise<string> {
 		const waypoint = formatWaypoint({
 			technicalName: model.selected?.technicalName ?? null,
 			lon: pin.lon,
@@ -154,14 +154,13 @@
 			label: pin.name,
 		});
 		if (!waypoint) {
-			flash('This planet has no waypoint name, so a chat waypoint cannot be formed.');
-			return;
+			return 'This map cannot form an in-game waypoint.';
 		}
 		try {
 			await navigator.clipboard.writeText(waypoint);
-			flash('Waypoint copied.');
+			return 'Waypoint copied.';
 		} catch {
-			flash('The clipboard refused the waypoint copy.');
+			return 'The clipboard refused the waypoint copy.';
 		}
 	}
 </script>

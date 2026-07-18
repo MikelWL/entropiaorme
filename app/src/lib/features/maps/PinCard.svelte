@@ -17,6 +17,7 @@
 		viewW,
 		viewH,
 		technicalName,
+		copyFeedback,
 		onpointerenter,
 		onpointerleave,
 		onedit,
@@ -28,6 +29,7 @@
 		viewW: number;
 		viewH: number;
 		technicalName: string | null;
+		copyFeedback: string | null;
 		onpointerenter: () => void;
 		onpointerleave: () => void;
 		onedit: () => void;
@@ -93,14 +95,19 @@
 		<p class="mt-2 text-xs text-text-secondary whitespace-pre-wrap break-words">{pin.notes}</p>
 	{/if}
 
-	<p class="mt-3 text-xs text-text-secondary">
-		{technicalName
-			? 'Click the pin to copy its waypoint.'
-			: 'This map cannot form an in-game waypoint.'}
-	</p>
-
-	<div class="mt-2 flex items-center gap-1.5">
-		<Button size="sm" variant="ghost" onclick={onedit}>Edit</Button>
-		<Button size="sm" variant="danger" onclick={ondelete}>Delete</Button>
+	<div class="mt-3 flex items-end gap-1.5">
+		<output
+			class="min-w-0 flex-1 rounded-md border border-border bg-base/70 px-2 py-1.5 text-xs leading-tight text-text-secondary"
+			aria-live="polite"
+		>
+			{copyFeedback ??
+				(technicalName
+					? 'Click the pin to copy its waypoint.'
+					: 'This map cannot form an in-game waypoint.')}
+		</output>
+		<div class="flex shrink-0 items-center gap-1.5">
+			<Button size="sm" variant="ghost" onclick={onedit}>Edit</Button>
+			<Button size="sm" variant="danger" onclick={ondelete}>Delete</Button>
+		</div>
 	</div>
 </div>

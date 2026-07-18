@@ -39,7 +39,7 @@ const pin: MapPin = {
 
 function setup() {
 	const onmapclick = vi.fn();
-	const oncopywaypoint = vi.fn();
+	const oncopywaypoint = vi.fn().mockResolvedValue('Waypoint copied.');
 	const oneditpin = vi.fn();
 	const ondeletepin = vi.fn();
 	render(MapViewer, {
@@ -67,6 +67,8 @@ describe('MapViewer pin interactions', () => {
 
 		await fireEvent.click(marker);
 		expect(oncopywaypoint).toHaveBeenCalledWith(pin);
+		expect(await screen.findByText('Waypoint copied.')).toBeTruthy();
+		expect(screen.queryByText('Click the pin to copy its waypoint.')).toBeNull();
 	});
 
 	it('contains card gestures so edit cannot become a map click', async () => {

@@ -37,7 +37,7 @@
 		pins: MapPin[];
 		/** A still click on a calibrated map, in game units. */
 		onmapclick: (point: GamePoint) => void;
-		oncopywaypoint: (pin: MapPin) => void;
+		oncopywaypoint: (pin: MapPin) => Promise<string>;
 		oneditpin: (pin: MapPin) => void;
 		ondeletepin: (pin: MapPin) => void;
 	} = $props();
@@ -54,16 +54,21 @@
 	// while the pointer is over the card itself, closed on a short delay
 	// so travelling marker -> card does not dismiss it.
 	let activePin = $state<MapPin | null>(null);
+	let copyFeedback = $state<string | null>(null);
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function raiseCard(pin: MapPin) {
 		if (closeTimer) clearTimeout(closeTimer);
+		if (activePin?.id !== pin.id) copyFeedback = null;
 		activePin = pin;
 	}
 
 	function scheduleCardClose() {
 		if (closeTimer) clearTimeout(closeTimer);
-		closeTimer = setTimeout(() => (activePin = null), 250);
+		closeTimer = setTimeout(() => {
+			activePin = null;
+			copyFeedback = null;
+		}, 250);
 	}
 
 	// Load the raster whenever the planet's data URL changes, and re-fit
@@ -322,10 +327,11 @@
 			onfocus={() => raiseCard(placed.pin)}
 			onblur={scheduleCardClose}
 			onpointerdown={(event) => event.stopPropagation()}
-			onclick={(event) => {
+			onclick={async (event) => {
 				event.stopPropagation();
 				raiseCard(placed.pin);
-				oncopywaypoint(placed.pin);
+				const feedback = await oncopywaypoint(placed.pin);
+				if (activePin?.id === placed.pin.id) copyFeedback = feedback;
 			}}
 		>
 			{pinGlyph(placed.pin.icon)}
@@ -341,6 +347,7 @@
 				{viewW}
 				{viewH}
 				technicalName={planet.technicalName}
+				{copyFeedback}
 				onpointerenter={() => raiseCard(placed.pin)}
 				onpointerleave={scheduleCardClose}
 				onedit={() => oneditpin(placed.pin)}
