@@ -6,12 +6,12 @@
 	 * feature model; geometry lives in the feature's pure modules.
 	 */
 	import { onMount } from 'svelte';
-	import { listen } from '@tauri-apps/api/event';
 	import Button from '$lib/components/Button.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import CalibrationModal from '$lib/features/maps/CalibrationModal.svelte';
 	import CartographyOverlayModal from '$lib/features/maps/CartographyOverlayModal.svelte';
+	import { startMapsCartographySync } from '$lib/features/maps/mapsCartographySync';
 	import MapViewer from '$lib/features/maps/MapViewer.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import type { PinFormValues } from '$lib/features/maps/PinEditModal.svelte';
@@ -26,53 +26,12 @@
 	import { describeError } from '$lib/view/errorState';
 	import { toggleCartographyOverlay } from '$lib/api';
 	import {
-		acceptCartographyOverlayBroadcast,
 		cartographyOverlayConfig,
-		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
-		MAP_PINS_CHANGED_EVENT,
 		setCartographyOverlayConfig,
 	} from '$lib/features/maps/cartographyOverlay.svelte';
 
 	const model = createMapsModel();
-	onMount(() => {
-		let mounted = true;
-		let unlistenPins: (() => void) | undefined;
-		let unlistenConfig: (() => void) | undefined;
-		void (async () => {
-			await model.loadPlanets();
-			if (!mounted) return;
-			const preferred = cartographyOverlayConfig.current.planet;
-			if (preferred && model.planets.some((planet) => planet.name === preferred)) {
-				await model.selectPlanet(preferred);
-			} else if (model.selected) {
-				await setCartographyOverlayConfig({
-					...cartographyOverlayConfig.current,
-					planet: model.selected.name,
-				});
-			}
-			if (!mounted) return;
-			const stopPins = await listen<{ planet?: string }>(MAP_PINS_CHANGED_EVENT, (event) => {
-				if (event.payload?.planet === model.selected?.name) void model.refreshPins();
-			});
-			if (!mounted) {
-				stopPins();
-				return;
-			}
-			unlistenPins = stopPins;
-			const stopConfig = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
-				acceptCartographyOverlayBroadcast(event.payload);
-				const planet = cartographyOverlayConfig.current.planet;
-				if (planet && planet !== model.selected?.name) void model.selectPlanet(planet);
-			});
-			if (mounted) unlistenConfig = stopConfig;
-			else stopConfig();
-		})();
-		return () => {
-			mounted = false;
-			unlistenPins?.();
-			unlistenConfig?.();
-		};
-	});
+	onMount(() => startMapsCartographySync(model));
 
 	// The pin form: create mode carries the drop point (from a map click
 	// or a coordinate scan, which may add an altitude), edit mode the pin
