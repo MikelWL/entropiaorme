@@ -70,6 +70,12 @@
 		});
 	}
 
+	function startDraggingFromSurface(event: PointerEvent) {
+		if (event.button !== 0 || !(event.target instanceof Element)) return;
+		if (event.target.closest('button, select, input, textarea, a, [role="button"]')) return;
+		void getCurrentWindow().startDragging();
+	}
+
 	async function dropPin(button: CartographyButton) {
 		const planet = cartographyOverlayConfig.current.planet;
 		if (busy) return;
@@ -96,7 +102,9 @@
 	}
 </script>
 
-<div bind:this={root} class="p-1.5">
+<!-- The window surface is a drag handle except where an interactive control owns the pointer. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div bind:this={root} class="p-1.5" onpointerdown={startDraggingFromSurface}>
 	<div class="overflow-hidden rounded-lg border border-border/80 bg-base/95 shadow-xl backdrop-blur-md">
 		<div class="flex items-center gap-2 border-b border-border/70 px-2 py-1.5" data-tauri-drag-region>
 			<select

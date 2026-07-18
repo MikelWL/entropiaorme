@@ -1,6 +1,6 @@
 import { emit } from '@tauri-apps/api/event';
-import { getPreference, setPreference } from '$lib/preferences';
 import type { CoordScanResult, MapPinInput } from '$lib/api';
+import { getPreference, setPreference } from '$lib/preferences';
 import { PIN_ICONS } from './pinIcons';
 
 export type CartographyButton = {
