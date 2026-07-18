@@ -71,6 +71,7 @@
 								size="sm"
 								variant="ghost"
 								disabled={buttons.length === 1}
+								aria-label="Remove {button.name}"
 								onclick={() => (buttons = buttons.filter((_, itemIndex) => itemIndex !== index))}
 							>
 								Remove

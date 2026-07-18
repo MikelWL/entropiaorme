@@ -37,7 +37,6 @@
 		/** Optional trailing dropdown row (e.g. an "Add custom" affordance). */
 		extraRow?: Snippet;
 		class?: string;
-		/** Optional placement classes for surfaces that need an anchored popover. */
 		dropdownClass?: string;
 	} = $props();
 

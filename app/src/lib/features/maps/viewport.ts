@@ -105,8 +105,6 @@ export function zoomAt(
 	return clampPan(next, imgW, imgH, viewW, viewH);
 }
 
-/** Centre an image point, increasing a fitted view to a useful inspection
- * zoom while preserving any closer zoom the user already chose. */
 export function centreOnImage(
 	vp: Viewport,
 	point: { x: number; y: number },

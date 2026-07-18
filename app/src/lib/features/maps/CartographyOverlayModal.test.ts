@@ -47,6 +47,7 @@ describe('CartographyOverlayModal', () => {
 
 		expect(screen.queryByText('Category')).toBeNull();
 		expect(screen.getAllByRole('option', { name: '10 m area' })).toHaveLength(2);
+		expect(screen.getByRole('button', { name: 'Remove Claim' })).toBeTruthy();
 		await fireEvent.click(screen.getByRole('button', { name: 'Move Claim down' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 

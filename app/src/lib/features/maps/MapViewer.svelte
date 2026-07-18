@@ -58,6 +58,7 @@
 	let image = $state<HTMLImageElement | null>(null);
 	let vp = $state<Viewport>({ zoom: 1, panX: 0, panY: 0 });
 	let cursorPoint = $state<GamePoint | null>(null);
+	let handledFocusNonce: number | null = null;
 
 	// The active pin card: raised by marker hover or focus, kept open
 	// while the pointer is over the card itself, closed on a short delay
@@ -120,10 +121,19 @@
 	$effect(() => {
 		const request = focusRequest;
 		const img = image;
-		if (!request || !img || !cal || viewW === 0 || viewH === 0) return;
+		if (
+			!request ||
+			request.nonce === handledFocusNonce ||
+			!img ||
+			!cal ||
+			viewW === 0 ||
+			viewH === 0
+		)
+			return;
 		const point = gameToImage(cal, request.point);
 		untrack(() => {
 			vp = centreOnImage(vp, point, img.naturalWidth, img.naturalHeight, viewW, viewH);
+			handledFocusNonce = request.nonce;
 		});
 	});
 
