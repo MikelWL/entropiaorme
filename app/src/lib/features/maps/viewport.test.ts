@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	centreOnImage,
 	clampPan,
 	fitViewport,
 	fitZoom,
@@ -92,6 +93,19 @@ describe('panBy and clampPan', () => {
 		const vp = clampPan({ zoom: 1, panX: 50, panY: 50 }, 512, 512, 1200, 800);
 		expect(vp.panX).toBeCloseTo((512 - 1200) / 2, 6);
 		expect(vp.panY).toBeCloseTo((512 - 800) / 2, 6);
+	});
+});
+
+describe('centreOnImage', () => {
+	it('centres the requested point and raises a fitted map to inspection zoom', () => {
+		const fitted = fitViewport(IMG.w, IMG.h, VIEW.w, VIEW.h);
+		const point = { x: 3000, y: 2800 };
+		const centred = centreOnImage(fitted, point, IMG.w, IMG.h, VIEW.w, VIEW.h);
+		const view = imageToView(centred, point.x, point.y);
+
+		expect(centred.zoom).toBeGreaterThan(fitted.zoom);
+		expect(view.x).toBeCloseTo(VIEW.w / 2, 6);
+		expect(view.y).toBeCloseTo(VIEW.h / 2, 6);
 	});
 });
 

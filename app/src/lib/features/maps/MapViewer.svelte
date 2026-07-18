@@ -10,12 +10,15 @@
 	 */
 	import { untrack } from 'svelte';
 	import type { MapPin, PlanetMap } from '$lib/api';
-	import { gameToImage, imageToGame, type GamePoint } from './coords';
+	import Button from '$lib/components/Button.svelte';
+	import { formatGamePoint, gameToImage, imageToGame, type GamePoint } from './coords';
+	import type { MapFocusRequest } from './mapTools';
 	import { pinGlyph } from './pinIcons';
 	import PinCard from './PinCard.svelte';
 	import type { WaypointCopyResult } from './waypoint';
 	import {
 		ZOOM_STEP,
+		centreOnImage,
 		fitViewport,
 		imageToView,
 		panBy,
@@ -32,6 +35,8 @@
 		oncopywaypoint,
 		oneditpin,
 		ondeletepin,
+		showGrid = false,
+		focusRequest = null,
 	}: {
 		planet: PlanetMap;
 		imageUrl: string;
@@ -41,6 +46,8 @@
 		oncopywaypoint: (pin: MapPin) => Promise<WaypointCopyResult>;
 		oneditpin: (pin: MapPin) => void;
 		ondeletepin: (pin: MapPin) => void;
+		showGrid?: boolean;
+		focusRequest?: MapFocusRequest | null;
 	} = $props();
 
 	const cal = $derived(planet.calibration);
@@ -50,6 +57,8 @@
 	let canvas = $state<HTMLCanvasElement | null>(null);
 	let image = $state<HTMLImageElement | null>(null);
 	let vp = $state<Viewport>({ zoom: 1, panX: 0, panY: 0 });
+	let cursorPoint = $state<GamePoint | null>(null);
+	let handledFocusNonce: number | null = null;
 
 	// The active pin card: raised by marker hover or focus, kept open
 	// while the pointer is over the card itself, closed on a short delay
@@ -105,6 +114,27 @@
 			img.onload = null;
 			img.onerror = null;
 		};
+	});
+
+	// Search and coordinate tools request focus declaratively. The nonce
+	// lets the same point be requested repeatedly after the user pans away.
+	$effect(() => {
+		const request = focusRequest;
+		const img = image;
+		if (
+			!request ||
+			request.nonce === handledFocusNonce ||
+			!img ||
+			!cal ||
+			viewW === 0 ||
+			viewH === 0
+		)
+			return;
+		const point = gameToImage(cal, request.point);
+		untrack(() => {
+			vp = centreOnImage(vp, point, img.naturalWidth, img.naturalHeight, viewW, viewH);
+			handledFocusNonce = request.nonce;
+		});
 	});
 
 	// Re-clamp on container resize. The current viewport is read
@@ -186,6 +216,17 @@
 	}
 
 	function handlePointerMove(event: PointerEvent) {
+		if (image && cal) {
+			const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+			const imagePoint = viewToImage(vp, event.clientX - rect.left, event.clientY - rect.top);
+			cursorPoint =
+				imagePoint.x >= 0 &&
+				imagePoint.y >= 0 &&
+				imagePoint.x <= image.naturalWidth &&
+				imagePoint.y <= image.naturalHeight
+					? imageToGame(cal, imagePoint)
+					: null;
+		}
 		if (!pressed || !image) return;
 		const dx = event.clientX - lastPointer.x;
 		const dy = event.clientY - lastPointer.y;
@@ -281,6 +322,20 @@
 			};
 		});
 	});
+
+	const gridLines = $derived.by<{ vertical: number[]; horizontal: number[] }>(() => {
+		if (!showGrid || !cal) return { vertical: [], horizontal: [] };
+		const tile = 8192;
+		const vertical: number[] = [];
+		const horizontal: number[] = [];
+		for (let lon = Math.ceil(cal.bounds.lonMin / tile) * tile; lon < cal.bounds.lonMax; lon += tile) {
+			vertical.push(imageToView(vp, gameToImage(cal, { lon, lat: cal.bounds.latMin }).x, 0).x);
+		}
+		for (let lat = Math.ceil(cal.bounds.latMin / tile) * tile; lat < cal.bounds.latMax; lat += tile) {
+			horizontal.push(imageToView(vp, 0, gameToImage(cal, { lon: cal.bounds.lonMin, lat }).y).y);
+		}
+		return { vertical, horizontal };
+	});
 </script>
 
 <!-- The viewer is a keyboard-operable application surface (arrows pan,
@@ -303,9 +358,34 @@
 		pressed = false;
 		dragging = false;
 	}}
+	onpointerleave={() => (cursorPoint = null)}
 	onkeydown={handleKeydown}
 >
 	<canvas class="absolute inset-0" bind:this={canvas} aria-hidden="true"></canvas>
+
+	{#if showGrid && cal}
+		<svg class="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true" viewBox="0 0 {viewW} {viewH}">
+			{#each gridLines.vertical as x}
+				<line x1={x} y1="0" x2={x} y2={viewH} class="stroke-accent/35" stroke-width="1" />
+			{/each}
+			{#each gridLines.horizontal as y}
+				<line x1="0" y1={y} x2={viewW} y2={y} class="stroke-accent/35" stroke-width="1" />
+			{/each}
+		</svg>
+	{/if}
+
+	<div
+		class="absolute right-2 top-2 z-10 flex gap-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur"
+		role="group"
+		aria-label="Map zoom"
+		onpointerdown={(event) => event.stopPropagation()}
+	>
+		<Button size="sm" variant="ghost" aria-label="Zoom in" onclick={() => applyZoom(ZOOM_STEP, viewW / 2, viewH / 2)}>+</Button>
+		<Button size="sm" variant="ghost" aria-label="Zoom out" onclick={() => applyZoom(1 / ZOOM_STEP, viewW / 2, viewH / 2)}>−</Button>
+		<Button size="sm" variant="ghost" aria-label="Fit map to view" onclick={() => {
+			if (image) vp = fitViewport(image.naturalWidth, image.naturalHeight, viewW, viewH);
+		}}>Fit</Button>
+	</div>
 
 	<!-- Area-pin discs under the markers. -->
 	{#if placedPins.some((placed) => placed.radiusRx != null)}
@@ -379,5 +459,11 @@
 		>
 			This map has no coordinate calibration yet: it is view-only, so pins cannot be placed.
 		</p>
+	{/if}
+
+	{#if cursorPoint}
+		<output class="pointer-events-none absolute bottom-2 left-2 rounded-md border border-border bg-base/85 px-2 py-1 text-xs tabular-nums text-text shadow-sm backdrop-blur" aria-live="off">
+			{formatGamePoint(cursorPoint)}
+		</output>
 	{/if}
 </div>

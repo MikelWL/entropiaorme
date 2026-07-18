@@ -87,7 +87,6 @@
 		<span class="text-lg leading-none" aria-hidden="true">{pinGlyph(pin.icon)}</span>
 		<div class="min-w-0">
 			<p class="font-medium text-text truncate">{pin.name}</p>
-			<p class="text-xs text-text-secondary">{pin.kind}</p>
 		</div>
 	</div>
 
