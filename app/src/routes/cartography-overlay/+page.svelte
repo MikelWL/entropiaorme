@@ -38,6 +38,7 @@
 	let busy = $state(false);
 	let feedback = $state<{ text: string; success: boolean } | null>(null);
 	let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+	let viewsRefreshEpoch = 0;
 
 	function flash(text: string, success = false) {
 		feedback = { text, success };
@@ -47,7 +48,22 @@
 
 	async function refreshViews(): Promise<void> {
 		const planet = cartographyOverlayConfig.current.planet;
-		views = planet ? await getMapViews(planet) : [];
+		const epoch = ++viewsRefreshEpoch;
+		if (!planet) {
+			views = [];
+			return;
+		}
+		try {
+			const loadedViews = await getMapViews(planet);
+			if (
+				epoch === viewsRefreshEpoch &&
+				planet === cartographyOverlayConfig.current.planet
+			) {
+				views = loadedViews;
+			}
+		} catch {
+			// Preserve the last-good view list; a later event can restore live state.
+		}
 	}
 
 	onMount(() => {
@@ -73,6 +89,7 @@
 		observer.observe(root);
 		return () => {
 			mounted = false;
+			viewsRefreshEpoch++;
 			unlisten?.();
 			observer.disconnect();
 			sizeSync.cancel();
@@ -88,6 +105,7 @@
 
 	async function dropPin(button: CartographyButton) {
 		const planet = cartographyOverlayConfig.current.planet;
+		const mapViewId = cartographyOverlayConfig.current.mapViewId;
 		if (busy) return;
 		if (!planet || !calibratedPlanets.some((candidate) => candidate.name === planet)) {
 			flash('Choose a calibrated planet in Maps first.');
@@ -98,7 +116,7 @@
 			const result = await scanMapCoordinates(planet);
 			const input = cartographyPinInput(
 				planet,
-				cartographyOverlayConfig.current.mapViewId,
+				mapViewId,
 				button,
 				result,
 			);

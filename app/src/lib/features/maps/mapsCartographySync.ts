@@ -16,17 +16,22 @@ export function startMapsCartographySync(model: MapsModel): () => void {
 	let mounted = true;
 	let unlistenPins: (() => void) | undefined;
 	let unlistenConfig: (() => void) | undefined;
+	let configEpoch = 0;
+
+	async function applyConfiguredSelection(epoch: number): Promise<void> {
+		const { planet, mapViewId } = cartographyOverlayConfig.current;
+		if (!planet || !model.planets.some((candidate) => candidate.name === planet)) return;
+		if (planet !== model.selected?.name) await model.selectPlanet(planet);
+		if (epoch !== configEpoch || planet !== model.selected?.name) return;
+		const viewId =
+			mapViewId !== null && model.views.some((view) => view.id === mapViewId) ? mapViewId : null;
+		if (viewId !== model.selectedViewId) await model.selectView(viewId);
+	}
+
 	void (async () => {
 		await model.loadPlanets();
 		if (!mounted) return;
-		const preferredPlanet = cartographyOverlayConfig.current.planet;
-		const preferredViewId = cartographyOverlayConfig.current.mapViewId;
-		if (preferredPlanet && model.planets.some((planet) => planet.name === preferredPlanet)) {
-			await model.selectPlanet(preferredPlanet);
-		}
-		if (preferredViewId !== null && model.views.some((view) => view.id === preferredViewId)) {
-			await model.selectView(preferredViewId);
-		}
+		await applyConfiguredSelection(configEpoch);
 		if (
 			model.selected &&
 			(cartographyOverlayConfig.current.planet !== model.selected.name ||
@@ -49,8 +54,7 @@ export function startMapsCartographySync(model: MapsModel): () => void {
 		unlistenPins = stopPins;
 		const stopConfig = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
 			acceptCartographyOverlayBroadcast(event.payload);
-			const planet = cartographyOverlayConfig.current.planet;
-			if (planet && planet !== model.selected?.name) void model.selectPlanet(planet);
+			void applyConfiguredSelection(++configEpoch);
 		});
 		if (mounted) unlistenConfig = stopConfig;
 		else stopConfig();

@@ -119,7 +119,7 @@
 	}
 
 	function handleItemClick(item: MenuItem) {
-		close(false);
+		close(true);
 		item.onSelect();
 	}
 
@@ -186,7 +186,7 @@
 				</button>
 			{/each}
 			{#if children}
-				{@render children({ close: () => close(false) })}
+				{@render children({ close: () => close(true) })}
 			{/if}
 		</div>
 	{/if}

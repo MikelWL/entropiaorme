@@ -26,13 +26,22 @@ export const PIN_ICONS: PinIconDef[] = [
 
 const FALLBACK = PIN_ICONS[0];
 const EMOJI_COMPONENT = /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3/u;
+const REGIONAL_INDICATORS = /^\p{Regional_Indicator}+$/u;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function isSingleEmoji(value: string): boolean {
+	if ([...GRAPHEME_SEGMENTER.segment(value)].length !== 1 || !EMOJI_COMPONENT.test(value)) {
+		return false;
+	}
+	return !REGIONAL_INDICATORS.test(value) || [...value].length === 2;
+}
 
 export function normalisePinEmoji(value: unknown): string {
 	if (typeof value !== 'string') return FALLBACK.glyph;
 	const legacy = PIN_ICONS.find((icon) => icon.id === value);
 	if (legacy) return legacy.glyph;
 	const emoji = value.trim();
-	return emoji.length <= 32 && EMOJI_COMPONENT.test(emoji) ? emoji : FALLBACK.glyph;
+	return emoji.length <= 32 && isSingleEmoji(emoji) ? emoji : FALLBACK.glyph;
 }
 
 /** The display glyph for either a current emoji or a legacy icon id. */

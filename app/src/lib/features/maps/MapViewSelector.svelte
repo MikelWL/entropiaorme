@@ -24,6 +24,7 @@
 	let draftName = $state('');
 	let editInput = $state<HTMLInputElement | null>(null);
 	let saving = $state(false);
+	let rowAction = false;
 
 	async function addView() {
 		const created = await onadd();
@@ -52,8 +53,12 @@
 	}
 
 	async function deleteView(view: MapView) {
-		if (!window.confirm(`Delete “${view.name}” and all pins on it?`)) return;
-		if (await ondelete(view)) editingId = null;
+		try {
+			if (!window.confirm(`Delete “${view.name}” and all pins on it?`)) return;
+			if (await ondelete(view)) editingId = null;
+		} finally {
+			rowAction = false;
+		}
 	}
 </script>
 
@@ -97,7 +102,14 @@
 							aria-label="Map name"
 							maxlength="40"
 							class="h-7 w-full rounded border border-accent/50 bg-base px-2 text-xs text-text focus:outline-none"
-							onblur={() => void saveName(view)}
+							onblur={() => {
+								if (rowAction) {
+									draftName = view.name;
+									rowAction = false;
+									return;
+								}
+								void saveName(view);
+							}}
 						/>
 					</form>
 				{:else}
@@ -118,7 +130,9 @@
 					role="menuitem"
 					aria-label="Rename {view.name}"
 					class="h-7 w-7 rounded text-xs text-text-tertiary hover:bg-surface-hover hover:text-text"
+					onpointerdown={() => (rowAction = true)}
 					onclick={() => {
+						rowAction = false;
 						editingId = view.id;
 						draftName = view.name;
 						void tick().then(() => {
@@ -132,6 +146,7 @@
 					role="menuitem"
 					aria-label="Delete {view.name}"
 					class="h-7 w-7 rounded text-xs text-text-tertiary hover:bg-error/10 hover:text-error"
+					onpointerdown={() => (rowAction = true)}
 					onclick={() => void deleteView(view)}
 				>×</button>
 			</div>

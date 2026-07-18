@@ -47,10 +47,10 @@
 	async function selectPlanet(name: string) {
 		focusRequest = null;
 		await model.selectPlanet(name);
-		if (model.selected?.calibration) {
+		if (model.selected?.name === name && model.selected.calibration) {
 			await setCartographyOverlayConfig({
 				...cartographyOverlayConfig.current,
-				planet: name,
+				planet: model.selected.name,
 				mapViewId: null,
 			});
 		}

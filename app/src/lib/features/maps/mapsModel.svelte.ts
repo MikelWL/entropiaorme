@@ -56,12 +56,17 @@ export function createMapsModel() {
 	async function refreshPins(): Promise<void> {
 		const planet = selectedName;
 		if (!planet) return;
+		const viewId = selectedViewId;
 		const epoch = selectEpoch;
 		try {
-			const loadedPins = await getMapPins(planet, selectedViewId);
-			if (epoch === selectEpoch && selectedName === planet) pins = loadedPins;
+			const loadedPins = await getMapPins(planet, viewId);
+			if (epoch === selectEpoch && selectedName === planet && selectedViewId === viewId) {
+				pins = loadedPins;
+			}
 		} catch (e) {
-			if (epoch === selectEpoch) error = describeError(e, `Failed to refresh the ${planet} pins`);
+			if (epoch === selectEpoch && selectedName === planet && selectedViewId === viewId) {
+				error = describeError(e, `Failed to refresh the ${planet} pins`);
+			}
 		}
 	}
 
@@ -69,11 +74,6 @@ export function createMapsModel() {
 		const epoch = ++selectEpoch;
 		const planet = planets.find((candidate) => candidate.name === name);
 		if (!planet) return;
-		selectedName = name;
-		selectedViewId = null;
-		imageUrl = null;
-		views = [];
-		pins = [];
 		loading = true;
 		error = null;
 		try {
@@ -83,6 +83,8 @@ export function createMapsModel() {
 				getMapPins(planet.name, null),
 			]);
 			if (epoch !== selectEpoch) return;
+			selectedName = name;
+			selectedViewId = null;
 			imageUrl = url;
 			views = loadedViews;
 			pins = loadedPins;
@@ -98,12 +100,11 @@ export function createMapsModel() {
 		const planet = selectedName;
 		if (!planet || (id !== null && !views.some((view) => view.id === id))) return;
 		const epoch = ++selectEpoch;
-		selectedViewId = id;
-		pins = [];
 		error = null;
 		try {
 			const loadedPins = await getMapPins(planet, id);
-			if (epoch === selectEpoch && selectedName === planet && selectedViewId === id) {
+			if (epoch === selectEpoch && selectedName === planet) {
+				selectedViewId = id;
 				pins = loadedPins;
 			}
 		} catch (e) {
@@ -113,24 +114,33 @@ export function createMapsModel() {
 
 	async function addView(): Promise<MapView | null> {
 		if (!selectedName) return null;
+		const planet = selectedName;
+		const epoch = selectEpoch;
 		let suffix = 1;
 		let name = 'New map';
 		const names = new Set(views.map((view) => view.name.toLowerCase()));
 		while (names.has(name.toLowerCase())) name = `New map ${++suffix}`;
-		const created = await createMapView(selectedName, name);
+		const created = await createMapView(planet, name);
+		if (selectedName !== planet || selectEpoch !== epoch) return null;
 		views = [...views, created];
 		await selectView(created.id);
 		return created;
 	}
 
 	async function renameView(id: number, name: string): Promise<MapView> {
+		const planet = selectedName;
+		const epoch = selectEpoch;
 		const renamed = await renameMapView(id, name);
+		if (selectedName !== planet || selectEpoch !== epoch) return renamed;
 		views = views.map((view) => (view.id === id ? renamed : view));
 		return renamed;
 	}
 
 	async function removeView(id: number): Promise<void> {
+		const planet = selectedName;
+		const epoch = selectEpoch;
 		await deleteMapView(id);
+		if (selectedName !== planet || selectEpoch !== epoch) return;
 		views = views.filter((view) => view.id !== id);
 		if (selectedViewId === id) await selectView(null);
 	}

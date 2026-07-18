@@ -158,6 +158,7 @@ async fn a_pin_roundtrips_with_its_wire_shape() {
     assert_eq!(wire["radiusM"], serde_json::Value::Null);
     assert_eq!(wire["notes"], "the sanity anchor");
     assert_eq!(wire["sessionId"], serde_json::Value::Null);
+    assert_eq!(wire["mapViewId"], serde_json::Value::Null);
     assert!(wire["createdAt"].is_f64());
 
     // Another planet's list stays empty (planet-scoped reads).

@@ -187,4 +187,84 @@ describe('createMapsModel', () => {
 		expect(model.selected?.name).toBe('Calypso');
 		expect(model.imageUrl).toBe('data:image/jpeg;base64,calypso');
 	});
+
+	it('preserves the last-good map when a replacement fails to load', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet(), planet({ name: 'Arkadia' })]);
+		mocked.getMapPins.mockResolvedValueOnce([pin()]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+
+		mocked.planetMapImage.mockRejectedValueOnce(new Error('raster unavailable'));
+		await model.selectPlanet('Arkadia');
+
+		expect(model.selected?.name).toBe('Calypso');
+		expect(model.imageUrl).toBe('data:image/jpeg;base64,xx');
+		expect(model.pins).toEqual([pin()]);
+		expect(model.error).toBe('raster unavailable');
+	});
+
+	it('discards a created view result after the selection context changes', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet(), planet({ name: 'Arkadia' })]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+
+		let releaseCreate: (created: MapView) => void = () => {};
+		mocked.createMapView.mockImplementationOnce(
+			() => new Promise((resolve) => (releaseCreate = resolve)),
+		);
+		const pendingCreate = model.addView();
+		await model.selectPlanet('Arkadia');
+		releaseCreate(view());
+
+		expect(await pendingCreate).toBeNull();
+		expect(model.selected?.name).toBe('Arkadia');
+		expect(model.views).toEqual([]);
+	});
+
+	it('does not let an old-view refresh overwrite a newly selected view', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet()]);
+		mocked.getMapViews.mockResolvedValue([view()]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+		mocked.getMapPins.mockResolvedValueOnce([pin({ id: 7, mapViewId: 7 })]);
+		await model.selectView(7);
+
+		let releaseSelection: (pins: MapPin[]) => void = () => {};
+		let releaseRefresh: (pins: MapPin[]) => void = () => {};
+		mocked.getMapPins
+			.mockImplementationOnce(() => new Promise((resolve) => (releaseSelection = resolve)))
+			.mockImplementationOnce(() => new Promise((resolve) => (releaseRefresh = resolve)));
+		const selection = model.selectView(null);
+		const refresh = model.refreshPins();
+		releaseSelection([pin({ id: 8, name: 'Default pin' })]);
+		await selection;
+		releaseRefresh([pin({ id: 9, mapViewId: 7, name: 'Old-view pin' })]);
+		await refresh;
+
+		expect(model.selectedViewId).toBeNull();
+		expect(model.pins).toEqual([pin({ id: 8, name: 'Default pin' })]);
+	});
+
+	it('does not surface an old-view refresh failure against a newly selected view', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet()]);
+		mocked.getMapViews.mockResolvedValue([view()]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+		await model.selectView(7);
+
+		let releaseSelection: (pins: MapPin[]) => void = () => {};
+		let rejectRefresh: (error: Error) => void = () => {};
+		mocked.getMapPins
+			.mockImplementationOnce(() => new Promise((resolve) => (releaseSelection = resolve)))
+			.mockImplementationOnce(() => new Promise((_, reject) => (rejectRefresh = reject)));
+		const selection = model.selectView(null);
+		const refresh = model.refreshPins();
+		releaseSelection([pin({ id: 8, name: 'Default pin' })]);
+		await selection;
+		rejectRefresh(new Error('stale refresh failed'));
+		await refresh;
+
+		expect(model.selectedViewId).toBeNull();
+		expect(model.error).toBeNull();
+	});
 });

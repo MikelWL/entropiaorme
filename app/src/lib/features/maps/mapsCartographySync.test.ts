@@ -85,4 +85,21 @@ describe('startMapsCartographySync', () => {
 		);
 		stop();
 	});
+
+	it('applies a same-planet view change broadcast', async () => {
+		const model = modelWithViews([view]);
+		const stop = startMapsCartographySync(model as unknown as MapsModel);
+		await vi.waitFor(() => expect(model.selectView).toHaveBeenCalledWith(7));
+		model.selectView.mockClear();
+
+		await vi.waitFor(() => expect(seams.listen).toHaveBeenCalledTimes(2));
+		const configListener = seams.listen.mock.calls.find(
+			([eventName]) => eventName === 'cartography-overlay-changed',
+		)?.[1] as (event: { payload: unknown }) => void;
+		seams.config.current = { planet: 'Calypso', mapViewId: null, buttons: [] };
+		configListener({ payload: seams.config.current });
+
+		await vi.waitFor(() => expect(model.selectView).toHaveBeenCalledWith(null));
+		stop();
+	});
 });

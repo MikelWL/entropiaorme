@@ -86,13 +86,11 @@
 	style:top="{top}px"
 >
 	<Input bind:value={query} placeholder="Search emoji" aria-label="Search emoji" />
-	<div class="mt-2 grid grid-cols-3 gap-1" role="listbox" aria-label="Emoji">
+	<div class="mt-2 grid grid-cols-3 gap-1">
 		{#each results as emoji (emoji.unicode)}
 			<button
 				type="button"
-				role="option"
 				aria-label={emoji.label}
-				aria-selected="false"
 				class="flex aspect-square items-center justify-center rounded-md border border-transparent text-xl hover:border-border-bright hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
 				onclick={() => choose(emoji.unicode)}
 			>

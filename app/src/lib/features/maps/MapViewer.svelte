@@ -370,6 +370,7 @@
 	<div
 		class="absolute left-2 top-2 z-10 w-48 space-y-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur"
 		onpointerdown={(event) => event.stopPropagation()}
+		onkeydown={(event) => event.stopPropagation()}
 	>
 		<Select
 			value={planet.name}
