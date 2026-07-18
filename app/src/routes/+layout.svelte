@@ -10,6 +10,7 @@
 	import { isTosAccepted } from '$lib/tos';
 	import { theme, initTheme } from '$lib/theme.svelte';
 	import { initStatsCustomisation } from '$lib/statsCustomisation.svelte';
+	import { initCartographyOverlay } from '$lib/features/maps/cartographyOverlay.svelte';
 	import { initActivityArchive } from '$lib/activityArchive.svelte';
 	import { initNews, newsOptIn, newsHasUnread, NEWS_PREFERENCE_KEYS } from '$lib/news.svelte';
 	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater.svelte';
@@ -50,6 +51,7 @@
 		await Promise.all([
 			initTheme(),
 			initStatsCustomisation(),
+			initCartographyOverlay(),
 			initActivityArchive(),
 			initNews(),
 			initUpdater(),
@@ -68,7 +70,9 @@
 		const path = page.url.pathname;
 		const isWelcome = path.startsWith('/welcome');
 		const isOverlay =
-			path.startsWith('/overlay') || path.startsWith('/scan-overlay');
+			path.startsWith('/overlay') ||
+			path.startsWith('/scan-overlay') ||
+			path.startsWith('/cartography-overlay');
 		if (!isWelcome && !isOverlay) {
 			if (!complete) {
 				await goto('/welcome', { replaceState: true });
@@ -140,7 +144,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/overlay') || page.url.pathname.startsWith('/scan-overlay')}
+{#if page.url.pathname.startsWith('/overlay') || page.url.pathname.startsWith('/scan-overlay') || page.url.pathname.startsWith('/cartography-overlay')}
 	{@render children()}
 {:else if page.url.pathname.startsWith('/welcome')}
 	<div class="flex flex-col h-screen bg-base">

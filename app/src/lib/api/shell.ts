@@ -18,6 +18,11 @@ export async function toggleOverlay(): Promise<void> {
 	await invoke('toggle_overlay');
 }
 
+/** Toggle the pre-spawned cartography pin overlay window. */
+export async function toggleCartographyOverlay(): Promise<void> {
+	await invoke('toggle_cartography_overlay');
+}
+
 /** Show and focus the pre-spawned scan overlay window. */
 export async function showScanOverlay(): Promise<void> {
 	await invoke('show_scan_overlay');

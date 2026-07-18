@@ -233,9 +233,11 @@ impl Api {
         self.map_pins.delete(id).await.map_err(pins_error)
     }
 
-    /// The bounds gate: refuse coordinates outside a calibrated map's
-    /// window. An uncatalogued or uncalibrated planet passes (nothing
-    /// authoritative to gate against); the facade never invents bounds.
+    /// The bounds gate: when the catalogue is composed, require a known,
+    /// calibrated planet and refuse coordinates outside its window. A
+    /// facade composed without the bundle keeps the service-level test and
+    /// recovery seam available, but the shipped application never invents
+    /// an uncatalogued pin namespace.
     fn validate_pin_coords(&self, planet: &str, lon: f64, lat: f64) -> Result<(), ApiError> {
         if !lon.is_finite() || !lat.is_finite() {
             return Err(ApiError::bad_request("pin coordinates must be finite"));
@@ -243,13 +245,14 @@ impl Api {
         let Some(store) = self.planet_maps.as_ref() else {
             return Ok(());
         };
-        let Some(bounds) = store
+        let record = store
             .record(planet)
-            .and_then(|record| record.calibration.as_ref())
-            .map(|cal| cal.bounds)
-        else {
-            return Ok(());
-        };
+            .ok_or_else(|| ApiError::bad_request(format!("no bundled map for planet {planet}")))?;
+        let bounds = record
+            .calibration
+            .as_ref()
+            .ok_or_else(|| ApiError::bad_request(format!("{planet}'s map is view-only")))?
+            .bounds;
         // Compared in float space: a coordinate a fraction past the edge
         // must not round back inside and persist off the map.
         if lon < bounds.lon_min as f64

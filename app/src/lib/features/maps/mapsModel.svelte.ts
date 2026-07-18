@@ -47,6 +47,18 @@ export function createMapsModel() {
 		}
 	}
 
+	async function refreshPins(): Promise<void> {
+		const planet = selectedName;
+		if (!planet) return;
+		const epoch = selectEpoch;
+		try {
+			const loadedPins = await getMapPins(planet);
+			if (epoch === selectEpoch && selectedName === planet) pins = loadedPins;
+		} catch (e) {
+			if (epoch === selectEpoch) error = describeError(e, `Failed to refresh the ${planet} pins`);
+		}
+	}
+
 	async function selectPlanet(name: string) {
 		const epoch = ++selectEpoch;
 		const planet = planets.find((candidate) => candidate.name === name);
@@ -112,6 +124,7 @@ export function createMapsModel() {
 		},
 		loadPlanets,
 		selectPlanet,
+		refreshPins,
 		addPin,
 		editPin,
 		removePin,

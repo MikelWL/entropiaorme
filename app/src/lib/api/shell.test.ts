@@ -22,6 +22,7 @@ beforeEach(() => {
 describe('window commands', () => {
 	it.each([
 		['toggleOverlay', 'toggle_overlay'],
+		['toggleCartographyOverlay', 'toggle_cartography_overlay'],
 		['showScanOverlay', 'show_scan_overlay'],
 		['hideScanOverlay', 'hide_scan_overlay'],
 	] as const)('%s invokes %s with no arguments', async (fn, command) => {

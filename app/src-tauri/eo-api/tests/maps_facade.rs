@@ -192,6 +192,13 @@ async fn implausible_coordinates_are_refused_on_create_and_move() {
     let mut outside = calypso_pin();
     outside.lat = 999_999.0;
     assert!(bare.map_pin_create(outside).await.is_ok());
+
+    let mut unknown = calypso_pin();
+    unknown.planet = "Not a planet".to_string();
+    assert!(matches!(
+        api.map_pin_create(unknown).await,
+        Err(ApiError::BadRequest { .. })
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

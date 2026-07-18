@@ -119,6 +119,16 @@ describe('createMapsModel', () => {
 		expect(model.pins).toHaveLength(0);
 	});
 
+	it('refreshes the selected planet pins after an overlay invalidation', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet()]);
+		const model = createMapsModel();
+		await model.loadPlanets();
+		mocked.getMapPins.mockResolvedValueOnce([pin({ id: 9, name: 'Overlay pin' })]);
+		await model.refreshPins();
+		expect(mocked.getMapPins).toHaveBeenLastCalledWith('Calypso');
+		expect(model.pins).toEqual([pin({ id: 9, name: 'Overlay pin' })]);
+	});
+
 	it('a stale selection cannot clobber a newer one', async () => {
 		mocked.getPlanetMaps.mockResolvedValue([planet(), planet({ name: 'Arkadia' })]);
 		const model = createMapsModel();

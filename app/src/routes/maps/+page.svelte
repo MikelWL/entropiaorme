@@ -6,10 +6,12 @@
 	 * feature model; geometry lives in the feature's pure modules.
 	 */
 	import { onMount } from 'svelte';
+	import { listen } from '@tauri-apps/api/event';
 	import Button from '$lib/components/Button.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import CalibrationModal from '$lib/features/maps/CalibrationModal.svelte';
+	import CartographyOverlayModal from '$lib/features/maps/CartographyOverlayModal.svelte';
 	import MapViewer from '$lib/features/maps/MapViewer.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import type { PinFormValues } from '$lib/features/maps/PinEditModal.svelte';
@@ -22,10 +24,43 @@
 	import type { MapPin } from '$lib/api';
 	import { scanMapCoordinates } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
+	import { toggleCartographyOverlay } from '$lib/api';
+	import {
+		acceptCartographyOverlayBroadcast,
+		cartographyOverlayConfig,
+		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
+		MAP_PINS_CHANGED_EVENT,
+		setCartographyOverlayConfig,
+	} from '$lib/features/maps/cartographyOverlay.svelte';
 
 	const model = createMapsModel();
 	onMount(() => {
-		void model.loadPlanets();
+		let unlistenPins: (() => void) | undefined;
+		let unlistenConfig: (() => void) | undefined;
+		void (async () => {
+			await model.loadPlanets();
+			const preferred = cartographyOverlayConfig.current.planet;
+			if (preferred && model.planets.some((planet) => planet.name === preferred)) {
+				await model.selectPlanet(preferred);
+			} else if (model.selected) {
+				await setCartographyOverlayConfig({
+					...cartographyOverlayConfig.current,
+					planet: model.selected.name,
+				});
+			}
+			unlistenPins = await listen<{ planet?: string }>(MAP_PINS_CHANGED_EVENT, (event) => {
+				if (event.payload?.planet === model.selected?.name) void model.refreshPins();
+			});
+			unlistenConfig = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
+				acceptCartographyOverlayBroadcast(event.payload);
+				const planet = cartographyOverlayConfig.current.planet;
+				if (planet && planet !== model.selected?.name) void model.selectPlanet(planet);
+			});
+		})();
+		return () => {
+			unlistenPins?.();
+			unlistenConfig?.();
+		};
 	});
 
 	// The pin form: create mode carries the drop point (from a map click
@@ -36,7 +71,15 @@
 	let dropAltitude = $state<number | null>(null);
 	let editingPin = $state<MapPin | null>(null);
 	let calibrationOpen = $state(false);
+	let overlayConfigOpen = $state(false);
 	let scanning = $state(false);
+
+	async function selectPlanet(name: string) {
+		await model.selectPlanet(name);
+		if (model.selected?.calibration) {
+			await setCartographyOverlayConfig({ ...cartographyOverlayConfig.current, planet: name });
+		}
+	}
 
 	// Transient action feedback (copy confirmations, CRUD failures).
 	let feedback = $state<string | null>(null);
@@ -181,6 +224,12 @@
 		{#if model.planets.length > 0}
 			<div class="flex items-center gap-2 shrink-0">
 				<Button size="sm" loading={scanning} onclick={scanMyLocation}>Pin my location</Button>
+				<Button size="sm" variant="secondary" onclick={toggleCartographyOverlay}>
+					Pin overlay
+				</Button>
+				<Button size="sm" variant="ghost" onclick={() => (overlayConfigOpen = true)}>
+					Configure
+				</Button>
 				<Button size="sm" variant="secondary" onclick={() => (calibrationOpen = true)}>
 					Calibrate capture
 				</Button>
@@ -190,7 +239,7 @@
 						class="w-52"
 						value={model.selected?.name ?? ''}
 						onchange={(event) =>
-							model.selectPlanet((event.currentTarget as HTMLSelectElement).value)}
+							selectPlanet((event.currentTarget as HTMLSelectElement).value)}
 					>
 						{#each model.planets as planet (planet.name)}
 							<option value={planet.name}>
@@ -235,6 +284,11 @@
 		{/if}
 	</div>
 </div>
+
+<CartographyOverlayModal
+	bind:open={overlayConfigOpen}
+	config={cartographyOverlayConfig.current}
+/>
 
 <PinEditModal bind:open={formOpen} point={dropPoint} editing={editingPin} onsubmit={submitPinForm} />
 <CalibrationModal bind:open={calibrationOpen} />

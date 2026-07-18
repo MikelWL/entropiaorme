@@ -47,6 +47,20 @@
         "visible": false,
         "skipTaskbar": true,
         "shadow": false
+      },
+      {
+        "label": "cartography-overlay",
+        "title": "EntropiaOrme Pin Overlay",
+        "url": "/cartography-overlay",
+        "width": 360,
+        "height": 150,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {
