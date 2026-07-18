@@ -39,7 +39,7 @@ const pin: MapPin = {
 
 function setup() {
 	const onmapclick = vi.fn();
-	const oncopywaypoint = vi.fn().mockResolvedValue('Waypoint copied.');
+	const oncopywaypoint = vi.fn().mockResolvedValue({ message: 'Waypoint copied.', copied: true });
 	const oneditpin = vi.fn();
 	const ondeletepin = vi.fn();
 	render(MapViewer, {
@@ -62,17 +62,32 @@ describe('MapViewer pin interactions', () => {
 		const marker = screen.getByRole('button', { name: 'Copy waypoint for Port Atlantis TP' });
 
 		await fireEvent.mouseEnter(marker);
-		expect(screen.getByText('Click the pin to copy its waypoint.')).toBeTruthy();
+		expect(screen.getByText('Click to copy')).toBeTruthy();
 		expect(screen.queryByRole('button', { name: 'Copy waypoint' })).toBeNull();
 
 		await fireEvent.click(marker);
 		expect(oncopywaypoint).toHaveBeenCalledWith(pin);
+		const confirmation = await screen.findByText('Waypoint copied.');
+		expect(confirmation.classList.contains('border-success/30')).toBe(true);
+		expect(confirmation.classList.contains('bg-success/10')).toBe(true);
+		expect(confirmation.classList.contains('text-success')).toBe(true);
+		expect(screen.queryByText('Click to copy')).toBeNull();
+	});
+
+	it('copies when pin detail text is clicked', async () => {
+		const { oncopywaypoint } = setup();
+		await fireEvent.mouseEnter(
+			screen.getByRole('button', { name: 'Copy waypoint for Port Atlantis TP' }),
+		);
+
+		await fireEvent.click(screen.getByText('Position'));
+
+		expect(oncopywaypoint).toHaveBeenCalledWith(pin);
 		expect(await screen.findByText('Waypoint copied.')).toBeTruthy();
-		expect(screen.queryByText('Click the pin to copy its waypoint.')).toBeNull();
 	});
 
 	it('contains card gestures so edit cannot become a map click', async () => {
-		const { onmapclick, oneditpin } = setup();
+		const { onmapclick, oncopywaypoint, oneditpin } = setup();
 		await fireEvent.mouseEnter(
 			screen.getByRole('button', { name: 'Copy waypoint for Port Atlantis TP' }),
 		);
@@ -83,6 +98,7 @@ describe('MapViewer pin interactions', () => {
 		await fireEvent.click(edit);
 
 		expect(oneditpin).toHaveBeenCalledWith(pin);
+		expect(oncopywaypoint).not.toHaveBeenCalled();
 		expect(onmapclick).not.toHaveBeenCalled();
 	});
 });

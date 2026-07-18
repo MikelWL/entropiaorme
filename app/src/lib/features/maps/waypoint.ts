@@ -8,6 +8,12 @@
  * callers disable the action rather than copy a string that cannot work.
  */
 
+/** The user-facing result of a clipboard attempt. */
+export interface WaypointCopyResult {
+	message: string;
+	copied: boolean;
+}
+
 /** The label with the waypoint delimiters neutralised: brackets are
  * dropped, commas soften to semicolons, whitespace collapses. */
 export function sanitiseWaypointLabel(label: string): string {

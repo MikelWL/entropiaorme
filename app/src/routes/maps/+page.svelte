@@ -14,7 +14,10 @@
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import type { PinFormValues } from '$lib/features/maps/PinEditModal.svelte';
 	import { createMapsModel } from '$lib/features/maps/mapsModel.svelte';
-	import { formatWaypoint } from '$lib/features/maps/waypoint';
+	import {
+		formatWaypoint,
+		type WaypointCopyResult,
+	} from '$lib/features/maps/waypoint';
 	import { formatGamePoint, type GamePoint } from '$lib/features/maps/coords';
 	import type { MapPin } from '$lib/api';
 	import { scanMapCoordinates } from '$lib/api';
@@ -145,7 +148,7 @@
 		}
 	}
 
-	async function copyWaypoint(pin: MapPin): Promise<string> {
+	async function copyWaypoint(pin: MapPin): Promise<WaypointCopyResult> {
 		const waypoint = formatWaypoint({
 			technicalName: model.selected?.technicalName ?? null,
 			lon: pin.lon,
@@ -154,13 +157,13 @@
 			label: pin.name,
 		});
 		if (!waypoint) {
-			return 'This map cannot form an in-game waypoint.';
+			return { message: 'Waypoint unavailable', copied: false };
 		}
 		try {
 			await navigator.clipboard.writeText(waypoint);
-			return 'Waypoint copied.';
+			return { message: 'Waypoint copied.', copied: true };
 		} catch {
-			return 'The clipboard refused the waypoint copy.';
+			return { message: 'Copy failed', copied: false };
 		}
 	}
 </script>

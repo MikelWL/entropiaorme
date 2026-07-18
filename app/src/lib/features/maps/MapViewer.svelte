@@ -13,6 +13,7 @@
 	import { gameToImage, imageToGame, type GamePoint } from './coords';
 	import { pinGlyph } from './pinIcons';
 	import PinCard from './PinCard.svelte';
+	import type { WaypointCopyResult } from './waypoint';
 	import {
 		ZOOM_STEP,
 		fitViewport,
@@ -37,7 +38,7 @@
 		pins: MapPin[];
 		/** A still click on a calibrated map, in game units. */
 		onmapclick: (point: GamePoint) => void;
-		oncopywaypoint: (pin: MapPin) => Promise<string>;
+		oncopywaypoint: (pin: MapPin) => Promise<WaypointCopyResult>;
 		oneditpin: (pin: MapPin) => void;
 		ondeletepin: (pin: MapPin) => void;
 	} = $props();
@@ -54,13 +55,24 @@
 	// while the pointer is over the card itself, closed on a short delay
 	// so travelling marker -> card does not dismiss it.
 	let activePin = $state<MapPin | null>(null);
-	let copyFeedback = $state<string | null>(null);
+	let copyFeedback = $state<WaypointCopyResult | null>(null);
+	let copyRequest = 0;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function raiseCard(pin: MapPin) {
 		if (closeTimer) clearTimeout(closeTimer);
-		if (activePin?.id !== pin.id) copyFeedback = null;
+		if (activePin?.id !== pin.id) {
+			copyFeedback = null;
+			copyRequest += 1;
+		}
 		activePin = pin;
+	}
+
+	async function copyPinWaypoint(pin: MapPin) {
+		raiseCard(pin);
+		const request = ++copyRequest;
+		const feedback = await oncopywaypoint(pin);
+		if (request === copyRequest && activePin?.id === pin.id) copyFeedback = feedback;
 	}
 
 	function scheduleCardClose() {
@@ -68,6 +80,7 @@
 		closeTimer = setTimeout(() => {
 			activePin = null;
 			copyFeedback = null;
+			copyRequest += 1;
 		}, 250);
 	}
 
@@ -327,11 +340,9 @@
 			onfocus={() => raiseCard(placed.pin)}
 			onblur={scheduleCardClose}
 			onpointerdown={(event) => event.stopPropagation()}
-			onclick={async (event) => {
+			onclick={(event) => {
 				event.stopPropagation();
-				raiseCard(placed.pin);
-				const feedback = await oncopywaypoint(placed.pin);
-				if (activePin?.id === placed.pin.id) copyFeedback = feedback;
+				void copyPinWaypoint(placed.pin);
 			}}
 		>
 			{pinGlyph(placed.pin.icon)}
@@ -350,6 +361,7 @@
 				{copyFeedback}
 				onpointerenter={() => raiseCard(placed.pin)}
 				onpointerleave={scheduleCardClose}
+				oncopy={() => void copyPinWaypoint(placed.pin)}
 				onedit={() => oneditpin(placed.pin)}
 				ondelete={() => {
 					activePin = null;

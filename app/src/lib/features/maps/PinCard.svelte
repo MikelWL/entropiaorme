@@ -9,6 +9,7 @@
 	import type { MapPin } from '$lib/api';
 	import { formatGamePoint } from './coords';
 	import { pinGlyph } from './pinIcons';
+	import type { WaypointCopyResult } from './waypoint';
 
 	let {
 		pin,
@@ -20,6 +21,7 @@
 		copyFeedback,
 		onpointerenter,
 		onpointerleave,
+		oncopy,
 		onedit,
 		ondelete,
 	}: {
@@ -29,9 +31,10 @@
 		viewW: number;
 		viewH: number;
 		technicalName: string | null;
-		copyFeedback: string | null;
+		copyFeedback: WaypointCopyResult | null;
 		onpointerenter: () => void;
 		onpointerleave: () => void;
+		oncopy: () => void;
 		onedit: () => void;
 		ondelete: () => void;
 	} = $props();
@@ -54,8 +57,10 @@
 	);
 </script>
 
+<!-- The card-wide pointer shortcut supplements the keyboard-operable marker. -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
-	class="absolute z-10 w-58 rounded-lg border border-border bg-surface/95 p-3 text-sm shadow-lg backdrop-blur"
+	class="absolute z-10 w-58 cursor-pointer rounded-lg border border-border bg-surface/95 p-3 text-sm shadow-lg backdrop-blur"
 	style="left: {left}px; {openUp ? `bottom: ${viewH - y + 26}px;` : `top: ${y + 10}px;`} width: {CARD_W}px;"
 	role="dialog"
 	tabindex="-1"
@@ -65,6 +70,7 @@
 	onfocusin={onpointerenter}
 	onfocusout={onpointerleave}
 	onpointerdown={(event) => event.stopPropagation()}
+	onclick={oncopy}
 >
 	<div class="flex items-start gap-2">
 		<span class="text-lg leading-none" aria-hidden="true">{pinGlyph(pin.icon)}</span>
@@ -97,17 +103,31 @@
 
 	<div class="mt-3 flex items-end gap-1.5">
 		<output
-			class="min-w-0 flex-1 rounded-md border border-border bg-base/70 px-2 py-1.5 text-xs leading-tight text-text-secondary"
+			class="min-w-0 flex-1 rounded-md border px-2 py-1.5 text-xs leading-tight transition-colors {copyFeedback?.copied
+				? 'border-success/30 bg-success/10 text-success'
+				: 'border-border bg-base/70 text-text-secondary'}"
 			aria-live="polite"
 		>
-			{copyFeedback ??
-				(technicalName
-					? 'Click the pin to copy its waypoint.'
-					: 'This map cannot form an in-game waypoint.')}
+			{copyFeedback?.message ??
+				(technicalName ? 'Click to copy' : 'Waypoint unavailable')}
 		</output>
 		<div class="flex shrink-0 items-center gap-1.5">
-			<Button size="sm" variant="ghost" onclick={onedit}>Edit</Button>
-			<Button size="sm" variant="danger" onclick={ondelete}>Delete</Button>
+			<Button
+				size="sm"
+				variant="ghost"
+				onclick={(event) => {
+					event.stopPropagation();
+					onedit();
+				}}>Edit</Button
+			>
+			<Button
+				size="sm"
+				variant="danger"
+				onclick={(event) => {
+					event.stopPropagation();
+					ondelete();
+				}}>Delete</Button
+			>
 		</div>
 	</div>
 </div>
