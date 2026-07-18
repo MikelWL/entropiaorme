@@ -42,20 +42,28 @@
 	}
 
 	onMount(() => {
+		let mounted = true;
 		let unlisten: (() => void) | undefined;
 		void (async () => {
 			await initCartographyOverlay();
-			planets = await getPlanetMaps();
+			if (!mounted) return;
+			const loadedPlanets = await getPlanetMaps();
+			if (!mounted) return;
+			planets = loadedPlanets;
 			await ensureKnownPlanet();
-			unlisten = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
+			if (!mounted) return;
+			const stopListening = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
 				acceptCartographyOverlayBroadcast(event.payload);
 				void ensureKnownPlanet();
 			});
+			if (mounted) unlisten = stopListening;
+			else stopListening();
 		})();
 		sizeSync.schedule();
 		const observer = new ResizeObserver(() => sizeSync.schedule());
 		observer.observe(root);
 		return () => {
+			mounted = false;
 			unlisten?.();
 			observer.disconnect();
 			sizeSync.cancel();
@@ -109,7 +117,7 @@
 		<div class="flex items-center gap-2 border-b border-border/70 px-2 py-1.5" data-tauri-drag-region>
 			<select
 				aria-label="Planet"
-				class="min-w-0 flex-1 bg-transparent text-xs font-medium text-text outline-none"
+				class="min-w-0 flex-1 bg-transparent text-xs font-medium text-text outline-hidden"
 				value={cartographyOverlayConfig.current.planet ?? ''}
 				onchange={selectPlanet}
 			>

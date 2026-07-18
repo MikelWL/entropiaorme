@@ -35,10 +35,12 @@
 
 	const model = createMapsModel();
 	onMount(() => {
+		let mounted = true;
 		let unlistenPins: (() => void) | undefined;
 		let unlistenConfig: (() => void) | undefined;
 		void (async () => {
 			await model.loadPlanets();
+			if (!mounted) return;
 			const preferred = cartographyOverlayConfig.current.planet;
 			if (preferred && model.planets.some((planet) => planet.name === preferred)) {
 				await model.selectPlanet(preferred);
@@ -48,16 +50,25 @@
 					planet: model.selected.name,
 				});
 			}
-			unlistenPins = await listen<{ planet?: string }>(MAP_PINS_CHANGED_EVENT, (event) => {
+			if (!mounted) return;
+			const stopPins = await listen<{ planet?: string }>(MAP_PINS_CHANGED_EVENT, (event) => {
 				if (event.payload?.planet === model.selected?.name) void model.refreshPins();
 			});
-			unlistenConfig = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
+			if (!mounted) {
+				stopPins();
+				return;
+			}
+			unlistenPins = stopPins;
+			const stopConfig = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
 				acceptCartographyOverlayBroadcast(event.payload);
 				const planet = cartographyOverlayConfig.current.planet;
 				if (planet && planet !== model.selected?.name) void model.selectPlanet(planet);
 			});
+			if (mounted) unlistenConfig = stopConfig;
+			else stopConfig();
 		})();
 		return () => {
+			mounted = false;
 			unlistenPins?.();
 			unlistenConfig?.();
 		};

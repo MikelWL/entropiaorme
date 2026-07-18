@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
 	import Modal from '$lib/components/Modal.svelte';
@@ -17,7 +18,7 @@
 	let saving = $state(false);
 
 	$effect(() => {
-		if (open) buttons = config.buttons.map((button) => ({ ...button }));
+		if (open) buttons = untrack(() => config.buttons.map((button) => ({ ...button })));
 	});
 
 	function addButton() {
@@ -45,7 +46,7 @@
 	}
 </script>
 
-<Modal bind:open title="Configure pin overlay" class="!max-w-2xl overflow-hidden">
+<Modal bind:open title="Configure pin overlay" class="max-w-2xl! overflow-hidden">
 	<div class="flex max-h-[calc(100vh-12rem)] min-h-0 flex-col">
 		<div class="min-h-0 space-y-3 overflow-y-auto pr-2">
 			{#each buttons as button, index (button.id)}
