@@ -52,6 +52,18 @@ pub fn capture_region_bgr(x: i64, y: i64, w: i64, h: i64) -> Option<BgrImage> {
     })
 }
 
+/// Return the generation of the newest Linux portal frame.
+///
+/// This is intentionally hidden from the generated API documentation: it is
+/// an assembly diagnostic used by the stand-alone capture probe to prove that
+/// the stream is still advancing rather than repeatedly cropping a cached
+/// first frame.
+#[cfg(all(target_os = "linux", feature = "linux-capture"))]
+#[doc(hidden)]
+pub fn capture_frame_generation() -> Option<u64> {
+    platform::frame_generation()
+}
+
 #[cfg(windows)]
 mod platform {
     use windows::Win32::Graphics::Gdi::{
@@ -168,7 +180,7 @@ mod platform {
 #[cfg(all(target_os = "linux", feature = "linux-capture"))]
 mod platform {
     use std::os::unix::fs::OpenOptionsExt as _;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
     use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
@@ -182,6 +194,7 @@ mod platform {
         bgra: Vec<u8>,
         width: usize,
         height: usize,
+        generation: u64,
         /// Monitor origin in global screen coordinates (the portal
         /// stream position).
         origin_x: i64,
@@ -219,16 +232,38 @@ mod platform {
         std::env::var_os("EO_CAPTURE_TOKEN_PATH").map(std::path::PathBuf::from)
     }
 
-    /// Open the portal stream (blocking on a private runtime) and return
+    /// ashpd's zbus connection starts its socket driver on the Tokio runtime
+    /// that creates it. A temporary current-thread runtime stops driving that
+    /// connection as soon as `block_on` returns, which can revoke the portal
+    /// stream before GStreamer receives its first frame. One dedicated worker
+    /// keeps the D-Bus peer and its portal grant alive for the process while
+    /// keeping this synchronous capture seam independent of the caller's
+    /// runtime context.
+    fn portal_runtime() -> Result<&'static tokio::runtime::Runtime, Box<dyn std::error::Error>> {
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        if let Some(runtime) = RUNTIME.get() {
+            return Ok(runtime);
+        }
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .thread_name("eo-capture-portal")
+            .enable_all()
+            .build()?;
+        let _ = RUNTIME.set(runtime);
+        RUNTIME.get().ok_or_else(|| {
+            std::io::Error::other("capture portal runtime failed to initialise").into()
+        })
+    }
+
+    /// Open the portal stream (blocking on its process-lifetime runtime) and return
     /// the PipeWire node id, the portal's PipeWire remote fd, and the
     /// monitor origin. The fd matters: the screencast node lives on the
     /// portal's own PipeWire remote and is access-restricted to it, so a
     /// pipeline that connects to the session daemon directly (node path
     /// alone) can negotiate a stream that never produces a frame.
     fn open_portal() -> Result<(u32, std::os::fd::OwnedFd, i64, i64), Box<dyn std::error::Error>> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        let runtime = portal_runtime()?;
         runtime.block_on(async {
             let saved = token_path()
                 .and_then(|path| std::fs::read_to_string(path).ok())
@@ -278,9 +313,6 @@ mod platform {
                 .clone();
             let (ox, oy) = stream.position().unwrap_or((0, 0));
             let remote_fd: std::os::fd::OwnedFd = proxy.open_pipe_wire_remote(&session).await?;
-            // Leak the session so the grant survives for the process
-            // lifetime; the OS reclaims it at exit.
-            std::mem::forget(session);
             Ok::<_, Box<dyn std::error::Error>>((
                 stream.pipe_wire_node_id(),
                 remote_fd,
@@ -312,6 +344,10 @@ mod platform {
             // seconds. Keepalive re-pushes the last frame on a timer, so
             // the first capture and quiet-screen scans never starve.
             .property("keepalive-time", 500i32)
+            // A revoked portal grant must surface through the pipeline bus;
+            // the default silently leaves the source connected but frameless,
+            // which is indistinguishable from slow negotiation at this seam.
+            .property_from_str("on-disconnect", "error")
             .build()?;
         let convert = gstreamer::ElementFactory::make("videoconvert").build()?;
         let caps = gstreamer::Caps::builder("video/x-raw")
@@ -347,10 +383,15 @@ mod platform {
                         let start = row * stride;
                         bgra.extend_from_slice(&map[start..start + width * 4]);
                     }
-                    *sink_slot.lock().expect("frame slot") = Some(Frame {
+                    let mut slot = sink_slot.lock().expect("frame slot");
+                    let generation = slot
+                        .as_ref()
+                        .map_or(1, |frame| frame.generation.saturating_add(1));
+                    *slot = Some(Frame {
                         bgra,
                         width,
                         height,
+                        generation,
                         origin_x,
                         origin_y,
                     });
@@ -400,7 +441,13 @@ mod platform {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        tracing::info!(target: "eo::capture", "capture stream produced its first frame");
+        let generation = latest
+            .lock()
+            .expect("frame slot")
+            .as_ref()
+            .map(|frame| frame.generation)
+            .unwrap_or_default();
+        tracing::info!(target: "eo::capture", generation, "capture stream produced its first frame");
 
         Ok(Engine {
             latest,
@@ -442,6 +489,41 @@ mod platform {
             out.extend_from_slice(&frame.bgra[start..start + w * 4]);
         }
         Some(out)
+    }
+
+    pub fn frame_generation() -> Option<u64> {
+        let engine = engine()?;
+        let generation = engine
+            .latest
+            .lock()
+            .expect("frame slot")
+            .as_ref()
+            .map(|frame| frame.generation);
+        generation
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn portal_runtime_drives_spawned_work_after_block_on_returns() {
+            let runtime = portal_runtime().expect("portal runtime");
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            let (completed_tx, completed_rx) = std::sync::mpsc::channel();
+
+            runtime.block_on(async move {
+                tokio::spawn(async move {
+                    let _ = release_rx.await;
+                    let _ = completed_tx.send(());
+                });
+            });
+
+            release_tx.send(()).expect("release portal task");
+            completed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("portal runtime stopped driving its spawned tasks");
+        }
     }
 }
 

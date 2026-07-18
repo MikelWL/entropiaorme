@@ -1,8 +1,8 @@
 //! Stand-alone probe for the Linux screen-capture engine: acquires the
 //! portal stream (reusing the restore token from `EO_CAPTURE_TOKEN_PATH`
 //! when present), then captures the same rectangle three times across
-//! fifteen seconds, so both first-frame delivery and stream longevity
-//! (does the grant survive past the portal handshake?) are exercised.
+//! fifteen seconds. Each capture must observe a newer frame generation,
+//! so a cached first frame cannot masquerade as a live stream.
 //!
 //! ```sh
 //! EO_CAPTURE_TOKEN_PATH=<data-dir>/capture-restore-token \
@@ -20,17 +20,26 @@ fn main() {
     #[cfg(all(target_os = "linux", feature = "linux-capture"))]
     {
         let mut failed = false;
+        let mut previous_generation = None;
         for (label, delay_ms) in [("t+0s", 0u64), ("t+3s", 3000), ("t+12s", 9000)] {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             match eo_services::screen_capture::capture_region_png(2100, 100, 200, 50) {
                 Some(png) => {
+                    let generation = eo_services::screen_capture::capture_frame_generation();
                     let out = std::env::temp_dir().join(format!("eo-capture-probe-{label}.png"));
                     let _ = std::fs::write(&out, &png);
                     eprintln!(
-                        "probe {label}: OK ({} bytes) -> {}",
+                        "probe {label}: OK ({} bytes, frame {generation:?}) -> {}",
                         png.len(),
                         out.display()
                     );
+                    if generation.is_none() || generation <= previous_generation {
+                        eprintln!(
+                            "probe {label}: stream did not advance beyond frame {previous_generation:?}"
+                        );
+                        failed = true;
+                    }
+                    previous_generation = generation;
                 }
                 None => {
                     eprintln!("probe {label}: capture returned None");

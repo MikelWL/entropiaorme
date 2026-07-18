@@ -41,12 +41,13 @@ Defined by `app/src-tauri/eo-services/src/lib.rs`. This crate carries the servic
 - **Market data.** `market_paste` (the parser over the game's market-ledger clipboard export) and `market_service` (the paste feed and its overview/history reads). An informational layer: estimated markup never joins the ledger or the analytics aggregates, a boundary the `market-isolation` CI guard enforces.
 - **Character and cost analytics.** `character_calc`, `cost_engine` (the pure-arithmetic leaf service), `equipment_pricing` (the per-shot and per-use cost lookups over the equipment library), `trifecta_service`, `tt_value_curve`, and `tool_inference`.
 - **Configuration.** `config_service` (the settings reader and writer).
-- **Scanning and OCR.** `ocr_engine` (the recogniser, EP-agnostic; the runtime wiring is a composition-root concern), `screen_capture`, `skill_scan_manual`, `skill_panel`, `scan_completion`, `scan_drift`, `scan_presets`, and `repair_ocr`. The fuzzy text matching used by these services lives in `fuzzy_match` and `difflib`.
+- **Scanning and OCR.** `ocr_engine` (the recogniser, EP-agnostic; the runtime wiring is a composition-root concern), `screen_capture`, `skill_scan_manual`, `skill_panel`, `scan_completion`, `scan_drift`, `scan_presets`, `repair_ocr`, and `coord_capture`. The fuzzy text matching used by these services lives in `fuzzy_match` and `difflib`.
+- **Planet maps.** `planet_maps` loads the bundled raster catalogue and calibrated coordinate bounds; `map_pins` owns durable pin storage and its map-space validation.
 - **Input listeners.** `hotbar_listener` and `spacebar_capture_listener` (the two OS keyboard hooks), behind the `keystroke_source` seam that filters keys at the hook boundary and provides an injectable mock for tests.
 - **Skill tracking.** `skill_tracker`.
 - **Infrastructure.** `game_data_store` (the bundled game-data snapshot), `db` (the persistence handle), `clock` (the injected-clock seam), `event_bus`, and `eu_window`/`paths` (Windows window-enumeration and path resolution). The `fingerprint_recorder` captures the runtime state that the Rust-side equivalence goldens are emitted from.
 
-The crate is Windows-aware: the input listeners and window enumeration compile platform bindings under `cfg(windows)`. The OCR recogniser binds the ONNX Runtime dynamically, so a host without the runtime skips the engine-running tests honestly rather than failing to build.
+The crate is platform-aware: input listeners and window enumeration compile their native bindings under platform gates, while Linux screen capture uses the desktop ScreenCast portal and PipeWire behind the optional `linux-capture` feature. The OCR recogniser binds the ONNX Runtime dynamically, so a host without the runtime skips the engine-running tests honestly rather than failing to build.
 
 ### `eo-wire`: the wire contracts
 
