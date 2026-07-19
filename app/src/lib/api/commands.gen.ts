@@ -767,6 +767,20 @@ export interface MapPin {
 	mapViewId: number | null;
 	/** Epoch seconds. */
 	createdAt: number;
+	/** Epoch seconds of the pin's most recent confirmed visit, if any. */
+	lastVisitedAt: number | null;
+	/** Epoch seconds until which the most recent visit keeps the pin on cooldown, if any. */
+	cooldownUntil: number | null;
+	/** The palette configuration this pin is an instance of, if any. */
+	pinConfigId: number | null;
+	/** The pin's colour, from its configuration (generic or special-active). */
+	colour: string | null;
+	/** The special-tree on-cooldown colour, from its configuration. */
+	cooldownColour: string | null;
+	/** The configuration's category (`generic` / `special`), if any. */
+	category: string | null;
+	/** The configuration's special kind (`tree`), if any. */
+	specialKind: string | null;
 }
 
 /**
@@ -784,6 +798,8 @@ export interface MapPinInput {
 	notes?: string | null;
 	sessionId?: string | null;
 	mapViewId?: number | null;
+	/** The palette configuration this pin instantiates, if any. */
+	pinConfigId?: number | null;
 	/** Explicit confirmation that a pin may be created within the duplicate-advisory radius of an existing pin. */
 	allowNearby?: boolean;
 }
@@ -1183,6 +1199,51 @@ export interface PathOptimizerResult {
 	totalPed: number;
 	excluded: ExcludedSkill[];
 	error?: string | null;
+}
+
+/**
+ * One palette entry: a pin *type* scoped to a `(planet, map view)` preset.
+ * `category` is `generic` or `special`; the only special `kind` so far is
+ * `tree`, which carries a `cooldownColour`. `colour` is the generic colour or
+ * the special-active colour. `placedCount` is how many pins reference it.
+ */
+export interface PinConfig {
+	id: number;
+	planet: string;
+	mapViewId: number | null;
+	label: string;
+	category: string;
+	specialKind: string | null;
+	icon: string;
+	radiusM: number | null;
+	colour: string;
+	cooldownColour: string | null;
+	ordinal: number;
+	/** Epoch seconds. */
+	createdAt: number;
+	placedCount: number;
+}
+
+export interface PinConfigEditInput {
+	label: string;
+	category: string;
+	specialKind?: string | null;
+	icon: string;
+	radiusM?: number | null;
+	colour: string;
+	cooldownColour?: string | null;
+}
+
+export interface PinConfigInput {
+	planet: string;
+	mapViewId?: number | null;
+	label: string;
+	category: string;
+	specialKind?: string | null;
+	icon: string;
+	radiusM?: number | null;
+	colour: string;
+	cooldownColour?: string | null;
 }
 
 /**
@@ -2532,6 +2593,26 @@ export async function mapPinUpdate(id: number, patch: MapPinPatch): Promise<MapP
 
 export async function mapPinDelete(id: number): Promise<void> {
 	return invokeCommand('map_pin_delete', { id });
+}
+
+export async function pinConfigsList(planet: string, mapViewId: number | null): Promise<PinConfig[]> {
+	return invokeCommand('pin_configs_list', { planet, map_view_id: mapViewId });
+}
+
+export async function pinConfigCreate(input: PinConfigInput): Promise<PinConfig> {
+	return invokeCommand('pin_config_create', { input });
+}
+
+export async function pinConfigUpdate(id: number, input: PinConfigEditInput): Promise<PinConfig> {
+	return invokeCommand('pin_config_update', { id, input });
+}
+
+export async function pinConfigDelete(id: number): Promise<void> {
+	return invokeCommand('pin_config_delete', { id });
+}
+
+export async function pinConfigReorder(ids: number[]): Promise<void> {
+	return invokeCommand('pin_config_reorder', { ids });
 }
 
 export async function mapsCalibrationStart(): Promise<CoordCalibrationStatus> {

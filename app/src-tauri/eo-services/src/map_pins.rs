@@ -17,6 +17,7 @@ use rusqlite::OptionalExtension;
 
 use crate::clock::Clock;
 use crate::db::{Db, DbError};
+use crate::navigation::COOLDOWN_SECONDS;
 use crate::time::naive_to_epoch;
 
 /// The pin domain service over the shared database and injected clock.
@@ -67,6 +68,26 @@ pub struct MapPin {
     pub map_view_id: Option<i64>,
     /// Epoch seconds.
     pub created_at: f64,
+    /// Epoch seconds of the most recent confirmed visit, if any. A read-only
+    /// projection of the separate visit records; the pin itself stays visit
+    /// agnostic.
+    pub last_visited_at: Option<f64>,
+    /// Epoch seconds until which the pin's most recent visit keeps it on
+    /// cooldown, if any. Derived from `last_visited_at` and the cooldown
+    /// policy so the policy stays owned by one place.
+    pub cooldown_until: Option<f64>,
+    /// The palette configuration this pin is an instance of, if any. Colour,
+    /// category, and special behaviour derive from it (below).
+    pub pin_config_id: Option<i64>,
+    /// The pin's colour, from its configuration (generic colour or special
+    /// active colour). `None` when the pin has no configuration.
+    pub colour: Option<String>,
+    /// The special-tree on-cooldown colour, from its configuration.
+    pub cooldown_colour: Option<String>,
+    /// The configuration's category (`generic` / `special`), if any.
+    pub category: Option<String>,
+    /// The configuration's special kind (`tree`), if any.
+    pub special_kind: Option<String>,
 }
 
 /// A new pin's fields (id and created_at are service-assigned).
@@ -83,6 +104,7 @@ pub struct NewMapPin {
     pub notes: Option<String>,
     pub session_id: Option<String>,
     pub map_view_id: Option<i64>,
+    pub pin_config_id: Option<i64>,
 }
 
 /// A partial update: `None` leaves a field untouched. The nullable
@@ -100,6 +122,16 @@ pub struct MapPinPatch {
     pub notes: Option<Option<String>>,
 }
 
+/// The pin read columns and join, shared by every pin query. Aliased `mp`
+/// (the pin) and `pc` (its configuration): colour, category, and special kind
+/// come from the joined configuration; the latest-visit subquery drives the
+/// cooldown projection.
+const PIN_COLUMNS: &str = "mp.id, mp.planet, mp.lon, mp.lat, mp.altitude, mp.name, mp.icon, \
+     mp.kind, mp.radius_m, mp.notes, mp.session_id, mp.map_view_id, mp.created_at, \
+     (SELECT MAX(visited_at) FROM map_pin_visits WHERE pin_id = mp.id), \
+     mp.pin_config_id, pc.colour, pc.cooldown_colour, pc.category, pc.special_kind";
+const PIN_FROM: &str = "FROM map_pins mp LEFT JOIN pin_configs pc ON pc.id = mp.pin_config_id";
+
 impl MapPinsService {
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Self {
         Self { db, clock }
@@ -113,13 +145,12 @@ impl MapPinsService {
     ) -> Result<Vec<MapPin>, DbError> {
         self.db
             .with_reader(move |connection| {
-                let mut stmt = connection.prepare(
-                    "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
-                            radius_m, notes, session_id, map_view_id, created_at \
-                     FROM map_pins WHERE planet = ?1 \
-                       AND ((?2 IS NULL AND map_view_id IS NULL) OR map_view_id = ?2) \
-                     ORDER BY created_at DESC, id DESC",
-                )?;
+                let sql = format!(
+                    "SELECT {PIN_COLUMNS} {PIN_FROM} WHERE mp.planet = ?1 \
+                       AND ((?2 IS NULL AND mp.map_view_id IS NULL) OR mp.map_view_id = ?2) \
+                     ORDER BY mp.created_at DESC, mp.id DESC"
+                );
+                let mut stmt = connection.prepare(&sql)?;
                 let mut rows = stmt.query(rusqlite::params![planet, map_view_id])?;
                 let mut pins = Vec::new();
                 while let Some(row) = rows.next()? {
@@ -144,14 +175,13 @@ impl MapPinsService {
     ) -> Result<Vec<MapPin>, DbError> {
         self.db
             .with_reader(move |connection| {
-                let mut stmt = connection.prepare(
-                    "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
-                            radius_m, notes, session_id, map_view_id, created_at \
-                     FROM map_pins WHERE planet = ?1 \
-                       AND ((?2 IS NULL AND map_view_id IS NULL) OR map_view_id = ?2) \
-                       AND lon BETWEEN ?3 AND ?4 AND lat BETWEEN ?5 AND ?6 \
-                     ORDER BY created_at DESC, id DESC",
-                )?;
+                let sql = format!(
+                    "SELECT {PIN_COLUMNS} {PIN_FROM} WHERE mp.planet = ?1 \
+                       AND ((?2 IS NULL AND mp.map_view_id IS NULL) OR mp.map_view_id = ?2) \
+                       AND mp.lon BETWEEN ?3 AND ?4 AND mp.lat BETWEEN ?5 AND ?6 \
+                     ORDER BY mp.created_at DESC, mp.id DESC"
+                );
+                let mut stmt = connection.prepare(&sql)?;
                 let rows = stmt.query_map(
                     rusqlite::params![planet, map_view_id, lon_min, lon_max, lat_min, lat_max],
                     read_pin,
@@ -191,11 +221,8 @@ impl MapPinsService {
     pub async fn get(&self, id: i64) -> Result<MapPin, MapPinsError> {
         self.db
             .with_reader(move |connection| {
-                let mut stmt = connection.prepare(
-                    "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
-                            radius_m, notes, session_id, map_view_id, created_at \
-                     FROM map_pins WHERE id = ?1",
-                )?;
+                let sql = format!("SELECT {PIN_COLUMNS} {PIN_FROM} WHERE mp.id = ?1");
+                let mut stmt = connection.prepare(&sql)?;
                 let mut rows = stmt.query([id])?;
                 match rows.next()? {
                     Some(row) => Ok(Some(read_pin(row)?)),
@@ -206,15 +233,17 @@ impl MapPinsService {
             .ok_or(MapPinsError::NotFound(id))
     }
 
-    /// Create a pin; returns it as stored.
+    /// Create a pin; returns it as stored (with its configuration's colour and
+    /// category joined in).
     pub async fn create(&self, pin: NewMapPin) -> Result<MapPin, DbError> {
         let created_at = naive_to_epoch(self.clock.now());
-        self.db
+        let id = self
+            .db
             .with_writer(move |connection| {
                 connection.execute(
                     "INSERT INTO map_pins (planet, lon, lat, altitude, name, icon, \
-                                           kind, radius_m, notes, session_id, map_view_id, created_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                           kind, radius_m, notes, session_id, map_view_id, pin_config_id, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     rusqlite::params![
                         pin.planet,
                         pin.lon,
@@ -227,27 +256,17 @@ impl MapPinsService {
                         pin.notes,
                         pin.session_id,
                         pin.map_view_id,
+                        pin.pin_config_id,
                         created_at,
                     ],
                 )?;
-                let id = connection.last_insert_rowid();
-                Ok(MapPin {
-                    id,
-                    planet: pin.planet,
-                    lon: pin.lon,
-                    lat: pin.lat,
-                    altitude: pin.altitude,
-                    name: pin.name,
-                    icon: pin.icon,
-                    kind: pin.kind,
-                    radius_m: pin.radius_m,
-                    notes: pin.notes,
-                    session_id: pin.session_id,
-                    map_view_id: pin.map_view_id,
-                    created_at,
-                })
+                Ok(connection.last_insert_rowid())
             })
-            .await
+            .await?;
+        self.get(id).await.map_err(|error| match error {
+            MapPinsError::Db(error) => error,
+            _ => DbError::from(rusqlite::Error::QueryReturnedNoRows),
+        })
     }
 
     /// Apply a partial update; returns the pin as stored afterwards.
@@ -255,11 +274,8 @@ impl MapPinsService {
         self.db
             .with_writer(move |connection| {
                 let existing = {
-                    let mut stmt = connection.prepare(
-                        "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
-                                radius_m, notes, session_id, map_view_id, created_at \
-                         FROM map_pins WHERE id = ?1",
-                    )?;
+                    let sql = format!("SELECT {PIN_COLUMNS} {PIN_FROM} WHERE mp.id = ?1");
+                    let mut stmt = connection.prepare(&sql)?;
                     let mut rows = stmt.query([id])?;
                     match rows.next()? {
                         Some(row) => read_pin(row)?,
@@ -447,6 +463,7 @@ impl MapPinsService {
                     return Ok(0);
                 }
                 transaction.execute("DELETE FROM map_pins WHERE map_view_id = ?1", [id])?;
+                transaction.execute("DELETE FROM pin_configs WHERE map_view_id = ?1", [id])?;
                 let changed = transaction.execute("DELETE FROM map_views WHERE id = ?1", [id])?;
                 transaction.commit()?;
                 Ok(changed)
@@ -460,6 +477,7 @@ impl MapPinsService {
 }
 
 fn read_pin(row: &rusqlite::Row<'_>) -> Result<MapPin, rusqlite::Error> {
+    let last_visited_at: Option<f64> = row.get(13)?;
     Ok(MapPin {
         id: row.get(0)?,
         planet: row.get(1)?,
@@ -474,5 +492,62 @@ fn read_pin(row: &rusqlite::Row<'_>) -> Result<MapPin, rusqlite::Error> {
         session_id: row.get(10)?,
         map_view_id: row.get(11)?,
         created_at: row.get(12)?,
+        last_visited_at,
+        cooldown_until: last_visited_at.map(|visited| visited + COOLDOWN_SECONDS),
+        pin_config_id: row.get(14)?,
+        colour: row.get(15)?,
+        cooldown_colour: row.get(16)?,
+        category: row.get(17)?,
+        special_kind: row.get(18)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::MockClock;
+
+    fn new_pin() -> NewMapPin {
+        NewMapPin {
+            planet: "Calypso".into(),
+            lon: 10.0,
+            lat: 20.0,
+            altitude: None,
+            name: "Tree".into(),
+            icon: "🌲".into(),
+            kind: "tree".into(),
+            radius_m: None,
+            notes: None,
+            session_id: None,
+            map_view_id: None,
+            pin_config_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pin_read_projects_its_latest_visit_and_cooldown() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("pins.db")).await.unwrap();
+        let clock: Arc<dyn Clock> = Arc::new(MockClock::new(None, 1_000.0));
+        let service = MapPinsService::new(db.clone(), clock);
+
+        let pin = service.create(new_pin()).await.unwrap();
+        assert_eq!(pin.last_visited_at, None);
+        assert_eq!(pin.cooldown_until, None);
+
+        let pin_id = pin.id;
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO map_pin_visits (pin_id, run_id, visited_at, source, outcome, observed_lon, observed_lat, observed_distance) VALUES (?1, NULL, 5000.0, 'manual', 'manual', 10.0, 20.0, 0.0)",
+                [pin_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let read = service.get(pin_id).await.unwrap();
+        assert_eq!(read.last_visited_at, Some(5_000.0));
+        assert_eq!(read.cooldown_until, Some(5_000.0 + COOLDOWN_SECONDS));
+    }
 }

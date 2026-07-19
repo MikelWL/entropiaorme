@@ -41,6 +41,7 @@ pub mod observability_config;
 pub mod ocr_engine;
 pub mod paths;
 pub mod ped;
+pub mod pin_configs;
 pub mod planet_maps;
 pub mod quests;
 pub mod repair_ocr;

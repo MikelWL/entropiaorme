@@ -109,6 +109,7 @@ fn calypso_pin() -> MapPinInput {
         notes: Some("the sanity anchor".to_string()),
         session_id: None,
         map_view_id: None,
+        pin_config_id: None,
         allow_nearby: false,
     }
 }

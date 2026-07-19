@@ -88,6 +88,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "navigation runtime fields",
         sql: include_str!("../../migrations/0010_navigation_runtime_fields.sql"),
     },
+    Migration {
+        version: 11,
+        description: "pin configs",
+        sql: include_str!("../../migrations/0011_pin_configs.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -106,6 +111,7 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "667746910B06E0DBC590639E4159B3357316BAFFA22F4B10BEADB4FDF2E015D2E5978A1BDF78B91CEB136B9C489DDA5D",
     "0B3F86B763DB00318691AB7640AAB1901A5FE8A7A6FDE0B1D61B9C71048529DE6119D4E4CFDFD97711B15DFF2287307D",
     "14807806F2AEEA83A890C0114AABEAA2B1DAF3749D335CCFB0EADD3945CEB115C7788FA0FD1D340741FDC951986D677A",
+    "D4CA3183B196882C7684EE6819E1761F35F33807EA01D8A63EB16E0E26FDFCEE3D74860C42CFF525D6F9E923B9AF0F0E",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as
@@ -338,6 +344,9 @@ mod tests {
                 row.get(0)
             })
             .expect("ledger tail");
-        assert_eq!(ledger_tail, 10);
+        assert_eq!(
+            ledger_tail,
+            MIGRATIONS.last().expect("chain is non-empty").version
+        );
     }
 }

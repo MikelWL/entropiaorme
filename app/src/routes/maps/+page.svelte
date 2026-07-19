@@ -48,6 +48,9 @@
 		}).catch(() => {});
 		void listen('navigation:updated', () => {
 			void getNavigationSnapshot().then((run) => (navigation = run)).catch(() => {});
+			// A recorded visit changes a pin's cooldown, so refresh the pins the
+			// hover cards read from.
+			void model.refreshPins();
 		}).then((stop) => (unlisten = stop));
 		return () => {
 			stopMapsSync();

@@ -90,6 +90,11 @@ pub const APP_COMMANDS: &[&str] = &[
     "navigation_start",
     "navigation_undo",
     "navigation_update_position",
+    "pin_config_create",
+    "pin_config_delete",
+    "pin_config_reorder",
+    "pin_config_update",
+    "pin_configs_list",
     "planet_map_image",
     "planet_maps_list",
     "playlist_create",
@@ -156,6 +161,7 @@ pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
     "map_pin_nearby",
     "map_views_list",
     "maps_scan_coordinates",
+    "pin_configs_list",
     "planet_maps_list",
 ];
 

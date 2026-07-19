@@ -31,8 +31,8 @@ use eo_api::equipment::{
 };
 use eo_api::maps::{
     CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, MapView,
-    NavigationPositionResult, NavigationRun, NearbyMapPin, PlanetMap, RadarCalibrationStatus,
-    RadarGeometry,
+    NavigationPositionResult, NavigationRun, NearbyMapPin, PinConfig, PinConfigEditInput,
+    PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use eo_api::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
@@ -1043,6 +1043,42 @@ pub async fn map_pin_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiErr
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn pin_configs_list(
+    app: tauri::AppHandle,
+    planet: String,
+    map_view_id: Option<i64>,
+) -> Result<Vec<PinConfig>, ApiError> {
+    facade(&app)?.pin_configs_list(planet, map_view_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_create(
+    app: tauri::AppHandle,
+    input: PinConfigInput,
+) -> Result<PinConfig, ApiError> {
+    facade(&app)?.pin_config_create(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_update(
+    app: tauri::AppHandle,
+    id: i64,
+    input: PinConfigEditInput,
+) -> Result<PinConfig, ApiError> {
+    facade(&app)?.pin_config_update(id, input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiError> {
+    facade(&app)?.pin_config_delete(id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_reorder(app: tauri::AppHandle, ids: Vec<i64>) -> Result<(), ApiError> {
+    facade(&app)?.pin_config_reorder(ids).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn maps_calibration_start(
     app: tauri::AppHandle,
 ) -> Result<CoordCalibrationStatus, ApiError> {
@@ -1279,6 +1315,11 @@ mod tests {
         "map_pin_create",
         "map_pin_update",
         "map_pin_delete",
+        "pin_configs_list",
+        "pin_config_create",
+        "pin_config_update",
+        "pin_config_delete",
+        "pin_config_reorder",
         "maps_calibration_start",
         "maps_calibration_cancel",
         "maps_calibration_status",

@@ -36,6 +36,13 @@ const pin: MapPin = {
 	sessionId: null,
 	mapViewId: null,
 	createdAt: 1_752_000_000,
+	lastVisitedAt: null,
+	cooldownUntil: null,
+	pinConfigId: null,
+	colour: null,
+	cooldownColour: null,
+	category: null,
+	specialKind: null,
 };
 
 function setup() {

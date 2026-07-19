@@ -7,6 +7,7 @@
 	 */
 	import Button from '$lib/components/Button.svelte';
 	import type { MapPin } from '$lib/api';
+	import { cooldownLabel, lastVisitedLabel } from './cooldown';
 	import { formatGamePoint } from './coords';
 	import { pinGlyph } from './pinIcons';
 	import type { WaypointCopyResult } from './waypoint';
@@ -66,6 +67,17 @@
 			day: 'numeric',
 		}),
 	);
+
+	// Reading the pin's id keeps the visit labels fresh each time a new pin is
+	// hovered; they are a snapshot at hover, not a live countdown.
+	const cooldown = $derived.by(() => {
+		pin.id;
+		return cooldownLabel(pin.cooldownUntil, Date.now() / 1000);
+	});
+	const lastVisited = $derived.by(() => {
+		pin.id;
+		return lastVisitedLabel(pin.lastVisitedAt, Date.now() / 1000);
+	});
 </script>
 
 <!-- The card-wide pointer shortcut supplements the keyboard-operable marker. -->
@@ -105,6 +117,18 @@
 			<dt>Created</dt>
 			<dd class="text-text">{createdLabel}</dd>
 		</div>
+		{#if lastVisited}
+			<div class="flex justify-between gap-2">
+				<dt>Last visited</dt>
+				<dd class="text-text">{lastVisited}</dd>
+			</div>
+		{/if}
+		{#if cooldown}
+			<div class="flex justify-between gap-2">
+				<dt class="text-warning">Cooldown</dt>
+				<dd class="tabular-nums text-warning">{cooldown}</dd>
+			</div>
+		{/if}
 	</dl>
 
 	{#if pin.notes}

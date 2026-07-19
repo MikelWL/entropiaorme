@@ -33,8 +33,8 @@ use crate::equipment::{
 };
 use crate::maps::{
     CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, MapView,
-    NavigationPositionResult, NavigationRun, NearbyMapPin, PlanetMap, RadarCalibrationStatus,
-    RadarGeometry,
+    NavigationPositionResult, NavigationRun, NearbyMapPin, PinConfig, PinConfigEditInput,
+    PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use crate::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
@@ -1132,6 +1132,58 @@ pub fn manifest() -> Vec<CommandSpec> {
             args: vec![ArgSpec {
                 name: "id",
                 schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "pin_configs_list",
+            args: vec![
+                ArgSpec {
+                    name: "planet",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "map_view_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<PinConfig>))),
+        },
+        CommandSpec {
+            name: "pin_config_create",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(PinConfigInput)),
+            }],
+            returns: Some(schema(schema_for!(PinConfig))),
+        },
+        CommandSpec {
+            name: "pin_config_update",
+            args: vec![
+                ArgSpec {
+                    name: "id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "input",
+                    schema: schema(schema_for!(PinConfigEditInput)),
+                },
+            ],
+            returns: Some(schema(schema_for!(PinConfig))),
+        },
+        CommandSpec {
+            name: "pin_config_delete",
+            args: vec![ArgSpec {
+                name: "id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "pin_config_reorder",
+            args: vec![ArgSpec {
+                name: "ids",
+                schema: schema(schema_for!(Vec<i64>)),
             }],
             returns: None,
         },

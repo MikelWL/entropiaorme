@@ -414,6 +414,21 @@ pub struct MapPin {
     pub map_view_id: Nullable<i64>,
     /// Epoch seconds.
     pub created_at: f64,
+    /// Epoch seconds of the pin's most recent confirmed visit, if any.
+    pub last_visited_at: Nullable<f64>,
+    /// Epoch seconds until which the most recent visit keeps the pin on
+    /// cooldown, if any.
+    pub cooldown_until: Nullable<f64>,
+    /// The palette configuration this pin is an instance of, if any.
+    pub pin_config_id: Nullable<i64>,
+    /// The pin's colour, from its configuration (generic or special-active).
+    pub colour: Nullable<String>,
+    /// The special-tree on-cooldown colour, from its configuration.
+    pub cooldown_colour: Nullable<String>,
+    /// The configuration's category (`generic` / `special`), if any.
+    pub category: Nullable<String>,
+    /// The configuration's special kind (`tree`), if any.
+    pub special_kind: Nullable<String>,
 }
 
 /// A new pin's fields (id and creation time are assigned server-side).
@@ -436,6 +451,9 @@ pub struct MapPinInput {
     pub session_id: Option<String>,
     #[serde(default)]
     pub map_view_id: Option<i64>,
+    /// The palette configuration this pin instantiates, if any.
+    #[serde(default)]
+    pub pin_config_id: Option<i64>,
     /// Explicit confirmation that a pin may be created within the
     /// duplicate-advisory radius of an existing pin.
     #[serde(default)]
@@ -484,6 +502,62 @@ pub struct MapPinPatch {
     pub notes: Option<Option<String>>,
 }
 
+/// One palette entry: a pin *type* scoped to a `(planet, map view)` preset.
+/// `category` is `generic` or `special`; the only special `kind` so far is
+/// `tree`, which carries a `cooldownColour`. `colour` is the generic colour or
+/// the special-active colour. `placedCount` is how many pins reference it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PinConfig {
+    pub id: i64,
+    pub planet: String,
+    pub map_view_id: Nullable<i64>,
+    pub label: String,
+    pub category: String,
+    pub special_kind: Nullable<String>,
+    pub icon: String,
+    pub radius_m: Nullable<f64>,
+    pub colour: String,
+    pub cooldown_colour: Nullable<String>,
+    pub ordinal: i64,
+    /// Epoch seconds.
+    pub created_at: f64,
+    pub placed_count: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PinConfigInput {
+    pub planet: String,
+    #[serde(default)]
+    pub map_view_id: Option<i64>,
+    pub label: String,
+    pub category: String,
+    #[serde(default)]
+    pub special_kind: Option<String>,
+    pub icon: String,
+    #[serde(default)]
+    pub radius_m: Option<f64>,
+    pub colour: String,
+    #[serde(default)]
+    pub cooldown_colour: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PinConfigEditInput {
+    pub label: String,
+    pub category: String,
+    #[serde(default)]
+    pub special_kind: Option<String>,
+    pub icon: String,
+    #[serde(default)]
+    pub radius_m: Option<f64>,
+    pub colour: String,
+    #[serde(default)]
+    pub cooldown_colour: Option<String>,
+}
+
 impl Api {
     /// Every pin on a planet, newest first.
     pub async fn map_pins_list(
@@ -525,6 +599,86 @@ impl Api {
             .await
             .map(|pins| pins.into_iter().map(pin_to_dto).collect())
             .map_err(db_error)
+    }
+
+    // ── Pin configurations (the per-preset palette) ─────────────────────
+
+    pub async fn pin_configs_list(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+    ) -> Result<Vec<PinConfig>, ApiError> {
+        self.validate_map_view(&planet, map_view_id).await?;
+        self.pin_configs
+            .list(planet, map_view_id)
+            .await
+            .map(|configs| configs.into_iter().map(config_to_dto).collect())
+            .map_err(db_error)
+    }
+
+    pub async fn pin_config_create(&self, input: PinConfigInput) -> Result<PinConfig, ApiError> {
+        validate_config_fields(
+            &input.category,
+            &input.special_kind,
+            &input.label,
+            &input.colour,
+            &input.cooldown_colour,
+        )?;
+        self.validate_map_view(&input.planet, input.map_view_id)
+            .await?;
+        self.pin_configs
+            .create(eo_services::pin_configs::NewPinConfig {
+                planet: input.planet,
+                map_view_id: input.map_view_id,
+                label: input.label,
+                category: input.category,
+                special_kind: input.special_kind,
+                icon: input.icon,
+                radius_m: input.radius_m,
+                colour: input.colour,
+                cooldown_colour: input.cooldown_colour,
+            })
+            .await
+            .map(config_to_dto)
+            .map_err(db_error)
+    }
+
+    pub async fn pin_config_update(
+        &self,
+        id: i64,
+        input: PinConfigEditInput,
+    ) -> Result<PinConfig, ApiError> {
+        validate_config_fields(
+            &input.category,
+            &input.special_kind,
+            &input.label,
+            &input.colour,
+            &input.cooldown_colour,
+        )?;
+        self.pin_configs
+            .update(
+                id,
+                eo_services::pin_configs::PinConfigEdit {
+                    label: input.label,
+                    category: input.category,
+                    special_kind: input.special_kind,
+                    icon: input.icon,
+                    radius_m: input.radius_m,
+                    colour: input.colour,
+                    cooldown_colour: input.cooldown_colour,
+                },
+            )
+            .await
+            .map(config_to_dto)
+            .map_err(configs_error)
+    }
+
+    pub async fn pin_config_delete(&self, id: i64) -> Result<(), ApiError> {
+        self.pin_configs.delete(id).await.map_err(configs_error)
+    }
+
+    pub async fn pin_config_reorder(&self, ids: Vec<i64>) -> Result<(), ApiError> {
+        self.pin_configs.reorder(ids).await.map_err(db_error)
     }
 
     pub async fn map_pin_nearby(
@@ -603,6 +757,7 @@ impl Api {
                 notes: pin.notes,
                 session_id: pin.session_id,
                 map_view_id: pin.map_view_id,
+                pin_config_id: pin.pin_config_id,
             })
             .await
             .map_err(db_error)?;
@@ -1001,6 +1156,13 @@ fn pin_to_dto(pin: eo_services::map_pins::MapPin) -> MapPin {
         session_id: pin.session_id.into(),
         map_view_id: pin.map_view_id.into(),
         created_at: pin.created_at,
+        last_visited_at: pin.last_visited_at.into(),
+        cooldown_until: pin.cooldown_until.into(),
+        pin_config_id: pin.pin_config_id.into(),
+        colour: pin.colour.into(),
+        cooldown_colour: pin.cooldown_colour.into(),
+        category: pin.category.into(),
+        special_kind: pin.special_kind.into(),
     }
 }
 
@@ -1041,6 +1203,93 @@ fn pins_error(err: MapPinsError) -> ApiError {
             "a map view named {name:?} already exists on {planet}"
         )),
         MapPinsError::Db(err) => ApiError::internal("map pins")(err),
+    }
+}
+
+fn configs_error(err: eo_services::pin_configs::PinConfigsError) -> ApiError {
+    match err {
+        eo_services::pin_configs::PinConfigsError::NotFound(id) => {
+            ApiError::not_found(format!("pin configuration {id} not found"))
+        }
+        eo_services::pin_configs::PinConfigsError::Db(err) => {
+            ApiError::internal("pin configs")(err)
+        }
+    }
+}
+
+/// `#rrggbb`, case-insensitive.
+fn is_hex_colour(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The generic/special invariants: a generic config has no special kind and no
+/// cooldown colour; a special one requires a known kind and a cooldown colour.
+fn validate_config_fields(
+    category: &str,
+    special_kind: &Option<String>,
+    label: &str,
+    colour: &str,
+    cooldown_colour: &Option<String>,
+) -> Result<(), ApiError> {
+    if label.trim().is_empty() {
+        return Err(ApiError::bad_request("pin label must not be empty"));
+    }
+    if !is_hex_colour(colour) {
+        return Err(ApiError::bad_request(
+            "pin colour must be a #rrggbb hex colour",
+        ));
+    }
+    match category {
+        "generic" => {
+            if special_kind.is_some() {
+                return Err(ApiError::bad_request("a generic pin has no special kind"));
+            }
+            if cooldown_colour.is_some() {
+                return Err(ApiError::bad_request(
+                    "a generic pin has no cooldown colour",
+                ));
+            }
+        }
+        "special" => {
+            if special_kind.as_deref() != Some("tree") {
+                return Err(ApiError::bad_request(
+                    "a special pin needs a known special kind",
+                ));
+            }
+            match cooldown_colour {
+                Some(value) if is_hex_colour(value) => {}
+                _ => {
+                    return Err(ApiError::bad_request(
+                        "a special tree pin needs a #rrggbb cooldown colour",
+                    ))
+                }
+            }
+        }
+        _ => {
+            return Err(ApiError::bad_request(
+                "pin category must be generic or special",
+            ))
+        }
+    }
+    Ok(())
+}
+
+fn config_to_dto(config: eo_services::pin_configs::PinConfig) -> PinConfig {
+    PinConfig {
+        id: config.id,
+        planet: config.planet,
+        map_view_id: config.map_view_id.into(),
+        label: config.label,
+        category: config.category,
+        special_kind: config.special_kind.into(),
+        icon: config.icon,
+        radius_m: config.radius_m.into(),
+        colour: config.colour,
+        cooldown_colour: config.cooldown_colour.into(),
+        ordinal: config.ordinal,
+        created_at: config.created_at,
+        placed_count: config.placed_count,
     }
 }
 

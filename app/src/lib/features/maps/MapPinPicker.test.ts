@@ -19,6 +19,13 @@ const pin = (id: number, name: string, notes: string | null): MapPin => ({
 	sessionId: null,
 	mapViewId: null,
 	createdAt: 1,
+	lastVisitedAt: null,
+	cooldownUntil: null,
+	pinConfigId: null,
+	colour: null,
+	cooldownColour: null,
+	category: null,
+	specialKind: null,
 });
 
 describe('MapPinPicker', () => {

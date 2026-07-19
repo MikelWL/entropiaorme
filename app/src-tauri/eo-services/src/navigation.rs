@@ -902,7 +902,10 @@ async fn load_candidates(
     // recovery point after an interruption.
     let cutoff = now - COOLDOWN_SECONDS;
     db.with_reader(move |conn| {
-        let mut stmt = conn.prepare("SELECT id, lon, lat FROM map_pins WHERE planet = ?1 AND ((?2 IS NULL AND map_view_id IS NULL) OR map_view_id = ?2) AND NOT EXISTS (SELECT 1 FROM map_pin_visits v WHERE v.pin_id = map_pins.id AND v.visited_at >= ?3) ORDER BY id")?;
+        // Only special-tree pins are route stops: generic markers (vendors,
+        // bosses) are not harvestable targets. The inner join on the tree
+        // configuration also excludes config-less pins.
+        let mut stmt = conn.prepare("SELECT mp.id, mp.lon, mp.lat FROM map_pins mp JOIN pin_configs pc ON pc.id = mp.pin_config_id AND pc.special_kind = 'tree' WHERE mp.planet = ?1 AND ((?2 IS NULL AND mp.map_view_id IS NULL) OR mp.map_view_id = ?2) AND NOT EXISTS (SELECT 1 FROM map_pin_visits v WHERE v.pin_id = mp.id AND v.visited_at >= ?3) ORDER BY mp.id")?;
         let rows = stmt.query_map(rusqlite::params![planet, map_view_id, cutoff], |row| Ok(Candidate { id: row.get(0)?, lon: row.get(1)?, lat: row.get(2)? }))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }).await
@@ -1080,6 +1083,23 @@ mod tests {
         let db = Db::open(&dir.path().join("navigation.db")).await.unwrap();
         let clock: Arc<dyn Clock> = Arc::new(MockClock::new(None, 0.0));
         let pins = MapPinsService::new(db.clone(), clock.clone());
+        // Route stops are special-tree pins, so seed a tree configuration and
+        // make every fixture pin an instance of it.
+        let configs = crate::pin_configs::PinConfigsService::new(db.clone(), clock.clone());
+        let tree = configs
+            .create(crate::pin_configs::NewPinConfig {
+                planet: "Calypso".into(),
+                map_view_id: None,
+                label: "Tree".into(),
+                category: "special".into(),
+                special_kind: Some("tree".into()),
+                icon: "🌳".into(),
+                radius_m: None,
+                colour: "#22c55e".into(),
+                cooldown_colour: Some("#f59e0b".into()),
+            })
+            .await
+            .unwrap();
         for (name, lon, lat) in [
             ("A", 10.0, 0.0),
             ("D", 13.0, 0.0),
@@ -1092,12 +1112,13 @@ mod tests {
                 lat,
                 altitude: None,
                 name: name.into(),
-                icon: "🌲".into(),
+                icon: "🌳".into(),
                 kind: "tree".into(),
                 radius_m: None,
                 notes: None,
                 session_id: None,
                 map_view_id: None,
+                pin_config_id: Some(tree.id),
             })
             .await
             .unwrap();

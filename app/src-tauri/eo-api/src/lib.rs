@@ -106,6 +106,9 @@ pub struct Api {
     /// The cartography-pin service (pin CRUD), built over the facade's
     /// shared db and clock; the facade adds the map-bounds gate on top.
     map_pins: eo_services::map_pins::MapPinsService,
+    /// The pin-configuration service (the per-preset palette; pins are
+    /// instances of a configuration), built over the same db and clock.
+    pin_configs: eo_services::pin_configs::PinConfigsService,
     /// The bundled planet-map catalogue (a shipped resource), or `None`
     /// on a facade built without it (the maps family then serves an
     /// empty catalogue and the raster fetch reports unavailable).
@@ -154,6 +157,8 @@ impl Api {
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
         let market = MarketService::new(db.clone(), clock.clone());
         let map_pins = eo_services::map_pins::MapPinsService::new(db.clone(), clock.clone());
+        let pin_configs =
+            eo_services::pin_configs::PinConfigsService::new(db.clone(), clock.clone());
         Self {
             db,
             game_data,
@@ -172,6 +177,7 @@ impl Api {
             analytics,
             market,
             map_pins,
+            pin_configs,
             planet_maps,
             coord_capture,
             navigation,

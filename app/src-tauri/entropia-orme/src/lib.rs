@@ -402,6 +402,11 @@ pub fn run() {
             commands::map_pin_create,
             commands::map_pin_update,
             commands::map_pin_delete,
+            commands::pin_configs_list,
+            commands::pin_config_create,
+            commands::pin_config_update,
+            commands::pin_config_delete,
+            commands::pin_config_reorder,
             commands::maps_calibration_start,
             commands::maps_calibration_cancel,
             commands::maps_calibration_status,
@@ -976,6 +981,7 @@ mod tests {
                 "map_pin_nearby",
                 "map_views_list",
                 "maps_scan_coordinates",
+                "pin_configs_list",
                 "planet_maps_list"
             ]
         );
