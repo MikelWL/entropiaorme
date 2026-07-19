@@ -968,6 +968,14 @@ mod tests {
             "core:window:allow-create",
             "core:webview:allow-create-webview-window",
             "trusted-commands",
+            // The palette is DB-backed now, not a preference blob: the overlay
+            // reaches no store or path permission (store:allow-set would let a
+            // compromised overlay write backend-consumed settings).
+            "store:allow-set",
+            "store:allow-get",
+            "store:allow-load",
+            "core:path:allow-join",
+            "core:path:allow-resolve-directory",
         ] {
             assert!(
                 !cartography_capability.contains(forbidden),

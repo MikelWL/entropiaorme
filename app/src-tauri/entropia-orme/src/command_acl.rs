@@ -178,10 +178,6 @@ pub const NAVIGATION_COMMANDS: &[&str] = &[
     "navigation_resolve_harvest",
     "navigation_undo",
     "navigation_end",
-    "radar_calibration_start",
-    "radar_calibration_cancel",
-    "radar_calibration_status",
-    "radar_geometry",
     "hide_navigation_overlays",
 ];
 

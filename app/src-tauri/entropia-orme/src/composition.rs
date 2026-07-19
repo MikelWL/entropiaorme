@@ -540,22 +540,27 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
     init_ort_runtime(resource_dir.as_ref());
     // The single shared OS keyboard hook, built at this production site and
     // injected down the compose chain. The allowlist filters at the hook
-    // boundary to the hotbar digit keys, the space key, and Enter (the
-    // coordinate-calibration confirm key), so out-of-scope keystrokes
-    // never enter the event stream.
+    // boundary to the hotbar digit keys, the space key, Enter (the
+    // coordinate-calibration confirm key), and F6-F12 (the field-navigation
+    // update hotkeys), so out-of-scope keystrokes never enter the event stream.
     //
-    // SECURITY (deliberate): Enter's admission is static, exactly like the
-    // spacebar's. While the hook runs for any consumer, Enter edges enter
-    // the in-process stream and are dropped by every listener unless a
-    // calibration flow armed its consumer (which also never logs or
-    // persists them). Dynamic admission (membership only while a flow is
-    // live) would scope tighter but adds mutable shared state to a hook
-    // callback deliberately kept to filter-and-enqueue; if the allowlist
-    // ever grows past these three cases, dynamic admission is the upgrade
-    // path. Tests inject a hook-free `MockKeystrokeSource` through the
-    // same parameter instead, so a generic test run never installs the OS
-    // hook (whose attach/detach lifecycle can intermittently wedge a
-    // headless run).
+    // SECURITY (deliberate): admission is static for every allowlisted key,
+    // not just the digits and spacebar. While the hook runs for any consumer,
+    // an allowlisted edge enters the in-process stream and is dropped by every
+    // listener unless a flow armed its consumer (calibration for Enter, a live
+    // route for the F-key; neither logs nor persists the keystroke). The
+    // allowlist has since grown past the original three cases to include the
+    // navigation F-keys: this is a re-affirmed acceptance, not an oversight,
+    // because F6-F12 are no more sensitive than the hotbar digits already
+    // admitted, and they only reach the stream while the hook is already
+    // running for another consumer, then get dropped unless a route is live.
+    // Dynamic admission (membership only while a flow is live) would scope
+    // tighter but adds mutable shared state to a hook callback deliberately
+    // kept to filter-and-enqueue; it remains the documented upgrade path if a
+    // future key is genuinely sensitive. Tests inject a hook-free
+    // `MockKeystrokeSource` through the same parameter instead, so a generic
+    // test run never installs the OS hook (whose attach/detach lifecycle can
+    // intermittently wedge a headless run).
     let allowlist: std::collections::BTreeSet<String> = HOTBAR_SLOT_KEYS
         .iter()
         .map(|key| key.to_string())
