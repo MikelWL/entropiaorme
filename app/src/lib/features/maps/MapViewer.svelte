@@ -40,6 +40,7 @@
 		oncopywaypoint,
 		oneditpin,
 		ondeletepin,
+		oncooldownpin,
 		onselectplanet,
 		onselectview,
 		onaddview,
@@ -59,6 +60,7 @@
 		oncopywaypoint: (pin: MapPin) => Promise<WaypointCopyResult>;
 		oneditpin: (pin: MapPin) => void;
 		ondeletepin: (pin: MapPin) => void;
+		oncooldownpin: (pin: MapPin) => void;
 		onselectplanet: (name: string) => void;
 		onselectview: (id: number | null) => void;
 		onaddview: () => Promise<MapView | null>;
@@ -557,6 +559,7 @@
 					activePin = null;
 					ondeletepin(pin);
 				}}
+				oncooldown={() => oncooldownpin(activePin!)}
 			/>
 	{/if}
 

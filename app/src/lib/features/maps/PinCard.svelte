@@ -27,6 +27,7 @@
 		oncopy,
 		onedit,
 		ondelete,
+		oncooldown,
 	}: {
 		pin: MapPin;
 		x: number;
@@ -42,6 +43,7 @@
 		oncopy: () => void;
 		onedit: () => void;
 		ondelete: () => void;
+		oncooldown: () => void;
 	} = $props();
 
 	function handleFocusOut(event: FocusEvent) {
@@ -164,4 +166,16 @@
 			>
 		</div>
 	</div>
+
+	{#if pin.specialKind === 'tree'}
+		<Button
+			size="sm"
+			variant="ghost"
+			class="mt-1.5 w-full"
+			onclick={(event) => {
+				event.stopPropagation();
+				oncooldown();
+			}}>Put on cooldown</Button
+		>
+	{/if}
 </div>

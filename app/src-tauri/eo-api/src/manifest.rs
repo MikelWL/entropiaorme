@@ -1136,6 +1136,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: None,
         },
         CommandSpec {
+            name: "map_pin_cooldown",
+            args: vec![ArgSpec {
+                name: "id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(MapPin))),
+        },
+        CommandSpec {
             name: "pin_configs_list",
             args: vec![
                 ArgSpec {

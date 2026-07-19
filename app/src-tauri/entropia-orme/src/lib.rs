@@ -402,6 +402,7 @@ pub fn run() {
             commands::map_pin_create,
             commands::map_pin_update,
             commands::map_pin_delete,
+            commands::map_pin_cooldown,
             commands::pin_configs_list,
             commands::pin_config_create,
             commands::pin_config_update,

@@ -647,6 +647,107 @@ impl NavigationService {
             .await
     }
 
+    /// Manually put a tree on cooldown from the map, whether or not a route is
+    /// live. Records a cooldown visit at the pin's own position (so the next
+    /// planned route excludes it), and if the live route holds the pin as an
+    /// active or pending stop, skips that stop and replans the remainder.
+    pub async fn cooldown_pin(&self, pin_id: i64) -> Result<(), NavigationError> {
+        let _guard = self.operation.lock().await;
+        let now = naive_to_epoch(self.clock.now());
+        self.db
+            .with_writer(move |conn| {
+                Ok(conn.execute(
+                    "INSERT INTO map_pin_visits (pin_id, run_id, visited_at, source, outcome, observed_lon, observed_lat, observed_distance) \
+                     SELECT id, NULL, ?2, 'manual', 'manual', lon, lat, 0 FROM map_pins WHERE id = ?1",
+                    rusqlite::params![pin_id, now],
+                )?)
+            })
+            .await?;
+        if let Some(run) = load_live_run(&self.db).await? {
+            let stop = run.stops.iter().find(|stop| {
+                stop.pin_id == pin_id
+                    && matches!(stop.status, StopStatus::Active | StopStatus::Pending)
+            });
+            if let Some(stop) = stop {
+                let was_active = stop.status == StopStatus::Active;
+                let stop_id = stop.id;
+                let run_id = run.id;
+                self.db
+                    .with_writer(move |conn| {
+                        let tx = conn.transaction()?;
+                        tx.execute(
+                            "UPDATE navigation_stops SET status = 'skipped', completed_at = ?2, completion_source = 'manual' WHERE id = ?1",
+                            rusqlite::params![stop_id, now],
+                        )?;
+                        if was_active {
+                            activate_next_or_complete(&tx, run_id, now)?;
+                        }
+                        tx.commit()?;
+                        Ok(())
+                    })
+                    .await?;
+                self.replan_or_complete(run_id, now).await?;
+            }
+        }
+        (self.changed)();
+        Ok(())
+    }
+
+    /// After a pin was deleted from the map, drop its orphaned active/pending
+    /// stop from the live route (foreign keys are off, so the row lingers) and
+    /// replan the remainder. A no-op when the pin was not a live route stop.
+    pub async fn replan_after_pin_removed(&self, pin_id: i64) -> Result<(), NavigationError> {
+        let _guard = self.operation.lock().await;
+        let Some(run) = load_live_run(&self.db).await? else {
+            return Ok(());
+        };
+        let run_id = run.id;
+        let removed = self
+            .db
+            .with_writer(move |conn| {
+                Ok(conn.execute(
+                    "DELETE FROM navigation_stops WHERE run_id = ?1 AND pin_id = ?2 AND status IN ('active', 'pending')",
+                    rusqlite::params![run_id, pin_id],
+                )?)
+            })
+            .await?;
+        if removed == 0 {
+            return Ok(());
+        }
+        let now = naive_to_epoch(self.clock.now());
+        self.replan_or_complete(run_id, now).await?;
+        (self.changed)();
+        Ok(())
+    }
+
+    /// Replan the live route from the current position, or complete it when no
+    /// active/pending stop remains. The caller holds the operation lock.
+    async fn replan_or_complete(&self, run_id: i64, now: f64) -> Result<(), NavigationError> {
+        let run = load_run(&self.db, run_id)
+            .await?
+            .ok_or(NavigationError::NoActiveRun)?;
+        let has_target = run
+            .stops
+            .iter()
+            .any(|stop| matches!(stop.status, StopStatus::Active | StopStatus::Pending));
+        if has_target {
+            self.replan_locked(run_id).await?;
+        } else {
+            self.db
+                .with_writer(move |conn| {
+                    Ok(conn.execute(
+                        "UPDATE navigation_runs SET status = 'completed', updated_at = ?2 WHERE id = ?1",
+                        rusqlite::params![run_id, now],
+                    )?)
+                })
+                .await?;
+            self.route_live
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            self.release_input_if_idle();
+        }
+        Ok(())
+    }
+
     async fn complete_active(
         &self,
         status: &str,
@@ -1817,5 +1918,63 @@ mod tests {
         )
         .await;
         assert!(restarted.snapshot().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn cooling_the_active_tree_skips_it_and_replans() {
+        let (_dir, service, _position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .await
+            .unwrap();
+        let active = run.active_stop().unwrap().clone();
+        service.cooldown_pin(active.pin_id).await.unwrap();
+        let after = service.snapshot().await.unwrap().unwrap();
+        assert_eq!(
+            after
+                .stops
+                .iter()
+                .find(|stop| stop.pin_id == active.pin_id)
+                .unwrap()
+                .status,
+            StopStatus::Skipped,
+        );
+        assert_ne!(
+            after.active_stop().map(|stop| stop.pin_id),
+            Some(active.pin_id)
+        );
+        assert_eq!(after.status, RunStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn cooling_a_tree_excludes_it_from_the_next_route() {
+        let (_dir, service, _position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, None, "f8".into())
+            .await
+            .unwrap();
+        let cooled = run.active_stop().unwrap().pin_id;
+        service.end().await.unwrap();
+        service.cooldown_pin(cooled).await.unwrap();
+        let replanned = service
+            .start("Calypso".into(), None, 0.0, 0.0, None, "f8".into())
+            .await
+            .unwrap();
+        assert!(replanned.stops.iter().all(|stop| stop.pin_id != cooled));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_route_pin_drops_its_stop_and_replans() {
+        let (_dir, service, _position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .await
+            .unwrap();
+        let removed = run.active_stop().unwrap().pin_id;
+        service.replan_after_pin_removed(removed).await.unwrap();
+        let after = service.snapshot().await.unwrap().unwrap();
+        assert!(after.stops.iter().all(|stop| stop.pin_id != removed));
+        assert_eq!(after.status, RunStatus::Active);
+        assert!(after.active_stop().is_some());
     }
 }

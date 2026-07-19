@@ -57,23 +57,30 @@
 	let pendingVisit = $state<{ name: string; distance: number } | null>(null);
 	const sizeSync = createWindowSizeSync(() => root);
 	const active = $derived(run?.stops.find((stop) => stop.status === 'active') ?? null);
-	const following = $derived(run?.stops.find((stop) => stop.status === 'pending') ?? null);
 	// A harvest was detected beyond the arrival radius; the overlay asks whether
 	// it was the intended tree rather than dropping it.
 	const pendingHarvest = $derived(run?.pendingHarvest ?? null);
-	const completed = $derived(run?.stops.filter((stop) => stop.status === 'visited' || stop.status === 'skipped').length ?? 0);
-	const remainingDistance = $derived.by(() => {
-		if (!run) return 0;
-		let lon = run.currentLon;
-		let lat = run.currentLat;
-		let total = 0;
-		for (const stop of run.stops.filter((candidate) => candidate.status === 'active' || candidate.status === 'pending')) {
-			total += Math.hypot(stop.lon - lon, stop.lat - lat);
-			lon = stop.lon;
-			lat = stop.lat;
-		}
-		return total;
-	});
+	const cutCount = $derived(run?.stops.filter((stop) => stop.status === 'visited').length ?? 0);
+	const totalStops = $derived(run?.stops.length ?? 0);
+
+	// Transient in-strip acknowledgements (replacing the old bottom text): a
+	// "Tree Cut" badge in the distance slot for two seconds when a tree is
+	// recorded, and a full-strip out-of-order notice for three seconds when a
+	// harvest matched a later tree and the path was recomputed.
+	let cutBadge = $state(false);
+	let cutTimer: ReturnType<typeof setTimeout> | null = null;
+	function signalCut() {
+		cutBadge = true;
+		if (cutTimer) clearTimeout(cutTimer);
+		cutTimer = setTimeout(() => (cutBadge = false), 2000);
+	}
+	let outOfOrder = $state(false);
+	let outOfOrderTimer: ReturnType<typeof setTimeout> | null = null;
+	function signalOutOfOrder() {
+		outOfOrder = true;
+		if (outOfOrderTimer) clearTimeout(outOfOrderTimer);
+		outOfOrderTimer = setTimeout(() => (outOfOrder = false), 3000);
+	}
 
 	function statusFeedback(status: NavigationPositionStatus): string {
 		switch (status) {
@@ -108,10 +115,11 @@
 				priorStatus !== 'visited' &&
 				stop.completionSource === 'harvest'
 			) {
-				feedback =
-					priorStatus === 'active' || stop.id === prevActiveId
-						? `Recorded ${stop.name}.`
-						: `${stop.name} visited out of order; route recomputed.`;
+				if (priorStatus === 'active' || stop.id === prevActiveId) {
+					signalCut();
+				} else {
+					signalOutOfOrder();
+				}
 				pendingVisit = null;
 			}
 		}
@@ -144,7 +152,14 @@
 		sizeSync.schedule();
 		const observer = new ResizeObserver(() => sizeSync.schedule());
 		observer.observe(root);
-		return () => { unlisten?.(); unlistenContext?.(); observer.disconnect(); sizeSync.cancel(); };
+		return () => {
+			unlisten?.();
+			unlistenContext?.();
+			observer.disconnect();
+			sizeSync.cancel();
+			if (cutTimer) clearTimeout(cutTimer);
+			if (outOfOrderTimer) clearTimeout(outOfOrderTimer);
+		};
 	});
 
 	function setAutoUpdate(value: boolean) {
@@ -247,7 +262,8 @@
 		try {
 			const result = await updateNavigationPosition();
 			if (result.run) run = result.run;
-			feedback = statusFeedback(result.status);
+			// The moving radar dot is the confirmation now; only surface a problem.
+			feedback = result.status === 'updated' ? null : statusFeedback(result.status);
 		} catch { feedback = 'The position could not be read.'; }
 		finally { busy = false; }
 	}
@@ -264,7 +280,7 @@
 			if (result.run) run = result.run;
 			if (result.status === 'updated') {
 				pendingVisit = null;
-				feedback = `Recorded ${target}.`;
+				signalCut();
 			} else if (result.status === 'outOfTolerance') {
 				pendingVisit = { name: target, distance: result.run?.distanceToActive ?? 0 };
 			} else {
@@ -285,7 +301,8 @@
 		pendingVisit = null;
 		try {
 			run = await resolveNavigationHarvest(confirm);
-			feedback = confirm ? 'Recorded harvest.' : 'Harvest dismissed.';
+			feedback = null;
+			if (confirm) signalCut();
 		} catch {
 			feedback = 'The harvest could not be updated.';
 		} finally {
@@ -315,28 +332,37 @@
 				<p class="text-[9px] font-bold uppercase tracking-wider text-white/35">{run ? 'Route guidance' : 'Plan route'}</p>
 				<p class="mt-1 truncate text-[11px] text-white/65">{run ? `${run.planet} · ${run.mapViewName ?? 'Default'} · ${autoUpdate ? `auto ${updateIntervalSec}s` : `${run.hotkey.toUpperCase()} updates`}` : planet ? `${planet} · new route` : 'No planet selected'}</p>
 			</div>
-			{#if run}
-				<button class="release-btn" aria-label="End route and close" onclick={endRoute}>×</button>
-			{:else}
-				<button class="release-btn" aria-label="Close" onclick={closeOverlay}>×</button>
-			{/if}
+			<div class="flex items-center gap-2">
+				{#if run && active}
+					<span class="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white/70">{cutCount}/{totalStops}</span>
+				{/if}
+				{#if run}
+					<button class="release-btn" aria-label="End route and close" onclick={endRoute}>×</button>
+				{:else}
+					<button class="release-btn" aria-label="Close" onclick={closeOverlay}>×</button>
+				{/if}
+			</div>
 		</div>
 		{#if run && active}
 			<div class="py-3">
-				<div class="flex items-center gap-2">
-					<span class="text-xl">{pinGlyph(active.icon)}</span>
-					<div class="min-w-0 flex-1">
-						<p class="truncate text-sm font-semibold">{active.name}</p>
-						<p class="text-[11px] tabular-nums text-white/55">{formatGamePoint(active)}</p>
+				{#if outOfOrder}
+					<div class="flex min-h-[2.75rem] items-center">
+						<p class="text-[11px] text-amber-300">Tree visited out of order, recomputing path…</p>
 					</div>
-					<span class="text-[10px] tabular-nums text-sky-300">{run.distanceToActive?.toFixed(1) ?? '—'} m</span>
-				</div>
-				<div class="mt-2 flex justify-between text-[10px] text-white/45">
-					<span>{completed + 1} / {run.stops.length}</span>
-					<span>{run.bearingDegrees?.toFixed(0) ?? '—'}° · {remainingDistance.toFixed(0)} m left</span>
-				</div>
-				<p class="mt-1 text-[9px] text-white/35">Last position: {run.lastPositionAt == null ? 'route start' : new Date(run.lastPositionAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>
-				{#if following}<p class="mt-2 truncate text-[10px] text-white/45">Next: {following.name} · {formatGamePoint(following)}</p>{/if}
+				{:else}
+					<div class="flex items-center gap-2">
+						<span class="text-xl">{pinGlyph(active.icon)}</span>
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-sm font-semibold">{active.name}</p>
+							<p class="text-[11px] tabular-nums text-white/55">{formatGamePoint(active)}</p>
+						</div>
+						{#if cutBadge}
+							<span class="rounded bg-emerald-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">Tree Cut</span>
+						{:else}
+							<span class="text-[10px] tabular-nums text-sky-300">{run.distanceToActive?.toFixed(1) ?? '—'} m</span>
+						{/if}
+					</div>
+				{/if}
 			</div>
 			{#if pendingHarvest}
 				<div class="mb-2 rounded-md border border-emerald-300/30 bg-emerald-300/10 p-2">
@@ -356,8 +382,10 @@
 					</div>
 				</div>
 			{/if}
-			<div class="grid grid-cols-2 gap-1.5">
-				<button class="hud-btn primary" disabled={busy} onclick={updatePosition}>Update</button>
+			<div class="grid {autoUpdate ? 'grid-cols-3' : 'grid-cols-2'} gap-1.5">
+				{#if !autoUpdate}
+					<button class="hud-btn primary" disabled={busy} onclick={updatePosition}>Update</button>
+				{/if}
 				<button class="hud-btn" disabled={busy} onclick={() => markVisited(false)}>Visited</button>
 				<button class="hud-btn" disabled={busy} onclick={() => act(skipNavigationStop)}>Skip</button>
 				<button class="hud-btn" disabled={busy} onclick={() => act(undoNavigationStop)}>Undo</button>

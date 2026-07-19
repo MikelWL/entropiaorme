@@ -42,6 +42,7 @@ export const deleteMapView = commands.mapViewDelete;
 export const createMapPin = commands.mapPinCreate;
 export const updateMapPin = commands.mapPinUpdate;
 export const deleteMapPin = commands.mapPinDelete;
+export const cooldownMapPin = commands.mapPinCooldown;
 export const getPinConfigs = commands.pinConfigsList;
 export const createPinConfig = commands.pinConfigCreate;
 export const updatePinConfig = commands.pinConfigUpdate;

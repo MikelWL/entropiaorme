@@ -2606,6 +2606,10 @@ export async function mapPinDelete(id: number): Promise<void> {
 	return invokeCommand('map_pin_delete', { id });
 }
 
+export async function mapPinCooldown(id: number): Promise<MapPin> {
+	return invokeCommand('map_pin_cooldown', { id });
+}
+
 export async function pinConfigsList(planet: string, mapViewId: number | null): Promise<PinConfig[]> {
 	return invokeCommand('pin_configs_list', { planet, map_view_id: mapViewId });
 }

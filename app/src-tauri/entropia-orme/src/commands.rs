@@ -1043,6 +1043,11 @@ pub async fn map_pin_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiErr
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_cooldown(app: tauri::AppHandle, id: i64) -> Result<MapPin, ApiError> {
+    facade(&app)?.map_pin_cooldown(id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn pin_configs_list(
     app: tauri::AppHandle,
     planet: String,
@@ -1323,6 +1328,7 @@ mod tests {
         "map_pin_create",
         "map_pin_update",
         "map_pin_delete",
+        "map_pin_cooldown",
         "pin_configs_list",
         "pin_config_create",
         "pin_config_update",

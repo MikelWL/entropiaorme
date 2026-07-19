@@ -834,10 +834,33 @@ impl Api {
         Ok(pin_to_dto(stored))
     }
 
-    /// Delete a pin.
+    /// Delete a pin. A pin in use by the live route is allowed to go: the route
+    /// drops its stop and recomputes from the current position.
     pub async fn map_pin_delete(&self, id: i64) -> Result<(), ApiError> {
-        self.ensure_pin_not_in_current_route(id).await?;
-        self.map_pins.delete(id).await.map_err(pins_error)
+        self.map_pins.delete(id).await.map_err(pins_error)?;
+        if let Some(navigation) = self.navigation.as_ref() {
+            navigation
+                .replan_after_pin_removed(id)
+                .await
+                .map_err(navigation_error)?;
+        }
+        Ok(())
+    }
+
+    /// Put a tree on cooldown from the map. Records a manual cooldown visit so
+    /// the tree is excluded from the next planned route, and if it is a stop in
+    /// the live route it is skipped and the route recomputed. Returns the pin
+    /// with its refreshed cooldown state.
+    pub async fn map_pin_cooldown(&self, id: i64) -> Result<MapPin, ApiError> {
+        self.navigation()?
+            .cooldown_pin(id)
+            .await
+            .map_err(navigation_error)?;
+        self.map_pins
+            .get(id)
+            .await
+            .map(pin_to_dto)
+            .map_err(pins_error)
     }
 
     /// Named views for a planet. The permanent Default view is virtual

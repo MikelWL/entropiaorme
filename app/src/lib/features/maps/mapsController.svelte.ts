@@ -96,6 +96,15 @@ export function createMapsController(model: MapsModel) {
 		}
 	}
 
+	async function cooldownPin(pin: MapPin) {
+		try {
+			await model.cooldownPin(pin.id);
+			flash(`"${pin.name}" put on cooldown.`);
+		} catch (e) {
+			flash(describeError(e, 'The tree could not be put on cooldown'));
+		}
+	}
+
 	async function copyWaypoint(pin: MapPin): Promise<WaypointCopyResult> {
 		const waypoint = formatWaypoint({
 			technicalName: model.selected?.technicalName ?? null,
@@ -134,6 +143,7 @@ export function createMapsController(model: MapsModel) {
 		openEditForm,
 		submitPinForm,
 		deletePin,
+		cooldownPin,
 		copyWaypoint,
 	};
 }

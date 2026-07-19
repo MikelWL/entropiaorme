@@ -8,6 +8,7 @@
 
 import type { MapPin, MapPinInput, MapPinPatch, MapView, PlanetMap } from '$lib/api';
 import {
+	cooldownMapPin,
 	createMapPin,
 	createMapView,
 	deleteMapPin,
@@ -178,6 +179,12 @@ export function createMapsModel() {
 		pins = pins.filter((pin) => pin.id !== id);
 	}
 
+	async function cooldownPin(id: number): Promise<MapPin> {
+		const updated = await cooldownMapPin(id);
+		pins = pins.map((pin) => (pin.id === id ? updated : pin));
+		return updated;
+	}
+
 	return {
 		get planets() {
 			return planets;
@@ -213,6 +220,7 @@ export function createMapsModel() {
 		addPin,
 		editPin,
 		removePin,
+		cooldownPin,
 	};
 }
 

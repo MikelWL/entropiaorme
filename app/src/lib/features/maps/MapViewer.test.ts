@@ -59,6 +59,7 @@ function setup() {
 			oncopywaypoint: vi.fn(),
 			oneditpin: vi.fn(),
 			ondeletepin: vi.fn(),
+			oncooldownpin: vi.fn(),
 			onselectplanet: vi.fn(),
 			onselectview: vi.fn(),
 			onaddview: vi.fn().mockResolvedValue(null),

@@ -222,6 +222,7 @@
 				oncopywaypoint={controller.copyWaypoint}
 				oneditpin={controller.openEditForm}
 				ondeletepin={controller.deletePin}
+				oncooldownpin={controller.cooldownPin}
 				onselectplanet={(name) => void selectPlanet(name)}
 				onselectview={(id) => void selectView(id)}
 				onaddview={addView}

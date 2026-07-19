@@ -62,6 +62,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "ledger_preset_create",
     "ledger_preset_delete",
     "ledger_presets_list",
+    "map_pin_cooldown",
     "map_pin_create",
     "map_pin_delete",
     "map_pin_nearby",
