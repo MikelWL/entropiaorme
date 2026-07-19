@@ -738,7 +738,7 @@ impl Api {
                 .map_err(db_error)?
             {
                 return Err(ApiError::bad_request(format!(
-                    "nearby pin {} already exists {:.2} units away; confirm create anyway",
+                    "nearby pin {} already exists {:.1} m away; confirm create anyway",
                     nearby.id, distance
                 )));
             }

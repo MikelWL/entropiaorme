@@ -165,7 +165,7 @@
 		{#if pendingDuplicate}
 			<div class="flex shrink-0 items-center gap-2" role="group" aria-label="Nearby pin confirmation">
 				<p class="max-w-48 text-[10px] font-medium leading-snug text-orange-200/90">
-					{pendingDuplicate.existingName} already exists {pendingDuplicate.distance.toFixed(2)} units away.
+					There is already a pin ({pendingDuplicate.existingName}) {pendingDuplicate.distance.toFixed(1)} m away.
 				</p>
 				<button bind:this={keepExistingButton} class="pin-button" disabled={busy} onclick={keepExisting}>
 					Keep existing

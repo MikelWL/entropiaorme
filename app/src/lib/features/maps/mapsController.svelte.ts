@@ -59,7 +59,7 @@ export function createMapsController(model: MapsModel) {
 				);
 				const allowNearby = nearby
 					? window.confirm(
-							`"${nearby.pin.name}" is ${nearby.distance.toFixed(2)} units away. Create another pin here anyway?`,
+							`There is already a pin ("${nearby.pin.name}") ${nearby.distance.toFixed(1)} m away. Create another pin here anyway?`,
 						)
 					: false;
 				if (nearby && !allowNearby) return false;

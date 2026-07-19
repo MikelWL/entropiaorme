@@ -17,8 +17,14 @@ use crate::db::{Db, DbError};
 use crate::keystroke_source::{KeystrokeKind, KeystrokeSource};
 use crate::time::naive_to_epoch;
 
-pub const ARRIVAL_TOLERANCE_UNITS: f64 = 2.0;
-pub const DUPLICATE_TOLERANCE_UNITS: f64 = 2.0;
+/// Arrival radius, in game units (metres): a harvest or a manual Visited
+/// within this of a route tree counts as reaching it. Loosened to five so a
+/// player standing beside a tree, not exactly on its surveyed pin, still
+/// registers arrival on the happy path.
+pub const ARRIVAL_TOLERANCE_UNITS: f64 = 5.0;
+/// Radius, in game units (metres), within which a new pin is flagged as a
+/// possible duplicate of an existing one (advisory only).
+pub const DUPLICATE_TOLERANCE_UNITS: f64 = 5.0;
 /// A confirmed visit puts its tree on cooldown for this long, so a freshly
 /// regenerated route excludes trees that were just harvested. Two hours is
 /// the initial default; a configurable per-species respawn is deferred work.
@@ -491,7 +497,21 @@ impl NavigationService {
                 (distance <= ARRIVAL_TOLERANCE_UNITS).then_some((stop.id, stop.pin_id, distance))
             })
             .collect();
-        if matches.len() > 1 {
+        let active_stop_id = run.active_stop().map(|stop| stop.id);
+        // A harvest proves arrival at a tree. When several route trees are
+        // within the arrival radius, assume the one the route currently points
+        // at (the active stop); a single unambiguous non-active match is an
+        // out-of-order arrival. Several non-active matches with no active among
+        // them stay ambiguous and touch nothing.
+        let matched = active_stop_id
+            .and_then(|id| {
+                matches
+                    .iter()
+                    .find(|(stop_id, _, _)| *stop_id == id)
+                    .copied()
+            })
+            .or_else(|| (matches.len() == 1).then(|| matches[0]));
+        if matched.is_none() && matches.len() > 1 {
             update_run_position(&self.db, run.id, lon, lat, now).await?;
             let refreshed = load_run(&self.db, run.id)
                 .await?
@@ -500,8 +520,6 @@ impl NavigationService {
         }
         let source = source.to_string();
         let outcome = outcome.to_string();
-        let matched = matches.first().copied();
-        let active_stop_id = run.active_stop().map(|stop| stop.id);
         let arrived_out_of_order = matched
             .map(|(stop_id, _, _)| Some(stop_id) != active_stop_id)
             .unwrap_or(false);
@@ -1066,10 +1084,11 @@ mod tests {
     }
 
     #[test]
-    fn two_unit_arrival_policy_is_euclidean_and_inclusive() {
-        assert_eq!(distance((0.0, 0.0), (1.2, 1.6)), ARRIVAL_TOLERANCE_UNITS);
-        assert!(distance((0.0, 0.0), (1.2, 1.6)) <= ARRIVAL_TOLERANCE_UNITS);
-        assert!(distance((0.0, 0.0), (2.01, 0.0)) > ARRIVAL_TOLERANCE_UNITS);
+    fn arrival_policy_is_euclidean_and_inclusive_at_five_units() {
+        assert_eq!(ARRIVAL_TOLERANCE_UNITS, 5.0);
+        assert_eq!(distance((0.0, 0.0), (3.0, 4.0)), ARRIVAL_TOLERANCE_UNITS);
+        assert!(distance((0.0, 0.0), (3.0, 4.0)) <= ARRIVAL_TOLERANCE_UNITS);
+        assert!(distance((0.0, 0.0), (5.01, 0.0)) > ARRIVAL_TOLERANCE_UNITS);
     }
 
     async fn navigation_fixture() -> (
@@ -1329,12 +1348,24 @@ mod tests {
             .start("Calypso".into(), None, 0.0, 0.0, 3, "f8".into())
             .await
             .unwrap();
+        // Pick a pending stop beyond the arrival radius of the active one, so a
+        // harvest there is an unambiguous out-of-order arrival (not the
+        // "prefer the active tree" case).
+        let active = run.active_stop().unwrap().clone();
         let pending = run
             .stops
             .iter()
-            .find(|stop| stop.status == StopStatus::Pending)
+            .filter(|stop| stop.status == StopStatus::Pending)
+            .max_by(|a, b| {
+                distance((a.lon, a.lat), (active.lon, active.lat))
+                    .total_cmp(&distance((b.lon, b.lat), (active.lon, active.lat)))
+            })
             .unwrap()
             .clone();
+        assert!(
+            distance((pending.lon, pending.lat), (active.lon, active.lat))
+                > ARRIVAL_TOLERANCE_UNITS
+        );
         *position.lock().unwrap() = (pending.lon as i64, pending.lat as i64);
 
         let PositionUpdate::Updated(replanned) = service.harvest_position("success").await.unwrap()
@@ -1390,18 +1421,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_position_inside_two_pending_arrival_radii_is_ambiguous_and_mutates_no_stop() {
+    async fn a_harvest_prefers_the_active_tree_when_several_are_within_range() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
             .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
             .await
             .unwrap();
-        let first = run.active_stop().unwrap();
-        *position.lock().unwrap() = (first.lon as i64 + 1, first.lat as i64);
+        // A(10,0) is active and D(13,0) is pending; (11,0) is within five of
+        // both. The harvest resolves to the active tree, not an ambiguity.
+        let active = run.active_stop().unwrap().clone();
+        *position.lock().unwrap() = (11, 0);
+        let PositionUpdate::Updated(updated) = service.harvest_position("success").await.unwrap()
+        else {
+            panic!("the harvest resolves to the active tree")
+        };
+        assert_eq!(
+            updated
+                .stops
+                .iter()
+                .find(|stop| stop.id == active.id)
+                .unwrap()
+                .status,
+            StopStatus::Visited,
+        );
+        assert_ne!(updated.active_stop().unwrap().id, active.id);
+    }
+
+    #[tokio::test]
+    async fn a_harvest_amid_only_non_active_trees_stays_ambiguous() {
+        let (_dir, service, position, _changes, _input) = navigation_fixture().await;
+        service
+            .start("Calypso".into(), None, 0.0, 0.0, 3, "f8".into())
+            .await
+            .unwrap();
+        // (16,2) is within five of pending D(13,0) and B(20,3) but not of the
+        // active A(10,0), so there is no active tree to fall back on: never guess.
+        *position.lock().unwrap() = (16, 2);
         let PositionUpdate::Ambiguous(ambiguous) =
             service.harvest_position("success").await.unwrap()
         else {
-            panic!("overlapping arrival radii stay ambiguous")
+            panic!("two non-active trees in range stay ambiguous")
         };
         assert!(ambiguous
             .stops
