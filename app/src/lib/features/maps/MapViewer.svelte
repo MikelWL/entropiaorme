@@ -83,8 +83,14 @@
 
 	// The active pin card: raised by marker hover or focus, kept open
 	// while the pointer is over the card itself, closed on a short delay
-	// so travelling marker -> card does not dismiss it.
+	// so travelling marker -> card does not dismiss it. Clicking a marker
+	// *locks* the card: it then stays put regardless of hover, so the pointer
+	// can travel off the marker to reach card actions (Put on cooldown, etc.)
+	// without the card dismissing. A locked card is released by clicking empty
+	// map, clicking another marker (which re-locks to it), or an action that
+	// closes the card.
 	let activePin = $state<MapPin | null>(null);
+	let lockedPinId = $state<number | null>(null);
 	let copyFeedback = $state<WaypointCopyResult | null>(null);
 	let copyRequest = 0;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -98,6 +104,14 @@
 		activePin = pin;
 	}
 
+	function dismissCard() {
+		if (closeTimer) clearTimeout(closeTimer);
+		lockedPinId = null;
+		activePin = null;
+		copyFeedback = null;
+		copyRequest += 1;
+	}
+
 	async function copyPinWaypoint(pin: MapPin) {
 		raiseCard(pin);
 		const request = ++copyRequest;
@@ -106,6 +120,8 @@
 	}
 
 	function scheduleCardClose() {
+		// A locked card ignores hover-out: it persists until explicitly dismissed.
+		if (lockedPinId != null) return;
 		if (closeTimer) clearTimeout(closeTimer);
 		closeTimer = setTimeout(() => {
 			activePin = null;
@@ -131,6 +147,7 @@
 		};
 		img.src = url;
 		activePin = null;
+		lockedPinId = null;
 		return () => {
 			img.onload = null;
 			img.onerror = null;
@@ -226,7 +243,9 @@
 					? imageToGame(cal, imagePoint)
 					: null;
 		}
-		if (!pressed) {
+		// While a card is locked open (marker was clicked), hover neither switches
+		// nor closes it; the locked card owns the surface until it is dismissed.
+		if (!pressed && lockedPinId == null) {
 			const hit = nearestPlacedPin(event.clientX - rect.left, event.clientY - rect.top, 10);
 			if (hit) raiseCard(hit.pin);
 			else if (activePin) scheduleCardClose();
@@ -264,7 +283,16 @@
 		}
 		const hit = nearestPlacedPin(event.clientX - rect.left, event.clientY - rect.top, 11);
 		if (hit) {
+			// Clicking a marker locks its card open so the pointer can travel to
+			// the card's actions without the hover-close dismissing it.
 			raiseCard(hit.pin);
+			lockedPinId = hit.pin.id;
+			return;
+		}
+		if (lockedPinId != null) {
+			// A locked card is open: an empty-map click releases it rather than
+			// dropping a new pin. A second click then places as usual.
+			dismissCard();
 			return;
 		}
 		onmapclick(imageToGame(cal, imagePoint));
@@ -556,7 +584,7 @@
 				onedit={() => oneditpin(activePin!)}
 				ondelete={() => {
 					const pin = activePin!;
-					activePin = null;
+					dismissCard();
 					ondeletepin(pin);
 				}}
 				oncooldown={() => oncooldownpin(activePin!)}
