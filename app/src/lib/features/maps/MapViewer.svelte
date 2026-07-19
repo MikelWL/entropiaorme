@@ -17,6 +17,7 @@
 	import { pinGlyph } from './pinIcons';
 	import PinCard from './PinCard.svelte';
 	import type { WaypointCopyResult } from './waypoint';
+	import { externalLinks } from '$lib/utils/openExternal';
 	import {
 		ZOOM_STEP,
 		centreOnImage,
@@ -80,6 +81,10 @@
 	let cursorPoint = $state<GamePoint | null>(null);
 	let handledFocusNonce: number | null = null;
 	let markerMode = $state<'auto' | 'icons' | 'precision'>('auto');
+	// The map-asset attribution popover: a small note clarifying this surface is
+	// for the user's own pins, not a wiki, pointing wiki-style map needs at the
+	// asset source. Toggled by its badge, dismissed on any map interaction.
+	let attributionOpen = $state(false);
 
 	// The active pin card: raised by marker hover or focus, kept open
 	// while the pointer is over the card itself, closed on a short delay
@@ -224,6 +229,7 @@
 
 	function handlePointerDown(event: PointerEvent) {
 		if (event.button !== 0) return;
+		attributionOpen = false;
 		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 		pressed = true;
 		dragging = false;
@@ -300,6 +306,11 @@
 
 	const PAN_STEP_PX = 60;
 	function handleKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape' && attributionOpen) {
+			attributionOpen = false;
+			event.preventDefault();
+			return;
+		}
 		if (!image) return;
 		const pan = (dx: number, dy: number) => {
 			vp = panBy(vp, dx, dy, image!.naturalWidth, image!.naturalHeight, viewW, viewH);
@@ -599,12 +610,43 @@
 		</p>
 	{/if}
 
-	{#if cursorPoint}
-		<output class="pointer-events-none absolute bottom-2 left-2 rounded-md border border-border bg-base/85 px-2 py-1 text-xs tabular-nums text-text shadow-sm backdrop-blur" aria-live="off">
-			{formatGamePoint(cursorPoint)}
-		</output>
-	{/if}
-	<output class="pointer-events-none absolute bottom-2 right-2 rounded-md border border-border bg-base/85 px-2 py-1 text-[10px] tabular-nums text-text-secondary shadow-sm backdrop-blur" aria-live="off">
-		{vp.zoom.toFixed(vp.zoom < 10 ? 2 : 0)}×
-	</output>
+	<!-- Bottom-right cluster: the live coordinate readout joins the zoom
+	     multiplier, with the map-asset attribution badge beneath them. -->
+	<div class="absolute bottom-2 right-2 z-10 flex flex-col items-end gap-1">
+		<div class="flex items-center gap-1">
+			{#if cursorPoint}
+				<output class="pointer-events-none rounded-md border border-border bg-base/85 px-2 py-1 text-xs tabular-nums text-text shadow-sm backdrop-blur" aria-live="off">
+					{formatGamePoint(cursorPoint)}
+				</output>
+			{/if}
+			<output class="pointer-events-none rounded-md border border-border bg-base/85 px-2 py-1 text-[10px] tabular-nums text-text-secondary shadow-sm backdrop-blur" aria-live="off">
+				{vp.zoom.toFixed(vp.zoom < 10 ? 2 : 0)}×
+			</output>
+		</div>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="relative" onpointerdown={(event) => event.stopPropagation()}>
+			{#if attributionOpen}
+				<div
+					class="absolute bottom-full right-0 mb-1.5 w-64 rounded-md border border-border bg-surface/95 p-2.5 text-xs leading-snug text-text-secondary shadow-lg backdrop-blur"
+					role="dialog"
+					aria-label="Map asset attribution"
+					use:externalLinks
+				>
+					<p>
+						These maps are for marking and navigating your own pins, not a wiki. For
+						wiki-style world maps and location data, see
+						<a class="text-accent underline decoration-dotted underline-offset-2" href="https://entropianexus.com/maps">Entropia Nexus</a>.
+					</p>
+				</div>
+			{/if}
+			<button
+				type="button"
+				class="rounded-md border border-border bg-base/85 px-2 py-1 text-[10px] text-text-secondary shadow-sm backdrop-blur transition-colors hover:text-text"
+				aria-expanded={attributionOpen}
+				onclick={() => (attributionOpen = !attributionOpen)}
+			>
+				Map asset by Entropia Nexus
+			</button>
+		</div>
+	</div>
 </div>

@@ -92,4 +92,19 @@ describe('MapViewer scalable interaction surface', () => {
 		expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Fit map to view' })).toBeTruthy();
 	});
+
+	it('discloses the map-asset attribution note only when its badge is toggled', async () => {
+		setup();
+		const badge = screen.getByRole('button', { name: /Map asset by Entropia Nexus/ });
+		expect(badge.getAttribute('aria-expanded')).toBe('false');
+		expect(screen.queryByRole('dialog', { name: 'Map asset attribution' })).toBeNull();
+
+		await fireEvent.click(badge);
+		expect(badge.getAttribute('aria-expanded')).toBe('true');
+		const link = screen.getByRole('link', { name: 'Entropia Nexus' });
+		expect(link.getAttribute('href')).toBe('https://entropianexus.com/maps');
+
+		await fireEvent.click(badge);
+		expect(screen.queryByRole('dialog', { name: 'Map asset attribution' })).toBeNull();
+	});
 });
