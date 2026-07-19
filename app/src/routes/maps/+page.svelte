@@ -27,6 +27,10 @@
 	} from '$lib/api';
 	import { listen } from '@tauri-apps/api/event';
 	import { broadcastCartographyContext } from '$lib/features/maps/cartographyOverlay.svelte';
+	import { getPreference, setPreference } from '$lib/preferences';
+
+	const LAST_PLANET_KEY = 'mapsLastPlanet';
+	const LAST_MAP_VIEW_KEY = 'mapsLastMapViewId';
 
 	const model = createMapsModel();
 	const controller = createMapsController(model);
@@ -41,7 +45,11 @@
 	onMount(() => {
 		const stopMapsSync = startMapsCartographySync(model);
 		let unlisten: (() => void) | undefined;
-		void model.loadPlanets();
+		// Reopen the planet and named map the user last visited.
+		void Promise.all([
+			getPreference<string | null>(LAST_PLANET_KEY, null),
+			getPreference<number | null>(LAST_MAP_VIEW_KEY, null),
+		]).then(([planet, viewId]) => model.loadPlanets({ planet, viewId }));
 		void getNavigationSnapshot().then((run) => {
 			navigation = run;
 			if (run?.status === 'active' || run?.status === 'paused') void showNavigationOverlays();
@@ -72,6 +80,17 @@
 			planet: model.selected?.name ?? null,
 			mapViewId: model.selectedViewId,
 		});
+	});
+
+	// Remember the last-visited planet and named map so the surface reopens to
+	// it next session. Reacts to every selection change (planet, view, add or
+	// remove), so persistence lives in one place.
+	$effect(() => {
+		const planet = model.selected?.name ?? null;
+		const viewId = model.selectedViewId;
+		if (!planet) return;
+		void setPreference(LAST_PLANET_KEY, planet);
+		void setPreference(LAST_MAP_VIEW_KEY, viewId);
 	});
 
 	// A configuration change can restyle or remove placed pins; refresh them and

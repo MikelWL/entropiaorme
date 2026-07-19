@@ -96,6 +96,26 @@ describe('createMapsModel', () => {
 		expect(mocked.getMapPins).toHaveBeenCalledWith('Calypso', null);
 	});
 
+	it('reopens the last-visited planet and map view', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet(), planet({ name: 'Arkadia' })]);
+		mocked.getMapViews.mockResolvedValue([view({ planet: 'Arkadia' })]);
+		const model = createMapsModel();
+		await model.loadPlanets({ planet: 'Arkadia', viewId: 7 });
+
+		expect(model.selected?.name).toBe('Arkadia');
+		expect(model.selectedViewId).toBe(7);
+		expect(mocked.getMapPins).toHaveBeenLastCalledWith('Arkadia', 7);
+	});
+
+	it('falls back to the first planet when the remembered one is gone', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet(), planet({ name: 'Arkadia' })]);
+		const model = createMapsModel();
+		await model.loadPlanets({ planet: 'Nowhere', viewId: 3 });
+
+		expect(model.selected?.name).toBe('Calypso');
+		expect(model.selectedViewId).toBeNull();
+	});
+
 	it('surfaces a load failure as the error state', async () => {
 		mocked.getPlanetMaps.mockRejectedValue(new Error('nope'));
 		const model = createMapsModel();

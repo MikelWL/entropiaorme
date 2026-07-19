@@ -37,15 +37,29 @@ export function createMapsModel() {
 
 	const selected = $derived(planets.find((planet) => planet.name === selectedName) ?? null);
 
-	async function loadPlanets() {
+	async function loadPlanets(preferred?: { planet?: string | null; viewId?: number | null }) {
 		loading = true;
 		error = null;
 		try {
 			planets = await getPlanetMaps();
-			if (planets.length > 0) {
-				await selectPlanet(planets[0].name);
-			} else {
+			if (planets.length === 0) {
 				loading = false;
+				return;
+			}
+			// Reopen the planet the user last visited when it is still in the
+			// catalogue, otherwise the first planet.
+			const target =
+				preferred?.planet && planets.some((candidate) => candidate.name === preferred.planet)
+					? preferred.planet
+					: planets[0].name;
+			await selectPlanet(target);
+			// Restore the remembered map view for that planet when it still exists.
+			if (
+				preferred?.viewId != null &&
+				selectedName === target &&
+				views.some((view) => view.id === preferred.viewId)
+			) {
+				await selectView(preferred.viewId);
 			}
 		} catch (e) {
 			error = describeError(e, 'Failed to load the planet maps');
