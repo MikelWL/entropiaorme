@@ -610,43 +610,43 @@
 		</p>
 	{/if}
 
-	<!-- Bottom-right cluster: the live coordinate readout joins the zoom
-	     multiplier, with the map-asset attribution badge beneath them. -->
-	<div class="absolute bottom-2 right-2 z-10 flex flex-col items-end gap-1">
-		<div class="flex items-center gap-1">
-			{#if cursorPoint}
-				<output class="pointer-events-none rounded-md border border-border bg-base/85 px-2 py-1 text-xs tabular-nums text-text shadow-sm backdrop-blur" aria-live="off">
-					{formatGamePoint(cursorPoint)}
-				</output>
-			{/if}
-			<output class="pointer-events-none rounded-md border border-border bg-base/85 px-2 py-1 text-[10px] tabular-nums text-text-secondary shadow-sm backdrop-blur" aria-live="off">
-				{vp.zoom.toFixed(vp.zoom < 10 ? 2 : 0)}×
-			</output>
-		</div>
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="relative" onpointerdown={(event) => event.stopPropagation()}>
-			{#if attributionOpen}
-				<div
-					class="absolute bottom-full right-0 mb-1.5 w-64 rounded-md border border-border bg-surface/95 p-2.5 text-xs leading-snug text-text-secondary shadow-lg backdrop-blur"
-					role="dialog"
-					aria-label="Map asset attribution"
-					use:externalLinks
-				>
-					<p>
-						These maps are for marking and navigating your own pins, not a wiki. For
-						wiki-style world maps and location data, see
-						<a class="text-accent underline decoration-dotted underline-offset-2" href="https://entropianexus.com/maps">Entropia Nexus</a>.
-					</p>
-				</div>
-			{/if}
-			<button
-				type="button"
-				class="rounded-md border border-border bg-base/85 px-2 py-1 text-[10px] text-text-secondary shadow-sm backdrop-blur transition-colors hover:text-text"
-				aria-expanded={attributionOpen}
-				onclick={() => (attributionOpen = !attributionOpen)}
+	<!-- Bottom-left: the map-asset attribution badge, on the same visual
+	     register as the top-corner control panels. -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="absolute bottom-2 left-2 z-10" onpointerdown={(event) => event.stopPropagation()}>
+		{#if attributionOpen}
+			<div
+				class="absolute bottom-full left-0 mb-1.5 w-64 rounded-md border border-border bg-surface/95 p-2.5 text-xs leading-snug text-text-secondary shadow-lg backdrop-blur"
+				role="dialog"
+				aria-label="Map asset attribution"
+				use:externalLinks
 			>
-				Map asset by Entropia Nexus
-			</button>
-		</div>
+				<p>
+					These maps are for marking and navigating your own pins, not a wiki. For
+					wiki-style world maps and location data, see
+					<a class="text-accent underline decoration-dotted underline-offset-2" href="https://entropianexus.com/maps">Entropia Nexus</a>.
+				</p>
+			</div>
+		{/if}
+		<button
+			type="button"
+			class="rounded-md border border-border bg-base/85 px-2.5 py-1.5 text-xs text-text shadow-sm backdrop-blur transition-colors hover:text-accent"
+			aria-expanded={attributionOpen}
+			onclick={() => (attributionOpen = !attributionOpen)}
+		>
+			Map asset by Entropia Nexus
+		</button>
+	</div>
+
+	<!-- Bottom-right: the live coordinate readout paired with the zoom multiplier. -->
+	<div class="pointer-events-none absolute bottom-2 right-2 z-10 flex items-center gap-1">
+		{#if cursorPoint}
+			<output class="rounded-md border border-border bg-base/85 px-2 py-1 text-xs tabular-nums text-text shadow-sm backdrop-blur" aria-live="off">
+				{formatGamePoint(cursorPoint)}
+			</output>
+		{/if}
+		<output class="rounded-md border border-border bg-base/85 px-2 py-1 text-[10px] tabular-nums text-text-secondary shadow-sm backdrop-blur" aria-live="off">
+			{vp.zoom.toFixed(vp.zoom < 10 ? 2 : 0)}×
+		</output>
 	</div>
 </div>
