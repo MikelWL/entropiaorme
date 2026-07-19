@@ -64,15 +64,17 @@
 	const totalStops = $derived(run?.stops.length ?? 0);
 
 	// Transient in-strip acknowledgements (replacing the old bottom text): a
-	// "Tree Cut" badge in the distance slot for two seconds when a tree is
-	// recorded, and a full-strip out-of-order notice for three seconds when a
-	// harvest matched a later tree and the path was recomputed.
-	let cutBadge = $state(false);
-	let cutTimer: ReturnType<typeof setTimeout> | null = null;
-	function signalCut() {
-		cutBadge = true;
-		if (cutTimer) clearTimeout(cutTimer);
-		cutTimer = setTimeout(() => (cutBadge = false), 2000);
+	// badge in the distance slot for two seconds when a tree is resolved, and a
+	// full-strip out-of-order notice for three seconds when a harvest matched a
+	// later tree and the path was recomputed. The badge distinguishes an actual
+	// harvest (green "Tree Cut") from merely marking a tree visited without
+	// cutting it (yellow "Visited"), so the two outcomes read differently.
+	let badge = $state<'cut' | 'visited' | null>(null);
+	let badgeTimer: ReturnType<typeof setTimeout> | null = null;
+	function signalBadge(kind: 'cut' | 'visited') {
+		badge = kind;
+		if (badgeTimer) clearTimeout(badgeTimer);
+		badgeTimer = setTimeout(() => (badge = null), 2000);
 	}
 	let outOfOrder = $state(false);
 	let outOfOrderTimer: ReturnType<typeof setTimeout> | null = null;
@@ -116,7 +118,7 @@
 				stop.completionSource === 'harvest'
 			) {
 				if (priorStatus === 'active' || stop.id === prevActiveId) {
-					signalCut();
+					signalBadge('cut');
 				} else {
 					signalOutOfOrder();
 				}
@@ -157,7 +159,7 @@
 			unlistenContext?.();
 			observer.disconnect();
 			sizeSync.cancel();
-			if (cutTimer) clearTimeout(cutTimer);
+			if (badgeTimer) clearTimeout(badgeTimer);
 			if (outOfOrderTimer) clearTimeout(outOfOrderTimer);
 		};
 	});
@@ -280,7 +282,7 @@
 			if (result.run) run = result.run;
 			if (result.status === 'updated') {
 				pendingVisit = null;
-				signalCut();
+				signalBadge('visited');
 			} else if (result.status === 'outOfTolerance') {
 				pendingVisit = { name: target, distance: result.run?.distanceToActive ?? 0 };
 			} else {
@@ -302,7 +304,7 @@
 		try {
 			run = await resolveNavigationHarvest(confirm);
 			feedback = null;
-			if (confirm) signalCut();
+			if (confirm) signalBadge('cut');
 		} catch {
 			feedback = 'The harvest could not be updated.';
 		} finally {
@@ -356,8 +358,10 @@
 							<p class="truncate text-sm font-semibold">{active.name}</p>
 							<p class="text-[11px] tabular-nums text-white/55">{formatGamePoint(active)}</p>
 						</div>
-						{#if cutBadge}
+						{#if badge === 'cut'}
 							<span class="rounded bg-emerald-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">Tree Cut</span>
+						{:else if badge === 'visited'}
+							<span class="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">Visited</span>
 						{:else}
 							<span class="text-[10px] tabular-nums text-sky-300">{run.distanceToActive?.toFixed(1) ?? '—'} m</span>
 						{/if}
