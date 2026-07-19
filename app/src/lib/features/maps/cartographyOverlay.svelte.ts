@@ -1,5 +1,13 @@
 import { emit } from '@tauri-apps/api/event';
-import { getPinConfigs, type CoordScanResult, type MapPinInput, type PinConfig } from '$lib/api';
+import {
+	createMapPin,
+	getNearbyMapPin,
+	getPinConfigs,
+	scanMapCoordinates,
+	type CoordScanResult,
+	type MapPinInput,
+	type PinConfig,
+} from '$lib/api';
 
 /**
  * The cartography overlay's shared state: the current planet/map-view context
@@ -87,6 +95,51 @@ export function cartographyScanFailureMessage(
 		implausible: `The readout is outside ${planet}.`,
 	};
 	return messages[status] ?? 'Coordinate scan failed.';
+}
+
+export type PinDropOutcome =
+	| { kind: 'placed'; label: string }
+	| { kind: 'duplicate'; input: MapPinInput; existingName: string; distance: number; label: string }
+	| { kind: 'error'; message: string };
+
+/**
+ * Scan the current coordinates and drop a pin for a palette configuration.
+ * Reports a nearby existing pin (for the caller to confirm) or a typed failure
+ * rather than throwing on the expected legs.
+ */
+export async function scanAndDropPin(
+	config: PinConfig,
+	context: CartographyContext,
+	calibratedPlanets: string[],
+): Promise<PinDropOutcome> {
+	const { planet, mapViewId } = context;
+	if (!planet || !calibratedPlanets.includes(planet)) {
+		return { kind: 'error', message: 'Choose a calibrated planet in Maps first.' };
+	}
+	const result = await scanMapCoordinates(planet);
+	const input = cartographyPinInput(planet, mapViewId, config, result);
+	if (!input) {
+		return { kind: 'error', message: cartographyScanFailureMessage(result.status, planet) };
+	}
+	const nearby = await getNearbyMapPin(planet, mapViewId, input.lon, input.lat);
+	if (nearby) {
+		return {
+			kind: 'duplicate',
+			input,
+			existingName: nearby.pin.name,
+			distance: nearby.distance,
+			label: config.label,
+		};
+	}
+	await createMapPin(input);
+	void emit(MAP_PINS_CHANGED_EVENT, { planet });
+	return { kind: 'placed', label: config.label };
+}
+
+/** Create a confirmed duplicate pin and notify the map. */
+export async function createConfirmedPin(input: MapPinInput): Promise<void> {
+	await createMapPin({ ...input, allowNearby: true });
+	void emit(MAP_PINS_CHANGED_EVENT, { planet: input.planet });
 }
 
 /** Build the pin-drop input for a palette configuration and a scan result. */

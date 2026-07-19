@@ -1,28 +1,19 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { listen, emit } from '@tauri-apps/api/event';
-	import {
-		createMapPin,
-		getMapViews,
-		getNearbyMapPin,
-		getPlanetMaps,
-		scanMapCoordinates,
-		type MapView,
-		type PinConfig,
-		type PlanetMap,
-	} from '$lib/api';
+	import { listen } from '@tauri-apps/api/event';
+	import { getMapViews, getPlanetMaps, type MapView, type PinConfig, type PlanetMap } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
 	import { createWindowSizeSync } from '$lib/windows/windowSize';
 	import { pinGlyph } from '$lib/features/maps/pinIcons';
 	import {
 		acceptCartographyContextBroadcast,
-		cartographyPinInput,
-		cartographyScanFailureMessage,
 		cartographyOverlay,
 		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
+		createConfirmedPin,
 		loadCartographyConfigs,
-		MAP_PINS_CHANGED_EVENT,
+		scanAndDropPin,
+		type PinDropOutcome,
 	} from '$lib/features/maps/cartographyOverlay.svelte';
 
 	let root: HTMLDivElement;
@@ -37,12 +28,7 @@
 				'Selected map',
 	);
 	let busy = $state(false);
-	type PendingDuplicate = {
-		input: NonNullable<ReturnType<typeof cartographyPinInput>>;
-		buttonName: string;
-		existingName: string;
-		distance: number;
-	};
+	type PendingDuplicate = Extract<PinDropOutcome, { kind: 'duplicate' }>;
 	let pendingDuplicate = $state<PendingDuplicate | null>(null);
 	let keepExistingButton = $state<HTMLButtonElement>();
 	let feedback = $state<{ text: string; success: boolean } | null>(null);
@@ -110,36 +96,21 @@
 	}
 
 	async function dropPin(config: PinConfig) {
-		const planet = cartographyOverlay.context.planet;
-		const mapViewId = cartographyOverlay.context.mapViewId;
 		if (busy) return;
-		if (!planet || !calibratedPlanets.some((candidate) => candidate.name === planet)) {
-			flash('Choose a calibrated planet in Maps first.');
-			return;
-		}
 		busy = true;
 		try {
-			const result = await scanMapCoordinates(planet);
-			const input = cartographyPinInput(planet, mapViewId, config, result);
-			if (!input) {
-				flash(cartographyScanFailureMessage(result.status, planet));
-				return;
-			}
-			const nearby = await getNearbyMapPin(planet, mapViewId, input.lon, input.lat);
-			if (nearby) {
-				pendingDuplicate = {
-					input,
-					buttonName: config.label,
-					existingName: nearby.pin.name,
-					distance: nearby.distance,
-				};
+			const outcome = await scanAndDropPin(
+				config,
+				cartographyOverlay.context,
+				calibratedPlanets.map((candidate) => candidate.name),
+			);
+			if (outcome.kind === 'placed') flash(`${outcome.label} pinned.`, true);
+			else if (outcome.kind === 'error') flash(outcome.message);
+			else {
+				pendingDuplicate = outcome;
 				await tick();
 				keepExistingButton?.focus();
-				return;
 			}
-			await createMapPin(input);
-			void emit(MAP_PINS_CHANGED_EVENT, { planet });
-			flash(`${config.label} pinned.`, true);
 		} catch (error) {
 			flash(describeError(error, 'The pin could not be saved'));
 		} finally {
@@ -157,11 +128,9 @@
 		if (!pending || busy) return;
 		busy = true;
 		try {
-			pending.input.allowNearby = true;
-			await createMapPin(pending.input);
-			void emit(MAP_PINS_CHANGED_EVENT, { planet: pending.input.planet });
+			await createConfirmedPin(pending.input);
 			pendingDuplicate = null;
-			flash(`${pending.buttonName} pinned.`, true);
+			flash(`${pending.label} pinned.`, true);
 		} catch (error) {
 			pendingDuplicate = null;
 			flash(describeError(error, 'The pin could not be saved'));

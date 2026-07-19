@@ -15,18 +15,13 @@
 	import NavigationSetupModal from '$lib/features/maps/NavigationSetupModal.svelte';
 	import RadarCalibrationModal from '$lib/features/maps/RadarCalibrationModal.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
-	import type { PinFormValues } from '$lib/features/maps/PinEditModal.svelte';
 	import { createMapsModel } from '$lib/features/maps/mapsModel.svelte';
-	import {
-		formatWaypoint,
-		type WaypointCopyResult,
-	} from '$lib/features/maps/waypoint';
+	import { createMapsController } from '$lib/features/maps/mapsController.svelte';
 	import type { GamePoint } from '$lib/features/maps/coords';
 	import type { MapFocusRequest } from '$lib/features/maps/mapTools';
-	import type { MapPin, MapView, NavigationRun } from '$lib/api';
+	import type { MapView, NavigationRun } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
 	import {
-		getNearbyMapPin,
 		getNavigationSnapshot,
 		showNavigationOverlays,
 		toggleCartographyOverlay,
@@ -35,6 +30,7 @@
 	import { broadcastCartographyContext } from '$lib/features/maps/cartographyOverlay.svelte';
 
 	const model = createMapsModel();
+	const controller = createMapsController(model);
 	let navigation = $state<NavigationRun | null>(null);
 
 	const selectedMapName = $derived(
@@ -82,13 +78,6 @@
 		});
 	}
 
-	// The pin form: create mode carries the drop point (from a map click
-	// or a coordinate scan, which may add an altitude), edit mode the pin
-	// being edited (its position is not editable in the form).
-	let formOpen = $state(false);
-	let dropPoint = $state<GamePoint>({ lon: 0, lat: 0 });
-	let dropAltitude = $state<number | null>(null);
-	let editingPin = $state<MapPin | null>(null);
 	let calibrationOpen = $state(false);
 	let overlayConfigOpen = $state(false);
 	let navigationSetupOpen = $state(false);
@@ -144,101 +133,9 @@
 		focusRequest = { point, nonce: ++focusNonce };
 	}
 
-	// Transient action feedback (copy confirmations, CRUD failures).
-	let feedback = $state<string | null>(null);
-	let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
-	function flash(message: string) {
-		feedback = message;
-		if (feedbackTimer) clearTimeout(feedbackTimer);
-		feedbackTimer = setTimeout(() => (feedback = null), 4000);
-	}
-
-	function openDropForm(point: GamePoint, altitude: number | null = null) {
-		dropPoint = point;
-		dropAltitude = altitude;
-		editingPin = null;
-		formOpen = true;
-	}
-
-	function openEditForm(pin: MapPin) {
-		dropPoint = { lon: pin.lon, lat: pin.lat };
-		editingPin = pin;
-		formOpen = true;
-	}
-
-	async function submitPinForm(values: PinFormValues): Promise<boolean> {
-		try {
-			if (editingPin) {
-				await model.editPin(editingPin.id, {
-					name: values.name,
-					icon: values.icon,
-					kind: values.kind,
-					radiusM: values.radiusM,
-					notes: values.notes || null,
-				});
-				flash(`Pin "${values.name}" updated.`);
-			} else if (model.selected) {
-				const nearby = await getNearbyMapPin(
-					model.selected.name,
-					model.selectedViewId,
-					dropPoint.lon,
-					dropPoint.lat,
-				);
-				const allowNearby = nearby
-					? window.confirm(`"${nearby.pin.name}" is ${nearby.distance.toFixed(2)} units away. Create another pin here anyway?`)
-					: false;
-				if (nearby && !allowNearby) return false;
-				await model.addPin({
-					planet: model.selected.name,
-					lon: dropPoint.lon,
-					lat: dropPoint.lat,
-					altitude: dropAltitude,
-					name: values.name,
-					icon: values.icon,
-					kind: values.kind,
-					radiusM: values.radiusM,
-					notes: values.notes || null,
-					sessionId: null,
-					mapViewId: model.selectedViewId,
-					pinConfigId: values.configId ?? null,
-					allowNearby,
-				});
-				flash(`Pin "${values.name}" dropped.`);
-			}
-			return true;
-		} catch (e) {
-			flash(describeError(e, 'The pin could not be saved'));
-			return false;
-		}
-	}
-
-	async function deletePin(pin: MapPin) {
-		try {
-			await model.removePin(pin.id);
-			flash(`Pin "${pin.name}" deleted.`);
-		} catch (e) {
-			flash(describeError(e, 'The pin could not be deleted'));
-		}
-	}
-
-	async function copyWaypoint(pin: MapPin): Promise<WaypointCopyResult> {
-		const waypoint = formatWaypoint({
-			technicalName: model.selected?.technicalName ?? null,
-			lon: pin.lon,
-			lat: pin.lat,
-			altitude: pin.altitude,
-			label: pin.name,
-		});
-		if (!waypoint) {
-			return { message: 'Waypoint unavailable', copied: false };
-		}
-		try {
-			await navigator.clipboard.writeText(waypoint);
-			return { message: 'Waypoint copied.', copied: true };
-		} catch {
-			return { message: 'Copy failed', copied: false };
-		}
-	}
+	// The pin lifecycle (form state, create/edit/delete/copy, feedback) lives in
+	// the controller; the route flashes view-selection errors through it too.
+	const flash = controller.flash;
 </script>
 
 <div class="flex h-full flex-col gap-3 px-4 pb-4 sm:px-6 sm:pb-6">
@@ -264,7 +161,7 @@
 	</header>
 
 	<div class="h-4 shrink-0">
-		{#if feedback}<p class="truncate text-xs text-text-secondary" role="status">{feedback}</p>{/if}
+		{#if controller.feedback}<p class="truncate text-xs text-text-secondary" role="status">{controller.feedback}</p>{/if}
 	</div>
 
 	{#if model.error}
@@ -286,10 +183,10 @@
 				selectedViewId={model.selectedViewId}
 				{focusRequest}
 				{navigation}
-				onmapclick={openDropForm}
-				oncopywaypoint={copyWaypoint}
-				oneditpin={openEditForm}
-				ondeletepin={deletePin}
+				onmapclick={controller.openDropForm}
+				oncopywaypoint={controller.copyWaypoint}
+				oneditpin={controller.openEditForm}
+				ondeletepin={controller.deletePin}
 				onselectplanet={(name) => void selectPlanet(name)}
 				onselectview={(id) => void selectView(id)}
 				onaddview={addView}
@@ -315,12 +212,12 @@
 />
 
 <PinEditModal
-	bind:open={formOpen}
-	point={dropPoint}
-	editing={editingPin}
+	bind:open={controller.formOpen}
+	point={controller.dropPoint}
+	editing={controller.editingPin}
 	planet={model.selected?.name ?? null}
 	mapViewId={model.selectedViewId}
-	onsubmit={submitPinForm}
+	onsubmit={controller.submitPinForm}
 />
 <CalibrationModal bind:open={calibrationOpen} />
 {#if model.selected}
