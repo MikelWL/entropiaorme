@@ -7,6 +7,7 @@
 	import { pinGlyph } from '$lib/features/maps/pinIcons';
 	import { CARTOGRAPHY_OVERLAY_CHANGED_EVENT } from '$lib/features/maps/cartographyOverlay.svelte';
 	import { createNavigationHudController } from '$lib/features/maps/navigationHudController.svelte';
+	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 
 	const NAVIGATION_HOTKEYS = ['f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'];
 
@@ -35,14 +36,13 @@
 		};
 	});
 
-	// Automatic updating polls the observe-only path while a route is live; the
-	// interval effect lives here in the component so it attaches to the HUD's
-	// lifecycle.
+	// Automatic updating polls the observe-only path while a route is live. The
+	// poll routes through the sanctioned visibility-gated helper (the single home
+	// for timer loops), and the effect attaches it to the HUD's lifecycle.
 	$effect(() => {
 		if (!c.autoUpdate || c.run?.status !== 'active') return;
 		const period = Math.max(1, c.updateIntervalSec) * 1000;
-		const timer = setInterval(() => void c.autoUpdateTick(), period);
-		return () => clearInterval(timer);
+		return useVisiblePoll(() => c.autoUpdateTick(), { intervalMs: period, immediate: false });
 	});
 
 	function drag(event: PointerEvent) {
@@ -89,7 +89,7 @@
 						{:else if c.badge === 'visited'}
 							<span class="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">Visited</span>
 						{:else}
-							<span class="text-[10px] tabular-nums text-sky-300">{c.run.distanceToActive?.toFixed(1) ?? '—'} m</span>
+							<span class="text-[10px] tabular-nums text-sky-300">{c.run.distanceToActive?.toFixed(1) ?? '-'} m</span>
 						{/if}
 					</div>
 				{/if}
