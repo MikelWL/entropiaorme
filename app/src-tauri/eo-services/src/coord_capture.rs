@@ -392,8 +392,15 @@ impl CoordCaptureService {
             region_h = region.h,
             "coordinate scan"
         );
-        if let Some(dir) = (self.providers.debug_dir)() {
-            write_debug_artefacts(&dir, &frame, &reads, &outcome);
+        // Persist the debug crop only for a problematic read (unreadable or
+        // implausible): those are the outcomes worth diagnosing. A clean read
+        // writes nothing, so the high-frequency navigation auto-poll does not
+        // leave a ~1 Hz screenshot of the player's live position in the data
+        // directory; the escape hatch stays available exactly when a read fails.
+        if !matches!(outcome, CoordScanOutcome::Read(_)) {
+            if let Some(dir) = (self.providers.debug_dir)() {
+                write_debug_artefacts(&dir, &frame, &reads, &outcome);
+            }
         }
         outcome
     }
