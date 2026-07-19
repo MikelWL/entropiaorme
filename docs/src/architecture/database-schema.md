@@ -550,6 +550,31 @@ open text rather than a closed set.
 | `notes` | TEXT | Optional free text. |
 | `session_id` | TEXT | Optional; references `tracking_sessions(id)`, the session the pin was dropped during. |
 | `map_view_id` | INTEGER | Optional; references `map_views(id)`. Null means the permanent Default map. |
+| `pin_config_id` | INTEGER | Optional; references `pin_configs(id)` (migration `0011`, indexed `idx_map_pins_config`). The palette configuration the pin instantiates: its colour, category, and special behaviour derive from that row, so `name`/`icon`/`radius_m` are a snapshot at drop time. Deleting the configuration deletes its pins (explicit cascade; foreign keys are disabled). |
+| `created_at` | REAL | Not null; Unix-epoch seconds. |
+
+#### `pin_configs`
+
+The per-preset pin palette (migration `0011`): each row is a *type* of pin
+scoped to one `(planet, map_view_id)` preset, and placed pins are instances of
+it. Editing a configuration restyles its placed pins; deleting one removes them.
+`category` is `generic` (no behaviour) or `special`; the only special `kind` so
+far is `tree`, which carries a distinct on-cooldown colour and is the sole pin
+kind the navigation router treats as a route stop.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `planet` | TEXT | Not null; the bundled map this palette entry belongs to. Indexed with `map_view_id` and `ordinal` (`idx_pin_configs_scope`). |
+| `map_view_id` | INTEGER | Optional; references `map_views(id)`. Null is the permanent Default map. |
+| `label` | TEXT | Not null; the palette label, snapshotted onto placed pins as their name. |
+| `category` | TEXT | Not null; `generic` or `special` (checked). |
+| `special_kind` | TEXT | Null for generic; `tree` for the special tree kind (checked). |
+| `icon` | TEXT | Not null; the palette emoji. |
+| `radius_m` | REAL | Null for an exact point; an area radius in metres. |
+| `colour` | TEXT | Not null; the generic colour, or a tree's available colour (hex). |
+| `cooldown_colour` | TEXT | Null for generic; a tree's on-cooldown colour (hex). |
+| `ordinal` | INTEGER | Not null; palette display order within the preset. |
 | `created_at` | REAL | Not null; Unix-epoch seconds. |
 
 ### Map navigation
@@ -739,7 +764,7 @@ additions (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
 `0005_market_observations.sql`, `0006_harvest_events.sql`,
 `0007_map_pins.sql`, `0008_map_views.sql`, `0009_map_navigation.sql`,
-`0010_navigation_runtime_fields.sql`); the runner
+`0010_navigation_runtime_fields.sql`, `0011_pin_configs.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
