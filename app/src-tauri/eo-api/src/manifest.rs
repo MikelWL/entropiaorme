@@ -1236,7 +1236,7 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
                 ArgSpec {
                     name: "hop_count",
-                    schema: schema(schema_for!(i64)),
+                    schema: schema(schema_for!(Option<i64>)),
                 },
                 ArgSpec {
                     name: "hotkey",

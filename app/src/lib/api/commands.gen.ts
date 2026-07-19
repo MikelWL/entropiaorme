@@ -2635,7 +2635,7 @@ export async function navigationSnapshot(): Promise<NavigationRun | null> {
 	return invokeCommand('navigation_snapshot', {});
 }
 
-export async function navigationStart(planet: string, mapViewId: number | null, startLon: number, startLat: number, hopCount: number, hotkey: string): Promise<NavigationRun> {
+export async function navigationStart(planet: string, mapViewId: number | null, startLon: number, startLat: number, hopCount: number | null, hotkey: string): Promise<NavigationRun> {
 	return invokeCommand('navigation_start', { planet, map_view_id: mapViewId, start_lon: startLon, start_lat: startLat, hop_count: hopCount, hotkey });
 }
 

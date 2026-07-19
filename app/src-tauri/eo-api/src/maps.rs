@@ -202,7 +202,7 @@ impl Api {
         map_view_id: Option<i64>,
         start_lon: f64,
         start_lat: f64,
-        hop_count: i64,
+        hop_count: Option<i64>,
         hotkey: String,
     ) -> Result<NavigationRun, ApiError> {
         self.validate_pin_coords(&planet, start_lon, start_lat)?;

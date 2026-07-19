@@ -306,11 +306,15 @@ impl NavigationService {
         map_view_id: Option<i64>,
         start_lon: f64,
         start_lat: f64,
-        hop_count: i64,
+        hop_count: Option<i64>,
         hotkey: String,
     ) -> Result<NavigationRun, NavigationError> {
-        if !(1..=500).contains(&hop_count) {
-            return Err(NavigationError::InvalidHopCount);
+        // An absent hop count means "chart every available pin"; an explicit
+        // count stays bounded so interactive planning holds its 500-stop cap.
+        if let Some(hops) = hop_count {
+            if !(1..=500).contains(&hops) {
+                return Err(NavigationError::InvalidHopCount);
+            }
         }
         if !NAVIGATION_HOTKEYS.contains(&hotkey.as_str()) {
             return Err(NavigationError::InvalidHotkey);
@@ -319,7 +323,10 @@ impl NavigationService {
         let _guard = self.operation.lock().await;
         let now = naive_to_epoch(self.clock.now());
         let candidates = load_candidates(&self.db, planet.clone(), map_view_id, now).await?;
-        let route = optimise_open_route((start_lon, start_lat), &candidates, hop_count as usize);
+        let cap = hop_count
+            .map(|hops| hops as usize)
+            .unwrap_or(candidates.len());
+        let route = optimise_open_route((start_lon, start_lat), &candidates, cap);
         if route.is_empty() {
             return Err(NavigationError::NoPins);
         }
@@ -1269,7 +1276,7 @@ mod tests {
     async fn navigation_hotkey_reenters_the_runtime_from_the_dispatch_thread() {
         let (_dir, service, position, _changes, input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
         let first = run.active_stop().unwrap();
@@ -1304,7 +1311,7 @@ mod tests {
     async fn route_progress_persists_supports_undo_and_stays_visible_at_completion() {
         let (_dir, service, position, changes, _input) = navigation_fixture().await;
         let mut run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
         assert_eq!(run.stops.len(), 2);
@@ -1345,7 +1352,7 @@ mod tests {
     async fn arriving_at_a_pending_stop_marks_it_and_replans_from_the_observed_position() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 3, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(3), "f8".into())
             .await
             .unwrap();
         // Pick a pending stop beyond the arrival radius of the active one, so a
@@ -1393,7 +1400,7 @@ mod tests {
     async fn repeated_harvest_swings_near_the_same_tree_do_not_advance_the_next_stop() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1424,7 +1431,7 @@ mod tests {
     async fn a_harvest_prefers_the_active_tree_when_several_are_within_range() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
         // A(10,0) is active and D(13,0) is pending; (11,0) is within five of
@@ -1451,7 +1458,7 @@ mod tests {
     async fn a_harvest_amid_only_non_active_trees_stays_ambiguous() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         service
-            .start("Calypso".into(), None, 0.0, 0.0, 3, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(3), "f8".into())
             .await
             .unwrap();
         // (16,2) is within five of pending D(13,0) and B(20,3) but not of the
@@ -1472,7 +1479,7 @@ mod tests {
     async fn update_position_observes_without_recording_a_visit() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1499,7 +1506,7 @@ mod tests {
     async fn mark_visited_outside_tolerance_needs_force_then_completes_the_active_tree() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1535,7 +1542,7 @@ mod tests {
     async fn a_regenerated_route_excludes_recently_visited_trees() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, 4, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(4), "f8".into())
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1544,7 +1551,7 @@ mod tests {
         service.end().await.unwrap();
 
         let regenerated = service
-            .start("Calypso".into(), None, 0.0, 0.0, 4, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(4), "f8".into())
             .await
             .unwrap();
         // The just-visited tree is on cooldown, so it never enters the new route.
@@ -1558,7 +1565,7 @@ mod tests {
     async fn a_lingering_run_is_ended_at_startup_not_resumed() {
         let (dir, service, position, _changes, _input) = navigation_fixture().await;
         service
-            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
         assert!(service.snapshot().await.unwrap().is_some());

@@ -7,20 +7,45 @@
 		getNavigationSnapshot,
 		hideNavigationOverlays,
 		markNavigationVisited,
+		scanMapCoordinates,
 		skipNavigationStop,
+		startNavigation,
 		undoNavigationStop,
 		updateNavigationPosition,
 		type NavigationPositionStatus,
 		type NavigationRun,
 	} from '$lib/api';
 	import { createWindowSizeSync } from '$lib/windows/windowSize';
-	import { formatGamePoint } from '$lib/features/maps/coords';
+	import { formatGamePoint, type GamePoint } from '$lib/features/maps/coords';
 	import { pinGlyph } from '$lib/features/maps/pinIcons';
+	import {
+		acceptCartographyContextBroadcast,
+		cartographyScanFailureMessage,
+		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
+	} from '$lib/features/maps/cartographyOverlay.svelte';
+	import { describeError } from '$lib/view/errorState';
+
+	const NAVIGATION_HOTKEYS = ['f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'];
 
 	let root: HTMLDivElement;
 	let run = $state<NavigationRun | null>(null);
 	let busy = $state(false);
 	let feedback = $state<string | null>(null);
+	// Route setup lives here (not on the Maps page) so a single-monitor player
+	// can plan while the game is fullscreen. Planet/map context arrives from the
+	// main surface over the shared cartography-context broadcast.
+	let planet = $state<string | null>(null);
+	let mapViewId = $state<number | null>(null);
+	let start = $state<GamePoint | null>(null);
+	// Absent stop count charts every available pin; an explicit count stays capped.
+	let hops = $state<number | null>(null);
+	let hotkey = $state('f8');
+	const canStart = $derived(
+		!busy &&
+			start != null &&
+			planet != null &&
+			(hops == null || (hops >= 1 && hops <= 500)),
+	);
 	// Set when a manual Visited lands outside the arrival tolerance: the visit
 	// is held until the user confirms a forced record.
 	let pendingVisit = $state<{ name: string; distance: number } | null>(null);
@@ -88,7 +113,8 @@
 			const next = await getNavigationSnapshot();
 			if (next && run) applyHarvestFeedback(run, next);
 			run = next;
-			if (!run) void hideNavigationOverlays();
+			// No run means the setup panel is shown; the overlay only hides on an
+			// explicit close, not whenever a route ends.
 		} catch {
 			feedback = 'Navigation is unavailable.';
 		}
@@ -96,13 +122,70 @@
 
 	onMount(() => {
 		let unlisten: (() => void) | undefined;
+		let unlistenContext: (() => void) | undefined;
 		void hydrate();
 		void listen('navigation:updated', hydrate).then((stop) => (unlisten = stop));
+		void listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
+			const context = acceptCartographyContextBroadcast(event.payload);
+			planet = context.planet;
+			mapViewId = context.mapViewId;
+		}).then((stop) => (unlistenContext = stop));
 		sizeSync.schedule();
 		const observer = new ResizeObserver(() => sizeSync.schedule());
 		observer.observe(root);
-		return () => { unlisten?.(); observer.disconnect(); sizeSync.cancel(); };
+		return () => { unlisten?.(); unlistenContext?.(); observer.disconnect(); sizeSync.cancel(); };
 	});
+
+	// Capture the current in-game coordinates as the route start. A reading that
+	// OCRs cleanly but falls outside the planet's map bounds ('implausible') still
+	// carries usable numbers, so it seeds the route with a note rather than being
+	// discarded as a failure.
+	async function captureStart() {
+		if (busy || !planet) return;
+		busy = true;
+		feedback = null;
+		try {
+			const result = await scanMapCoordinates(planet);
+			if (
+				(result.status === 'read' || result.status === 'implausible') &&
+				result.lon != null &&
+				result.lat != null
+			) {
+				start = { lon: result.lon, lat: result.lat };
+				feedback =
+					result.status === 'implausible'
+						? `Captured ${formatGamePoint(start)} (reads outside ${planet}).`
+						: null;
+			} else {
+				feedback = cartographyScanFailureMessage(result.status, planet);
+			}
+		} catch (cause) {
+			feedback = describeError(cause, 'The current position could not be captured');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function beginRoute() {
+		if (!canStart || !start || !planet) return;
+		busy = true;
+		feedback = null;
+		try {
+			run = await startNavigation(planet, mapViewId, start.lon, start.lat, hops, hotkey);
+			start = null;
+			// The main surface repositions the HUD and radar around the live route.
+		} catch (cause) {
+			feedback = describeError(cause, 'The route could not be created');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function closeOverlay() {
+		if (busy) return;
+		busy = true;
+		try { await hideNavigationOverlays(); } finally { busy = false; }
+	}
 
 	async function act(action: () => Promise<NavigationRun>) {
 		if (busy) return;
@@ -170,10 +253,14 @@
 	<div class="glass-panel w-72 rounded-xl p-3 text-white shadow-xl">
 		<div class="flex items-start justify-between gap-3 border-b border-white/10 pb-2">
 			<div class="min-w-0">
-				<p class="text-[9px] font-bold uppercase tracking-wider text-white/35">Route guidance</p>
-				<p class="mt-1 truncate text-[11px] text-white/65">{run ? `${run.planet} · ${run.mapViewName ?? 'Default'} · ${run.hotkey.toUpperCase()} updates` : 'No route'}</p>
+				<p class="text-[9px] font-bold uppercase tracking-wider text-white/35">{run ? 'Route guidance' : 'Plan route'}</p>
+				<p class="mt-1 truncate text-[11px] text-white/65">{run ? `${run.planet} · ${run.mapViewName ?? 'Default'} · ${run.hotkey.toUpperCase()} updates` : planet ? `${planet} · new route` : 'No planet selected'}</p>
 			</div>
-			<button class="release-btn" aria-label="End route and close" onclick={endRoute}>×</button>
+			{#if run}
+				<button class="release-btn" aria-label="End route and close" onclick={endRoute}>×</button>
+			{:else}
+				<button class="release-btn" aria-label="Close" onclick={closeOverlay}>×</button>
+			{/if}
 		</div>
 		{#if run && active}
 			<div class="py-3">
@@ -216,8 +303,29 @@
 				<button class="hud-btn" disabled={busy} onclick={() => act(undoNavigationStop)}>Undo last</button>
 				<button class="hud-btn primary" disabled={busy} onclick={endRoute}>Done</button>
 			</div>
+		{:else if planet}
+			<div class="space-y-2.5 py-3">
+				<div>
+					<p class="text-[9px] uppercase tracking-wider text-white/35">Starting position</p>
+					<p class="mt-0.5 text-[11px] tabular-nums text-white/70">{start ? formatGamePoint(start) : 'Not captured'}</p>
+				</div>
+				<button class="hud-btn primary w-full" disabled={busy} onclick={captureStart}>
+					{start ? 'Capture again' : 'Capture current position'}
+				</button>
+				<label class="block">
+					<span class="mb-0.5 block text-[9px] uppercase tracking-wider text-white/35">Stops (blank = all pins)</span>
+					<input class="hud-field w-full" type="number" min="1" max="500" placeholder="All pins" bind:value={hops} />
+				</label>
+				<label class="block">
+					<span class="mb-0.5 block text-[9px] uppercase tracking-wider text-white/35">Update hotkey</span>
+					<select class="hud-field w-full" bind:value={hotkey} aria-label="Navigation update hotkey">
+						{#each NAVIGATION_HOTKEYS as key}<option value={key}>{key.toUpperCase()}</option>{/each}
+					</select>
+				</label>
+				<button class="hud-btn primary w-full" disabled={!canStart} onclick={beginRoute}>Start route</button>
+			</div>
 		{:else}
-			<p class="py-4 text-xs text-white/55">No active route.</p>
+			<p class="py-4 text-xs text-white/55">Open a planet map in the app to plan a route.</p>
 		{/if}
 		<div class="h-4 pt-1"><p class="truncate text-[9px] text-orange-300/85" role="status">{feedback ?? ''}</p></div>
 	</div>
@@ -230,4 +338,7 @@
 	.hud-btn:hover { border-color: rgba(56,189,248,.35); color: rgb(125 211 252); }
 	.hud-btn.primary { background: rgba(56,189,248,.16); color: rgb(125 211 252); }
 	.hud-btn:disabled { opacity: .4; cursor: default; }
+	.hud-field { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); border-radius: 5px; padding: 4px 7px; color: rgba(255,255,255,.85); font-size: 11px; }
+	.hud-field:focus { outline: none; border-color: rgba(56,189,248,.5); }
+	.hud-field option { color: #0a0e17; }
 </style>

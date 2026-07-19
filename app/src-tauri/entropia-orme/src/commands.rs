@@ -1126,7 +1126,7 @@ pub async fn navigation_start(
     map_view_id: Option<i64>,
     start_lon: f64,
     start_lat: f64,
-    hop_count: i64,
+    hop_count: Option<i64>,
     hotkey: String,
 ) -> Result<NavigationRun, ApiError> {
     facade(&app)?

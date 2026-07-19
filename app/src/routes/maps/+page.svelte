@@ -12,7 +12,6 @@
 	import MapControls from '$lib/features/maps/MapControls.svelte';
 	import { startMapsCartographySync } from '$lib/features/maps/mapsCartographySync';
 	import MapViewer from '$lib/features/maps/MapViewer.svelte';
-	import NavigationSetupModal from '$lib/features/maps/NavigationSetupModal.svelte';
 	import RadarCalibrationModal from '$lib/features/maps/RadarCalibrationModal.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import { createMapsModel } from '$lib/features/maps/mapsModel.svelte';
@@ -48,7 +47,14 @@
 			if (run?.status === 'active' || run?.status === 'paused') void showNavigationOverlays();
 		}).catch(() => {});
 		void listen('navigation:updated', () => {
-			void getNavigationSnapshot().then((run) => (navigation = run)).catch(() => {});
+			void getNavigationSnapshot().then((run) => {
+				const wasActive = navigation?.status === 'active' || navigation?.status === 'paused';
+				navigation = run;
+				// A route just started (from the overlay's setup panel): position the
+				// HUD and radar around the live run.
+				const nowActive = run?.status === 'active' || run?.status === 'paused';
+				if (nowActive && !wasActive) void showNavigationOverlays();
+			}).catch(() => {});
 			// A recorded visit changes a pin's cooldown, so refresh the pins the
 			// hover cards read from.
 			void model.refreshPins();
@@ -80,8 +86,18 @@
 
 	let calibrationOpen = $state(false);
 	let overlayConfigOpen = $state(false);
-	let navigationSetupOpen = $state(false);
 	let radarCalibrationOpen = $state(false);
+
+	// Route planning happens in the pre-spawned HUD overlay (not a modal on this
+	// page) so a single-monitor player can plan while the game is fullscreen.
+	// Publish the current planet/map context, then show the overlay in setup mode.
+	async function openRouteSetup() {
+		broadcastCartographyContext({
+			planet: model.selected?.name ?? null,
+			mapViewId: model.selectedViewId,
+		});
+		await showNavigationOverlays();
+	}
 	let focusRequest = $state<MapFocusRequest | null>(null);
 	let focusNonce = 0;
 
@@ -154,7 +170,7 @@
 				onconfigure={() => (overlayConfigOpen = true)}
 				oncalibrate={() => (calibrationOpen = true)}
 				onselectpin={(pin) => focusMap({ lon: pin.lon, lat: pin.lat })}
-				onroute={() => (navigationSetupOpen = true)}
+				onroute={() => void openRouteSetup()}
 				onradarcalibrate={() => (radarCalibrationOpen = true)}
 			/>
 		{/if}
@@ -220,18 +236,6 @@
 	onsubmit={controller.submitPinForm}
 />
 <CalibrationModal bind:open={calibrationOpen} />
-{#if model.selected}
-	<NavigationSetupModal
-		bind:open={navigationSetupOpen}
-		planet={model.selected.name}
-		mapViewId={model.selectedViewId}
-		pins={model.pins}
-		onstarted={(run) => {
-			navigation = run;
-			void showNavigationOverlays();
-		}}
-	/>
-{/if}
 <RadarCalibrationModal bind:open={radarCalibrationOpen} oncomplete={() => {
 	if (navigation) void showNavigationOverlays();
 }} />

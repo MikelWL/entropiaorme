@@ -167,6 +167,8 @@ pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
 
 #[allow(dead_code)]
 pub const NAVIGATION_COMMANDS: &[&str] = &[
+    "navigation_start",
+    "maps_scan_coordinates",
     "navigation_snapshot",
     "navigation_update_position",
     "navigation_mark_visited",
