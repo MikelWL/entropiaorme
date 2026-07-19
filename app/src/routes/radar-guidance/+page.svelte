@@ -22,6 +22,10 @@
 	const dotRadius = $derived(inRange && distance != null ? (distance / RADAR_RANGE_M) * EDGE : 0);
 	const dotX = $derived(50 + Math.sin(angle) * dotRadius);
 	const dotY = $derived(50 - Math.cos(angle) * dotRadius);
+	// The line stops at the dot when the tree is in range; only a beyond-range
+	// tree draws the full line to the radar edge.
+	const lineX = $derived(inRange ? dotX : x2);
+	const lineY = $derived(inRange ? dotY : y2);
 
 	async function hydrate() {
 		const [nextRun, geometry] = await Promise.all([getNavigationSnapshot(), getRadarGeometry()]);
@@ -42,7 +46,7 @@
 		<defs>
 			<filter id="glow"><feGaussianBlur stdDeviation="1.2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
 		</defs>
-		<line x1="50" y1="50" {x2} {y2} stroke="rgba(125,211,252,.9)" stroke-width="2" stroke-linecap="round" filter="url(#glow)" />
+		<line x1="50" y1="50" x2={lineX} y2={lineY} stroke="rgba(125,211,252,.9)" stroke-width="2" stroke-linecap="round" filter="url(#glow)" />
 		{#if inRange}
 			<circle cx={dotX} cy={dotY} r="3.5" fill="rgba(125,211,252,.95)" filter="url(#glow)" />
 		{/if}
