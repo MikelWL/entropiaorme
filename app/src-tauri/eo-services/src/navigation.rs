@@ -18,10 +18,11 @@ use crate::keystroke_source::{KeystrokeKind, KeystrokeSource};
 use crate::time::naive_to_epoch;
 
 /// Arrival radius, in game units (metres): a harvest or a manual Visited
-/// within this of a route tree counts as reaching it. Loosened to five so a
-/// player standing beside a tree, not exactly on its surveyed pin, still
-/// registers arrival on the happy path.
-pub const ARRIVAL_TOLERANCE_UNITS: f64 = 5.0;
+/// within this of a route tree counts as reaching it. Set to fifteen because
+/// Entropia Universe lets a player start cutting a tree from a wide radius, so
+/// arrival should register anywhere within that reach, not only right on the
+/// surveyed pin. Distinct from the pin-drop duplicate radius below.
+pub const ARRIVAL_TOLERANCE_UNITS: f64 = 15.0;
 /// Radius, in game units (metres), within which a new pin is flagged as a
 /// possible duplicate of an existing one (advisory only).
 pub const DUPLICATE_TOLERANCE_UNITS: f64 = 5.0;
@@ -1222,11 +1223,13 @@ mod tests {
     }
 
     #[test]
-    fn arrival_policy_is_euclidean_and_inclusive_at_five_units() {
-        assert_eq!(ARRIVAL_TOLERANCE_UNITS, 5.0);
-        assert_eq!(distance((0.0, 0.0), (3.0, 4.0)), ARRIVAL_TOLERANCE_UNITS);
-        assert!(distance((0.0, 0.0), (3.0, 4.0)) <= ARRIVAL_TOLERANCE_UNITS);
-        assert!(distance((0.0, 0.0), (5.01, 0.0)) > ARRIVAL_TOLERANCE_UNITS);
+    fn arrival_policy_is_euclidean_and_inclusive_at_fifteen_units() {
+        assert_eq!(ARRIVAL_TOLERANCE_UNITS, 15.0);
+        assert_eq!(distance((0.0, 0.0), (9.0, 12.0)), ARRIVAL_TOLERANCE_UNITS);
+        assert!(distance((0.0, 0.0), (9.0, 12.0)) <= ARRIVAL_TOLERANCE_UNITS);
+        assert!(distance((0.0, 0.0), (15.01, 0.0)) > ARRIVAL_TOLERANCE_UNITS);
+        // The pin-drop duplicate radius is a separate, tighter policy.
+        assert_eq!(DUPLICATE_TOLERANCE_UNITS, 5.0);
     }
 
     async fn navigation_fixture() -> (
@@ -1257,11 +1260,14 @@ mod tests {
             })
             .await
             .unwrap();
+        // Laid out for the fifteen-unit arrival radius: A and D sit close enough
+        // to share a point (the "prefer the active tree" case), while B and C are
+        // spread beyond the radius (the out-of-order and ambiguity cases).
         for (name, lon, lat) in [
-            ("A", 10.0, 0.0),
-            ("D", 13.0, 0.0),
-            ("B", 20.0, 3.0),
-            ("C", 8.0, 12.0),
+            ("A", 30.0, 0.0),
+            ("D", 39.0, 0.0),
+            ("B", 60.0, 9.0),
+            ("C", 24.0, 36.0),
         ] {
             pins.create(NewMapPin {
                 planet: "Calypso".into(),
@@ -1538,7 +1544,7 @@ mod tests {
         *position.lock().unwrap() = (first.lon as i64, first.lat as i64);
         service.harvest_position("success").await.unwrap();
 
-        // The next tree is three units away. A one-unit OCR shift is inside
+        // The next tree is nine units away. A one-unit OCR shift is inside
         // both its arrival radius and the previous observation's debounce
         // radius, so this repeated swing must not consume the next stop.
         *position.lock().unwrap() = (first.lon as i64 + 1, first.lat as i64);
@@ -1565,10 +1571,10 @@ mod tests {
             .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
             .await
             .unwrap();
-        // A(10,0) is active and D(13,0) is pending; (11,0) is within five of
+        // A(30,0) is active and D(39,0) is pending; (34,0) is within fifteen of
         // both. The harvest resolves to the active tree, not an ambiguity.
         let active = run.active_stop().unwrap().clone();
-        *position.lock().unwrap() = (11, 0);
+        *position.lock().unwrap() = (34, 0);
         let PositionUpdate::Updated(updated) = service.harvest_position("success").await.unwrap()
         else {
             panic!("the harvest resolves to the active tree")
@@ -1688,9 +1694,9 @@ mod tests {
             .start("Calypso".into(), None, 0.0, 0.0, Some(3), "f8".into())
             .await
             .unwrap();
-        // (16,2) is within five of pending D(13,0) and B(20,3) but not of the
-        // active A(10,0), so there is no active tree to fall back on: never guess.
-        *position.lock().unwrap() = (16, 2);
+        // (50,4) is within fifteen of pending D(39,0) and B(60,9) but not of the
+        // active A(30,0), so there is no active tree to fall back on: never guess.
+        *position.lock().unwrap() = (50, 4);
         let PositionUpdate::Ambiguous(ambiguous) =
             service.harvest_position("success").await.unwrap()
         else {
