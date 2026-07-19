@@ -21,9 +21,10 @@ harvesting activity tables plus the harvest columns on the summary and
 rollup projections), `0007_map_pins.sql` (the cartography pins),
 `0008_map_views.sql` (independent named pin sets over each planet map),
 `0009_map_navigation.sql` (persisted routes, stop progress, pin visits, radar
-calibration, and cartography spatial indexes), and
+calibration, and cartography spatial indexes),
 `0010_navigation_runtime_fields.sql` (the last-position timestamp and
-flow-scoped route hotkey). The
+flow-scoped route hotkey), and `0011_pin_configs.sql` (the per-preset pin
+palette, with each placed pin referencing one configuration). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
