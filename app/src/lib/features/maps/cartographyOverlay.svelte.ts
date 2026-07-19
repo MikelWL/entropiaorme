@@ -1,12 +1,12 @@
 import { emit } from '@tauri-apps/api/event';
 import {
+	type CoordScanResult,
 	createMapPin,
 	getNearbyMapPin,
 	getPinConfigs,
-	scanMapCoordinates,
-	type CoordScanResult,
 	type MapPinInput,
 	type PinConfig,
+	scanMapCoordinates,
 } from '$lib/api';
 
 /**

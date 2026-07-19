@@ -12,22 +12,22 @@ import {
 	getNavigationSnapshot,
 	hideNavigationOverlays,
 	markNavigationVisited,
+	type NavigationPositionStatus,
+	type NavigationRun,
 	resolveNavigationHarvest,
 	scanMapCoordinates,
 	skipNavigationStop,
 	startNavigation,
 	undoNavigationStop,
 	updateNavigationPosition,
-	type NavigationPositionStatus,
-	type NavigationRun,
 } from '$lib/api';
-import { describeError } from '$lib/view/errorState';
 import { getPreference, setPreference } from '$lib/preferences';
-import { formatGamePoint, type GamePoint } from './coords';
+import { describeError } from '$lib/view/errorState';
 import {
 	acceptCartographyContextBroadcast,
 	cartographyScanFailureMessage,
 } from './cartographyOverlay.svelte';
+import { formatGamePoint, type GamePoint } from './coords';
 
 function statusFeedback(status: NavigationPositionStatus): string {
 	switch (status) {

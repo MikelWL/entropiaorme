@@ -46,13 +46,13 @@ export * from './settings';
 // The shell's updater commands stay out of this barrel: $lib/updater
 // owns that flow (phases, progress, stores) and imports them directly.
 export {
+	hideNavigationOverlays,
 	hideScanOverlay,
 	manualSkillScanCapturePng,
 	planetMapImage,
+	showNavigationOverlays,
 	showScanOverlay,
 	toggleCartographyOverlay,
-	showNavigationOverlays,
-	hideNavigationOverlays,
 	toggleOverlay,
 } from './shell';
 export * from './tracking';

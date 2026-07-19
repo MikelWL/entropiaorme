@@ -58,7 +58,9 @@ beforeAll(() => {
 
 beforeEach(() => {
 	mocks.getPinConfigs.mockReset().mockResolvedValue([config()]);
-	mocks.createPinConfig.mockReset().mockResolvedValue(config({ id: 10, category: 'special', specialKind: 'tree', label: 'Tree' }));
+	mocks.createPinConfig
+		.mockReset()
+		.mockResolvedValue(config({ id: 10, category: 'special', specialKind: 'tree', label: 'Tree' }));
 	mocks.updatePinConfig.mockReset().mockResolvedValue(config());
 	mocks.deletePinConfig.mockReset().mockResolvedValue(undefined);
 	mocks.reorderPinConfigs.mockReset().mockResolvedValue(undefined);
@@ -78,7 +80,10 @@ describe('CartographyOverlayModal', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
 		await waitFor(() => expect(mocks.createPinConfig).toHaveBeenCalledTimes(1));
-		expect(mocks.updatePinConfig).toHaveBeenCalledWith(5, expect.objectContaining({ category: 'generic' }));
+		expect(mocks.updatePinConfig).toHaveBeenCalledWith(
+			5,
+			expect.objectContaining({ category: 'generic' }),
+		);
 		expect(mocks.createPinConfig).toHaveBeenCalledWith(
 			expect.objectContaining({
 				planet: 'Arkadia',
