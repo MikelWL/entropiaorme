@@ -68,6 +68,50 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "harvest events",
         sql: include_str!("../../migrations/0006_harvest_events.sql"),
     },
+    Migration {
+        version: 7,
+        description: "map pins",
+        sql: include_str!("../../migrations/0007_map_pins.sql"),
+    },
+    Migration {
+        version: 8,
+        description: "map views",
+        sql: include_str!("../../migrations/0008_map_views.sql"),
+    },
+    Migration {
+        version: 9,
+        description: "map navigation",
+        sql: include_str!("../../migrations/0009_map_navigation.sql"),
+    },
+    Migration {
+        version: 10,
+        description: "navigation runtime fields",
+        sql: include_str!("../../migrations/0010_navigation_runtime_fields.sql"),
+    },
+    Migration {
+        version: 11,
+        description: "pin configs",
+        sql: include_str!("../../migrations/0011_pin_configs.sql"),
+    },
+];
+
+// Applied migrations are immutable. These hashes are a deliberate second
+// ratchet beside the runtime ledger validation: changing an old SQL file now
+// fails locally even when the test database is fresh and has no historic row
+// capable of exposing the drift. Schema refinements always add a new version.
+#[cfg(test)]
+const FROZEN_CHECKSUMS: &[&str] = &[
+    "92076B31C71D64008E027CB9016A4495BD477CB53BFAB3738926964A241CED0F8D8B2BB81BE70C673A3F86BFF2ED83CA",
+    "4F167CE13DFEEB846931505C633FCF6F5D45E8FA760F3014DD6273796CA7E3DD81ED1A08527C7C7DAC85301B9B46FA10",
+    "09ECF202A7D3CF35185195D0C623FB3BCC53CD598B915D8A62CB60EAFF698C266355EC7BB49EF4B2C14513681AD2D732",
+    "4008598E5E86F950CA7758016F79D51A9C530D61388D0FBC2B6D080C46219371D1DB1DAA99F5BB3CDC1A7F0D9C9CDA60",
+    "8B4DAB6032687FFAE181CEE89731D792A6AF12D122F471FC6AADC391A96C14251B16DCF0C1E3E5FA4701393C3BACB1B9",
+    "84AD81FF155635AA349517B71A1264FF75D7D758AD6BD3FFE742DFBA4DFD246B1984613593346EDA6704C846044594DD",
+    "E1E390E195B57A2AEE8B4F9D58FDC398FCA2B3200B9473D256D9295D15EE4608E3A9873F4EBC9DAA64BB692802C28B23",
+    "667746910B06E0DBC590639E4159B3357316BAFFA22F4B10BEADB4FDF2E015D2E5978A1BDF78B91CEB136B9C489DDA5D",
+    "0B3F86B763DB00318691AB7640AAB1901A5FE8A7A6FDE0B1D61B9C71048529DE6119D4E4CFDFD97711B15DFF2287307D",
+    "14807806F2AEEA83A890C0114AABEAA2B1DAF3749D335CCFB0EADD3945CEB115C7788FA0FD1D340741FDC951986D677A",
+    "D4CA3183B196882C7684EE6819E1761F35F33807EA01D8A63EB16E0E26FDFCEE3D74860C42CFF525D6F9E923B9AF0F0E",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as
@@ -232,22 +276,77 @@ mod tests {
         );
     }
 
-    /// The checksum discipline is SHA-384 over the raw file bytes: the
-    /// exact accounting the previous runner wrote, pinned here against
-    /// the baseline's known digest prefix so an algorithm drift cannot
-    /// pass silently.
+    /// Every migration checksum is frozen, not only checked against a newly
+    /// created ledger. This catches an edit before a persistent development
+    /// database has to quarantine itself to reveal the drift.
     #[test]
-    fn checksums_reproduce_the_inherited_ledger_accounting() {
-        let baseline = &MIGRATIONS[0];
-        let hex: String = baseline
-            .checksum()
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect();
-        assert!(
-            hex.starts_with("92076B31C71D6400"),
-            "the baseline checksum must reproduce the ledger rows already \
-             in the wild; got {hex}"
+    fn migration_checksums_are_immutable() {
+        assert_eq!(MIGRATIONS.len(), FROZEN_CHECKSUMS.len());
+        for (migration, expected) in MIGRATIONS.iter().zip(FROZEN_CHECKSUMS) {
+            let actual: String = migration
+                .checksum()
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect();
+            assert_eq!(
+                &actual, expected,
+                "migration {} is immutable; add a new migration instead",
+                migration.version
+            );
+        }
+    }
+
+    /// A database that applied the original navigation migration upgrades
+    /// forward without ledger surgery, preserving existing rows and filling
+    /// the new route hotkey from its declared default.
+    #[test]
+    fn navigation_runtime_fields_upgrade_from_the_frozen_v9_schema() {
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(LEDGER_DDL).expect("ledger");
+        for migration in &MIGRATIONS[..9] {
+            let tx = connection.transaction().expect("migration transaction");
+            tx.execute_batch(migration.sql).expect("migration SQL");
+            tx.execute(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?1, ?2, TRUE, ?3, 0)",
+                rusqlite::params![
+                    migration.version,
+                    migration.description,
+                    migration.checksum()
+                ],
+            )
+            .expect("ledger row");
+            tx.commit().expect("migration commit");
+        }
+        connection
+            .execute(
+                "INSERT INTO navigation_runs \
+                 (planet, status, start_lon, start_lat, current_lon, current_lat, \
+                  hop_count, created_at, updated_at) \
+                 VALUES ('calypso', 'active', 1, 2, 1, 2, 3, 4, 4)",
+                [],
+            )
+            .expect("v9 navigation row");
+
+        run(&mut connection).expect("v10 upgrade");
+
+        let upgraded: (Option<f64>, String) = connection
+            .query_row(
+                "SELECT last_position_at, hotkey FROM navigation_runs",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("upgraded navigation row");
+        assert_eq!(upgraded, (None, "f8".to_owned()));
+        let ledger_tail: i64 = connection
+            .query_row("SELECT MAX(version) FROM _sqlx_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("ledger tail");
+        assert_eq!(
+            ledger_tail,
+            MIGRATIONS.last().expect("chain is non-empty").version
         );
     }
 }

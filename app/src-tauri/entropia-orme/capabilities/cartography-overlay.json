@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "cartography-overlay",
+  "description": "Least-privilege window access for the cartography pin overlay.",
+  "windows": ["cartography-overlay"],
+  "permissions": [
+    "cartography-commands",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "core:window:allow-start-dragging"
+  ]
+}

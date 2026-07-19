@@ -99,6 +99,9 @@ fn facade_fixture_bench() {
         handles.repair_ocr,
         handles.quests.clone(),
         None,
+        None,
+        None,
+        None,
     );
 
     let mut rows: Vec<(String, f64, f64, f64, f64)> = Vec::new();

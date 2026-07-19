@@ -29,6 +29,11 @@ use eo_api::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildR
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
+use eo_api::maps::{
+    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, MapView,
+    NavigationPositionResult, NavigationRun, NearbyMapPin, PinConfig, PinConfigEditInput,
+    PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
+};
 use eo_api::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
     MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
@@ -47,6 +52,7 @@ use eo_api::tracking::{
     StartResult, StopResult, TagLockResult, TrackingSession, TrackingSnapshot,
 };
 use eo_api::ApiError;
+use eo_api::Nullable;
 
 /// Holds the composed facade for the typed commands, published by
 /// `install_native_services` once every service is present.
@@ -944,6 +950,257 @@ pub async fn dev_rebuild_projections(app: tauri::AppHandle) -> Result<RebuildRep
     facade(&app)?.dev_rebuild_projections().await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn planet_maps_list(app: tauri::AppHandle) -> Result<Vec<PlanetMap>, ApiError> {
+    facade(&app)?.planet_maps()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pins_list(
+    app: tauri::AppHandle,
+    planet: String,
+    map_view_id: Option<i64>,
+) -> Result<Vec<MapPin>, ApiError> {
+    facade(&app)?.map_pins_list(planet, map_view_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pins_viewport(
+    app: tauri::AppHandle,
+    planet: String,
+    map_view_id: Option<i64>,
+    lon_min: f64,
+    lon_max: f64,
+    lat_min: f64,
+    lat_max: f64,
+) -> Result<Vec<MapPin>, ApiError> {
+    facade(&app)?
+        .map_pins_viewport(planet, map_view_id, lon_min, lon_max, lat_min, lat_max)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_nearby(
+    app: tauri::AppHandle,
+    planet: String,
+    map_view_id: Option<i64>,
+    lon: f64,
+    lat: f64,
+) -> Result<Nullable<NearbyMapPin>, ApiError> {
+    facade(&app)?
+        .map_pin_nearby(planet, map_view_id, lon, lat)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_views_list(
+    app: tauri::AppHandle,
+    planet: String,
+) -> Result<Vec<MapView>, ApiError> {
+    facade(&app)?.map_views_list(planet).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_view_create(
+    app: tauri::AppHandle,
+    planet: String,
+    name: String,
+) -> Result<MapView, ApiError> {
+    facade(&app)?.map_view_create(planet, name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_view_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    name: String,
+) -> Result<MapView, ApiError> {
+    facade(&app)?.map_view_rename(id, name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_view_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiError> {
+    facade(&app)?.map_view_delete(id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_create(app: tauri::AppHandle, pin: MapPinInput) -> Result<MapPin, ApiError> {
+    facade(&app)?.map_pin_create(pin).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_update(
+    app: tauri::AppHandle,
+    id: i64,
+    patch: MapPinPatch,
+) -> Result<MapPin, ApiError> {
+    facade(&app)?.map_pin_update(id, patch).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiError> {
+    facade(&app)?.map_pin_delete(id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn map_pin_cooldown(app: tauri::AppHandle, id: i64) -> Result<MapPin, ApiError> {
+    facade(&app)?.map_pin_cooldown(id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_configs_list(
+    app: tauri::AppHandle,
+    planet: String,
+    map_view_id: Option<i64>,
+) -> Result<Vec<PinConfig>, ApiError> {
+    facade(&app)?.pin_configs_list(planet, map_view_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_create(
+    app: tauri::AppHandle,
+    input: PinConfigInput,
+) -> Result<PinConfig, ApiError> {
+    facade(&app)?.pin_config_create(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_update(
+    app: tauri::AppHandle,
+    id: i64,
+    input: PinConfigEditInput,
+) -> Result<PinConfig, ApiError> {
+    facade(&app)?.pin_config_update(id, input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_delete(app: tauri::AppHandle, id: i64) -> Result<(), ApiError> {
+    facade(&app)?.pin_config_delete(id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn pin_config_reorder(app: tauri::AppHandle, ids: Vec<i64>) -> Result<(), ApiError> {
+    facade(&app)?.pin_config_reorder(ids).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_calibration_start(
+    app: tauri::AppHandle,
+) -> Result<CoordCalibrationStatus, ApiError> {
+    facade(&app)?.maps_calibration_start()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_calibration_cancel(
+    app: tauri::AppHandle,
+) -> Result<CoordCalibrationStatus, ApiError> {
+    facade(&app)?.maps_calibration_cancel()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_calibration_status(
+    app: tauri::AppHandle,
+) -> Result<CoordCalibrationStatus, ApiError> {
+    facade(&app)?.maps_calibration_status()
+}
+
+// The scan runs a synchronous screen grab + OCR read; offload it so a
+// slow grab never ties up an async runtime worker.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn maps_scan_coordinates(
+    app: tauri::AppHandle,
+    planet: Option<String>,
+) -> Result<CoordScanResult, ApiError> {
+    let api = facade(&app)?;
+    tokio::task::spawn_blocking(move || api.maps_scan_coordinates(planet))
+        .await
+        .map_err(|_| ApiError::invalid_state("coordinate scan task failed"))?
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_snapshot(
+    app: tauri::AppHandle,
+) -> Result<Nullable<NavigationRun>, ApiError> {
+    facade(&app)?.navigation_snapshot().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_start(
+    app: tauri::AppHandle,
+    planet: String,
+    map_view_id: Option<i64>,
+    start_lon: f64,
+    start_lat: f64,
+    hop_count: Option<i64>,
+    hotkey: String,
+) -> Result<NavigationRun, ApiError> {
+    facade(&app)?
+        .navigation_start(planet, map_view_id, start_lon, start_lat, hop_count, hotkey)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_update_position(
+    app: tauri::AppHandle,
+) -> Result<NavigationPositionResult, ApiError> {
+    facade(&app)?.navigation_update_position().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_mark_visited(
+    app: tauri::AppHandle,
+    force: bool,
+) -> Result<NavigationPositionResult, ApiError> {
+    facade(&app)?.navigation_mark_visited(force).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_skip(app: tauri::AppHandle) -> Result<NavigationRun, ApiError> {
+    facade(&app)?.navigation_skip().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_resolve_harvest(
+    app: tauri::AppHandle,
+    confirm: bool,
+) -> Result<NavigationRun, ApiError> {
+    facade(&app)?.navigation_resolve_harvest(confirm).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_undo(app: tauri::AppHandle) -> Result<NavigationRun, ApiError> {
+    facade(&app)?.navigation_undo().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_end(app: tauri::AppHandle) -> Result<(), ApiError> {
+    facade(&app)?.navigation_end().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn radar_calibration_start(
+    app: tauri::AppHandle,
+) -> Result<RadarCalibrationStatus, ApiError> {
+    facade(&app)?.radar_calibration_start()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn radar_calibration_cancel(app: tauri::AppHandle) -> Result<(), ApiError> {
+    facade(&app)?.radar_calibration_cancel()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn radar_calibration_status(
+    app: tauri::AppHandle,
+) -> Result<RadarCalibrationStatus, ApiError> {
+    facade(&app)?.radar_calibration_status()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn radar_geometry(app: tauri::AppHandle) -> Result<Nullable<RadarGeometry>, ApiError> {
+    facade(&app)?.radar_geometry().await
+}
+
 #[cfg(test)]
 mod tests {
     /// The commands this module defines and the `generate_handler!`
@@ -1060,6 +1317,39 @@ mod tests {
         "dev_set_crash_reporting",
         "dev_compact_database",
         "dev_rebuild_projections",
+        "planet_maps_list",
+        "map_pins_list",
+        "map_pins_viewport",
+        "map_pin_nearby",
+        "map_views_list",
+        "map_view_create",
+        "map_view_rename",
+        "map_view_delete",
+        "map_pin_create",
+        "map_pin_update",
+        "map_pin_delete",
+        "map_pin_cooldown",
+        "pin_configs_list",
+        "pin_config_create",
+        "pin_config_update",
+        "pin_config_delete",
+        "pin_config_reorder",
+        "maps_calibration_start",
+        "maps_calibration_cancel",
+        "maps_calibration_status",
+        "maps_scan_coordinates",
+        "navigation_snapshot",
+        "navigation_start",
+        "navigation_update_position",
+        "navigation_mark_visited",
+        "navigation_skip",
+        "navigation_resolve_harvest",
+        "navigation_undo",
+        "navigation_end",
+        "radar_calibration_start",
+        "radar_calibration_cancel",
+        "radar_calibration_status",
+        "radar_geometry",
     ];
 
     #[test]
@@ -1069,5 +1359,28 @@ mod tests {
             .map(|spec| spec.name)
             .collect();
         assert_eq!(TYPED_COMMANDS, manifest.as_slice());
+    }
+
+    #[test]
+    fn the_application_acl_covers_exactly_the_registered_command_surface() {
+        let mut expected = TYPED_COMMANDS.to_vec();
+        expected.extend([
+            "toggle_overlay",
+            "toggle_cartography_overlay",
+            "show_scan_overlay",
+            "hide_scan_overlay",
+            "show_navigation_overlays",
+            "hide_navigation_overlays",
+            "capture_png",
+            "planet_map_image",
+            "check_for_update",
+            "download_update",
+            "install_update",
+            "get_update_channel",
+            "set_update_channel",
+        ]);
+        expected.sort_unstable();
+        expected.dedup();
+        assert_eq!(crate::command_acl::APP_COMMANDS, expected.as_slice());
     }
 }

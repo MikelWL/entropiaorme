@@ -12,7 +12,8 @@
 		items,
 		trigger,
 		children,
-		class: className = ''
+		class: className = '',
+		panelClass = ''
 	}: {
 		/** Accessible name for the default three-dot trigger. */
 		ariaLabel?: string;
@@ -28,8 +29,9 @@
 		 * Custom panel content, rendered after `items`. Elements marked
 		 * `role="menuitem"` participate in the keyboard roving focus.
 		 */
-		children?: Snippet;
+		children?: Snippet<[{ close: () => void }]>;
 		class?: string;
+		panelClass?: string;
 	} = $props();
 
 	let open = $state(false);
@@ -84,6 +86,8 @@
 	}
 
 	function handlePanelKeydown(e: KeyboardEvent) {
+		const textEntry = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+		if (textEntry && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
 		const els = menuItemEls();
 		const current = els.indexOf(document.activeElement as HTMLElement);
 		switch (e.key) {
@@ -115,7 +119,7 @@
 	}
 
 	function handleItemClick(item: MenuItem) {
-		close(false);
+		close(true);
 		item.onSelect();
 	}
 
@@ -166,7 +170,7 @@
 			bind:this={panelEl}
 			role="menu"
 			tabindex="-1"
-			class="absolute right-0 top-8 z-20 bg-surface-raised border border-border rounded-md shadow-lg py-1 min-w-[100px] focus:outline-none"
+			class="absolute right-0 top-8 z-20 bg-surface-raised border border-border rounded-md shadow-lg py-1 min-w-[100px] focus:outline-none {panelClass}"
 			onkeydown={handlePanelKeydown}
 		>
 			{#each items ?? [] as item (item.label)}
@@ -182,7 +186,7 @@
 				</button>
 			{/each}
 			{#if children}
-				{@render children()}
+				{@render children({ close: () => close(true) })}
 			{/if}
 		</div>
 	{/if}

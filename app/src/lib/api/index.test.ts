@@ -722,5 +722,7 @@ describe('re-exported client and shell surface', () => {
 		expect(tauriInvoke).toHaveBeenCalledWith('capture_png', { page: 2 });
 		await api.toggleOverlay();
 		expect(tauriInvoke).toHaveBeenCalledWith('toggle_overlay');
+		await api.toggleCartographyOverlay();
+		expect(tauriInvoke).toHaveBeenCalledWith('toggle_cartography_overlay');
 	});
 });

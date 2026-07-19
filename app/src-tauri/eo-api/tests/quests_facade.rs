@@ -51,6 +51,9 @@ async fn quests_api(dir: &Path) -> Api {
         handles.repair_ocr,
         handles.quests.clone(),
         None,
+        None,
+        None,
+        None,
     )
 }
 
@@ -285,6 +288,9 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
         handles.spacebar,
         handles.repair_ocr,
         handles.quests.clone(),
+        None,
+        None,
+        None,
         None,
     );
 

@@ -219,6 +219,8 @@ fn label(event: &BusEvent) -> &'static str {
         BusEvent::TickFlushed(_) => "tick_flushed",
         BusEvent::TrackingSessionUpdated(_) => "tracking_session_updated",
         BusEvent::ScanStatusChanged(_) => "scan_status_changed",
+        BusEvent::HarvestRecorded(_) => "harvest_recorded",
+        BusEvent::NavigationUpdated(_) => "navigation_updated",
     }
 }
 

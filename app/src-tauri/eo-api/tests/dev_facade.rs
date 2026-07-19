@@ -47,6 +47,9 @@ async fn dev_api(dir: &Path) -> (Api, std::path::PathBuf) {
         handles.repair_ocr,
         handles.quests.clone(),
         None,
+        None,
+        None,
+        None,
     );
     (api, data_dir)
 }

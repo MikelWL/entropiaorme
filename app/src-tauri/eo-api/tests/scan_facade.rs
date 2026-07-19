@@ -70,6 +70,9 @@ async fn scan_api(dir: &Path, providers: ScanProviders) -> (Api, Arc<SkillScanMa
         handles.repair_ocr,
         handles.quests.clone(),
         None,
+        None,
+        None,
+        None,
     );
     (api, skill_scan)
 }

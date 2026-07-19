@@ -1,0 +1,362 @@
+{
+  "gameUnitsPerTile": 8192,
+  "attribution": "Map images and calibration data sourced from Entropia Nexus (entropianexus.com).",
+  "planets": [
+    {
+      "name": "Calypso",
+      "technicalName": "Calypso",
+      "image": "maps/calypso.jpg",
+      "imageWidthPx": 4608,
+      "imageHeightPx": 4608,
+      "tileOriginX": 2,
+      "tileOriginY": 3,
+      "tileWidth": 9,
+      "tileHeight": 9,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 16384,
+        "lonMax": 90112,
+        "latMin": 24576,
+        "latMax": 98304
+      }
+    },
+    {
+      "name": "Arkadia",
+      "technicalName": "Arkadia",
+      "image": "maps/arkadia.jpg",
+      "imageWidthPx": 1536,
+      "imageHeightPx": 1536,
+      "tileOriginX": 1,
+      "tileOriginY": 1,
+      "tileWidth": 3,
+      "tileHeight": 3,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 8192,
+        "lonMax": 32768,
+        "latMin": 8192,
+        "latMax": 32768
+      }
+    },
+    {
+      "name": "Arkadia Moon",
+      "technicalName": "Arkadia Moon",
+      "image": "maps/arkadiamoon.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 1,
+      "tileOriginY": 1,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 8192,
+        "lonMax": 16384,
+        "latMin": 8192,
+        "latMax": 16384
+      }
+    },
+    {
+      "name": "Arkadia Underground",
+      "technicalName": "Arkadia Underground",
+      "image": "maps/arkadiaunderground.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 1,
+      "tileOriginY": 2,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 8192,
+        "lonMax": 16384,
+        "latMin": 16384,
+        "latMax": 24576
+      }
+    },
+    {
+      "name": "Monria",
+      "technicalName": "Monria",
+      "image": "maps/monria.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 4,
+      "tileOriginY": 2,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 32768,
+        "lonMax": 40960,
+        "latMin": 16384,
+        "latMax": 24576
+      }
+    },
+    {
+      "name": "ROCKtropia",
+      "technicalName": "Rocktropia",
+      "image": "maps/rocktropia.jpg",
+      "imageWidthPx": 1024,
+      "imageHeightPx": 2048,
+      "tileOriginX": 16,
+      "tileOriginY": 10,
+      "tileWidth": 1,
+      "tileHeight": 2,
+      "unitsPerPixel": 8.0,
+      "bounds": {
+        "lonMin": 131072,
+        "lonMax": 139264,
+        "latMin": 81920,
+        "latMax": 98304
+      }
+    },
+    {
+      "name": "Toulan",
+      "technicalName": "Planet Toulan",
+      "image": "maps/toulan.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 16,
+      "tileOriginY": 11,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 131072,
+        "lonMax": 139264,
+        "latMin": 90112,
+        "latMax": 98304
+      }
+    },
+    {
+      "name": "Next Island",
+      "technicalName": "Next Island",
+      "image": "maps/nextisland.jpg",
+      "imageWidthPx": 1024,
+      "imageHeightPx": 1024,
+      "tileOriginX": 15,
+      "tileOriginY": 10,
+      "tileWidth": 2,
+      "tileHeight": 2,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 122880,
+        "lonMax": 139264,
+        "latMin": 81920,
+        "latMax": 98304
+      }
+    },
+    {
+      "name": "Ancient Greece",
+      "technicalName": "Ancient Greece",
+      "image": "maps/ancientgreece.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 4,
+      "tileOriginY": 2,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 32768,
+        "lonMax": 40960,
+        "latMin": 16384,
+        "latMax": 24576
+      }
+    },
+    {
+      "name": "Cyrene",
+      "technicalName": "Planet Cyrene",
+      "image": "maps/cyrene.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 16,
+      "tileOriginY": 9,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 131072,
+        "lonMax": 139264,
+        "latMin": 73728,
+        "latMax": 81920
+      }
+    },
+    {
+      "name": "DSEC9",
+      "technicalName": "DSEC9",
+      "image": "maps/dsec9.jpg",
+      "imageWidthPx": 2048,
+      "imageHeightPx": 2048,
+      "tileOriginX": 4,
+      "tileOriginY": 2,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 4.0,
+      "bounds": {
+        "lonMin": 32768,
+        "lonMax": 40960,
+        "latMin": 16384,
+        "latMax": 24576
+      }
+    },
+    {
+      "name": "Hunt The THING",
+      "technicalName": "Hunt the THING",
+      "image": "maps/huntthething.jpg",
+      "imageWidthPx": 1024,
+      "imageHeightPx": 1024,
+      "tileOriginX": 4,
+      "tileOriginY": 2,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 8.0,
+      "bounds": {
+        "lonMin": 32768,
+        "lonMax": 40960,
+        "latMin": 16384,
+        "latMax": 24576
+      }
+    },
+    {
+      "name": "Secret Island",
+      "technicalName": "Secret Island",
+      "image": "maps/secretisland.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 4,
+      "tileOriginY": 2,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 32768,
+        "lonMax": 40960,
+        "latMin": 16384,
+        "latMax": 24576
+      }
+    },
+    {
+      "name": "Asteroid F.O.M.A.",
+      "technicalName": "Asteroid",
+      "image": "maps/asteroidfoma.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 8,
+      "tileOriginY": 8,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 65536,
+        "lonMax": 73728,
+        "latMin": 65536,
+        "latMax": 73728
+      }
+    },
+    {
+      "name": "Crystal Palace",
+      "technicalName": "Crystal Palace",
+      "image": "maps/crystalpalace.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 8,
+      "tileOriginY": 8,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 65536,
+        "lonMax": 73728,
+        "latMin": 65536,
+        "latMax": 73728
+      }
+    },
+    {
+      "name": "HELL",
+      "technicalName": "HELL",
+      "image": "maps/hell.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": 4,
+      "tileOriginY": 2,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 32768,
+        "lonMax": 40960,
+        "latMin": 16384,
+        "latMax": 24576
+      }
+    },
+    {
+      "name": "Setesh",
+      "technicalName": "Setesh",
+      "image": "maps/setesh.png",
+      "imageWidthPx": 720,
+      "imageHeightPx": 720,
+      "tileOriginX": 8,
+      "tileOriginY": 8,
+      "tileWidth": 1,
+      "tileHeight": 1,
+      "unitsPerPixel": 11.377778,
+      "bounds": {
+        "lonMin": 65536,
+        "lonMax": 73728,
+        "latMin": 65536,
+        "latMax": 73728
+      }
+    },
+    {
+      "name": "ARIS",
+      "technicalName": "ARIS",
+      "image": "maps/aris.png",
+      "imageWidthPx": 512,
+      "imageHeightPx": 1536,
+      "tileOriginX": 3,
+      "tileOriginY": 0,
+      "tileWidth": 3,
+      "tileHeight": 4,
+      "unitsPerPixel": 48.0,
+      "bounds": {
+        "lonMin": 24576,
+        "lonMax": 49152,
+        "latMin": 0,
+        "latMax": 32768
+      }
+    },
+    {
+      "name": "Space",
+      "technicalName": "Space",
+      "image": "maps/space.jpg",
+      "imageWidthPx": 3072,
+      "imageHeightPx": 2560,
+      "tileOriginX": 6,
+      "tileOriginY": 6,
+      "tileWidth": 6,
+      "tileHeight": 5,
+      "unitsPerPixel": 16.0,
+      "bounds": {
+        "lonMin": 49152,
+        "lonMax": 98304,
+        "latMin": 49152,
+        "latMax": 90112
+      }
+    },
+    {
+      "name": "Thule",
+      "technicalName": null,
+      "image": "maps/thule.jpg",
+      "imageWidthPx": 512,
+      "imageHeightPx": 512,
+      "tileOriginX": null,
+      "tileOriginY": null,
+      "tileWidth": null,
+      "tileHeight": null,
+      "unitsPerPixel": null,
+      "bounds": null,
+      "note": "No calibration data available for this map; coordinates cannot be placed on it until reference points are established."
+    }
+  ]
+}

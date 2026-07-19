@@ -52,7 +52,7 @@ fn enum_values(definition: &Value, property: &str) -> Vec<String> {
 }
 
 /// The native union's variants, as (topic, envelope def, payload def).
-const VARIANTS: [(&str, &str, &str); 2] = [
+const VARIANTS: [(&str, &str, &str); 4] = [
     (
         "tracking.session.updated",
         "TrackingSessionUpdated",
@@ -62,6 +62,16 @@ const VARIANTS: [(&str, &str, &str); 2] = [
         "scan.status.changed",
         "ScanStatusChanged",
         "ScanStatusChangedPayload",
+    ),
+    (
+        "harvest.recorded",
+        "HarvestRecorded",
+        "HarvestRecordedPayload",
+    ),
+    (
+        "navigation.updated",
+        "NavigationUpdated",
+        "NavigationUpdatedPayload",
     ),
 ];
 
@@ -182,6 +192,32 @@ fn scan_payload_definition_matches_the_native_type() {
         enum_values(def, "phase"),
         ["idle", "capturing", "processing", "awaiting_review"]
     );
+}
+
+#[test]
+fn harvest_payload_definition_matches_the_native_type() {
+    let doc = snapshot();
+    let def = &doc["$defs"]["HarvestRecordedPayload"];
+    assert_eq!(def["additionalProperties"], false);
+    assert_eq!(
+        property_names(def),
+        ["harvestId", "success"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    );
+    assert_eq!(required_set(def), property_names(def));
+    assert_eq!(def["properties"]["harvestId"]["type"], "string");
+    assert_eq!(def["properties"]["success"]["type"], "boolean");
+}
+
+#[test]
+fn navigation_payload_definition_matches_the_native_type() {
+    let doc = snapshot();
+    let def = &doc["$defs"]["NavigationUpdatedPayload"];
+    assert_eq!(def["additionalProperties"], false);
+    assert!(property_names(def).is_empty());
+    assert!(required_set(def).is_empty());
 }
 
 /// Every enum value the snapshot names deserialises into the native type,

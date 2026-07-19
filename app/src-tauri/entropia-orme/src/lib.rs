@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod command_acl;
 mod commands;
 mod composition;
 mod crash;
@@ -87,6 +89,64 @@ async fn toggle_overlay(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn toggle_cartography_overlay(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("cartography-overlay") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let position = monitor_anchor(&window, (60, 150));
+            let _ = window.set_position(position);
+            let _ = window.show();
+        }
+    }
+}
+
+#[tauri::command]
+async fn show_navigation_overlays(app: tauri::AppHandle) {
+    let geometry = match commands::facade(&app) {
+        Ok(facade) => facade.radar_geometry().await.ok().and_then(|value| value.0),
+        Err(_) => None,
+    };
+    if let Some(radar) = app.get_webview_window("radar-guidance") {
+        if let Some(geometry) = geometry {
+            let diameter = (geometry.radius_px * 2.0).round().max(16.0) as u32;
+            let x = (geometry.centre_x as f64 - geometry.radius_px).round() as i32;
+            let y = (geometry.centre_y as f64 - geometry.radius_px).round() as i32;
+            let _ = radar.set_size(tauri::PhysicalSize::new(diameter, diameter));
+            let _ = radar.set_position(tauri::PhysicalPosition::new(x, y));
+            let _ = radar.show();
+            // GTK does not allocate the hidden pre-spawned window's native
+            // surface until its first map. Tao's Linux hit-test path expects
+            // that surface to exist, so click-through must be enabled only
+            // after show maps it; doing this while hidden panics inside Tao.
+            let _ = radar.set_ignore_cursor_events(true);
+        }
+    }
+    if let Some(hud) = app.get_webview_window("navigation-hud") {
+        let position = geometry
+            .map(|geometry| {
+                tauri::PhysicalPosition::new(
+                    (geometry.centre_x as f64 + geometry.radius_px + 12.0).round() as i32,
+                    (geometry.centre_y as f64 - geometry.radius_px).round() as i32,
+                )
+            })
+            .filter(|position| position_on_a_monitor(&hud, position.x, position.y))
+            .unwrap_or_else(|| monitor_anchor(&hud, (60, 250)));
+        let _ = hud.set_position(position);
+        let _ = hud.show();
+    }
+}
+
+#[tauri::command]
+fn hide_navigation_overlays(app: tauri::AppHandle) {
+    for label in ["navigation-hud", "radar-guidance"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
+    }
+}
+
+#[tauri::command]
 fn show_scan_overlay(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("scan-overlay") {
         // Position near a monitor's top-left so the overlay never collides
@@ -120,6 +180,21 @@ async fn capture_png(app: tauri::AppHandle, page: u32) -> Result<String, String>
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// A bundled planet map's raster, base64-encoded for an `<img>` `data:` URL
+/// (the MIME type rides the typed `planet_maps_list` read). The facade
+/// returns raw image bytes, which cannot ride the typed-DTO command surface
+/// (the bindings are JSON), so this stays a bespoke command outside the
+/// manifest, base64-encoding the bytes here.
+#[tauri::command]
+async fn planet_map_image(app: tauri::AppHandle, planet: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let facade = commands::facade(&app).map_err(|error| error.to_string())?;
+    let bytes = facade
+        .planet_map_image(&planet)
+        .map_err(|error| error.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 // Holds the substrate's live producer spine so the Tauri exit seam can
 // stop it deterministically. The substrate task composes the producers
 // inside its own async context (after the database opens) and hands the
@@ -137,6 +212,8 @@ struct Producers(Mutex<Option<composition::ProducerState>>);
 struct ScanInput {
     spacebar: std::sync::Arc<composition::SpacebarCaptureListener>,
     skill_scan: std::sync::Arc<composition::SkillScanManual>,
+    coord_confirm: std::sync::Arc<eo_services::coord_capture::CoordConfirmListener>,
+    radar_confirm: std::sync::Arc<eo_services::coord_capture::CoordConfirmListener>,
 }
 
 // Holds the composed database handle so the exit seam can run the
@@ -199,9 +276,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             toggle_overlay,
+            toggle_cartography_overlay,
             show_scan_overlay,
             hide_scan_overlay,
             capture_png,
+            planet_map_image,
             // The typed IPC commands (held in lock-step with the eo-api
             // manifest by the parity test in `commands`).
             commands::equipment_search,
@@ -312,6 +391,41 @@ pub fn run() {
             commands::dev_set_crash_reporting,
             commands::dev_compact_database,
             commands::dev_rebuild_projections,
+            commands::planet_maps_list,
+            commands::map_pins_list,
+            commands::map_pins_viewport,
+            commands::map_pin_nearby,
+            commands::map_views_list,
+            commands::map_view_create,
+            commands::map_view_rename,
+            commands::map_view_delete,
+            commands::map_pin_create,
+            commands::map_pin_update,
+            commands::map_pin_delete,
+            commands::map_pin_cooldown,
+            commands::pin_configs_list,
+            commands::pin_config_create,
+            commands::pin_config_update,
+            commands::pin_config_delete,
+            commands::pin_config_reorder,
+            commands::maps_calibration_start,
+            commands::maps_calibration_cancel,
+            commands::maps_calibration_status,
+            commands::maps_scan_coordinates,
+            commands::navigation_snapshot,
+            commands::navigation_start,
+            commands::navigation_update_position,
+            commands::navigation_mark_visited,
+            commands::navigation_skip,
+            commands::navigation_resolve_harvest,
+            commands::navigation_undo,
+            commands::navigation_end,
+            commands::radar_calibration_start,
+            commands::radar_calibration_cancel,
+            commands::radar_calibration_status,
+            commands::radar_geometry,
+            show_navigation_overlays,
+            hide_navigation_overlays,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -349,7 +463,7 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // The overlay + scan-overlay windows are configured invisible
+            // The tracking, scan, and cartography overlay windows are configured invisible
             // but still count toward Tauri's "exit when all windows close"
             // tally — closing main alone leaves them open and the app
             // keeps running headless. Treat main-window close as a
@@ -395,6 +509,8 @@ pub(crate) fn run_exit_teardown(app: &tauri::AppHandle) {
     // listener detaches its share of the shared OS hook.
     if let Some(state) = app.try_state::<ScanInput>() {
         state.spacebar.stop();
+        state.coord_confirm.stop();
+        state.radar_confirm.stop();
         state.skill_scan.shutdown();
     }
 
@@ -517,6 +633,8 @@ fn install_native_services(app: &tauri::AppHandle, composed: composition::Compos
     // the shared OS hook and the scan resets in-flight state on close.
     let exit_spacebar = composed.spacebar_listener.clone();
     let exit_skill_scan = composed.skill_scan.clone();
+    let exit_coord_confirm = composed.coord_confirm.clone();
+    let exit_radar_confirm = composed.radar_confirm.clone();
     // The typed-command facade, published to its managed slot below.
     let composed_api = composed.api.clone();
     // The composed database handle, held so the exit seam can run the
@@ -540,6 +658,8 @@ fn install_native_services(app: &tauri::AppHandle, composed: composition::Compos
     app.manage(ScanInput {
         spacebar: exit_spacebar,
         skill_scan: exit_skill_scan,
+        coord_confirm: exit_coord_confirm,
+        radar_confirm: exit_radar_confirm,
     });
     // Hold the database handle for the exit-seam `PRAGMA optimize`.
     app.manage(ShutdownDb(shutdown_db));
@@ -831,5 +951,51 @@ mod tests {
             capabilities.contains("shell:allow-open"),
             "the shell open capability must survive for external links: {capabilities}"
         );
+    }
+
+    #[test]
+    fn the_cartography_overlay_has_a_dedicated_least_privilege_capability() {
+        let default_capability = include_str!("../capabilities/default.json");
+        let cartography_capability = include_str!("../capabilities/cartography-overlay.json");
+        assert!(
+            !default_capability.contains("cartography-overlay"),
+            "the cartography webview must not inherit the main capability: {default_capability}"
+        );
+        assert!(cartography_capability.contains("\"windows\": [\"cartography-overlay\"]"));
+        assert!(cartography_capability.contains("cartography-commands"));
+        for forbidden in [
+            "shell:allow-open",
+            "core:window:allow-create",
+            "core:webview:allow-create-webview-window",
+            "trusted-commands",
+            // The palette is DB-backed now, not a preference blob: the overlay
+            // reaches no store or path permission (store:allow-set would let a
+            // compromised overlay write backend-consumed settings).
+            "store:allow-set",
+            "store:allow-get",
+            "store:allow-load",
+            "core:path:allow-join",
+            "core:path:allow-resolve-directory",
+        ] {
+            assert!(
+                !cartography_capability.contains(forbidden),
+                "the cartography capability must not grant {forbidden}: {cartography_capability}"
+            );
+        }
+        assert!(crate::command_acl::APP_COMMANDS.contains(&"map_pin_create"));
+        assert!(crate::command_acl::APP_COMMANDS.contains(&"settings_update"));
+        assert_eq!(
+            crate::command_acl::CARTOGRAPHY_COMMANDS,
+            [
+                "map_pin_create",
+                "map_pin_nearby",
+                "map_views_list",
+                "maps_scan_coordinates",
+                "pin_configs_list",
+                "planet_maps_list"
+            ]
+        );
+        assert!(!crate::command_acl::CARTOGRAPHY_COMMANDS.contains(&"map_pin_delete"));
+        assert!(!crate::command_acl::CARTOGRAPHY_COMMANDS.contains(&"settings_update"));
     }
 }

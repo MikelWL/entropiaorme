@@ -90,6 +90,7 @@
 			bind:this={panelEl}
 			class="relative z-10 w-full max-w-md rounded-lg border border-border-bright/60
 				bg-surface-raised/95 shadow-lg backdrop-blur-md
+				focus:outline-hidden
 				before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit]
 				before:[box-shadow:inset_0_1px_0_0_rgba(255,255,255,0.05)]
 				p-6 {className}"

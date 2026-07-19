@@ -327,6 +327,55 @@ export interface ComputedCharacterStats {
 }
 
 /**
+ * The calibration flow's phase, as the closed wire vocabulary.
+ */
+export type CoordCalibrationPhase = 'idle' | 'awaitTopLeft' | 'awaitBottomRight';
+
+/**
+ * The calibration surface's assembled state: the flow phase, the
+ * persisted region (null until a calibration completed), and the
+ * validation read echoed after the last completion.
+ */
+export interface CoordCalibrationStatus {
+	phase: CoordCalibrationPhase;
+	region: CoordRegionDto | null;
+	lastValidation: CoordScanResult | null;
+}
+
+/**
+ * The persisted capture rectangle, in screen coordinates.
+ */
+export interface CoordRegionDto {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+/**
+ * One coordinate scan's answer: `status` names the outcome precisely
+ * (a wrong read never masquerades as a position), and the extras ride
+ * where the outcome carries them (the `CaptureResult` convention):
+ * coordinates on `read` and `implausible`, the raw capture text only
+ * on `unreadable` (where the UI shows it); a successful read's text is
+ * its digits, so the parsed coordinates already carry everything and
+ * the boundary hands the webview no more screen text than it needs.
+ */
+export interface CoordScanResult {
+	status: CoordScanStatus;
+	lon?: number | null;
+	lat?: number | null;
+	altitude?: number | null;
+	rawText?: string | null;
+	confidence?: number | null;
+}
+
+/**
+ * The closed vocabulary of a coordinate scan's outcome.
+ */
+export type CoordScanStatus = 'read' | 'noRegion' | 'captureFailed' | 'engineUnavailable' | 'unreadable' | 'implausible';
+
+/**
  * The session-detail cost split.
  */
 export interface CostBreakdown {
@@ -698,6 +747,91 @@ export interface ManualMobSuggestion {
 }
 
 /**
+ * One stored cartography pin. Coordinates are game units; `radius_m`
+ * null marks an exact point, a value an area pin of that radius in
+ * metres; `session_id` backlinks the tracked session the pin was
+ * dropped during, when any.
+ */
+export interface MapPin {
+	id: number;
+	planet: string;
+	lon: number;
+	lat: number;
+	altitude: number | null;
+	name: string;
+	icon: string;
+	kind: string;
+	radiusM: number | null;
+	notes: string | null;
+	sessionId: string | null;
+	mapViewId: number | null;
+	/** Epoch seconds. */
+	createdAt: number;
+	/** Epoch seconds of the pin's most recent confirmed visit, if any. */
+	lastVisitedAt: number | null;
+	/** Epoch seconds until which the most recent visit keeps the pin on cooldown, if any. */
+	cooldownUntil: number | null;
+	/** The palette configuration this pin is an instance of, if any. */
+	pinConfigId: number | null;
+	/** The pin's colour, from its configuration (generic or special-active). */
+	colour: string | null;
+	/** The special-tree on-cooldown colour, from its configuration. */
+	cooldownColour: string | null;
+	/** The configuration's category (`generic` / `special`), if any. */
+	category: string | null;
+	/** The configuration's special kind (`tree`), if any. */
+	specialKind: string | null;
+}
+
+/**
+ * A new pin's fields (id and creation time are assigned server-side).
+ */
+export interface MapPinInput {
+	planet: string;
+	lon: number;
+	lat: number;
+	altitude?: number | null;
+	name: string;
+	icon: string;
+	kind: string;
+	radiusM?: number | null;
+	notes?: string | null;
+	sessionId?: string | null;
+	mapViewId?: number | null;
+	/** The palette configuration this pin instantiates, if any. */
+	pinConfigId?: number | null;
+	/** Explicit confirmation that a pin may be created within the duplicate-advisory radius of an existing pin. */
+	allowNearby?: boolean;
+}
+
+/**
+ * A partial pin update: absent fields stay untouched. The nullable
+ * fields (altitude, radius, notes) are double options so an explicit
+ * `null` (clear it) stays distinct from an absent field.
+ */
+export interface MapPinPatch {
+	lon?: number | null;
+	lat?: number | null;
+	altitude?: number | null;
+	name?: string | null;
+	icon?: string | null;
+	kind?: string | null;
+	radiusM?: number | null;
+	notes?: string | null;
+}
+
+/**
+ * One user-named pin set over a planet map. Default is represented by
+ * a null view id and therefore has no row of its own.
+ */
+export interface MapView {
+	id: number;
+	planet: string;
+	name: string;
+	createdAt: number;
+}
+
+/**
  * The break-even readout: the player's looter professions and every
  * library weapon's modelled break-even markup against each of them.
  */
@@ -931,6 +1065,56 @@ export interface MonthlyEntry {
 	ledgerLosses: Record<string, number>;
 }
 
+export interface NavigationPositionResult {
+	status: NavigationPositionStatus;
+	run: NavigationRun | null;
+}
+
+export type NavigationPositionStatus = 'updated' | 'noActiveRun' | 'paused' | 'noRegion' | 'captureFailed' | 'engineUnavailable' | 'unreadable' | 'implausible' | 'ambiguous' | 'outOfTolerance';
+
+export interface NavigationRun {
+	id: number;
+	planet: string;
+	mapViewId: number | null;
+	mapViewName: string | null;
+	status: NavigationRunStatus;
+	startLon: number;
+	startLat: number;
+	currentLon: number;
+	currentLat: number;
+	lastPositionAt: number | null;
+	hopCount: number;
+	hotkey: string;
+	updatedAt: number;
+	distanceToActive: number | null;
+	/** Degrees clockwise from north. */
+	bearingDegrees: number | null;
+	pendingHarvest: PendingHarvest | null;
+	stops: NavigationStop[];
+}
+
+export type NavigationRunStatus = 'active' | 'paused' | 'completed' | 'ended';
+
+export interface NavigationStop {
+	id: number;
+	pinId: number;
+	ordinal: number;
+	status: NavigationStopStatus;
+	name: string;
+	icon: string;
+	lon: number;
+	lat: number;
+	completedAt: number | null;
+	completionSource: string | null;
+}
+
+export type NavigationStopStatus = 'pending' | 'active' | 'visited' | 'skipped';
+
+export interface NearbyMapPin {
+	pin: MapPin;
+	distance: number;
+}
+
 /**
  * One notable event in a session detail.
  */
@@ -1016,6 +1200,101 @@ export interface PathOptimizerResult {
 	totalPed: number;
 	excluded: ExcludedSkill[];
 	error?: string | null;
+}
+
+/**
+ * A harvest detected beyond the arrival radius, awaiting the player's confirm
+ * or dismiss in the overlay. Names the proposed (active) tree and how far the
+ * harvest read was from it.
+ */
+export interface PendingHarvest {
+	name: string;
+	distance: number;
+}
+
+/**
+ * One palette entry: a pin *type* scoped to a `(planet, map view)` preset.
+ * `category` is `generic` or `special`; the only special `kind` so far is
+ * `tree`, which carries a `cooldownColour`. `colour` is the generic colour or
+ * the special-active colour. `placedCount` is how many pins reference it.
+ */
+export interface PinConfig {
+	id: number;
+	planet: string;
+	mapViewId: number | null;
+	label: string;
+	category: string;
+	specialKind: string | null;
+	icon: string;
+	radiusM: number | null;
+	colour: string;
+	cooldownColour: string | null;
+	ordinal: number;
+	/** Epoch seconds. */
+	createdAt: number;
+	placedCount: number;
+}
+
+export interface PinConfigEditInput {
+	label: string;
+	category: string;
+	specialKind?: string | null;
+	icon: string;
+	radiusM?: number | null;
+	colour: string;
+	cooldownColour?: string | null;
+}
+
+export interface PinConfigInput {
+	planet: string;
+	mapViewId?: number | null;
+	label: string;
+	category: string;
+	specialKind?: string | null;
+	icon: string;
+	radiusM?: number | null;
+	colour: string;
+	cooldownColour?: string | null;
+}
+
+/**
+ * One planet/instance map in the bundled catalogue. `calibration` is
+ * null for a view-only map (displayable, but coordinates cannot be
+ * placed on it); `technical_name` is null when the in-game waypoint
+ * name is unknown.
+ */
+export interface PlanetMap {
+	name: string;
+	technicalName: string | null;
+	imageMime: string;
+	imageWidthPx: number;
+	imageHeightPx: number;
+	calibration: PlanetMapCalibration | null;
+}
+
+/**
+ * A map's coordinate window in game units: the plausibility gate for
+ * any coordinate claimed to lie on it.
+ */
+export interface PlanetMapBounds {
+	lonMin: number;
+	lonMax: number;
+	latMin: number;
+	latMax: number;
+}
+
+/**
+ * A calibrated map's placement on the global tile grid, with the
+ * per-axis pixel scales the frontend renders through.
+ */
+export interface PlanetMapCalibration {
+	tileOriginX: number;
+	tileOriginY: number;
+	tileWidth: number;
+	tileHeight: number;
+	unitsPerPixelX: number;
+	unitsPerPixelY: number;
+	bounds: PlanetMapBounds;
 }
 
 /**
@@ -1331,6 +1610,17 @@ export interface QuestPlaylist {
 	immediateQuestIds: string[];
 	longHorizonQuestIds: string[];
 	items: PlaylistItem[];
+}
+
+export type RadarCalibrationStatus = 'idle' | 'awaitCentre' | 'awaitNorthEdge';
+
+export interface RadarGeometry {
+	centreX: number;
+	centreY: number;
+	northX: number;
+	northY: number;
+	radiusPx: number;
+	displayScale: number;
 }
 
 /**
@@ -2270,4 +2560,136 @@ export async function devCompactDatabase(): Promise<CompactResult> {
 
 export async function devRebuildProjections(): Promise<RebuildReport> {
 	return invokeCommand('dev_rebuild_projections', {});
+}
+
+export async function planetMapsList(): Promise<PlanetMap[]> {
+	return invokeCommand('planet_maps_list', {});
+}
+
+export async function mapPinsList(planet: string, mapViewId: number | null): Promise<MapPin[]> {
+	return invokeCommand('map_pins_list', { planet, map_view_id: mapViewId });
+}
+
+export async function mapPinsViewport(planet: string, mapViewId: number | null, lonMin: number, lonMax: number, latMin: number, latMax: number): Promise<MapPin[]> {
+	return invokeCommand('map_pins_viewport', { planet, map_view_id: mapViewId, lon_min: lonMin, lon_max: lonMax, lat_min: latMin, lat_max: latMax });
+}
+
+export async function mapPinNearby(planet: string, mapViewId: number | null, lon: number, lat: number): Promise<NearbyMapPin | null> {
+	return invokeCommand('map_pin_nearby', { planet, map_view_id: mapViewId, lon, lat });
+}
+
+export async function mapViewsList(planet: string): Promise<MapView[]> {
+	return invokeCommand('map_views_list', { planet });
+}
+
+export async function mapViewCreate(planet: string, name: string): Promise<MapView> {
+	return invokeCommand('map_view_create', { planet, name });
+}
+
+export async function mapViewRename(id: number, name: string): Promise<MapView> {
+	return invokeCommand('map_view_rename', { id, name });
+}
+
+export async function mapViewDelete(id: number): Promise<void> {
+	return invokeCommand('map_view_delete', { id });
+}
+
+export async function mapPinCreate(pin: MapPinInput): Promise<MapPin> {
+	return invokeCommand('map_pin_create', { pin });
+}
+
+export async function mapPinUpdate(id: number, patch: MapPinPatch): Promise<MapPin> {
+	return invokeCommand('map_pin_update', { id, patch });
+}
+
+export async function mapPinDelete(id: number): Promise<void> {
+	return invokeCommand('map_pin_delete', { id });
+}
+
+export async function mapPinCooldown(id: number): Promise<MapPin> {
+	return invokeCommand('map_pin_cooldown', { id });
+}
+
+export async function pinConfigsList(planet: string, mapViewId: number | null): Promise<PinConfig[]> {
+	return invokeCommand('pin_configs_list', { planet, map_view_id: mapViewId });
+}
+
+export async function pinConfigCreate(input: PinConfigInput): Promise<PinConfig> {
+	return invokeCommand('pin_config_create', { input });
+}
+
+export async function pinConfigUpdate(id: number, input: PinConfigEditInput): Promise<PinConfig> {
+	return invokeCommand('pin_config_update', { id, input });
+}
+
+export async function pinConfigDelete(id: number): Promise<void> {
+	return invokeCommand('pin_config_delete', { id });
+}
+
+export async function pinConfigReorder(ids: number[]): Promise<void> {
+	return invokeCommand('pin_config_reorder', { ids });
+}
+
+export async function mapsCalibrationStart(): Promise<CoordCalibrationStatus> {
+	return invokeCommand('maps_calibration_start', {});
+}
+
+export async function mapsCalibrationCancel(): Promise<CoordCalibrationStatus> {
+	return invokeCommand('maps_calibration_cancel', {});
+}
+
+export async function mapsCalibrationStatus(): Promise<CoordCalibrationStatus> {
+	return invokeCommand('maps_calibration_status', {});
+}
+
+export async function mapsScanCoordinates(planet: string | null): Promise<CoordScanResult> {
+	return invokeCommand('maps_scan_coordinates', { planet });
+}
+
+export async function navigationSnapshot(): Promise<NavigationRun | null> {
+	return invokeCommand('navigation_snapshot', {});
+}
+
+export async function navigationStart(planet: string, mapViewId: number | null, startLon: number, startLat: number, hopCount: number | null, hotkey: string): Promise<NavigationRun> {
+	return invokeCommand('navigation_start', { planet, map_view_id: mapViewId, start_lon: startLon, start_lat: startLat, hop_count: hopCount, hotkey });
+}
+
+export async function navigationUpdatePosition(): Promise<NavigationPositionResult> {
+	return invokeCommand('navigation_update_position', {});
+}
+
+export async function navigationMarkVisited(force: boolean): Promise<NavigationPositionResult> {
+	return invokeCommand('navigation_mark_visited', { force });
+}
+
+export async function navigationSkip(): Promise<NavigationRun> {
+	return invokeCommand('navigation_skip', {});
+}
+
+export async function navigationResolveHarvest(confirm: boolean): Promise<NavigationRun> {
+	return invokeCommand('navigation_resolve_harvest', { confirm });
+}
+
+export async function navigationUndo(): Promise<NavigationRun> {
+	return invokeCommand('navigation_undo', {});
+}
+
+export async function navigationEnd(): Promise<void> {
+	return invokeCommand('navigation_end', {});
+}
+
+export async function radarCalibrationStart(): Promise<RadarCalibrationStatus> {
+	return invokeCommand('radar_calibration_start', {});
+}
+
+export async function radarCalibrationCancel(): Promise<void> {
+	return invokeCommand('radar_calibration_cancel', {});
+}
+
+export async function radarCalibrationStatus(): Promise<RadarCalibrationStatus> {
+	return invokeCommand('radar_calibration_status', {});
+}
+
+export async function radarGeometry(): Promise<RadarGeometry | null> {
+	return invokeCommand('radar_geometry', {});
 }

@@ -16,6 +16,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub const TOPIC_TRACKING_SESSION_UPDATED: &str = "tracking.session.updated";
 pub const TOPIC_SCAN_STATUS_CHANGED: &str = "scan.status.changed";
+pub const TOPIC_HARVEST_RECORDED: &str = "harvest.recorded";
+pub const TOPIC_NAVIGATION_UPDATED: &str = "navigation.updated";
 
 /// A field that serialises to exactly one topic literal and refuses any
 /// other input: the discriminator the union routes on, kept closed so a
@@ -46,6 +48,8 @@ macro_rules! topic_tag {
 
 topic_tag!(TrackingSessionUpdatedTag, "tracking.session.updated");
 topic_tag!(ScanStatusChangedTag, "scan.status.changed");
+topic_tag!(HarvestRecordedTag, "harvest.recorded");
+topic_tag!(NavigationUpdatedTag, "navigation.updated");
 
 fn default_event_version() -> i64 {
     1
@@ -121,6 +125,40 @@ pub struct ScanStatusChanged {
     pub payload: ScanStatusChangedPayload,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestRecordedPayload {
+    #[serde(rename = "harvestId")]
+    pub harvest_id: String,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestRecorded {
+    #[serde(rename = "type")]
+    pub topic: HarvestRecordedTag,
+    #[serde(default = "default_event_version")]
+    pub event_version: i64,
+    pub occurred_at: String,
+    pub payload: HarvestRecordedPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NavigationUpdatedPayload {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NavigationUpdated {
+    #[serde(rename = "type")]
+    pub topic: NavigationUpdatedTag,
+    #[serde(default = "default_event_version")]
+    pub event_version: i64,
+    pub occurred_at: String,
+    pub payload: NavigationUpdatedPayload,
+}
+
 /// The discriminated union of every frontend-facing domain event. The
 /// untagged dispatch is made exact by the closed topic-tag fields: a
 /// frame routes to the one variant whose `type` literal it carries, and
@@ -131,6 +169,8 @@ pub struct ScanStatusChanged {
 pub enum DomainEvent {
     TrackingSessionUpdated(TrackingSessionUpdated),
     ScanStatusChanged(ScanStatusChanged),
+    HarvestRecorded(HarvestRecorded),
+    NavigationUpdated(NavigationUpdated),
 }
 
 impl DomainEvent {
@@ -139,6 +179,8 @@ impl DomainEvent {
         match self {
             DomainEvent::TrackingSessionUpdated(_) => TOPIC_TRACKING_SESSION_UPDATED,
             DomainEvent::ScanStatusChanged(_) => TOPIC_SCAN_STATUS_CHANGED,
+            DomainEvent::HarvestRecorded(_) => TOPIC_HARVEST_RECORDED,
+            DomainEvent::NavigationUpdated(_) => TOPIC_NAVIGATION_UPDATED,
         }
     }
 
@@ -194,6 +236,31 @@ mod tests {
             "\"payload\":{\"phase\":\"processing\"}}"
         );
         assert_eq!(event.to_wire_json(), expected);
+    }
+
+    #[test]
+    fn harvest_envelope_serialises_to_the_pinned_wire_bytes() {
+        let event = DomainEvent::HarvestRecorded(HarvestRecorded {
+            topic: HarvestRecordedTag,
+            event_version: 1,
+            occurred_at: "2026-07-19T08:00:00+00:00".into(),
+            payload: HarvestRecordedPayload {
+                harvest_id: "harvest-7".into(),
+                success: true,
+            },
+        });
+        assert_eq!(event.to_wire_json(), "{\"type\":\"harvest.recorded\",\"event_version\":1,\"occurred_at\":\"2026-07-19T08:00:00+00:00\",\"payload\":{\"harvestId\":\"harvest-7\",\"success\":true}}");
+    }
+
+    #[test]
+    fn navigation_envelope_serialises_to_the_pinned_wire_bytes() {
+        let event = DomainEvent::NavigationUpdated(NavigationUpdated {
+            topic: NavigationUpdatedTag,
+            event_version: 1,
+            occurred_at: "2026-07-19T08:00:00+00:00".into(),
+            payload: NavigationUpdatedPayload {},
+        });
+        assert_eq!(event.to_wire_json(), "{\"type\":\"navigation.updated\",\"event_version\":1,\"occurred_at\":\"2026-07-19T08:00:00+00:00\",\"payload\":{}}");
     }
 
     #[test]

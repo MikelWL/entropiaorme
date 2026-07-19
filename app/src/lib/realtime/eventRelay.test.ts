@@ -35,6 +35,7 @@ function stubMainWindow(): void {
 const HYDRATE_CALLS = [
 	['tracking:session:updated', {}],
 	['scan:status:changed', {}],
+	['navigation:updated', {}],
 ];
 
 beforeEach(() => {

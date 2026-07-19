@@ -4,7 +4,7 @@
   "harvest_events": [
     {
       "cost_ped": 0.0,
-      "id": "<UUID_3>",
+      "id": "<UUID_2>",
       "loot_total_ped": 0.098,
       "session_id": "<UUID_1>",
       "success": 1,
@@ -13,7 +13,7 @@
     },
     {
       "cost_ped": 0.0,
-      "id": "<UUID_4>",
+      "id": "<UUID_3>",
       "loot_total_ped": 0.0,
       "session_id": "<UUID_1>",
       "success": 0,
@@ -22,7 +22,7 @@
     },
     {
       "cost_ped": 0.0,
-      "id": "<UUID_5>",
+      "id": "<UUID_4>",
       "loot_total_ped": 0.047,
       "session_id": "<UUID_1>",
       "success": 1,
@@ -31,7 +31,7 @@
     },
     {
       "cost_ped": 0.0,
-      "id": "<UUID_6>",
+      "id": "<UUID_5>",
       "loot_total_ped": 0.1,
       "session_id": "<UUID_1>",
       "success": 1,
@@ -40,7 +40,7 @@
     },
     {
       "cost_ped": 0.0,
-      "id": "<UUID_7>",
+      "id": "<UUID_6>",
       "loot_total_ped": 0.0,
       "session_id": "<UUID_1>",
       "success": 0,
@@ -49,7 +49,7 @@
     },
     {
       "cost_ped": 0.0,
-      "id": "<UUID_8>",
+      "id": "<UUID_7>",
       "loot_total_ped": 0.08,
       "session_id": "<UUID_1>",
       "success": 1,
@@ -59,37 +59,37 @@
   ],
   "harvest_loot_items": [
     {
-      "harvest_id": "<UUID_3>",
+      "harvest_id": "<UUID_2>",
       "item_name": "Short Moonleaf Board",
       "quantity": 9,
       "value_ped": 0.09
     },
     {
-      "harvest_id": "<UUID_3>",
+      "harvest_id": "<UUID_2>",
       "item_name": "Wood Shavings",
       "quantity": 8,
       "value_ped": 0.008
     },
     {
-      "harvest_id": "<UUID_5>",
+      "harvest_id": "<UUID_4>",
       "item_name": "Short Moonleaf Board",
       "quantity": 4,
       "value_ped": 0.04
     },
     {
-      "harvest_id": "<UUID_5>",
+      "harvest_id": "<UUID_4>",
       "item_name": "Wood Shavings",
       "quantity": 7,
       "value_ped": 0.007
     },
     {
-      "harvest_id": "<UUID_6>",
+      "harvest_id": "<UUID_5>",
       "item_name": "Short Moonleaf Board",
       "quantity": 10,
       "value_ped": 0.1
     },
     {
-      "harvest_id": "<UUID_8>",
+      "harvest_id": "<UUID_7>",
       "item_name": "Short Moonleaf Board",
       "quantity": 8,
       "value_ped": 0.08
@@ -99,7 +99,7 @@
     {
       "is_enhancer_shrapnel": 0,
       "item_name": "Shrapnel",
-      "kill_id": "<UUID_2>",
+      "kill_id": "<UUID_8>",
       "quantity": 250,
       "value_ped": 2.5
     }
@@ -109,7 +109,7 @@
       "cost_per_shot": 0.0,
       "critical_hits": 0,
       "damage_dealt": 55.0,
-      "kill_id": "<UUID_2>",
+      "kill_id": "<UUID_8>",
       "shots_fired": 2,
       "tool_name": "Unknown"
     }
@@ -121,7 +121,7 @@
       "damage_dealt": 55.0,
       "damage_taken": 0.0,
       "enhancer_cost": 0.0,
-      "id": "<UUID_2>",
+      "id": "<UUID_8>",
       "is_global": 0,
       "is_hof": 0,
       "loot_total_ped": 2.5,
@@ -143,6 +143,7 @@
       "type": "markup"
     }
   ],
+  "map_pins": [],
   "notable_events": [],
   "quest_claims": [],
   "quest_mobs": [],

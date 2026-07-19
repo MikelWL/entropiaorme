@@ -200,6 +200,23 @@ fn ort_dylib_path(resource_dir: Option<&PathBuf>) -> PathBuf {
     }
 }
 
+/// Where the bundled planet-map bundle lives (per-planet rasters plus
+/// `calibration.json`): the bundled resource dir (`<resource_dir>/maps/`)
+/// in a release build, the repo copy (`entropia-orme/resources/maps/`)
+/// in dev, mirroring `tauri.conf.json`'s bundle map
+/// (`resources/maps/` -> `maps/`).
+fn maps_dir(resource_dir: Option<&PathBuf>) -> PathBuf {
+    match resource_dir {
+        Some(dir) if !cfg!(debug_assertions) => dir.join("maps"),
+        _ => dev_project_root()
+            .join("app")
+            .join("src-tauri")
+            .join("entropia-orme")
+            .join("resources")
+            .join("maps"),
+    }
+}
+
 /// Where the recogniser's model + dict live: the bundled resource dir
 /// (`<resource_dir>/models/`) in a release build, the repo copy
 /// (`entropia-orme/resources/models/`) in dev. The asymmetry mirrors
@@ -488,6 +505,13 @@ pub struct Composed {
     /// OS hook. Held for the spacebar-capture toggle and the exit
     /// seam (its teardown).
     pub spacebar_listener: Arc<SpacebarCaptureListener>,
+    /// The coordinate-calibration Enter listener, on the same shared OS
+    /// hook; enabled only while a calibration flow is live. Held for the
+    /// exit seam (its teardown).
+    pub coord_confirm: Arc<eo_services::coord_capture::CoordConfirmListener>,
+    /// The radar flow's instance of the same gated Enter listener, held for
+    /// the listener lifetime and the exit seam.
+    pub radar_confirm: Arc<eo_services::coord_capture::CoordConfirmListener>,
 }
 
 /// The outcome of a composition attempt at the substrate's startup: the
@@ -516,15 +540,36 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
     init_ort_runtime(resource_dir.as_ref());
     // The single shared OS keyboard hook, built at this production site and
     // injected down the compose chain. The allowlist filters at the hook
-    // boundary to the hotbar digit keys and the space key, so out-of-scope
-    // keystrokes never enter the event stream. Tests inject a hook-free
+    // boundary to the hotbar digit keys, the space key, Enter (the
+    // coordinate-calibration confirm key), and F6-F12 (the field-navigation
+    // update hotkeys), so out-of-scope keystrokes never enter the event stream.
+    //
+    // SECURITY (deliberate): admission is static for every allowlisted key,
+    // not just the digits and spacebar. While the hook runs for any consumer,
+    // an allowlisted edge enters the in-process stream and is dropped by every
+    // listener unless a flow armed its consumer (calibration for Enter, a live
+    // route for the F-key; neither logs nor persists the keystroke). The
+    // allowlist has since grown past the original three cases to include the
+    // navigation F-keys: this is a re-affirmed acceptance, not an oversight,
+    // because F6-F12 are no more sensitive than the hotbar digits already
+    // admitted, and they only reach the stream while the hook is already
+    // running for another consumer, then get dropped unless a route is live.
+    // Dynamic admission (membership only while a flow is live) would scope
+    // tighter but adds mutable shared state to a hook callback deliberately
+    // kept to filter-and-enqueue; it remains the documented upgrade path if a
+    // future key is genuinely sensitive. Tests inject a hook-free
     // `MockKeystrokeSource` through the same parameter instead, so a generic
     // test run never installs the OS hook (whose attach/detach lifecycle can
     // intermittently wedge a headless run).
     let allowlist: std::collections::BTreeSet<String> = HOTBAR_SLOT_KEYS
         .iter()
         .map(|key| key.to_string())
-        .chain(std::iter::once("space".to_string()))
+        .chain(
+            [
+                "space", "return", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+            ]
+            .map(str::to_string),
+        )
         .collect();
     let keystroke_source: Arc<dyn KeystrokeSource> =
         Arc::new(HookKeystrokeSource::new(Some(allowlist)));
@@ -533,6 +578,7 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
         snapshot_dir(resource_dir.as_ref()),
         models_dir(resource_dir.as_ref()),
         Some(demo_db_path(resource_dir.as_ref())),
+        maps_dir(resource_dir.as_ref()),
         keystroke_source,
     )
     .await
@@ -548,6 +594,7 @@ async fn compose_with(
     snapshot: PathBuf,
     models: PathBuf,
     demo_db_path: Option<PathBuf>,
+    maps: PathBuf,
     keystroke_source: Arc<dyn KeystrokeSource>,
 ) -> Composition {
     if let Err(err) = std::fs::create_dir_all(&data_dir) {
@@ -701,6 +748,129 @@ async fn compose_with(
     )
     .await;
 
+    // Coordinate capture: the maps feature's two-point calibration flow
+    // plus the one-shot coordinate scan, composed over the same seams the
+    // repair scan rides (screen capture, the shared recogniser) plus the
+    // cursor-position lookup and the config-owned capture rectangle. The
+    // region provider and the frame reader are each one narrow closure on
+    // purpose: an automatic UI locator or a specialised digit recogniser
+    // replaces its closure without touching the scan path.
+    let coord_capture = {
+        use eo_services::coord_capture::{CoordCaptureProviders, CoordCaptureService};
+        let region_reader = {
+            let config = producers.config_service_handle();
+            let reader = config.lock().expect("config service").reader();
+            move || reader.current().map_coord_region
+        };
+        let persist_config = producers.config_service_handle();
+        let coord_engine = ocr_engine.clone();
+        // Every scan drops its last frame + recogniser answers under the
+        // data dir's debug/ (tiny, overwritten, local-only): the standing
+        // instrument for diagnosing a readout that will not read.
+        let coord_debug_dir = data_dir.join("debug");
+        CoordCaptureService::new(CoordCaptureProviders {
+            cursor_position: Arc::new(eu_window::cursor_position),
+            region: Arc::new(region_reader),
+            capture_region: Arc::new(capture_region_bgr),
+            read_text: Arc::new(move |frame: &BgrImage| {
+                coord_engine
+                    .as_ref()?
+                    .recognize_bgr(&frame.data, frame.h, frame.w)
+                    .ok()
+            }),
+            persist_region: Arc::new(move |region| {
+                let mut updates = serde_json::Map::new();
+                updates.insert(
+                    "map_coord_region".to_string(),
+                    serde_json::to_value(region).map_err(|err| err.to_string())?,
+                );
+                persist_config
+                    .lock()
+                    .map_err(|_| "config service lock poisoned".to_string())?
+                    .update(&updates)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string())
+            }),
+            debug_dir: Arc::new(move || Some(coord_debug_dir.clone())),
+        })
+    };
+    let coord_confirm = eo_services::coord_capture::CoordConfirmListener::new(
+        coord_capture.clone(),
+        Some(producers.keystroke_source_handle()),
+    );
+    coord_capture.attach_confirm_listener(&coord_confirm);
+
+    // The planet-map bundle is optional: a missing or broken bundle stands
+    // the maps surface down (an empty catalogue) with a logged reason,
+    // never declines composition.
+    let planet_maps = match eo_services::planet_maps::PlanetMapStore::new(&maps) {
+        Ok(store) if !store.is_empty() => Some(Arc::new(store)),
+        Ok(_) => None,
+        Err(err) => {
+            tracing::warn!(
+                target: "eo::composition",
+                "planet-map bundle at {} unusable ({err}); the maps surface stands down",
+                maps.display()
+            );
+            None
+        }
+    };
+
+    let navigation = {
+        let bus = producers.bus_handle();
+        let changed_bus = bus.clone();
+        let changed_clock = clock.clone();
+        let changed: eo_services::navigation::ChangedSink = Arc::new(move || {
+            use eo_wire::domain_events::{
+                NavigationUpdated, NavigationUpdatedPayload, NavigationUpdatedTag,
+            };
+            changed_bus.publish(&BusEvent::NavigationUpdated(NavigationUpdated {
+                topic: NavigationUpdatedTag,
+                event_version: 1,
+                occurred_at: eo_services::time::to_iso_utc(naive_to_epoch(changed_clock.now())),
+                payload: NavigationUpdatedPayload {},
+            }));
+        });
+        let bounds_store = planet_maps.clone();
+        let bounds: eo_services::navigation::BoundsProvider = Arc::new(move |planet| {
+            let bounds = bounds_store
+                .as_ref()?
+                .record(planet)?
+                .calibration
+                .as_ref()?
+                .bounds;
+            Some(eo_services::coord_capture::CoordBounds {
+                lon_min: bounds.lon_min,
+                lon_max: bounds.lon_max,
+                lat_min: bounds.lat_min,
+                lat_max: bounds.lat_max,
+            })
+        });
+        let service = eo_services::navigation::NavigationService::new(
+            db.clone(),
+            clock.clone(),
+            coord_capture.clone(),
+            bounds,
+            changed,
+            Some(producers.keystroke_source_handle()),
+        )
+        .await;
+        let radar_confirm = service.attach_radar_confirm_listener(
+            Some(producers.keystroke_source_handle()),
+            tokio::runtime::Handle::current(),
+        );
+        let harvest_navigation = service.clone();
+        bus.subscribe(Topic::HarvestRecorded, move |event| {
+            let BusEvent::HarvestRecorded(envelope) = event else {
+                return;
+            };
+            let success = envelope.payload.success;
+            let navigation = harvest_navigation.clone();
+            tokio::spawn(async move { navigation.on_harvest(success).await });
+        });
+        (service, radar_confirm)
+    };
+
     // The typed-command facade shares the read surface's handles plus the
     // producers the write families signal (the config writer, the hunt
     // tracker, the hotbar gate, the chat-log watcher, the skill tracker
@@ -722,6 +892,9 @@ async fn compose_with(
         repair_ocr.clone(),
         producers.quests_handle(),
         demo_db_path,
+        planet_maps,
+        Some(coord_capture.clone()),
+        Some(navigation.0),
     ));
     Composition::Ready(Composed {
         db,
@@ -730,6 +903,8 @@ async fn compose_with(
         ocr_engine,
         skill_scan,
         spacebar_listener,
+        coord_confirm,
+        radar_confirm: navigation.1,
     })
 }
 
@@ -1132,7 +1307,12 @@ fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
 /// and capture channel clones, so they need no separate registration
 /// store; they drop with the bus when the spine tears down.
 fn subscribe_domain_bridge(bus: &EventBus, domain_bus: &Arc<DomainBus>) {
-    for topic in [Topic::TrackingSessionUpdated, Topic::ScanStatusChanged] {
+    for topic in [
+        Topic::TrackingSessionUpdated,
+        Topic::ScanStatusChanged,
+        Topic::HarvestRecorded,
+        Topic::NavigationUpdated,
+    ] {
         let domain_bus = domain_bus.clone();
         bus.subscribe(topic, move |event| match event {
             BusEvent::TrackingSessionUpdated(envelope) => {
@@ -1140,6 +1320,12 @@ fn subscribe_domain_bridge(bus: &EventBus, domain_bus: &Arc<DomainBus>) {
             }
             BusEvent::ScanStatusChanged(envelope) => {
                 domain_bus.publish(DomainEvent::ScanStatusChanged(envelope.clone()));
+            }
+            BusEvent::HarvestRecorded(envelope) => {
+                domain_bus.publish(DomainEvent::HarvestRecorded(envelope.clone()));
+            }
+            BusEvent::NavigationUpdated(envelope) => {
+                domain_bus.publish(DomainEvent::NavigationUpdated(envelope.clone()));
             }
             // A foreign event on a domain topic is unrepresentable at the
             // publish site; nothing to forward.
@@ -1311,6 +1497,16 @@ mod tests {
             .join("snapshot")
     }
 
+    /// The repo's planet-map bundle directory (the dev `maps_dir`).
+    fn repo_maps() -> PathBuf {
+        dev_project_root()
+            .join("app")
+            .join("src-tauri")
+            .join("entropia-orme")
+            .join("resources")
+            .join("maps")
+    }
+
     /// The repo's recogniser model+dict directory (the dev `models_dir`).
     fn repo_models() -> PathBuf {
         dev_project_root()
@@ -1336,6 +1532,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1363,6 +1560,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1402,6 +1600,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1419,6 +1618,7 @@ mod tests {
             dir.path().join("no-such-snapshot"),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await;
@@ -1426,6 +1626,16 @@ mod tests {
             matches!(composed, Composition::Declined),
             "missing snapshot declines composition"
         );
+    }
+
+    #[test]
+    fn maps_dir_prefers_the_repo_copy_in_dev_builds() {
+        let resolved = maps_dir(Some(&PathBuf::from("X:/resources")));
+        if cfg!(debug_assertions) {
+            assert_eq!(resolved, repo_maps());
+        } else {
+            assert_eq!(resolved, PathBuf::from("X:/resources").join("maps"));
+        }
     }
 
     #[test]
@@ -1599,6 +1809,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await
@@ -1674,6 +1885,7 @@ mod tests {
             repo_snapshot(),
             repo_models(),
             None,
+            repo_maps(),
             Arc::new(MockKeystrokeSource::new()),
         )
         .await

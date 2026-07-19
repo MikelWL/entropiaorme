@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "navigation-overlay",
+  "description": "Least-privilege access for the interactive route guidance HUD.",
+  "windows": ["navigation-hud"],
+  "permissions": [
+    "navigation-commands",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "core:window:allow-start-dragging"
+  ]
+}

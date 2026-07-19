@@ -4,7 +4,7 @@
  * Real-time backend domain events reach every window over the Tauri event bus:
  * the native producer spine emits each typed envelope directly on its colon-form
  * Tauri topic (see `spawn_domain_event_bridge` in the shell), and the topic-aware
- * consumers (the tracking and scan stores, the overlay) subscribe through
+ * snapshot consumers (the tracking, scan and navigation stores) subscribe through
  * `listen()`. This module owns only the HYDRATE NUDGE: a payload-less frame on
  * each forwarded topic that prompts every window to re-read its current state,
  * so a window cannot show stale data after it first mounts or after the native
@@ -24,11 +24,15 @@
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
-/** Wire topics whose colon-form Tauri events the windows subscribe to. The
- * hydrate nudge fires a payload-less frame on each. Grows as more domain topics
- * are added (quests, ...); the Rust bridge forwards the live events on the same
- * topics. */
-const FORWARDED_TOPICS = ['tracking.session.updated', 'scan.status.changed'] as const;
+/** Snapshot topics whose colon-form Tauri events trigger state hydration. The
+ * nudge fires a payload-less frame on each. Semantic events such as a completed
+ * harvest are forwarded live by the Rust bridge but do not belong here because
+ * an empty payload would look like a real event to their consumers. */
+const FORWARDED_TOPICS = [
+	'tracking.session.updated',
+	'scan.status.changed',
+	'navigation.updated',
+] as const;
 
 /**
  * Substrate ready signal. The shell composes the native service spine at startup
@@ -54,8 +58,8 @@ function toTauriEventName(topic: string): string {
 
 /**
  * Prompt every window to re-read its current state. A payload-less typed frame on
- * each forwarded topic drives the topic-aware consumers (the tracking and scan
- * stores, the overlay): each subscribes through its typed topic, so a
+ * each forwarded topic drives the snapshot consumers: each subscribes through
+ * its typed topic, so a
  * payload-less frame reads as "re-hydrate" rather than as an idle session.
  */
 function hydrate(): void {

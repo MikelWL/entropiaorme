@@ -3,7 +3,9 @@
 EntropiaOrme reads a player's skill levels directly from the in-game skills
 panel: the user captures the panel page by page, the application recognises
 the text in each cell, and the recognised values are resolved into a map of
-canonical skill name to level. This page traces that journey stage by stage.
+canonical skill name to level. The same recogniser also serves on-demand
+repair-cost and map-coordinate reads. This page traces the shared machinery
+and the skill-panel journey stage by stage.
 
 The pipeline runs in-process in the native Rust spine, and the Rust
 implementation is the implementation. The recogniser is pinned against a
@@ -42,17 +44,21 @@ The model weights ship inside the installer and the recogniser operates fully
 offline from a cold start: there is no network access at any point of the read
 path.
 
-Two consumers share the recogniser:
+Three consumers share the recogniser:
 
 | Consumer | Input | Output |
 | --- | --- | --- |
 | Skill-panel scan | A captured panel sliced into per-cell crops | A `name → level` map |
 | Repair-cost read | A single small numeric region on the repair terminal | A parsed PED cost |
+| Map-coordinate read | A calibrated minimap region read line by line | Parsed longitude, latitude, and optional altitude |
 
 This page focuses on the skill-panel scan; the repair-cost read
 (`app/src-tauri/eo-services/src/repair_ocr.rs`) reuses the same recogniser
 for a single on-demand number and is summarised under
-[The shared repair-cost read](#the-shared-repair-cost-read).
+[The shared repair-cost read](#the-shared-repair-cost-read). The coordinate
+reader (`app/src-tauri/eo-services/src/coord_capture.rs`) adds explicit grammar
+and per-planet bounds checks so an unreadable or implausible result cannot
+silently become a map pin.
 
 ## The stages in order
 
@@ -71,6 +77,13 @@ and persistence; the bytes decode back to BGR, keeping the preview and
 recognition paths interchangeable. The capture is supplied to the scan service
 as an injected provider (`capture_region` on `ScanProviders`), so the scan
 logic stays independent of the platform capture mechanism.
+
+On Windows the provider performs an on-demand GDI capture. On Linux it acquires
+a user-consented ScreenCast portal session and consumes its PipeWire node
+through GStreamer. The portal's D-Bus connection is driven by a dedicated,
+process-lifetime Tokio worker because the PipeWire grant remains valid only
+while that peer is alive; the GStreamer pipeline retains the newest full-monitor
+frame and crops requested rectangles from it.
 
 ### 2. Image decode and preprocess
 

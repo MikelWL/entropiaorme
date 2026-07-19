@@ -48,6 +48,9 @@ async fn settings_api(dir: &Path) -> Api {
         handles.repair_ocr,
         handles.quests.clone(),
         None,
+        None,
+        None,
+        None,
     )
 }
 

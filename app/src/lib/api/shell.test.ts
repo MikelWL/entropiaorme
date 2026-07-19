@@ -22,6 +22,7 @@ beforeEach(() => {
 describe('window commands', () => {
 	it.each([
 		['toggleOverlay', 'toggle_overlay'],
+		['toggleCartographyOverlay', 'toggle_cartography_overlay'],
 		['showScanOverlay', 'show_scan_overlay'],
 		['hideScanOverlay', 'hide_scan_overlay'],
 	] as const)('%s invokes %s with no arguments', async (fn, command) => {
@@ -41,6 +42,16 @@ describe('updater commands', () => {
 		const shell = await loadModule();
 		await shell[fn]();
 		expect(invokeMock).toHaveBeenCalledWith(command);
+	});
+});
+
+describe('planetMapImage', () => {
+	it('fetches the raster over the planet_map_image command as a base64 data URL', async () => {
+		const { planetMapImage } = await loadModule();
+		invokeMock.mockResolvedValue('aGVsbG8=');
+		const url = await planetMapImage('Calypso', 'image/jpeg');
+		expect(invokeMock).toHaveBeenCalledWith('planet_map_image', { planet: 'Calypso' });
+		expect(url).toBe('data:image/jpeg;base64,aGVsbG8=');
 	});
 });
 

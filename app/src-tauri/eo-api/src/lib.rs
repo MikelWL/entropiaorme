@@ -43,6 +43,7 @@ pub mod dev;
 pub mod equipment;
 mod error;
 pub mod manifest;
+pub mod maps;
 pub mod market;
 mod nullable;
 pub mod quests;
@@ -102,6 +103,24 @@ pub struct Api {
     /// over the facade's shared db and clock. An informational layer
     /// only: nothing here feeds the ledger or any realised P&L figure.
     market: MarketService,
+    /// The cartography-pin service (pin CRUD), built over the facade's
+    /// shared db and clock; the facade adds the map-bounds gate on top.
+    map_pins: eo_services::map_pins::MapPinsService,
+    /// The pin-configuration service (the per-preset palette; pins are
+    /// instances of a configuration), built over the same db and clock.
+    pin_configs: eo_services::pin_configs::PinConfigsService,
+    /// The bundled planet-map catalogue (a shipped resource), or `None`
+    /// on a facade built without it (the maps family then serves an
+    /// empty catalogue and the raster fetch reports unavailable).
+    planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
+    /// The coordinate-capture service (the maps calibration flow and
+    /// the one-shot coordinate scan), or `None` on a facade built
+    /// without the native capture seams (those commands then report
+    /// unavailable).
+    coord_capture: Option<Arc<eo_services::coord_capture::CoordCaptureService>>,
+    /// Persisted route navigation and radar guidance, composed only when
+    /// the native capture and producer seams are available.
+    navigation: Option<Arc<eo_services::navigation::NavigationService>>,
     /// The bundled guide-mode demo database path (a shipped resource), or
     /// `None` on a facade built without it (the demo commands then report the
     /// unavailable error). The demo services are a parallel database + tracker
@@ -130,10 +149,16 @@ impl Api {
         repair_ocr: Arc<RepairOcrService>,
         quests: Arc<QuestService>,
         demo_db_path: Option<PathBuf>,
+        planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
+        coord_capture: Option<Arc<eo_services::coord_capture::CoordCaptureService>>,
+        navigation: Option<Arc<eo_services::navigation::NavigationService>>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
         let market = MarketService::new(db.clone(), clock.clone());
+        let map_pins = eo_services::map_pins::MapPinsService::new(db.clone(), clock.clone());
+        let pin_configs =
+            eo_services::pin_configs::PinConfigsService::new(db.clone(), clock.clone());
         Self {
             db,
             game_data,
@@ -151,6 +176,11 @@ impl Api {
             quests,
             analytics,
             market,
+            map_pins,
+            pin_configs,
+            planet_maps,
+            coord_capture,
+            navigation,
             demo_db_path,
             demo: tokio::sync::OnceCell::new(),
         }

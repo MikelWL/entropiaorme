@@ -18,6 +18,19 @@ export async function toggleOverlay(): Promise<void> {
 	await invoke('toggle_overlay');
 }
 
+/** Toggle the pre-spawned cartography pin overlay window. */
+export async function toggleCartographyOverlay(): Promise<void> {
+	await invoke('toggle_cartography_overlay');
+}
+
+export async function showNavigationOverlays(): Promise<void> {
+	await invoke('show_navigation_overlays');
+}
+
+export async function hideNavigationOverlays(): Promise<void> {
+	await invoke('hide_navigation_overlays');
+}
+
 /** Show and focus the pre-spawned scan overlay window. */
 export async function showScanOverlay(): Promise<void> {
 	await invoke('show_scan_overlay');
@@ -60,4 +73,11 @@ export async function installUpdate(): Promise<void> {
 export async function manualSkillScanCapturePng(page: number): Promise<string> {
 	const encoded = await invoke<string>('capture_png', { page });
 	return `data:image/png;base64,${encoded}`;
+}
+
+/** A bundled planet map's raster as a base64 `data:` URL for an `<img>`
+ * `src`. `mime` comes from the planet's `planet_maps_list` record. */
+export async function planetMapImage(planet: string, mime: string): Promise<string> {
+	const encoded = await invoke<string>('planet_map_image', { planet });
+	return `data:${mime};base64,${encoded}`;
 }

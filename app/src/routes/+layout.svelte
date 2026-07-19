@@ -24,6 +24,7 @@
 		NavCharacter,
 		NavQuests,
 		NavEquipment,
+		NavMaps,
 		NavMarket,
 		NavSettings,
 		NavNews,
@@ -67,7 +68,11 @@
 		const path = page.url.pathname;
 		const isWelcome = path.startsWith('/welcome');
 		const isOverlay =
-			path.startsWith('/overlay') || path.startsWith('/scan-overlay');
+			path.startsWith('/overlay') ||
+			path.startsWith('/scan-overlay') ||
+			path.startsWith('/cartography-overlay') ||
+			path.startsWith('/navigation-hud') ||
+			path.startsWith('/radar-guidance');
 		if (!isWelcome && !isOverlay) {
 			if (!complete) {
 				await goto('/welcome', { replaceState: true });
@@ -98,6 +103,7 @@
 		{ id: '/quests', label: 'Quests', icon: NavQuests },
 		{ id: '/equipment', label: 'Equipment', icon: NavEquipment },
 		{ id: '/market', label: 'Market', icon: NavMarket },
+		{ id: '/maps', label: 'Maps', icon: NavMaps },
 	];
 
 	let footerNavItems = $derived([
@@ -138,7 +144,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/overlay') || page.url.pathname.startsWith('/scan-overlay')}
+{#if page.url.pathname.startsWith('/overlay') || page.url.pathname.startsWith('/scan-overlay') || page.url.pathname.startsWith('/cartography-overlay') || page.url.pathname.startsWith('/navigation-hud') || page.url.pathname.startsWith('/radar-guidance')}
 	{@render children()}
 {:else if page.url.pathname.startsWith('/welcome')}
 	<div class="flex flex-col h-screen bg-base">

@@ -47,6 +47,48 @@
         "visible": false,
         "skipTaskbar": true,
         "shadow": false
+      },
+      {
+        "label": "cartography-overlay",
+        "title": "EntropiaOrme Pin Overlay",
+        "url": "/cartography-overlay",
+        "width": 360,
+        "height": 150,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
+      },
+      {
+        "label": "navigation-hud",
+        "title": "EntropiaOrme Route",
+        "url": "/navigation-hud",
+        "width": 300,
+        "height": 230,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
+      },
+      {
+        "label": "radar-guidance",
+        "title": "EntropiaOrme Radar Guidance",
+        "url": "/radar-guidance",
+        "width": 200,
+        "height": 200,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {
@@ -72,6 +114,7 @@
     "homepage": "https://entropiaorme.com",
     "resources": {
       "resources/snapshot/": "snapshot/",
+      "resources/maps/": "maps/",
       "resources/panel_geometry.json": "panel_geometry.json",
       "resources/models/": "models/",
       "../../../data/demo/entropia_orme.db": "demo/entropia_orme.db",

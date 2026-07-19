@@ -61,6 +61,9 @@ async fn api_over(dir: &Path) -> (Api, Db) {
             handles.repair_ocr,
             handles.quests.clone(),
             None,
+            None,
+            None,
+            None,
         ),
         db,
     )

@@ -109,10 +109,11 @@ describe('dismissal and activation', () => {
 	it('runs the item action and closes on selection', async () => {
 		const onEdit = vi.fn();
 		render(Menu, { props: { ariaLabel: 'Quest actions', items: threeItems({ onEdit }) } });
-		await openMenu();
+		const trigger = await openMenu();
 
 		await fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
 		expect(onEdit).toHaveBeenCalledTimes(1);
 		expect(screen.queryByRole('menu')).toBeNull();
+		expect(document.activeElement).toBe(trigger);
 	});
 });

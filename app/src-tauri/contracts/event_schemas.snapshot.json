@@ -1,5 +1,50 @@
 {
   "$defs": {
+    "HarvestRecorded": {
+      "additionalProperties": false,
+      "description": "A harvesting attempt was durably recorded.",
+      "properties": {
+        "event_version": { "default": 1, "title": "Event Version", "type": "integer" },
+        "occurred_at": { "title": "Occurred At", "type": "string" },
+        "payload": { "$ref": "#/$defs/HarvestRecordedPayload" },
+        "type": { "const": "harvest.recorded", "default": "harvest.recorded", "title": "Type", "type": "string" }
+      },
+      "required": ["occurred_at", "payload"],
+      "title": "HarvestRecorded",
+      "type": "object"
+    },
+    "HarvestRecordedPayload": {
+      "additionalProperties": false,
+      "description": "The durable harvest identity and whether it yielded resources.",
+      "properties": {
+        "harvestId": { "title": "Harvestid", "type": "string" },
+        "success": { "title": "Success", "type": "boolean" }
+      },
+      "required": ["harvestId", "success"],
+      "title": "HarvestRecordedPayload",
+      "type": "object"
+    },
+    "NavigationUpdated": {
+      "additionalProperties": false,
+      "description": "The persisted navigation run changed.",
+      "properties": {
+        "event_version": { "default": 1, "title": "Event Version", "type": "integer" },
+        "occurred_at": { "title": "Occurred At", "type": "string" },
+        "payload": { "$ref": "#/$defs/NavigationUpdatedPayload" },
+        "type": { "const": "navigation.updated", "default": "navigation.updated", "title": "Type", "type": "string" }
+      },
+      "required": ["occurred_at", "payload"],
+      "title": "NavigationUpdated",
+      "type": "object"
+    },
+    "NavigationUpdatedPayload": {
+      "additionalProperties": false,
+      "description": "A content-free invalidation that prompts consumers to hydrate navigation state.",
+      "properties": {},
+      "required": [],
+      "title": "NavigationUpdatedPayload",
+      "type": "object"
+    },
     "ScanStatusChanged": {
       "additionalProperties": false,
       "description": "The manual skill-scan status changed (phase transition or capture/OCR progress).",
@@ -125,6 +170,8 @@
   },
   "discriminator": {
     "mapping": {
+      "harvest.recorded": "#/$defs/HarvestRecorded",
+      "navigation.updated": "#/$defs/NavigationUpdated",
       "scan.status.changed": "#/$defs/ScanStatusChanged",
       "tracking.session.updated": "#/$defs/TrackingSessionUpdated"
     },
@@ -136,6 +183,12 @@
     },
     {
       "$ref": "#/$defs/ScanStatusChanged"
+    },
+    {
+      "$ref": "#/$defs/HarvestRecorded"
+    },
+    {
+      "$ref": "#/$defs/NavigationUpdated"
     }
   ]
 }
