@@ -6,11 +6,11 @@
 		endNavigation,
 		getNavigationSnapshot,
 		hideNavigationOverlays,
-		replanNavigation,
+		markNavigationVisited,
 		skipNavigationStop,
-		toggleNavigationPause,
 		undoNavigationStop,
 		updateNavigationPosition,
+		type NavigationPositionStatus,
 		type NavigationRun,
 	} from '$lib/api';
 	import { createWindowSizeSync } from '$lib/windows/windowSize';
@@ -21,6 +21,9 @@
 	let run = $state<NavigationRun | null>(null);
 	let busy = $state(false);
 	let feedback = $state<string | null>(null);
+	// Set when a manual Visited lands outside the arrival tolerance: the visit
+	// is held until the user confirms a forced record.
+	let pendingVisit = $state<{ name: string; distance: number } | null>(null);
 	const sizeSync = createWindowSizeSync(() => root);
 	const active = $derived(run?.stops.find((stop) => stop.status === 'active') ?? null);
 	const following = $derived(run?.stops.find((stop) => stop.status === 'pending') ?? null);
@@ -38,9 +41,53 @@
 		return total;
 	});
 
+	function statusFeedback(status: NavigationPositionStatus): string {
+		switch (status) {
+			case 'updated':
+				return 'Position updated.';
+			case 'noActiveRun':
+				return 'No active route.';
+			case 'noRegion':
+				return 'Calibrate coordinate capture first.';
+			case 'ambiguous':
+				return 'Several route points are within range.';
+			case 'unreadable':
+				return 'The coordinates could not be read.';
+			case 'implausible':
+				return 'That reading looked implausible.';
+			default:
+				return 'The position could not be read.';
+		}
+	}
+
+	// Automatic harvesting advances the route from the tracker. Diffing the
+	// previous snapshot against the next surfaces which tree was recorded, and
+	// whether it was reached out of order (so the remaining path was recomputed).
+	function applyHarvestFeedback(prev: NavigationRun, next: NavigationRun) {
+		const before = new Map(prev.stops.map((stop) => [stop.id, stop.status]));
+		const prevActiveId = prev.stops.find((stop) => stop.status === 'active')?.id;
+		for (const stop of next.stops) {
+			const priorStatus = before.get(stop.id);
+			if (
+				stop.status === 'visited' &&
+				priorStatus != null &&
+				priorStatus !== 'visited' &&
+				stop.completionSource === 'harvest'
+			) {
+				feedback =
+					priorStatus === 'active' || stop.id === prevActiveId
+						? `Recorded ${stop.name}.`
+						: `${stop.name} visited out of order; route recomputed.`;
+				pendingVisit = null;
+			}
+		}
+	}
+
 	async function hydrate() {
 		try {
-			run = await getNavigationSnapshot();
+			const next = await getNavigationSnapshot();
+			if (next && run) applyHarvestFeedback(run, next);
+			run = next;
 			if (!run) void hideNavigationOverlays();
 		} catch {
 			feedback = 'Navigation is unavailable.';
@@ -61,22 +108,51 @@
 		if (busy) return;
 		busy = true;
 		feedback = null;
+		pendingVisit = null;
 		try { run = await action(); } catch { feedback = 'The route could not be updated.'; }
 		finally { busy = false; }
 	}
 
+	// Update strictly observes: it refreshes the distance and bearing to the
+	// active tree without ever recording a visit.
 	async function updatePosition() {
 		if (busy) return;
 		busy = true;
 		feedback = null;
+		pendingVisit = null;
 		try {
 			const result = await updateNavigationPosition();
 			if (result.run) run = result.run;
-			feedback = result.status === 'updated' ? 'Position updated.' : result.status === 'ambiguous' ? 'Several route points are within range.' : result.status === 'noRegion' ? 'Calibrate coordinate capture first.' : result.status === 'paused' ? 'Resume the route before updating.' : 'The position could not be read.';
+			feedback = statusFeedback(result.status);
 		} catch { feedback = 'The position could not be read.'; }
 		finally { busy = false; }
 	}
 
+	// Visited records the active tree. Outside the arrival tolerance the visit
+	// is held for an explicit confirmation (force).
+	async function markVisited(force: boolean) {
+		if (busy) return;
+		busy = true;
+		feedback = null;
+		const target = active?.name ?? 'this tree';
+		try {
+			const result = await markNavigationVisited(force);
+			if (result.run) run = result.run;
+			if (result.status === 'updated') {
+				pendingVisit = null;
+				feedback = `Recorded ${target}.`;
+			} else if (result.status === 'outOfTolerance') {
+				pendingVisit = { name: target, distance: result.run?.distanceToActive ?? 0 };
+			} else {
+				pendingVisit = null;
+				feedback = statusFeedback(result.status);
+			}
+		} catch { feedback = 'The visit could not be recorded.'; }
+		finally { busy = false; }
+	}
+
+	// Closing the HUD ends the visible navigation interaction; starting a new
+	// route is the way to replan.
 	async function endRoute() {
 		if (busy) return;
 		busy = true;
@@ -97,7 +173,7 @@
 				<p class="text-[9px] font-bold uppercase tracking-wider text-white/35">Route guidance</p>
 				<p class="mt-1 truncate text-[11px] text-white/65">{run ? `${run.planet} · ${run.mapViewName ?? 'Default'} · ${run.hotkey.toUpperCase()} updates` : 'No route'}</p>
 			</div>
-			<button class="release-btn" aria-label="Hide route guidance" onclick={() => hideNavigationOverlays()}>×</button>
+			<button class="release-btn" aria-label="End route and close" onclick={endRoute}>×</button>
 		</div>
 		{#if run && active}
 			<div class="py-3">
@@ -116,13 +192,20 @@
 				<p class="mt-1 text-[9px] text-white/35">Last position: {run.lastPositionAt == null ? 'route start' : new Date(run.lastPositionAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>
 				{#if following}<p class="mt-2 truncate text-[10px] text-white/45">Next: {following.name} · {formatGamePoint(following)}</p>{/if}
 			</div>
-			<div class="grid grid-cols-3 gap-1.5">
+			{#if pendingVisit}
+				<div class="mb-2 rounded-md border border-orange-300/30 bg-orange-300/10 p-2">
+					<p class="text-[10px] text-orange-200">{pendingVisit.distance.toFixed(1)} m from {pendingVisit.name}. Mark it visited anyway?</p>
+					<div class="mt-1.5 grid grid-cols-2 gap-1.5">
+						<button class="hud-btn primary" disabled={busy} onclick={() => markVisited(true)}>Visit anyway</button>
+						<button class="hud-btn" disabled={busy} onclick={() => (pendingVisit = null)}>Cancel</button>
+					</div>
+				</div>
+			{/if}
+			<div class="grid grid-cols-2 gap-1.5">
 				<button class="hud-btn primary" disabled={busy} onclick={updatePosition}>Update</button>
+				<button class="hud-btn" disabled={busy} onclick={() => markVisited(false)}>Visited</button>
 				<button class="hud-btn" disabled={busy} onclick={() => act(skipNavigationStop)}>Skip</button>
 				<button class="hud-btn" disabled={busy} onclick={() => act(undoNavigationStop)}>Undo</button>
-				<button class="hud-btn" disabled={busy} onclick={() => act(toggleNavigationPause)}>{run.status === 'paused' ? 'Resume' : 'Pause'}</button>
-				<button class="hud-btn" disabled={busy} onclick={() => act(replanNavigation)}>Replan</button>
-				<button class="hud-btn danger" disabled={busy} onclick={endRoute}>End</button>
 			</div>
 		{:else if run?.status === 'completed'}
 			<div class="py-4 text-center">
@@ -146,6 +229,5 @@
 	.hud-btn { border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.05); border-radius: 5px; padding: 5px 6px; color: rgba(255,255,255,.7); font-size: 10px; cursor: pointer; }
 	.hud-btn:hover { border-color: rgba(56,189,248,.35); color: rgb(125 211 252); }
 	.hud-btn.primary { background: rgba(56,189,248,.16); color: rgb(125 211 252); }
-	.hud-btn.danger { color: rgb(253 186 116); }
 	.hud-btn:disabled { opacity: .4; cursor: default; }
 </style>

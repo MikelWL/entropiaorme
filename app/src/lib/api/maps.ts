@@ -15,6 +15,7 @@ export type {
 	MapPinPatch,
 	MapView,
 	NavigationPositionResult,
+	NavigationPositionStatus,
 	NavigationRun,
 	NavigationRunStatus,
 	NavigationStop,
@@ -45,10 +46,9 @@ export const scanMapCoordinates = commands.mapsScanCoordinates;
 export const getNavigationSnapshot = commands.navigationSnapshot;
 export const startNavigation = commands.navigationStart;
 export const updateNavigationPosition = commands.navigationUpdatePosition;
+export const markNavigationVisited = commands.navigationMarkVisited;
 export const skipNavigationStop = commands.navigationSkip;
 export const undoNavigationStop = commands.navigationUndo;
-export const toggleNavigationPause = commands.navigationTogglePause;
-export const replanNavigation = commands.navigationReplan;
 export const endNavigation = commands.navigationEnd;
 export const startRadarCalibration = commands.radarCalibrationStart;
 export const cancelRadarCalibration = commands.radarCalibrationCancel;

@@ -11,7 +11,7 @@ use rusqlite::OptionalExtension;
 
 use crate::clock::Clock;
 use crate::coord_capture::{
-    CoordBounds, CoordCaptureService, CoordConfirmListener, CoordScanOutcome,
+    CoordBounds, CoordCaptureService, CoordConfirmListener, CoordRead, CoordScanOutcome,
 };
 use crate::db::{Db, DbError};
 use crate::keystroke_source::{KeystrokeKind, KeystrokeSource};
@@ -19,6 +19,10 @@ use crate::time::naive_to_epoch;
 
 pub const ARRIVAL_TOLERANCE_UNITS: f64 = 2.0;
 pub const DUPLICATE_TOLERANCE_UNITS: f64 = 2.0;
+/// A confirmed visit puts its tree on cooldown for this long, so a freshly
+/// regenerated route excludes trees that were just harvested. Two hours is
+/// the initial default; a configurable per-species respawn is deferred work.
+pub const COOLDOWN_SECONDS: f64 = 2.0 * 60.0 * 60.0;
 pub const DEFAULT_NAVIGATION_HOTKEY: &str = "f8";
 pub const NAVIGATION_HOTKEYS: [&str; 7] = ["f6", "f7", "f8", "f9", "f10", "f11", "f12"];
 
@@ -151,6 +155,33 @@ pub enum PositionUpdate {
     Unreadable,
     Implausible,
     Ambiguous(NavigationRun),
+    /// A manual `Visited` whose observed position is outside the arrival
+    /// tolerance. The run position is updated so distance/bearing are fresh,
+    /// but no visit is recorded until the user confirms a forced visit.
+    OutOfTolerance(NavigationRun),
+}
+
+/// The read-failure legs of a coordinate scan, kept small so the scan helper
+/// does not carry a run-sized `Err` type. Each maps to its `PositionUpdate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScanFailure {
+    NoRegion,
+    CaptureFailed,
+    EngineUnavailable,
+    Unreadable,
+    Implausible,
+}
+
+impl From<ScanFailure> for PositionUpdate {
+    fn from(failure: ScanFailure) -> Self {
+        match failure {
+            ScanFailure::NoRegion => PositionUpdate::NoRegion,
+            ScanFailure::CaptureFailed => PositionUpdate::CaptureFailed,
+            ScanFailure::EngineUnavailable => PositionUpdate::EngineUnavailable,
+            ScanFailure::Unreadable => PositionUpdate::Unreadable,
+            ScanFailure::Implausible => PositionUpdate::Implausible,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -193,12 +224,12 @@ impl NavigationService {
         changed: ChangedSink,
         input: Option<Arc<dyn KeystrokeSource>>,
     ) -> Arc<Self> {
-        let live_run = load_live_run(&db).await.unwrap_or(None);
-        let live = live_run.is_some();
-        let hotkey = live_run
-            .as_ref()
-            .map(|run| run.hotkey.clone())
-            .unwrap_or_else(|| DEFAULT_NAVIGATION_HOTKEY.to_string());
+        // An interrupted route is not restored as a unit: recovery is by
+        // regenerating a route that excludes cooled-down trees (the per-tree
+        // visit records are the recovery point). Any run left live by a crash
+        // or a hard close is ended at startup rather than hydrated.
+        let now = naive_to_epoch(clock.now());
+        let _ = end_lingering_runs(&db, now).await;
         let service = Arc::new(Self {
             db,
             clock,
@@ -210,8 +241,8 @@ impl NavigationService {
             radar_confirm_listener: Mutex::new(None),
             input: input.clone(),
             input_claimed: std::sync::atomic::AtomicBool::new(false),
-            route_live: std::sync::atomic::AtomicBool::new(live),
-            hotkey: Mutex::new(hotkey),
+            route_live: std::sync::atomic::AtomicBool::new(false),
+            hotkey: Mutex::new(DEFAULT_NAVIGATION_HOTKEY.to_string()),
         });
         if let Some(input) = input {
             let weak = Arc::downgrade(&service);
@@ -228,13 +259,10 @@ impl NavigationService {
                 {
                     let service = service.clone();
                     runtime.spawn(async move {
-                        let _ = service.update_position("hotkey", "manual").await;
+                        let _ = service.update_position().await;
                     });
                 }
             }));
-        }
-        if live {
-            service.claim_input();
         }
         service
     }
@@ -283,12 +311,12 @@ impl NavigationService {
         }
         let selected_hotkey = hotkey.clone();
         let _guard = self.operation.lock().await;
-        let candidates = load_candidates(&self.db, planet.clone(), map_view_id).await?;
+        let now = naive_to_epoch(self.clock.now());
+        let candidates = load_candidates(&self.db, planet.clone(), map_view_id, now).await?;
         let route = optimise_open_route((start_lon, start_lat), &candidates, hop_count as usize);
         if route.is_empty() {
             return Err(NavigationError::NoPins);
         }
-        let now = naive_to_epoch(self.clock.now());
         let run_id = self.db.with_writer(move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
@@ -320,32 +348,104 @@ impl NavigationService {
         Ok(run)
     }
 
-    pub async fn update_position(
-        &self,
-        source: &str,
-        outcome: &str,
-    ) -> Result<PositionUpdate, NavigationError> {
+    /// Observe the current position. Strictly captures the coordinate and
+    /// refreshes the run's position so distance and bearing to the active
+    /// tree recompute; it never records a visit or advances the route. Both
+    /// the `Update` button and the configured hotkey ride this path.
+    pub async fn update_position(&self) -> Result<PositionUpdate, NavigationError> {
         let _guard = self.operation.lock().await;
         let Some(run) = load_live_run(&self.db).await? else {
             return Ok(PositionUpdate::NoActiveRun);
         };
-        if run.status == RunStatus::Paused {
-            return Ok(PositionUpdate::Paused(run));
-        }
-        let scan = self.coord_capture.scan((self.bounds)(&run.planet));
-        let read = match scan {
-            CoordScanOutcome::Read(read) => read,
-            CoordScanOutcome::NoRegion => return Ok(PositionUpdate::NoRegion),
-            CoordScanOutcome::CaptureFailed => return Ok(PositionUpdate::CaptureFailed),
-            CoordScanOutcome::EngineUnavailable => return Ok(PositionUpdate::EngineUnavailable),
-            CoordScanOutcome::Unreadable { .. } => return Ok(PositionUpdate::Unreadable),
-            CoordScanOutcome::Implausible { .. } => return Ok(PositionUpdate::Implausible),
+        let read = match self.scan_position(&run.planet) {
+            Ok(read) => read,
+            Err(failure) => return Ok(failure.into()),
         };
-        let updated = self
-            .apply_position(run, read.lon as f64, read.lat as f64, source, outcome)
-            .await?;
+        let now = naive_to_epoch(self.clock.now());
+        update_run_position(&self.db, run.id, read.lon as f64, read.lat as f64, now).await?;
+        let refreshed = load_run(&self.db, run.id)
+            .await?
+            .ok_or(NavigationError::NoActiveRun)?;
         (self.changed)();
-        Ok(updated)
+        Ok(PositionUpdate::Updated(refreshed))
+    }
+
+    /// Record the active tree as visited. When the observed position is
+    /// within the arrival tolerance (or `force` is set after the caller
+    /// confirms), the active stop is completed, a durable per-pin visit is
+    /// written (starting its cooldown), and the route advances. Outside the
+    /// tolerance without `force`, the position is refreshed but no visit is
+    /// recorded, and `OutOfTolerance` asks the caller to confirm.
+    pub async fn mark_visited(&self, force: bool) -> Result<PositionUpdate, NavigationError> {
+        let _guard = self.operation.lock().await;
+        let Some(run) = load_live_run(&self.db).await? else {
+            return Ok(PositionUpdate::NoActiveRun);
+        };
+        let read = match self.scan_position(&run.planet) {
+            Ok(read) => read,
+            Err(failure) => return Ok(failure.into()),
+        };
+        let lon = read.lon as f64;
+        let lat = read.lat as f64;
+        let now = naive_to_epoch(self.clock.now());
+        let Some(active) = run.active_stop() else {
+            update_run_position(&self.db, run.id, lon, lat, now).await?;
+            (self.changed)();
+            return Ok(PositionUpdate::NoActiveRun);
+        };
+        let observed_distance = distance((lon, lat), (active.lon, active.lat));
+        if observed_distance > ARRIVAL_TOLERANCE_UNITS && !force {
+            update_run_position(&self.db, run.id, lon, lat, now).await?;
+            let refreshed = load_run(&self.db, run.id)
+                .await?
+                .ok_or(NavigationError::NoActiveRun)?;
+            (self.changed)();
+            return Ok(PositionUpdate::OutOfTolerance(refreshed));
+        }
+        let run_id = run.id;
+        let stop_id = active.id;
+        let pin_id = active.pin_id;
+        self.db.with_writer(move |conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE navigation_runs SET current_lon = ?2, current_lat = ?3, last_position_at = ?4, updated_at = ?4 WHERE id = ?1",
+                rusqlite::params![run_id, lon, lat, now],
+            )?;
+            tx.execute(
+                "UPDATE navigation_stops SET status = 'visited', completed_at = ?2, completion_source = 'manual', observed_lon = ?3, observed_lat = ?4, observed_distance = ?5 WHERE id = ?1",
+                rusqlite::params![stop_id, now, lon, lat, observed_distance],
+            )?;
+            tx.execute(
+                "INSERT INTO map_pin_visits (pin_id, run_id, visited_at, source, outcome, observed_lon, observed_lat, observed_distance) VALUES (?1, ?2, ?3, 'manual', 'manual', ?4, ?5, ?6)",
+                rusqlite::params![pin_id, run_id, now, lon, lat, observed_distance],
+            )?;
+            activate_next_or_complete(&tx, run_id, now)?;
+            tx.commit()?;
+            Ok(())
+        }).await?;
+        let refreshed = load_run(&self.db, run_id)
+            .await?
+            .ok_or(NavigationError::NoActiveRun)?;
+        if refreshed.status == RunStatus::Completed {
+            self.route_live
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            self.release_input_if_idle();
+        }
+        (self.changed)();
+        Ok(PositionUpdate::Updated(refreshed))
+    }
+
+    /// Scan the calibrated coordinate region, mapping every read failure to
+    /// its typed `PositionUpdate` so the position paths share one grammar.
+    fn scan_position(&self, planet: &str) -> Result<CoordRead, ScanFailure> {
+        match self.coord_capture.scan((self.bounds)(planet)) {
+            CoordScanOutcome::Read(read) => Ok(read),
+            CoordScanOutcome::NoRegion => Err(ScanFailure::NoRegion),
+            CoordScanOutcome::CaptureFailed => Err(ScanFailure::CaptureFailed),
+            CoordScanOutcome::EngineUnavailable => Err(ScanFailure::EngineUnavailable),
+            CoordScanOutcome::Unreadable { .. } => Err(ScanFailure::Unreadable),
+            CoordScanOutcome::Implausible { .. } => Err(ScanFailure::Implausible),
+        }
     }
 
     async fn apply_position(
@@ -513,45 +613,6 @@ impl NavigationService {
         Ok(refreshed)
     }
 
-    pub async fn toggle_pause(&self) -> Result<NavigationRun, NavigationError> {
-        let _guard = self.operation.lock().await;
-        let run = load_live_run(&self.db)
-            .await?
-            .ok_or(NavigationError::NoActiveRun)?;
-        let next = if run.status == RunStatus::Paused {
-            "active"
-        } else {
-            "paused"
-        };
-        let now = naive_to_epoch(self.clock.now());
-        let id = run.id;
-        self.db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "UPDATE navigation_runs SET status = ?2, updated_at = ?3 WHERE id = ?1",
-                    rusqlite::params![id, next, now],
-                )?;
-                Ok(())
-            })
-            .await?;
-        let refreshed = load_run(&self.db, id)
-            .await?
-            .ok_or(NavigationError::NoActiveRun)?;
-        (self.changed)();
-        Ok(refreshed)
-    }
-
-    pub async fn replan(&self) -> Result<NavigationRun, NavigationError> {
-        let _guard = self.operation.lock().await;
-        let run_id = load_live_run(&self.db)
-            .await?
-            .ok_or(NavigationError::NoActiveRun)?
-            .id;
-        let refreshed = self.replan_locked(run_id).await?;
-        (self.changed)();
-        Ok(refreshed)
-    }
-
     async fn replan_locked(&self, run_id: i64) -> Result<NavigationRun, NavigationError> {
         let run = load_run(&self.db, run_id)
             .await?
@@ -631,8 +692,28 @@ impl NavigationService {
             return;
         }
         let _ = self
-            .update_position("harvest", if success { "success" } else { "failed" })
+            .harvest_position(if success { "success" } else { "failed" })
             .await;
+    }
+
+    /// The automatic arrival path: a harvest swing proves arrival. Scans the
+    /// current position and runs full arrival matching (debounce, ambiguity
+    /// safety, out-of-order replan) so a matched pending stop is recorded and
+    /// the route advances without blocking tracker processing.
+    async fn harvest_position(&self, outcome: &str) -> Result<PositionUpdate, NavigationError> {
+        let _guard = self.operation.lock().await;
+        let Some(run) = load_live_run(&self.db).await? else {
+            return Ok(PositionUpdate::NoActiveRun);
+        };
+        let read = match self.scan_position(&run.planet) {
+            Ok(read) => read,
+            Err(failure) => return Ok(failure.into()),
+        };
+        let updated = self
+            .apply_position(run, read.lon as f64, read.lat as f64, "harvest", outcome)
+            .await?;
+        (self.changed)();
+        Ok(updated)
     }
 
     pub fn radar_calibration_start(&self) -> RadarCalibrationPhase {
@@ -814,12 +895,28 @@ async fn load_candidates(
     db: &Db,
     planet: String,
     map_view_id: Option<i64>,
+    now: f64,
 ) -> Result<Vec<Candidate>, DbError> {
+    // A freshly regenerated route excludes trees whose latest confirmed visit
+    // is still within its cooldown, so the durable per-tree visits are the
+    // recovery point after an interruption.
+    let cutoff = now - COOLDOWN_SECONDS;
     db.with_reader(move |conn| {
-        let mut stmt = conn.prepare("SELECT id, lon, lat FROM map_pins WHERE planet = ?1 AND ((?2 IS NULL AND map_view_id IS NULL) OR map_view_id = ?2) ORDER BY id")?;
-        let rows = stmt.query_map(rusqlite::params![planet, map_view_id], |row| Ok(Candidate { id: row.get(0)?, lon: row.get(1)?, lat: row.get(2)? }))?;
+        let mut stmt = conn.prepare("SELECT id, lon, lat FROM map_pins WHERE planet = ?1 AND ((?2 IS NULL AND map_view_id IS NULL) OR map_view_id = ?2) AND NOT EXISTS (SELECT 1 FROM map_pin_visits v WHERE v.pin_id = map_pins.id AND v.visited_at >= ?3) ORDER BY id")?;
+        let rows = stmt.query_map(rusqlite::params![planet, map_view_id, cutoff], |row| Ok(Candidate { id: row.get(0)?, lon: row.get(1)?, lat: row.get(2)? }))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }).await
+}
+
+async fn end_lingering_runs(db: &Db, now: f64) -> Result<(), DbError> {
+    db.with_writer(move |conn| {
+        conn.execute(
+            "UPDATE navigation_runs SET status = 'ended', updated_at = ?1 WHERE status IN ('active', 'paused', 'completed')",
+            [now],
+        )?;
+        Ok(())
+    })
+    .await
 }
 
 async fn update_run_position(
@@ -1006,6 +1103,23 @@ mod tests {
             .unwrap();
         }
         let position = Arc::new(Mutex::new((0_i64, 0_i64)));
+        let changes = Arc::new(AtomicUsize::new(0));
+        let input = Arc::new(MockKeystrokeSource::new());
+        let service =
+            spawn_navigation(db, clock, position.clone(), changes.clone(), input.clone()).await;
+        (dir, service, position, changes, input)
+    }
+
+    /// Build a navigation service reading its coordinates from `position`,
+    /// so a second service can be spawned on the same database to exercise
+    /// startup behaviour.
+    async fn spawn_navigation(
+        db: Db,
+        clock: Arc<dyn Clock>,
+        position: Arc<Mutex<(i64, i64)>>,
+        changes: Arc<AtomicUsize>,
+        input: Arc<MockKeystrokeSource>,
+    ) -> Arc<NavigationService> {
         let read_position = position.clone();
         let cursor_position = position.clone();
         let capture = CoordCaptureService::new(CoordCaptureProviders {
@@ -1031,10 +1145,8 @@ mod tests {
             cursor_position: Arc::new(move || Some(*cursor_position.lock().unwrap())),
             ..CoordCaptureProviders::default()
         });
-        let changes = Arc::new(AtomicUsize::new(0));
         let change_count = changes.clone();
-        let input = Arc::new(MockKeystrokeSource::new());
-        let service = NavigationService::new(
+        NavigationService::new(
             db,
             clock,
             capture,
@@ -1049,10 +1161,9 @@ mod tests {
             Arc::new(move || {
                 change_count.fetch_add(1, AtomicOrdering::SeqCst);
             }),
-            Some(input.clone()),
+            Some(input),
         )
-        .await;
-        (dir, service, position, changes, input)
+        .await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1130,14 +1241,16 @@ mod tests {
         .join()
         .expect("off-runtime hotkey dispatch");
 
+        // The hotkey observes only: it refreshes the position without ever
+        // recording a visit, so no stop transitions to Visited.
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             loop {
                 let snapshot = service.snapshot().await.unwrap().unwrap();
-                if snapshot
-                    .stops
-                    .iter()
-                    .any(|stop| stop.status == StopStatus::Visited)
-                {
+                if snapshot.last_position_at.is_some() {
+                    assert!(snapshot
+                        .stops
+                        .iter()
+                        .all(|stop| stop.status != StopStatus::Visited));
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -1159,10 +1272,8 @@ mod tests {
 
         let first = run.active_stop().unwrap().clone();
         *position.lock().unwrap() = (first.lon as i64, first.lat as i64);
-        let PositionUpdate::Updated(updated) =
-            service.update_position("manual", "manual").await.unwrap()
-        else {
-            panic!("position updates")
+        let PositionUpdate::Updated(updated) = service.mark_visited(false).await.unwrap() else {
+            panic!("visited at the active tree")
         };
         run = updated;
         assert_eq!(
@@ -1175,10 +1286,8 @@ mod tests {
 
         let second = run.active_stop().unwrap().clone();
         *position.lock().unwrap() = (second.lon as i64, second.lat as i64);
-        let PositionUpdate::Updated(completed) =
-            service.update_position("manual", "manual").await.unwrap()
-        else {
-            panic!("position updates")
+        let PositionUpdate::Updated(completed) = service.mark_visited(false).await.unwrap() else {
+            panic!("visited at the active tree")
         };
         assert_eq!(completed.status, RunStatus::Completed);
         assert_eq!(
@@ -1207,8 +1316,7 @@ mod tests {
             .clone();
         *position.lock().unwrap() = (pending.lon as i64, pending.lat as i64);
 
-        let PositionUpdate::Updated(replanned) =
-            service.update_position("manual", "manual").await.unwrap()
+        let PositionUpdate::Updated(replanned) = service.harvest_position("success").await.unwrap()
         else {
             panic!("position updates")
         };
@@ -1238,14 +1346,14 @@ mod tests {
             .unwrap();
         let first = run.active_stop().unwrap().clone();
         *position.lock().unwrap() = (first.lon as i64, first.lat as i64);
-        service.update_position("harvest", "success").await.unwrap();
+        service.harvest_position("success").await.unwrap();
 
         // The next tree is three units away. A one-unit OCR shift is inside
         // both its arrival radius and the previous observation's debounce
         // radius, so this repeated swing must not consume the next stop.
         *position.lock().unwrap() = (first.lon as i64 + 1, first.lat as i64);
         let PositionUpdate::Updated(after_repeat) =
-            service.update_position("harvest", "success").await.unwrap()
+            service.harvest_position("success").await.unwrap()
         else {
             panic!("position updates")
         };
@@ -1270,7 +1378,7 @@ mod tests {
         let first = run.active_stop().unwrap();
         *position.lock().unwrap() = (first.lon as i64 + 1, first.lat as i64);
         let PositionUpdate::Ambiguous(ambiguous) =
-            service.update_position("manual", "manual").await.unwrap()
+            service.harvest_position("success").await.unwrap()
         else {
             panic!("overlapping arrival radii stay ambiguous")
         };
@@ -1278,5 +1386,116 @@ mod tests {
             .stops
             .iter()
             .all(|stop| matches!(stop.status, StopStatus::Active | StopStatus::Pending)));
+    }
+
+    #[tokio::test]
+    async fn update_position_observes_without_recording_a_visit() {
+        let (_dir, service, position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .await
+            .unwrap();
+        let first = run.active_stop().unwrap().clone();
+        *position.lock().unwrap() = (first.lon as i64, first.lat as i64);
+
+        let PositionUpdate::Updated(observed) = service.update_position().await.unwrap() else {
+            panic!("position observes")
+        };
+        // Standing exactly on the active tree still records nothing: observing
+        // is strictly separate from completing.
+        assert!(observed
+            .stops
+            .iter()
+            .all(|stop| stop.status != StopStatus::Visited));
+        assert_eq!(observed.active_stop().unwrap().id, first.id);
+        assert_eq!(
+            (observed.current_lon, observed.current_lat),
+            (first.lon, first.lat)
+        );
+        assert!(observed.last_position_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn mark_visited_outside_tolerance_needs_force_then_completes_the_active_tree() {
+        let (_dir, service, position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .await
+            .unwrap();
+        let first = run.active_stop().unwrap().clone();
+        *position.lock().unwrap() = (50, 50);
+
+        let PositionUpdate::OutOfTolerance(pending) = service.mark_visited(false).await.unwrap()
+        else {
+            panic!("an out-of-range visit asks for confirmation")
+        };
+        // Position refreshed, but nothing recorded until the user confirms.
+        assert!(pending
+            .stops
+            .iter()
+            .all(|stop| stop.status != StopStatus::Visited));
+        assert_eq!((pending.current_lon, pending.current_lat), (50.0, 50.0));
+
+        let PositionUpdate::Updated(forced) = service.mark_visited(true).await.unwrap() else {
+            panic!("a forced visit completes the active tree")
+        };
+        assert_eq!(
+            forced
+                .stops
+                .iter()
+                .find(|stop| stop.id == first.id)
+                .unwrap()
+                .status,
+            StopStatus::Visited,
+        );
+        assert_ne!(forced.active_stop().unwrap().id, first.id);
+    }
+
+    #[tokio::test]
+    async fn a_regenerated_route_excludes_recently_visited_trees() {
+        let (_dir, service, position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, 4, "f8".into())
+            .await
+            .unwrap();
+        let first = run.active_stop().unwrap().clone();
+        *position.lock().unwrap() = (first.lon as i64, first.lat as i64);
+        service.mark_visited(false).await.unwrap();
+        service.end().await.unwrap();
+
+        let regenerated = service
+            .start("Calypso".into(), None, 0.0, 0.0, 4, "f8".into())
+            .await
+            .unwrap();
+        // The just-visited tree is on cooldown, so it never enters the new route.
+        assert!(regenerated
+            .stops
+            .iter()
+            .all(|stop| stop.pin_id != first.pin_id));
+    }
+
+    #[tokio::test]
+    async fn a_lingering_run_is_ended_at_startup_not_resumed() {
+        let (dir, service, position, _changes, _input) = navigation_fixture().await;
+        service
+            .start("Calypso".into(), None, 0.0, 0.0, 2, "f8".into())
+            .await
+            .unwrap();
+        assert!(service.snapshot().await.unwrap().is_some());
+        drop(service);
+
+        // A fresh service on the same database does not restore the run: an
+        // interrupted route is recovered by regeneration, not hydration.
+        let db = Db::open(&dir.path().join("navigation.db")).await.unwrap();
+        let clock: Arc<dyn Clock> = Arc::new(MockClock::new(None, 0.0));
+        let restarted = spawn_navigation(
+            db,
+            clock,
+            position.clone(),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(MockKeystrokeSource::new()),
+        )
+        .await;
+        assert!(restarted.snapshot().await.unwrap().is_none());
     }
 }

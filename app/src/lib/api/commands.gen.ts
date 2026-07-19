@@ -1054,7 +1054,7 @@ export interface NavigationPositionResult {
 	run: NavigationRun | null;
 }
 
-export type NavigationPositionStatus = 'updated' | 'noActiveRun' | 'paused' | 'noRegion' | 'captureFailed' | 'engineUnavailable' | 'unreadable' | 'implausible' | 'ambiguous';
+export type NavigationPositionStatus = 'updated' | 'noActiveRun' | 'paused' | 'noRegion' | 'captureFailed' | 'engineUnavailable' | 'unreadable' | 'implausible' | 'ambiguous' | 'outOfTolerance';
 
 export interface NavigationRun {
 	id: number;
@@ -2562,20 +2562,16 @@ export async function navigationUpdatePosition(): Promise<NavigationPositionResu
 	return invokeCommand('navigation_update_position', {});
 }
 
+export async function navigationMarkVisited(force: boolean): Promise<NavigationPositionResult> {
+	return invokeCommand('navigation_mark_visited', { force });
+}
+
 export async function navigationSkip(): Promise<NavigationRun> {
 	return invokeCommand('navigation_skip', {});
 }
 
 export async function navigationUndo(): Promise<NavigationRun> {
 	return invokeCommand('navigation_undo', {});
-}
-
-export async function navigationTogglePause(): Promise<NavigationRun> {
-	return invokeCommand('navigation_toggle_pause', {});
-}
-
-export async function navigationReplan(): Promise<NavigationRun> {
-	return invokeCommand('navigation_replan', {});
 }
 
 export async function navigationEnd(): Promise<void> {

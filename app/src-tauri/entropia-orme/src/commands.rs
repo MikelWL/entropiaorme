@@ -1106,6 +1106,14 @@ pub async fn navigation_update_position(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_mark_visited(
+    app: tauri::AppHandle,
+    force: bool,
+) -> Result<NavigationPositionResult, ApiError> {
+    facade(&app)?.navigation_mark_visited(force).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn navigation_skip(app: tauri::AppHandle) -> Result<NavigationRun, ApiError> {
     facade(&app)?.navigation_skip().await
 }
@@ -1113,16 +1121,6 @@ pub async fn navigation_skip(app: tauri::AppHandle) -> Result<NavigationRun, Api
 #[tauri::command(rename_all = "snake_case")]
 pub async fn navigation_undo(app: tauri::AppHandle) -> Result<NavigationRun, ApiError> {
     facade(&app)?.navigation_undo().await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn navigation_toggle_pause(app: tauri::AppHandle) -> Result<NavigationRun, ApiError> {
-    facade(&app)?.navigation_toggle_pause().await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn navigation_replan(app: tauri::AppHandle) -> Result<NavigationRun, ApiError> {
-    facade(&app)?.navigation_replan().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1288,10 +1286,9 @@ mod tests {
         "navigation_snapshot",
         "navigation_start",
         "navigation_update_position",
+        "navigation_mark_visited",
         "navigation_skip",
         "navigation_undo",
-        "navigation_toggle_pause",
-        "navigation_replan",
         "navigation_end",
         "radar_calibration_start",
         "radar_calibration_cancel",

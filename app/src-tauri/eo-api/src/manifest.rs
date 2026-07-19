@@ -1199,22 +1199,20 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(NavigationPositionResult))),
         },
         CommandSpec {
+            name: "navigation_mark_visited",
+            args: vec![ArgSpec {
+                name: "force",
+                schema: schema(schema_for!(bool)),
+            }],
+            returns: Some(schema(schema_for!(NavigationPositionResult))),
+        },
+        CommandSpec {
             name: "navigation_skip",
             args: Vec::new(),
             returns: Some(schema(schema_for!(NavigationRun))),
         },
         CommandSpec {
             name: "navigation_undo",
-            args: Vec::new(),
-            returns: Some(schema(schema_for!(NavigationRun))),
-        },
-        CommandSpec {
-            name: "navigation_toggle_pause",
-            args: Vec::new(),
-            returns: Some(schema(schema_for!(NavigationRun))),
-        },
-        CommandSpec {
-            name: "navigation_replan",
             args: Vec::new(),
             returns: Some(schema(schema_for!(NavigationRun))),
         },

@@ -157,6 +157,7 @@ pub enum NavigationPositionStatus {
     Unreadable,
     Implausible,
     Ambiguous,
+    OutOfTolerance,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -215,7 +216,18 @@ impl Api {
 
     pub async fn navigation_update_position(&self) -> Result<NavigationPositionResult, ApiError> {
         self.navigation()?
-            .update_position("manual", "manual")
+            .update_position()
+            .await
+            .map(position_to_dto)
+            .map_err(navigation_error)
+    }
+
+    pub async fn navigation_mark_visited(
+        &self,
+        force: bool,
+    ) -> Result<NavigationPositionResult, ApiError> {
+        self.navigation()?
+            .mark_visited(force)
             .await
             .map(position_to_dto)
             .map_err(navigation_error)
@@ -232,22 +244,6 @@ impl Api {
     pub async fn navigation_undo(&self) -> Result<NavigationRun, ApiError> {
         self.navigation()?
             .undo()
-            .await
-            .map(navigation_to_dto)
-            .map_err(navigation_error)
-    }
-
-    pub async fn navigation_toggle_pause(&self) -> Result<NavigationRun, ApiError> {
-        self.navigation()?
-            .toggle_pause()
-            .await
-            .map(navigation_to_dto)
-            .map_err(navigation_error)
-    }
-
-    pub async fn navigation_replan(&self) -> Result<NavigationRun, ApiError> {
-        self.navigation()?
-            .replan()
             .await
             .map(navigation_to_dto)
             .map_err(navigation_error)
@@ -365,6 +361,9 @@ fn position_to_dto(update: PositionUpdate) -> NavigationPositionResult {
         PositionUpdate::Unreadable => (NavigationPositionStatus::Unreadable, None),
         PositionUpdate::Implausible => (NavigationPositionStatus::Implausible, None),
         PositionUpdate::Ambiguous(run) => (NavigationPositionStatus::Ambiguous, Some(run)),
+        PositionUpdate::OutOfTolerance(run) => {
+            (NavigationPositionStatus::OutOfTolerance, Some(run))
+        }
     };
     NavigationPositionResult {
         status,
