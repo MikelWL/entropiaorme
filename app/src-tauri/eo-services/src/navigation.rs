@@ -321,28 +321,31 @@ impl NavigationService {
 
     pub async fn snapshot(&self) -> Result<Option<NavigationRun>, DbError> {
         let mut run = load_current_run(&self.db).await?;
-        // Surface a pending harvest confirmation only while it still names the
-        // active stop of the live run; any later state change makes it stale, so
-        // drop it instead.
+        if let Some(run) = run.as_mut() {
+            self.attach_pending_harvest(run);
+        }
+        Ok(run)
+    }
+
+    /// Decorate a freshly-loaded run with any pending far-harvest confirmation,
+    /// but only while it still names the active stop; otherwise clear the stale
+    /// proposal. Shared by the snapshot read and the observe path so the overlay
+    /// prompt survives continuous automatic position updates.
+    fn attach_pending_harvest(&self, run: &mut NavigationRun) {
         let pending = self
             .pending_harvest
             .lock()
             .expect("pending harvest")
             .clone();
         if let Some(pending) = pending {
-            let still_active = run.as_ref().is_some_and(|run| {
-                run.status == RunStatus::Active
-                    && run.active_stop().map(|stop| stop.id) == Some(pending.stop_id)
-            });
+            let still_active = run.status == RunStatus::Active
+                && run.active_stop().map(|stop| stop.id) == Some(pending.stop_id);
             if still_active {
-                if let Some(run) = run.as_mut() {
-                    run.pending_harvest = Some(pending);
-                }
+                run.pending_harvest = Some(pending);
             } else {
                 *self.pending_harvest.lock().expect("pending harvest") = None;
             }
         }
-        Ok(run)
     }
 
     pub async fn start(
@@ -421,9 +424,12 @@ impl NavigationService {
         };
         let now = naive_to_epoch(self.clock.now());
         update_run_position(&self.db, run.id, read.lon as f64, read.lat as f64, now).await?;
-        let refreshed = load_run(&self.db, run.id)
+        let mut refreshed = load_run(&self.db, run.id)
             .await?
             .ok_or(NavigationError::NoActiveRun)?;
+        // An observe update never resolves a pending harvest, so keep surfacing
+        // it (the automatic updater polls this path every interval).
+        self.attach_pending_harvest(&mut refreshed);
         (self.changed)();
         Ok(PositionUpdate::Updated(refreshed))
     }

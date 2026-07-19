@@ -25,6 +25,7 @@
 		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
 	} from '$lib/features/maps/cartographyOverlay.svelte';
 	import { describeError } from '$lib/view/errorState';
+	import { getPreference, setPreference } from '$lib/preferences';
 
 	const NAVIGATION_HOTKEYS = ['f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'];
 
@@ -41,6 +42,10 @@
 	// Absent stop count charts every available pin; an explicit count stays capped.
 	let hops = $state<number | null>(null);
 	let hotkey = $state('f8');
+	// Location updates: manual (hotkey / Update button only) or automatic (poll
+	// the observe path every interval). Remembered across routes.
+	let autoUpdate = $state(false);
+	let updateIntervalSec = $state(1);
 	const canStart = $derived(
 		!busy &&
 			start != null &&
@@ -128,6 +133,8 @@
 		let unlisten: (() => void) | undefined;
 		let unlistenContext: (() => void) | undefined;
 		void hydrate();
+		void getPreference('navAutoUpdate', false).then((value) => (autoUpdate = value));
+		void getPreference('navUpdateIntervalSec', 1).then((value) => (updateIntervalSec = value));
 		void listen('navigation:updated', hydrate).then((stop) => (unlisten = stop));
 		void listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
 			const context = acceptCartographyContextBroadcast(event.payload);
@@ -138,6 +145,36 @@
 		const observer = new ResizeObserver(() => sizeSync.schedule());
 		observer.observe(root);
 		return () => { unlisten?.(); unlistenContext?.(); observer.disconnect(); sizeSync.cancel(); };
+	});
+
+	function setAutoUpdate(value: boolean) {
+		autoUpdate = value;
+		void setPreference('navAutoUpdate', value);
+	}
+
+	function persistInterval() {
+		updateIntervalSec = Math.min(60, Math.max(1, Math.round(updateIntervalSec || 1)));
+		void setPreference('navUpdateIntervalSec', updateIntervalSec);
+	}
+
+	// Automatic updating polls the observe-only path on a fixed interval while a
+	// route is live, so the radar dot and bearing track the player without a
+	// keypress. It records no visit and stays quiet on a transient read failure.
+	async function autoUpdateTick() {
+		if (busy) return;
+		try {
+			const result = await updateNavigationPosition();
+			if (result.run) run = result.run;
+		} catch {
+			// A transient scan failure is silent here; the next tick retries.
+		}
+	}
+
+	$effect(() => {
+		if (!autoUpdate || run?.status !== 'active') return;
+		const period = Math.max(1, updateIntervalSec) * 1000;
+		const timer = setInterval(() => void autoUpdateTick(), period);
+		return () => clearInterval(timer);
 	});
 
 	// Capture the current in-game coordinates as the route start. A reading that
@@ -276,7 +313,7 @@
 		<div class="flex items-start justify-between gap-3 border-b border-white/10 pb-2">
 			<div class="min-w-0">
 				<p class="text-[9px] font-bold uppercase tracking-wider text-white/35">{run ? 'Route guidance' : 'Plan route'}</p>
-				<p class="mt-1 truncate text-[11px] text-white/65">{run ? `${run.planet} · ${run.mapViewName ?? 'Default'} · ${run.hotkey.toUpperCase()} updates` : planet ? `${planet} · new route` : 'No planet selected'}</p>
+				<p class="mt-1 truncate text-[11px] text-white/65">{run ? `${run.planet} · ${run.mapViewName ?? 'Default'} · ${autoUpdate ? `auto ${updateIntervalSec}s` : `${run.hotkey.toUpperCase()} updates`}` : planet ? `${planet} · new route` : 'No planet selected'}</p>
 			</div>
 			{#if run}
 				<button class="release-btn" aria-label="End route and close" onclick={endRoute}>×</button>
@@ -353,6 +390,20 @@
 						{#each NAVIGATION_HOTKEYS as key}<option value={key}>{key.toUpperCase()}</option>{/each}
 					</select>
 				</label>
+				<div>
+					<span class="mb-0.5 block text-[9px] uppercase tracking-wider text-white/35">Location updates</span>
+					<div class="grid grid-cols-2 gap-1.5">
+						<button class="hud-btn {autoUpdate ? '' : 'primary'}" onclick={() => setAutoUpdate(false)}>Manual</button>
+						<button class="hud-btn {autoUpdate ? 'primary' : ''}" onclick={() => setAutoUpdate(true)}>Automatic</button>
+					</div>
+					{#if autoUpdate}
+						<label class="mt-1.5 flex items-center gap-2">
+							<span class="text-[10px] text-white/55">Every</span>
+							<input class="hud-field w-16" type="number" min="1" max="60" bind:value={updateIntervalSec} onchange={persistInterval} aria-label="Automatic update interval in seconds" />
+							<span class="text-[10px] text-white/55">seconds</span>
+						</label>
+					{/if}
+				</div>
 				<button class="hud-btn primary w-full" disabled={!canStart} onclick={beginRoute}>Start route</button>
 			</div>
 		{:else}
