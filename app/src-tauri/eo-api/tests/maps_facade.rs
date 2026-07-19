@@ -92,6 +92,7 @@ async fn maps_api(dir: &Path, with_bundle: bool, coord: Option<Arc<CoordCaptureS
         None,
         planet_maps,
         coord,
+        None,
     )
 }
 
@@ -108,6 +109,7 @@ fn calypso_pin() -> MapPinInput {
         notes: Some("the sanity anchor".to_string()),
         session_id: None,
         map_view_id: None,
+        allow_nearby: false,
     }
 }
 
@@ -167,6 +169,38 @@ async fn a_pin_roundtrips_with_its_wire_shape() {
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nearby_pin_creation_is_advisory_and_requires_explicit_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = maps_api(dir.path(), true, None).await;
+    let first = api.map_pin_create(calypso_pin()).await.unwrap();
+
+    let nearby = api
+        .map_pin_nearby("Calypso".to_string(), None, 61402.0, 75800.0)
+        .await
+        .unwrap()
+        .0
+        .expect("two-unit boundary is included");
+    assert_eq!(nearby.pin.id, first.id);
+    assert_eq!(nearby.distance, 2.0);
+
+    let mut duplicate = calypso_pin();
+    duplicate.lon = 61402.0;
+    duplicate.lat = 75800.0;
+    duplicate.name = "Second tree".into();
+    assert!(matches!(
+        api.map_pin_create(duplicate).await,
+        Err(ApiError::BadRequest { .. })
+    ));
+
+    let mut confirmed = calypso_pin();
+    confirmed.lon = 61402.0;
+    confirmed.lat = 75800.0;
+    confirmed.name = "Second tree".into();
+    confirmed.allow_nearby = true;
+    assert!(api.map_pin_create(confirmed).await.is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

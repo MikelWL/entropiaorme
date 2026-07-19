@@ -784,6 +784,8 @@ export interface MapPinInput {
 	notes?: string | null;
 	sessionId?: string | null;
 	mapViewId?: number | null;
+	/** Explicit confirmation that a pin may be created within the duplicate-advisory radius of an existing pin. */
+	allowNearby?: boolean;
 }
 
 /**
@@ -1045,6 +1047,55 @@ export interface MonthlyEntry {
 	ledgerGains: Record<string, number>;
 	trackingCost: number;
 	ledgerLosses: Record<string, number>;
+}
+
+export interface NavigationPositionResult {
+	status: NavigationPositionStatus;
+	run: NavigationRun | null;
+}
+
+export type NavigationPositionStatus = 'updated' | 'noActiveRun' | 'paused' | 'noRegion' | 'captureFailed' | 'engineUnavailable' | 'unreadable' | 'implausible' | 'ambiguous';
+
+export interface NavigationRun {
+	id: number;
+	planet: string;
+	mapViewId: number | null;
+	mapViewName: string | null;
+	status: NavigationRunStatus;
+	startLon: number;
+	startLat: number;
+	currentLon: number;
+	currentLat: number;
+	lastPositionAt: number | null;
+	hopCount: number;
+	hotkey: string;
+	updatedAt: number;
+	distanceToActive: number | null;
+	/** Degrees clockwise from north. */
+	bearingDegrees: number | null;
+	stops: NavigationStop[];
+}
+
+export type NavigationRunStatus = 'active' | 'paused' | 'completed' | 'ended';
+
+export interface NavigationStop {
+	id: number;
+	pinId: number;
+	ordinal: number;
+	status: NavigationStopStatus;
+	name: string;
+	icon: string;
+	lon: number;
+	lat: number;
+	completedAt: number | null;
+	completionSource: string | null;
+}
+
+export type NavigationStopStatus = 'pending' | 'active' | 'visited' | 'skipped';
+
+export interface NearbyMapPin {
+	pin: MapPin;
+	distance: number;
 }
 
 /**
@@ -1487,6 +1538,17 @@ export interface QuestPlaylist {
 	immediateQuestIds: string[];
 	longHorizonQuestIds: string[];
 	items: PlaylistItem[];
+}
+
+export type RadarCalibrationStatus = 'idle' | 'awaitCentre' | 'awaitNorthEdge';
+
+export interface RadarGeometry {
+	centreX: number;
+	centreY: number;
+	northX: number;
+	northY: number;
+	radiusPx: number;
+	displayScale: number;
 }
 
 /**
@@ -2436,6 +2498,14 @@ export async function mapPinsList(planet: string, mapViewId: number | null): Pro
 	return invokeCommand('map_pins_list', { planet, map_view_id: mapViewId });
 }
 
+export async function mapPinsViewport(planet: string, mapViewId: number | null, lonMin: number, lonMax: number, latMin: number, latMax: number): Promise<MapPin[]> {
+	return invokeCommand('map_pins_viewport', { planet, map_view_id: mapViewId, lon_min: lonMin, lon_max: lonMax, lat_min: latMin, lat_max: latMax });
+}
+
+export async function mapPinNearby(planet: string, mapViewId: number | null, lon: number, lat: number): Promise<NearbyMapPin | null> {
+	return invokeCommand('map_pin_nearby', { planet, map_view_id: mapViewId, lon, lat });
+}
+
 export async function mapViewsList(planet: string): Promise<MapView[]> {
 	return invokeCommand('map_views_list', { planet });
 }
@@ -2478,4 +2548,52 @@ export async function mapsCalibrationStatus(): Promise<CoordCalibrationStatus> {
 
 export async function mapsScanCoordinates(planet: string | null): Promise<CoordScanResult> {
 	return invokeCommand('maps_scan_coordinates', { planet });
+}
+
+export async function navigationSnapshot(): Promise<NavigationRun | null> {
+	return invokeCommand('navigation_snapshot', {});
+}
+
+export async function navigationStart(planet: string, mapViewId: number | null, startLon: number, startLat: number, hopCount: number, hotkey: string): Promise<NavigationRun> {
+	return invokeCommand('navigation_start', { planet, map_view_id: mapViewId, start_lon: startLon, start_lat: startLat, hop_count: hopCount, hotkey });
+}
+
+export async function navigationUpdatePosition(): Promise<NavigationPositionResult> {
+	return invokeCommand('navigation_update_position', {});
+}
+
+export async function navigationSkip(): Promise<NavigationRun> {
+	return invokeCommand('navigation_skip', {});
+}
+
+export async function navigationUndo(): Promise<NavigationRun> {
+	return invokeCommand('navigation_undo', {});
+}
+
+export async function navigationTogglePause(): Promise<NavigationRun> {
+	return invokeCommand('navigation_toggle_pause', {});
+}
+
+export async function navigationReplan(): Promise<NavigationRun> {
+	return invokeCommand('navigation_replan', {});
+}
+
+export async function navigationEnd(): Promise<void> {
+	return invokeCommand('navigation_end', {});
+}
+
+export async function radarCalibrationStart(): Promise<RadarCalibrationStatus> {
+	return invokeCommand('radar_calibration_start', {});
+}
+
+export async function radarCalibrationCancel(): Promise<void> {
+	return invokeCommand('radar_calibration_cancel', {});
+}
+
+export async function radarCalibrationStatus(): Promise<RadarCalibrationStatus> {
+	return invokeCommand('radar_calibration_status', {});
+}
+
+export async function radarGeometry(): Promise<RadarGeometry | null> {
+	return invokeCommand('radar_geometry', {});
 }

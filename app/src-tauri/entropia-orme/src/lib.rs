@@ -102,6 +102,51 @@ fn toggle_cartography_overlay(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+async fn show_navigation_overlays(app: tauri::AppHandle) {
+    let geometry = match commands::facade(&app) {
+        Ok(facade) => facade.radar_geometry().await.ok().and_then(|value| value.0),
+        Err(_) => None,
+    };
+    if let Some(radar) = app.get_webview_window("radar-guidance") {
+        if let Some(geometry) = geometry {
+            let diameter = (geometry.radius_px * 2.0).round().max(16.0) as u32;
+            let x = (geometry.centre_x as f64 - geometry.radius_px).round() as i32;
+            let y = (geometry.centre_y as f64 - geometry.radius_px).round() as i32;
+            let _ = radar.set_size(tauri::PhysicalSize::new(diameter, diameter));
+            let _ = radar.set_position(tauri::PhysicalPosition::new(x, y));
+            let _ = radar.show();
+            // GTK does not allocate the hidden pre-spawned window's native
+            // surface until its first map. Tao's Linux hit-test path expects
+            // that surface to exist, so click-through must be enabled only
+            // after show maps it; doing this while hidden panics inside Tao.
+            let _ = radar.set_ignore_cursor_events(true);
+        }
+    }
+    if let Some(hud) = app.get_webview_window("navigation-hud") {
+        let position = geometry
+            .map(|geometry| {
+                tauri::PhysicalPosition::new(
+                    (geometry.centre_x as f64 + geometry.radius_px + 12.0).round() as i32,
+                    (geometry.centre_y as f64 - geometry.radius_px).round() as i32,
+                )
+            })
+            .filter(|position| position_on_a_monitor(&hud, position.x, position.y))
+            .unwrap_or_else(|| monitor_anchor(&hud, (60, 250)));
+        let _ = hud.set_position(position);
+        let _ = hud.show();
+    }
+}
+
+#[tauri::command]
+fn hide_navigation_overlays(app: tauri::AppHandle) {
+    for label in ["navigation-hud", "radar-guidance"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
+    }
+}
+
+#[tauri::command]
 fn show_scan_overlay(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("scan-overlay") {
         // Position near a monitor's top-left so the overlay never collides
@@ -168,6 +213,7 @@ struct ScanInput {
     spacebar: std::sync::Arc<composition::SpacebarCaptureListener>,
     skill_scan: std::sync::Arc<composition::SkillScanManual>,
     coord_confirm: std::sync::Arc<eo_services::coord_capture::CoordConfirmListener>,
+    radar_confirm: std::sync::Arc<eo_services::coord_capture::CoordConfirmListener>,
 }
 
 // Holds the composed database handle so the exit seam can run the
@@ -347,6 +393,8 @@ pub fn run() {
             commands::dev_rebuild_projections,
             commands::planet_maps_list,
             commands::map_pins_list,
+            commands::map_pins_viewport,
+            commands::map_pin_nearby,
             commands::map_views_list,
             commands::map_view_create,
             commands::map_view_rename,
@@ -358,6 +406,20 @@ pub fn run() {
             commands::maps_calibration_cancel,
             commands::maps_calibration_status,
             commands::maps_scan_coordinates,
+            commands::navigation_snapshot,
+            commands::navigation_start,
+            commands::navigation_update_position,
+            commands::navigation_skip,
+            commands::navigation_undo,
+            commands::navigation_toggle_pause,
+            commands::navigation_replan,
+            commands::navigation_end,
+            commands::radar_calibration_start,
+            commands::radar_calibration_cancel,
+            commands::radar_calibration_status,
+            commands::radar_geometry,
+            show_navigation_overlays,
+            hide_navigation_overlays,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -442,6 +504,7 @@ pub(crate) fn run_exit_teardown(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<ScanInput>() {
         state.spacebar.stop();
         state.coord_confirm.stop();
+        state.radar_confirm.stop();
         state.skill_scan.shutdown();
     }
 
@@ -565,6 +628,7 @@ fn install_native_services(app: &tauri::AppHandle, composed: composition::Compos
     let exit_spacebar = composed.spacebar_listener.clone();
     let exit_skill_scan = composed.skill_scan.clone();
     let exit_coord_confirm = composed.coord_confirm.clone();
+    let exit_radar_confirm = composed.radar_confirm.clone();
     // The typed-command facade, published to its managed slot below.
     let composed_api = composed.api.clone();
     // The composed database handle, held so the exit seam can run the
@@ -589,6 +653,7 @@ fn install_native_services(app: &tauri::AppHandle, composed: composition::Compos
         spacebar: exit_spacebar,
         skill_scan: exit_skill_scan,
         coord_confirm: exit_coord_confirm,
+        radar_confirm: exit_radar_confirm,
     });
     // Hold the database handle for the exit-seam `PRAGMA optimize`.
     app.manage(ShutdownDb(shutdown_db));
@@ -909,6 +974,7 @@ mod tests {
             crate::command_acl::CARTOGRAPHY_COMMANDS,
             [
                 "map_pin_create",
+                "map_pin_nearby",
                 "map_views_list",
                 "maps_scan_coordinates",
                 "planet_maps_list"

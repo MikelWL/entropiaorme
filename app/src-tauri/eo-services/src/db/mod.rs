@@ -1275,12 +1275,13 @@ mod tests {
         // sqlite_sequence arrives automatically) plus the daily-rollup
         // migration's three projection tables, the market migration's
         // two feed tables, the harvest migration's two activity
-        // tables, the map-pins table, and the named-map table; index migrations: 18 baseline
+        // tables, the map-pins table, the named-map table, and four navigation tables;
+        // index migrations: 18 baseline
         // + 4 analytical + the ledger date index + 2 market + 2 harvest
-        // + the pin planet index + 2 named-map indexes = 30 indexes,
+        // + the pin planet index + 2 named-map indexes + 4 navigation indexes = 34 indexes,
         // 8 triggers.
-        assert_eq!(count("table").await, 32);
-        assert_eq!(count("index").await, 30);
+        assert_eq!(count("table").await, 36);
+        assert_eq!(count("index").await, 34);
         assert_eq!(count("trigger").await, 8);
 
         let version = db
@@ -1664,15 +1665,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = fresh_db(dir.path()).await;
         let master = db.schema_master().await.unwrap();
-        // 32 declared tables (23 baseline + 3 daily-rollup projection +
-        // 2 market feed + 2 harvest activity + map pins + map views) + the
-        // migration ledger + 30 indexes (18 baseline + 4 analytical + the
+        // 36 declared tables (23 baseline + 3 daily-rollup projection +
+        // 2 market feed + 2 harvest activity + map pins + map views + 4
+        // navigation tables) + the migration ledger + 34 indexes (18 baseline + 4 analytical + the
         // ledger date index + 2 market + 2 harvest + the pin planet index +
-        // 2 map-view indexes) +
+        // 2 map-view indexes + 4 navigation indexes) +
         // 8 triggers (only SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), 33 + 30 + 8);
+        assert_eq!(master.len(), 37 + 34 + 8);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

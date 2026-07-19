@@ -152,6 +152,9 @@ impl TrackerActor {
     /// loot items, under one commit, mirroring `persist_kill`.
     pub(super) async fn persist_harvest(&self, harvest: &HarvestEvent) {
         let harvest = harvest.clone();
+        let recorded_id = harvest.id.clone();
+        let recorded_timestamp = harvest.timestamp;
+        let recorded_success = harvest.success;
         let result = self
             .db
             .with_writer(move |conn| {
@@ -189,7 +192,23 @@ impl TrackerActor {
             })
             .await;
         // Contained like the kill path's persistence failure.
-        let _ = result;
+        if result.is_ok() {
+            use eo_wire::domain_events::{
+                HarvestRecorded, HarvestRecordedPayload, HarvestRecordedTag,
+            };
+            self.bus
+                .publish(&crate::bus_events::BusEvent::HarvestRecorded(
+                    HarvestRecorded {
+                        topic: HarvestRecordedTag,
+                        event_version: 1,
+                        occurred_at: super::time::to_iso_utc(recorded_timestamp),
+                        payload: HarvestRecordedPayload {
+                            harvest_id: recorded_id,
+                            success: recorded_success,
+                        },
+                    },
+                ));
+        }
     }
 
     /// Session-end margin on non-enhancer Shrapnel loot (1%, the

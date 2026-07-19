@@ -220,6 +220,13 @@ impl CoordCaptureService {
         (self.providers.region)()
     }
 
+    /// Current physical cursor position through the same injected seam used
+    /// by coordinate-boundary calibration. Other pointer calibrations reuse
+    /// this provider rather than reaching around the established flow.
+    pub fn cursor_position(&self) -> Option<(i64, i64)> {
+        (self.providers.cursor_position)()
+    }
+
     /// The validation read echoed after the last completed calibration.
     pub fn last_validation(&self) -> Option<CoordScanOutcome> {
         self.last_validation
@@ -392,7 +399,7 @@ impl CoordCaptureService {
     }
 }
 
-/// The Enter listener for the calibration flow, mirroring the
+/// The shared Enter listener for pointer-based calibration flows, mirroring the
 /// spacebar-capture listener's lifecycle over the SAME shared OS hook:
 /// enabled only while a flow is live (the facade's start/cancel verbs
 /// flip it, and completing the flow disables it from inside), starting
@@ -400,7 +407,8 @@ impl CoordCaptureService {
 /// calibration episode Enter presses are not observed at all.
 /// Listening is pass-through: the game still receives the keystroke.
 pub struct CoordConfirmListener {
-    service: Arc<CoordCaptureService>,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
+    confirm: Arc<dyn Fn() + Send + Sync>,
     source: Option<Arc<dyn crate::keystroke_source::KeystrokeSource>>,
     enabled: std::sync::atomic::AtomicBool,
     source_running: std::sync::atomic::AtomicBool,
@@ -415,9 +423,28 @@ impl CoordConfirmListener {
         service: Arc<CoordCaptureService>,
         source: Option<Arc<dyn crate::keystroke_source::KeystrokeSource>>,
     ) -> Arc<Self> {
+        let active_service = service.clone();
+        Self::new_with_handler(
+            Arc::new(move || active_service.calibration_active()),
+            Arc::new(move || {
+                service.on_confirm();
+            }),
+            source,
+        )
+    }
+
+    /// Reuse the established calibration listener lifecycle for another
+    /// two-point flow. The callbacks remain ignorant of the OS hook; the
+    /// listener owns press-edge filtering, flow gating and source claims.
+    pub fn new_with_handler(
+        active: Arc<dyn Fn() -> bool + Send + Sync>,
+        confirm: Arc<dyn Fn() + Send + Sync>,
+        source: Option<Arc<dyn crate::keystroke_source::KeystrokeSource>>,
+    ) -> Arc<Self> {
         use std::sync::atomic::AtomicBool;
         let listener = Arc::new(Self {
-            service,
+            active,
+            confirm,
             source: source.clone(),
             enabled: AtomicBool::new(false),
             source_running: AtomicBool::new(false),
@@ -506,7 +533,7 @@ impl CoordConfirmListener {
                 if self.return_down.swap(true, Ordering::SeqCst) {
                     return;
                 }
-                if !self.service.calibration_active() {
+                if !(self.active)() {
                     return;
                 }
                 // The completing press runs a capture + OCR validation
@@ -515,7 +542,7 @@ impl CoordConfirmListener {
                 // Idle-reaching transition.
                 let listener = self.clone();
                 std::thread::spawn(move || {
-                    listener.service.on_confirm();
+                    (listener.confirm)();
                 });
             }
         }

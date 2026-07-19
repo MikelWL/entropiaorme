@@ -12,6 +12,8 @@
 	import MapControls from '$lib/features/maps/MapControls.svelte';
 	import { startMapsCartographySync } from '$lib/features/maps/mapsCartographySync';
 	import MapViewer from '$lib/features/maps/MapViewer.svelte';
+	import NavigationSetupModal from '$lib/features/maps/NavigationSetupModal.svelte';
+	import RadarCalibrationModal from '$lib/features/maps/RadarCalibrationModal.svelte';
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import type { PinFormValues } from '$lib/features/maps/PinEditModal.svelte';
 	import { createMapsModel } from '$lib/features/maps/mapsModel.svelte';
@@ -21,16 +23,37 @@
 	} from '$lib/features/maps/waypoint';
 	import type { GamePoint } from '$lib/features/maps/coords';
 	import type { MapFocusRequest } from '$lib/features/maps/mapTools';
-	import type { MapPin, MapView } from '$lib/api';
+	import type { MapPin, MapView, NavigationRun } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
-	import { toggleCartographyOverlay } from '$lib/api';
+	import {
+		getNearbyMapPin,
+		getNavigationSnapshot,
+		showNavigationOverlays,
+		toggleCartographyOverlay,
+	} from '$lib/api';
+	import { listen } from '@tauri-apps/api/event';
 	import {
 		cartographyOverlayConfig,
 		setCartographyOverlayConfig,
 	} from '$lib/features/maps/cartographyOverlay.svelte';
 
 	const model = createMapsModel();
-	onMount(() => startMapsCartographySync(model));
+	let navigation = $state<NavigationRun | null>(null);
+	onMount(() => {
+		const stopMapsSync = startMapsCartographySync(model);
+		let unlisten: (() => void) | undefined;
+		void getNavigationSnapshot().then((run) => {
+			navigation = run;
+			if (run?.status === 'active' || run?.status === 'paused') void showNavigationOverlays();
+		}).catch(() => {});
+		void listen('navigation:updated', () => {
+			void getNavigationSnapshot().then((run) => (navigation = run)).catch(() => {});
+		}).then((stop) => (unlisten = stop));
+		return () => {
+			stopMapsSync();
+			unlisten?.();
+		};
+	});
 
 	// The pin form: create mode carries the drop point (from a map click
 	// or a coordinate scan, which may add an altitude), edit mode the pin
@@ -41,6 +64,8 @@
 	let editingPin = $state<MapPin | null>(null);
 	let calibrationOpen = $state(false);
 	let overlayConfigOpen = $state(false);
+	let navigationSetupOpen = $state(false);
+	let radarCalibrationOpen = $state(false);
 	let focusRequest = $state<MapFocusRequest | null>(null);
 	let focusNonce = 0;
 
@@ -145,6 +170,16 @@
 				});
 				flash(`Pin "${values.name}" updated.`);
 			} else if (model.selected) {
+				const nearby = await getNearbyMapPin(
+					model.selected.name,
+					model.selectedViewId,
+					dropPoint.lon,
+					dropPoint.lat,
+				);
+				const allowNearby = nearby
+					? window.confirm(`"${nearby.pin.name}" is ${nearby.distance.toFixed(2)} units away. Create another pin here anyway?`)
+					: false;
+				if (nearby && !allowNearby) return false;
 				await model.addPin({
 					planet: model.selected.name,
 					lon: dropPoint.lon,
@@ -157,6 +192,7 @@
 					notes: values.notes || null,
 					sessionId: null,
 					mapViewId: model.selectedViewId,
+					allowNearby,
 				});
 				flash(`Pin "${values.name}" dropped.`);
 			}
@@ -212,6 +248,8 @@
 				onconfigure={() => (overlayConfigOpen = true)}
 				oncalibrate={() => (calibrationOpen = true)}
 				onselectpin={(pin) => focusMap({ lon: pin.lon, lat: pin.lat })}
+				onroute={() => (navigationSetupOpen = true)}
+				onradarcalibrate={() => (radarCalibrationOpen = true)}
 			/>
 		{/if}
 	</header>
@@ -238,6 +276,7 @@
 				views={model.views}
 				selectedViewId={model.selectedViewId}
 				{focusRequest}
+				{navigation}
 				onmapclick={openDropForm}
 				oncopywaypoint={copyWaypoint}
 				oneditpin={openEditForm}
@@ -265,3 +304,18 @@
 
 <PinEditModal bind:open={formOpen} point={dropPoint} editing={editingPin} onsubmit={submitPinForm} />
 <CalibrationModal bind:open={calibrationOpen} />
+{#if model.selected}
+	<NavigationSetupModal
+		bind:open={navigationSetupOpen}
+		planet={model.selected.name}
+		mapViewId={model.selectedViewId}
+		pins={model.pins}
+		onstarted={(run) => {
+			navigation = run;
+			void showNavigationOverlays();
+		}}
+	/>
+{/if}
+<RadarCalibrationModal bind:open={radarCalibrationOpen} oncomplete={() => {
+	if (navigation) void showNavigationOverlays();
+}} />

@@ -14,6 +14,8 @@ describe('MapControls', () => {
 				ontoggleoverlay,
 				onconfigure,
 				oncalibrate: vi.fn(),
+				onroute: vi.fn(),
+				onradarcalibrate: vi.fn(),
 				onselectpin: vi.fn(),
 			},
 		});

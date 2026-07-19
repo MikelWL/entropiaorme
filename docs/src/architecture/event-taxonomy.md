@@ -24,7 +24,7 @@ The **low-level bus** is intra-core wiring. As the domain-events module puts it,
 
 The **domain event layer** is the coarse, frontend-facing subset. Each domain event is a typed envelope carrying a `type` discriminator, so the wire format is a serde-compatible tagged JSON object. The set of domain events is small and curated; the low-level topics stay inside the process and are never forwarded.
 
-The two layers share one piece of plumbing: the two domain envelopes ride the *same* `EventBus` instance as the low-level topics, as the two domain-topic variants of the `BusEvent` enum, which carry the `eo-wire` envelope types (`TrackingSessionUpdated`, `ScanStatusChanged`) directly. `EventBus::publish` takes a `&BusEvent` and derives the topic from the variant, so "a typed envelope on a domain topic" is enforced by construction at the bus seam: a foreign value on a domain topic is unrepresentable, and no runtime re-validation exists because none is needed. `subscribe_domain_bridge` (in `app/src-tauri/entropia-orme/src/composition.rs`) republishes those two variants' envelopes, still typed, onto the broadcast channel the shell's bridge consumes.
+The two layers share one piece of plumbing: the four domain envelopes ride the *same* `EventBus` instance as the low-level topics, as typed variants of the `BusEvent` enum. They carry the `eo-wire` envelope types (`TrackingSessionUpdated`, `ScanStatusChanged`, `HarvestRecorded`, and `NavigationUpdated`) directly. `EventBus::publish` takes a `&BusEvent` and derives the topic from the variant, so "a typed envelope on a domain topic" is enforced by construction at the bus seam: a foreign value on a domain topic is unrepresentable, and no runtime re-validation exists because none is needed. `subscribe_domain_bridge` (in `app/src-tauri/entropia-orme/src/composition.rs`) republishes those four variants' envelopes, still typed, onto the broadcast channel the shell's bridge consumes.
 
 ### The bus mechanics
 
@@ -55,7 +55,7 @@ The variants of the `Topic` enum in `app/src-tauri/eo-services/src/event_bus.rs`
 | `MissionReceived` | `mission_received` | A mission was received. |
 | `TickFlushed` | `tick_flushed` | The settling boundary: a parse tick has closed and every per-event subscriber write for that tick has completed. |
 
-The same enum also carries the two frontend-facing domain topics (`TrackingSessionUpdated`, `ScanStatusChanged`), whose `as_str()` returns the dotted constants from `app/src-tauri/eo-wire/src/domain_events.rs`, because the typed envelopes ride this same bus before the bridge republishes them onto the broadcast channel.
+The same enum also carries the four frontend-facing domain topics (`TrackingSessionUpdated`, `ScanStatusChanged`, `HarvestRecorded`, and `NavigationUpdated`), whose `as_str()` returns the dotted constants from `app/src-tauri/eo-wire/src/domain_events.rs`, because the typed envelopes ride this same bus before the bridge republishes them onto the broadcast channel.
 
 ### The tick_flushed settling boundary
 
@@ -65,11 +65,11 @@ This is purely intra-core, like the other low-level topics. Its purpose is to gi
 
 ## Domain event envelopes
 
-The frontend-facing domain events are defined in `app/src-tauri/eo-wire/src/domain_events.rs`. Two concrete envelope types exist today.
+The frontend-facing domain events are defined in `app/src-tauri/eo-wire/src/domain_events.rs`. Four concrete envelope types exist today.
 
 ### The shared envelope shape
 
-Both envelopes carry the same three top-level fields, then a typed `payload`:
+Every envelope carries the same three top-level fields, then a typed `payload`:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -80,7 +80,7 @@ Both envelopes carry the same three top-level fields, then a typed `payload`:
 
 #### occurred_at is required and never null
 
-`occurred_at` is a **required** envelope field and is never `null` and never the bus's raw float. In `app/src-tauri/eo-wire/src/domain_events.rs` it is typed as a plain `String` on both envelopes, with no `Option`. The schema snapshot in `app/src-tauri/contracts/event_schemas.snapshot.json` confirms this: for both envelopes, `occurred_at` is `"type": "string"` and appears in the `required` array, with no null branch.
+`occurred_at` is a **required** envelope field and is never `null` and never the bus's raw float. In `app/src-tauri/eo-wire/src/domain_events.rs` it is typed as a plain `String` on every envelope, with no `Option`. The schema snapshot in `app/src-tauri/contracts/event_schemas.snapshot.json` confirms this: `occurred_at` is `"type": "string"` and appears in every envelope's `required` array, with no null branch.
 
 An emitter whose domain carries no instant for the change (for example a settled tick that has no timestamp) synthesises one from its injected clock rather than threading a null to the wire. The helper `to_iso_utc(ts)` (in `app/src-tauri/eo-services/src/tracker.rs`) renders a Unix timestamp (a SQLite REAL or a bus float) as ISO-8601 UTC, so the required `occurred_at` always names a real instant.
 
@@ -110,19 +110,36 @@ Every envelope struct and every payload struct carries `#[serde(deny_unknown_fie
 
 `phase` is the sole field and is required (confirmed by the `required: ["phase"]` entry and the four-value enum in the schema snapshot). The `ScanPhase` enum uses `#[serde(rename_all = "snake_case")]`, so `awaiting_review` round-trips byte-for-byte.
 
+### `harvest.recorded`
+
+`HarvestRecorded` fires only after a successful or failed harvesting attempt has
+been written durably. Its payload carries the stable `harvestId` and a required
+`success` boolean. Navigation consumes this semantic boundary rather than
+guessing from raw loot lines, then captures the current coordinates and applies
+the same arrival policy as a manual refresh.
+
+### `navigation.updated`
+
+`NavigationUpdated` is a content-free push-to-pull invalidation for persisted
+navigation state. The Maps page and navigation overlay re-read the complete run
+from the typed snapshot command on every event. Radar calibration uses its
+separate status read and does not emit this route-state signal.
+
 ### The discriminated union
 
-The two envelopes form a discriminated union:
+The four envelopes form a discriminated union:
 
 ```rust
 #[serde(untagged)]
 pub enum DomainEvent {
     TrackingSessionUpdated(TrackingSessionUpdated),
     ScanStatusChanged(ScanStatusChanged),
+    HarvestRecorded(HarvestRecorded),
+    NavigationUpdated(NavigationUpdated),
 }
 ```
 
-The `#[serde(untagged)]` dispatch is made exact by the closed topic-tag fields: a frame routes to the one variant whose `type` literal it carries, and a missing or unrecognised `type` fails outright, so adding a new member changes neither the existing members nor the wire format. Every call site (the bus publish, the broadcast channel, the schema snapshot) routes through this union unchanged. The schema snapshot records the union as a `oneOf` over the two `$def`s with a `discriminator` mapping keyed on `type`. `DomainEvent::topic()` returns the variant's wire topic, and `to_wire_json()` yields the compact envelope JSON.
+The `#[serde(untagged)]` dispatch is made exact by the closed topic-tag fields: a frame routes to the one variant whose `type` literal it carries, and a missing or unrecognised `type` fails outright, so adding a new member changes neither the existing members nor the wire format. Every call site (the bus publish, the broadcast channel, the schema snapshot) routes through this union unchanged. The schema snapshot records the union as a `oneOf` over the four `$def`s with a `discriminator` mapping keyed on `type`. `DomainEvent::topic()` returns the variant's wire topic, and `to_wire_json()` yields the compact envelope JSON.
 
 ## The typed broadcast channel
 
@@ -130,7 +147,7 @@ Domain events leave the producer spine through a typed broadcast channel and rea
 
 ### The channel: typed fan-out
 
-`DomainBus` wraps a tokio `broadcast::Sender<DomainEvent>`. It is fed by `subscribe_domain_bridge` (in `app/src-tauri/entropia-orme/src/composition.rs`), which subscribes the two domain topics on the bus and republishes each typed envelope onto the channel. The forwarded set is exactly `[Topic::TrackingSessionUpdated, Topic::ScanStatusChanged]`; the low-level topics stay intra-core and are deliberately not forwarded.
+`DomainBus` wraps a tokio `broadcast::Sender<DomainEvent>`. It is fed by `subscribe_domain_bridge` (in `app/src-tauri/entropia-orme/src/composition.rs`), which subscribes the four domain topics on the bus and republishes each typed envelope onto the channel. The low-level topics stay intra-core and are deliberately not forwarded.
 
 The work spans a thread boundary. `EventBus::publish` runs synchronously on whatever thread mutated state (for the tick-coalesced tracking event, that is the chat-log watcher's OS thread). The channel crosses the boundary in one place and one direction: the bus subscriber closure runs on the **publisher** thread and calls `DomainBus::publish` (a non-blocking broadcast send), and the bridge task consumes its `subscribe()` receiver asynchronously on the runtime. The envelope stays typed end to end; nothing is serialised until the bridge hands it to the Tauri emitter.
 
@@ -144,7 +161,7 @@ There is no frame format, no sequence number, and no client registry. The retire
 
 ## Producers and coalescing
 
-Two core services produce domain events. Both share a discipline: **they publish only after releasing their own lock**, so a subscriber never runs while the producer holds its lock. (`EventBus::publish` copies its subscriber list under the bus lock, then releases it before dispatch, so no bus-lock to producer-lock cycle can form.)
+Core services publish domain events only at settled state boundaries and outside their own lock, so a subscriber never runs while the producer holds its lock. (`EventBus::publish` copies its subscriber list under the bus lock, then releases it before dispatch, so no bus-lock to producer-lock cycle can form.)
 
 ### The tracker
 
@@ -162,15 +179,24 @@ The manual skill-scan service (`app/src-tauri/eo-services/src/skill_scan_manual.
 
 The payload carries only the coarse `phase`. Per-page capture / OCR progress liveness rides the snapshot re-hydration the frame triggers, rather than widening the wire: the emitter fires on every discrete progress change, but the payload stays a minimal invalidation signal.
 
+### Harvesting and navigation
+
+The tracker publishes `harvest.recorded` after its harvest transaction commits,
+for both resource-yielding and failed attempts. The navigation service subscribes
+to that topic only while a run is live. After serialising its route mutations it
+publishes `navigation.updated`; navigation consumers then hydrate the persisted
+snapshot. Repeated harvesting events at the same captured location are debounced
+for 30 seconds so tool swings cannot advance several closely spaced stops.
+
 ### Why the payloads are minimal: push-to-pull
 
-Both producers follow the **push-to-pull** model (see [ADR 0009](../adr/0009-push-to-pull-invalidation.md)). A payload is a minimal invalidation signal (which session, active versus idle, why; or which scan phase), and the window re-hydrates the full shape via the matching snapshot GET. This keeps the ETag / 304 snapshot as the single source of shape, minimises the serialisation surface, and is exactly what makes drop-oldest queue overflow safe.
+The frontend-facing producers follow the **push-to-pull** model (see [ADR 0009](../adr/0009-push-to-pull-invalidation.md)). A payload is a minimal invalidation signal, and the window re-hydrates the full shape through the matching typed snapshot command. This keeps one read model as the source of shape, minimises the serialisation surface, and makes bounded-channel overflow self-healing.
 
 ## The bridge and the frontend relay
 
 In the shipped application the producer spine's domain events are forwarded onto the Tauri event bus **in-process** by the shell's domain-event bridge (`spawn_domain_event_bridge` in `app/src-tauri/entropia-orme/src/lib.rs`), the native replacement for the frontend's former `EventSource` relay. The bridge subscribes the typed broadcast channel, receives each envelope already typed, and applies the one transform the Tauri event system needs before re-emitting, so every window (including hidden overlays) receives core state changes by subscription rather than by polling.
 
-- **The dot-to-colon rename.** Tauri event names admit only alphanumerics and `-`, `/`, `:`, `_` (no dots), so `domain_topic_to_tauri_event` namespaces the dotted wire topic with colons: `tracking.session.updated` is re-emitted as `tracking:session:updated`, and `scan.status.changed` as `scan:status:changed`. This is the **only** topic transform; the wire contract keeps the dotted form throughout.
+- **The dot-to-colon rename.** Tauri event names admit only alphanumerics and `-`, `/`, `:`, `_` (no dots), so `domain_topic_to_tauri_event` replaces dots with colons, for example `navigation.updated` becomes `navigation:updated`. This is the **only** topic transform; the wire contract keeps the dotted form throughout.
 
 - **Whole-envelope forwarding.** The bridge emits the **whole** typed envelope (`type`, `event_version`, `occurred_at`, `payload`) onto the colon-form Tauri topic, not just the payload, so a topic-aware consumer sees the full contract; the Tauri emitter serialises it, the first and only serialisation on the path. A receiver that falls behind the channel's capacity observes a lag error, which is logged, and skips to live (the snapshot re-hydration the next event triggers absorbs the gap).
 

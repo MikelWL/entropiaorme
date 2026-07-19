@@ -101,6 +101,7 @@ fn facade_fixture_bench() {
         None,
         None,
         None,
+        None,
     );
 
     let mut rows: Vec<(String, f64, f64, f64, f64)> = Vec::new();

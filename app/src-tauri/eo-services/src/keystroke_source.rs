@@ -335,6 +335,7 @@ mod windows_hook {
             // VK_RETURN covers both the main Enter and the keypad Enter
             // (the extended-key bit distinguishes them; both confirm).
             0x0D => Some("return".to_string()),
+            0x75..=0x7B => Some(format!("f{}", vk - 0x6F)),
             _ => None,
         }
     }
@@ -521,6 +522,13 @@ mod linux_evdev {
             KeyCode::KEY_0 | KeyCode::KEY_KP0 => "0",
             KeyCode::KEY_SPACE => "space",
             KeyCode::KEY_ENTER | KeyCode::KEY_KPENTER => "return",
+            KeyCode::KEY_F6 => "f6",
+            KeyCode::KEY_F7 => "f7",
+            KeyCode::KEY_F8 => "f8",
+            KeyCode::KEY_F9 => "f9",
+            KeyCode::KEY_F10 => "f10",
+            KeyCode::KEY_F11 => "f11",
+            KeyCode::KEY_F12 => "f12",
             _ => return None,
         })
     }

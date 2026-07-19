@@ -138,5 +138,6 @@ export function cartographyPinInput(
 		notes: null,
 		sessionId: null,
 		mapViewId,
+		allowNearby: false,
 	};
 }

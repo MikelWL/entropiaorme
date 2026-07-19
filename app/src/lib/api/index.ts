@@ -51,6 +51,8 @@ export {
 	planetMapImage,
 	showScanOverlay,
 	toggleCartographyOverlay,
+	showNavigationOverlays,
+	hideNavigationOverlays,
 	toggleOverlay,
 } from './shell';
 export * from './tracking';

@@ -49,6 +49,7 @@ async fn dev_api(dir: &Path) -> (Api, std::path::PathBuf) {
         None,
         None,
         None,
+        None,
     );
     (api, data_dir)
 }

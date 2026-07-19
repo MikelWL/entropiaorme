@@ -40,9 +40,6 @@ const pin: MapPin = {
 
 function setup() {
 	const onmapclick = vi.fn();
-	const oncopywaypoint = vi.fn().mockResolvedValue({ message: 'Waypoint copied.', copied: true });
-	const oneditpin = vi.fn();
-	const ondeletepin = vi.fn();
 	render(MapViewer, {
 		props: {
 			planet,
@@ -52,9 +49,9 @@ function setup() {
 			views: [],
 			selectedViewId: null,
 			onmapclick,
-			oncopywaypoint,
-			oneditpin,
-			ondeletepin,
+			oncopywaypoint: vi.fn(),
+			oneditpin: vi.fn(),
+			ondeletepin: vi.fn(),
 			onselectplanet: vi.fn(),
 			onselectview: vi.fn(),
 			onaddview: vi.fn().mockResolvedValue(null),
@@ -62,72 +59,29 @@ function setup() {
 			ondeleteview: vi.fn().mockResolvedValue(true),
 		},
 	});
-	return { onmapclick, oncopywaypoint, oneditpin };
+	return { onmapclick };
 }
 
-describe('MapViewer pin interactions', () => {
-	it('copies from marker activation while hover retains the detail card', async () => {
-		const { oncopywaypoint } = setup();
-		const marker = screen.getByRole('button', { name: 'Copy waypoint for Port Atlantis TP' });
-
-		await fireEvent.mouseEnter(marker);
-		expect(screen.getByText('Click to copy')).toBeTruthy();
-		expect(screen.queryByRole('button', { name: 'Copy waypoint' })).toBeNull();
-
-		await fireEvent.click(marker);
-		expect(oncopywaypoint).toHaveBeenCalledWith(pin);
-		const confirmation = await screen.findByText('Waypoint copied.');
-		expect(confirmation.classList.contains('border-success/30')).toBe(true);
-		expect(confirmation.classList.contains('bg-success/10')).toBe(true);
-		expect(confirmation.classList.contains('text-success')).toBe(true);
-		expect(screen.queryByText('Click to copy')).toBeNull();
+describe('MapViewer scalable interaction surface', () => {
+	it('keeps the map keyboard operable without creating one DOM control per pin', () => {
+		setup();
+		const map = screen.getByRole('application', { name: /Calypso map/ });
+		expect(map.getAttribute('tabindex')).toBe('0');
+		expect(screen.queryByRole('button', { name: /Port Atlantis TP/ })).toBeNull();
 	});
 
-	it('copies when pin detail text is clicked', async () => {
-		const { oncopywaypoint } = setup();
-		await fireEvent.mouseEnter(
-			screen.getByRole('button', { name: 'Copy waypoint for Port Atlantis TP' }),
-		);
-
-		await fireEvent.click(screen.getByText('Position'));
-
-		expect(oncopywaypoint).toHaveBeenCalledWith(pin);
-		expect(await screen.findByText('Waypoint copied.')).toBeTruthy();
+	it('offers explicit icon and precision-dot modes with automatic density rendering', async () => {
+		setup();
+		const display = screen.getByRole('combobox', { name: 'Pin display' }) as HTMLSelectElement;
+		expect(display.value).toBe('auto');
+		await fireEvent.change(display, { target: { value: 'precision' } });
+		expect(display.value).toBe('precision');
 	});
 
-	it('contains card gestures so edit cannot become a map click', async () => {
-		const { onmapclick, oncopywaypoint, oneditpin } = setup();
-		await fireEvent.mouseEnter(
-			screen.getByRole('button', { name: 'Copy waypoint for Port Atlantis TP' }),
-		);
-		const edit = screen.getByRole('button', { name: 'Edit' });
-
-		await fireEvent.pointerDown(edit, { button: 0, pointerId: 1 });
-		await fireEvent.pointerUp(edit, { button: 0, pointerId: 1 });
-		await fireEvent.click(edit);
-
-		expect(oneditpin).toHaveBeenCalledWith(pin);
-		expect(oncopywaypoint).not.toHaveBeenCalled();
-		expect(onmapclick).not.toHaveBeenCalled();
-	});
-
-	it('keeps the pin card open while keyboard focus moves into its actions', async () => {
-		vi.useFakeTimers();
-		try {
-			setup();
-			const marker = screen.getByRole('button', {
-				name: 'Copy waypoint for Port Atlantis TP',
-			});
-			await fireEvent.focus(marker);
-			const edit = screen.getByRole('button', { name: 'Edit' });
-
-			await fireEvent.blur(marker, { relatedTarget: edit });
-			await fireEvent.focusIn(edit, { relatedTarget: marker });
-			vi.advanceTimersByTime(251);
-
-			expect(screen.getByRole('dialog', { name: 'Pin detail: Port Atlantis TP' })).toBeTruthy();
-		} finally {
-			vi.useRealTimers();
-		}
+	it('retains fit and incremental zoom controls as an escape from extreme inspection zoom', () => {
+		setup();
+		expect(screen.getByRole('button', { name: 'Zoom in' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Fit map to view' })).toBeTruthy();
 	});
 });

@@ -40,6 +40,8 @@ pub enum Topic {
     TickFlushed,
     TrackingSessionUpdated,
     ScanStatusChanged,
+    HarvestRecorded,
+    NavigationUpdated,
 }
 
 impl Topic {
@@ -61,6 +63,8 @@ impl Topic {
             Topic::TickFlushed => "tick_flushed",
             Topic::TrackingSessionUpdated => eo_wire::domain_events::TOPIC_TRACKING_SESSION_UPDATED,
             Topic::ScanStatusChanged => eo_wire::domain_events::TOPIC_SCAN_STATUS_CHANGED,
+            Topic::HarvestRecorded => eo_wire::domain_events::TOPIC_HARVEST_RECORDED,
+            Topic::NavigationUpdated => eo_wire::domain_events::TOPIC_NAVIGATION_UPDATED,
         }
     }
 }

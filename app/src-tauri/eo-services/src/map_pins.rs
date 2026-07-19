@@ -130,6 +130,63 @@ impl MapPinsService {
             .await
     }
 
+    /// Pins intersecting a coordinate viewport, newest first. The
+    /// compound spatial index narrows the read before any rendering or
+    /// precise distance work reaches the caller.
+    pub async fn list_in_bounds(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+        lon_min: f64,
+        lon_max: f64,
+        lat_min: f64,
+        lat_max: f64,
+    ) -> Result<Vec<MapPin>, DbError> {
+        self.db
+            .with_reader(move |connection| {
+                let mut stmt = connection.prepare(
+                    "SELECT id, planet, lon, lat, altitude, name, icon, kind, \
+                            radius_m, notes, session_id, map_view_id, created_at \
+                     FROM map_pins WHERE planet = ?1 \
+                       AND ((?2 IS NULL AND map_view_id IS NULL) OR map_view_id = ?2) \
+                       AND lon BETWEEN ?3 AND ?4 AND lat BETWEEN ?5 AND ?6 \
+                     ORDER BY created_at DESC, id DESC",
+                )?;
+                let rows = stmt.query_map(
+                    rusqlite::params![planet, map_view_id, lon_min, lon_max, lat_min, lat_max],
+                    read_pin,
+                )?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+    }
+
+    /// The nearest pin inside `radius`, using an index-friendly bounding
+    /// square followed by exact Euclidean distance.
+    pub async fn nearby(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+        lon: f64,
+        lat: f64,
+        radius: f64,
+    ) -> Result<Option<(MapPin, f64)>, DbError> {
+        let lon_min = lon - radius;
+        let lon_max = lon + radius;
+        let lat_min = lat - radius;
+        let lat_max = lat + radius;
+        let candidates = self
+            .list_in_bounds(planet, map_view_id, lon_min, lon_max, lat_min, lat_max)
+            .await?;
+        Ok(candidates
+            .into_iter()
+            .filter_map(|pin| {
+                let distance = (pin.lon - lon).hypot(pin.lat - lat);
+                (distance <= radius).then_some((pin, distance))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1)))
+    }
+
     /// One pin by id.
     pub async fn get(&self, id: i64) -> Result<MapPin, MapPinsError> {
         self.db

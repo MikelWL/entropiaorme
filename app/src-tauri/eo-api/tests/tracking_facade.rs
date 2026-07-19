@@ -55,6 +55,7 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -307,6 +308,7 @@ async fn deleting_a_session_cascades_and_guards_active_and_missing() {
         handles.spacebar,
         handles.repair_ocr,
         handles.quests.clone(),
+        None,
         None,
         None,
         None,

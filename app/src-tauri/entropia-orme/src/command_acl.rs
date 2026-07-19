@@ -48,6 +48,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "equipment_search",
     "equipment_update",
     "get_update_channel",
+    "hide_navigation_overlays",
     "hide_scan_overlay",
     "install_update",
     "inventory_create",
@@ -63,8 +64,10 @@ pub const APP_COMMANDS: &[&str] = &[
     "ledger_presets_list",
     "map_pin_create",
     "map_pin_delete",
+    "map_pin_nearby",
     "map_pin_update",
     "map_pins_list",
+    "map_pins_viewport",
     "map_view_create",
     "map_view_delete",
     "map_view_rename",
@@ -80,6 +83,14 @@ pub const APP_COMMANDS: &[&str] = &[
     "market_overview",
     "market_paste_commit",
     "market_paste_preview",
+    "navigation_end",
+    "navigation_replan",
+    "navigation_skip",
+    "navigation_snapshot",
+    "navigation_start",
+    "navigation_toggle_pause",
+    "navigation_undo",
+    "navigation_update_position",
     "planet_map_image",
     "planet_maps_list",
     "playlist_create",
@@ -97,6 +108,10 @@ pub const APP_COMMANDS: &[&str] = &[
     "quests_analytics",
     "quests_list",
     "quests_mobs",
+    "radar_calibration_cancel",
+    "radar_calibration_start",
+    "radar_calibration_status",
+    "radar_geometry",
     "scan_accept",
     "scan_cancel",
     "scan_capture",
@@ -112,6 +127,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "settings_overlay_position",
     "settings_set_overlay_position",
     "settings_update",
+    "show_navigation_overlays",
     "show_scan_overlay",
     "toggle_cartography_overlay",
     "toggle_overlay",
@@ -138,7 +154,27 @@ pub const APP_COMMANDS: &[&str] = &[
 
 pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
     "map_pin_create",
+    "map_pin_nearby",
     "map_views_list",
     "maps_scan_coordinates",
     "planet_maps_list",
 ];
+
+#[allow(dead_code)]
+pub const NAVIGATION_COMMANDS: &[&str] = &[
+    "navigation_snapshot",
+    "navigation_update_position",
+    "navigation_skip",
+    "navigation_undo",
+    "navigation_toggle_pause",
+    "navigation_replan",
+    "navigation_end",
+    "radar_calibration_start",
+    "radar_calibration_cancel",
+    "radar_calibration_status",
+    "radar_geometry",
+    "hide_navigation_overlays",
+];
+
+#[allow(dead_code)]
+pub const RADAR_GUIDANCE_COMMANDS: &[&str] = &["navigation_snapshot", "radar_geometry"];

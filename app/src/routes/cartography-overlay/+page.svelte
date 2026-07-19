@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { listen, emit } from '@tauri-apps/api/event';
 	import {
 		createMapPin,
 		getMapViews,
+		getNearbyMapPin,
 		getPlanetMaps,
 		scanMapCoordinates,
 		type MapView,
@@ -36,6 +37,14 @@
 				'Selected map',
 	);
 	let busy = $state(false);
+	type PendingDuplicate = {
+		input: NonNullable<ReturnType<typeof cartographyPinInput>>;
+		buttonName: string;
+		existingName: string;
+		distance: number;
+	};
+	let pendingDuplicate = $state<PendingDuplicate | null>(null);
+	let keepExistingButton = $state<HTMLButtonElement>();
 	let feedback = $state<{ text: string; success: boolean } | null>(null);
 	let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
 	let viewsRefreshEpoch = 0;
@@ -124,6 +133,18 @@
 				flash(cartographyScanFailureMessage(result.status, planet));
 				return;
 			}
+			const nearby = await getNearbyMapPin(planet, mapViewId, input.lon, input.lat);
+			if (nearby) {
+				pendingDuplicate = {
+					input,
+					buttonName: button.name,
+					existingName: nearby.pin.name,
+					distance: nearby.distance,
+				};
+				await tick();
+				keepExistingButton?.focus();
+				return;
+			}
 			await createMapPin(input);
 			void emit(MAP_PINS_CHANGED_EVENT, { planet });
 			flash(`${button.name} pinned.`, true);
@@ -132,6 +153,34 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	function keepExisting() {
+		pendingDuplicate = null;
+		flash('Existing pin kept.');
+	}
+
+	async function createDuplicate() {
+		const pending = pendingDuplicate;
+		if (!pending || busy) return;
+		busy = true;
+		try {
+			pending.input.allowNearby = true;
+			await createMapPin(pending.input);
+			void emit(MAP_PINS_CHANGED_EVENT, { planet: pending.input.planet });
+			pendingDuplicate = null;
+			flash(`${pending.buttonName} pinned.`, true);
+		} catch (error) {
+			pendingDuplicate = null;
+			flash(describeError(error, 'The pin could not be saved'));
+		} finally {
+			busy = false;
+		}
+	}
+
+	function hideOverlay() {
+		pendingDuplicate = null;
+		void getCurrentWindow().hide();
 	}
 </script>
 
@@ -152,18 +201,32 @@
 			</span>
 		</div>
 
-		<div class="flex shrink-0 items-center gap-1.5">
-			{#each cartographyOverlayConfig.current.buttons as button (button.id)}
-				<button
-					class="pin-button"
-					disabled={busy || !cartographyOverlayConfig.current.planet}
-					onclick={() => dropPin(button)}
-				>
-					<span aria-hidden="true">{pinGlyph(button.icon)}</span>
-					<span>{button.name}</span>
+		{#if pendingDuplicate}
+			<div class="flex shrink-0 items-center gap-2" role="group" aria-label="Nearby pin confirmation">
+				<p class="max-w-48 text-[10px] font-medium leading-snug text-orange-200/90">
+					{pendingDuplicate.existingName} already exists {pendingDuplicate.distance.toFixed(2)} units away.
+				</p>
+				<button bind:this={keepExistingButton} class="pin-button" disabled={busy} onclick={keepExisting}>
+					Keep existing
 				</button>
-			{/each}
-		</div>
+				<button class="pin-button confirm-button" disabled={busy} onclick={createDuplicate}>
+					Create anyway
+				</button>
+			</div>
+		{:else}
+			<div class="flex shrink-0 items-center gap-1.5">
+				{#each cartographyOverlayConfig.current.buttons as button (button.id)}
+					<button
+						class="pin-button"
+						disabled={busy || !cartographyOverlayConfig.current.planet}
+						onclick={() => dropPin(button)}
+					>
+						<span aria-hidden="true">{pinGlyph(button.icon)}</span>
+						<span>{button.name}</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
 
 		{#if feedback}
 			<p
@@ -179,7 +242,7 @@
 		<button
 			class="release-btn shrink-0"
 			aria-label="Hide pin overlay"
-			onclick={() => getCurrentWindow().hide()}
+			onclick={hideOverlay}
 		>×</button>
 	</div>
 </div>
@@ -216,6 +279,11 @@
 	.pin-button:hover {
 		background: rgba(56, 189, 248, 0.12);
 		border-color: rgba(56, 189, 248, 0.35);
+		color: rgba(125, 211, 252, 0.95);
+	}
+	.confirm-button {
+		border-color: rgba(56, 189, 248, 0.35);
+		background: rgba(56, 189, 248, 0.12);
 		color: rgba(125, 211, 252, 0.95);
 	}
 	.pin-button:disabled {

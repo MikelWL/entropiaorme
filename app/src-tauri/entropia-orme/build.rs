@@ -23,6 +23,24 @@ fn main() {
     for command in CARTOGRAPHY_COMMANDS {
         permissions.push_str(&format!("  \"{command}\",\n"));
     }
+    permissions.push_str(
+        "]\n\n[[permission]]\n\
+         identifier = \"navigation-commands\"\n\
+         description = \"Allows the route HUD's navigation controls and radar reads.\"\n\
+         commands.allow = [\n",
+    );
+    for command in NAVIGATION_COMMANDS {
+        permissions.push_str(&format!("  \"{command}\",\n"));
+    }
+    permissions.push_str(
+        "]\n\n[[permission]]\n\
+         identifier = \"radar-guidance-commands\"\n\
+         description = \"Allows the click-through radar renderer's two read commands.\"\n\
+         commands.allow = [\n",
+    );
+    for command in RADAR_GUIDANCE_COMMANDS {
+        permissions.push_str(&format!("  \"{command}\",\n"));
+    }
     permissions.push_str("]\n");
     std::fs::write(permissions_dir.join("commands.toml"), permissions)
         .expect("write application command permissions");

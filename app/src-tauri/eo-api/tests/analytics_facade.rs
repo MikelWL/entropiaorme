@@ -52,6 +52,7 @@ async fn analytics_api(dir: &Path) -> Api {
         None,
         None,
         None,
+        None,
     )
 }
 

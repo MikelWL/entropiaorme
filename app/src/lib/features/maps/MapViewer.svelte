@@ -1,15 +1,13 @@
 <script lang="ts">
 	/**
-	 * The pan/zoom map view: a canvas raster under a DOM pin layer, both
-	 * rendered through the one viewport transform (`./viewport`). Wheel
-	 * zoom anchors under the cursor; drag pans; a still click on the map
-	 * reports the game coordinate for a pin drop; pin markers are real
-	 * buttons (hover and keyboard focus raise the detail card, activation
-	 * copies the in-game waypoint).
+	 * The pan/zoom map view: raster, route and high-volume pins share one
+	 * canvas and one viewport transform (`./viewport`). Wheel zoom anchors
+	 * under the cursor; drag pans; a still click reports the game coordinate
+	 * for a pin drop; canvas hit testing raises the detail card.
 	 * Arrow keys pan, +/- zoom about the centre, 0 re-fits.
 	 */
 	import { untrack } from 'svelte';
-	import type { MapPin, MapView, PlanetMap } from '$lib/api';
+	import type { MapPin, MapView, NavigationRun, PlanetMap } from '$lib/api';
 	import Button from '$lib/components/Button.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { formatGamePoint, gameToImage, imageToGame, type GamePoint } from './coords';
@@ -21,6 +19,7 @@
 	import {
 		ZOOM_STEP,
 		centreOnImage,
+		fitZoom,
 		fitViewport,
 		imageToView,
 		panBy,
@@ -46,6 +45,7 @@
 		onrenameview,
 		ondeleteview,
 		focusRequest = null,
+		navigation = null,
 	}: {
 		planet: PlanetMap;
 		planets: PlanetMap[];
@@ -64,6 +64,7 @@
 		onrenameview: (id: number, name: string) => Promise<boolean>;
 		ondeleteview: (view: MapView) => Promise<boolean>;
 		focusRequest?: MapFocusRequest | null;
+		navigation?: NavigationRun | null;
 	} = $props();
 
 	const cal = $derived(planet.calibration);
@@ -75,6 +76,7 @@
 	let vp = $state<Viewport>({ zoom: 1, panX: 0, panY: 0 });
 	let cursorPoint = $state<GamePoint | null>(null);
 	let handledFocusNonce: number | null = null;
+	let markerMode = $state<'auto' | 'icons' | 'precision'>('auto');
 
 	// The active pin card: raised by marker hover or focus, kept open
 	// while the pointer is over the card itself, closed on a short delay
@@ -171,28 +173,6 @@
 		});
 	});
 
-	// Draw on dirty: re-runs only when the transform, raster, or size
-	// change (no free-running animation loop; the app idles beside a
-	// running game).
-	$effect(() => {
-		const ctx = canvas?.getContext('2d');
-		if (!ctx || !canvas || !image || viewW === 0 || viewH === 0) return;
-		const dpr = window.devicePixelRatio || 1;
-		canvas.width = Math.round(viewW * dpr);
-		canvas.height = Math.round(viewH * dpr);
-		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		ctx.clearRect(0, 0, viewW, viewH);
-		ctx.imageSmoothingEnabled = true;
-		ctx.imageSmoothingQuality = 'high';
-		ctx.drawImage(
-			image,
-			-vp.panX * vp.zoom,
-			-vp.panY * vp.zoom,
-			image.naturalWidth * vp.zoom,
-			image.naturalHeight * vp.zoom,
-		);
-	});
-
 	function applyZoom(factor: number, anchorX: number, anchorY: number) {
 		if (!image) return;
 		vp = zoomAt(
@@ -232,8 +212,8 @@
 	}
 
 	function handlePointerMove(event: PointerEvent) {
+		const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
 		if (image && cal) {
-			const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
 			const imagePoint = viewToImage(vp, event.clientX - rect.left, event.clientY - rect.top);
 			cursorPoint =
 				imagePoint.x >= 0 &&
@@ -242,6 +222,11 @@
 				imagePoint.y <= image.naturalHeight
 					? imageToGame(cal, imagePoint)
 					: null;
+		}
+		if (!pressed) {
+			const hit = nearestPlacedPin(event.clientX - rect.left, event.clientY - rect.top, 10);
+			if (hit) raiseCard(hit.pin);
+			else if (activePin) scheduleCardClose();
 		}
 		if (!pressed || !image) return;
 		const dx = event.clientX - lastPointer.x;
@@ -272,6 +257,11 @@
 			imagePoint.x > image.naturalWidth ||
 			imagePoint.y > image.naturalHeight
 		) {
+			return;
+		}
+		const hit = nearestPlacedPin(event.clientX - rect.left, event.clientY - rect.top, 11);
+		if (hit) {
+			raiseCard(hit.pin);
 			return;
 		}
 		onmapclick(imageToGame(cal, imagePoint));
@@ -336,7 +326,140 @@
 				radiusRx: pin.radiusM == null ? null : (pin.radiusM / cal.unitsPerPixelX) * vp.zoom,
 				radiusRy: pin.radiusM == null ? null : (pin.radiusM / cal.unitsPerPixelY) * vp.zoom,
 			};
-		});
+		}).filter((placed) => placed.x >= -32 && placed.y >= -32 && placed.x <= viewW + 32 && placed.y <= viewH + 32);
+	});
+
+	function nearestPlacedPin(x: number, y: number, radius: number): PlacedPin | null {
+		let nearest: PlacedPin | null = null;
+		let nearestDistance = radius;
+		for (const placed of placedPins) {
+			const candidate = Math.hypot(placed.x - x, placed.y - y);
+			if (candidate <= nearestDistance) {
+				nearest = placed;
+				nearestDistance = candidate;
+			}
+		}
+		return nearest;
+	}
+
+	const activePlaced = $derived(
+		activePin ? placedPins.find((placed) => placed.pin.id === activePin?.id) ?? null : null,
+	);
+
+	// Raster, route, areas, and high-volume markers share one draw-on-dirty
+	// canvas. Marker rendering changes semantically with zoom instead of
+	// creating one DOM node per tree.
+	$effect(() => {
+		const ctx = canvas?.getContext('2d');
+		const img = image;
+		const visiblePins = placedPins;
+		const mode = markerMode;
+		const run = navigation;
+		if (!ctx || !canvas || !img || viewW === 0 || viewH === 0) return;
+		const dpr = window.devicePixelRatio || 1;
+		canvas.width = Math.round(viewW * dpr);
+		canvas.height = Math.round(viewH * dpr);
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		ctx.clearRect(0, 0, viewW, viewH);
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = 'high';
+		ctx.drawImage(
+			img,
+			-vp.panX * vp.zoom,
+			-vp.panY * vp.zoom,
+			img.naturalWidth * vp.zoom,
+			img.naturalHeight * vp.zoom,
+		);
+
+		for (const placed of visiblePins) {
+			if (placed.radiusRx == null || placed.radiusRy == null) continue;
+			ctx.beginPath();
+			ctx.ellipse(placed.x, placed.y, placed.radiusRx, placed.radiusRy, 0, 0, Math.PI * 2);
+			ctx.fillStyle = 'rgba(56, 189, 248, 0.1)';
+			ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+			ctx.lineWidth = 1.5;
+			ctx.fill();
+			ctx.stroke();
+		}
+
+		if (cal && run?.planet === planet.name && run.mapViewId === selectedViewId) {
+			const routePoints = run.stops
+				.filter((stop) => stop.status === 'active' || stop.status === 'pending')
+				.map((stop) => {
+					const point = gameToImage(cal, { lon: stop.lon, lat: stop.lat });
+					return { stop, point: imageToView(vp, point.x, point.y) };
+				});
+			if (routePoints.length > 0) {
+				const currentImage = gameToImage(cal, { lon: run.currentLon, lat: run.currentLat });
+				const current = imageToView(vp, currentImage.x, currentImage.y);
+				ctx.beginPath();
+				ctx.moveTo(current.x, current.y);
+				for (const item of routePoints) ctx.lineTo(item.point.x, item.point.y);
+				ctx.strokeStyle = 'rgba(125, 211, 252, 0.9)';
+				ctx.lineWidth = 2;
+				ctx.setLineDash([7, 5]);
+				ctx.stroke();
+				ctx.setLineDash([]);
+				ctx.beginPath();
+				ctx.arc(current.x, current.y, 5, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(52, 211, 153, 0.95)';
+				ctx.fill();
+				ctx.font = '600 9px sans-serif';
+				ctx.textAlign = 'center';
+				ctx.textBaseline = 'middle';
+				for (const item of routePoints) {
+					ctx.beginPath();
+					ctx.arc(item.point.x, item.point.y, item.stop.status === 'active' ? 8 : 6, 0, Math.PI * 2);
+					ctx.fillStyle = item.stop.status === 'active' ? 'rgba(250, 204, 21, 0.95)' : 'rgba(14, 116, 144, 0.9)';
+					ctx.fill();
+					ctx.fillStyle = 'rgba(255,255,255,0.95)';
+					ctx.fillText(String(item.stop.ordinal + 1), item.point.x, item.point.y + 0.5);
+				}
+			}
+		}
+
+		const relativeZoom = vp.zoom / fitZoom(img.naturalWidth, img.naturalHeight, viewW, viewH);
+		const effective = mode === 'auto' ? (relativeZoom < 2.5 ? 'density' : 'precision') : mode;
+		if (effective === 'density') {
+			const cellSize = 16;
+			const cells = new Map<string, { x: number; y: number; count: number }>();
+			for (const placed of visiblePins) {
+				const col = Math.floor(placed.x / cellSize);
+				const row = Math.floor(placed.y / cellSize);
+				const key = `${col}:${row}`;
+				const cell = cells.get(key) ?? { x: (col + 0.5) * cellSize, y: (row + 0.5) * cellSize, count: 0 };
+				cell.count += 1;
+				cells.set(key, cell);
+			}
+			for (const cell of cells.values()) {
+				ctx.beginPath();
+				ctx.arc(cell.x, cell.y, Math.min(8, 2 + Math.log2(cell.count + 1) * 1.6), 0, Math.PI * 2);
+				ctx.fillStyle = `rgba(56, 189, 248, ${Math.min(0.9, 0.22 + Math.log2(cell.count + 1) * 0.14)})`;
+				ctx.fill();
+			}
+		} else if (effective === 'icons') {
+			ctx.font = '18px sans-serif';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'bottom';
+			for (const placed of visiblePins) ctx.fillText(pinGlyph(placed.pin.icon), placed.x, placed.y);
+		} else {
+			ctx.globalCompositeOperation = 'lighter';
+			for (const placed of visiblePins) {
+				ctx.beginPath();
+				ctx.arc(placed.x, placed.y, relativeZoom >= 12 ? 2.25 : 2.75, 0, Math.PI * 2);
+				ctx.fillStyle = relativeZoom >= 12 ? 'rgba(56, 189, 248, 0.92)' : 'rgba(56, 189, 248, 0.5)';
+				ctx.fill();
+			}
+			ctx.globalCompositeOperation = 'source-over';
+		}
+
+		if (activePlaced) {
+			ctx.beginPath();
+			ctx.arc(activePlaced.x, activePlaced.y, 8, 0, Math.PI * 2);
+			ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
+			ctx.lineWidth = 2;
+			ctx.stroke();
+		}
 	});
 
 </script>
@@ -392,7 +515,7 @@
 	</div>
 
 	<div
-		class="absolute right-2 top-2 z-10 flex gap-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur"
+		class="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur"
 		role="group"
 		aria-label="Map zoom"
 		onpointerdown={(event) => event.stopPropagation()}
@@ -402,73 +525,35 @@
 		<Button size="sm" variant="ghost" aria-label="Fit map to view" onclick={() => {
 			if (image) vp = fitViewport(image.naturalWidth, image.naturalHeight, viewW, viewH);
 		}}>Fit</Button>
+		<Select value={markerMode} aria-label="Pin display" onchange={(event) => markerMode = (event.currentTarget as HTMLSelectElement).value as typeof markerMode}>
+			<option value="auto">Auto</option>
+			<option value="icons">Icons</option>
+			<option value="precision">Dots</option>
+		</Select>
 	</div>
 
-	<!-- Area-pin discs under the markers. -->
-	{#if placedPins.some((placed) => placed.radiusRx != null)}
-		<svg
-			class="absolute inset-0 h-full w-full pointer-events-none"
-			aria-hidden="true"
-			viewBox="0 0 {viewW} {viewH}"
-		>
-			{#each placedPins.filter((placed) => placed.radiusRx != null) as placed (placed.pin.id)}
-				<ellipse
-					cx={placed.x}
-					cy={placed.y}
-					rx={placed.radiusRx}
-					ry={placed.radiusRy}
-					class="fill-accent/10 stroke-accent/50"
-					stroke-width="1.5"
-				/>
-			{/each}
-		</svg>
-	{/if}
-
-	<!-- Pin markers: real buttons, so hover and keyboard focus share one
-	     detail surface while click/Enter copies the waypoint. -->
-	{#each placedPins as placed (placed.pin.id)}
-		<button
-			type="button"
-			class="absolute -translate-x-1/2 -translate-y-full cursor-pointer text-xl leading-none drop-shadow-md transition-transform hover:scale-125 focus-visible:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
-			style="left: {placed.x}px; top: {placed.y}px;"
-			aria-label="Copy waypoint for {placed.pin.name}"
-			onmouseenter={() => raiseCard(placed.pin)}
-			onmouseleave={scheduleCardClose}
-			onfocus={() => raiseCard(placed.pin)}
-			onblur={scheduleCardClose}
-			onpointerdown={(event) => event.stopPropagation()}
-			onclick={(event) => {
-				event.stopPropagation();
-				void copyPinWaypoint(placed.pin);
-			}}
-		>
-			{pinGlyph(placed.pin.icon)}
-		</button>
-		<!-- The active card renders immediately after its marker, so Tab
-		     moves from the marker straight into the card's actions; focus
-		     inside the card holds it open exactly like pointer hover. -->
-		{#if activePin?.id === placed.pin.id}
+	{#if activePin && activePlaced}
 			<PinCard
-				pin={placed.pin}
-				x={placed.x}
-				y={placed.y}
+				pin={activePin}
+				x={activePlaced.x}
+				y={activePlaced.y}
 				{viewW}
 				{viewH}
 				technicalName={planet.technicalName}
 				{copyFeedback}
-				onpointerenter={() => raiseCard(placed.pin)}
+				onpointerenter={() => raiseCard(activePin!)}
 				onpointerleave={scheduleCardClose}
-				onfocusin={() => raiseCard(placed.pin)}
+				onfocusin={() => raiseCard(activePin!)}
 				onfocusout={scheduleCardClose}
-				oncopy={() => void copyPinWaypoint(placed.pin)}
-				onedit={() => oneditpin(placed.pin)}
+				oncopy={() => void copyPinWaypoint(activePin!)}
+				onedit={() => oneditpin(activePin!)}
 				ondelete={() => {
+					const pin = activePin!;
 					activePin = null;
-					ondeletepin(placed.pin);
+					ondeletepin(pin);
 				}}
 			/>
-		{/if}
-	{/each}
+	{/if}
 
 	{#if !cal}
 		<p
@@ -483,4 +568,7 @@
 			{formatGamePoint(cursorPoint)}
 		</output>
 	{/if}
+	<output class="pointer-events-none absolute bottom-2 right-2 rounded-md border border-border bg-base/85 px-2 py-1 text-[10px] tabular-nums text-text-secondary shadow-sm backdrop-blur" aria-live="off">
+		{vp.zoom.toFixed(vp.zoom < 10 ? 2 : 0)}×
+	</output>
 </div>

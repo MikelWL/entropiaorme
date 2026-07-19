@@ -32,7 +32,9 @@ use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
 use crate::maps::{
-    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, MapView, PlanetMap,
+    CoordCalibrationStatus, CoordScanResult, MapPin, MapPinInput, MapPinPatch, MapView,
+    NavigationPositionResult, NavigationRun, NearbyMapPin, PlanetMap, RadarCalibrationStatus,
+    RadarGeometry,
 };
 use crate::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
@@ -1008,6 +1010,58 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(Vec<MapPin>))),
         },
         CommandSpec {
+            name: "map_pins_viewport",
+            args: vec![
+                ArgSpec {
+                    name: "planet",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "map_view_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+                ArgSpec {
+                    name: "lon_min",
+                    schema: schema(schema_for!(f64)),
+                },
+                ArgSpec {
+                    name: "lon_max",
+                    schema: schema(schema_for!(f64)),
+                },
+                ArgSpec {
+                    name: "lat_min",
+                    schema: schema(schema_for!(f64)),
+                },
+                ArgSpec {
+                    name: "lat_max",
+                    schema: schema(schema_for!(f64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Vec<MapPin>))),
+        },
+        CommandSpec {
+            name: "map_pin_nearby",
+            args: vec![
+                ArgSpec {
+                    name: "planet",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "map_view_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+                ArgSpec {
+                    name: "lon",
+                    schema: schema(schema_for!(f64)),
+                },
+                ArgSpec {
+                    name: "lat",
+                    schema: schema(schema_for!(f64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(Nullable<NearbyMapPin>))),
+        },
+        CommandSpec {
             name: "map_views_list",
             args: vec![ArgSpec {
                 name: "planet",
@@ -1103,6 +1157,91 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(Option<String>)),
             }],
             returns: Some(schema(schema_for!(CoordScanResult))),
+        },
+        CommandSpec {
+            name: "navigation_snapshot",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Nullable<NavigationRun>))),
+        },
+        CommandSpec {
+            name: "navigation_start",
+            args: vec![
+                ArgSpec {
+                    name: "planet",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "map_view_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+                ArgSpec {
+                    name: "start_lon",
+                    schema: schema(schema_for!(f64)),
+                },
+                ArgSpec {
+                    name: "start_lat",
+                    schema: schema(schema_for!(f64)),
+                },
+                ArgSpec {
+                    name: "hop_count",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "hotkey",
+                    schema: schema(schema_for!(String)),
+                },
+            ],
+            returns: Some(schema(schema_for!(NavigationRun))),
+        },
+        CommandSpec {
+            name: "navigation_update_position",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(NavigationPositionResult))),
+        },
+        CommandSpec {
+            name: "navigation_skip",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(NavigationRun))),
+        },
+        CommandSpec {
+            name: "navigation_undo",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(NavigationRun))),
+        },
+        CommandSpec {
+            name: "navigation_toggle_pause",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(NavigationRun))),
+        },
+        CommandSpec {
+            name: "navigation_replan",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(NavigationRun))),
+        },
+        CommandSpec {
+            name: "navigation_end",
+            args: Vec::new(),
+            returns: None,
+        },
+        CommandSpec {
+            name: "radar_calibration_start",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(RadarCalibrationStatus))),
+        },
+        CommandSpec {
+            name: "radar_calibration_cancel",
+            args: Vec::new(),
+            returns: None,
+        },
+        CommandSpec {
+            name: "radar_calibration_status",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(RadarCalibrationStatus))),
+        },
+        CommandSpec {
+            name: "radar_geometry",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Nullable<RadarGeometry>))),
         },
     ]
 }

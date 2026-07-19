@@ -115,6 +115,9 @@ pub struct Api {
     /// without the native capture seams (those commands then report
     /// unavailable).
     coord_capture: Option<Arc<eo_services::coord_capture::CoordCaptureService>>,
+    /// Persisted route navigation and radar guidance, composed only when
+    /// the native capture and producer seams are available.
+    navigation: Option<Arc<eo_services::navigation::NavigationService>>,
     /// The bundled guide-mode demo database path (a shipped resource), or
     /// `None` on a facade built without it (the demo commands then report the
     /// unavailable error). The demo services are a parallel database + tracker
@@ -145,6 +148,7 @@ impl Api {
         demo_db_path: Option<PathBuf>,
         planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
         coord_capture: Option<Arc<eo_services::coord_capture::CoordCaptureService>>,
+        navigation: Option<Arc<eo_services::navigation::NavigationService>>,
     ) -> Self {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
@@ -170,6 +174,7 @@ impl Api {
             map_pins,
             planet_maps,
             coord_capture,
+            navigation,
             demo_db_path,
             demo: tokio::sync::OnceCell::new(),
         }

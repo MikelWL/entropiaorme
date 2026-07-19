@@ -21,9 +21,9 @@ describe('fit and bounds', () => {
 		expect(fitZoom(IMG.w, IMG.h, VIEW.w, VIEW.h)).toBeCloseTo(800 / 4608, 6);
 	});
 
-	it('a small map in a large view caps at the native-upscale ceiling', () => {
+	it('a small map fits initially but retains the precision zoom ceiling', () => {
 		const bounds = zoomBounds(512, 512, 1400, 1400);
-		expect(bounds.min).toBe(MAX_NATIVE_UPSCALE);
+		expect(bounds.min).toBeCloseTo(1400 / 512, 6);
 		expect(bounds.max).toBe(MAX_NATIVE_UPSCALE);
 	});
 

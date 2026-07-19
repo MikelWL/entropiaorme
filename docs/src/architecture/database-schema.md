@@ -18,8 +18,12 @@ schema-version row, followed by forward-only additions:
 Overview, plus a ledger date index), `0005_market_observations.sql` (the
 market-markup observation feed), `0006_harvest_events.sql` (the
 harvesting activity tables plus the harvest columns on the summary and
-rollup projections), `0007_map_pins.sql` (the cartography pins), and
-`0008_map_views.sql` (independent named pin sets over each planet map). The
+rollup projections), `0007_map_pins.sql` (the cartography pins),
+`0008_map_views.sql` (independent named pin sets over each planet map),
+`0009_map_navigation.sql` (persisted routes, stop progress, pin visits, radar
+calibration, and cartography spatial indexes), and
+`0010_navigation_runtime_fields.sql` (the last-position timestamp and
+flow-scoped route hotkey). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
@@ -535,7 +539,7 @@ open text rather than a closed set.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | INTEGER | Primary key, autoincrement. |
-| `planet` | TEXT | Not null; the bundled map the pin sits on. Indexed (`idx_map_pins_planet`), and indexed with `map_view_id` and `created_at` (`idx_map_pins_planet_view`). |
+| `planet` | TEXT | Not null; the bundled map the pin sits on. Indexed (`idx_map_pins_planet`), indexed with `map_view_id` and `created_at` (`idx_map_pins_planet_view`), and indexed with map identity plus coordinates (`idx_map_pins_spatial`) for viewport and proximity reads. |
 | `lon` | REAL | Not null; game units (longitude grows eastward). |
 | `lat` | REAL | Not null; game units (latitude grows northward). |
 | `altitude` | REAL | Optional; carried when the source read included one. |
@@ -547,6 +551,71 @@ open text rather than a closed set.
 | `session_id` | TEXT | Optional; references `tracking_sessions(id)`, the session the pin was dropped during. |
 | `map_view_id` | INTEGER | Optional; references `map_views(id)`. Null means the permanent Default map. |
 | `created_at` | REAL | Not null; Unix-epoch seconds. |
+
+### Map navigation
+
+#### `navigation_runs`
+
+One persisted traversal over a planet and named map. A partial unique index
+(`idx_navigation_one_live_run`) permits at most one `active` or `paused` run.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `planet` | TEXT | Not null; the bundled planet map. |
+| `map_view_id` | INTEGER | Optional reference to `map_views(id)`; null selects Default. |
+| `status` | TEXT | One of `active`, `paused`, `completed`, or `ended`. |
+| `start_lon`, `start_lat` | REAL | The route's fixed starting position. |
+| `current_lon`, `current_lat` | REAL | The most recently captured position. |
+| `last_position_at` | REAL | Optional Unix-epoch time of the latest manual, hotkey, or harvesting coordinate sample. |
+| `hop_count` | INTEGER | Not null; requested route length. |
+| `hotkey` | TEXT | Not null; the F6 through F12 position-update key selected for this run. |
+| `created_at`, `updated_at` | REAL | Unix-epoch seconds. |
+
+#### `navigation_stops`
+
+The ordered pins selected for one run. The run and pin pair and the run and
+ordinal pair are both unique. `idx_navigation_stops_run_status` serves the
+active and pending traversal reads.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `run_id`, `pin_id` | INTEGER | Not-null references to the run and map pin. |
+| `ordinal` | INTEGER | Stable route order within the run. |
+| `status` | TEXT | One of `pending`, `active`, `visited`, or `skipped`. |
+| `completed_at` | REAL | Optional Unix-epoch completion time. |
+| `completion_source` | TEXT | Optional source such as `manual` or `harvest`. |
+| `observed_lon`, `observed_lat` | REAL | Optional captured completion position. |
+| `observed_distance` | REAL | Optional Euclidean distance from the pin. |
+
+#### `map_pin_visits`
+
+Append-only visit evidence for manual and harvesting-driven completion.
+`idx_map_pin_visits_pin_time` serves newest-first history for a pin.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `pin_id` | INTEGER | Not-null reference to `map_pins(id)`. |
+| `run_id` | INTEGER | Optional reference to the navigation run. |
+| `visited_at` | REAL | Not-null Unix-epoch time. |
+| `source`, `outcome` | TEXT | Not-null operational provenance. |
+| `observed_lon`, `observed_lat`, `observed_distance` | REAL | Not-null capture and match evidence. |
+
+#### `radar_calibration`
+
+A singleton physical-screen calibration. The centre and north-edge points
+define a circular radar and its northbound bearing frame.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `singleton` | INTEGER | Primary key constrained to `1`. |
+| `centre_x`, `centre_y` | INTEGER | Physical-screen centre coordinates. |
+| `north_x`, `north_y` | INTEGER | Physical-screen north-edge coordinates. |
+| `radius_px` | REAL | Not null and at least eight physical pixels. |
+| `display_scale` | REAL | Positive display scale, currently `1.0`. |
+| `updated_at` | REAL | Not-null Unix-epoch time. |
 
 ### Derived caches
 
@@ -669,7 +738,8 @@ version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
 additions (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
 `0005_market_observations.sql`, `0006_harvest_events.sql`,
-`0007_map_pins.sql`, `0008_map_views.sql`); the runner
+`0007_map_pins.sql`, `0008_map_views.sql`, `0009_map_navigation.sql`,
+`0010_navigation_runtime_fields.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
@@ -678,6 +748,12 @@ prefix of the embedded chain; any drift refuses loudly before anything
 applies. The version the baseline reproduces is pinned by the
 `BASELINE_SCHEMA_VERSION` constant (33); the post-baseline migrations extend
 the schema in place and do not change that version row.
+
+Migration files are immutable once they can have been applied. A later schema
+refinement always receives the next version, including during feature-branch
+development against a persistent dogfood database. This preserves checksum
+validation as a corruption and provenance guard rather than turning the ledger
+into mutable development state.
 
 ### The version-33 baseline
 

@@ -110,6 +110,7 @@ describe('cartography overlay preferences', () => {
 			notes: null,
 			sessionId: null,
 			mapViewId: 42,
+			allowNearby: false,
 		});
 	});
 

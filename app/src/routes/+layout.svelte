@@ -72,7 +72,9 @@
 		const isOverlay =
 			path.startsWith('/overlay') ||
 			path.startsWith('/scan-overlay') ||
-			path.startsWith('/cartography-overlay');
+			path.startsWith('/cartography-overlay') ||
+			path.startsWith('/navigation-hud') ||
+			path.startsWith('/radar-guidance');
 		if (!isWelcome && !isOverlay) {
 			if (!complete) {
 				await goto('/welcome', { replaceState: true });
@@ -144,7 +146,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/overlay') || page.url.pathname.startsWith('/scan-overlay') || page.url.pathname.startsWith('/cartography-overlay')}
+{#if page.url.pathname.startsWith('/overlay') || page.url.pathname.startsWith('/scan-overlay') || page.url.pathname.startsWith('/cartography-overlay') || page.url.pathname.startsWith('/navigation-hud') || page.url.pathname.startsWith('/radar-guidance')}
 	{@render children()}
 {:else if page.url.pathname.startsWith('/welcome')}
 	<div class="flex flex-col h-screen bg-base">

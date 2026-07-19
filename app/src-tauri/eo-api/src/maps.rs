@@ -10,6 +10,8 @@
 //! preview. A facade composed without the bundle serves an empty
 //! catalogue: the maps surface stands down, nothing errors at startup.
 
+use std::sync::Arc;
+
 use eo_services::map_pins::{MapPinsError, NewMapPin};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,11 @@ use serde::{Deserialize, Serialize};
 use crate::settings::double_option;
 use crate::Nullable;
 use crate::{Api, ApiError};
+
+use eo_services::navigation::{
+    NavigationError, NavigationRun as ServiceNavigationRun, PositionUpdate, RadarCalibrationPhase,
+    RunStatus as ServiceRunStatus, StopStatus as ServiceStopStatus,
+};
 
 /// A map's coordinate window in game units: the plausibility gate for
 /// any coordinate claimed to lie on it.
@@ -81,6 +88,310 @@ impl Api {
     }
 }
 
+// ── Route navigation ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum NavigationRunStatus {
+    Active,
+    Paused,
+    Completed,
+    Ended,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum NavigationStopStatus {
+    Pending,
+    Active,
+    Visited,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationStop {
+    pub id: i64,
+    pub pin_id: i64,
+    pub ordinal: i64,
+    pub status: NavigationStopStatus,
+    pub name: String,
+    pub icon: String,
+    pub lon: f64,
+    pub lat: f64,
+    pub completed_at: Nullable<f64>,
+    pub completion_source: Nullable<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationRun {
+    pub id: i64,
+    pub planet: String,
+    pub map_view_id: Nullable<i64>,
+    pub map_view_name: Nullable<String>,
+    pub status: NavigationRunStatus,
+    pub start_lon: f64,
+    pub start_lat: f64,
+    pub current_lon: f64,
+    pub current_lat: f64,
+    pub last_position_at: Nullable<f64>,
+    pub hop_count: i64,
+    pub hotkey: String,
+    pub updated_at: f64,
+    pub distance_to_active: Nullable<f64>,
+    /// Degrees clockwise from north.
+    pub bearing_degrees: Nullable<f64>,
+    pub stops: Vec<NavigationStop>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum NavigationPositionStatus {
+    Updated,
+    NoActiveRun,
+    Paused,
+    NoRegion,
+    CaptureFailed,
+    EngineUnavailable,
+    Unreadable,
+    Implausible,
+    Ambiguous,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationPositionResult {
+    pub status: NavigationPositionStatus,
+    pub run: Nullable<NavigationRun>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum RadarCalibrationStatus {
+    Idle,
+    AwaitCentre,
+    AwaitNorthEdge,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RadarGeometry {
+    pub centre_x: i64,
+    pub centre_y: i64,
+    pub north_x: i64,
+    pub north_y: i64,
+    pub radius_px: f64,
+    pub display_scale: f64,
+}
+
+impl Api {
+    pub async fn navigation_snapshot(&self) -> Result<Nullable<NavigationRun>, ApiError> {
+        let navigation = self.navigation()?;
+        navigation
+            .snapshot()
+            .await
+            .map(|run| run.map(navigation_to_dto).into())
+            .map_err(db_error)
+    }
+
+    pub async fn navigation_start(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+        start_lon: f64,
+        start_lat: f64,
+        hop_count: i64,
+        hotkey: String,
+    ) -> Result<NavigationRun, ApiError> {
+        self.validate_pin_coords(&planet, start_lon, start_lat)?;
+        self.validate_map_view(&planet, map_view_id).await?;
+        self.navigation()?
+            .start(planet, map_view_id, start_lon, start_lat, hop_count, hotkey)
+            .await
+            .map(navigation_to_dto)
+            .map_err(navigation_error)
+    }
+
+    pub async fn navigation_update_position(&self) -> Result<NavigationPositionResult, ApiError> {
+        self.navigation()?
+            .update_position("manual", "manual")
+            .await
+            .map(position_to_dto)
+            .map_err(navigation_error)
+    }
+
+    pub async fn navigation_skip(&self) -> Result<NavigationRun, ApiError> {
+        self.navigation()?
+            .skip()
+            .await
+            .map(navigation_to_dto)
+            .map_err(navigation_error)
+    }
+
+    pub async fn navigation_undo(&self) -> Result<NavigationRun, ApiError> {
+        self.navigation()?
+            .undo()
+            .await
+            .map(navigation_to_dto)
+            .map_err(navigation_error)
+    }
+
+    pub async fn navigation_toggle_pause(&self) -> Result<NavigationRun, ApiError> {
+        self.navigation()?
+            .toggle_pause()
+            .await
+            .map(navigation_to_dto)
+            .map_err(navigation_error)
+    }
+
+    pub async fn navigation_replan(&self) -> Result<NavigationRun, ApiError> {
+        self.navigation()?
+            .replan()
+            .await
+            .map(navigation_to_dto)
+            .map_err(navigation_error)
+    }
+
+    pub async fn navigation_end(&self) -> Result<(), ApiError> {
+        self.navigation()?.end().await.map_err(navigation_error)
+    }
+
+    pub fn radar_calibration_start(&self) -> Result<RadarCalibrationStatus, ApiError> {
+        Ok(radar_phase_to_dto(
+            self.navigation()?.radar_calibration_start(),
+        ))
+    }
+
+    pub fn radar_calibration_cancel(&self) -> Result<(), ApiError> {
+        self.navigation()?.radar_calibration_cancel();
+        Ok(())
+    }
+
+    pub fn radar_calibration_status(&self) -> Result<RadarCalibrationStatus, ApiError> {
+        Ok(radar_phase_to_dto(
+            self.navigation()?.radar_calibration_phase(),
+        ))
+    }
+
+    pub async fn radar_geometry(&self) -> Result<Nullable<RadarGeometry>, ApiError> {
+        self.navigation()?
+            .radar_geometry()
+            .await
+            .map(|geometry| {
+                geometry
+                    .map(|geometry| RadarGeometry {
+                        centre_x: geometry.centre_x,
+                        centre_y: geometry.centre_y,
+                        north_x: geometry.north_x,
+                        north_y: geometry.north_y,
+                        radius_px: geometry.radius_px,
+                        display_scale: geometry.display_scale,
+                    })
+                    .into()
+            })
+            .map_err(db_error)
+    }
+
+    fn navigation(&self) -> Result<&Arc<eo_services::navigation::NavigationService>, ApiError> {
+        self.navigation
+            .as_ref()
+            .ok_or_else(|| ApiError::invalid_state("map navigation unavailable"))
+    }
+}
+
+fn navigation_to_dto(run: ServiceNavigationRun) -> NavigationRun {
+    let (distance_to_active, bearing_degrees) = run.active_stop().map_or((None, None), |active| {
+        let dx = active.lon - run.current_lon;
+        let dy = active.lat - run.current_lat;
+        (
+            Some(dx.hypot(dy)),
+            Some(dx.atan2(dy).to_degrees().rem_euclid(360.0)),
+        )
+    });
+    NavigationRun {
+        id: run.id,
+        planet: run.planet,
+        map_view_id: run.map_view_id.into(),
+        map_view_name: run.map_view_name.into(),
+        status: match run.status {
+            ServiceRunStatus::Active => NavigationRunStatus::Active,
+            ServiceRunStatus::Paused => NavigationRunStatus::Paused,
+            ServiceRunStatus::Completed => NavigationRunStatus::Completed,
+            ServiceRunStatus::Ended => NavigationRunStatus::Ended,
+        },
+        start_lon: run.start_lon,
+        start_lat: run.start_lat,
+        current_lon: run.current_lon,
+        current_lat: run.current_lat,
+        last_position_at: run.last_position_at.into(),
+        hop_count: run.hop_count,
+        hotkey: run.hotkey,
+        updated_at: run.updated_at,
+        distance_to_active: distance_to_active.into(),
+        bearing_degrees: bearing_degrees.into(),
+        stops: run
+            .stops
+            .into_iter()
+            .map(|stop| NavigationStop {
+                id: stop.id,
+                pin_id: stop.pin_id,
+                ordinal: stop.ordinal,
+                status: match stop.status {
+                    ServiceStopStatus::Pending => NavigationStopStatus::Pending,
+                    ServiceStopStatus::Active => NavigationStopStatus::Active,
+                    ServiceStopStatus::Visited => NavigationStopStatus::Visited,
+                    ServiceStopStatus::Skipped => NavigationStopStatus::Skipped,
+                },
+                name: stop.name,
+                icon: stop.icon,
+                lon: stop.lon,
+                lat: stop.lat,
+                completed_at: stop.completed_at.into(),
+                completion_source: stop.completion_source.into(),
+            })
+            .collect(),
+    }
+}
+
+fn position_to_dto(update: PositionUpdate) -> NavigationPositionResult {
+    let (status, run) = match update {
+        PositionUpdate::Updated(run) => (NavigationPositionStatus::Updated, Some(run)),
+        PositionUpdate::NoActiveRun => (NavigationPositionStatus::NoActiveRun, None),
+        PositionUpdate::Paused(run) => (NavigationPositionStatus::Paused, Some(run)),
+        PositionUpdate::NoRegion => (NavigationPositionStatus::NoRegion, None),
+        PositionUpdate::CaptureFailed => (NavigationPositionStatus::CaptureFailed, None),
+        PositionUpdate::EngineUnavailable => (NavigationPositionStatus::EngineUnavailable, None),
+        PositionUpdate::Unreadable => (NavigationPositionStatus::Unreadable, None),
+        PositionUpdate::Implausible => (NavigationPositionStatus::Implausible, None),
+        PositionUpdate::Ambiguous(run) => (NavigationPositionStatus::Ambiguous, Some(run)),
+    };
+    NavigationPositionResult {
+        status,
+        run: run.map(navigation_to_dto).into(),
+    }
+}
+
+fn radar_phase_to_dto(phase: RadarCalibrationPhase) -> RadarCalibrationStatus {
+    match phase {
+        RadarCalibrationPhase::Idle => RadarCalibrationStatus::Idle,
+        RadarCalibrationPhase::AwaitCentre => RadarCalibrationStatus::AwaitCentre,
+        RadarCalibrationPhase::AwaitNorthEdge { .. } => RadarCalibrationStatus::AwaitNorthEdge,
+    }
+}
+
+fn navigation_error(error: NavigationError) -> ApiError {
+    match error {
+        NavigationError::NoActiveRun | NavigationError::NoPins => {
+            ApiError::invalid_state(error.to_string())
+        }
+        NavigationError::InvalidHopCount
+        | NavigationError::InvalidHotkey
+        | NavigationError::InvalidRadarRadius => ApiError::bad_request(error.to_string()),
+        NavigationError::Db(error) => db_error(error),
+    }
+}
+
 // ── Pins ────────────────────────────────────────────────────────────
 
 /// One stored cartography pin. Coordinates are game units; `radius_m`
@@ -126,6 +437,17 @@ pub struct MapPinInput {
     pub session_id: Option<String>,
     #[serde(default)]
     pub map_view_id: Option<i64>,
+    /// Explicit confirmation that a pin may be created within the
+    /// duplicate-advisory radius of an existing pin.
+    #[serde(default)]
+    pub allow_nearby: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NearbyMapPin {
+    pub pin: MapPin,
+    pub distance: f64,
 }
 
 /// One user-named pin set over a planet map. Default is represented by
@@ -179,6 +501,62 @@ impl Api {
         Ok(pins.into_iter().map(pin_to_dto).collect())
     }
 
+    /// Pins inside a coordinate viewport. This is the scalable map read;
+    /// the unbounded list remains for compact lists and compatibility.
+    pub async fn map_pins_viewport(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+        lon_min: f64,
+        lon_max: f64,
+        lat_min: f64,
+        lat_max: f64,
+    ) -> Result<Vec<MapPin>, ApiError> {
+        self.validate_map_view(&planet, map_view_id).await?;
+        for value in [lon_min, lon_max, lat_min, lat_max] {
+            if !value.is_finite() {
+                return Err(ApiError::bad_request("viewport bounds must be finite"));
+            }
+        }
+        if lon_min > lon_max || lat_min > lat_max {
+            return Err(ApiError::bad_request("viewport bounds are inverted"));
+        }
+        self.map_pins
+            .list_in_bounds(planet, map_view_id, lon_min, lon_max, lat_min, lat_max)
+            .await
+            .map(|pins| pins.into_iter().map(pin_to_dto).collect())
+            .map_err(db_error)
+    }
+
+    pub async fn map_pin_nearby(
+        &self,
+        planet: String,
+        map_view_id: Option<i64>,
+        lon: f64,
+        lat: f64,
+    ) -> Result<Nullable<NearbyMapPin>, ApiError> {
+        self.validate_pin_coords(&planet, lon, lat)?;
+        self.validate_map_view(&planet, map_view_id).await?;
+        self.map_pins
+            .nearby(
+                planet,
+                map_view_id,
+                lon,
+                lat,
+                eo_services::navigation::DUPLICATE_TOLERANCE_UNITS,
+            )
+            .await
+            .map(|nearby| {
+                nearby
+                    .map(|(pin, distance)| NearbyMapPin {
+                        pin: pin_to_dto(pin),
+                        distance,
+                    })
+                    .into()
+            })
+            .map_err(db_error)
+    }
+
     /// Create a pin. When the planet is in the bundled catalogue and
     /// calibrated, the coordinates must lie inside its bounds: an
     /// implausible pin is refused, never silently stored.
@@ -191,6 +569,25 @@ impl Api {
         if let Some(radius) = pin.radius_m {
             if !radius.is_finite() || radius <= 0.0 {
                 return Err(ApiError::bad_request("a pin radius must be positive"));
+            }
+        }
+        if !pin.allow_nearby {
+            if let Some((nearby, distance)) = self
+                .map_pins
+                .nearby(
+                    pin.planet.clone(),
+                    pin.map_view_id,
+                    pin.lon,
+                    pin.lat,
+                    eo_services::navigation::DUPLICATE_TOLERANCE_UNITS,
+                )
+                .await
+                .map_err(db_error)?
+            {
+                return Err(ApiError::bad_request(format!(
+                    "nearby pin {} already exists {:.2} units away; confirm create anyway",
+                    nearby.id, distance
+                )));
             }
         }
         let stored = self
@@ -215,6 +612,7 @@ impl Api {
 
     /// Apply a partial update; a moved pin re-clears the bounds gate.
     pub async fn map_pin_update(&self, id: i64, patch: MapPinPatch) -> Result<MapPin, ApiError> {
+        self.ensure_pin_not_in_current_route(id).await?;
         if let Some(name) = patch.name.as_deref() {
             if name.trim().is_empty() {
                 return Err(ApiError::bad_request("a pin needs a name"));
@@ -255,6 +653,7 @@ impl Api {
 
     /// Delete a pin.
     pub async fn map_pin_delete(&self, id: i64) -> Result<(), ApiError> {
+        self.ensure_pin_not_in_current_route(id).await?;
         self.map_pins.delete(id).await.map_err(pins_error)
     }
 
@@ -291,7 +690,48 @@ impl Api {
 
     /// Delete a named view and its pins.
     pub async fn map_view_delete(&self, id: i64) -> Result<(), ApiError> {
+        self.ensure_view_not_in_current_route(id).await?;
         self.map_pins.delete_view(id).await.map_err(pins_error)
+    }
+
+    async fn ensure_pin_not_in_current_route(&self, pin_id: i64) -> Result<(), ApiError> {
+        let in_use = self
+            .db
+            .with_reader(move |connection| {
+                Ok(connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM navigation_stops s JOIN navigation_runs r ON r.id = s.run_id WHERE s.pin_id = ?1 AND r.status IN ('active', 'paused', 'completed'))",
+                    [pin_id],
+                    |row| row.get::<_, bool>(0),
+                )?)
+            })
+            .await
+            .map_err(db_error)?;
+        if in_use {
+            return Err(ApiError::invalid_state(
+                "finish the current route before changing one of its pins",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn ensure_view_not_in_current_route(&self, view_id: i64) -> Result<(), ApiError> {
+        let in_use = self
+            .db
+            .with_reader(move |connection| {
+                Ok(connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM navigation_runs WHERE map_view_id = ?1 AND status IN ('active', 'paused', 'completed'))",
+                    [view_id],
+                    |row| row.get::<_, bool>(0),
+                )?)
+            })
+            .await
+            .map_err(db_error)?;
+        if in_use {
+            return Err(ApiError::invalid_state(
+                "finish the current route before deleting its map",
+            ));
+        }
+        Ok(())
     }
 
     async fn validate_map_view(

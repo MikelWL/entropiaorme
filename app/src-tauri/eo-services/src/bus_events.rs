@@ -216,6 +216,8 @@ pub enum BusEvent {
     TickFlushed(TickFlushedPayload),
     TrackingSessionUpdated(TrackingSessionUpdated),
     ScanStatusChanged(ScanStatusChanged),
+    HarvestRecorded(eo_wire::domain_events::HarvestRecorded),
+    NavigationUpdated(eo_wire::domain_events::NavigationUpdated),
 }
 
 impl BusEvent {
@@ -237,6 +239,8 @@ impl BusEvent {
             BusEvent::TickFlushed(_) => Topic::TickFlushed,
             BusEvent::TrackingSessionUpdated(_) => Topic::TrackingSessionUpdated,
             BusEvent::ScanStatusChanged(_) => Topic::ScanStatusChanged,
+            BusEvent::HarvestRecorded(_) => Topic::HarvestRecorded,
+            BusEvent::NavigationUpdated(_) => Topic::NavigationUpdated,
         }
     }
 

@@ -9,9 +9,9 @@
  * - zooming about a cursor keeps the image point under the cursor fixed;
  * - pan is clamped so the image never drifts fully out of view (a
  *   smaller-than-view image centres on the slack axis instead);
- * - zoom is bounded per map: fit-to-view at the bottom, a capped
- *   native-pixel upscale at the top so low-resolution maps stop before
- *   they degrade into blur.
+ * - zoom is bounded at fit-to-view below and only by a numerical safety
+ *   ceiling above. Pixelation is intentional: exact game coordinates
+ *   remain discriminable long after the raster's native pixels show.
  */
 
 export interface Viewport {
@@ -20,8 +20,8 @@ export interface Viewport {
 	panY: number;
 }
 
-/** The upscale ceiling: screen pixels per native image pixel. */
-export const MAX_NATIVE_UPSCALE = 2.5;
+/** Numerical safety ceiling, not a product-level zoom restriction. */
+export const MAX_NATIVE_UPSCALE = 512;
 
 /** The zoom multiplier of one wheel/keyboard zoom step. */
 export const ZOOM_STEP = 1.2;
@@ -32,8 +32,7 @@ export function fitZoom(imgW: number, imgH: number, viewW: number, viewH: number
 	return Math.min(viewW / imgW, viewH / imgH);
 }
 
-/** The per-map zoom bounds: fit at the bottom (never above the cap),
- * the native-upscale cap at the top. */
+/** Fit at the bottom and an intentionally remote safety ceiling above. */
 export function zoomBounds(
 	imgW: number,
 	imgH: number,

@@ -10,18 +10,23 @@
 		onconfigure,
 		oncalibrate,
 		onselectpin,
+		onroute,
+		onradarcalibrate,
 	}: {
 		pins: MapPin[];
 		ontoggleoverlay: () => void;
 		onconfigure: () => void;
 		oncalibrate: () => void;
 		onselectpin: (pin: MapPin) => void;
+		onroute: () => void;
+		onradarcalibrate: () => void;
 	} = $props();
 	let searchOpen = $state(false);
 
 	const setupItems = $derived([
 		{ label: 'Configure pin overlay', onSelect: onconfigure },
 		{ label: 'Calibrate coordinate capture', onSelect: oncalibrate },
+		{ label: 'Calibrate radar guidance', onSelect: onradarcalibrate },
 		{
 			label: searchOpen ? 'Hide pin search' : 'Search pins',
 			onSelect: () => (searchOpen = !searchOpen),
@@ -31,6 +36,7 @@
 
 <div class="relative flex shrink-0 items-center gap-1">
 	<Button size="sm" onclick={ontoggleoverlay}>Pin overlay</Button>
+	<Button size="sm" variant="secondary" onclick={onroute}>Route</Button>
 	<Menu ariaLabel="Map setup" items={setupItems}>
 		{#snippet trigger({ open, toggle })}
 			<Button size="sm" variant="ghost" aria-haspopup="menu" aria-expanded={open} onclick={toggle}>Setup</Button>

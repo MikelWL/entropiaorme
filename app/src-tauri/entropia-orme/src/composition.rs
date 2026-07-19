@@ -509,6 +509,9 @@ pub struct Composed {
     /// hook; enabled only while a calibration flow is live. Held for the
     /// exit seam (its teardown).
     pub coord_confirm: Arc<eo_services::coord_capture::CoordConfirmListener>,
+    /// The radar flow's instance of the same gated Enter listener, held for
+    /// the listener lifetime and the exit seam.
+    pub radar_confirm: Arc<eo_services::coord_capture::CoordConfirmListener>,
 }
 
 /// The outcome of a composition attempt at the substrate's startup: the
@@ -556,7 +559,12 @@ pub async fn compose_native(resource_dir: Option<PathBuf>) -> Composition {
     let allowlist: std::collections::BTreeSet<String> = HOTBAR_SLOT_KEYS
         .iter()
         .map(|key| key.to_string())
-        .chain(["space".to_string(), "return".to_string()])
+        .chain(
+            [
+                "space", "return", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+            ]
+            .map(str::to_string),
+        )
         .collect();
     let keystroke_source: Arc<dyn KeystrokeSource> =
         Arc::new(HookKeystrokeSource::new(Some(allowlist)));
@@ -803,6 +811,61 @@ async fn compose_with(
         }
     };
 
+    let navigation = {
+        let bus = producers.bus_handle();
+        let changed_bus = bus.clone();
+        let changed_clock = clock.clone();
+        let changed: eo_services::navigation::ChangedSink = Arc::new(move || {
+            use eo_wire::domain_events::{
+                NavigationUpdated, NavigationUpdatedPayload, NavigationUpdatedTag,
+            };
+            changed_bus.publish(&BusEvent::NavigationUpdated(NavigationUpdated {
+                topic: NavigationUpdatedTag,
+                event_version: 1,
+                occurred_at: eo_services::time::to_iso_utc(naive_to_epoch(changed_clock.now())),
+                payload: NavigationUpdatedPayload {},
+            }));
+        });
+        let bounds_store = planet_maps.clone();
+        let bounds: eo_services::navigation::BoundsProvider = Arc::new(move |planet| {
+            let bounds = bounds_store
+                .as_ref()?
+                .record(planet)?
+                .calibration
+                .as_ref()?
+                .bounds;
+            Some(eo_services::coord_capture::CoordBounds {
+                lon_min: bounds.lon_min,
+                lon_max: bounds.lon_max,
+                lat_min: bounds.lat_min,
+                lat_max: bounds.lat_max,
+            })
+        });
+        let service = eo_services::navigation::NavigationService::new(
+            db.clone(),
+            clock.clone(),
+            coord_capture.clone(),
+            bounds,
+            changed,
+            Some(producers.keystroke_source_handle()),
+        )
+        .await;
+        let radar_confirm = service.attach_radar_confirm_listener(
+            Some(producers.keystroke_source_handle()),
+            tokio::runtime::Handle::current(),
+        );
+        let harvest_navigation = service.clone();
+        bus.subscribe(Topic::HarvestRecorded, move |event| {
+            let BusEvent::HarvestRecorded(envelope) = event else {
+                return;
+            };
+            let success = envelope.payload.success;
+            let navigation = harvest_navigation.clone();
+            tokio::spawn(async move { navigation.on_harvest(success).await });
+        });
+        (service, radar_confirm)
+    };
+
     // The typed-command facade shares the read surface's handles plus the
     // producers the write families signal (the config writer, the hunt
     // tracker, the hotbar gate, the chat-log watcher, the skill tracker
@@ -826,6 +889,7 @@ async fn compose_with(
         demo_db_path,
         planet_maps,
         Some(coord_capture.clone()),
+        Some(navigation.0),
     ));
     Composition::Ready(Composed {
         db,
@@ -835,6 +899,7 @@ async fn compose_with(
         skill_scan,
         spacebar_listener,
         coord_confirm,
+        radar_confirm: navigation.1,
     })
 }
 
@@ -1237,7 +1302,12 @@ fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
 /// and capture channel clones, so they need no separate registration
 /// store; they drop with the bus when the spine tears down.
 fn subscribe_domain_bridge(bus: &EventBus, domain_bus: &Arc<DomainBus>) {
-    for topic in [Topic::TrackingSessionUpdated, Topic::ScanStatusChanged] {
+    for topic in [
+        Topic::TrackingSessionUpdated,
+        Topic::ScanStatusChanged,
+        Topic::HarvestRecorded,
+        Topic::NavigationUpdated,
+    ] {
         let domain_bus = domain_bus.clone();
         bus.subscribe(topic, move |event| match event {
             BusEvent::TrackingSessionUpdated(envelope) => {
@@ -1245,6 +1315,12 @@ fn subscribe_domain_bridge(bus: &EventBus, domain_bus: &Arc<DomainBus>) {
             }
             BusEvent::ScanStatusChanged(envelope) => {
                 domain_bus.publish(DomainEvent::ScanStatusChanged(envelope.clone()));
+            }
+            BusEvent::HarvestRecorded(envelope) => {
+                domain_bus.publish(DomainEvent::HarvestRecorded(envelope.clone()));
+            }
+            BusEvent::NavigationUpdated(envelope) => {
+                domain_bus.publish(DomainEvent::NavigationUpdated(envelope.clone()));
             }
             // A foreign event on a domain topic is unrepresentable at the
             // publish site; nothing to forward.

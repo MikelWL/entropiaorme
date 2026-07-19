@@ -1,18 +1,22 @@
 {"payload": {"session_id": "<UUID_1>"}, "topic": "session_started"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_1>", "payload": {"reason": "started", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
 {"payload": {"items": [{"is_enhancer_shrapnel": false, "item_name": "Short Moonleaf Board", "quantity": 9, "value_ped": 0.09}, {"is_enhancer_shrapnel": false, "item_name": "Wood Shavings", "quantity": 8, "value_ped": 0.008}], "timestamp": "<TS_2>", "total_ped": 0.098, "type": "loot"}, "topic": "loot_group"}
+{"payload": {"event_version": 1, "occurred_at": "<TS_3>", "payload": {"harvestId": "<UUID_2>", "success": true}, "type": "harvest.recorded"}, "topic": "harvest.recorded"}
 {"payload": {"amount": 1.6243, "skill_name": "Botany", "timestamp": "<TS_2>", "type": "skill_gain"}, "topic": "skill_gain"}
 {"payload": {"timestamp": "<TS_2>"}, "topic": "tick_flushed"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_3>", "payload": {"reason": "updated", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
 {"payload": {"amount": 1.6299, "skill_name": "Resource Gathering", "timestamp": "<TS_4>", "type": "skill_gain"}, "topic": "skill_gain"}
 {"payload": {"timestamp": "<TS_4>", "type": "harvest_fail"}, "topic": "harvest_fail"}
+{"payload": {"event_version": 1, "occurred_at": "<TS_5>", "payload": {"harvestId": "<UUID_3>", "success": false}, "type": "harvest.recorded"}, "topic": "harvest.recorded"}
 {"payload": {"timestamp": "<TS_4>"}, "topic": "tick_flushed"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_5>", "payload": {"reason": "updated", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
 {"payload": {"items": [{"is_enhancer_shrapnel": false, "item_name": "Short Moonleaf Board", "quantity": 4, "value_ped": 0.04}, {"is_enhancer_shrapnel": false, "item_name": "Wood Shavings", "quantity": 7, "value_ped": 0.007}], "timestamp": "<TS_6>", "total_ped": 0.047, "type": "loot"}, "topic": "loot_group"}
+{"payload": {"event_version": 1, "occurred_at": "<TS_7>", "payload": {"harvestId": "<UUID_4>", "success": true}, "type": "harvest.recorded"}, "topic": "harvest.recorded"}
 {"payload": {"amount": 1.2192, "skill_name": "Analysis", "timestamp": "<TS_6>", "type": "skill_gain"}, "topic": "skill_gain"}
 {"payload": {"timestamp": "<TS_6>"}, "topic": "tick_flushed"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_7>", "payload": {"reason": "updated", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
 {"payload": {"items": [{"is_enhancer_shrapnel": false, "item_name": "Short Moonleaf Board", "quantity": 10, "value_ped": 0.1}], "timestamp": "<TS_8>", "total_ped": 0.1, "type": "loot"}, "topic": "loot_group"}
+{"payload": {"event_version": 1, "occurred_at": "<TS_9>", "payload": {"harvestId": "<UUID_5>", "success": true}, "type": "harvest.recorded"}, "topic": "harvest.recorded"}
 {"payload": {"amount": 0.3835, "skill_name": "Alertness", "timestamp": "<TS_8>", "type": "skill_gain"}, "topic": "skill_gain"}
 {"payload": {"timestamp": "<TS_8>"}, "topic": "tick_flushed"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_9>", "payload": {"reason": "updated", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
@@ -26,9 +30,11 @@
 {"payload": {"timestamp": "<TS_14>"}, "topic": "tick_flushed"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_15>", "payload": {"reason": "updated", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
 {"payload": {"timestamp": "<TS_16>", "type": "harvest_fail"}, "topic": "harvest_fail"}
+{"payload": {"event_version": 1, "occurred_at": "<TS_17>", "payload": {"harvestId": "<UUID_6>", "success": false}, "type": "harvest.recorded"}, "topic": "harvest.recorded"}
 {"payload": {"timestamp": "<TS_16>"}, "topic": "tick_flushed"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_17>", "payload": {"reason": "updated", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
 {"payload": {"items": [{"is_enhancer_shrapnel": false, "item_name": "Short Moonleaf Board", "quantity": 8, "value_ped": 0.08}], "timestamp": "<TS_18>", "total_ped": 0.08, "type": "loot"}, "topic": "loot_group"}
+{"payload": {"event_version": 1, "occurred_at": "<TS_19>", "payload": {"harvestId": "<UUID_7>", "success": true}, "type": "harvest.recorded"}, "topic": "harvest.recorded"}
 {"payload": {"timestamp": "<TS_18>"}, "topic": "tick_flushed"}
 {"payload": {"event_version": 1, "occurred_at": "<TS_19>", "payload": {"reason": "updated", "sessionId": "<UUID_1>", "status": "active"}, "type": "tracking.session.updated"}, "topic": "tracking.session.updated"}
 {"payload": {"session_id": "<UUID_1>"}, "topic": "session_stopped"}

@@ -23,6 +23,14 @@ export async function toggleCartographyOverlay(): Promise<void> {
 	await invoke('toggle_cartography_overlay');
 }
 
+export async function showNavigationOverlays(): Promise<void> {
+	await invoke('show_navigation_overlays');
+}
+
+export async function hideNavigationOverlays(): Promise<void> {
+	await invoke('hide_navigation_overlays');
+}
+
 /** Show and focus the pre-spawned scan overlay window. */
 export async function showScanOverlay(): Promise<void> {
 	await invoke('show_scan_overlay');
