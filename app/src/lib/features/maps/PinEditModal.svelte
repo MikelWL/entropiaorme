@@ -1,17 +1,17 @@
 <script lang="ts">
 	/**
-	 * Create/edit form for a pin, over the shared Modal primitive. The
-	 * coordinates are shown but not editable here: a pin's position comes
-	 * from the map click (or, later, the coordinate scan); moving a pin
-	 * is a new drop.
+	 * Pin form over the shared Modal primitive. Creating a pin picks one of the
+	 * preset's palette configurations (its colour and behaviour come from that
+	 * configuration); editing a pin adjusts its own snapshot fields. Position is
+	 * shown but not editable: moving a pin is a new drop.
 	 */
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import type { MapPin } from '$lib/api';
+	import { getPinConfigs, type MapPin, type PinConfig } from '$lib/api';
 	import { formatGamePoint, type GamePoint } from './coords';
-	import { PIN_ICONS, pinKind } from './pinIcons';
+	import { PIN_ICONS, pinGlyph, pinKind } from './pinIcons';
 
 	export interface PinFormValues {
 		name: string;
@@ -19,12 +19,16 @@
 		kind: string;
 		radiusM: number | null;
 		notes: string;
+		/** The chosen palette configuration, when creating. */
+		configId?: number | null;
 	}
 
 	let {
 		open = $bindable(false),
 		point,
 		editing = null,
+		planet,
+		mapViewId,
 		onsubmit,
 	}: {
 		open?: boolean;
@@ -32,6 +36,9 @@
 		point: GamePoint;
 		/** The pin being edited, or null when creating. */
 		editing?: MapPin | null;
+		/** The current planet/map-view, to load the palette in create mode. */
+		planet: string | null;
+		mapViewId: number | null;
 		/** Resolves true when the pin persisted; false keeps the modal
 		 * open so a failed save cannot discard the entered form. */
 		onsubmit: (values: PinFormValues) => Promise<boolean>;
@@ -51,6 +58,8 @@
 	let icon = $state('pin');
 	let radius = $state('');
 	let notes = $state('');
+	let configs = $state<PinConfig[]>([]);
+	let selectedConfigId = $state<number | null>(null);
 
 	// Re-seed the form whenever the modal opens for a target.
 	$effect(() => {
@@ -59,9 +68,19 @@
 		icon = editing?.icon ?? 'pin';
 		radius = editing?.radiusM == null ? '' : String(editing.radiusM);
 		notes = editing?.notes ?? '';
+		selectedConfigId = null;
+		if (!editing && planet) {
+			void getPinConfigs(planet, mapViewId)
+				.then((loaded) => {
+					configs = loaded;
+					selectedConfigId = loaded[0]?.id ?? null;
+				})
+				.catch(() => (configs = []));
+		}
 	});
 
-	const valid = $derived(name.trim().length > 0);
+	const selectedConfig = $derived(configs.find((config) => config.id === selectedConfigId) ?? null);
+	const valid = $derived(editing ? name.trim().length > 0 : selectedConfig !== null);
 	let saving = $state(false);
 
 	async function submit(event: SubmitEvent) {
@@ -69,16 +88,24 @@
 		if (!valid || saving) return;
 		saving = true;
 		try {
-			const persisted = await onsubmit({
-				name: name.trim(),
-				icon,
-				kind: pinKind(icon),
-				radiusM: radius === '' ? null : Number(radius),
-				notes: notes.trim(),
-			});
-			if (persisted) {
-				open = false;
-			}
+			const values: PinFormValues = editing
+				? {
+						name: name.trim(),
+						icon,
+						kind: pinKind(icon),
+						radiusM: radius === '' ? null : Number(radius),
+						notes: notes.trim(),
+					}
+				: {
+						name: selectedConfig!.label,
+						icon: selectedConfig!.icon,
+						kind: selectedConfig!.specialKind ?? 'marker',
+						radiusM: selectedConfig!.radiusM,
+						notes: notes.trim(),
+						configId: selectedConfig!.id,
+					};
+			const persisted = await onsubmit(values);
+			if (persisted) open = false;
 		} finally {
 			saving = false;
 		}
@@ -91,29 +118,53 @@
 			Position: {formatGamePoint(point)}
 		</p>
 
-		<label class="block space-y-1">
-			<span class="text-xs text-text-secondary">Name</span>
-			<Input bind:value={name} placeholder="e.g. Ore claim north ridge" required />
-		</label>
+		{#if editing}
+			<label class="block space-y-1">
+				<span class="text-xs text-text-secondary">Name</span>
+				<Input bind:value={name} placeholder="e.g. Ore claim north ridge" required />
+			</label>
 
-		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+				<label class="block space-y-1">
+					<span class="text-xs text-text-secondary">Marker</span>
+					<Select bind:value={icon}>
+						{#each PIN_ICONS as def (def.id)}
+							<option value={def.id}>{def.glyph} {def.label}</option>
+						{/each}
+					</Select>
+				</label>
+				<label class="block space-y-1">
+					<span class="text-xs text-text-secondary">Area</span>
+					<Select bind:value={radius}>
+						{#each RADIUS_PRESETS as preset (preset.value)}
+							<option value={preset.value}>{preset.label}</option>
+						{/each}
+					</Select>
+				</label>
+			</div>
+		{:else if configs.length === 0}
+			<p class="rounded-md border border-border bg-surface/40 p-3 text-sm text-text-secondary">
+				This map has no pin options yet. Add some with Configure pin overlay, then drop pins.
+			</p>
+		{:else}
 			<label class="block space-y-1">
-				<span class="text-xs text-text-secondary">Marker</span>
-				<Select bind:value={icon}>
-					{#each PIN_ICONS as def (def.id)}
-						<option value={def.id}>{def.glyph} {def.label}</option>
+				<span class="text-xs text-text-secondary">Pin type</span>
+				<Select
+					value={selectedConfigId == null ? '' : String(selectedConfigId)}
+					onchange={(event) => {
+						const value = (event.currentTarget as HTMLSelectElement).value;
+						selectedConfigId = value ? Number(value) : null;
+					}}
+				>
+					{#each configs as config (config.id)}
+						<option value={String(config.id)}>
+							{pinGlyph(config.icon)}
+							{config.label}{config.radiusM ? ` · ${config.radiusM} m` : ''}
+						</option>
 					{/each}
 				</Select>
 			</label>
-			<label class="block space-y-1">
-				<span class="text-xs text-text-secondary">Area</span>
-				<Select bind:value={radius}>
-					{#each RADIUS_PRESETS as preset (preset.value)}
-						<option value={preset.value}>{preset.label}</option>
-					{/each}
-				</Select>
-			</label>
-		</div>
+		{/if}
 
 		<label class="block space-y-1">
 			<span class="text-xs text-text-secondary">Notes</span>

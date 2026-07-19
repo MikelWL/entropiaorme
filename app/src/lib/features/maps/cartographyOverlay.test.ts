@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PinConfig } from '$lib/api';
 
-const getPreference = vi.fn();
-const setPreference = vi.fn();
+const getPinConfigs = vi.fn();
 const emit = vi.fn();
 
-vi.mock('$lib/preferences', () => ({
-	getPreference: (...args: unknown[]) => getPreference(...args),
-	setPreference: (...args: unknown[]) => setPreference(...args),
+vi.mock('$lib/api', () => ({
+	getPinConfigs: (...args: unknown[]) => getPinConfigs(...args),
 }));
 vi.mock('@tauri-apps/api/event', () => ({
 	emit: (...args: unknown[]) => emit(...args),
@@ -19,110 +18,123 @@ async function loadModule(): Promise<Mod> {
 	return import('./cartographyOverlay.svelte');
 }
 
+function treeConfig(overrides: Partial<PinConfig> = {}): PinConfig {
+	return {
+		id: 1,
+		planet: 'Arkadia',
+		mapViewId: null,
+		label: 'Tree',
+		category: 'special',
+		specialKind: 'tree',
+		icon: '🌳',
+		radiusM: null,
+		colour: '#22c55e',
+		cooldownColour: '#f59e0b',
+		ordinal: 0,
+		createdAt: 1,
+		placedCount: 0,
+		...overrides,
+	};
+}
+
 beforeEach(() => {
-	getPreference.mockReset();
-	setPreference.mockReset().mockResolvedValue(undefined);
+	getPinConfigs.mockReset().mockResolvedValue([]);
 	emit.mockReset().mockResolvedValue(undefined);
 });
 
-describe('cartography overlay preferences', () => {
-	it('recovers corrupt data to the useful default palette', async () => {
-		const { sanitiseCartographyOverlayConfig, DEFAULT_CARTOGRAPHY_BUTTONS } = await loadModule();
-		expect(sanitiseCartographyOverlayConfig(null)).toEqual({
+describe('cartography overlay context', () => {
+	it('sanitises a broadcast context', async () => {
+		const { acceptCartographyContextBroadcast } = await loadModule();
+		expect(acceptCartographyContextBroadcast({ planet: ' Calypso ', mapViewId: 42 })).toEqual({
+			planet: 'Calypso',
+			mapViewId: 42,
+		});
+		expect(acceptCartographyContextBroadcast({ planet: '  ', mapViewId: -3 })).toEqual({
 			planet: null,
 			mapViewId: null,
-			buttons: DEFAULT_CARTOGRAPHY_BUTTONS,
+		});
+		expect(acceptCartographyContextBroadcast(null)).toEqual({ planet: null, mapViewId: null });
+	});
+
+	it('broadcasts the context to every window', async () => {
+		const { broadcastCartographyContext, cartographyOverlay, CARTOGRAPHY_OVERLAY_CHANGED_EVENT } =
+			await loadModule();
+		broadcastCartographyContext({ planet: 'Arkadia', mapViewId: 7 });
+		expect(cartographyOverlay.context).toEqual({ planet: 'Arkadia', mapViewId: 7 });
+		expect(emit).toHaveBeenCalledWith(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, {
+			planet: 'Arkadia',
+			mapViewId: 7,
 		});
 	});
 
-	it('sanitises and bounds persisted button definitions', async () => {
-		const { sanitiseCartographyOverlayConfig, MAX_CARTOGRAPHY_BUTTONS } = await loadModule();
-		const buttons = Array.from({ length: 12 }, (_, index) => ({
-			id: `id-${index}`,
-			name: index === 0 ? '   ' : `Button ${index}`,
-			icon: index === 1 ? 'unknown' : 'ore',
-			kind: '',
-			radiusM: index === 2 ? -5 : 20_000,
-		}));
-		const clean = sanitiseCartographyOverlayConfig({ planet: ' Calypso ', buttons });
-		expect(clean.planet).toBe('Calypso');
-		expect(clean.buttons).toHaveLength(MAX_CARTOGRAPHY_BUTTONS);
-		expect(clean.buttons[0]).toMatchObject({
-			name: 'Pin',
-			icon: '⛏️',
-			kind: 'marker',
-			radiusM: 10_000,
-		});
-		expect(clean.buttons[1].icon).toBe('📍');
-		expect(clean.buttons[2].radiusM).toBeNull();
+	it('loads the palette for the current context', async () => {
+		getPinConfigs.mockResolvedValue([treeConfig()]);
+		const { acceptCartographyContextBroadcast, loadCartographyConfigs, cartographyOverlay } =
+			await loadModule();
+		acceptCartographyContextBroadcast({ planet: 'Arkadia', mapViewId: null });
+		await loadCartographyConfigs();
+		expect(getPinConfigs).toHaveBeenCalledWith('Arkadia', null);
+		expect(cartographyOverlay.configs).toHaveLength(1);
+		expect(cartographyOverlay.configs[0].label).toBe('Tree');
 	});
 
-	it('persists a clean config and broadcasts it to every window', async () => {
-		const {
-			setCartographyOverlayConfig,
-			cartographyOverlayConfig,
-			CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
-		} = await loadModule();
-		await setCartographyOverlayConfig({
-			planet: 'Calypso',
-			mapViewId: 42,
-			buttons: [{ id: 'one', name: ' North ', icon: 'star', kind: '', radiusM: 50 }],
-		});
-		const expected = {
-			planet: 'Calypso',
-			mapViewId: 42,
-			buttons: [{ id: 'one', name: 'North', icon: '⭐', kind: 'marker', radiusM: 50 }],
-		};
-		expect(cartographyOverlayConfig.current).toEqual(expected);
-		expect(setPreference).toHaveBeenCalledWith('cartographyOverlay', expected);
-		expect(emit).toHaveBeenCalledWith(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, expected);
+	it('clears the palette when no planet is selected', async () => {
+		const { loadCartographyConfigs, cartographyOverlay } = await loadModule();
+		await loadCartographyConfigs();
+		expect(getPinConfigs).not.toHaveBeenCalled();
+		expect(cartographyOverlay.configs).toEqual([]);
 	});
+});
 
-	it('loads and sanitises the stored preference', async () => {
-		getPreference.mockResolvedValue({
-			planet: 'Calypso',
-			buttons: [{ id: 'one', name: 'Spot', icon: 'bogus', kind: 'marker', radiusM: null }],
-		});
-		const { initCartographyOverlay, cartographyOverlayConfig } = await loadModule();
-		await initCartographyOverlay();
-		expect(getPreference).toHaveBeenCalledWith('cartographyOverlay', expect.any(Object));
-		expect(cartographyOverlayConfig.current.buttons[0].icon).toBe('📍');
-	});
-
-	it('maps a successful scan and configured button to the exact typed pin input', async () => {
+describe('cartographyPinInput', () => {
+	it('maps a scan and a configuration to the typed pin input', async () => {
 		const { cartographyPinInput } = await loadModule();
 		expect(
-			cartographyPinInput(
-				'Calypso',
-				42,
-				{ id: 'ore', name: 'Claim', icon: 'ore', kind: 'mining', radiusM: 50 },
-				{ status: 'read', lon: 61_234, lat: 75_456, altitude: 103, rawText: '61234 75456 103' },
-			),
+			cartographyPinInput('Arkadia', 42, treeConfig({ id: 9 }), {
+				status: 'read',
+				lon: 61_234,
+				lat: 75_456,
+				altitude: 103,
+				rawText: '61234 75456 103',
+			}),
 		).toEqual({
-			planet: 'Calypso',
+			planet: 'Arkadia',
 			lon: 61_234,
 			lat: 75_456,
 			altitude: 103,
-			name: 'Claim',
-			icon: 'ore',
-			kind: 'mining',
-			radiusM: 50,
+			name: 'Tree',
+			icon: '🌳',
+			kind: 'tree',
+			radiusM: null,
 			notes: null,
 			sessionId: null,
 			mapViewId: 42,
+			pinConfigId: 9,
 			allowNearby: false,
 		});
+	});
+
+	it('uses the marker kind for a generic configuration', async () => {
+		const { cartographyPinInput } = await loadModule();
+		const input = cartographyPinInput(
+			'Arkadia',
+			null,
+			treeConfig({ category: 'generic', specialKind: null, icon: '📍' }),
+			{ status: 'read', lon: 100, lat: 200, altitude: null, rawText: null },
+		);
+		expect(input?.kind).toBe('marker');
 	});
 
 	it('refuses a read result without both coordinates', async () => {
 		const { cartographyPinInput } = await loadModule();
 		expect(
-			cartographyPinInput(
-				'Calypso',
-				null,
-				{ id: 'pin', name: 'Pin', icon: 'pin', kind: 'marker', radiusM: null },
-				{ status: 'read', lon: null, lat: 75_456, altitude: null, rawText: null },
-			),
+			cartographyPinInput('Arkadia', null, treeConfig(), {
+				status: 'read',
+				lon: null,
+				lat: 75_456,
+				altitude: null,
+				rawText: null,
+			}),
 		).toBeNull();
 	});
 });

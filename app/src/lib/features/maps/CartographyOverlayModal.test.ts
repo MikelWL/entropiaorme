@@ -1,17 +1,44 @@
 // @vitest-environment happy-dom
 
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PinConfig } from '$lib/api';
 import CartographyOverlayModal from './CartographyOverlayModal.svelte';
 
 const mocks = vi.hoisted(() => ({
-	setCartographyOverlayConfig: vi.fn().mockResolvedValue(undefined),
+	getPinConfigs: vi.fn(),
+	createPinConfig: vi.fn(),
+	updatePinConfig: vi.fn(),
+	deletePinConfig: vi.fn(),
+	reorderPinConfigs: vi.fn(),
 }));
 
-vi.mock('./cartographyOverlay.svelte', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('./cartographyOverlay.svelte')>();
-	return { ...actual, setCartographyOverlayConfig: mocks.setCartographyOverlayConfig };
-});
+vi.mock('$lib/api', () => ({
+	getPinConfigs: (...args: unknown[]) => mocks.getPinConfigs(...args),
+	createPinConfig: (...args: unknown[]) => mocks.createPinConfig(...args),
+	updatePinConfig: (...args: unknown[]) => mocks.updatePinConfig(...args),
+	deletePinConfig: (...args: unknown[]) => mocks.deletePinConfig(...args),
+	reorderPinConfigs: (...args: unknown[]) => mocks.reorderPinConfigs(...args),
+}));
+
+function config(overrides: Partial<PinConfig> = {}): PinConfig {
+	return {
+		id: 5,
+		planet: 'Arkadia',
+		mapViewId: null,
+		label: 'Claim',
+		category: 'generic',
+		specialKind: null,
+		icon: '📍',
+		radiusM: null,
+		colour: '#38bdf8',
+		cooldownColour: null,
+		ordinal: 0,
+		createdAt: 1,
+		placedCount: 3,
+		...overrides,
+	};
+}
 
 beforeAll(() => {
 	Element.prototype.animate = function animate() {
@@ -29,56 +56,53 @@ beforeAll(() => {
 	};
 });
 
+beforeEach(() => {
+	mocks.getPinConfigs.mockReset().mockResolvedValue([config()]);
+	mocks.createPinConfig.mockReset().mockResolvedValue(config({ id: 10, category: 'special', specialKind: 'tree', label: 'Tree' }));
+	mocks.updatePinConfig.mockReset().mockResolvedValue(config());
+	mocks.deletePinConfig.mockReset().mockResolvedValue(undefined);
+	mocks.reorderPinConfigs.mockReset().mockResolvedValue(undefined);
+});
+
 describe('CartographyOverlayModal', () => {
-	it('searches for an emoji and saves neutral marker definitions', async () => {
-		mocks.setCartographyOverlayConfig.mockClear();
+	it('adds a tree option and saves the palette to the database', async () => {
+		const onchanged = vi.fn();
 		render(CartographyOverlayModal, {
-			props: {
-				open: true,
-				config: {
-					planet: 'Calypso',
-					mapViewId: null,
-					buttons: [
-						{ id: 'ore', name: 'Claim', icon: 'ore', kind: 'custom', radiusM: null },
-						{ id: 'home', name: 'Camp', icon: 'home', kind: 'custom', radiusM: 50 },
-					],
-				},
-			},
+			props: { open: true, planet: 'Arkadia', mapViewId: null, mapName: 'Default', onchanged },
 		});
 
-		expect(screen.queryByText('Category')).toBeNull();
-		expect(screen.queryByText('Ore claim')).toBeNull();
-		expect(screen.getAllByRole('option', { name: '10 m area' })).toHaveLength(2);
-		expect(screen.getByRole('button', { name: 'Remove Claim' })).toBeTruthy();
-		await fireEvent.click(screen.getByRole('button', { name: 'Choose emoji for Claim' }));
-		const picker = within(screen.getAllByRole('dialog', { name: 'Choose emoji' })[0]);
-		expect(
-			picker.getAllByRole('button').map((option) => option.getAttribute('aria-label')),
-		).toEqual([
-			'round pushpin',
-			'triangular flag',
-			'star',
-			'pick',
-			'alien monster',
-			'deciduous tree',
-			'cyclone',
-			'house',
-			'droplet',
-		]);
-		await fireEvent.input(picker.getByRole('textbox', { name: 'Search emoji' }), {
-			target: { value: 'dragon' },
-		});
-		await fireEvent.click(picker.getByRole('button', { name: 'dragon' }));
-		await fireEvent.click(screen.getByRole('button', { name: 'Move Claim down' }));
+		await waitFor(() => expect(mocks.getPinConfigs).toHaveBeenCalledWith('Arkadia', null));
+		await screen.findByDisplayValue('Claim');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Add tree' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-		expect(mocks.setCartographyOverlayConfig).toHaveBeenCalledWith({
-			planet: 'Calypso',
-			mapViewId: null,
-			buttons: [
-				{ id: 'home', name: 'Camp', icon: '🏠', kind: 'marker', radiusM: 50 },
-				{ id: 'ore', name: 'Claim', icon: '🐉', kind: 'marker', radiusM: null },
-			],
+		await waitFor(() => expect(mocks.createPinConfig).toHaveBeenCalledTimes(1));
+		expect(mocks.updatePinConfig).toHaveBeenCalledWith(5, expect.objectContaining({ category: 'generic' }));
+		expect(mocks.createPinConfig).toHaveBeenCalledWith(
+			expect.objectContaining({
+				planet: 'Arkadia',
+				mapViewId: null,
+				category: 'special',
+				specialKind: 'tree',
+			}),
+		);
+		expect(mocks.reorderPinConfigs).toHaveBeenCalledWith([5, 10]);
+		expect(onchanged).toHaveBeenCalled();
+	});
+
+	it('confirms a cascade delete naming the placed-pin count', async () => {
+		const onchanged = vi.fn();
+		render(CartographyOverlayModal, {
+			props: { open: true, planet: 'Arkadia', mapViewId: null, mapName: 'Default', onchanged },
 		});
+		await screen.findByDisplayValue('Claim');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Remove Claim' }));
+		expect(screen.getByText(/deletes the 3 pins already placed/i)).toBeTruthy();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+		await waitFor(() => expect(mocks.deletePinConfig).toHaveBeenCalledWith(5));
+		expect(onchanged).toHaveBeenCalled();
 	});
 });

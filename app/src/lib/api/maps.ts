@@ -17,6 +17,9 @@ export type {
 	NavigationPositionResult,
 	NavigationPositionStatus,
 	NavigationRun,
+	PinConfig,
+	PinConfigEditInput,
+	PinConfigInput,
 	NavigationRunStatus,
 	NavigationStop,
 	NavigationStopStatus,
@@ -39,6 +42,11 @@ export const deleteMapView = commands.mapViewDelete;
 export const createMapPin = commands.mapPinCreate;
 export const updateMapPin = commands.mapPinUpdate;
 export const deleteMapPin = commands.mapPinDelete;
+export const getPinConfigs = commands.pinConfigsList;
+export const createPinConfig = commands.pinConfigCreate;
+export const updatePinConfig = commands.pinConfigUpdate;
+export const deletePinConfig = commands.pinConfigDelete;
+export const reorderPinConfigs = commands.pinConfigReorder;
 export const startMapsCalibration = commands.mapsCalibrationStart;
 export const cancelMapsCalibration = commands.mapsCalibrationCancel;
 export const getMapsCalibrationStatus = commands.mapsCalibrationStatus;

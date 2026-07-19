@@ -9,20 +9,20 @@
 		getPlanetMaps,
 		scanMapCoordinates,
 		type MapView,
+		type PinConfig,
 		type PlanetMap,
 	} from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
 	import { createWindowSizeSync } from '$lib/windows/windowSize';
 	import { pinGlyph } from '$lib/features/maps/pinIcons';
 	import {
-		acceptCartographyOverlayBroadcast,
+		acceptCartographyContextBroadcast,
 		cartographyPinInput,
 		cartographyScanFailureMessage,
-		cartographyOverlayConfig,
+		cartographyOverlay,
 		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
-		initCartographyOverlay,
+		loadCartographyConfigs,
 		MAP_PINS_CHANGED_EVENT,
-		type CartographyButton,
 	} from '$lib/features/maps/cartographyOverlay.svelte';
 
 	let root: HTMLDivElement;
@@ -31,9 +31,9 @@
 	let views = $state<MapView[]>([]);
 	const calibratedPlanets = $derived(planets.filter((planet) => planet.calibration !== null));
 	const selectedMapName = $derived(
-		cartographyOverlayConfig.current.mapViewId === null
+		cartographyOverlay.context.mapViewId === null
 			? 'Default'
-			: views.find((view) => view.id === cartographyOverlayConfig.current.mapViewId)?.name ??
+			: views.find((view) => view.id === cartographyOverlay.context.mapViewId)?.name ??
 				'Selected map',
 	);
 	let busy = $state(false);
@@ -56,7 +56,7 @@
 	}
 
 	async function refreshViews(): Promise<void> {
-		const planet = cartographyOverlayConfig.current.planet;
+		const planet = cartographyOverlay.context.planet;
 		const epoch = ++viewsRefreshEpoch;
 		if (!planet) {
 			views = [];
@@ -64,10 +64,7 @@
 		}
 		try {
 			const loadedViews = await getMapViews(planet);
-			if (
-				epoch === viewsRefreshEpoch &&
-				planet === cartographyOverlayConfig.current.planet
-			) {
+			if (epoch === viewsRefreshEpoch && planet === cartographyOverlay.context.planet) {
 				views = loadedViews;
 			}
 		} catch {
@@ -79,16 +76,16 @@
 		let mounted = true;
 		let unlisten: (() => void) | undefined;
 		void (async () => {
-			await initCartographyOverlay();
-			if (!mounted) return;
 			const loadedPlanets = await getPlanetMaps();
 			if (!mounted) return;
 			planets = loadedPlanets;
 			await refreshViews();
+			await loadCartographyConfigs();
 			if (!mounted) return;
 			const stopListening = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
-				acceptCartographyOverlayBroadcast(event.payload);
+				acceptCartographyContextBroadcast(event.payload);
 				void refreshViews();
+				void loadCartographyConfigs();
 			});
 			if (mounted) unlisten = stopListening;
 			else stopListening();
@@ -112,9 +109,9 @@
 		void getCurrentWindow().startDragging();
 	}
 
-	async function dropPin(button: CartographyButton) {
-		const planet = cartographyOverlayConfig.current.planet;
-		const mapViewId = cartographyOverlayConfig.current.mapViewId;
+	async function dropPin(config: PinConfig) {
+		const planet = cartographyOverlay.context.planet;
+		const mapViewId = cartographyOverlay.context.mapViewId;
 		if (busy) return;
 		if (!planet || !calibratedPlanets.some((candidate) => candidate.name === planet)) {
 			flash('Choose a calibrated planet in Maps first.');
@@ -123,12 +120,7 @@
 		busy = true;
 		try {
 			const result = await scanMapCoordinates(planet);
-			const input = cartographyPinInput(
-				planet,
-				mapViewId,
-				button,
-				result,
-			);
+			const input = cartographyPinInput(planet, mapViewId, config, result);
 			if (!input) {
 				flash(cartographyScanFailureMessage(result.status, planet));
 				return;
@@ -137,7 +129,7 @@
 			if (nearby) {
 				pendingDuplicate = {
 					input,
-					buttonName: button.name,
+					buttonName: config.label,
 					existingName: nearby.pin.name,
 					distance: nearby.distance,
 				};
@@ -147,7 +139,7 @@
 			}
 			await createMapPin(input);
 			void emit(MAP_PINS_CHANGED_EVENT, { planet });
-			flash(`${button.name} pinned.`, true);
+			flash(`${config.label} pinned.`, true);
 		} catch (error) {
 			flash(describeError(error, 'The pin could not be saved'));
 		} finally {
@@ -191,13 +183,13 @@
 	<div class="glass-panel overlay-strip flex w-max items-center gap-3 rounded-xl px-4 py-2">
 		<div
 			class="flex min-w-0 max-w-48 shrink-0 flex-col justify-center border-r border-white/10 pr-3"
-			title={`${cartographyOverlayConfig.current.planet ?? 'No planet'} · ${selectedMapName}`}
+			title={`${cartographyOverlay.context.planet ?? 'No planet'} · ${selectedMapName}`}
 		>
 			<span class="text-[9px] font-bold uppercase leading-none tracking-wider text-white/35">
 				Pinning to
 			</span>
 			<span class="mt-1 truncate text-[11px] font-medium leading-none text-white/70">
-				{cartographyOverlayConfig.current.planet ?? 'No planet'} · {selectedMapName}
+				{cartographyOverlay.context.planet ?? 'No planet'} · {selectedMapName}
 			</span>
 		</div>
 
@@ -213,16 +205,21 @@
 					Create anyway
 				</button>
 			</div>
+		{:else if cartographyOverlay.configs.length === 0}
+			<p class="max-w-56 shrink-0 text-[10px] leading-snug text-white/50">
+				No pins configured for this map. Add some in Maps → Configure pin overlay.
+			</p>
 		{:else}
 			<div class="flex shrink-0 items-center gap-1.5">
-				{#each cartographyOverlayConfig.current.buttons as button (button.id)}
+				{#each cartographyOverlay.configs as config (config.id)}
 					<button
 						class="pin-button"
-						disabled={busy || !cartographyOverlayConfig.current.planet}
-						onclick={() => dropPin(button)}
+						disabled={busy || !cartographyOverlay.context.planet}
+						onclick={() => dropPin(config)}
 					>
-						<span aria-hidden="true">{pinGlyph(button.icon)}</span>
-						<span>{button.name}</span>
+						<span class="swatch" style="background:{config.colour}" aria-hidden="true"></span>
+						<span aria-hidden="true">{pinGlyph(config.icon)}</span>
+						<span>{config.label}</span>
 					</button>
 				{/each}
 			</div>
@@ -280,6 +277,12 @@
 		background: rgba(56, 189, 248, 0.12);
 		border-color: rgba(56, 189, 248, 0.35);
 		color: rgba(125, 211, 252, 0.95);
+	}
+	.swatch {
+		width: 8px;
+		height: 8px;
+		border-radius: 9999px;
+		box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
 	}
 	.confirm-button {
 		border-color: rgba(56, 189, 248, 0.35);

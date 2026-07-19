@@ -7,9 +7,6 @@
 
 export const DEFAULT_PRECISION_MARKER_COLOUR = '#38bdf8';
 
-/** Preference key for the persisted precision-marker colour. */
-export const PRECISION_MARKER_COLOUR_KEY = 'precisionMarkerColour';
-
 export type Rgb = { r: number; g: number; b: number };
 
 const DEFAULT_RGB: Rgb = { r: 56, g: 189, b: 248 };
@@ -37,4 +34,27 @@ export function markerRgba(hex: string, alpha: number): string {
 	const { r, g, b } = parseHexRgb(hex);
 	const a = Math.min(1, Math.max(0, alpha));
 	return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+/**
+ * The colour a pin renders in: its configuration colour, or the special-tree
+ * on-cooldown colour while it is still on cooldown. Falls back to the default
+ * for a pin with no configuration.
+ */
+export function pinRenderColour(
+	colour: string | null,
+	cooldownColour: string | null,
+	specialKind: string | null,
+	cooldownUntil: number | null,
+	nowSeconds: number,
+): string {
+	if (
+		specialKind === 'tree' &&
+		cooldownColour &&
+		cooldownUntil != null &&
+		cooldownUntil > nowSeconds
+	) {
+		return cooldownColour;
+	}
+	return colour ?? DEFAULT_PRECISION_MARKER_COLOUR;
 }

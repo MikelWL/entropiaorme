@@ -4,6 +4,7 @@ import {
 	markerRgba,
 	normaliseHex,
 	parseHexRgb,
+	pinRenderColour,
 } from './markerColour';
 
 describe('parseHexRgb', () => {
@@ -45,5 +46,23 @@ describe('markerRgba', () => {
 	it('clamps the alpha into the [0, 1] range', () => {
 		expect(markerRgba('#38bdf8', 1.4)).toBe('rgba(56, 189, 248, 1)');
 		expect(markerRgba('#38bdf8', -0.2)).toBe('rgba(56, 189, 248, 0)');
+	});
+});
+
+describe('pinRenderColour', () => {
+	it('uses the configuration colour for a generic pin', () => {
+		expect(pinRenderColour('#ff8000', null, null, null, 1000)).toBe('#ff8000');
+	});
+
+	it('uses the cooldown colour for a tree still on cooldown', () => {
+		expect(pinRenderColour('#22c55e', '#f59e0b', 'tree', 2000, 1000)).toBe('#f59e0b');
+	});
+
+	it('uses the active colour for a tree past its cooldown', () => {
+		expect(pinRenderColour('#22c55e', '#f59e0b', 'tree', 500, 1000)).toBe('#22c55e');
+	});
+
+	it('falls back to the default when a pin has no configuration colour', () => {
+		expect(pinRenderColour(null, null, null, null, 1000)).toBe('#38bdf8');
 	});
 });

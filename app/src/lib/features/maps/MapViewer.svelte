@@ -6,17 +6,11 @@
 	 * for a pin drop; canvas hit testing raises the detail card.
 	 * Arrow keys pan, +/- zoom about the centre, 0 re-fits.
 	 */
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import type { MapPin, MapView, NavigationRun, PlanetMap } from '$lib/api';
 	import Button from '$lib/components/Button.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { getPreference, setPreference } from '$lib/preferences';
-	import {
-		DEFAULT_PRECISION_MARKER_COLOUR,
-		PRECISION_MARKER_COLOUR_KEY,
-		markerRgba,
-		normaliseHex,
-	} from './markerColour';
+	import { markerRgba, pinRenderColour } from './markerColour';
 	import { formatGamePoint, gameToImage, imageToGame, type GamePoint } from './coords';
 	import type { MapFocusRequest } from './mapTools';
 	import MapViewSelector from './MapViewSelector.svelte';
@@ -84,18 +78,6 @@
 	let cursorPoint = $state<GamePoint | null>(null);
 	let handledFocusNonce: number | null = null;
 	let markerMode = $state<'auto' | 'icons' | 'precision'>('auto');
-	let precisionColour = $state(DEFAULT_PRECISION_MARKER_COLOUR);
-
-	onMount(() => {
-		void getPreference(PRECISION_MARKER_COLOUR_KEY, DEFAULT_PRECISION_MARKER_COLOUR).then(
-			(saved) => (precisionColour = normaliseHex(saved)),
-		);
-	});
-
-	function setPrecisionColour(value: string) {
-		precisionColour = normaliseHex(value);
-		void setPreference(PRECISION_MARKER_COLOUR_KEY, precisionColour);
-	}
 
 	// The active pin card: raised by marker hover or focus, kept open
 	// while the pointer is over the card itself, closed on a short delay
@@ -373,7 +355,7 @@
 		const img = image;
 		const visiblePins = placedPins;
 		const mode = markerMode;
-		const colour = precisionColour;
+		const now = Date.now() / 1000;
 		const run = navigation;
 		if (!ctx || !canvas || !img || viewW === 0 || viewH === 0) return;
 		const dpr = window.devicePixelRatio || 1;
@@ -440,34 +422,37 @@
 
 		const relativeZoom = vp.zoom / fitZoom(img.naturalWidth, img.naturalHeight, viewW, viewH);
 		const effective = mode === 'auto' ? (relativeZoom < 2.5 ? 'density' : 'precision') : mode;
-		if (effective === 'density') {
-			const cellSize = 16;
-			const cells = new Map<string, { x: number; y: number; count: number }>();
-			for (const placed of visiblePins) {
-				const col = Math.floor(placed.x / cellSize);
-				const row = Math.floor(placed.y / cellSize);
-				const key = `${col}:${row}`;
-				const cell = cells.get(key) ?? { x: (col + 0.5) * cellSize, y: (row + 0.5) * cellSize, count: 0 };
-				cell.count += 1;
-				cells.set(key, cell);
-			}
-			for (const cell of cells.values()) {
-				ctx.beginPath();
-				ctx.arc(cell.x, cell.y, Math.min(8, 2 + Math.log2(cell.count + 1) * 1.6), 0, Math.PI * 2);
-				ctx.fillStyle = markerRgba(colour, Math.min(0.9, 0.22 + Math.log2(cell.count + 1) * 0.14));
-				ctx.fill();
-			}
-		} else if (effective === 'icons') {
+		const onCooldown = (pin: MapPin) =>
+			pin.specialKind === 'tree' && pin.cooldownUntil != null && pin.cooldownUntil > now;
+		if (effective === 'icons') {
+			// Emoji markers; a tree on cooldown is dimmed.
 			ctx.font = '18px sans-serif';
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'bottom';
-			for (const placed of visiblePins) ctx.fillText(pinGlyph(placed.pin.icon), placed.x, placed.y);
+			for (const placed of visiblePins) {
+				ctx.globalAlpha = onCooldown(placed.pin) ? 0.4 : 1;
+				ctx.fillText(pinGlyph(placed.pin.icon), placed.x, placed.y);
+			}
+			ctx.globalAlpha = 1;
 		} else {
+			// Fine-grained points in each pin's configured colour (its cooldown
+			// colour while a tree is on cooldown). Additive compositing keeps a
+			// dense field of overlapping points legible as a heatmap at low zoom.
+			const dense = effective === 'density';
+			const radius = dense ? 2 : relativeZoom >= 12 ? 2.25 : 2.75;
+			const alpha = dense ? 0.5 : relativeZoom >= 12 ? 0.92 : 0.5;
 			ctx.globalCompositeOperation = 'lighter';
 			for (const placed of visiblePins) {
+				const colour = pinRenderColour(
+					placed.pin.colour,
+					placed.pin.cooldownColour,
+					placed.pin.specialKind,
+					placed.pin.cooldownUntil,
+					now,
+				);
 				ctx.beginPath();
-				ctx.arc(placed.x, placed.y, relativeZoom >= 12 ? 2.25 : 2.75, 0, Math.PI * 2);
-				ctx.fillStyle = markerRgba(colour, relativeZoom >= 12 ? 0.92 : 0.5);
+				ctx.arc(placed.x, placed.y, radius, 0, Math.PI * 2);
+				ctx.fillStyle = markerRgba(colour, alpha);
 				ctx.fill();
 			}
 			ctx.globalCompositeOperation = 'source-over';
@@ -550,14 +535,6 @@
 			<option value="icons">Icons</option>
 			<option value="precision">Dots</option>
 		</Select>
-		<input
-			type="color"
-			class="h-7 w-7 cursor-pointer rounded border border-border bg-transparent p-0.5"
-			aria-label="Precision marker colour"
-			title="Precision marker colour"
-			value={precisionColour}
-			oninput={(event) => setPrecisionColour(event.currentTarget.value)}
-		/>
 	</div>
 
 	{#if activePin && activePlaced}

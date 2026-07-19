@@ -10,7 +10,6 @@
 	import { isTosAccepted } from '$lib/tos';
 	import { theme, initTheme } from '$lib/theme.svelte';
 	import { initStatsCustomisation } from '$lib/statsCustomisation.svelte';
-	import { initCartographyOverlay } from '$lib/features/maps/cartographyOverlay.svelte';
 	import { initActivityArchive } from '$lib/activityArchive.svelte';
 	import { initNews, newsOptIn, newsHasUnread, NEWS_PREFERENCE_KEYS } from '$lib/news.svelte';
 	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater.svelte';
@@ -51,7 +50,6 @@
 		await Promise.all([
 			initTheme(),
 			initStatsCustomisation(),
-			initCartographyOverlay(),
 			initActivityArchive(),
 			initNews(),
 			initUpdater(),

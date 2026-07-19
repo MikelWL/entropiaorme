@@ -32,16 +32,21 @@
 		toggleCartographyOverlay,
 	} from '$lib/api';
 	import { listen } from '@tauri-apps/api/event';
-	import {
-		cartographyOverlayConfig,
-		setCartographyOverlayConfig,
-	} from '$lib/features/maps/cartographyOverlay.svelte';
+	import { broadcastCartographyContext } from '$lib/features/maps/cartographyOverlay.svelte';
 
 	const model = createMapsModel();
 	let navigation = $state<NavigationRun | null>(null);
+
+	const selectedMapName = $derived(
+		model.selectedViewId === null
+			? 'Default'
+			: model.views.find((view) => view.id === model.selectedViewId)?.name ?? 'Selected map',
+	);
+
 	onMount(() => {
 		const stopMapsSync = startMapsCartographySync(model);
 		let unlisten: (() => void) | undefined;
+		void model.loadPlanets();
 		void getNavigationSnapshot().then((run) => {
 			navigation = run;
 			if (run?.status === 'active' || run?.status === 'paused') void showNavigationOverlays();
@@ -57,6 +62,25 @@
 			unlisten?.();
 		};
 	});
+
+	// Publish the active planet/map-view context to the overlay window whenever
+	// the selection changes, so its palette tracks the map on screen.
+	$effect(() => {
+		broadcastCartographyContext({
+			planet: model.selected?.name ?? null,
+			mapViewId: model.selectedViewId,
+		});
+	});
+
+	// A configuration change can restyle or remove placed pins; refresh them and
+	// re-publish the context so the overlay reloads its palette.
+	function onConfigsChanged() {
+		void model.refreshPins();
+		broadcastCartographyContext({
+			planet: model.selected?.name ?? null,
+			mapViewId: model.selectedViewId,
+		});
+	}
 
 	// The pin form: create mode carries the drop point (from a map click
 	// or a coordinate scan, which may add an altitude), edit mode the pin
@@ -75,33 +99,15 @@
 	async function selectPlanet(name: string) {
 		focusRequest = null;
 		await model.selectPlanet(name);
-		if (model.selected?.name === name && model.selected.calibration) {
-			await setCartographyOverlayConfig({
-				...cartographyOverlayConfig.current,
-				planet: model.selected.name,
-				mapViewId: null,
-			});
-		}
 	}
 
 	async function selectView(id: number | null) {
 		await model.selectView(id);
-		await setCartographyOverlayConfig({
-			...cartographyOverlayConfig.current,
-			mapViewId: model.selectedViewId,
-		});
 	}
 
 	async function addView(): Promise<MapView | null> {
 		try {
-			const created = await model.addView();
-			if (created) {
-				await setCartographyOverlayConfig({
-					...cartographyOverlayConfig.current,
-					mapViewId: created.id,
-				});
-			}
-			return created;
+			return await model.addView();
 		} catch (e) {
 			flash(describeError(e, 'The map could not be created'));
 			return null;
@@ -111,9 +117,12 @@
 	async function renameView(id: number, name: string): Promise<boolean> {
 		try {
 			await model.renameView(id, name);
-			// The overlay owns a separate window and reloads its view names
-			// when the shared configuration changes.
-			await setCartographyOverlayConfig({ ...cartographyOverlayConfig.current });
+			// The view id is unchanged, so the selection effect does not fire;
+			// re-publish the context so the overlay reloads the renamed view.
+			broadcastCartographyContext({
+				planet: model.selected?.name ?? null,
+				mapViewId: model.selectedViewId,
+			});
 			return true;
 		} catch (e) {
 			flash(describeError(e, 'The map could not be renamed'));
@@ -124,10 +133,6 @@
 	async function deleteView(view: MapView): Promise<boolean> {
 		try {
 			await model.removeView(view.id);
-			await setCartographyOverlayConfig({
-				...cartographyOverlayConfig.current,
-				mapViewId: model.selectedViewId,
-			});
 			return true;
 		} catch (e) {
 			flash(describeError(e, 'The map could not be deleted'));
@@ -195,6 +200,7 @@
 					notes: values.notes || null,
 					sessionId: null,
 					mapViewId: model.selectedViewId,
+					pinConfigId: values.configId ?? null,
 					allowNearby,
 				});
 				flash(`Pin "${values.name}" dropped.`);
@@ -302,10 +308,20 @@
 
 <CartographyOverlayModal
 	bind:open={overlayConfigOpen}
-	config={cartographyOverlayConfig.current}
+	planet={model.selected?.name ?? null}
+	mapViewId={model.selectedViewId}
+	mapName={selectedMapName}
+	onchanged={onConfigsChanged}
 />
 
-<PinEditModal bind:open={formOpen} point={dropPoint} editing={editingPin} onsubmit={submitPinForm} />
+<PinEditModal
+	bind:open={formOpen}
+	point={dropPoint}
+	editing={editingPin}
+	planet={model.selected?.name ?? null}
+	mapViewId={model.selectedViewId}
+	onsubmit={submitPinForm}
+/>
 <CalibrationModal bind:open={calibrationOpen} />
 {#if model.selected}
 	<NavigationSetupModal

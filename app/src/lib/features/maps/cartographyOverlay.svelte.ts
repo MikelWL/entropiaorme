@@ -1,79 +1,66 @@
 import { emit } from '@tauri-apps/api/event';
-import type { CoordScanResult, MapPinInput } from '$lib/api';
-import { getPreference, setPreference } from '$lib/preferences';
-import { normalisePinEmoji } from './pinIcons';
+import { getPinConfigs, type CoordScanResult, type MapPinInput, type PinConfig } from '$lib/api';
 
-export type CartographyButton = {
-	id: string;
-	name: string;
-	icon: string;
-	kind: string;
-	radiusM: number | null;
-};
+/**
+ * The cartography overlay's shared state: the current planet/map-view context
+ * (synced from the main Maps surface) and the pin configurations for it (the
+ * palette). Configurations are first-class per-preset data read from the
+ * database, so the palette and the placed pins stay in step, and a
+ * configuration's colour and special behaviour flow through to its pins.
+ */
 
-export type CartographyOverlayConfig = {
-	planet: string | null;
-	mapViewId: number | null;
-	buttons: CartographyButton[];
-};
+export type CartographyContext = { planet: string | null; mapViewId: number | null };
 
-const PREFERENCE_KEY = 'cartographyOverlay';
+/** Broadcast the active planet/map-view context to the overlay window. */
 export const CARTOGRAPHY_OVERLAY_CHANGED_EVENT = 'cartography-overlay-changed';
+/** Broadcast that placed pins changed, so the main map refreshes them. */
 export const MAP_PINS_CHANGED_EVENT = 'map-pins-changed';
-export const MAX_CARTOGRAPHY_BUTTONS = 8;
 
-export const DEFAULT_CARTOGRAPHY_BUTTONS: CartographyButton[] = [
-	{ id: 'ore-claim', name: 'Ore claim', icon: '⛏️', kind: 'marker', radiusM: null },
-	{ id: 'mob-spawn', name: 'Mob spawn', icon: '👾', kind: 'marker', radiusM: 50 },
-	{ id: 'favourite', name: 'Favourite', icon: '⭐', kind: 'marker', radiusM: null },
-];
+export const MAX_PIN_CONFIGS = 12;
+export const DEFAULT_GENERIC_COLOUR = '#38bdf8';
+export const DEFAULT_TREE_COLOUR = '#22c55e';
+export const DEFAULT_TREE_COOLDOWN_COLOUR = '#f59e0b';
 
-const DEFAULT_CONFIG: CartographyOverlayConfig = {
-	planet: null,
-	mapViewId: null,
-	buttons: DEFAULT_CARTOGRAPHY_BUTTONS,
-};
+let context = $state<CartographyContext>({ planet: null, mapViewId: null });
+let configs = $state<PinConfig[]>([]);
 
-let config = $state<CartographyOverlayConfig>(structuredClone(DEFAULT_CONFIG));
-
-export const cartographyOverlayConfig = {
-	get current(): CartographyOverlayConfig {
-		return config;
+export const cartographyOverlay = {
+	get context(): CartographyContext {
+		return context;
+	},
+	get configs(): PinConfig[] {
+		return configs;
 	},
 };
 
-function cleanText(value: unknown, fallback: string, max: number): string {
-	if (typeof value !== 'string') return fallback;
-	return value.trim().slice(0, max) || fallback;
+/** Reload the palette for the current context from the database. */
+export async function loadCartographyConfigs(): Promise<void> {
+	if (!context.planet) {
+		configs = [];
+		return;
+	}
+	try {
+		configs = await getPinConfigs(context.planet, context.mapViewId);
+	} catch {
+		// Keep the last-good palette; a later event can restore live state.
+	}
 }
 
-export function sanitiseCartographyOverlayConfig(value: unknown): CartographyOverlayConfig {
-	if (!value || typeof value !== 'object') return structuredClone(DEFAULT_CONFIG);
-	const candidate = value as Partial<CartographyOverlayConfig>;
-	const seen = new Set<string>();
-	const buttons: CartographyButton[] = [];
-	if (Array.isArray(candidate.buttons)) {
-		for (const raw of candidate.buttons) {
-			if (!raw || typeof raw !== 'object' || buttons.length >= MAX_CARTOGRAPHY_BUTTONS) continue;
-			const item = raw as Partial<CartographyButton>;
-			const id = cleanText(item.id, `button-${buttons.length + 1}`, 64);
-			if (seen.has(id)) continue;
-			seen.add(id);
-			const radius = item.radiusM;
-			const icon = normalisePinEmoji(item.icon);
-			buttons.push({
-				id,
-				name: cleanText(item.name, 'Pin', 40),
-				icon,
-				kind: 'marker',
-				radiusM:
-					typeof radius === 'number' && Number.isFinite(radius) && radius > 0
-						? Math.min(radius, 10_000)
-						: null,
-			});
-		}
-	}
-	return {
+/** Set the context locally (the main surface owns selection). */
+export function setCartographyContext(next: CartographyContext): void {
+	context = next;
+}
+
+/** Main surface: set the context and broadcast it to the overlay window. */
+export function broadcastCartographyContext(next: CartographyContext): void {
+	context = next;
+	void emit(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, next);
+}
+
+/** Overlay window: adopt a broadcast context, sanitised. */
+export function acceptCartographyContextBroadcast(value: unknown): CartographyContext {
+	const candidate = (value ?? {}) as Partial<CartographyContext>;
+	context = {
 		planet:
 			typeof candidate.planet === 'string' && candidate.planet.trim()
 				? candidate.planet.trim().slice(0, 80)
@@ -84,25 +71,8 @@ export function sanitiseCartographyOverlayConfig(value: unknown): CartographyOve
 			candidate.mapViewId > 0
 				? candidate.mapViewId
 				: null,
-		buttons: buttons.length ? buttons : structuredClone(DEFAULT_CARTOGRAPHY_BUTTONS),
 	};
-}
-
-export async function initCartographyOverlay(): Promise<void> {
-	config = sanitiseCartographyOverlayConfig(
-		await getPreference<unknown>(PREFERENCE_KEY, DEFAULT_CONFIG),
-	);
-}
-
-export async function setCartographyOverlayConfig(value: CartographyOverlayConfig): Promise<void> {
-	const clean = sanitiseCartographyOverlayConfig(value);
-	config = clean;
-	await setPreference(PREFERENCE_KEY, clean);
-	void emit(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, clean);
-}
-
-export function acceptCartographyOverlayBroadcast(value: unknown): void {
-	config = sanitiseCartographyOverlayConfig(value);
+	return context;
 }
 
 export function cartographyScanFailureMessage(
@@ -119,10 +89,11 @@ export function cartographyScanFailureMessage(
 	return messages[status] ?? 'Coordinate scan failed.';
 }
 
+/** Build the pin-drop input for a palette configuration and a scan result. */
 export function cartographyPinInput(
 	planet: string,
 	mapViewId: number | null,
-	button: CartographyButton,
+	config: PinConfig,
 	result: CoordScanResult,
 ): MapPinInput | null {
 	if (result.status !== 'read' || result.lon == null || result.lat == null) return null;
@@ -131,13 +102,14 @@ export function cartographyPinInput(
 		lon: result.lon,
 		lat: result.lat,
 		altitude: result.altitude,
-		name: button.name,
-		icon: button.icon,
-		kind: button.kind,
-		radiusM: button.radiusM,
+		name: config.label,
+		icon: config.icon,
+		kind: config.specialKind ?? 'marker',
+		radiusM: config.radiusM,
 		notes: null,
 		sessionId: null,
 		mapViewId,
+		pinConfigId: config.id,
 		allowNearby: false,
 	};
 }
