@@ -1,7 +1,7 @@
 //! Stand-alone probe for the Linux screen-capture engine: acquires the
 //! portal stream (reusing the restore token from `EO_CAPTURE_TOKEN_PATH`
 //! when present), then captures the same rectangle three times across
-//! fifteen seconds. Each capture must observe a newer frame generation,
+//! twelve seconds. Each capture must observe a newer frame generation,
 //! so a cached first frame cannot masquerade as a live stream.
 //!
 //! ```sh

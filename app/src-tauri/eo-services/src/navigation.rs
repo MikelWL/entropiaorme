@@ -39,6 +39,11 @@ pub type ChangedSink = Arc<dyn Fn() + Send + Sync>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunStatus {
     Active,
+    // No live code path ever sets a run to Paused: pause/resume was removed. The
+    // variant survives only to parse a legacy `paused` row (the frozen migration
+    // 0009 CHECK still permits it), which `NavigationService::new` ends at
+    // startup. Kept for round-trip completeness with that persisted schema, not
+    // as an observable runtime state.
     Paused,
     Completed,
     Ended,

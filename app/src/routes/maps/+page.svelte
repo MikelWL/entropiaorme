@@ -52,15 +52,15 @@
 		]).then(([planet, viewId]) => model.loadPlanets({ planet, viewId }));
 		void getNavigationSnapshot().then((run) => {
 			navigation = run;
-			if (run?.status === 'active' || run?.status === 'paused') void showNavigationOverlays();
+			if (run?.status === 'active') void showNavigationOverlays();
 		}).catch(() => {});
 		void listen('navigation:updated', () => {
 			void getNavigationSnapshot().then((run) => {
-				const wasActive = navigation?.status === 'active' || navigation?.status === 'paused';
+				const wasActive = navigation?.status === 'active';
 				navigation = run;
 				// A route just started (from the overlay's setup panel): position the
 				// HUD and radar around the live run.
-				const nowActive = run?.status === 'active' || run?.status === 'paused';
+				const nowActive = run?.status === 'active';
 				if (nowActive && !wasActive) void showNavigationOverlays();
 			}).catch(() => {});
 			// A recorded visit changes a pin's cooldown, so refresh the pins the
