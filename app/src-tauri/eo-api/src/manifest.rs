@@ -1264,6 +1264,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(NavigationRun))),
         },
         CommandSpec {
+            name: "navigation_resolve_harvest",
+            args: vec![ArgSpec {
+                name: "confirm",
+                schema: schema(schema_for!(bool)),
+            }],
+            returns: Some(schema(schema_for!(NavigationRun))),
+        },
+        CommandSpec {
             name: "navigation_undo",
             args: Vec::new(),
             returns: Some(schema(schema_for!(NavigationRun))),

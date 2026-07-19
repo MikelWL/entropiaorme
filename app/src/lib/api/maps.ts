@@ -56,6 +56,7 @@ export const startNavigation = commands.navigationStart;
 export const updateNavigationPosition = commands.navigationUpdatePosition;
 export const markNavigationVisited = commands.navigationMarkVisited;
 export const skipNavigationStop = commands.navigationSkip;
+export const resolveNavigationHarvest = commands.navigationResolveHarvest;
 export const undoNavigationStop = commands.navigationUndo;
 export const endNavigation = commands.navigationEnd;
 export const startRadarCalibration = commands.radarCalibrationStart;

@@ -7,6 +7,7 @@
 		getNavigationSnapshot,
 		hideNavigationOverlays,
 		markNavigationVisited,
+		resolveNavigationHarvest,
 		scanMapCoordinates,
 		skipNavigationStop,
 		startNavigation,
@@ -52,6 +53,9 @@
 	const sizeSync = createWindowSizeSync(() => root);
 	const active = $derived(run?.stops.find((stop) => stop.status === 'active') ?? null);
 	const following = $derived(run?.stops.find((stop) => stop.status === 'pending') ?? null);
+	// A harvest was detected beyond the arrival radius; the overlay asks whether
+	// it was the intended tree rather than dropping it.
+	const pendingHarvest = $derived(run?.pendingHarvest ?? null);
 	const completed = $derived(run?.stops.filter((stop) => stop.status === 'visited' || stop.status === 'skipped').length ?? 0);
 	const remainingDistance = $derived.by(() => {
 		if (!run) return 0;
@@ -234,6 +238,24 @@
 		finally { busy = false; }
 	}
 
+	// A harvest landed beyond the arrival radius. EU trees cut from far away, so
+	// the overlay asks whether this was the intended tree; confirm records it,
+	// dismiss leaves the route untouched.
+	async function resolveHarvest(confirm: boolean) {
+		if (busy) return;
+		busy = true;
+		feedback = null;
+		pendingVisit = null;
+		try {
+			run = await resolveNavigationHarvest(confirm);
+			feedback = confirm ? 'Recorded harvest.' : 'Harvest dismissed.';
+		} catch {
+			feedback = 'The harvest could not be updated.';
+		} finally {
+			busy = false;
+		}
+	}
+
 	// Closing the HUD ends the visible navigation interaction; starting a new
 	// route is the way to replan.
 	async function endRoute() {
@@ -279,6 +301,15 @@
 				<p class="mt-1 text-[9px] text-white/35">Last position: {run.lastPositionAt == null ? 'route start' : new Date(run.lastPositionAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>
 				{#if following}<p class="mt-2 truncate text-[10px] text-white/45">Next: {following.name} · {formatGamePoint(following)}</p>{/if}
 			</div>
+			{#if pendingHarvest}
+				<div class="mb-2 rounded-md border border-emerald-300/30 bg-emerald-300/10 p-2">
+					<p class="text-[10px] text-emerald-200">Harvest {pendingHarvest.distance.toFixed(1)} m from {pendingHarvest.name}. Cutting this tree?</p>
+					<div class="mt-1.5 grid grid-cols-2 gap-1.5">
+						<button class="hud-btn primary" disabled={busy} onclick={() => resolveHarvest(true)}>Yes, mark cut</button>
+						<button class="hud-btn" disabled={busy} onclick={() => resolveHarvest(false)}>Not this one</button>
+					</div>
+				</div>
+			{/if}
 			{#if pendingVisit}
 				<div class="mb-2 rounded-md border border-orange-300/30 bg-orange-300/10 p-2">
 					<p class="text-[10px] text-orange-200">{pendingVisit.distance.toFixed(1)} m from {pendingVisit.name}. Mark it visited anyway?</p>
@@ -338,7 +369,16 @@
 	.hud-btn:hover { border-color: rgba(56,189,248,.35); color: rgb(125 211 252); }
 	.hud-btn.primary { background: rgba(56,189,248,.16); color: rgb(125 211 252); }
 	.hud-btn:disabled { opacity: .4; cursor: default; }
-	.hud-field { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); border-radius: 5px; padding: 4px 7px; color: rgba(255,255,255,.85); font-size: 11px; }
+	.hud-field { width: 100%; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); border-radius: 5px; padding: 4px 7px; color: rgba(255,255,255,.85); font-size: 11px; }
 	.hud-field:focus { outline: none; border-color: rgba(56,189,248,.5); }
-	.hud-field option { color: #0a0e17; }
+	select.hud-field {
+		appearance: none;
+		padding-right: 22px;
+		cursor: pointer;
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23ffffff88' stroke-width='1.4'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+		background-repeat: no-repeat;
+		background-position: right 6px center;
+		background-size: 12px;
+	}
+	.hud-field option { color: #0a0e17; background: #e5edf5; }
 </style>

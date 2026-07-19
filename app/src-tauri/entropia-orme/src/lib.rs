@@ -416,6 +416,7 @@ pub fn run() {
             commands::navigation_update_position,
             commands::navigation_mark_visited,
             commands::navigation_skip,
+            commands::navigation_resolve_harvest,
             commands::navigation_undo,
             commands::navigation_end,
             commands::radar_calibration_start,

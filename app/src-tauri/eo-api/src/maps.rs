@@ -108,6 +108,16 @@ pub enum NavigationStopStatus {
     Skipped,
 }
 
+/// A harvest detected beyond the arrival radius, awaiting the player's confirm
+/// or dismiss in the overlay. Names the proposed (active) tree and how far the
+/// harvest read was from it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingHarvest {
+    pub name: String,
+    pub distance: f64,
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct NavigationStop {
@@ -142,6 +152,7 @@ pub struct NavigationRun {
     pub distance_to_active: Nullable<f64>,
     /// Degrees clockwise from north.
     pub bearing_degrees: Nullable<f64>,
+    pub pending_harvest: Nullable<PendingHarvest>,
     pub stops: Vec<NavigationStop>,
 }
 
@@ -241,6 +252,17 @@ impl Api {
             .map_err(navigation_error)
     }
 
+    pub async fn navigation_resolve_harvest(
+        &self,
+        confirm: bool,
+    ) -> Result<NavigationRun, ApiError> {
+        self.navigation()?
+            .resolve_harvest(confirm)
+            .await
+            .map(navigation_to_dto)
+            .map_err(navigation_error)
+    }
+
     pub async fn navigation_undo(&self) -> Result<NavigationRun, ApiError> {
         self.navigation()?
             .undo()
@@ -326,6 +348,13 @@ fn navigation_to_dto(run: ServiceNavigationRun) -> NavigationRun {
         updated_at: run.updated_at,
         distance_to_active: distance_to_active.into(),
         bearing_degrees: bearing_degrees.into(),
+        pending_harvest: run
+            .pending_harvest
+            .map(|pending| PendingHarvest {
+                name: pending.name,
+                distance: pending.observed_distance,
+            })
+            .into(),
         stops: run
             .stops
             .into_iter()

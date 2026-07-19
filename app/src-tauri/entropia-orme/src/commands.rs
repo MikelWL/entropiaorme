@@ -1155,6 +1155,14 @@ pub async fn navigation_skip(app: tauri::AppHandle) -> Result<NavigationRun, Api
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn navigation_resolve_harvest(
+    app: tauri::AppHandle,
+    confirm: bool,
+) -> Result<NavigationRun, ApiError> {
+    facade(&app)?.navigation_resolve_harvest(confirm).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn navigation_undo(app: tauri::AppHandle) -> Result<NavigationRun, ApiError> {
     facade(&app)?.navigation_undo().await
 }
@@ -1329,6 +1337,7 @@ mod tests {
         "navigation_update_position",
         "navigation_mark_visited",
         "navigation_skip",
+        "navigation_resolve_harvest",
         "navigation_undo",
         "navigation_end",
         "radar_calibration_start",

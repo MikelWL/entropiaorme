@@ -107,6 +107,22 @@ pub struct NavigationStop {
     pub completion_source: Option<String>,
 }
 
+/// A harvest swing detected outside the arrival radius of every route stop.
+/// EU trees are cuttable from well beyond that radius, so rather than dropping
+/// the swing the actor stashes this proposal for the player to accept or
+/// dismiss in the overlay. It is ephemeral (never persisted) and always names
+/// the currently-active stop.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingHarvest {
+    pub stop_id: i64,
+    pub pin_id: i64,
+    pub name: String,
+    pub observed_lon: f64,
+    pub observed_lat: f64,
+    pub observed_distance: f64,
+    pub outcome: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NavigationRun {
     pub id: i64,
@@ -123,6 +139,8 @@ pub struct NavigationRun {
     pub hotkey: String,
     pub updated_at: f64,
     pub stops: Vec<NavigationStop>,
+    /// Set only on the snapshot read, and only while its stop is still active.
+    pub pending_harvest: Option<PendingHarvest>,
 }
 
 impl NavigationRun {
@@ -219,6 +237,10 @@ pub struct NavigationService {
     input_claimed: std::sync::atomic::AtomicBool,
     route_live: std::sync::atomic::AtomicBool,
     hotkey: Mutex<String>,
+    // A harvest swing detected beyond the arrival radius, awaiting the player's
+    // confirm/dismiss in the overlay. Ephemeral; the snapshot self-heals it away
+    // once the active stop moves on.
+    pending_harvest: Mutex<Option<PendingHarvest>>,
 }
 
 impl NavigationService {
@@ -249,6 +271,7 @@ impl NavigationService {
             input_claimed: std::sync::atomic::AtomicBool::new(false),
             route_live: std::sync::atomic::AtomicBool::new(false),
             hotkey: Mutex::new(DEFAULT_NAVIGATION_HOTKEY.to_string()),
+            pending_harvest: Mutex::new(None),
         });
         if let Some(input) = input {
             let weak = Arc::downgrade(&service);
@@ -297,7 +320,29 @@ impl NavigationService {
     }
 
     pub async fn snapshot(&self) -> Result<Option<NavigationRun>, DbError> {
-        load_current_run(&self.db).await
+        let mut run = load_current_run(&self.db).await?;
+        // Surface a pending harvest confirmation only while it still names the
+        // active stop of the live run; any later state change makes it stale, so
+        // drop it instead.
+        let pending = self
+            .pending_harvest
+            .lock()
+            .expect("pending harvest")
+            .clone();
+        if let Some(pending) = pending {
+            let still_active = run.as_ref().is_some_and(|run| {
+                run.status == RunStatus::Active
+                    && run.active_stop().map(|stop| stop.id) == Some(pending.stop_id)
+            });
+            if still_active {
+                if let Some(run) = run.as_mut() {
+                    run.pending_harvest = Some(pending);
+                }
+            } else {
+                *self.pending_harvest.lock().expect("pending harvest") = None;
+            }
+        }
+        Ok(run)
     }
 
     pub async fn start(
@@ -525,6 +570,31 @@ impl NavigationService {
                 .ok_or(NavigationError::NoActiveRun)?;
             return Ok(PositionUpdate::Ambiguous(refreshed));
         }
+        // A harvest with nothing inside the arrival radius is not noise: EU trees
+        // cut from well beyond it. Rather than silently dropping the swing, stash
+        // a confirmation proposing the active tree for the overlay to resolve.
+        if source == "harvest" && matched.is_none() {
+            if let Some(active) = run.active_stop() {
+                let stop_id = active.id;
+                let pin_id = active.pin_id;
+                let name = active.name.clone();
+                let observed_distance = distance((lon, lat), (active.lon, active.lat));
+                update_run_position(&self.db, run.id, lon, lat, now).await?;
+                *self.pending_harvest.lock().expect("pending harvest") = Some(PendingHarvest {
+                    stop_id,
+                    pin_id,
+                    name,
+                    observed_lon: lon,
+                    observed_lat: lat,
+                    observed_distance,
+                    outcome: outcome.to_string(),
+                });
+                let refreshed = load_run(&self.db, run.id)
+                    .await?
+                    .ok_or(NavigationError::NoActiveRun)?;
+                return Ok(PositionUpdate::Updated(refreshed));
+            }
+        }
         let source = source.to_string();
         let outcome = outcome.to_string();
         let arrived_out_of_order = matched
@@ -719,6 +789,60 @@ impl NavigationService {
         let _ = self
             .harvest_position(if success { "success" } else { "failed" })
             .await;
+    }
+
+    /// Resolve a pending far-harvest confirmation. `confirm` records the proposed
+    /// (active) tree as harvested using the stashed observation and advances the
+    /// route; a dismissal leaves the route untouched. Either way the pending
+    /// proposal is cleared.
+    pub async fn resolve_harvest(&self, confirm: bool) -> Result<NavigationRun, NavigationError> {
+        let _guard = self.operation.lock().await;
+        let pending = self.pending_harvest.lock().expect("pending harvest").take();
+        let Some(run) = load_live_run(&self.db).await? else {
+            return Err(NavigationError::NoActiveRun);
+        };
+        // Dismissed, nothing pending, or the proposal no longer names the active
+        // stop: leave the route as it is.
+        let record = pending.filter(|pending| {
+            confirm && run.active_stop().map(|stop| stop.id) == Some(pending.stop_id)
+        });
+        let Some(pending) = record else {
+            let refreshed = load_run(&self.db, run.id)
+                .await?
+                .ok_or(NavigationError::NoActiveRun)?;
+            (self.changed)();
+            return Ok(refreshed);
+        };
+        let now = naive_to_epoch(self.clock.now());
+        let run_id = run.id;
+        self.db.with_writer(move |conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE navigation_runs SET current_lon = ?2, current_lat = ?3, last_position_at = ?4, updated_at = ?4 WHERE id = ?1",
+                rusqlite::params![run_id, pending.observed_lon, pending.observed_lat, now],
+            )?;
+            tx.execute(
+                "UPDATE navigation_stops SET status = 'visited', completed_at = ?2, completion_source = 'harvest', observed_lon = ?3, observed_lat = ?4, observed_distance = ?5 WHERE id = ?1",
+                rusqlite::params![pending.stop_id, now, pending.observed_lon, pending.observed_lat, pending.observed_distance],
+            )?;
+            tx.execute(
+                "INSERT INTO map_pin_visits (pin_id, run_id, visited_at, source, outcome, observed_lon, observed_lat, observed_distance) VALUES (?1, ?2, ?3, 'harvest', ?4, ?5, ?6, ?7)",
+                rusqlite::params![pending.pin_id, run_id, now, pending.outcome, pending.observed_lon, pending.observed_lat, pending.observed_distance],
+            )?;
+            activate_next_or_complete(&tx, run_id, now)?;
+            tx.commit()?;
+            Ok(())
+        }).await?;
+        let refreshed = load_run(&self.db, run_id)
+            .await?
+            .ok_or(NavigationError::NoActiveRun)?;
+        if refreshed.status == RunStatus::Completed {
+            self.route_live
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            self.release_input_if_idle();
+        }
+        (self.changed)();
+        Ok(refreshed)
     }
 
     /// The automatic arrival path: a harvest swing proves arrival. Scans the
@@ -1054,6 +1178,7 @@ async fn load_run_where(db: &Db, clause: &str) -> Result<Option<NavigationRun>, 
         hotkey,
         updated_at,
         stops,
+        pending_harvest: None,
     }))
 }
 
@@ -1452,6 +1577,102 @@ mod tests {
             StopStatus::Visited,
         );
         assert_ne!(updated.active_stop().unwrap().id, active.id);
+    }
+
+    #[tokio::test]
+    async fn a_far_harvest_awaits_confirmation_then_records_on_confirm() {
+        let (_dir, service, position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .await
+            .unwrap();
+        let active = run.active_stop().unwrap().clone();
+
+        // EU trees cut from well beyond the arrival radius. A swing with no tree
+        // in range must not silently drop: it records nothing yet and stashes a
+        // confirmation proposing the active tree.
+        *position.lock().unwrap() = (60, 60);
+        let PositionUpdate::Updated(after) = service.harvest_position("success").await.unwrap()
+        else {
+            panic!("a far harvest refreshes position without advancing")
+        };
+        assert_eq!(
+            after
+                .stops
+                .iter()
+                .filter(|stop| stop.status == StopStatus::Visited)
+                .count(),
+            0,
+        );
+        assert_eq!(after.active_stop().unwrap().id, active.id);
+
+        // The snapshot surfaces the pending confirmation naming the active tree.
+        let pending = service
+            .snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .pending_harvest
+            .expect("a pending harvest confirmation");
+        assert_eq!(pending.stop_id, active.id);
+        assert_eq!(pending.name, active.name);
+
+        // Confirming records the active tree as a harvest and advances.
+        let resolved = service.resolve_harvest(true).await.unwrap();
+        assert_eq!(
+            resolved
+                .stops
+                .iter()
+                .find(|stop| stop.id == active.id)
+                .unwrap()
+                .status,
+            StopStatus::Visited,
+        );
+        assert_ne!(resolved.active_stop().unwrap().id, active.id);
+        assert!(service
+            .snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .pending_harvest
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn a_far_harvest_dismissal_leaves_the_route_untouched() {
+        let (_dir, service, position, _changes, _input) = navigation_fixture().await;
+        let run = service
+            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .await
+            .unwrap();
+        let active = run.active_stop().unwrap().clone();
+        *position.lock().unwrap() = (60, 60);
+        service.harvest_position("success").await.unwrap();
+        assert!(service
+            .snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .pending_harvest
+            .is_some());
+
+        let dismissed = service.resolve_harvest(false).await.unwrap();
+        assert_eq!(dismissed.active_stop().unwrap().id, active.id);
+        assert_eq!(
+            dismissed
+                .stops
+                .iter()
+                .filter(|stop| stop.status == StopStatus::Visited)
+                .count(),
+            0,
+        );
+        assert!(service
+            .snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .pending_harvest
+            .is_none());
     }
 
     #[tokio::test]

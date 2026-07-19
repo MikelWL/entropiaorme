@@ -1089,6 +1089,7 @@ export interface NavigationRun {
 	distanceToActive: number | null;
 	/** Degrees clockwise from north. */
 	bearingDegrees: number | null;
+	pendingHarvest: PendingHarvest | null;
 	stops: NavigationStop[];
 }
 
@@ -1199,6 +1200,16 @@ export interface PathOptimizerResult {
 	totalPed: number;
 	excluded: ExcludedSkill[];
 	error?: string | null;
+}
+
+/**
+ * A harvest detected beyond the arrival radius, awaiting the player's confirm
+ * or dismiss in the overlay. Names the proposed (active) tree and how far the
+ * harvest read was from it.
+ */
+export interface PendingHarvest {
+	name: string;
+	distance: number;
 }
 
 /**
@@ -2649,6 +2660,10 @@ export async function navigationMarkVisited(force: boolean): Promise<NavigationP
 
 export async function navigationSkip(): Promise<NavigationRun> {
 	return invokeCommand('navigation_skip', {});
+}
+
+export async function navigationResolveHarvest(confirm: boolean): Promise<NavigationRun> {
+	return invokeCommand('navigation_resolve_harvest', { confirm });
 }
 
 export async function navigationUndo(): Promise<NavigationRun> {
