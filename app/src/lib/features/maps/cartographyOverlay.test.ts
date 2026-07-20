@@ -67,6 +67,12 @@ describe('cartography overlay context', () => {
 		});
 	});
 
+	it('requests the current context from the main surface', async () => {
+		const { requestCartographyContext, CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST } = await loadModule();
+		requestCartographyContext();
+		expect(emit).toHaveBeenCalledWith(CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST);
+	});
+
 	it('loads the palette for the current context', async () => {
 		getPinConfigs.mockResolvedValue([treeConfig()]);
 		const { acceptCartographyContextBroadcast, loadCartographyConfigs, cartographyOverlay } =

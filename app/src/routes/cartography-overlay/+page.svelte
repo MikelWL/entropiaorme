@@ -12,6 +12,7 @@
 		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
 		createConfirmedPin,
 		loadCartographyConfigs,
+		requestCartographyContext,
 		scanAndDropPin,
 		type PinDropOutcome,
 	} from '$lib/features/maps/cartographyOverlay.svelte';
@@ -61,20 +62,52 @@
 	onMount(() => {
 		let mounted = true;
 		let unlisten: (() => void) | undefined;
+		let unlistenFocus: (() => void) | undefined;
+
+		// The calibrated-planet list gates pin dropping. This pre-spawned window
+		// mounts before the backend facade finishes composing, when the reads
+		// return the startup not-ready error; retry through that window so the
+		// list populates once the backend is up.
+		async function loadCalibratedPlanets(): Promise<void> {
+			for (let attempt = 0; attempt < 40 && mounted; attempt++) {
+				try {
+					const loaded = await getPlanetMaps();
+					if (!mounted) return;
+					planets = loaded;
+					return;
+				} catch {
+					await new Promise((resolve) => setTimeout(resolve, 500));
+				}
+			}
+		}
+
 		void (async () => {
-			const loadedPlanets = await getPlanetMaps();
-			if (!mounted) return;
-			planets = loadedPlanets;
-			await refreshViews();
-			await loadCartographyConfigs();
-			if (!mounted) return;
+			// Register the context listener and request the current context FIRST,
+			// before any facade-backed load. These use only core event/window
+			// APIs, which are ready immediately, so the overlay always ends up
+			// listening. Previously a fallible read ran first and, during the
+			// backend's startup not-ready window, aborted this block and left the
+			// overlay with no listener: it then never learned the open map.
 			const stopListening = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
 				acceptCartographyContextBroadcast(event.payload);
 				void refreshViews();
 				void loadCartographyConfigs();
 			});
-			if (mounted) unlisten = stopListening;
-			else stopListening();
+			if (!mounted) return stopListening();
+			unlisten = stopListening;
+			// Ask the main surface to publish the current context now that the
+			// listener is live, and again on every show (focus), so the palette
+			// tracks the open map regardless of broadcast timing.
+			requestCartographyContext();
+			const stopFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+				if (focused) requestCartographyContext();
+			});
+			if (!mounted) return stopFocus();
+			unlistenFocus = stopFocus;
+			// Facade-backed loads last, resilient to the startup not-ready window.
+			await loadCalibratedPlanets();
+			await refreshViews();
+			await loadCartographyConfigs();
 		})();
 		sizeSync.schedule();
 		const observer = new ResizeObserver(() => sizeSync.schedule());
@@ -83,6 +116,7 @@
 			mounted = false;
 			viewsRefreshEpoch++;
 			unlisten?.();
+			unlistenFocus?.();
 			observer.disconnect();
 			sizeSync.cancel();
 			if (feedbackTimer) clearTimeout(feedbackTimer);

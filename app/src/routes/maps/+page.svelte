@@ -26,7 +26,10 @@
 		toggleCartographyOverlay,
 	} from '$lib/api';
 	import { listen } from '@tauri-apps/api/event';
-	import { broadcastCartographyContext } from '$lib/features/maps/cartographyOverlay.svelte';
+	import {
+		broadcastCartographyContext,
+		CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST,
+	} from '$lib/features/maps/cartographyOverlay.svelte';
 	import { getPreference, setPreference } from '$lib/preferences';
 
 	const LAST_PLANET_KEY = 'mapsLastPlanet';
@@ -45,6 +48,13 @@
 	onMount(() => {
 		const stopMapsSync = startMapsCartographySync(model);
 		let unlisten: (() => void) | undefined;
+		let unlistenContextRequest: (() => void) | undefined;
+		// The overlay asks for the current context when it comes alive or is
+		// shown (its one-shot broadcast may have fired before its listener was
+		// live); reply with the live selection so its palette tracks the map.
+		void listen(CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST, () => publishContext()).then(
+			(stop) => (unlistenContextRequest = stop),
+		);
 		// Reopen the planet and named map the user last visited.
 		void Promise.all([
 			getPreference<string | null>(LAST_PLANET_KEY, null),
@@ -70,16 +80,25 @@
 		return () => {
 			stopMapsSync();
 			unlisten?.();
+			unlistenContextRequest?.();
 		};
 	});
 
-	// Publish the active planet/map-view context to the overlay window whenever
-	// the selection changes, so its palette tracks the map on screen.
-	$effect(() => {
+	// Publish the current planet/map-view context to the overlay window. The
+	// single home for building the context payload, so the selection effect, the
+	// overlay's on-show request reply, and the explicit re-publishes below all
+	// broadcast the same shape.
+	function publishContext() {
 		broadcastCartographyContext({
 			planet: model.selected?.name ?? null,
 			mapViewId: model.selectedViewId,
 		});
+	}
+
+	// Publish the active context whenever the selection changes, so the overlay's
+	// palette tracks the map on screen.
+	$effect(() => {
+		publishContext();
 	});
 
 	// Remember the last-visited planet and named map so the surface reopens to
@@ -97,10 +116,15 @@
 	// re-publish the context so the overlay reloads its palette.
 	function onConfigsChanged() {
 		void model.refreshPins();
-		broadcastCartographyContext({
-			planet: model.selected?.name ?? null,
-			mapViewId: model.selectedViewId,
-		});
+		publishContext();
+	}
+
+	// Re-publish the context when the overlay is toggled visible: a pre-spawned
+	// overlay shown after the last selection change would otherwise still hold
+	// the context from whenever its listener last caught a broadcast.
+	async function toggleOverlay() {
+		await toggleCartographyOverlay();
+		publishContext();
 	}
 
 	let calibrationOpen = $state(false);
@@ -111,10 +135,7 @@
 	// page) so a single-monitor player can plan while the game is fullscreen.
 	// Publish the current planet/map context, then show the overlay in setup mode.
 	async function openRouteSetup() {
-		broadcastCartographyContext({
-			planet: model.selected?.name ?? null,
-			mapViewId: model.selectedViewId,
-		});
+		publishContext();
 		await showNavigationOverlays();
 	}
 	let focusRequest = $state<MapFocusRequest | null>(null);
@@ -143,10 +164,7 @@
 			await model.renameView(id, name);
 			// The view id is unchanged, so the selection effect does not fire;
 			// re-publish the context so the overlay reloads the renamed view.
-			broadcastCartographyContext({
-				planet: model.selected?.name ?? null,
-				mapViewId: model.selectedViewId,
-			});
+			publishContext();
 			return true;
 		} catch (e) {
 			flash(describeError(e, 'The map could not be renamed'));
@@ -185,7 +203,7 @@
 		{#if model.planets.length > 0}
 			<MapControls
 				pins={model.pins}
-				ontoggleoverlay={() => void toggleCartographyOverlay()}
+				ontoggleoverlay={() => void toggleOverlay()}
 				onconfigure={() => (overlayConfigOpen = true)}
 				oncalibrate={() => (calibrationOpen = true)}
 				onselectpin={(pin) => focusMap({ lon: pin.lon, lat: pin.lat })}
