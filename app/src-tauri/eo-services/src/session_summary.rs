@@ -686,6 +686,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn harvest_swings_join_loot_and_cycled_spend() {
+        let (_dir, db) = env().await;
+        run(
+            &db,
+            "INSERT INTO tracking_sessions \
+             (id, started_at, ended_at, is_active, armour_cost, heal_cost, dangling_cost, \
+              mob_tracking_mode) \
+             VALUES ('s1', 1000.0, 8200.0, 0, 0.0, 0.0, 0.0, 'mob')",
+        )
+        .await;
+        run(
+            &db,
+            "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
+             VALUES ('k1', 's1', 'Atrox', 1500.0, 0.0, 5.0)",
+        )
+        .await;
+        run(
+            &db,
+            "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, cost_per_shot) \
+             VALUES ('k1', 'Rifle', 10, 0.5)",
+        )
+        .await;
+        run(
+            &db,
+            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+             VALUES ('s1', 1100.0, 'Rifle', 1.0, 0.5)",
+        )
+        .await;
+        // Two swings: one successful with 3.0 wood TT, one failed; 2.0 decay.
+        run(
+            &db,
+            "INSERT INTO harvest_events \
+             (id, session_id, timestamp, success, cost_ped, loot_total_ped) \
+             VALUES ('h1', 's1', 1700.0, 1, 1.0, 3.0), \
+                    ('h2', 's1', 1800.0, 0, 1.0, 0.0)",
+        )
+        .await;
+
+        let summary = compute(&db, "s1").await.unwrap();
+
+        // Wood TT joins kill loot in lootTt: 5.0 kill + 3.0 harvest.
+        assert_eq!(summary["lootTt"], Value::from(8.0));
+        // Swing decay joins weapon cost in cycledPed: 5.0 weapon + 2.0 harvest
+        // (armour/heal/dangling/enhancer all zero).
+        assert_eq!(summary["cycledPed"], Value::from(7.0));
+        // The per-activity harvest columns carry the raw swing tallies.
+        assert_eq!(summary["harvestSwings"], Value::from(2_i64));
+        assert_eq!(summary["harvestSuccesses"], Value::from(1_i64));
+        assert_eq!(summary["harvestLootTt"], Value::from(3.0));
+        assert_eq!(summary["harvestCost"], Value::from(2.0));
+    }
+
+    #[tokio::test]
     async fn dominance_admits_the_exact_threshold_and_refuses_below() {
         let (_dir, db) = env().await;
         seed_standard(&db).await;

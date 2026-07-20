@@ -448,7 +448,9 @@ mod tests {
         rollup_version: i64,
         dirty: i64,
         has_rows: i64,
-        /// The 9 aggregate families, in column order (index 0 = `loot_tt`).
+        /// The 11 aggregate families, in column order (index 0 = `loot_tt`,
+        /// index 9 = `harvest_loot_tt`, index 10 = `harvest_cost`). Call sites
+        /// pass the SQL column index instead; `family` rebases it by 3.
         families: Vec<Option<f64>>,
     }
 
@@ -585,12 +587,13 @@ mod tests {
             Ok(conn
                 .query_row(
                     "SELECT rollup_version, dirty, has_rows, loot_tt, weapon_cost, enhancer_cost, \
-                     armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes \
+                     armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes, \
+                     harvest_loot_tt, harvest_cost \
                      FROM daily_rollups WHERE day = ?1",
                     rusqlite::params![day],
                     |row| {
-                        let mut families = Vec::with_capacity(9);
-                        for index in 3..=11 {
+                        let mut families = Vec::with_capacity(11);
+                        for index in 3..=13 {
                             families.push(row.get::<_, Option<f64>>(index)?);
                         }
                         Ok(DayRollup {
@@ -675,7 +678,7 @@ mod tests {
         recompute(&db, "2001-09-06").await;
         let row = rollup_row(&db, "2001-09-06").await.unwrap();
         assert_eq!(row.has_rows, 0, "no rows");
-        for index in 3..=11 {
+        for index in 3..=13 {
             assert_eq!(family(&row, index), None);
         }
 
@@ -690,7 +693,7 @@ mod tests {
         recompute(&db, "2001-08-99").await;
         let row = rollup_row(&db, "2001-08-99").await.unwrap();
         assert_eq!(row.has_rows, 1);
-        for index in 3..=11 {
+        for index in 3..=13 {
             assert_eq!(family(&row, index), None);
         }
         let stray_ledger = ledger_rows(
@@ -967,11 +970,17 @@ mod tests {
     async fn recompute_membership_isolates_each_contributing_family() {
         let (_dir, db) = env().await;
         // Days past the seed window, each carrying exactly one family so
-        // that day's membership hinges on that single count alone.
+        // that day's membership hinges on that single count alone. The weapon
+        // family is deliberately absent: `weapon_count` joins
+        // `kill_tool_stats` to `kills` and filters on the kill's timestamp, and
+        // a tool-stat row has no timestamp of its own, so any counted tool-stat
+        // row implies a kill already counted in the same window. It can never
+        // be the sole contributor, so it cannot be isolated here.
         const DAY_10: f64 = 1_000_080_000.0; // kill only
         const DAY_11: f64 = 1_000_166_400.0; // session only
         const DAY_12: f64 = 1_000_252_800.0; // codex only
         const DAY_13: f64 = 1_000_339_200.0; // quest only
+        const DAY_14: f64 = 1_000_425_600.0; // harvest only
 
         // A kill with no tool stats, whose session_id names no session row.
         run(
@@ -1009,7 +1018,26 @@ mod tests {
         )
         .await;
 
-        for day in ["2001-09-10", "2001-09-11", "2001-09-12", "2001-09-13"] {
+        // A harvest swing whose session_id names no session row, so the day
+        // carries harvest rows and nothing else.
+        run(
+            &db,
+            &format!(
+                "INSERT INTO harvest_events \
+                 (id, session_id, timestamp, success, cost_ped, loot_total_ped) \
+                 VALUES ('h1', 'ghost', {}, 1, 0.5, 1.0)",
+                DAY_14 + 100.0
+            ),
+        )
+        .await;
+
+        for day in [
+            "2001-09-10",
+            "2001-09-11",
+            "2001-09-12",
+            "2001-09-13",
+            "2001-09-14",
+        ] {
             recompute(&db, day).await;
             let row = rollup_row(&db, day).await.unwrap();
             assert_eq!(
@@ -1018,8 +1046,15 @@ mod tests {
             );
         }
 
-        // An empty day between them stays a non-member.
-        recompute(&db, "2001-09-14").await;
-        assert_eq!(rollup_row(&db, "2001-09-14").await.unwrap().has_rows, 0);
+        // The harvest day's own aggregates land in the two harvest families,
+        // which no other test reads: membership alone would pass even if the
+        // projection wrote nothing into them.
+        let harvest_day = rollup_row(&db, "2001-09-14").await.unwrap();
+        assert_eq!(family(&harvest_day, 12), Some(1.0), "harvest_loot_tt");
+        assert_eq!(family(&harvest_day, 13), Some(0.5), "harvest_cost");
+
+        // An empty day past them all stays a non-member.
+        recompute(&db, "2001-09-15").await;
+        assert_eq!(rollup_row(&db, "2001-09-15").await.unwrap().has_rows, 0);
     }
 }
