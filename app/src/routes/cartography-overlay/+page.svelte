@@ -136,7 +136,7 @@
 				{#each cartographyOverlay.configs as config (config.id)}
 					<button
 						class="pin-button"
-						disabled={busy || !cartographyOverlay.context.planet}
+						disabled={busy || !cartographyOverlay.context.planet || overlay.planets.length === 0}
 						onclick={() => dropPin(config)}
 					>
 						<span class="swatch" style="background:{config.colour}" aria-hidden="true"></span>
