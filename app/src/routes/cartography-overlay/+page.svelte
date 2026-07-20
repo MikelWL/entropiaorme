@@ -1,40 +1,27 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { listen } from '@tauri-apps/api/event';
-	import { getMapViews, getPlanetMaps, type MapView, type PinConfig, type PlanetMap } from '$lib/api';
+	import { type PinConfig } from '$lib/api';
 	import { describeError } from '$lib/view/errorState';
 	import { createWindowSizeSync } from '$lib/windows/windowSize';
 	import { pinGlyph } from '$lib/features/maps/pinIcons';
 	import {
-		acceptCartographyContextBroadcast,
 		cartographyOverlay,
-		CARTOGRAPHY_OVERLAY_CHANGED_EVENT,
 		createConfirmedPin,
-		loadCartographyConfigs,
-		requestCartographyContext,
 		scanAndDropPin,
 		type PinDropOutcome,
 	} from '$lib/features/maps/cartographyOverlay.svelte';
+	import { createCartographyOverlayController } from '$lib/features/maps/cartographyOverlayController.svelte';
 
 	let root: HTMLDivElement;
 	const sizeSync = createWindowSizeSync(() => root);
-	let planets = $state<PlanetMap[]>([]);
-	let views = $state<MapView[]>([]);
-	const calibratedPlanets = $derived(planets.filter((planet) => planet.calibration !== null));
-	const selectedMapName = $derived(
-		cartographyOverlay.context.mapViewId === null
-			? 'Default'
-			: views.find((view) => view.id === cartographyOverlay.context.mapViewId)?.name ??
-				'Selected map',
-	);
+	const overlay = createCartographyOverlayController();
 	let busy = $state(false);
 	type PendingDuplicate = Extract<PinDropOutcome, { kind: 'duplicate' }>;
 	let pendingDuplicate = $state<PendingDuplicate | null>(null);
 	let keepExistingButton = $state<HTMLButtonElement>();
 	let feedback = $state<{ text: string; success: boolean } | null>(null);
 	let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
-	let viewsRefreshEpoch = 0;
 
 	function flash(text: string, success = false) {
 		feedback = { text, success };
@@ -42,81 +29,13 @@
 		feedbackTimer = setTimeout(() => (feedback = null), 3500);
 	}
 
-	async function refreshViews(): Promise<void> {
-		const planet = cartographyOverlay.context.planet;
-		const epoch = ++viewsRefreshEpoch;
-		if (!planet) {
-			views = [];
-			return;
-		}
-		try {
-			const loadedViews = await getMapViews(planet);
-			if (epoch === viewsRefreshEpoch && planet === cartographyOverlay.context.planet) {
-				views = loadedViews;
-			}
-		} catch {
-			// Preserve the last-good view list; a later event can restore live state.
-		}
-	}
-
 	onMount(() => {
-		let mounted = true;
-		let unlisten: (() => void) | undefined;
-		let unlistenFocus: (() => void) | undefined;
-
-		// The calibrated-planet list gates pin dropping. This pre-spawned window
-		// mounts before the backend facade finishes composing, when the reads
-		// return the startup not-ready error; retry through that window so the
-		// list populates once the backend is up.
-		async function loadCalibratedPlanets(): Promise<void> {
-			for (let attempt = 0; attempt < 40 && mounted; attempt++) {
-				try {
-					const loaded = await getPlanetMaps();
-					if (!mounted) return;
-					planets = loaded;
-					return;
-				} catch {
-					await new Promise((resolve) => setTimeout(resolve, 500));
-				}
-			}
-		}
-
-		void (async () => {
-			// Register the context listener and request the current context FIRST,
-			// before any facade-backed load. These use only core event/window
-			// APIs, which are ready immediately, so the overlay always ends up
-			// listening. Previously a fallible read ran first and, during the
-			// backend's startup not-ready window, aborted this block and left the
-			// overlay with no listener: it then never learned the open map.
-			const stopListening = await listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => {
-				acceptCartographyContextBroadcast(event.payload);
-				void refreshViews();
-				void loadCartographyConfigs();
-			});
-			if (!mounted) return stopListening();
-			unlisten = stopListening;
-			// Ask the main surface to publish the current context now that the
-			// listener is live, and again on every show (focus), so the palette
-			// tracks the open map regardless of broadcast timing.
-			requestCartographyContext();
-			const stopFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-				if (focused) requestCartographyContext();
-			});
-			if (!mounted) return stopFocus();
-			unlistenFocus = stopFocus;
-			// Facade-backed loads last, resilient to the startup not-ready window.
-			await loadCalibratedPlanets();
-			await refreshViews();
-			await loadCartographyConfigs();
-		})();
+		const stopOverlay = overlay.start();
 		sizeSync.schedule();
 		const observer = new ResizeObserver(() => sizeSync.schedule());
 		observer.observe(root);
 		return () => {
-			mounted = false;
-			viewsRefreshEpoch++;
-			unlisten?.();
-			unlistenFocus?.();
+			stopOverlay();
 			observer.disconnect();
 			sizeSync.cancel();
 			if (feedbackTimer) clearTimeout(feedbackTimer);
@@ -136,7 +55,7 @@
 			const outcome = await scanAndDropPin(
 				config,
 				cartographyOverlay.context,
-				calibratedPlanets.map((candidate) => candidate.name),
+				overlay.calibratedPlanets.map((candidate) => candidate.name),
 			);
 			if (outcome.kind === 'placed') flash(`${outcome.label} pinned.`, true);
 			else if (outcome.kind === 'error') flash(outcome.message);
@@ -186,13 +105,13 @@
 	<div class="glass-panel overlay-strip flex w-max items-center gap-3 rounded-xl px-4 py-2">
 		<div
 			class="flex min-w-0 max-w-48 shrink-0 flex-col justify-center border-r border-white/10 pr-3"
-			title={`${cartographyOverlay.context.planet ?? 'No planet'} · ${selectedMapName}`}
+			title={`${cartographyOverlay.context.planet ?? 'No planet'} · ${overlay.selectedMapName}`}
 		>
 			<span class="text-[9px] font-bold uppercase leading-none tracking-wider text-white/35">
 				Pinning to
 			</span>
 			<span class="mt-1 truncate text-[11px] font-medium leading-none text-white/70">
-				{cartographyOverlay.context.planet ?? 'No planet'} · {selectedMapName}
+				{cartographyOverlay.context.planet ?? 'No planet'} · {overlay.selectedMapName}
 			</span>
 		</div>
 
