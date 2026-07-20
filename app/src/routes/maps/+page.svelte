@@ -47,14 +47,19 @@
 
 	onMount(() => {
 		const stopMapsSync = startMapsCartographySync(model);
+		// A listen() promise can resolve after the component has already
+		// unmounted (rapid navigation away); stop the listener immediately in
+		// that case rather than storing a handle the cleanup has already passed.
+		let mounted = true;
 		let unlisten: (() => void) | undefined;
 		let unlistenContextRequest: (() => void) | undefined;
 		// The overlay asks for the current context when it comes alive or is
 		// shown (its one-shot broadcast may have fired before its listener was
 		// live); reply with the live selection so its palette tracks the map.
-		void listen(CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST, () => publishContext()).then(
-			(stop) => (unlistenContextRequest = stop),
-		);
+		void listen(CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST, () => publishContext()).then((stop) => {
+			if (mounted) unlistenContextRequest = stop;
+			else stop();
+		});
 		// Reopen the planet and named map the user last visited.
 		void Promise.all([
 			getPreference<string | null>(LAST_PLANET_KEY, null),
@@ -76,8 +81,12 @@
 			// A recorded visit changes a pin's cooldown, so refresh the pins the
 			// hover cards read from.
 			void model.refreshPins();
-		}).then((stop) => (unlisten = stop));
+		}).then((stop) => {
+			if (mounted) unlisten = stop;
+			else stop();
+		});
 		return () => {
+			mounted = false;
 			stopMapsSync();
 			unlisten?.();
 			unlistenContextRequest?.();
