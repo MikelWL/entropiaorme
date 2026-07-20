@@ -21,6 +21,15 @@ export type CartographyContext = { planet: string | null; mapViewId: number | nu
 
 /** Broadcast the active planet/map-view context to the overlay window. */
 export const CARTOGRAPHY_OVERLAY_CHANGED_EVENT = 'cartography-overlay-changed';
+/**
+ * The overlay asks the main surface to (re)publish the current context. The
+ * broadcast is one-shot and fires on selection change, so an overlay whose
+ * listener was not yet live when it fired (a pre-spawned window that WebKitGTK
+ * only realises on its first show) would otherwise never learn the planet. On
+ * coming alive (and on every show) the overlay requests, and the main surface
+ * replies, closing that race without either side polling.
+ */
+export const CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST = 'cartography-overlay-request-context';
 /** Broadcast that placed pins changed, so the main map refreshes them. */
 export const MAP_PINS_CHANGED_EVENT = 'map-pins-changed';
 
@@ -63,6 +72,11 @@ export function setCartographyContext(next: CartographyContext): void {
 export function broadcastCartographyContext(next: CartographyContext): void {
 	context = next;
 	void emit(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, next);
+}
+
+/** Overlay window: ask the main surface to (re)publish the current context. */
+export function requestCartographyContext(): void {
+	void emit(CARTOGRAPHY_OVERLAY_CONTEXT_REQUEST);
 }
 
 /** Overlay window: adopt a broadcast context, sanitised. */
