@@ -15,7 +15,7 @@ use crate::ped::Ped;
 use crate::tracking_models::{HarvestEvent, LootItem};
 
 use super::actor::TrackerActor;
-use super::providers::{HarvestGuardrailTools, TreeSize};
+use super::providers::{GuardrailTool, HarvestGuardrailTools, TreeSize};
 use super::session::ActiveSession;
 use super::time::{instant_to_epoch, parse_timestamp_instant, resolve_local};
 use super::HarvestTool;
@@ -71,6 +71,20 @@ pub(super) fn tree_size_for_group(items: &[LootItem]) -> Option<TreeSize> {
     items
         .iter()
         .find_map(|item| tree_size_for_board(&item.item_name))
+}
+
+/// The guardrail intent a loot group resolves to: the evidenced tree
+/// size paired with its configured tool. None when the group carries
+/// no board, and equally when the evidenced size has no configured
+/// tool: that size is outside the guardrail's remit, so neither the
+/// attribution override nor the retro pass may act on it.
+pub(super) fn guardrail_intent<'a>(
+    guardrail: Option<&'a HarvestGuardrailTools>,
+    items: &[LootItem],
+) -> Option<(TreeSize, &'a GuardrailTool)> {
+    guardrail
+        .zip(tree_size_for_group(items))
+        .and_then(|(tools, size)| tools.for_size(size).map(|tool| (size, tool)))
 }
 
 impl TrackerActor {
@@ -184,10 +198,15 @@ impl TrackerActor {
         items: &[LootItem],
         at_epoch: f64,
     ) -> (Option<String>, Ped) {
-        let intended = guardrail
-            .zip(tree_size_for_group(items))
-            .and_then(|(tools, size)| tools.for_size(size).map(|tool| (size, tool)));
-        let Some((size, tool)) = intended else {
+        let Some((size, tool)) = guardrail_intent(guardrail, items) else {
+            // Board evidence naming a size with no configured tool is
+            // outside the guardrail's remit: the hotbar belief stands
+            // directly, and a mismatch from a DIFFERENT tree size must
+            // not leak its tool onto a swing whose own evidence
+            // contradicts that size.
+            if tree_size_for_group(items).is_some() {
+                return Self::harvest_swing_cost(active, harvest_tool);
+            }
             return Self::no_evidence_swing_cost(active, guardrail, harvest_tool);
         };
         let observed = harvest_tool.map(|equipped| equipped.name.clone());

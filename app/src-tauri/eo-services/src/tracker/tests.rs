@@ -3235,6 +3235,65 @@ fn mismatch_setting_evidence_restamps_the_preceding_evidence_less_run() {
 }
 
 #[test]
+fn an_unconfigured_tree_size_stays_outside_the_guardrail_remit() {
+    // Only the short size carries an intent; long-tree evidence is
+    // outside the guardrail's remit and must neither inherit a
+    // standing short-tree mismatch nor trigger the retro pass.
+    let providers = Providers {
+        equipment: Arc::new(ScriptedEquipment {
+            harvest_guardrail: Some(HarvestGuardrailTools {
+                short: Some(GuardrailTool {
+                    name: "Terratech PH-1 (L)".into(),
+                    cost_per_use_ped: 0.02,
+                }),
+                long: None,
+                huge: None,
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let rig = rig();
+    let tracker = rig.tracker(providers);
+    rig.wait(tracker.start_session()).unwrap();
+
+    equip_harvest_tool(&rig, "Terratech PH-4 (L)", 0.875);
+    // Short-tree evidence arms the mismatch (expected PH-1).
+    rig.bus.publish(&wood_group(
+        "2026-01-01T00:00:02",
+        Some("Short Moonleaf Board"),
+    ));
+    // An evidence-less swing inherits the standing mismatch's tool.
+    rig.bus.publish(&wood_group("2026-01-01T00:00:04", None));
+    // Long-tree evidence: unconfigured size, so the belief stands and
+    // nothing before it is re-stamped.
+    rig.bus
+        .publish(&wood_group("2026-01-01T00:00:06", Some("Moonleaf Board")));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        let harvests = &active.session.harvests;
+        assert_eq!(harvests.len(), 3);
+        assert_eq!(harvests[0].tool_name.as_deref(), Some("Terratech PH-1 (L)"));
+        assert_eq!(
+            harvests[1].tool_name.as_deref(),
+            Some("Terratech PH-1 (L)"),
+            "the evidence-less swing inherited the standing mismatch"
+        );
+        assert_eq!(
+            harvests[2].tool_name.as_deref(),
+            Some("Terratech PH-4 (L)"),
+            "the unconfigured size follows the belief, not the mismatch"
+        );
+        assert_eq!(harvests[2].cost_ped, Ped(0.875));
+        assert!(
+            active.guardrail_mismatch.is_some(),
+            "the short-tree mismatch stays standing; the long swing proves nothing about it"
+        );
+    });
+}
+
+#[test]
 fn the_retro_pass_never_reaches_back_past_a_hotbar_press() {
     use crate::bus_events::{HarvestFailPayload, HarvestFailTag};
 

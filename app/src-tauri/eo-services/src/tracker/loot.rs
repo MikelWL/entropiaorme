@@ -9,7 +9,7 @@ use crate::ped::Ped;
 use crate::tracking_models::{HarvestEvent, Kill};
 
 use super::actor::TrackerActor;
-use super::harvest::{is_harvest_loot_group, tree_size_for_group};
+use super::harvest::{guardrail_intent, is_harvest_loot_group};
 use super::time::{instant_to_epoch, parse_timestamp_instant, python_total_seconds, resolve_local};
 use super::{GLOBAL_CORRELATION_WINDOW_SECONDS, LOOT_DEDUP_WINDOW_SECONDS};
 
@@ -101,11 +101,15 @@ impl TrackerActor {
                 // Board evidence that leaves a mismatch standing has
                 // just contradicted the belief the preceding
                 // evidence-less swings were stamped from: re-stamp
-                // that contiguous run to the evidence tool.
+                // that contiguous run to the evidence tool. Gated on
+                // resolved guardrail intent, not mere board presence:
+                // an evidenced size with no configured tool was
+                // belief-stamped and proves nothing about the run.
                 let restamps = match &tool_name {
                     Some(evidence_tool)
                         if active.guardrail_mismatch.is_some()
-                            && tree_size_for_group(&group.items).is_some() =>
+                            && guardrail_intent(harvest_guardrail.as_ref(), &group.items)
+                                .is_some() =>
                     {
                         let floor = active.guardrail_retro_floor;
                         Self::restamp_preceding_no_evidence_swings(
