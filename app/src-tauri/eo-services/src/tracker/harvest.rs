@@ -104,10 +104,12 @@ impl TrackerActor {
             };
             active.harvest_warning_emitted = false;
             // A hotbar press re-syncs the app's belief with the game;
-            // any standing wrong-tool cue is resolved by it. Clearing
-            // one is a readout change, so it nudges even for a re-press
-            // of the same tool.
+            // any standing wrong-tool cue is resolved by it, and the
+            // retro pass may not reach back past this point. Clearing
+            // a cue is a readout change, so it nudges even for a
+            // re-press of the same tool.
             let cleared_mismatch = active.guardrail_mismatch.take().is_some();
+            active.guardrail_retro_floor = active.session.harvests.len();
             if changed || hand_changed || cleared_mismatch {
                 Some(active.session.id.clone())
             } else {
@@ -217,19 +219,23 @@ impl TrackerActor {
     /// immediately before it was almost surely the same desynced run,
     /// so they are re-stamped to the evidence tool. The walk stops at
     /// any board-bearing swing (its own evidence stands) and at a
-    /// chain gap past the retro window (a different tree). It never
+    /// chain gap past the retro window (a different tree), and it may
+    /// not walk below `floor` (the last hotbar press: swings before it
+    /// were stamped under a separately-validated belief). It never
     /// runs on agreeing evidence, so swings the belief was right about
     /// are never rewritten. Returns the rows whose persisted copies
     /// need the same update.
     pub(super) fn restamp_preceding_no_evidence_swings(
         harvests: &mut [HarvestEvent],
+        floor: usize,
         evidence_tool: &str,
         evidence_cost: Ped,
         evidence_epoch: f64,
     ) -> Vec<(String, String, Ped)> {
         let mut restamps = Vec::new();
         let mut chain_epoch = evidence_epoch;
-        for harvest in harvests.iter_mut().rev() {
+        let start = floor.min(harvests.len());
+        for harvest in harvests[start..].iter_mut().rev() {
             if tree_size_for_group(&harvest.loot_items).is_some() {
                 break;
             }

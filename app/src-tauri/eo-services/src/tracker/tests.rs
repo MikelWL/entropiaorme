@@ -3220,6 +3220,42 @@ fn mismatch_setting_evidence_restamps_the_preceding_evidence_less_run() {
 }
 
 #[test]
+fn the_retro_pass_never_reaches_back_past_a_hotbar_press() {
+    use crate::bus_events::{HarvestFailPayload, HarvestFailTag};
+
+    let rig = rig();
+    let tracker = rig.tracker(guardrail_providers());
+    rig.wait(tracker.start_session()).unwrap();
+
+    // A fail stamped under the PH-3 belief, then a press (belief
+    // re-syncs to PH-4), then evidence contradicting the NEW belief.
+    // The press is a boundary: the fail's stamp belongs to the earlier
+    // belief regime and stays, even inside the chain window.
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+    rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+        kind: HarvestFailTag,
+        timestamp: "2026-01-01T00:00:02".into(),
+    }));
+    equip_harvest_tool(&rig, "Terratech PH-4 (L)", 0.875);
+    rig.bus
+        .publish(&wood_group("2026-01-01T00:00:05", Some("Short Moonleaf Board")));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        let harvests = &active.session.harvests;
+        assert_eq!(harvests.len(), 2);
+        assert_eq!(
+            harvests[0].tool_name.as_deref(),
+            Some("Terratech PH-3"),
+            "the pre-press fail keeps its stamp"
+        );
+        assert_eq!(harvests[0].cost_ped, Ped(0.1));
+        assert_eq!(harvests[1].tool_name.as_deref(), Some("Terratech PH-1 (L)"));
+        assert!(active.guardrail_mismatch.is_some());
+    });
+}
+
+#[test]
 fn agreeing_evidence_never_restamps_preceding_swings() {
     use crate::bus_events::{HarvestFailPayload, HarvestFailTag};
 

@@ -56,6 +56,11 @@ pub(super) struct ActiveSession {
     /// last contradicted the hotbar-equipped tool (see `harvest.rs`).
     pub(super) guardrail_mismatch: Option<GuardrailMismatch>,
     pub(super) guardrail_warning_emitted: bool,
+    /// The harvest-list index the guardrail's retro pass may not walk
+    /// below: every hotbar press re-syncs the belief, so swings stamped
+    /// before it belong to a separately-validated belief regime that
+    /// later contradicting evidence says nothing about.
+    pub(super) guardrail_retro_floor: usize,
     pub(super) weapons: WeaponRuntime,
 }
 
@@ -77,6 +82,7 @@ impl ActiveSession {
             trifecta_unmatched_warning_emitted: false,
             guardrail_mismatch: None,
             guardrail_warning_emitted: false,
+            guardrail_retro_floor: 0,
             weapons: WeaponRuntime::default(),
         }
     }

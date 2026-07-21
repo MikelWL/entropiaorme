@@ -107,8 +107,10 @@ impl TrackerActor {
                         if active.guardrail_mismatch.is_some()
                             && tree_size_for_group(&group.items).is_some() =>
                     {
+                        let floor = active.guardrail_retro_floor;
                         Self::restamp_preceding_no_evidence_swings(
                             &mut active.session.harvests,
+                            floor,
                             evidence_tool,
                             cost,
                             now_epoch,
