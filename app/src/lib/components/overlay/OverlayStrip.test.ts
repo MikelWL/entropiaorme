@@ -306,13 +306,14 @@ describe('trifecta selector', () => {
 			},
 		});
 		const alert = screen.getByTestId('guardrail-alert');
-		expect(alert.textContent).toContain('Terratech PH-1 (L)');
-		expect(alert.className).toContain('text-red-400');
+		// The believed tool shows in red; the corrected attribution beneath.
+		const believed = screen.getByText('Terratech PH-4 (L)');
+		expect(believed.className).toContain('text-red-400');
+		expect(screen.getByText('Recording: Terratech PH-1 (L)').className).toContain('text-white/70');
 		expect(alert.title).toBe('Tree loot says Terratech PH-1 (L); hotbar shows Terratech PH-4 (L)');
-		expect(screen.queryByText('Terratech PH-4 (L)')).toBeNull();
 	});
 
-	it('names the no-tool case in the guardrail alert title', () => {
+	it('names the no-tool case in the guardrail alert', () => {
 		render(OverlayStrip, {
 			props: {
 				data: liveData({
@@ -327,6 +328,7 @@ describe('trifecta selector', () => {
 				}),
 			},
 		});
+		expect(screen.getByText('No tool').className).toContain('text-red-400');
 		expect(screen.getByTestId('guardrail-alert').title).toBe(
 			'Tree loot says Terratech PH-1 (L); hotbar shows no tool',
 		);
