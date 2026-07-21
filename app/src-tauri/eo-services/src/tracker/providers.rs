@@ -11,6 +11,55 @@ use serde_json::{Map, Value};
 /// known.
 pub type EquipmentProfile = Option<Map<String, Value>>;
 
+/// A tree size, named by the board its felling loot carries: a bare
+/// board is a long tree; the "Short "/"Long " prefixes name the short
+/// and huge trees respectively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeSize {
+    Short,
+    Long,
+    Huge,
+}
+
+impl TreeSize {
+    /// The closed wire/display vocabulary for the size.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TreeSize::Short => "short",
+            TreeSize::Long => "long",
+            TreeSize::Huge => "huge",
+        }
+    }
+}
+
+/// One intended harvesting tool, resolved from the equipment library.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuardrailTool {
+    pub name: String,
+    pub cost_per_use_ped: f64,
+}
+
+/// The resolved harvest guardrail: the intended tool per tree size.
+/// A size with no configured tool carries None and stays outside the
+/// guardrail's reach.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HarvestGuardrailTools {
+    pub short: Option<GuardrailTool>,
+    pub long: Option<GuardrailTool>,
+    pub huge: Option<GuardrailTool>,
+}
+
+impl HarvestGuardrailTools {
+    /// The intended tool for a tree size, when one is configured.
+    pub fn for_size(&self, size: TreeSize) -> Option<&GuardrailTool> {
+        match size {
+            TreeSize::Short => self.short.as_ref(),
+            TreeSize::Long => self.long.as_ref(),
+            TreeSize::Huge => self.huge.as_ref(),
+        }
+    }
+}
+
 /// The equipment-library seam: profile and cost lookups plus the
 /// trifecta-preset resolution the attribution mode needs.
 pub trait EquipmentLibrary: Send + Sync {
@@ -24,6 +73,11 @@ pub trait EquipmentLibrary: Send + Sync {
     /// Resolve the active trifecta preset's attribution map (weapons,
     /// damage bands, heal tool), when one is configured and complete.
     fn resolve_trifecta(&self) -> Option<Map<String, Value>>;
+
+    /// Resolve the harvest guardrail's intended tools, when the
+    /// guardrail is enabled and at least one size names a tool the
+    /// library knows.
+    fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools>;
 }
 
 /// The session-capture configuration seam: the live settings the
@@ -84,6 +138,10 @@ impl EquipmentLibrary for InertEquipment {
     fn resolve_trifecta(&self) -> Option<Map<String, Value>> {
         None
     }
+
+    fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools> {
+        None
+    }
 }
 
 /// The original's inert configuration fallbacks: mob mode, no tag,
@@ -126,6 +184,7 @@ mod tests {
         assert_eq!(equipment.weapon_profile("Opalo"), None);
         assert_eq!(equipment.cost_per_shot("Opalo"), 0.0);
         assert_eq!(equipment.resolve_trifecta(), None);
+        assert_eq!(equipment.resolve_harvest_guardrail(), None);
     }
 
     #[test]

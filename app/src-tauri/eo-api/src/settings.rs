@@ -74,6 +74,17 @@ pub struct TrifectaSettings {
     pub message: Nullable<String>,
 }
 
+/// The harvest-guardrail block: the enabled flag and the intended tool
+/// id per tree size (null while a size has no intended tool).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestGuardrailSettings {
+    pub enabled: bool,
+    pub short_tool_id: Nullable<i64>,
+    pub long_tool_id: Nullable<i64>,
+    pub huge_tool_id: Nullable<i64>,
+}
+
 /// The full assembled settings response. Field order is the wire order
 /// the frontend contract expects (and the HTTP body carried).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -90,6 +101,7 @@ pub struct AppSettings {
     /// order (`serde_json`'s `preserve_order`), so slot "0" stays last.
     pub hotbar: Map<String, Value>,
     pub trifecta: TrifectaSettings,
+    pub harvest_guardrail: HarvestGuardrailSettings,
     pub loot_filter_blacklist: Vec<String>,
     pub db_path: String,
     pub app_version: String,
@@ -118,6 +130,20 @@ pub struct TrifectaPresetInput {
     pub big_weapon_id: Option<i64>,
     #[serde(default)]
     pub heal_id: Option<i64>,
+}
+
+/// The harvest-guardrail block in a settings update. Field names stay
+/// in the stored snake_case the config writer re-normalises.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HarvestGuardrailInput {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub short_tool_id: Option<i64>,
+    #[serde(default)]
+    pub long_tool_id: Option<i64>,
+    #[serde(default)]
+    pub huge_tool_id: Option<i64>,
 }
 
 /// The partial settings update: every field optional, only the present
@@ -150,6 +176,8 @@ pub struct SettingsPatch {
     pub active_trifecta_preset_id: Option<Option<String>>,
     #[serde(default)]
     pub trifecta_presets: Option<Vec<TrifectaPresetInput>>,
+    #[serde(default)]
+    pub harvest_guardrail: Option<HarvestGuardrailInput>,
     #[serde(default)]
     pub loot_filter_blacklist: Option<Vec<String>>,
 }
@@ -211,6 +239,9 @@ impl SettingsPatch {
         if let Some(value) = self.trifecta_presets {
             updates.insert("trifecta_presets".into(), json!(value));
         }
+        if let Some(value) = self.harvest_guardrail {
+            updates.insert("harvest_guardrail".into(), json!(value));
+        }
         if let Some(value) = self.loot_filter_blacklist {
             updates.insert("loot_filter_blacklist".into(), json!(value));
         }
@@ -250,6 +281,12 @@ impl Api {
             mob_tracking_tag: config.mob_tracking_tag.clone(),
             hotbar: config.hotbar.clone(),
             trifecta,
+            harvest_guardrail: HarvestGuardrailSettings {
+                enabled: config.harvest_guardrail.enabled,
+                short_tool_id: config.harvest_guardrail.short_tool_id.into(),
+                long_tool_id: config.harvest_guardrail.long_tool_id.into(),
+                huge_tool_id: config.harvest_guardrail.huge_tool_id.into(),
+            },
             loot_filter_blacklist: config.loot_filter_blacklist.clone(),
             db_path: python_path_str(&self.data_dir.join(DB_FILE_NAME)),
             app_version: APP_VERSION.to_string(),

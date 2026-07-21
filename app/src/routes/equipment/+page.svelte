@@ -9,6 +9,7 @@
 	import { equipmentSurface } from '$lib/guide/surfaces/equipment';
 	import { getPreference } from '$lib/preferences';
 	import type { Hotbar } from '$lib/types/settings';
+	import GuardrailsTab from './GuardrailsTab.svelte';
 	import HotbarTab from './HotbarTab.svelte';
 	import TrifectaTab from './TrifectaTab.svelte';
 
@@ -17,7 +18,8 @@
 	const tabs = [
 		{ id: 'library', label: 'Library' },
 		{ id: 'trifecta', label: 'Trifecta' },
-		{ id: 'hotbar', label: 'Hotbar' }
+		{ id: 'hotbar', label: 'Hotbar' },
+		{ id: 'guardrails', label: 'Guardrails' }
 	];
 	let activeTab = $state('library');
 
@@ -147,6 +149,14 @@
 			enabled={guideState.isActive ? !demoHotbarEnabled : true}
 			onchange={(value) => {
 				model.trifecta = value;
+			}}
+		/>
+	{:else if activeTab === 'guardrails'}
+		<GuardrailsTab
+			equipment={model.allEquipment}
+			guardrail={model.harvestGuardrail}
+			onchange={(value) => {
+				model.harvestGuardrail = value;
 			}}
 		/>
 	{:else}

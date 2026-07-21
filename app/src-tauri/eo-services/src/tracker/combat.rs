@@ -293,8 +293,15 @@ impl TrackerActor {
                 return;
             };
             let tool_name = payload.tool_name.clone();
-            let tool_changed =
-                hand_changed || active.weapons.hotbar_tool.as_deref() != Some(tool_name.as_str());
+            // Any hotbar press re-syncs the app's belief with the game;
+            // a standing harvest-guardrail cue is resolved by it (a
+            // readout change worth a nudge), and the retro pass may
+            // not reach back past this point.
+            let cleared_mismatch = active.guardrail_mismatch.take().is_some();
+            active.guardrail_retro_floor = active.session.harvests.len();
+            let tool_changed = hand_changed
+                || cleared_mismatch
+                || active.weapons.hotbar_tool.as_deref() != Some(tool_name.as_str());
             active.weapons.hotbar_tool = Some(tool_name.clone());
 
             let current_cost =

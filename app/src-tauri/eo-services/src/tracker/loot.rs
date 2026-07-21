@@ -9,7 +9,7 @@ use crate::ped::Ped;
 use crate::tracking_models::{HarvestEvent, Kill};
 
 use super::actor::TrackerActor;
-use super::harvest::is_harvest_loot_group;
+use super::harvest::{guardrail_intent, is_harvest_loot_group};
 use super::time::{instant_to_epoch, parse_timestamp_instant, python_total_seconds, resolve_local};
 use super::{GLOBAL_CORRELATION_WINDOW_SECONDS, LOOT_DEDUP_WINDOW_SECONDS};
 
@@ -29,11 +29,12 @@ impl TrackerActor {
         let BusEvent::LootGroup(group) = event else {
             return;
         };
-        let routed = {
+        let (routed, restamps) = {
             let Self {
                 session,
                 loot_blacklist,
                 harvest_tool,
+                harvest_guardrail,
                 clock,
                 ..
             } = &mut *self;
@@ -90,7 +91,37 @@ impl TrackerActor {
             // filtered items: a user filter must trim what gets
             // recorded, never flip what kind of event happened.
             if is_harvest_loot_group(&group.items) {
-                let (tool_name, cost) = Self::harvest_swing_cost(active, harvest_tool.as_ref());
+                let (tool_name, cost) = Self::guarded_harvest_swing_cost(
+                    active,
+                    harvest_guardrail.as_ref(),
+                    harvest_tool.as_ref(),
+                    &group.items,
+                    now_epoch,
+                );
+                // Board evidence that leaves a mismatch standing has
+                // just contradicted the belief the preceding
+                // evidence-less swings were stamped from: re-stamp
+                // that contiguous run to the evidence tool. Gated on
+                // resolved guardrail intent, not mere board presence:
+                // an evidenced size with no configured tool was
+                // belief-stamped and proves nothing about the run.
+                let restamps = match &tool_name {
+                    Some(evidence_tool)
+                        if active.guardrail_mismatch.is_some()
+                            && guardrail_intent(harvest_guardrail.as_ref(), &group.items)
+                                .is_some() =>
+                    {
+                        let floor = active.guardrail_retro_floor;
+                        Self::restamp_preceding_no_evidence_swings(
+                            &mut active.session.harvests,
+                            floor,
+                            evidence_tool,
+                            cost,
+                            now_epoch,
+                        )
+                    }
+                    _ => Vec::new(),
+                };
                 let harvest = HarvestEvent {
                     id: uuid::Uuid::new_v4().to_string(),
                     session_id: active.session.id.clone(),
@@ -102,7 +133,7 @@ impl TrackerActor {
                     loot_items: items,
                 };
                 active.session.harvests.push(harvest.clone());
-                RoutedLoot::Harvest(harvest)
+                (RoutedLoot::Harvest(harvest), restamps)
             } else {
                 // Snapshot the mob/tag stamp from the selection (the
                 // variant carries the source, so the stamp cannot drift
@@ -142,7 +173,7 @@ impl TrackerActor {
                 // Append the finalised kill to the session; the list tail
                 // doubles as the original's `_last_kill` alias.
                 active.session.kills.push(kill.clone());
-                RoutedLoot::Kill(kill)
+                (RoutedLoot::Kill(kill), Vec::new())
             }
         };
 
@@ -150,7 +181,12 @@ impl TrackerActor {
         // the live session ended with the block above.
         match routed {
             RoutedLoot::Kill(kill) => self.persist_kill(&kill).await,
-            RoutedLoot::Harvest(harvest) => self.persist_harvest(&harvest).await,
+            RoutedLoot::Harvest(harvest) => {
+                self.persist_harvest(&harvest).await;
+                if !restamps.is_empty() {
+                    self.persist_harvest_restamps(&restamps).await;
+                }
+            }
         }
     }
 

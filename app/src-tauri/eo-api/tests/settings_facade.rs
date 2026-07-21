@@ -90,10 +90,21 @@ async fn the_settings_assembly_shapes_the_default_config() {
             "mobTrackingTag",
             "hotbar",
             "trifecta",
+            "harvestGuardrail",
             "lootFilterBlacklist",
             "dbPath",
             "appVersion",
         ]
+    );
+    assert_eq!(
+        body["harvestGuardrail"],
+        serde_json::json!({
+            "enabled": false,
+            "shortToolId": null,
+            "longToolId": null,
+            "hugeToolId": null,
+        }),
+        "the guardrail defaults disabled with no intended tools"
     );
     assert_eq!(
         keys(&body["gameConnection"]),

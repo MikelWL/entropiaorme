@@ -10,10 +10,13 @@ use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::DbError;
 use crate::mob_lookup_service::python_whitespace;
 use crate::ped::Ped;
-use crate::tracking_models::{ActiveSessionView, TrackingReadout, TrackingSession};
+use crate::tracking_models::{
+    ActiveSessionView, HarvestGuardrailMismatchView, TrackingReadout, TrackingSession,
+};
 
 use super::actor::TrackerActor;
 use super::combat::Accumulator;
+use super::harvest::GuardrailMismatch;
 use super::mob::{MobSelection, MobSource, TrackingMode};
 use super::time::{instant_to_epoch, local_isoformat, resolve_local};
 use super::weapons::WeaponRuntime;
@@ -49,6 +52,15 @@ pub(super) struct ActiveSession {
     /// always stamped together.
     pub(super) last_loot: Option<(LootFingerprint, DateTime<Utc>)>,
     pub(super) trifecta_unmatched_warning_emitted: bool,
+    /// The standing harvest-guardrail disagreement, when loot evidence
+    /// last contradicted the hotbar-equipped tool (see `harvest.rs`).
+    pub(super) guardrail_mismatch: Option<GuardrailMismatch>,
+    pub(super) guardrail_warning_emitted: bool,
+    /// The harvest-list index the guardrail's retro pass may not walk
+    /// below: every hotbar press re-syncs the belief, so swings stamped
+    /// before it belong to a separately-validated belief regime that
+    /// later contradicting evidence says nothing about.
+    pub(super) guardrail_retro_floor: usize,
     pub(super) weapons: WeaponRuntime,
 }
 
@@ -68,6 +80,9 @@ impl ActiveSession {
             last_heal_time: None,
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
+            guardrail_mismatch: None,
+            guardrail_warning_emitted: false,
+            guardrail_retro_floor: 0,
             weapons: WeaponRuntime::default(),
         }
     }
@@ -112,6 +127,7 @@ pub(super) struct SessionAggregate {
     pub(super) harvest_successes: i64,
     pub(super) harvest_loot: Ped,
     pub(super) harvest_cost: Ped,
+    pub(super) guardrail_mismatch: Option<GuardrailMismatch>,
     pub(super) warnings: Vec<String>,
 }
 
@@ -267,6 +283,7 @@ impl TrackerActor {
             harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
             harvest_loot,
             harvest_cost,
+            guardrail_mismatch: active.guardrail_mismatch.clone(),
             warnings: active.warnings.clone(),
         };
         (current_tool, Some(aggregate))
@@ -299,6 +316,7 @@ impl TrackerActor {
         } else {
             None
         };
+        self.harvest_guardrail = self.providers.equipment.resolve_harvest_guardrail();
         self.refresh_loot_filter();
         let Self {
             session,
@@ -359,6 +377,7 @@ impl TrackerActor {
         } else {
             None
         };
+        self.harvest_guardrail = self.providers.equipment.resolve_harvest_guardrail();
 
         self.refresh_loot_filter();
         let session = TrackingSession {
@@ -662,6 +681,14 @@ impl HuntTracker {
             // as "-0.0".
             harvest_loot: aggregated.harvest_loot.round_half_even(4).value() + 0.0,
             harvest_cost: aggregated.harvest_cost.round_half_even(4).value() + 0.0,
+            harvest_guardrail_mismatch: aggregated.guardrail_mismatch.map(|mismatch| {
+                HarvestGuardrailMismatchView {
+                    expected_tool: mismatch.expected_tool,
+                    observed_tool: mismatch.observed_tool,
+                    tree_size: mismatch.tree_size.as_str().to_string(),
+                    at_epoch: mismatch.at_epoch,
+                }
+            }),
             notable_event_rows: notable_rows,
             warnings: aggregated.warnings,
         };

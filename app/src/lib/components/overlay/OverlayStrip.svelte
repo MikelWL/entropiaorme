@@ -261,6 +261,25 @@
 					error={trifectaError}
 					ontrigger={onTrifectaTrigger}
 				/>
+			{:else if data.harvestGuardrail}
+				<!-- The guardrail cue: loot evidence disagrees with the hotbar's
+					 tool. The believed tool shows in red (the questionable
+					 belief) with the corrected attribution beneath, until a
+					 hotbar press or agreeing loot resolves it. -->
+				<div
+					class="flex flex-col min-w-0"
+					title={`Tree loot says ${data.harvestGuardrail.expectedTool}; hotbar shows ${data.harvestGuardrail.observedTool ?? 'no tool'}`}
+					data-testid="guardrail-alert"
+				>
+					<div class="text-xs text-red-400 animate-pulse truncate max-w-[120px]">
+						{data.harvestGuardrail.observedTool ?? 'No tool'}
+					</div>
+					<!-- Never truncated: what is actually being recorded must be
+						 readable in full, so the self-sizing window widens for it. -->
+					<div class="text-[10px] leading-tight text-white/70 whitespace-nowrap">
+						Recording: {data.harvestGuardrail.expectedTool}
+					</div>
+				</div>
 			{:else}
 				<div class="text-xs {data.currentTool ? 'text-white/70' : 'text-white/20'} truncate max-w-[120px]">
 					{data.currentTool || '—'}

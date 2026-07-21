@@ -105,6 +105,9 @@ pub(super) struct TrackerActor {
     /// loot groups and failed swings price against it; routing itself
     /// is by the wood taxonomy, so it works with no hotbar signal.
     pub(super) harvest_tool: Option<HarvestTool>,
+    /// The resolved harvest guardrail (config-derived), refreshed at
+    /// session start and on config reload; None while disabled.
+    pub(super) harvest_guardrail: Option<super::providers::HarvestGuardrailTools>,
     /// Whether the hand item is currently the harvesting tool (set by
     /// a harvest-tool equip, cleared by a weapon equip). Display-only:
     /// it picks which name the snapshot's `current_tool` shows and
@@ -142,6 +145,7 @@ impl TrackerActor {
             loot_blacklist: BTreeSet::new(),
             heal_tool: HealTool::default(),
             harvest_tool: None,
+            harvest_guardrail: None,
             hand_is_harvest: false,
             sender,
             subscriptions: Vec::new(),

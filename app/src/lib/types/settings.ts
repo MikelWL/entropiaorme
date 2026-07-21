@@ -9,6 +9,8 @@
 export type {
 	AppSettings,
 	GameConnection,
+	HarvestGuardrailInput,
+	HarvestGuardrailSettings,
 	MobEntryMode as MobTrackingMode,
 	TrifectaPresetView as TrifectaPreset,
 	TrifectaSettings,

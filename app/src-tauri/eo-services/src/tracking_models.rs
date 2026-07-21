@@ -148,10 +148,25 @@ pub struct ActiveSessionView {
     pub harvest_successes: i64,
     pub harvest_loot: f64,
     pub harvest_cost: f64,
+    /// The standing harvest-guardrail disagreement, when the loot
+    /// evidence last contradicted the hotbar-equipped tool.
+    pub harvest_guardrail_mismatch: Option<HarvestGuardrailMismatchView>,
     /// Raw rows (event_type, mob_or_item, value_ped, timestamp): the
     /// presentation mapping lives in the HTTP layer.
     pub notable_event_rows: Vec<(String, String, f64, Option<f64>)>,
     pub warnings: Vec<String>,
+}
+
+/// A harvest-guardrail disagreement as the read surfaces consume it:
+/// the tool the loot evidence expects, the tool the hotbar believed
+/// (None when none was equipped), the closed tree-size vocabulary
+/// ("short" | "long" | "huge"), and when the evidence arrived.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestGuardrailMismatchView {
+    pub expected_tool: String,
+    pub observed_tool: Option<String>,
+    pub tree_size: String,
+    pub at_epoch: f64,
 }
 
 /// Immutable view of the whole tracking readout: `active` is the
