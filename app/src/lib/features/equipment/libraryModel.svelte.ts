@@ -23,7 +23,7 @@ import {
 	equipmentDemoTrifecta,
 } from '$lib/guide/fixtures/equipment';
 import type { Equipment, EquipmentDetail, HealingTool } from '$lib/types';
-import type { Hotbar, TrifectaSettings } from '$lib/types/settings';
+import type { HarvestGuardrailSettings, Hotbar, TrifectaSettings } from '$lib/types/settings';
 import { describeError } from '$lib/view/errorState';
 import { createTypeahead } from '$lib/view/typeahead.svelte';
 import { previewCostPerUse } from './costPreview';
@@ -45,6 +45,12 @@ export function createLibraryModel() {
 		presets: [],
 		ready: false,
 		message: null,
+	});
+	let harvestGuardrail = $state<HarvestGuardrailSettings>({
+		enabled: false,
+		shortToolId: null,
+		longToolId: null,
+		hugeToolId: null,
 	});
 	let error = $state<string | null>(null);
 
@@ -164,6 +170,7 @@ export function createLibraryModel() {
 				hotbar = hotbarFromSettings(settings);
 				hotbarHooksEnabled = settings.hotbarHooksEnabled;
 				trifecta = settings.trifecta;
+				harvestGuardrail = settings.harvestGuardrail;
 				detailCache = {};
 			}
 		} catch (e) {
@@ -438,6 +445,12 @@ export function createLibraryModel() {
 		},
 		set trifecta(value: TrifectaSettings) {
 			trifecta = value;
+		},
+		get harvestGuardrail() {
+			return harvestGuardrail;
+		},
+		set harvestGuardrail(value: HarvestGuardrailSettings) {
+			harvestGuardrail = value;
 		},
 		get error() {
 			return error;

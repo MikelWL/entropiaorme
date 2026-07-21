@@ -95,7 +95,8 @@ use eo_services::skill_tracker::SkillTracker;
 pub use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
 use eo_services::time::naive_to_epoch;
 use eo_services::tracker::{
-    EquipmentLibrary, EquipmentProfile, HuntTracker, Providers, TrackingConfig,
+    EquipmentLibrary, EquipmentProfile, GuardrailTool, HarvestGuardrailTools, HuntTracker,
+    Providers, TrackingConfig,
 };
 use eo_services::trifecta_service::{describe_trifecta, TrifectaPreset};
 use eo_wire::bus::DomainBus;
@@ -1387,6 +1388,58 @@ impl EquipmentLibrary for LiveEquipmentLibrary {
                 .ok()
                 .and_then(|(data, _error)| data)
         })
+    }
+
+    fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools> {
+        // Resolve the configured intent per tree size off the live
+        // config and the equipment library. A size whose id is unset,
+        // unknown, or not a harvesting tool resolves to None; a fully
+        // empty resolution reads as no guardrail at all. The per-use
+        // cost recipe matches the hotbar resolver's "tool" branch, so
+        // a guardrail attribution and a hotbar attribution of the same
+        // tool always price identically.
+        let config = self.reader.current();
+        if !config.harvest_guardrail.enabled {
+            return None;
+        }
+        let ids = [
+            config.harvest_guardrail.short_tool_id,
+            config.harvest_guardrail.long_tool_id,
+            config.harvest_guardrail.huge_tool_id,
+        ];
+        let db = self.db.clone();
+        let resolved = block_on_pool(&self.runtime, async move {
+            db.with_reader(move |conn| {
+                let mut tools: Vec<Option<GuardrailTool>> = Vec::with_capacity(ids.len());
+                for id in ids {
+                    let tool = match id {
+                        None => None,
+                        Some(equip_id) => hotbar_equipment_row_sync(conn, equip_id)?.and_then(
+                            |(name, item_type, properties_json)| {
+                                (item_type == "tool").then(|| {
+                                    let (cost_ped, _) = heal_cost_from_props(&properties_json);
+                                    GuardrailTool {
+                                        name,
+                                        cost_per_use_ped: cost_ped,
+                                    }
+                                })
+                            },
+                        ),
+                    };
+                    tools.push(tool);
+                }
+                Ok(tools)
+            })
+            .await
+            .ok()
+        })?;
+        let mut sizes = resolved.into_iter();
+        let tools = HarvestGuardrailTools {
+            short: sizes.next().flatten(),
+            long: sizes.next().flatten(),
+            huge: sizes.next().flatten(),
+        };
+        (tools != HarvestGuardrailTools::default()).then_some(tools)
     }
 }
 

@@ -113,6 +113,7 @@ export interface AppSettings {
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
 	hotbar: Record<string, unknown>;
 	trifecta: TrifectaSettings;
+	harvestGuardrail: HarvestGuardrailSettings;
 	lootFilterBlacklist: string[];
 	dbPath: string;
 	appVersion: string;
@@ -513,6 +514,40 @@ export interface GameConnection {
 	chatLogPath: string;
 	chatLogValid: boolean;
 	playerName: string;
+}
+
+/**
+ * A harvest-guardrail disagreement on the snapshot: the tool the loot
+ * evidence expects for the tree size, the tool the hotbar believed
+ * (null when none was equipped), and when the evidence arrived.
+ */
+export interface HarvestGuardrailAlert {
+	expectedTool: string;
+	observedTool: string | null;
+	treeSize: TreeSizeName;
+	atEpoch: number;
+}
+
+/**
+ * The harvest-guardrail block in a settings update. Field names stay
+ * in the stored snake_case the config writer re-normalises.
+ */
+export interface HarvestGuardrailInput {
+	enabled?: boolean;
+	short_tool_id?: number | null;
+	long_tool_id?: number | null;
+	huge_tool_id?: number | null;
+}
+
+/**
+ * The harvest-guardrail block: the enabled flag and the intended tool
+ * id per tree size (null while a size has no intended tool).
+ */
+export interface HarvestGuardrailSettings {
+	enabled: boolean;
+	shortToolId: number | null;
+	longToolId: number | null;
+	hugeToolId: number | null;
 }
 
 /**
@@ -1818,6 +1853,7 @@ export interface SettingsPatch {
 	hotbar?: Record<string, unknown> | null;
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;
+	harvest_guardrail?: HarvestGuardrailInput | null;
 	loot_filter_blacklist?: string[] | null;
 }
 
@@ -2009,6 +2045,8 @@ export interface TrackingSnapshot {
 	harvestSuccesses?: number | null;
 	harvestLoot?: number | null;
 	harvestCost?: number | null;
+	/** The standing harvest-guardrail disagreement; present only while the loot evidence contradicts the hotbar-equipped tool. */
+	harvestGuardrail?: HarvestGuardrailAlert | null;
 	warnings?: Warning[] | null;
 }
 
@@ -2016,6 +2054,11 @@ export interface TrackingSnapshot {
  * The session state a tracking readout reports.
  */
 export type TrackingState = 'idle' | 'active';
+
+/**
+ * The closed tree-size vocabulary the guardrail names.
+ */
+export type TreeSizeName = 'short' | 'long' | 'huge';
 
 /**
  * The Overview headline trend, as the service computes it. The

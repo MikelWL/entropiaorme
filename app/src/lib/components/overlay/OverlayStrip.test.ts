@@ -288,6 +288,49 @@ describe('trifecta selector', () => {
 		expect(screen.getByText('Sollomate Opalo')).toBeTruthy();
 		expect(screen.queryByTitle('Hunting Set')).toBeNull();
 	});
+
+	it('shows the guardrail alert in place of the tool readout on a mismatch', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({
+					status: 'active',
+					weaponAttribution: 'hotbar',
+					currentTool: 'Terratech PH-4 (L)',
+					harvestGuardrail: {
+						expectedTool: 'Terratech PH-1 (L)',
+						observedTool: 'Terratech PH-4 (L)',
+						treeSize: 'short',
+						atEpoch: 1_784_600_000,
+					},
+				}),
+			},
+		});
+		const alert = screen.getByTestId('guardrail-alert');
+		expect(alert.textContent).toContain('Terratech PH-1 (L)');
+		expect(alert.className).toContain('text-red-400');
+		expect(alert.title).toBe('Tree loot says Terratech PH-1 (L); hotbar shows Terratech PH-4 (L)');
+		expect(screen.queryByText('Terratech PH-4 (L)')).toBeNull();
+	});
+
+	it('names the no-tool case in the guardrail alert title', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({
+					status: 'active',
+					weaponAttribution: 'hotbar',
+					harvestGuardrail: {
+						expectedTool: 'Terratech PH-1 (L)',
+						observedTool: null,
+						treeSize: 'short',
+						atEpoch: 1_784_600_000,
+					},
+				}),
+			},
+		});
+		expect(screen.getByTestId('guardrail-alert').title).toBe(
+			'Tree loot says Terratech PH-1 (L); hotbar shows no tool',
+		);
+	});
 });
 
 describe('armour cost control', () => {

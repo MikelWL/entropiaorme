@@ -261,6 +261,17 @@
 					error={trifectaError}
 					ontrigger={onTrifectaTrigger}
 				/>
+			{:else if data.harvestGuardrail}
+				<!-- The guardrail cue: loot evidence disagrees with the hotbar's
+					 tool, so the name shown is the intended tool being charged,
+					 in red until a hotbar press or agreeing loot resolves it. -->
+				<div
+					class="text-xs text-red-400 animate-pulse truncate max-w-[120px]"
+					title={`Tree loot says ${data.harvestGuardrail.expectedTool}; hotbar shows ${data.harvestGuardrail.observedTool ?? 'no tool'}`}
+					data-testid="guardrail-alert"
+				>
+					{data.harvestGuardrail.expectedTool}
+				</div>
 			{:else}
 				<div class="text-xs {data.currentTool ? 'text-white/70' : 'text-white/20'} truncate max-w-[120px]">
 					{data.currentTool || '—'}

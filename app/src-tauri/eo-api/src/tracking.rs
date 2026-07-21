@@ -51,7 +51,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 39] = [
+const SNAPSHOT_FIELDS: [&str; 40] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -90,6 +90,7 @@ const SNAPSHOT_FIELDS: [&str; 39] = [
     "harvestSuccesses",
     "harvestLoot",
     "harvestCost",
+    "harvestGuardrail",
     "warnings",
 ];
 
@@ -478,8 +479,33 @@ pub struct TrackingSnapshot {
     pub harvest_loot: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harvest_cost: Option<f64>,
+    /// The standing harvest-guardrail disagreement; present only while
+    /// the loot evidence contradicts the hotbar-equipped tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harvest_guardrail: Option<HarvestGuardrailAlert>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<Warning>>,
+}
+
+/// A harvest-guardrail disagreement on the snapshot: the tool the loot
+/// evidence expects for the tree size, the tool the hotbar believed
+/// (null when none was equipped), and when the evidence arrived.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestGuardrailAlert {
+    pub expected_tool: String,
+    pub observed_tool: Nullable<String>,
+    pub tree_size: TreeSizeName,
+    pub at_epoch: f64,
+}
+
+/// The closed tree-size vocabulary the guardrail names.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TreeSizeName {
+    Short,
+    Long,
+    Huge,
 }
 
 /// The start lifecycle acknowledgement.
@@ -1133,7 +1159,17 @@ pub(crate) async fn build_snapshot_value(
                 .iter()
                 .map(|message| json!({"type": "warning", "description": message, "value": 0.0}))
                 .collect();
-            json!({
+            // The guardrail key rides only while a disagreement stands
+            // (`exclude_unset`): absent is the quiet steady state.
+            let harvest_guardrail = active.harvest_guardrail_mismatch.as_ref().map(|mismatch| {
+                json!({
+                    "expectedTool": mismatch.expected_tool.clone(),
+                    "observedTool": mismatch.observed_tool.clone(),
+                    "treeSize": mismatch.tree_size.clone(),
+                    "atEpoch": mismatch.at_epoch,
+                })
+            });
+            let mut value = json!({
                 "status": "active",
                 "session_id": active.session_id.clone(),
                 "started_at": active.started_at.clone(),
@@ -1173,7 +1209,11 @@ pub(crate) async fn build_snapshot_value(
                 "mobSource": active.mob_source.clone(),
                 "recentEvents": recent_events,
                 "warnings": warnings,
-            })
+            });
+            if let (Some(mismatch), Some(object)) = (harvest_guardrail, value.as_object_mut()) {
+                object.insert("harvestGuardrail".to_string(), mismatch);
+            }
+            value
         }
     };
     Ok(project(&value, &SNAPSHOT_FIELDS))

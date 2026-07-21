@@ -36,8 +36,8 @@ mod weapons;
 
 pub use mob::{MobSelection, MobSource, TrackingMode};
 pub use providers::{
-    DefaultTrackingConfig, EquipmentLibrary, EquipmentProfile, InertEquipment, Providers,
-    TrackingConfig,
+    DefaultTrackingConfig, EquipmentLibrary, EquipmentProfile, GuardrailTool,
+    HarvestGuardrailTools, InertEquipment, Providers, TrackingConfig, TreeSize,
 };
 
 use std::sync::Arc;

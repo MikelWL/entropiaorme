@@ -51,6 +51,23 @@ impl TrifectaPresetConfig {
     }
 }
 
+/// The harvesting tool guardrail: the tool the user intends to use on
+/// each tree size. While enabled, harvest swings whose loot names a
+/// tree size are attributed to the intended tool for that size, and a
+/// disagreement with the hotbar-equipped tool is surfaced rather than
+/// silently recorded.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HarvestGuardrailConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub short_tool_id: Option<i64>,
+    #[serde(default)]
+    pub long_tool_id: Option<i64>,
+    #[serde(default)]
+    pub huge_tool_id: Option<i64>,
+}
+
 /// All user-configurable settings; field order is the serialised order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -67,6 +84,7 @@ pub struct AppConfig {
     pub hotbar: Map<String, Value>,
     pub trifecta_presets: Vec<TrifectaPresetConfig>,
     pub active_trifecta_preset_id: Option<String>,
+    pub harvest_guardrail: HarvestGuardrailConfig,
     pub loot_filter_blacklist: Vec<String>,
     pub overlay_x: Option<i64>,
     pub overlay_y: Option<i64>,
@@ -102,6 +120,7 @@ impl Default for AppConfig {
             hotbar,
             trifecta_presets: vec![TrifectaPresetConfig::default_preset()],
             active_trifecta_preset_id: Some(DEFAULT_TRIFECTA_PRESET_ID.to_string()),
+            harvest_guardrail: HarvestGuardrailConfig::default(),
             loot_filter_blacklist: vec!["Universal Ammo".to_string()],
             overlay_x: None,
             overlay_y: None,
@@ -366,6 +385,7 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
         hotbar: normalize_hotbar(data.get("hotbar")),
         trifecta_presets,
         active_trifecta_preset_id: Some(active_id),
+        harvest_guardrail: normalize_harvest_guardrail(data.get("harvest_guardrail")),
         loot_filter_blacklist: data
             .get("loot_filter_blacklist")
             .and_then(|v| {
@@ -389,7 +409,7 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
     }
 }
 
-const KNOWN_KEYS: [&str; 17] = [
+const KNOWN_KEYS: [&str; 18] = [
     "chatlog_path",
     "player_name",
     "hotbar_hooks_enabled",
@@ -403,6 +423,7 @@ const KNOWN_KEYS: [&str; 17] = [
     "hotbar",
     "trifecta_presets",
     "active_trifecta_preset_id",
+    "harvest_guardrail",
     "loot_filter_blacklist",
     "overlay_x",
     "overlay_y",
@@ -417,6 +438,21 @@ fn json_truthy(value: &Value) -> bool {
         Value::String(s) => !s.is_empty(),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
+    }
+}
+
+/// Normalise a stored or submitted guardrail block: a non-object reads
+/// as the disabled default; `enabled` follows the stored-toggle truthy
+/// rule; a tool id that is not an integer reads as unset.
+fn normalize_harvest_guardrail(raw: Option<&Value>) -> HarvestGuardrailConfig {
+    let Some(object) = raw.and_then(Value::as_object) else {
+        return HarvestGuardrailConfig::default();
+    };
+    HarvestGuardrailConfig {
+        enabled: object.get("enabled").map(json_truthy).unwrap_or(false),
+        short_tool_id: object.get("short_tool_id").and_then(Value::as_i64),
+        long_tool_id: object.get("long_tool_id").and_then(Value::as_i64),
+        huge_tool_id: object.get("huge_tool_id").and_then(Value::as_i64),
     }
 }
 
@@ -550,6 +586,9 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
                     Value::String(s) => Some(s.clone()),
                     _ => continue,
                 };
+            }
+            "harvest_guardrail" => {
+                config.harvest_guardrail = normalize_harvest_guardrail(Some(value));
             }
             "loot_filter_blacklist" => {
                 if let Some(items) = value.as_array() {
@@ -742,6 +781,45 @@ mod tests {
         assert_eq!(hotbar["1"], Value::Null);
         let keys: Vec<&String> = hotbar.keys().collect();
         assert_eq!(keys[9], "0", "slot order preserved");
+    }
+
+    #[test]
+    fn harvest_guardrail_normalises_stored_and_updated_shapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = service(dir.path());
+        assert_eq!(
+            svc.get().harvest_guardrail,
+            HarvestGuardrailConfig::default(),
+            "absent block reads as the disabled default"
+        );
+
+        let mut updates = Map::new();
+        updates.insert(
+            "harvest_guardrail".into(),
+            serde_json::json!({
+                "enabled": true,
+                "short_tool_id": 3,
+                "long_tool_id": "not an id",
+                "huge_tool_id": null,
+            }),
+        );
+        svc.update(&updates).unwrap();
+        assert_eq!(
+            svc.get().harvest_guardrail,
+            HarvestGuardrailConfig {
+                enabled: true,
+                short_tool_id: Some(3),
+                long_tool_id: None,
+                huge_tool_id: None,
+            },
+            "non-integer ids read as unset"
+        );
+
+        // A malformed stored block reads as the disabled default.
+        let mut updates = Map::new();
+        updates.insert("harvest_guardrail".into(), serde_json::json!("garbled"));
+        svc.update(&updates).unwrap();
+        assert_eq!(svc.get().harvest_guardrail, HarvestGuardrailConfig::default());
     }
 
     #[test]

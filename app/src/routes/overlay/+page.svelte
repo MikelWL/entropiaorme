@@ -688,6 +688,7 @@
 			mobSource: snap.mobSource,
 			currentTool: snap.currentTool,
 			trifectaAttribution: snap.trifectaAttribution,
+			harvestGuardrail: snap.harvestGuardrail,
 		};
 		const startedMs = snap.started_at ? new Date(snap.started_at).getTime() : NaN;
 		sessionStartedAtMs = Number.isNaN(startedMs) ? null : startedMs;

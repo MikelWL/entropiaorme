@@ -7,6 +7,7 @@
  */
 
 import type {
+	HarvestGuardrailAlert,
 	MobEntryMode,
 	MobSource,
 	NotableEventCategory,
@@ -46,6 +47,7 @@ export interface TrackingLive {
 	mobSource?: MobSource | null;
 	currentTool?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
+	harvestGuardrail?: HarvestGuardrailAlert | null;
 	recentEvents?: {
 		type: NotableEventCategory;
 		eventType?: NotableEventType;
@@ -55,7 +57,7 @@ export interface TrackingLive {
 	}[];
 }
 
-export type { RecentEvent, TrackingSnapshot };
+export type { HarvestGuardrailAlert, RecentEvent, TrackingSnapshot };
 
 export const startTracking = commands.trackingStart;
 export const stopTracking = commands.trackingStop;

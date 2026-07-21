@@ -34,6 +34,7 @@ impl TrackerActor {
                 session,
                 loot_blacklist,
                 harvest_tool,
+                harvest_guardrail,
                 clock,
                 ..
             } = &mut *self;
@@ -90,7 +91,13 @@ impl TrackerActor {
             // filtered items: a user filter must trim what gets
             // recorded, never flip what kind of event happened.
             if is_harvest_loot_group(&group.items) {
-                let (tool_name, cost) = Self::harvest_swing_cost(active, harvest_tool.as_ref());
+                let (tool_name, cost) = Self::guarded_harvest_swing_cost(
+                    active,
+                    harvest_guardrail.as_ref(),
+                    harvest_tool.as_ref(),
+                    &group.items,
+                    now_epoch,
+                );
                 let harvest = HarvestEvent {
                     id: uuid::Uuid::new_v4().to_string(),
                     session_id: active.session.id.clone(),
