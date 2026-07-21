@@ -11,6 +11,7 @@ vi.mock('$lib/api', () => ({
 	updateMapPin: vi.fn(),
 	renameMapView: vi.fn(),
 	deleteMapPin: vi.fn(),
+	cooldownMapPin: vi.fn(),
 	deleteMapView: vi.fn(),
 	planetMapImage: vi.fn(),
 }));
@@ -161,6 +162,23 @@ describe('createMapsModel', () => {
 		mocked.deleteMapPin.mockResolvedValue(undefined);
 		await model.removePin(7);
 		expect(model.pins).toHaveLength(0);
+	});
+
+	it('applies bulk pin actions through the established single-pin commands', async () => {
+		mocked.getPlanetMaps.mockResolvedValue([planet()]);
+		mocked.getMapPins.mockResolvedValue([pin({ id: 1 }), pin({ id: 2 })]);
+		mocked.deleteMapPin.mockResolvedValue(undefined);
+		mocked.cooldownMapPin
+			.mockResolvedValueOnce(pin({ id: 1, cooldownUntil: 200 }))
+			.mockResolvedValueOnce(pin({ id: 2, cooldownUntil: 200 }));
+		const model = createMapsModel();
+		await model.loadPlanets();
+
+		await model.cooldownPins([1, 2]);
+		expect(model.pins.every((entry) => entry.cooldownUntil === 200)).toBe(true);
+		await model.removePins([1, 2]);
+		expect(mocked.deleteMapPin.mock.calls).toEqual([[1], [2]]);
+		expect(model.pins).toEqual([]);
 	});
 
 	it('refreshes the selected planet pins after an overlay invalidation', async () => {

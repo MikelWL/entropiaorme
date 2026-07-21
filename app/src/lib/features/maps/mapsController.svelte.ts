@@ -88,6 +88,7 @@ export function createMapsController(model: MapsModel) {
 	}
 
 	async function deletePin(pin: MapPin) {
+		if (!window.confirm(`Delete pin "${pin.name}"? This cannot be undone.`)) return;
 		try {
 			await model.removePin(pin.id);
 			flash(`Pin "${pin.name}" deleted.`);

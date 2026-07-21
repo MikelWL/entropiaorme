@@ -14,9 +14,19 @@
 	import { formatGamePoint, gameToImage, imageToGame, type GamePoint } from './coords';
 	import type { MapFocusRequest } from './mapTools';
 	import MapViewSelector from './MapViewSelector.svelte';
+	import MapAreaSelectionToolbar from './MapAreaSelectionToolbar.svelte';
 	import { pinGlyph } from './pinIcons';
 	import PinCard from './PinCard.svelte';
 	import type { WaypointCopyResult } from './waypoint';
+	import {
+		clampImageRect,
+		normaliseImageRect,
+		selectedMapPinIds,
+		selectedRoutePinIds,
+		selectedTreePinIds,
+		type ImagePoint,
+		type ImageRect,
+	} from './routeAreaSelection';
 	import { externalLinks } from '$lib/utils/openExternal';
 	import {
 		ZOOM_STEP,
@@ -49,6 +59,14 @@
 		ondeleteview,
 		focusRequest = null,
 		navigation = null,
+		selectionMode = null,
+		selectionRegions = [],
+		onselectionregionschange = () => {},
+		onselectionconfirm = () => {},
+		onselectiondelete = () => {},
+		onselectioncooldown = () => {},
+		onselectioncancel = () => {},
+		onselectionclear = () => {},
 	}: {
 		planet: PlanetMap;
 		planets: PlanetMap[];
@@ -69,7 +87,17 @@
 		ondeleteview: (view: MapView) => Promise<boolean>;
 		focusRequest?: MapFocusRequest | null;
 		navigation?: NavigationRun | null;
+		selectionMode?: 'route' | 'pins' | null;
+		selectionRegions?: ImageRect[];
+		onselectionregionschange?: (regions: ImageRect[]) => void;
+		onselectionconfirm?: (pinIds: number[]) => void;
+		onselectiondelete?: (pinIds: number[]) => void;
+		onselectioncooldown?: (pinIds: number[]) => void;
+		onselectioncancel?: () => void;
+		onselectionclear?: () => void;
 	} = $props();
+
+	const selectionActive = $derived(selectionMode !== null);
 
 	const cal = $derived(planet.calibration);
 
@@ -219,22 +247,38 @@
 		applyZoom(factor, event.clientX - rect.left, event.clientY - rect.top);
 	}
 
-	// Drag vs click: a press starts a candidate drag; passing the slop
-	// threshold makes it a pan, otherwise release is a map click.
+	// Drag vs click: outside area selection, a press starts a candidate pan;
+	// in selection mode the same gesture draws a rectangle, while Space-drag
+	// preserves mouse panning.
 	const DRAG_SLOP_PX = 4;
 	let pressed = $state(false);
 	let dragging = $state(false);
+	let interaction = $state<'pan' | 'select' | null>(null);
+	let spaceHeld = $state(false);
+	let selectionStart = $state<ImagePoint | null>(null);
+	let draftRegion = $state<ImageRect | null>(null);
 	let lastPointer = { x: 0, y: 0 };
 	let pressPointer = { x: 0, y: 0 };
 
 	function handlePointerDown(event: PointerEvent) {
-		if (event.button !== 0) return;
+		if (event.button !== 0 && !(selectionActive && event.button === 1)) return;
 		attributionOpen = false;
-		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+		const surface = event.currentTarget as HTMLElement;
+		surface.focus();
+		surface.setPointerCapture(event.pointerId);
 		pressed = true;
 		dragging = false;
 		lastPointer = { x: event.clientX, y: event.clientY };
 		pressPointer = lastPointer;
+		interaction = selectionActive && !spaceHeld && event.button === 0 ? 'select' : 'pan';
+		if (interaction === 'select' && image) {
+			const rect = surface.getBoundingClientRect();
+			selectionStart = viewToImage(vp, event.clientX - rect.left, event.clientY - rect.top);
+			draftRegion = null;
+		} else {
+			selectionStart = null;
+			draftRegion = null;
+		}
 	}
 
 	function handlePointerMove(event: PointerEvent) {
@@ -251,12 +295,28 @@
 		}
 		// While a card is locked open (marker was clicked), hover neither switches
 		// nor closes it; the locked card owns the surface until it is dismissed.
-		if (!pressed && lockedPinId == null) {
+		if (!selectionActive && !pressed && lockedPinId == null) {
 			const hit = nearestPlacedPin(event.clientX - rect.left, event.clientY - rect.top, 10);
 			if (hit) raiseCard(hit.pin);
 			else if (activePin) scheduleCardClose();
 		}
 		if (!pressed || !image) return;
+		if (interaction === 'select' && selectionStart) {
+			if (
+				!dragging &&
+				Math.hypot(event.clientX - pressPointer.x, event.clientY - pressPointer.y) < DRAG_SLOP_PX
+			) {
+				return;
+			}
+			dragging = true;
+			const current = viewToImage(vp, event.clientX - rect.left, event.clientY - rect.top);
+			draftRegion = clampImageRect(
+				normaliseImageRect(selectionStart, current),
+				image.naturalWidth,
+				image.naturalHeight,
+			);
+			return;
+		}
 		const dx = event.clientX - lastPointer.x;
 		const dy = event.clientY - lastPointer.y;
 		if (
@@ -273,6 +333,21 @@
 	function handlePointerUp(event: PointerEvent) {
 		if (!pressed) return;
 		pressed = false;
+		if (interaction === 'select') {
+			if (dragging && draftRegion) {
+				onselectionregionschange([...selectionRegions, draftRegion]);
+			}
+			dragging = false;
+			interaction = null;
+			selectionStart = null;
+			draftRegion = null;
+			return;
+		}
+		interaction = null;
+		if (selectionActive) {
+			dragging = false;
+			return;
+		}
 		if (dragging || !cal || !image) {
 			dragging = false;
 			return;
@@ -306,6 +381,16 @@
 
 	const PAN_STEP_PX = 60;
 	function handleKeydown(event: KeyboardEvent) {
+		if (selectionActive && event.key === 'Escape') {
+			onselectioncancel();
+			event.preventDefault();
+			return;
+		}
+		if (selectionActive && event.key === ' ') {
+			spaceHeld = true;
+			event.preventDefault();
+			return;
+		}
 		if (event.key === 'Escape' && attributionOpen) {
 			attributionOpen = false;
 			event.preventDefault();
@@ -343,6 +428,13 @@
 				return;
 		}
 		event.preventDefault();
+	}
+
+	function handleKeyup(event: KeyboardEvent) {
+		if (event.key === ' ') {
+			spaceHeld = false;
+			event.preventDefault();
+		}
 	}
 
 	interface PlacedPin {
@@ -387,6 +479,16 @@
 	const activePlaced = $derived(
 		activePin ? placedPins.find((placed) => placed.pin.id === activePin?.id) ?? null : null,
 	);
+	const selectedRouteIds = $derived(
+		selectionMode === 'route' && cal
+			? selectedRoutePinIds(pins, cal, selectionRegions, Date.now() / 1000)
+			: [],
+	);
+	const selectedPinIds = $derived(
+		selectionMode === 'pins' && cal ? selectedMapPinIds(pins, cal, selectionRegions) : [],
+	);
+	const selectedCooldownIds = $derived(selectedTreePinIds(pins, selectedPinIds));
+	const highlightedIds = $derived(selectionMode === 'route' ? selectedRouteIds : selectedPinIds);
 
 	// Raster, route, areas, and high-volume markers share one draw-on-dirty
 	// canvas. Marker rendering changes semantically with zoom instead of
@@ -398,6 +500,9 @@
 		const mode = markerMode;
 		const now = Date.now() / 1000;
 		const run = navigation;
+		const selectedIds = new Set(highlightedIds);
+		const routeRegions = selectionRegions;
+		const routeDraft = draftRegion;
 		if (!ctx || !canvas || !img || viewW === 0 || viewH === 0) return;
 		const dpr = window.devicePixelRatio || 1;
 		canvas.width = Math.round(viewW * dpr);
@@ -413,6 +518,28 @@
 			img.naturalWidth * vp.zoom,
 			img.naturalHeight * vp.zoom,
 		);
+
+		if (selectionActive) {
+			for (const region of [...routeRegions, ...(routeDraft ? [routeDraft] : [])]) {
+				const topLeft = imageToView(vp, region.left, region.top);
+				const bottomRight = imageToView(vp, region.right, region.bottom);
+				ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+				ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
+				ctx.lineWidth = 1.5;
+				ctx.fillRect(
+					topLeft.x,
+					topLeft.y,
+					bottomRight.x - topLeft.x,
+					bottomRight.y - topLeft.y,
+				);
+				ctx.strokeRect(
+					topLeft.x,
+					topLeft.y,
+					bottomRight.x - topLeft.x,
+					bottomRight.y - topLeft.y,
+				);
+			}
+		}
 
 		for (const placed of visiblePins) {
 			if (placed.radiusRx == null || placed.radiusRy == null) continue;
@@ -471,7 +598,13 @@
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'bottom';
 			for (const placed of visiblePins) {
-				ctx.globalAlpha = onCooldown(placed.pin) ? 0.4 : 1;
+				ctx.globalAlpha = selectionActive
+					? selectedIds.has(placed.pin.id)
+						? 1
+						: 0.2
+					: onCooldown(placed.pin)
+						? 0.4
+						: 1;
 				ctx.fillText(pinGlyph(placed.pin.icon), placed.x, placed.y);
 			}
 			ctx.globalAlpha = 1;
@@ -493,10 +626,24 @@
 				);
 				ctx.beginPath();
 				ctx.arc(placed.x, placed.y, radius, 0, Math.PI * 2);
-				ctx.fillStyle = markerRgba(colour, alpha);
+				ctx.fillStyle = markerRgba(
+					colour,
+					selectionActive && !selectedIds.has(placed.pin.id) ? alpha * 0.2 : alpha,
+				);
 				ctx.fill();
 			}
 			ctx.globalCompositeOperation = 'source-over';
+		}
+
+		if (selectionActive) {
+			for (const placed of visiblePins) {
+				if (!selectedIds.has(placed.pin.id)) continue;
+				ctx.beginPath();
+				ctx.arc(placed.x, placed.y, 7, 0, Math.PI * 2);
+				ctx.strokeStyle = 'rgba(125, 211, 252, 1)';
+				ctx.lineWidth = 2;
+				ctx.stroke();
+			}
 		}
 
 		if (activePlaced) {
@@ -516,11 +663,13 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
-	class="relative h-full w-full overflow-hidden rounded-lg border border-border bg-base select-none"
+	class="relative h-full w-full overflow-hidden rounded-lg border border-border bg-base select-none {selectionActive ? (spaceHeld ? 'cursor-grabbing' : 'cursor-crosshair') : ''}"
 	bind:clientWidth={viewW}
 	bind:clientHeight={viewH}
 	role="application"
-	aria-label="{planet.name} map. Arrow keys pan, plus and minus zoom, 0 fits the view."
+	aria-label={selectionActive
+		? `${planet.name} map area selection. Drag to add areas, use each area button to remove it, hold Space to pan.`
+		: `${planet.name} map. Arrow keys pan, plus and minus zoom, 0 fits the view.`}
 	tabindex="0"
 	onwheel={handleWheel}
 	onpointerdown={handlePointerDown}
@@ -529,15 +678,50 @@
 	onpointercancel={() => {
 		pressed = false;
 		dragging = false;
+		interaction = null;
+		selectionStart = null;
+		draftRegion = null;
 	}}
 	onpointerleave={() => (cursorPoint = null)}
 	onkeydown={handleKeydown}
+	onkeyup={handleKeyup}
+	onfocusout={() => (spaceHeld = false)}
 >
 	<canvas class="absolute inset-0" bind:this={canvas} aria-hidden="true"></canvas>
 
+	{#if selectionActive}
+		<MapAreaSelectionToolbar
+			mode={selectionMode!}
+			count={selectionMode === 'route' ? selectedRouteIds.length : selectedPinIds.length}
+			treeCount={selectedCooldownIds.length}
+			onclear={() => {
+				onselectionclear();
+				draftRegion = null;
+			}}
+			oncancel={onselectioncancel}
+			onconfirm={() => onselectionconfirm(selectedRouteIds)}
+			ondelete={() => onselectiondelete(selectedPinIds)}
+			oncooldown={() => onselectioncooldown(selectedCooldownIds)}
+		/>
+		{#each selectionRegions as region, index (`${region.left}:${region.top}:${region.right}:${region.bottom}:${index}`)}
+			{@const corner = imageToView(vp, region.right, region.top)}
+			<button
+				type="button"
+				class="absolute z-20 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-accent/70 bg-surface-raised text-sm font-semibold text-text shadow-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+				style:left={`${corner.x}px`}
+				style:top={`${corner.y}px`}
+				aria-label={`Remove selected area ${index + 1}`}
+				onpointerdown={(event) => event.stopPropagation()}
+				onclick={() =>
+					onselectionregionschange(selectionRegions.filter((_, candidate) => candidate !== index))}
+			>×</button>
+		{/each}
+	{/if}
+
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="absolute left-2 top-2 z-10 w-48 space-y-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur"
+		class="absolute left-2 top-2 z-10 w-48 space-y-1 rounded-md border border-border bg-base/85 p-1 shadow-sm backdrop-blur {selectionActive ? 'pointer-events-none opacity-40' : ''}"
+		inert={selectionActive}
 		onpointerdown={(event) => event.stopPropagation()}
 		onkeydown={(event) => event.stopPropagation()}
 	>
@@ -578,7 +762,7 @@
 		</Select>
 	</div>
 
-	{#if activePin && activePlaced}
+	{#if !selectionActive && activePin && activePlaced}
 			<PinCard
 				pin={activePin}
 				x={activePlaced.x}

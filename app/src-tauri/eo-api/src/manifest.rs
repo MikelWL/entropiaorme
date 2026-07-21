@@ -1243,8 +1243,8 @@ pub fn manifest() -> Vec<CommandSpec> {
                     schema: schema(schema_for!(f64)),
                 },
                 ArgSpec {
-                    name: "hop_count",
-                    schema: schema(schema_for!(Option<i64>)),
+                    name: "selected_pin_ids",
+                    schema: schema(schema_for!(Option<Vec<i64>>)),
                 },
                 ArgSpec {
                     name: "hotkey",

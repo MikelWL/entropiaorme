@@ -179,10 +179,18 @@ export function createMapsModel() {
 		pins = pins.filter((pin) => pin.id !== id);
 	}
 
+	async function removePins(ids: number[]): Promise<void> {
+		for (const id of ids) await removePin(id);
+	}
+
 	async function cooldownPin(id: number): Promise<MapPin> {
 		const updated = await cooldownMapPin(id);
 		pins = pins.map((pin) => (pin.id === id ? updated : pin));
 		return updated;
+	}
+
+	async function cooldownPins(ids: number[]): Promise<void> {
+		for (const id of ids) await cooldownPin(id);
 	}
 
 	return {
@@ -220,7 +228,9 @@ export function createMapsModel() {
 		addPin,
 		editPin,
 		removePin,
+		removePins,
 		cooldownPin,
+		cooldownPins,
 	};
 }
 

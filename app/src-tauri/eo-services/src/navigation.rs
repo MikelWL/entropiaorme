@@ -220,8 +220,8 @@ pub enum NavigationError {
     NoActiveRun,
     #[error("no eligible pins are available for this route")]
     NoPins,
-    #[error("route hop count must be between 1 and 500")]
-    InvalidHopCount,
+    #[error("a custom route selection must contain at least one pin")]
+    EmptyPinSelection,
     #[error("navigation hotkey must be F6 through F12")]
     InvalidHotkey,
     #[error("radar calibration needs a radius of at least 8 pixels")]
@@ -360,15 +360,11 @@ impl NavigationService {
         map_view_id: Option<i64>,
         start_lon: f64,
         start_lat: f64,
-        hop_count: Option<i64>,
+        selected_pin_ids: Option<Vec<i64>>,
         hotkey: String,
     ) -> Result<NavigationRun, NavigationError> {
-        // An absent hop count means "chart every available pin"; an explicit
-        // count stays bounded so interactive planning holds its 500-stop cap.
-        if let Some(hops) = hop_count {
-            if !(1..=500).contains(&hops) {
-                return Err(NavigationError::InvalidHopCount);
-            }
+        if selected_pin_ids.as_ref().is_some_and(Vec::is_empty) {
+            return Err(NavigationError::EmptyPinSelection);
         }
         if !NAVIGATION_HOTKEYS.contains(&hotkey.as_str()) {
             return Err(NavigationError::InvalidHotkey);
@@ -376,11 +372,12 @@ impl NavigationService {
         let selected_hotkey = hotkey.clone();
         let _guard = self.operation.lock().await;
         let now = naive_to_epoch(self.clock.now());
-        let candidates = load_candidates(&self.db, planet.clone(), map_view_id, now).await?;
-        let cap = hop_count
-            .map(|hops| hops as usize)
-            .unwrap_or(candidates.len());
-        let route = optimise_open_route((start_lon, start_lat), &candidates, cap);
+        let mut candidates = load_candidates(&self.db, planet.clone(), map_view_id, now).await?;
+        if let Some(selected_pin_ids) = selected_pin_ids {
+            let selected: std::collections::HashSet<_> = selected_pin_ids.into_iter().collect();
+            candidates.retain(|candidate| selected.contains(&candidate.id));
+        }
+        let route = optimise_open_route((start_lon, start_lat), &candidates, candidates.len());
         if route.is_empty() {
             return Err(NavigationError::NoPins);
         }
@@ -1400,6 +1397,94 @@ mod tests {
         (dir, service, position, changes, input)
     }
 
+    #[tokio::test]
+    async fn custom_selection_is_an_exact_eligible_pin_allow_list() {
+        let (dir, service, _position, _changes, _input) = navigation_fixture().await;
+        let all = service
+            .start("Calypso".into(), None, 0.0, 0.0, None, "f8".into())
+            .await
+            .unwrap();
+        let selected = vec![all.stops[1].pin_id, all.stops[3].pin_id];
+        let cooled = all.stops[2].pin_id;
+        service.end().await.unwrap();
+        service.cooldown_pin(cooled).await.unwrap();
+
+        let db = Db::open(&dir.path().join("navigation.db")).await.unwrap();
+        let clock: Arc<dyn Clock> = Arc::new(MockClock::new(None, 0.0));
+        let configs = crate::pin_configs::PinConfigsService::new(db.clone(), clock.clone());
+        let generic = configs
+            .create(crate::pin_configs::NewPinConfig {
+                planet: "Calypso".into(),
+                map_view_id: None,
+                label: "Marker".into(),
+                category: "generic".into(),
+                special_kind: None,
+                icon: "x".into(),
+                radius_m: None,
+                colour: "#38bdf8".into(),
+                cooldown_colour: None,
+            })
+            .await
+            .unwrap();
+        let generic_pin = MapPinsService::new(db.clone(), clock.clone())
+            .create(NewMapPin {
+                planet: "Calypso".into(),
+                lon: 1.0,
+                lat: 1.0,
+                altitude: None,
+                name: "Marker".into(),
+                icon: "x".into(),
+                kind: "marker".into(),
+                radius_m: None,
+                notes: None,
+                session_id: None,
+                map_view_id: None,
+                pin_config_id: Some(generic.id),
+            })
+            .await
+            .unwrap();
+
+        let custom = service
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![
+                    selected[1],
+                    selected[0],
+                    selected[1],
+                    cooled,
+                    generic_pin.id,
+                    i64::MAX,
+                ]),
+                "f8".into(),
+            )
+            .await
+            .unwrap();
+        let actual: std::collections::BTreeSet<_> =
+            custom.stops.iter().map(|stop| stop.pin_id).collect();
+        assert_eq!(actual, selected.into_iter().collect());
+        assert_eq!(custom.hop_count, 2);
+    }
+
+    #[tokio::test]
+    async fn custom_selection_must_not_be_empty() {
+        let (_dir, service, _position, _changes, _input) = navigation_fixture().await;
+        let error = service
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(Vec::new()),
+                "f8".into(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, NavigationError::EmptyPinSelection));
+    }
+
     /// Build a navigation service reading its coordinates from `position`,
     /// so a second service can be spawned on the same database to exercise
     /// startup behaviour.
@@ -1519,7 +1604,14 @@ mod tests {
     async fn navigation_hotkey_reenters_the_runtime_from_the_dispatch_thread() {
         let (_dir, service, position, _changes, input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let first = run.active_stop().unwrap();
@@ -1554,7 +1646,14 @@ mod tests {
     async fn route_progress_persists_supports_undo_and_stays_visible_at_completion() {
         let (_dir, service, position, changes, _input) = navigation_fixture().await;
         let mut run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         assert_eq!(run.stops.len(), 2);
@@ -1595,7 +1694,14 @@ mod tests {
     async fn arriving_at_a_pending_stop_marks_it_and_replans_from_the_observed_position() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(3), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2, 3]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         // Pick a pending stop beyond the arrival radius of the active one, so a
@@ -1643,7 +1749,14 @@ mod tests {
     async fn repeated_harvest_swings_near_the_same_tree_do_not_advance_the_next_stop() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1674,7 +1787,14 @@ mod tests {
     async fn a_harvest_prefers_the_active_tree_when_several_are_within_range() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         // A(30,0) is active and D(39,0) is pending; (34,0) is within fifteen of
@@ -1701,7 +1821,14 @@ mod tests {
     async fn a_far_harvest_awaits_confirmation_then_records_on_confirm() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let active = run.active_stop().unwrap().clone();
@@ -1760,7 +1887,14 @@ mod tests {
     async fn a_far_harvest_dismissal_leaves_the_route_untouched() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let active = run.active_stop().unwrap().clone();
@@ -1797,7 +1931,14 @@ mod tests {
     async fn a_harvest_amid_only_non_active_trees_stays_ambiguous() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(3), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2, 3]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         // (50,4) is within fifteen of pending D(39,0) and B(60,9) but not of the
@@ -1818,7 +1959,14 @@ mod tests {
     async fn update_position_observes_without_recording_a_visit() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1845,7 +1993,14 @@ mod tests {
     async fn mark_visited_outside_tolerance_needs_force_then_completes_the_active_tree() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1881,7 +2036,7 @@ mod tests {
     async fn a_regenerated_route_excludes_recently_visited_trees() {
         let (_dir, service, position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(4), "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, None, "f8".into())
             .await
             .unwrap();
         let first = run.active_stop().unwrap().clone();
@@ -1890,7 +2045,7 @@ mod tests {
         service.end().await.unwrap();
 
         let regenerated = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(4), "f8".into())
+            .start("Calypso".into(), None, 0.0, 0.0, None, "f8".into())
             .await
             .unwrap();
         // The just-visited tree is on cooldown, so it never enters the new route.
@@ -1904,7 +2059,14 @@ mod tests {
     async fn a_lingering_run_is_ended_at_startup_not_resumed() {
         let (dir, service, position, _changes, _input) = navigation_fixture().await;
         service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         assert!(service.snapshot().await.unwrap().is_some());
@@ -1929,7 +2091,14 @@ mod tests {
     async fn cooling_the_active_tree_skips_it_and_replans() {
         let (_dir, service, _position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let active = run.active_stop().unwrap().clone();
@@ -1972,7 +2141,14 @@ mod tests {
     async fn deleting_a_route_pin_drops_its_stop_and_replans() {
         let (_dir, service, _position, _changes, _input) = navigation_fixture().await;
         let run = service
-            .start("Calypso".into(), None, 0.0, 0.0, Some(2), "f8".into())
+            .start(
+                "Calypso".into(),
+                None,
+                0.0,
+                0.0,
+                Some(vec![1, 2]),
+                "f8".into(),
+            )
             .await
             .unwrap();
         let removed = run.active_stop().unwrap().pin_id;

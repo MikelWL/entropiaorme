@@ -213,13 +213,20 @@ impl Api {
         map_view_id: Option<i64>,
         start_lon: f64,
         start_lat: f64,
-        hop_count: Option<i64>,
+        selected_pin_ids: Option<Vec<i64>>,
         hotkey: String,
     ) -> Result<NavigationRun, ApiError> {
         self.validate_pin_coords(&planet, start_lon, start_lat)?;
         self.validate_map_view(&planet, map_view_id).await?;
         self.navigation()?
-            .start(planet, map_view_id, start_lon, start_lat, hop_count, hotkey)
+            .start(
+                planet,
+                map_view_id,
+                start_lon,
+                start_lat,
+                selected_pin_ids,
+                hotkey,
+            )
             .await
             .map(navigation_to_dto)
             .map_err(navigation_error)
@@ -413,7 +420,7 @@ fn navigation_error(error: NavigationError) -> ApiError {
         NavigationError::NoActiveRun | NavigationError::NoPins => {
             ApiError::invalid_state(error.to_string())
         }
-        NavigationError::InvalidHopCount
+        NavigationError::EmptyPinSelection
         | NavigationError::InvalidHotkey
         | NavigationError::InvalidRadarRadius => ApiError::bad_request(error.to_string()),
         NavigationError::Db(error) => db_error(error),
