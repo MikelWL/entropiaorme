@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use eo_wire::normalizer::round_half_even;
 
 use crate::db::DbError;
+use crate::ped::Ped;
 use crate::session_summary::write_session_summary;
 use crate::tracking_models::{HarvestEvent, Kill};
 
@@ -209,6 +210,28 @@ impl TrackerActor {
                     },
                 ));
         }
+    }
+
+    /// Update already-persisted swings the guardrail's retro pass
+    /// re-stamped: tool identity and cost only, under one commit.
+    pub(super) async fn persist_harvest_restamps(&self, restamps: &[(String, String, Ped)]) {
+        let restamps = restamps.to_vec();
+        let result = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                for (id, tool_name, cost) in &restamps {
+                    tx.execute(
+                        "UPDATE harvest_events SET tool_name = ?, cost_ped = ? WHERE id = ?",
+                        rusqlite::params![tool_name, cost.value(), id],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await;
+        // Contained like the other persistence failures.
+        let _ = result;
     }
 
     /// Session-end margin on non-enhancer Shrapnel loot (1%, the

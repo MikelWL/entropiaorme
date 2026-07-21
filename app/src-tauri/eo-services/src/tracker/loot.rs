@@ -9,7 +9,7 @@ use crate::ped::Ped;
 use crate::tracking_models::{HarvestEvent, Kill};
 
 use super::actor::TrackerActor;
-use super::harvest::is_harvest_loot_group;
+use super::harvest::{is_harvest_loot_group, tree_size_for_group};
 use super::time::{instant_to_epoch, parse_timestamp_instant, python_total_seconds, resolve_local};
 use super::{GLOBAL_CORRELATION_WINDOW_SECONDS, LOOT_DEDUP_WINDOW_SECONDS};
 
@@ -29,7 +29,7 @@ impl TrackerActor {
         let BusEvent::LootGroup(group) = event else {
             return;
         };
-        let routed = {
+        let (routed, restamps) = {
             let Self {
                 session,
                 loot_blacklist,
@@ -98,6 +98,24 @@ impl TrackerActor {
                     &group.items,
                     now_epoch,
                 );
+                // Board evidence that leaves a mismatch standing has
+                // just contradicted the belief the preceding
+                // evidence-less swings were stamped from: re-stamp
+                // that contiguous run to the evidence tool.
+                let restamps = match &tool_name {
+                    Some(evidence_tool)
+                        if active.guardrail_mismatch.is_some()
+                            && tree_size_for_group(&group.items).is_some() =>
+                    {
+                        Self::restamp_preceding_no_evidence_swings(
+                            &mut active.session.harvests,
+                            evidence_tool,
+                            cost,
+                            now_epoch,
+                        )
+                    }
+                    _ => Vec::new(),
+                };
                 let harvest = HarvestEvent {
                     id: uuid::Uuid::new_v4().to_string(),
                     session_id: active.session.id.clone(),
@@ -109,7 +127,7 @@ impl TrackerActor {
                     loot_items: items,
                 };
                 active.session.harvests.push(harvest.clone());
-                RoutedLoot::Harvest(harvest)
+                (RoutedLoot::Harvest(harvest), restamps)
             } else {
                 // Snapshot the mob/tag stamp from the selection (the
                 // variant carries the source, so the stamp cannot drift
@@ -149,7 +167,7 @@ impl TrackerActor {
                 // Append the finalised kill to the session; the list tail
                 // doubles as the original's `_last_kill` alias.
                 active.session.kills.push(kill.clone());
-                RoutedLoot::Kill(kill)
+                (RoutedLoot::Kill(kill), Vec::new())
             }
         };
 
@@ -157,7 +175,12 @@ impl TrackerActor {
         // the live session ended with the block above.
         match routed {
             RoutedLoot::Kill(kill) => self.persist_kill(&kill).await,
-            RoutedLoot::Harvest(harvest) => self.persist_harvest(&harvest).await,
+            RoutedLoot::Harvest(harvest) => {
+                self.persist_harvest(&harvest).await;
+                if !restamps.is_empty() {
+                    self.persist_harvest_restamps(&restamps).await;
+                }
+            }
         }
     }
 

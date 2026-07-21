@@ -62,6 +62,12 @@ pub const LOOT_DEDUP_WINDOW_SECONDS: f64 = 2.0;
 /// at most this many seconds away.
 const GLOBAL_CORRELATION_WINDOW_SECONDS: f64 = 5.0;
 
+/// When board evidence sets a guardrail mismatch, immediately preceding
+/// evidence-less swings are re-stamped to the evidence tool as long as
+/// each chains to the next within this window (the same-tree swing
+/// cadence is 2-3 s; a gap past this is a different tree).
+const GUARDRAIL_RETRO_WINDOW_SECONDS: f64 = 30.0;
+
 /// The mob/tag command preconditions the original raises as
 /// `RuntimeError`/`ValueError`; the messages match verbatim so the
 /// command boundary surfaces identical text.

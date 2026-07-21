@@ -3108,6 +3108,148 @@ fn guardrail_with_no_tool_equipped_stamps_the_intended_tool() {
 }
 
 #[test]
+fn a_standing_mismatch_prices_evidence_less_swings_by_the_expected_tool() {
+    use crate::bus_events::{HarvestFailPayload, HarvestFailTag};
+
+    let rig = rig();
+    let tracker = rig.tracker(guardrail_providers());
+    rig.wait(tracker.start_session()).unwrap();
+
+    equip_harvest_tool(&rig, "Terratech PH-4 (L)", 0.875);
+    // Board evidence arms the mismatch (short tree, PH-1 expected).
+    rig.bus
+        .publish(&wood_group("2026-01-01T00:00:02", Some("Short Moonleaf Board")));
+    // While it stands, a fail and a shavings-only swing inherit PH-1.
+    rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+        kind: HarvestFailTag,
+        timestamp: "2026-01-01T00:00:04".into(),
+    }));
+    rig.bus.publish(&wood_group("2026-01-01T00:00:06", None));
+    // A hotbar press clears the mismatch; a later fail follows the
+    // fresh belief again.
+    equip_harvest_tool(&rig, "Terratech PH-4 (L)", 0.875);
+    rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+        kind: HarvestFailTag,
+        timestamp: "2026-01-01T00:00:08".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        let harvests = &active.session.harvests;
+        assert_eq!(harvests.len(), 4);
+        for harvest in &harvests[1..3] {
+            assert_eq!(
+                harvest.tool_name.as_deref(),
+                Some("Terratech PH-1 (L)"),
+                "evidence-less swings inherit the standing mismatch's tool"
+            );
+            assert_eq!(harvest.cost_ped, Ped(0.02));
+        }
+        assert_eq!(
+            harvests[3].tool_name.as_deref(),
+            Some("Terratech PH-4 (L)"),
+            "after the clearing press the belief stands again"
+        );
+        assert_eq!(harvests[3].cost_ped, Ped(0.875));
+    });
+}
+
+#[test]
+fn mismatch_setting_evidence_restamps_the_preceding_evidence_less_run() {
+    use crate::bus_events::{HarvestFailPayload, HarvestFailTag};
+
+    let rig = rig();
+    let tracker = rig.tracker(guardrail_providers());
+    rig.wait(tracker.start_session()).unwrap();
+
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+    // An agreeing long-tree run whose swings the belief was right
+    // about: its trailing fail must never be rewritten.
+    rig.bus
+        .publish(&wood_group("2026-01-01T00:00:02", Some("Moonleaf Board")));
+    rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+        kind: HarvestFailTag,
+        timestamp: "2026-01-01T00:00:05".into(),
+    }));
+    // The desynced short-tree run, past the chain window: a fail and a
+    // shavings-only swing before the first board drops, all still
+    // believed PH-3.
+    rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+        kind: HarvestFailTag,
+        timestamp: "2026-01-01T00:00:50".into(),
+    }));
+    rig.bus.publish(&wood_group("2026-01-01T00:00:52", None));
+    rig.bus
+        .publish(&wood_group("2026-01-01T00:00:54", Some("Short Moonleaf Board")));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        let harvests = &active.session.harvests;
+        assert_eq!(harvests.len(), 5);
+        assert_eq!(
+            harvests[1].tool_name.as_deref(),
+            Some("Terratech PH-3"),
+            "the fail beyond the chain window keeps its stamp"
+        );
+        assert_eq!(harvests[1].cost_ped, Ped(0.1));
+        for harvest in &harvests[2..5] {
+            assert_eq!(
+                harvest.tool_name.as_deref(),
+                Some("Terratech PH-1 (L)"),
+                "the contiguous run before the evidence is re-stamped"
+            );
+            assert_eq!(harvest.cost_ped, Ped(0.02));
+        }
+    });
+
+    // The re-stamp reached the persisted rows too.
+    let rows: Vec<(Option<String>, f64)> = rig
+        .wait(rig.db.with_reader(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT tool_name, cost_ped FROM harvest_events ORDER BY timestamp",
+            )?;
+            let mapped = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+        }))
+        .unwrap();
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[1], (Some("Terratech PH-3".into()), 0.1));
+    for row in &rows[2..5] {
+        assert_eq!(row, &(Some("Terratech PH-1 (L)".into()), 0.02));
+    }
+}
+
+#[test]
+fn agreeing_evidence_never_restamps_preceding_swings() {
+    use crate::bus_events::{HarvestFailPayload, HarvestFailTag};
+
+    let rig = rig();
+    let tracker = rig.tracker(guardrail_providers());
+    rig.wait(tracker.start_session()).unwrap();
+
+    // A genuine long-tree fail on PH-3, then a legitimate move to a
+    // short tree with a proper hotbar press: the agreeing short board
+    // clears nothing and rewrites nothing.
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+    rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+        kind: HarvestFailTag,
+        timestamp: "2026-01-01T00:00:02".into(),
+    }));
+    equip_harvest_tool(&rig, "Terratech PH-1 (L)", 0.02);
+    rig.bus
+        .publish(&wood_group("2026-01-01T00:00:05", Some("Short Moonleaf Board")));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        let harvests = &active.session.harvests;
+        assert_eq!(harvests.len(), 2);
+        assert_eq!(harvests[0].tool_name.as_deref(), Some("Terratech PH-3"));
+        assert_eq!(harvests[0].cost_ped, Ped(0.1));
+        assert!(active.guardrail_mismatch.is_none());
+    });
+}
+
+#[test]
 fn the_snapshot_carries_the_guardrail_mismatch_view() {
     let rig = rig();
     let tracker = rig.tracker(guardrail_providers());

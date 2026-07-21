@@ -134,6 +134,7 @@ impl TrackerActor {
             let Self {
                 session,
                 harvest_tool,
+                harvest_guardrail,
                 clock,
                 ..
             } = &mut *self;
@@ -143,7 +144,11 @@ impl TrackerActor {
             let now_epoch = parse_timestamp_instant(&payload.timestamp)
                 .map(instant_to_epoch)
                 .unwrap_or_else(|| instant_to_epoch(resolve_local(clock.now())));
-            let (tool_name, cost) = Self::harvest_swing_cost(active, harvest_tool.as_ref());
+            let (tool_name, cost) = Self::no_evidence_swing_cost(
+                active,
+                harvest_guardrail.as_ref(),
+                harvest_tool.as_ref(),
+            );
             active.dirty = true;
             let harvest = HarvestEvent {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -181,7 +186,7 @@ impl TrackerActor {
             .zip(tree_size_for_group(items))
             .and_then(|(tools, size)| tools.for_size(size).map(|tool| (size, tool)));
         let Some((size, tool)) = intended else {
-            return Self::harvest_swing_cost(active, harvest_tool);
+            return Self::no_evidence_swing_cost(active, guardrail, harvest_tool);
         };
         let observed = harvest_tool.map(|equipped| equipped.name.clone());
         if observed.as_deref() == Some(tool.name.as_str()) {
@@ -205,6 +210,59 @@ impl TrackerActor {
             });
         }
         (Some(tool.name.clone()), Ped(tool.cost_per_use_ped))
+    }
+
+    /// The retro pass: when board evidence has just set (or re-armed)
+    /// a mismatch, the contiguous run of evidence-less swings
+    /// immediately before it was almost surely the same desynced run,
+    /// so they are re-stamped to the evidence tool. The walk stops at
+    /// any board-bearing swing (its own evidence stands) and at a
+    /// chain gap past the retro window (a different tree). It never
+    /// runs on agreeing evidence, so swings the belief was right about
+    /// are never rewritten. Returns the rows whose persisted copies
+    /// need the same update.
+    pub(super) fn restamp_preceding_no_evidence_swings(
+        harvests: &mut [HarvestEvent],
+        evidence_tool: &str,
+        evidence_cost: Ped,
+        evidence_epoch: f64,
+    ) -> Vec<(String, String, Ped)> {
+        let mut restamps = Vec::new();
+        let mut chain_epoch = evidence_epoch;
+        for harvest in harvests.iter_mut().rev() {
+            if tree_size_for_group(&harvest.loot_items).is_some() {
+                break;
+            }
+            if chain_epoch - harvest.timestamp > super::GUARDRAIL_RETRO_WINDOW_SECONDS {
+                break;
+            }
+            chain_epoch = harvest.timestamp;
+            if harvest.tool_name.as_deref() == Some(evidence_tool) {
+                continue;
+            }
+            harvest.tool_name = Some(evidence_tool.to_string());
+            harvest.cost_ped = evidence_cost;
+            restamps.push((harvest.id.clone(), evidence_tool.to_string(), evidence_cost));
+        }
+        restamps
+    }
+
+    /// The tool for a swing with no board evidence: while a guardrail
+    /// mismatch stands the run is already indicted, so the swing
+    /// follows the mismatch's expected tool rather than the doubted
+    /// hotbar belief; otherwise the belief stands (including its
+    /// no-tool warning path).
+    pub(super) fn no_evidence_swing_cost(
+        active: &mut ActiveSession,
+        guardrail: Option<&HarvestGuardrailTools>,
+        harvest_tool: Option<&HarvestTool>,
+    ) -> (Option<String>, Ped) {
+        if let (Some(tools), Some(mismatch)) = (guardrail, active.guardrail_mismatch.as_ref()) {
+            if let Some(tool) = tools.for_size(mismatch.tree_size) {
+                return (Some(tool.name.clone()), Ped(tool.cost_per_use_ped));
+            }
+        }
+        Self::harvest_swing_cost(active, harvest_tool)
     }
 
     /// The swing's tool identity and cost: the equipped harvesting
