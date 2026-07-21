@@ -4,6 +4,7 @@
 pub const APP_COMMANDS: &[&str] = &[
     "analytics_activity",
     "analytics_overview",
+    "begin_navigation_area_selection",
     "capture_png",
     "character_activity_recommender",
     "character_calibration",
@@ -169,6 +170,7 @@ pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
 
 #[allow(dead_code)]
 pub const NAVIGATION_COMMANDS: &[&str] = &[
+    "begin_navigation_area_selection",
     "navigation_start",
     "maps_scan_coordinates",
     "navigation_snapshot",

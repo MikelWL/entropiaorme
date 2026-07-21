@@ -594,7 +594,7 @@ One persisted traversal over a planet and named map. A partial unique index
 | `start_lon`, `start_lat` | REAL | The route's fixed starting position. |
 | `current_lon`, `current_lat` | REAL | The most recently captured position. |
 | `last_position_at` | REAL | Optional Unix-epoch time of the latest manual, hotkey, or harvesting coordinate sample. |
-| `hop_count` | INTEGER | Not null; requested route length. |
+| `hop_count` | INTEGER | Not null; number of stops admitted to the route. |
 | `hotkey` | TEXT | Not null; the F6 through F12 position-update key selected for this run. |
 | `created_at`, `updated_at` | REAL | Unix-epoch seconds. |
 

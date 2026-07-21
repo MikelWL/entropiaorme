@@ -8,6 +8,7 @@
  */
 
 import {
+	beginNavigationAreaSelection,
 	endNavigation,
 	getNavigationSnapshot,
 	hideNavigationOverlays,
@@ -28,6 +29,11 @@ import {
 	cartographyScanFailureMessage,
 } from './cartographyOverlay.svelte';
 import { formatGamePoint, type GamePoint } from './coords';
+import {
+	acceptRouteAreaSelectionCancellation,
+	acceptRouteAreaSelectionResult,
+	resetRouteAreaSelection,
+} from './routeAreaSelection';
 
 function statusFeedback(status: NavigationPositionStatus): string {
 	switch (status) {
@@ -58,8 +64,11 @@ export function createNavigationHudController() {
 	let planet = $state<string | null>(null);
 	let mapViewId = $state<number | null>(null);
 	let start = $state<GamePoint | null>(null);
-	// Absent stop count charts every available pin; an explicit count stays capped.
-	let hops = $state<number | null>(null);
+	// Null selects every eligible tree; a confirmed map-area selection carries
+	// the exact pin allow-list previewed on the main map.
+	let selectedPinIds = $state<number[] | null>(null);
+	let selectionRequestId = $state<number | null>(null);
+	let nextSelectionRequestId = 0;
 	let hotkey = $state('f8');
 	// Location updates: manual (hotkey / Update button only) or automatic (poll
 	// the observe path every interval). Remembered across routes.
@@ -75,9 +84,7 @@ export function createNavigationHudController() {
 	const pendingHarvest = $derived(run?.pendingHarvest ?? null);
 	const cutCount = $derived(run?.stops.filter((stop) => stop.status === 'visited').length ?? 0);
 	const totalStops = $derived(run?.stops.length ?? 0);
-	const canStart = $derived(
-		!busy && start != null && planet != null && (hops == null || (hops >= 1 && hops <= 500)),
-	);
+	const canStart = $derived(!busy && start != null && planet != null);
 
 	// Transient in-strip acknowledgements (replacing the old bottom text): a
 	// badge in the distance slot for two seconds when a tree is resolved, and a
@@ -200,13 +207,59 @@ export function createNavigationHudController() {
 		}
 	}
 
+	async function chooseRouteArea() {
+		if (busy || !planet) return;
+		busy = true;
+		feedback = null;
+		const requestId = ++nextSelectionRequestId;
+		selectionRequestId = requestId;
+		try {
+			await beginNavigationAreaSelection(requestId, planet, mapViewId);
+			feedback = 'Open Maps to choose a route area.';
+		} catch (cause) {
+			selectionRequestId = null;
+			feedback = describeError(cause, 'The map selection could not be opened');
+		} finally {
+			busy = false;
+		}
+	}
+
+	function applyRouteAreaSelection(payload: unknown) {
+		const result = acceptRouteAreaSelectionResult(payload);
+		if (
+			!result ||
+			result.requestId !== selectionRequestId ||
+			result.planet !== planet ||
+			result.mapViewId !== mapViewId
+		) {
+			return;
+		}
+		selectedPinIds = result.pinIds;
+		selectionRequestId = null;
+		feedback = null;
+	}
+
+	function applyRouteAreaSelectionCancelled(payload: unknown) {
+		if (acceptRouteAreaSelectionCancellation(payload) === selectionRequestId) {
+			selectionRequestId = null;
+			feedback = null;
+		}
+	}
+
+	function useAllTrees() {
+		selectedPinIds = null;
+		resetRouteAreaSelection();
+	}
+
 	async function beginRoute() {
 		if (!canStart || !start || !planet) return;
 		busy = true;
 		feedback = null;
 		try {
-			run = await startNavigation(planet, mapViewId, start.lon, start.lat, hops, hotkey);
+			run = await startNavigation(planet, mapViewId, start.lon, start.lat, selectedPinIds, hotkey);
 			start = null;
+			selectedPinIds = null;
+			resetRouteAreaSelection();
 			// The main surface repositions the HUD and radar around the live route.
 		} catch (cause) {
 			feedback = describeError(cause, 'The route could not be created');
@@ -373,11 +426,8 @@ export function createNavigationHudController() {
 		set updateIntervalSec(value: number) {
 			updateIntervalSec = value;
 		},
-		get hops() {
-			return hops;
-		},
-		set hops(value: number | null) {
-			hops = value;
+		get selectedTreeCount() {
+			return selectedPinIds?.length ?? null;
 		},
 		get hotkey() {
 			return hotkey;
@@ -392,6 +442,10 @@ export function createNavigationHudController() {
 		persistInterval,
 		autoUpdateTick,
 		captureStart,
+		chooseRouteArea,
+		applyRouteAreaSelection,
+		applyRouteAreaSelectionCancelled,
+		useAllTrees,
 		beginRoute,
 		closeOverlay,
 		updatePosition,

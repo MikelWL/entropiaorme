@@ -146,6 +146,37 @@ fn hide_navigation_overlays(app: tauri::AppHandle) {
     }
 }
 
+/// Hand route-area selection from the floating HUD to the main Maps surface.
+/// Window orchestration stays in the shell; the event carries only transient
+/// UI context and does not enter the domain-event spine.
+#[tauri::command(rename_all = "snake_case")]
+fn begin_navigation_area_selection(
+    app: tauri::AppHandle,
+    request_id: u32,
+    planet: String,
+    map_view_id: Option<i64>,
+) -> Result<(), String> {
+    let planet = planet.trim();
+    if request_id == 0 || planet.is_empty() || planet.len() > 80 {
+        return Err("invalid route-area selection request".into());
+    }
+    app.emit_to(
+        "main",
+        "navigation-area-selection-requested",
+        serde_json::json!({
+            "requestId": request_id,
+            "planet": planet,
+            "mapViewId": map_view_id,
+        }),
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn show_scan_overlay(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("scan-overlay") {
@@ -426,6 +457,7 @@ pub fn run() {
             commands::radar_geometry,
             show_navigation_overlays,
             hide_navigation_overlays,
+            begin_navigation_area_selection,
             updater::check_for_update,
             updater::download_update,
             updater::install_update,
@@ -997,5 +1029,41 @@ mod tests {
         );
         assert!(!crate::command_acl::CARTOGRAPHY_COMMANDS.contains(&"map_pin_delete"));
         assert!(!crate::command_acl::CARTOGRAPHY_COMMANDS.contains(&"settings_update"));
+    }
+
+    #[test]
+    fn the_navigation_hud_keeps_a_narrow_selection_and_route_capability() {
+        let capability = include_str!("../capabilities/navigation-overlay.json");
+        assert!(capability.contains("\"windows\": [\"navigation-hud\"]"));
+        assert!(capability.contains("navigation-commands"));
+        assert!(capability.contains("core:event:allow-emit"));
+        for forbidden in [
+            "trusted-commands",
+            "shell:allow-open",
+            "core:window:allow-create",
+            "core:webview:allow-create-webview-window",
+            "store:allow-set",
+        ] {
+            assert!(
+                !capability.contains(forbidden),
+                "the navigation capability must not grant {forbidden}: {capability}"
+            );
+        }
+        assert_eq!(
+            crate::command_acl::NAVIGATION_COMMANDS,
+            [
+                "begin_navigation_area_selection",
+                "navigation_start",
+                "maps_scan_coordinates",
+                "navigation_snapshot",
+                "navigation_update_position",
+                "navigation_mark_visited",
+                "navigation_skip",
+                "navigation_resolve_harvest",
+                "navigation_undo",
+                "navigation_end",
+                "hide_navigation_overlays",
+            ]
+        );
     }
 }

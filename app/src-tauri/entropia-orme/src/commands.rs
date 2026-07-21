@@ -1131,11 +1131,18 @@ pub async fn navigation_start(
     map_view_id: Option<i64>,
     start_lon: f64,
     start_lat: f64,
-    hop_count: Option<i64>,
+    selected_pin_ids: Option<Vec<i64>>,
     hotkey: String,
 ) -> Result<NavigationRun, ApiError> {
     facade(&app)?
-        .navigation_start(planet, map_view_id, start_lon, start_lat, hop_count, hotkey)
+        .navigation_start(
+            planet,
+            map_view_id,
+            start_lon,
+            start_lat,
+            selected_pin_ids,
+            hotkey,
+        )
         .await
 }
 
@@ -1371,6 +1378,7 @@ mod tests {
             "hide_scan_overlay",
             "show_navigation_overlays",
             "hide_navigation_overlays",
+            "begin_navigation_area_selection",
             "capture_png",
             "planet_map_image",
             "check_for_update",

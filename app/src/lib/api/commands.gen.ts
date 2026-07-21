@@ -2693,8 +2693,8 @@ export async function navigationSnapshot(): Promise<NavigationRun | null> {
 	return invokeCommand('navigation_snapshot', {});
 }
 
-export async function navigationStart(planet: string, mapViewId: number | null, startLon: number, startLat: number, hopCount: number | null, hotkey: string): Promise<NavigationRun> {
-	return invokeCommand('navigation_start', { planet, map_view_id: mapViewId, start_lon: startLon, start_lat: startLat, hop_count: hopCount, hotkey });
+export async function navigationStart(planet: string, mapViewId: number | null, startLon: number, startLat: number, selectedPinIds: number[] | null, hotkey: string): Promise<NavigationRun> {
+	return invokeCommand('navigation_start', { planet, map_view_id: mapViewId, start_lon: startLon, start_lat: startLat, selected_pin_ids: selectedPinIds, hotkey });
 }
 
 export async function navigationUpdatePosition(): Promise<NavigationPositionResult> {

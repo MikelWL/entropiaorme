@@ -1,10 +1,5 @@
 <script lang="ts">
-	/**
-	 * The maps route shell: planet selection over the bundled catalogue,
-	 * the pan/zoom viewer, and the pin lifecycle (drop by map click,
-	 * edit, delete, copy waypoint). Data and CRUD live in the maps
-	 * feature model; geometry lives in the feature's pure modules.
-	 */
+	/** Thin Maps shell over the feature model, controllers and pan/zoom viewer. */
 	import { onMount } from 'svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import CalibrationModal from '$lib/features/maps/CalibrationModal.svelte';
@@ -16,6 +11,7 @@
 	import PinEditModal from '$lib/features/maps/PinEditModal.svelte';
 	import { createMapsModel } from '$lib/features/maps/mapsModel.svelte';
 	import { createMapsController } from '$lib/features/maps/mapsController.svelte';
+	import { createMapAreaSelectionController } from '$lib/features/maps/mapPinSelectionController.svelte';
 	import type { GamePoint } from '$lib/features/maps/coords';
 	import type { MapFocusRequest } from '$lib/features/maps/mapTools';
 	import type { MapView, NavigationRun } from '$lib/api';
@@ -37,6 +33,7 @@
 
 	const model = createMapsModel();
 	const controller = createMapsController(model);
+	const areaSelection = createMapAreaSelectionController(model, controller.flash);
 	let navigation = $state<NavigationRun | null>(null);
 
 	const selectedMapName = $derived(
@@ -47,6 +44,7 @@
 
 	onMount(() => {
 		const stopMapsSync = startMapsCartographySync(model);
+		const stopRouteAreaSelection = areaSelection.mount();
 		// A listen() promise can resolve after the component has already
 		// unmounted (rapid navigation away); stop the listener immediately in
 		// that case rather than storing a handle the cleanup has already passed.
@@ -88,6 +86,7 @@
 		return () => {
 			mounted = false;
 			stopMapsSync();
+			stopRouteAreaSelection();
 			unlisten?.();
 			unlistenContextRequest?.();
 		};
@@ -153,10 +152,12 @@
 	async function selectPlanet(name: string) {
 		focusRequest = null;
 		await model.selectPlanet(name);
+		areaSelection.reconcileContext();
 	}
 
 	async function selectView(id: number | null) {
 		await model.selectView(id);
+		areaSelection.reconcileContext();
 	}
 
 	async function addView(): Promise<MapView | null> {
@@ -212,11 +213,13 @@
 		{#if model.planets.length > 0}
 			<MapControls
 				pins={model.pins}
+				disabled={areaSelection.active}
 				ontoggleoverlay={() => void toggleOverlay()}
 				onconfigure={() => (overlayConfigOpen = true)}
 				oncalibrate={() => (calibrationOpen = true)}
 				onselectpin={(pin) => focusMap({ lon: pin.lon, lat: pin.lat })}
 				onroute={() => void openRouteSetup()}
+				onselectpins={areaSelection.beginPinSelection}
 				onradarcalibrate={() => (radarCalibrationOpen = true)}
 			/>
 		{/if}
@@ -245,6 +248,14 @@
 				selectedViewId={model.selectedViewId}
 				{focusRequest}
 				{navigation}
+				selectionMode={areaSelection.mode}
+				selectionRegions={areaSelection.regions}
+				onselectionregionschange={areaSelection.setRegions}
+				onselectionclear={areaSelection.clearRegions}
+				onselectioncancel={areaSelection.cancel}
+				onselectionconfirm={areaSelection.confirmRoute}
+				onselectiondelete={areaSelection.deletePins}
+				onselectioncooldown={areaSelection.cooldownPins}
 				onmapclick={controller.openDropForm}
 				oncopywaypoint={controller.copyWaypoint}
 				oneditpin={controller.openEditForm}

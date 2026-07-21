@@ -8,6 +8,7 @@ describe('MapControls', () => {
 	it('keeps the overlay primary and reveals pin search through setup', async () => {
 		const ontoggleoverlay = vi.fn();
 		const onconfigure = vi.fn();
+		const onselectpins = vi.fn();
 		render(MapControls, {
 			props: {
 				pins: [],
@@ -15,6 +16,7 @@ describe('MapControls', () => {
 				onconfigure,
 				oncalibrate: vi.fn(),
 				onroute: vi.fn(),
+				onselectpins,
 				onradarcalibrate: vi.fn(),
 				onselectpin: vi.fn(),
 			},
@@ -24,6 +26,8 @@ describe('MapControls', () => {
 		expect(screen.queryByRole('combobox', { name: 'Search pins' })).toBeNull();
 		await fireEvent.click(screen.getByRole('button', { name: 'Pin overlay' }));
 		expect(ontoggleoverlay).toHaveBeenCalledOnce();
+		await fireEvent.click(screen.getByRole('button', { name: 'Select pins' }));
+		expect(onselectpins).toHaveBeenCalledOnce();
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Setup' }));
 		await fireEvent.click(screen.getByRole('menuitem', { name: 'Search pins' }));

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { fireEvent, render, screen } from '@testing-library/svelte';
+import type { ComponentProps } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 import type { MapPin, PlanetMap } from '$lib/api';
 import MapViewer from './MapViewer.svelte';
@@ -45,8 +46,13 @@ const pin: MapPin = {
 	specialKind: null,
 };
 
-function setup() {
+function setup(overrides: Partial<ComponentProps<typeof MapViewer>> = {}) {
 	const onmapclick = vi.fn();
+	const onselectioncancel = vi.fn();
+	const onselectionclear = vi.fn();
+	const onselectionregionschange = vi.fn();
+	const onselectiondelete = vi.fn();
+	const onselectioncooldown = vi.fn();
 	render(MapViewer, {
 		props: {
 			planet,
@@ -65,9 +71,22 @@ function setup() {
 			onaddview: vi.fn().mockResolvedValue(null),
 			onrenameview: vi.fn().mockResolvedValue(true),
 			ondeleteview: vi.fn().mockResolvedValue(true),
+			onselectioncancel,
+			onselectionclear,
+			onselectionregionschange,
+			onselectiondelete,
+			onselectioncooldown,
+			...overrides,
 		},
 	});
-	return { onmapclick };
+	return {
+		onmapclick,
+		onselectioncancel,
+		onselectionclear,
+		onselectionregionschange,
+		onselectiondelete,
+		onselectioncooldown,
+	};
 }
 
 describe('MapViewer scalable interaction surface', () => {
@@ -106,5 +125,53 @@ describe('MapViewer scalable interaction surface', () => {
 
 		await fireEvent.click(badge);
 		expect(screen.queryByRole('dialog', { name: 'Map asset attribution' })).toBeNull();
+	});
+
+	it('presents an action-first route-area selection state', async () => {
+		const tree = { ...pin, kind: 'tree', category: 'special', specialKind: 'tree' };
+		const { onselectioncancel, onselectionclear } = setup({
+			pins: [tree],
+			selectionMode: 'route',
+			selectionRegions: [{ left: 0, top: 0, right: 4608, bottom: 4608 }],
+		});
+
+		expect(screen.getByRole('dialog', { name: 'Choose route area' })).toBeTruthy();
+		expect(screen.getByText('1 eligible tree selected')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Use 1 tree' })).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+		expect(onselectionclear).toHaveBeenCalledOnce();
+		expect(onselectioncancel).toHaveBeenCalledOnce();
+	});
+
+	it('adds areas by default and exposes a direct control to remove each one', async () => {
+		const regions = [
+			{ left: 0, top: 0, right: 100, bottom: 100 },
+			{ left: 200, top: 200, right: 300, bottom: 300 },
+		];
+		const { onselectionregionschange } = setup({
+			selectionMode: 'route',
+			selectionRegions: regions,
+		});
+
+		expect(screen.getByText(/Drag to add areas/)).toBeTruthy();
+		expect(screen.queryByText(/Ctrl/)).toBeNull();
+		await fireEvent.click(screen.getByRole('button', { name: 'Remove selected area 1' }));
+		expect(onselectionregionschange).toHaveBeenCalledWith([regions[1]]);
+	});
+
+	it('offers bulk deletion for all selected pins and cooldown only for trees', async () => {
+		const tree = { ...pin, id: 2, kind: 'tree', category: 'special', specialKind: 'tree' };
+		const { onselectiondelete, onselectioncooldown } = setup({
+			pins: [pin, tree],
+			selectionMode: 'pins',
+			selectionRegions: [{ left: 0, top: 0, right: 4608, bottom: 4608 }],
+		});
+
+		expect(screen.getByRole('dialog', { name: 'Select map pins' })).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: 'Delete 2 pins' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Cooldown 1 tree' }));
+		expect(onselectiondelete).toHaveBeenCalledWith([1, 2]);
+		expect(onselectioncooldown).toHaveBeenCalledWith([2]);
 	});
 });

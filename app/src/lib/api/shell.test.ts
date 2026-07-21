@@ -23,12 +23,24 @@ describe('window commands', () => {
 	it.each([
 		['toggleOverlay', 'toggle_overlay'],
 		['toggleCartographyOverlay', 'toggle_cartography_overlay'],
+		['showNavigationOverlays', 'show_navigation_overlays'],
+		['hideNavigationOverlays', 'hide_navigation_overlays'],
 		['showScanOverlay', 'show_scan_overlay'],
 		['hideScanOverlay', 'hide_scan_overlay'],
 	] as const)('%s invokes %s with no arguments', async (fn, command) => {
 		const shell = await loadModule();
 		await shell[fn]();
 		expect(invokeMock).toHaveBeenCalledWith(command);
+	});
+
+	it('hands route-area selection to the main Maps window with typed context', async () => {
+		const { beginNavigationAreaSelection } = await loadModule();
+		await beginNavigationAreaSelection(4, 'Calypso', 9);
+		expect(invokeMock).toHaveBeenCalledWith('begin_navigation_area_selection', {
+			request_id: 4,
+			planet: 'Calypso',
+			map_view_id: 9,
+		});
 	});
 });
 

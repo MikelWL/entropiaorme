@@ -31,6 +31,19 @@ export async function hideNavigationOverlays(): Promise<void> {
 	await invoke('hide_navigation_overlays');
 }
 
+/** Transfer route-area selection from the floating HUD to the main Maps window. */
+export async function beginNavigationAreaSelection(
+	requestId: number,
+	planet: string,
+	mapViewId: number | null,
+): Promise<void> {
+	await invoke('begin_navigation_area_selection', {
+		request_id: requestId,
+		planet,
+		map_view_id: mapViewId,
+	});
+}
+
 /** Show and focus the pre-spawned scan overlay window. */
 export async function showScanOverlay(): Promise<void> {
 	await invoke('show_scan_overlay');

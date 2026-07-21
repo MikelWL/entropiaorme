@@ -7,6 +7,10 @@
 	import { pinGlyph } from '$lib/features/maps/pinIcons';
 	import { CARTOGRAPHY_OVERLAY_CHANGED_EVENT } from '$lib/features/maps/cartographyOverlay.svelte';
 	import { createNavigationHudController } from '$lib/features/maps/navigationHudController.svelte';
+	import {
+		ROUTE_AREA_SELECTION_CANCELLED_EVENT,
+		ROUTE_AREA_SELECTION_RESULT_EVENT,
+	} from '$lib/features/maps/routeAreaSelection';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 
 	const NAVIGATION_HOTKEYS = ['f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'];
@@ -18,11 +22,19 @@
 	onMount(() => {
 		let unlisten: (() => void) | undefined;
 		let unlistenContext: (() => void) | undefined;
+		let unlistenAreaResult: (() => void) | undefined;
+		let unlistenAreaCancelled: (() => void) | undefined;
 		void c.hydrate();
 		void c.loadPrefs();
 		void listen('navigation:updated', c.hydrate).then((stop) => (unlisten = stop));
 		void listen(CARTOGRAPHY_OVERLAY_CHANGED_EVENT, (event) => c.applyContext(event.payload)).then(
 			(stop) => (unlistenContext = stop),
+		);
+		void listen(ROUTE_AREA_SELECTION_RESULT_EVENT, (event) => c.applyRouteAreaSelection(event.payload)).then(
+			(stop) => (unlistenAreaResult = stop),
+		);
+		void listen(ROUTE_AREA_SELECTION_CANCELLED_EVENT, (event) => c.applyRouteAreaSelectionCancelled(event.payload)).then(
+			(stop) => (unlistenAreaCancelled = stop),
 		);
 		sizeSync.schedule();
 		const observer = new ResizeObserver(() => sizeSync.schedule());
@@ -30,6 +42,8 @@
 		return () => {
 			unlisten?.();
 			unlistenContext?.();
+			unlistenAreaResult?.();
+			unlistenAreaCancelled?.();
 			observer.disconnect();
 			sizeSync.cancel();
 			c.dispose();
@@ -138,10 +152,19 @@
 				<button class="hud-btn primary w-full" disabled={c.busy} onclick={c.captureStart}>
 					{c.start ? 'Capture again' : 'Capture current position'}
 				</button>
-				<label class="block">
-					<span class="mb-0.5 block text-[9px] uppercase tracking-wider text-white/35">Stops (blank = all pins)</span>
-					<input class="hud-field w-full" type="number" min="1" max="500" placeholder="All pins" bind:value={c.hops} />
-				</label>
+				<div>
+					<span class="mb-0.5 block text-[9px] uppercase tracking-wider text-white/35">Route trees</span>
+					{#if c.selectedTreeCount == null}
+						<p class="mb-1.5 text-[11px] text-white/70">All eligible trees</p>
+						<button class="hud-btn w-full" disabled={c.busy} onclick={c.chooseRouteArea}>Select map area</button>
+					{:else}
+						<p class="mb-1.5 text-[11px] text-sky-300">{c.selectedTreeCount} {c.selectedTreeCount === 1 ? 'tree' : 'trees'} selected</p>
+						<div class="grid grid-cols-2 gap-1.5">
+							<button class="hud-btn" disabled={c.busy} onclick={c.chooseRouteArea}>Edit area</button>
+							<button class="hud-btn" disabled={c.busy} onclick={c.useAllTrees}>Use all trees</button>
+						</div>
+					{/if}
+				</div>
 				<label class="block">
 					<span class="mb-0.5 block text-[9px] uppercase tracking-wider text-white/35">Update hotkey</span>
 					<select class="hud-field w-full" bind:value={c.hotkey} aria-label="Navigation update hotkey">

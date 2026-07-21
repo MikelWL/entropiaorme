@@ -11,7 +11,9 @@
 		oncalibrate,
 		onselectpin,
 		onroute,
+		onselectpins,
 		onradarcalibrate,
+		disabled = false,
 	}: {
 		pins: MapPin[];
 		ontoggleoverlay: () => void;
@@ -19,7 +21,9 @@
 		oncalibrate: () => void;
 		onselectpin: (pin: MapPin) => void;
 		onroute: () => void;
+		onselectpins: () => void;
 		onradarcalibrate: () => void;
+		disabled?: boolean;
 	} = $props();
 	let searchOpen = $state(false);
 
@@ -35,11 +39,12 @@
 </script>
 
 <div class="relative flex shrink-0 items-center gap-1">
-	<Button size="sm" onclick={ontoggleoverlay}>Pin overlay</Button>
-	<Button size="sm" variant="secondary" onclick={onroute}>Route</Button>
+	<Button size="sm" {disabled} onclick={ontoggleoverlay}>Pin overlay</Button>
+	<Button size="sm" variant="secondary" {disabled} onclick={onroute}>Route</Button>
+	<Button size="sm" variant="secondary" {disabled} onclick={onselectpins}>Select pins</Button>
 	<Menu ariaLabel="Map setup" items={setupItems}>
 		{#snippet trigger({ open, toggle })}
-			<Button size="sm" variant="ghost" aria-haspopup="menu" aria-expanded={open} onclick={toggle}>Setup</Button>
+			<Button size="sm" variant="ghost" {disabled} aria-haspopup="menu" aria-expanded={open} onclick={toggle}>Setup</Button>
 		{/snippet}
 	</Menu>
 
