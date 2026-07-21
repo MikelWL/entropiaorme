@@ -9,6 +9,7 @@
 - [Event taxonomy](architecture/event-taxonomy.md)
 - [OCR pipeline](architecture/ocr-pipeline.md)
 - [Database schema reference](architecture/database-schema.md)
+- [Market data pipeline](architecture/market-data.md)
 
 # Decision records
 
@@ -36,3 +37,5 @@
   - [ADR-0021: A synchronous database core](adr/0021-synchronous-database-core.md)
   - [ADR-0022: Runes-native shared state](adr/0022-runes-native-shared-state.md)
   - [ADR-0023: The Linux platform layer](adr/0023-linux-platform-layer.md)
+  - [ADR-0024: Estimated market data as a quarantined informational layer](adr/0024-market-informational-layer.md)
+  - [ADR-0025: A central market-data service on AWS serverless](adr/0025-central-market-data-service.md)
