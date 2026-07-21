@@ -147,6 +147,10 @@ async fn the_ledger_page_carries_the_next_cursor_when_more_remain() {
     // yields every entry once, newest first.
     let first = api.ledger_list(None, Some(2)).await.unwrap();
     assert_eq!(first.entries.len(), 2);
+    assert_eq!(
+        first.total, 3,
+        "the count spans the whole table, not the page"
+    );
     let cursor = first.next_cursor.0.clone().expect("a further page");
     let second = api.ledger_list(Some(cursor), Some(2)).await.unwrap();
     assert_eq!(second.entries.len(), 1);
@@ -159,6 +163,44 @@ async fn the_ledger_page_carries_the_next_cursor_when_more_remain() {
         .map(|e| e.description.as_str())
         .collect();
     assert_eq!(seen, ["e03", "e02", "e01"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_ledger_summary_counts_every_entry_beyond_the_page_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = analytics_api(dir.path()).await;
+
+    // Five entries across two types and three tags, then a page smaller
+    // than the table: the summary must aggregate the WHOLE ledger, not the
+    // loaded page window.
+    let entries = [
+        ("2026-05-01", "expense", "ammo", 10.0),
+        ("2026-05-02", "expense", "ammo", 5.0),
+        ("2026-05-03", "expense", "equipment", 100.0),
+        ("2026-05-04", "markup", "item_sale", 40.0),
+        ("2026-05-05", "markup", "quest_reward", 2.5),
+    ];
+    for (date, kind, tag, amount) in entries {
+        api.ledger_create(LedgerEntryInput {
+            date: date.to_string(),
+            kind: kind.to_string(),
+            description: format!("{tag} {date}"),
+            amount,
+            tag: tag.to_string(),
+        })
+        .await
+        .unwrap();
+    }
+    let page = api.ledger_list(None, Some(2)).await.unwrap();
+    assert_eq!(page.entries.len(), 2, "the page window is a slice");
+
+    let summary = api.ledger_summary("all").await.unwrap();
+    assert_eq!(summary.losses.get("ammo"), Some(&15.0));
+    assert_eq!(summary.losses.get("equipment"), Some(&100.0));
+    assert_eq!(summary.gains.get("item_sale"), Some(&40.0));
+    assert_eq!(summary.gains.get("quest_reward"), Some(&2.5));
+    assert_eq!(summary.losses.len(), 2);
+    assert_eq!(summary.gains.len(), 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

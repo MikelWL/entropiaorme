@@ -5,8 +5,9 @@
  * state.
  *
  * Paging is two-layered by design: the server side stays keyset (an opaque
- * cursor grows the loaded window via "load more"), while the client-side
- * pager over the loaded window is the shared table model.
+ * cursor grows the loaded window on demand as the pager steps past it),
+ * while the client-side pager over the loaded window is the shared table
+ * model; the server's whole-table count gives the pager its true bounds.
  */
 
 import {
@@ -18,6 +19,7 @@ import {
 	getInventoryItems,
 	getLedgerEntries,
 	getLedgerPresets,
+	getLedgerSummary,
 } from '$lib/api';
 import type {
 	InventoryItem,
@@ -33,11 +35,11 @@ export const PAGE_SIZE = 5;
 
 export const netRanges = ['All Time', '30d', '90d', '1y'] as const;
 export type NetRange = (typeof netRanges)[number];
-const netRangeDays: Record<NetRange, number | null> = {
-	'All Time': null,
-	'30d': 30,
-	'90d': 90,
-	'1y': 365,
+const netRangePeriods: Record<NetRange, string> = {
+	'All Time': 'all',
+	'30d': '30d',
+	'90d': '90d',
+	'1y': '1y',
 };
 
 export const tagLabels: Record<string, string> = {
@@ -53,7 +55,29 @@ export const tagLabels: Record<string, string> = {
 export function createLedgerModel() {
 	let netRange = $state<NetRange>('All Time');
 
+	// The whole-ledger per-tag summary for the selected range, served by
+	// the backend independently of the paginated entry list: the loaded
+	// page window is a viewing slice, never the aggregate's source.
+	let summaryGains = $state<Record<string, number>>({});
+	let summaryLosses = $state<Record<string, number>>({});
+	// A guide-mode synthetic sale folded into the summary getters locally
+	// (the demo entry never reaches the backend ledger).
+	let demoSaleOverlay = $state<{ tag: string; gain: number } | null>(null);
+
+	async function loadSummary() {
+		try {
+			const summary = await getLedgerSummary(netRangePeriods[netRange]);
+			summaryGains = summary.gains;
+			summaryLosses = summary.losses;
+		} catch (e) {
+			error = describeError(e, 'Failed to load ledger summary');
+		}
+	}
+
 	let entries = $state<LedgerEntry[]>([]);
+	// The whole-ledger row count from the server, so the pager reports
+	// true bounds rather than the loaded window's size.
+	let total = $state(0);
 	let presets = $state<LedgerPreset[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -119,9 +143,14 @@ export function createLedgerModel() {
 		loading = true;
 		error = null;
 		try {
-			const [entryPage, presetRows] = await Promise.all([getLedgerEntries(), getLedgerPresets()]);
+			const [entryPage, presetRows] = await Promise.all([
+				getLedgerEntries(),
+				getLedgerPresets(),
+				loadSummary(),
+			]);
 			entries = entryPage.items;
 			nextCursor = entryPage.nextCursor;
+			total = entryPage.total;
 			presets = presetRows;
 		} catch (e) {
 			error = describeError(e, 'Failed to load ledger');
@@ -141,11 +170,27 @@ export function createLedgerModel() {
 			const page = await getLedgerEntries(nextCursor);
 			entries = [...entries, ...page.items];
 			nextCursor = page.nextCursor;
+			total = page.total;
 		} catch (e) {
 			error = describeError(e, 'Failed to load more entries');
 		} finally {
 			loadingMore = false;
 		}
+	}
+
+	// Pager bounds from the server total: the client pages the loaded
+	// window, and stepping past it fetches the next keyset page on demand.
+	const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)));
+
+	async function nextPage() {
+		const nextStart = (table.page + 1) * PAGE_SIZE;
+		if (nextStart >= total) return;
+		if (nextStart >= entries.length && nextCursor) await loadMoreEntries();
+		if (nextStart < entries.length) table.page++;
+	}
+
+	function prevPage() {
+		if (table.page > 0) table.page--;
 	}
 
 	async function addEntry() {
@@ -162,11 +207,13 @@ export function createLedgerModel() {
 				tag,
 			});
 			entries = [newEntry, ...entries];
+			total += 1;
 			entryDescription = '';
 			entryAmount = 0;
 			entryTag = '';
 			table.page = 0;
 			showAddModal = false;
+			void loadSummary();
 		} catch (e) {
 			error = describeError(e, 'Failed to add entry');
 		}
@@ -187,6 +234,8 @@ export function createLedgerModel() {
 		try {
 			await deleteLedgerEntry(id);
 			entries = entries.filter((e) => e.id !== id);
+			total = Math.max(0, total - 1);
+			void loadSummary();
 		} catch (e) {
 			error = describeError(e, 'Failed to delete entry');
 		}
@@ -238,48 +287,32 @@ export function createLedgerModel() {
 				tag: preset.tag,
 			});
 			entries = [newEntry, ...entries];
+			total += 1;
 			table.page = 0;
 			showAddModal = false;
+			void loadSummary();
 		} catch (e) {
 			error = describeError(e, 'Failed to add entry');
 		}
 	}
 
-	// Computed summaries (filtered by netRange; affects only the Net card)
-	const netRangeEntries = $derived.by(() => {
-		const days = netRangeDays[netRange];
-		if (days === null) return entries;
-		const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-		return entries.filter((e) => new Date(e.date).getTime() >= cutoff);
-	});
-
-	const expenseTags = $derived.by(() => {
-		const tags: Record<string, number> = {};
-		netRangeEntries
-			.filter((e) => e.type === 'expense')
-			.forEach((e) => {
-				tags[e.tag] = (tags[e.tag] || 0) + e.amount;
-			});
-		return Object.entries(tags).map(([tag, total]) => ({ tag, total }));
-	});
+	// Computed summaries (the netRange-scoped server aggregate; the demo
+	// overlay folds a guide-mode synthetic sale in locally).
+	const expenseTags = $derived(
+		Object.entries(summaryLosses).map(([tag, total]) => ({ tag, total })),
+	);
 
 	const markupTags = $derived.by(() => {
-		const tags: Record<string, number> = {};
-		netRangeEntries
-			.filter((e) => e.type === 'markup')
-			.forEach((e) => {
-				tags[e.tag] = (tags[e.tag] || 0) + e.amount;
-			});
+		const tags: Record<string, number> = { ...summaryGains };
+		if (demoSaleOverlay) {
+			tags[demoSaleOverlay.tag] = (tags[demoSaleOverlay.tag] || 0) + demoSaleOverlay.gain;
+		}
 		return Object.entries(tags).map(([tag, total]) => ({ tag, total }));
 	});
 
-	const totalExpenses = $derived(
-		netRangeEntries.filter((e) => e.type === 'expense').reduce((sum, e) => sum + e.amount, 0),
-	);
+	const totalExpenses = $derived(expenseTags.reduce((sum, { total }) => sum + total, 0));
 
-	const totalMarkup = $derived(
-		netRangeEntries.filter((e) => e.type === 'markup').reduce((sum, e) => sum + e.amount, 0),
-	);
+	const totalMarkup = $derived(markupTags.reduce((sum, { total }) => sum + total, 0));
 
 	const netLedger = $derived(totalMarkup - totalExpenses);
 
@@ -342,6 +375,12 @@ export function createLedgerModel() {
 
 	function handleInventorySold(result: InventorySellResult) {
 		inventoryItems = inventoryItems.filter((i) => i.id !== result.soldItem.id);
+		if (result.ledgerEntry) {
+			entries = [result.ledgerEntry, ...entries];
+			total += 1;
+			table.page = 0;
+			void loadSummary();
+		}
 		inventorySellTarget = null;
 		inventorySellPrefilledPrice = null;
 	}
@@ -376,12 +415,16 @@ export function createLedgerModel() {
 			amount: gain,
 			tag: 'inventory_sale',
 		};
+		if (!entries.some((e) => e.id === syntheticEntry.id)) total += 1;
 		entries = [syntheticEntry, ...entries.filter((e) => e.id !== syntheticEntry.id)];
+		demoSaleOverlay = { tag: 'inventory_sale', gain };
 		table.page = 0;
 	}
 
 	function clearDemoSaleEntry() {
+		if (entries.some((e) => e.id === 'demo-inventory-sale')) total = Math.max(0, total - 1);
 		entries = entries.filter((e) => e.id !== 'demo-inventory-sale');
+		demoSaleOverlay = null;
 	}
 
 	return {
@@ -392,6 +435,7 @@ export function createLedgerModel() {
 		},
 		set netRange(value: NetRange) {
 			netRange = value;
+			void loadSummary();
 		},
 		get entries() {
 			return entries;
@@ -413,6 +457,12 @@ export function createLedgerModel() {
 		},
 		get loadingMore() {
 			return loadingMore;
+		},
+		get total() {
+			return total;
+		},
+		get totalPages() {
+			return totalPages;
 		},
 
 		// Entry form
@@ -564,6 +614,8 @@ export function createLedgerModel() {
 
 		loadAll,
 		loadMoreEntries,
+		nextPage,
+		prevPage,
 		addEntry,
 		applyTagSuggestion,
 		applyPresetTagSuggestion,

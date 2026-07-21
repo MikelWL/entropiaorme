@@ -154,26 +154,26 @@
 			</table>
 		</div>
 
-		{#if table.totalPages > 1}
+		{#if model.totalPages > 1}
 			<div class="flex items-center justify-between px-2">
 				<span class="text-xs text-text-tertiary tabular-nums">
-					Showing {table.page * PAGE_SIZE + 1}{'\u2013'}{Math.min((table.page + 1) * PAGE_SIZE, model.sessions.length)} of {model.sessions.length}
+					Showing {table.page * PAGE_SIZE + 1}{'\u2013'}{Math.min((table.page + 1) * PAGE_SIZE, model.total)} of {model.total}
 				</span>
 				<div class="flex items-center gap-2">
 					<Button
 						size="sm"
 						variant="ghost"
 						disabled={table.page === 0}
-						onclick={() => table.page--}
+						onclick={() => model.prevPage()}
 					>
 						Previous
 					</Button>
-					<span class="text-xs font-medium px-2">{table.page + 1} / {table.totalPages}</span>
+					<span class="text-xs font-medium px-2">{table.page + 1} / {model.totalPages}</span>
 					<Button
 						size="sm"
 						variant="ghost"
-						disabled={table.page === table.totalPages - 1}
-						onclick={() => table.page++}
+						disabled={table.page >= model.totalPages - 1 || model.loadingMore}
+						onclick={() => model.nextPage()}
 					>
 						Next
 					</Button>

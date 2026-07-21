@@ -48,8 +48,11 @@ use tokio::sync::OnceCell;
 
 use crate::analytics::{
     analytics_error, AnalyticsActivity, AnalyticsOverview, InventoryItem, LedgerPage, LedgerPreset,
+    LedgerSummary,
 };
-use crate::tracking::{build_snapshot_value, SessionDetail, TrackingSession, TrackingSnapshot};
+use crate::tracking::{
+    build_snapshot_value, SessionDetail, SessionPage, TrackingSession, TrackingSnapshot,
+};
 use crate::{Api, ApiError};
 
 /// The curated mid-hunt session. Timestamps are offsets from `started_at`;
@@ -233,6 +236,19 @@ impl DemoState {
                 .map(crate::analytics::ledger_item_dto)
                 .collect(),
             next_cursor: page.next_cursor.into(),
+            total: page.total,
+        })
+    }
+
+    async fn ledger_summary(&self, period: &str) -> Result<LedgerSummary, ApiError> {
+        let summary = self
+            .analytics
+            .ledger_summary(period)
+            .await
+            .map_err(analytics_error("demo ledger summary"))?;
+        Ok(LedgerSummary {
+            gains: summary.gains,
+            losses: summary.losses,
         })
     }
 
@@ -262,11 +278,28 @@ impl DemoState {
 
     // ── Session reads (the live tracking computation over the demo DB) ──
 
-    async fn tracking_sessions(&self) -> Result<Vec<TrackingSession>, ApiError> {
-        let value = list_sessions_impl(&self.db, self.now_epoch())
+    async fn tracking_sessions(
+        &self,
+        cursor: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<SessionPage, ApiError> {
+        let seek = match cursor.as_deref() {
+            None => None,
+            Some(token) => match eo_services::tracking_reads::decode_session_cursor(token) {
+                Some(key) => Some(key),
+                None => return Err(ApiError::bad_request("Invalid cursor")),
+            },
+        };
+        let page = list_sessions_impl(&self.db, self.now_epoch(), seek, limit)
             .await
             .map_err(ApiError::internal("demo tracking sessions"))?;
-        serde_json::from_value(value).map_err(ApiError::internal("demo tracking sessions shaping"))
+        let sessions: Vec<TrackingSession> = serde_json::from_value(page.sessions)
+            .map_err(ApiError::internal("demo tracking sessions shaping"))?;
+        Ok(SessionPage {
+            sessions,
+            next_cursor: page.next_cursor.into(),
+            total: page.total,
+        })
     }
 
     async fn tracking_session_detail(&self, session_id: &str) -> Result<SessionDetail, ApiError> {
@@ -610,6 +643,11 @@ impl Api {
         self.ensure_demo().await?.ledger_list(cursor, limit).await
     }
 
+    /// The demo whole-ledger per-tag summary for a named period.
+    pub async fn demo_ledger_summary(&self, period: &str) -> Result<LedgerSummary, ApiError> {
+        self.ensure_demo().await?.ledger_summary(period).await
+    }
+
     /// The demo ledger presets.
     pub async fn demo_ledger_presets_list(&self) -> Result<Vec<LedgerPreset>, ApiError> {
         self.ensure_demo().await?.ledger_presets_list().await
@@ -620,9 +658,16 @@ impl Api {
         self.ensure_demo().await?.inventory_list().await
     }
 
-    /// The demo recent sessions.
-    pub async fn demo_tracking_sessions(&self) -> Result<Vec<TrackingSession>, ApiError> {
-        self.ensure_demo().await?.tracking_sessions().await
+    /// One demo keyset page of sessions plus the cursor for the next page.
+    pub async fn demo_tracking_sessions(
+        &self,
+        cursor: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<SessionPage, ApiError> {
+        self.ensure_demo()
+            .await?
+            .tracking_sessions(cursor, limit)
+            .await
     }
 
     /// One demo session's full detail; an absent session is a not-found.
@@ -748,7 +793,7 @@ mod tests {
         demo.ensure_primed().await.expect("demo primes");
         assert_matches_golden(
             "tracking_sessions",
-            &to_json(&demo.tracking_sessions().await.expect("sessions")),
+            &to_json(&demo.tracking_sessions(None, None).await.expect("sessions")),
         );
 
         let snapshot = to_json(&demo.tracking_snapshot().await.expect("snapshot"));

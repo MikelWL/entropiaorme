@@ -702,12 +702,15 @@ export type LedgerKind = 'expense' | 'markup';
 
 /**
  * A page of ledger entries plus the opaque cursor for the next page
- * (`null` on the last page): the keyset `X-Next-Cursor` header folded
- * into the typed return, since a command answers one structured payload.
+ * (`null` on the last page) and the whole-ledger row count, so a pager
+ * can report true bounds while loading windows on demand: the keyset
+ * `X-Next-Cursor` header folded into the typed return, since a command
+ * answers one structured payload.
  */
 export interface LedgerPage {
 	entries: LedgerItem[];
 	nextCursor: string | null;
+	total: number;
 }
 
 /**
@@ -731,6 +734,17 @@ export interface LedgerPresetInput {
 	description: string;
 	amount: number;
 	tag: string;
+}
+
+/**
+ * The whole-ledger summary for a period: the per-tag markup (gain) and
+ * expense (loss) totals over every entry in the window, independent of
+ * the paginated list. The Ledger tab's net-impact and source cards read
+ * this instead of folding the loaded page window.
+ */
+export interface LedgerSummary {
+	gains: Record<string, number>;
+	losses: Record<string, number>;
 }
 
 /**
@@ -1807,6 +1821,17 @@ export interface SessionDetail {
 }
 
 /**
+ * A keyset page of session-list rows plus the opaque cursor for the
+ * next page (`null` on the last page) and the whole-table session
+ * count, mirroring the ledger's [`crate::analytics::LedgerPage`] shape.
+ */
+export interface SessionPage {
+	sessions: TrackingSession[];
+	nextCursor: string | null;
+	total: number;
+}
+
+/**
  * The quest-link suggestion (all seven fields always present).
  */
 export interface SessionQuestLinkSuggestion {
@@ -2369,6 +2394,10 @@ export async function ledgerList(cursor: string | null, limit: number | null): P
 	return invokeCommand('ledger_list', { cursor, limit });
 }
 
+export async function ledgerSummary(period: string): Promise<LedgerSummary> {
+	return invokeCommand('ledger_summary', { period });
+}
+
 export async function ledgerCreate(entry: LedgerEntryInput): Promise<LedgerItem> {
 	return invokeCommand('ledger_create', { entry });
 }
@@ -2477,8 +2506,8 @@ export async function scanSpacebarCapture(enabled: boolean): Promise<SpacebarRes
 	return invokeCommand('scan_spacebar_capture', { enabled });
 }
 
-export async function trackingSessions(): Promise<TrackingSession[]> {
-	return invokeCommand('tracking_sessions', {});
+export async function trackingSessions(cursor: string | null, limit: number | null): Promise<SessionPage> {
+	return invokeCommand('tracking_sessions', { cursor, limit });
 }
 
 export async function trackingSessionDetail(sessionId: string): Promise<SessionDetail> {
@@ -2565,6 +2594,10 @@ export async function demoLedgerList(cursor: string | null, limit: number | null
 	return invokeCommand('demo_ledger_list', { cursor, limit });
 }
 
+export async function demoLedgerSummary(period: string): Promise<LedgerSummary> {
+	return invokeCommand('demo_ledger_summary', { period });
+}
+
 export async function demoLedgerPresetsList(): Promise<LedgerPreset[]> {
 	return invokeCommand('demo_ledger_presets_list', {});
 }
@@ -2573,8 +2606,8 @@ export async function demoInventoryList(): Promise<InventoryItem[]> {
 	return invokeCommand('demo_inventory_list', {});
 }
 
-export async function demoTrackingSessions(): Promise<TrackingSession[]> {
-	return invokeCommand('demo_tracking_sessions', {});
+export async function demoTrackingSessions(cursor: string | null, limit: number | null): Promise<SessionPage> {
+	return invokeCommand('demo_tracking_sessions', { cursor, limit });
 }
 
 export async function demoTrackingSessionDetail(sessionId: string): Promise<SessionDetail> {

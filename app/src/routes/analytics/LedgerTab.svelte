@@ -226,42 +226,29 @@
 					</tbody>
 				</table>
 
-				{#if table.totalPages > 1}
+				{#if model.totalPages > 1}
 					<div class="flex items-center justify-between mt-4">
 						<span class="text-xs text-text-tertiary">
-							Showing {table.page * PAGE_SIZE + 1} to {Math.min((table.page + 1) * PAGE_SIZE, model.entries.length)} of {model.entries.length} entries
+							Showing {table.page * PAGE_SIZE + 1} to {Math.min((table.page + 1) * PAGE_SIZE, model.total)} of {model.total} entries
 						</span>
 						<div class="flex gap-1">
 							<Button
 								size="sm"
 								variant="ghost"
 								disabled={table.page === 0}
-								onclick={() => table.page--}
+								onclick={() => model.prevPage()}
 							>
 								Previous
 							</Button>
 							<Button
 								size="sm"
 								variant="ghost"
-								disabled={table.page === table.totalPages - 1}
-								onclick={() => table.page++}
+								disabled={table.page >= model.totalPages - 1 || model.loadingMore}
+								onclick={() => model.nextPage()}
 							>
 								Next
 							</Button>
 						</div>
-					</div>
-				{/if}
-
-				{#if model.nextCursor}
-					<div class="flex justify-center mt-4">
-						<Button
-							size="sm"
-							variant="ghost"
-							disabled={model.loadingMore}
-							onclick={() => model.loadMoreEntries()}
-						>
-							{model.loadingMore ? 'Loading...' : 'Load more entries'}
-						</Button>
 					</div>
 				{/if}
 			{/if}

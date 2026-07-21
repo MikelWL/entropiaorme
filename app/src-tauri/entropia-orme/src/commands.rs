@@ -14,7 +14,7 @@ use std::sync::Arc;
 use eo_api::analytics::{
     AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
     InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput,
+    LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -48,8 +48,8 @@ use eo_api::scan::{
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionQuestLinkSuggestion,
-    StartResult, StopResult, TagLockResult, TrackingSession, TrackingSnapshot,
+    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
+    SessionQuestLinkSuggestion, StartResult, StopResult, TagLockResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -461,14 +461,47 @@ pub async fn ledger_list(
     #[cfg(feature = "e2e-stub")]
     {
         let _ = (&app, &cursor, &limit);
+        let entries: Vec<LedgerItem> = e2e_analytics("ledger")?;
         Ok(LedgerPage {
-            entries: e2e_analytics("ledger")?,
+            total: entries.len() as i64,
+            entries,
             next_cursor: None.into(),
         })
     }
     #[cfg(not(feature = "e2e-stub"))]
     {
         facade(&app)?.ledger_list(cursor, limit).await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ledger_summary(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<LedgerSummary, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = (&app, &period);
+        // Derive the per-tag summary from the same committed ledger fixture
+        // the entry list serves, keeping the net-impact card's baseline
+        // consistent with the visible entries.
+        let entries: Vec<LedgerItem> = e2e_analytics("ledger")?;
+        let mut summary = LedgerSummary {
+            gains: Default::default(),
+            losses: Default::default(),
+        };
+        for entry in entries {
+            let side = match serde_json::to_value(&entry.kind) {
+                Ok(value) if value == "markup" => &mut summary.gains,
+                _ => &mut summary.losses,
+            };
+            *side.entry(entry.tag).or_insert(0.0) += entry.amount;
+        }
+        Ok(summary)
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.ledger_summary(&period).await
     }
 }
 
@@ -670,15 +703,24 @@ pub async fn scan_spacebar_capture(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_sessions(app: tauri::AppHandle) -> Result<Vec<TrackingSession>, ApiError> {
+pub async fn tracking_sessions(
+    app: tauri::AppHandle,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<SessionPage, ApiError> {
     #[cfg(feature = "e2e-stub")]
     {
-        let _ = &app;
-        e2e_analytics("sessions")
+        let _ = (&app, &cursor, &limit);
+        let sessions: Vec<eo_api::tracking::TrackingSession> = e2e_analytics("sessions")?;
+        Ok(SessionPage {
+            total: sessions.len() as i64,
+            sessions,
+            next_cursor: None.into(),
+        })
     }
     #[cfg(not(feature = "e2e-stub"))]
     {
-        facade(&app)?.tracking_sessions().await
+        facade(&app)?.tracking_sessions(cursor, limit).await
     }
 }
 
@@ -886,6 +928,14 @@ pub async fn demo_ledger_list(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn demo_ledger_summary(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<LedgerSummary, ApiError> {
+    facade(&app)?.demo_ledger_summary(&period).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn demo_ledger_presets_list(
     app: tauri::AppHandle,
 ) -> Result<Vec<LedgerPreset>, ApiError> {
@@ -900,8 +950,10 @@ pub async fn demo_inventory_list(app: tauri::AppHandle) -> Result<Vec<InventoryI
 #[tauri::command(rename_all = "snake_case")]
 pub async fn demo_tracking_sessions(
     app: tauri::AppHandle,
-) -> Result<Vec<TrackingSession>, ApiError> {
-    facade(&app)?.demo_tracking_sessions().await
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<SessionPage, ApiError> {
+    facade(&app)?.demo_tracking_sessions(cursor, limit).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1265,6 +1317,7 @@ mod tests {
         "analytics_overview",
         "analytics_activity",
         "ledger_list",
+        "ledger_summary",
         "ledger_create",
         "ledger_delete",
         "ledger_presets_list",
@@ -1314,6 +1367,7 @@ mod tests {
         "demo_analytics_overview",
         "demo_analytics_activity",
         "demo_ledger_list",
+        "demo_ledger_summary",
         "demo_ledger_presets_list",
         "demo_inventory_list",
         "demo_tracking_sessions",

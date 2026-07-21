@@ -346,8 +346,10 @@
 			{@const lb = data.lossesBreakdown}
 			{@const rb = data.returnsBreakdown}
 			{@const cb = lb.cycledBreakdown}
-			{@const totalLedgerGains = Object.entries(rb.ledger).reduce((s, [tag, v]) => s + (PROGRESSION_GAIN_TAGS.has(tag) ? 0 : v), 0)}
-			{@const totalLedgerLosses = Object.values(lb.ledger).reduce((s, v) => s + v, 0)}
+			<!-- The table honours the Global Returns tag toggles, so its totals
+			     always reconcile with the donut card above. -->
+			{@const totalLedgerGains = Object.entries(rb.ledger).reduce((s, [tag, v]) => s + (PROGRESSION_GAIN_TAGS.has(tag) || !config.gainTags[tag] ? 0 : v), 0)}
+			{@const totalLedgerLosses = Object.entries(lb.ledger).reduce((s, [tag, v]) => s + (config.lossTags[tag] ? v : 0), 0)}
 			{@const totalReturns = rb.lootTt + totalLedgerGains}
 			{@const totalCosts = lb.trackingCost + totalLedgerLosses}
 			<div class="mt-2">
@@ -375,7 +377,7 @@
 								<td class="py-1.5 text-right tabular-nums text-text-secondary">{formatPed(rb.lootTt)}</td>
 							</tr>
 							{#each Object.entries(rb.ledger) as [tag, amount]}
-								{#if amount > 0 && !PROGRESSION_GAIN_TAGS.has(tag)}
+								{#if amount > 0 && !PROGRESSION_GAIN_TAGS.has(tag) && config.gainTags[tag]}
 									<tr class="border-b border-border/30">
 										<td class="py-1.5 pl-5 text-text-secondary">{labelFor(tag)}</td>
 										<td class="py-1.5 text-right tabular-nums text-text-secondary">{formatPed(amount)}</td>
@@ -426,7 +428,7 @@
 								</tr>
 							{/if}
 							{#each Object.entries(lb.ledger) as [tag, amount]}
-								{#if amount > 0}
+								{#if amount > 0 && config.lossTags[tag]}
 									<tr class="border-b border-border/30">
 										<td class="py-1.5 pl-5 text-text-secondary">{labelFor(tag)}</td>
 										<td class="py-1.5 text-right tabular-nums text-text-secondary">{formatPed(amount)}</td>

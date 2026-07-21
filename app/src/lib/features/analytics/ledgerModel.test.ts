@@ -4,6 +4,7 @@ import { createLedgerModel, PAGE_SIZE } from './ledgerModel.svelte';
 
 vi.mock('$lib/api', () => ({
 	getLedgerEntries: vi.fn(),
+	getLedgerSummary: vi.fn(),
 	addLedgerEntry: vi.fn(),
 	deleteLedgerEntry: vi.fn(),
 	getLedgerPresets: vi.fn(),
@@ -52,13 +53,19 @@ function item(overrides: Partial<InventoryItem> = {}): InventoryItem {
 	} as InventoryItem;
 }
 
-function seedLoad(entries: LedgerEntry[] = [entry()], nextCursor: string | null = null) {
-	mocked.getLedgerEntries.mockResolvedValue({ items: entries, nextCursor });
+function seedLoad(
+	entries: LedgerEntry[] = [entry()],
+	nextCursor: string | null = null,
+	total: number = entries.length,
+) {
+	mocked.getLedgerEntries.mockResolvedValue({ items: entries, nextCursor, total });
 	mocked.getLedgerPresets.mockResolvedValue([preset()]);
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// A benign default summary; the summary-focused tests override it.
+	mocked.getLedgerSummary.mockResolvedValue({ gains: {}, losses: {} });
 });
 
 describe('loadAll', () => {
@@ -93,6 +100,7 @@ describe('loadMoreEntries', () => {
 		mocked.getLedgerEntries.mockResolvedValue({
 			items: [entry({ id: 'e2' })],
 			nextCursor: null,
+			total: 2,
 		});
 		await model.loadMoreEntries();
 
@@ -146,6 +154,37 @@ describe('paging', () => {
 
 		expect(model.table.page).toBe(0);
 		expect(model.entries[0].id).toBe('new');
+	});
+});
+
+describe('on-demand paging', () => {
+	it('reports totals from the server and fetches on a step past the loaded window', async () => {
+		seedLoad(
+			Array.from({ length: 5 }, (_, i) => entry({ id: `e${i}` })),
+			'cursor-1',
+			12,
+		);
+		const model = createLedgerModel();
+		await model.loadAll();
+		expect(model.total).toBe(12);
+		expect(model.totalPages).toBe(3);
+
+		mocked.getLedgerEntries.mockResolvedValueOnce({
+			items: Array.from({ length: 7 }, (_, i) => entry({ id: `e${5 + i}` })),
+			nextCursor: null,
+			total: 12,
+		});
+		await model.nextPage();
+		expect(mocked.getLedgerEntries).toHaveBeenLastCalledWith('cursor-1');
+		expect(model.table.page).toBe(1);
+		expect(model.table.pageRows.map((e) => e.id)).toEqual(
+			Array.from({ length: 5 }, (_, i) => `e${5 + i}`),
+		);
+
+		await model.nextPage();
+		expect(model.table.page).toBe(2);
+		await model.nextPage();
+		expect(model.table.page).toBe(2);
 	});
 });
 
@@ -265,29 +304,59 @@ describe('tag suggestions', () => {
 });
 
 describe('net-range summaries', () => {
-	it('sums expenses and markup into the net, filtered by the active range', async () => {
-		const now = Date.now();
-		const recent = new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString();
-		const old = new Date(now - 200 * 24 * 60 * 60 * 1000).toISOString();
-		seedLoad(
-			[
-				entry({ id: 'e1', type: 'expense', amount: 40, date: recent }),
-				entry({ id: 'e2', type: 'markup', amount: 100, date: recent, tag: 'item_sale' }),
-				entry({ id: 'e3', type: 'expense', amount: 10, date: old }),
-			],
-			null,
-		);
+	it('derives the tag cards and the net from the server summary, not the loaded page', async () => {
+		// One loaded page entry only: the aggregates must NOT be a fold over
+		// the page window, so they reflect the whole-ledger server summary.
+		seedLoad([entry({ id: 'e1', type: 'expense', amount: 40 })], 'cursor-1');
+		mocked.getLedgerSummary.mockResolvedValue({
+			gains: { item_sale: 100, quest_reward: 2.5 },
+			losses: { equipment: 500, repair: 50 },
+		});
 		const model = createLedgerModel();
 		await model.loadAll();
 
-		expect(model.totalExpenses).toBe(50);
-		expect(model.totalMarkup).toBe(100);
-		expect(model.netLedger).toBe(50);
-		expect(model.expenseTags).toEqual([{ tag: 'equipment', total: 50 }]);
+		expect(mocked.getLedgerSummary).toHaveBeenCalledWith('all');
+		expect(model.totalExpenses).toBe(550);
+		expect(model.totalMarkup).toBe(102.5);
+		expect(model.netLedger).toBe(-447.5);
+		expect(model.expenseTags).toEqual([
+			{ tag: 'equipment', total: 500 },
+			{ tag: 'repair', total: 50 },
+		]);
+		expect(model.markupTags).toEqual([
+			{ tag: 'item_sale', total: 100 },
+			{ tag: 'quest_reward', total: 2.5 },
+		]);
+	});
 
+	it('reloads the summary for the selected range', async () => {
+		seedLoad();
+		const model = createLedgerModel();
+		await model.loadAll();
+
+		mocked.getLedgerSummary.mockResolvedValue({ gains: {}, losses: { equipment: 40 } });
 		model.netRange = '30d';
-		expect(model.totalExpenses).toBe(40);
-		expect(model.netLedger).toBe(60);
+		await vi.waitFor(() => expect(model.totalExpenses).toBe(40));
+		expect(mocked.getLedgerSummary).toHaveBeenLastCalledWith('30d');
+		expect(model.netLedger).toBe(-40);
+	});
+
+	it('refreshes the summary after an add and a delete', async () => {
+		seedLoad();
+		mocked.addLedgerEntry.mockResolvedValue(entry({ id: 'new' }));
+		mocked.deleteLedgerEntry.mockResolvedValue(undefined);
+		const model = createLedgerModel();
+		await model.loadAll();
+		expect(mocked.getLedgerSummary).toHaveBeenCalledTimes(1);
+
+		model.entryDescription = 'Fresh entry';
+		model.entryTag = 'other';
+		model.entryAmount = 3;
+		await model.addEntry();
+		expect(mocked.getLedgerSummary).toHaveBeenCalledTimes(2);
+
+		await model.deleteEntry('new');
+		expect(mocked.getLedgerSummary).toHaveBeenCalledTimes(3);
 	});
 });
 
@@ -389,8 +458,12 @@ describe('guide demo handlers', () => {
 		expect(model.entries.filter((e) => e.id === 'demo-inventory-sale')).toHaveLength(1);
 		expect(model.entries[0].description).toBe('Sold Hedoc Mayhem, Adjusted at +100 PED over basis');
 		expect(model.table.page).toBe(0);
+		// The synthetic sale folds into the summary-backed cards locally.
+		expect(model.totalMarkup).toBe(100);
+		expect(model.markupTags).toEqual([{ tag: 'inventory_sale', total: 100 }]);
 
 		model.clearDemoSaleEntry();
 		expect(model.entries.some((e) => e.id === 'demo-inventory-sale')).toBe(false);
+		expect(model.totalMarkup).toBe(0);
 	});
 });

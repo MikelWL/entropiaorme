@@ -36,11 +36,13 @@ pub struct AnalyticsService {
 }
 
 /// A page of ledger entries (newest first) plus the opaque cursor for the
-/// following page (`None` on the last page); the cursor is the base64url
-/// keyset token.
+/// following page (`None` on the last page) and the whole-table row count
+/// (so a pager can report true bounds while loading windows on demand);
+/// the cursor is the base64url keyset token.
 pub struct LedgerPage {
     pub entries: Vec<LedgerRow>,
     pub next_cursor: Option<String>,
+    pub total: i64,
 }
 
 /// One ledger entry, in wire shape (`type` is the stored kind).
@@ -1618,6 +1620,38 @@ impl AnalyticsService {
     pub async fn activity(&self) -> Result<ActivityData, AnalyticsError> {
         Ok(activity_impl(&self.db).await?)
     }
+
+    /// The whole-ledger summary for a named period (`30d` / `90d` / `1y`,
+    /// or all-time for any other value): the per-tag markup and expense
+    /// totals over EVERY ledger entry in the window, independent of the
+    /// paginated list. Serves the Ledger tab's net-impact and source
+    /// cards, through the same hybrid rollup + raw-edge split as the
+    /// Overview (O(days), not O(entries)).
+    pub async fn ledger_summary(&self, period: &str) -> Result<LedgerSummaryData, AnalyticsError> {
+        let now = naive_to_epoch(self.clock.now());
+        let watermark = self
+            .db
+            .with_writer(move |conn| daily_rollup::heal_rollups(conn, now))
+            .await?;
+        let epoch_start = period_epoch(period, now);
+        let (gains, losses) = self
+            .db
+            .with_reader(move |conn| {
+                Ok((
+                    ledger_by_tag(conn, "markup", epoch_start, None, &watermark)?,
+                    ledger_by_tag(conn, "expense", epoch_start, None, &watermark)?,
+                ))
+            })
+            .await?;
+        Ok(LedgerSummaryData { gains, losses })
+    }
+}
+
+/// The whole-ledger per-tag summary: markup (gain) and expense (loss)
+/// totals by tag over the requested window.
+pub struct LedgerSummaryData {
+    pub gains: std::collections::BTreeMap<String, f64>,
+    pub losses: std::collections::BTreeMap<String, f64>,
 }
 
 // ── Ledger / presets / inventory writes (the CRUD surface) ──
@@ -1655,23 +1689,16 @@ const LEDGER_PAGE_DEFAULT: i64 = 50;
 /// here, bounding the work a single request can ask for.
 const LEDGER_PAGE_MAX: i64 = 200;
 
-/// The opaque keyset cursor: base64url (no padding) of the JSON `[date, id]`
-/// of the last row on a page. Opaque so clients treat it as a token, and
-/// robust to any characters a user-entered ledger date or a UUID id carries.
+/// The opaque keyset cursor over `[date, id]` of the last row on a page
+/// (the shared [`crate::keyset`] codec).
 fn encode_ledger_cursor(date: &str, id: &str) -> String {
-    use base64::Engine as _;
-    let json = serde_json::to_vec(&[date, id]).expect("a cursor pair serialises");
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
+    crate::keyset::encode_cursor(&[date, id])
 }
 
 /// Decode a keyset cursor back to its `(date, id)` seek key, or `None` for a
 /// malformed token (which the handler answers as a 400).
 fn decode_ledger_cursor(token: &str) -> Option<(String, String)> {
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(token)
-        .ok()?;
-    let [date, id]: [String; 2] = serde_json::from_slice(&bytes).ok()?;
+    let [date, id]: [String; 2] = crate::keyset::decode_cursor(token)?;
     Some((date, id))
 }
 
@@ -1726,11 +1753,13 @@ impl AnalyticsService {
         }
         sql.push_str(" ORDER BY date DESC, id DESC LIMIT ?");
 
-        // Each fetched row as (date, id, wire shape); the cursor is cut from
-        // the last kept row's (date, id).
-        let rows: Vec<(String, String, LedgerRow)> = self
+        // Each fetched row as (date, id, wire shape) plus the whole-table
+        // count; the cursor is cut from the last kept row's (date, id).
+        let (rows, total): (Vec<(String, String, LedgerRow)>, i64) = self
             .db
             .with_reader(move |conn| {
+                let total: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM ledger_entries", [], |row| row.get(0))?;
                 let mut stmt = conn.prepare(&sql)?;
                 let map_row =
                     |row: &rusqlite::Row| -> rusqlite::Result<(String, String, LedgerRow)> {
@@ -1748,7 +1777,7 @@ impl AnalyticsService {
                         .query_map(rusqlite::params![page + 1], map_row)?
                         .collect::<rusqlite::Result<Vec<_>>>()?,
                 };
-                Ok(rows)
+                Ok((rows, total))
             })
             .await?;
 
@@ -1768,6 +1797,7 @@ impl AnalyticsService {
         Ok(LedgerPage {
             entries,
             next_cursor,
+            total,
         })
     }
 
