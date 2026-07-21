@@ -274,7 +274,9 @@
 					<div class="text-xs text-red-400 animate-pulse truncate max-w-[120px]">
 						{data.harvestGuardrail.observedTool ?? 'No tool'}
 					</div>
-					<div class="text-[10px] leading-tight text-white/70 truncate max-w-[120px]">
+					<!-- Never truncated: what is actually being recorded must be
+						 readable in full, so the self-sizing window widens for it. -->
+					<div class="text-[10px] leading-tight text-white/70 whitespace-nowrap">
 						Recording: {data.harvestGuardrail.expectedTool}
 					</div>
 				</div>

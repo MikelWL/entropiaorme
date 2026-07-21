@@ -309,7 +309,11 @@ describe('trifecta selector', () => {
 		// The believed tool shows in red; the corrected attribution beneath.
 		const believed = screen.getByText('Terratech PH-4 (L)');
 		expect(believed.className).toContain('text-red-400');
-		expect(screen.getByText('Recording: Terratech PH-1 (L)').className).toContain('text-white/70');
+		const recording = screen.getByText('Recording: Terratech PH-1 (L)');
+		expect(recording.className).toContain('text-white/70');
+		// The recorded tool must stay readable in full: no truncation.
+		expect(recording.className).toContain('whitespace-nowrap');
+		expect(recording.className).not.toContain('truncate');
 		expect(alert.title).toBe('Tree loot says Terratech PH-1 (L); hotbar shows Terratech PH-4 (L)');
 	});
 
