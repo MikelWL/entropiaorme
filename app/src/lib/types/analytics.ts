@@ -20,6 +20,7 @@ export type {
 	ComputedCharacterStats,
 	CycledBreakdown,
 	ExcludedSkill,
+	HarvestToolComparison,
 	HpOptimizerAttribute,
 	HpOptimizerResult,
 	HpOptimizerSkill,
@@ -47,5 +48,4 @@ export type {
 	StatProfession,
 	TagComparison,
 	TimelineDay,
-	WeaponComparison,
 } from '$lib/api/commands.gen';

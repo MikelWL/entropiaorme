@@ -3,7 +3,7 @@ import type { GuideSurface } from '../types';
 
 /** Analytics-surface demoApi method names (declared here for documentation). */
 type AnalyticsDemoApi = {
-	setTab(tab: 'overview' | 'ledger' | 'activity' | 'sessions'): void;
+	setTab(tab: 'overview' | 'ledger' | 'hunting' | 'treecutting' | 'sessions'): void;
 };
 
 /** Sub-API registered by LedgerTab.svelte on mount for guide-driven modal control. */
@@ -301,22 +301,22 @@ export const analyticsSurface: GuideSurface = {
 			},
 		},
 		{
-			id: 'activity-intro',
+			id: 'hunting-intro',
 			anchor: () =>
-				document.querySelector<HTMLElement>('[data-guide-anchor="analytics-activity-area"]'),
+				document.querySelector<HTMLElement>('[data-guide-anchor="analytics-hunting-area"]'),
 			placement: 'bottom-centre',
 			prose: {
-				title: 'Activity',
+				title: 'Hunting',
 				body: [
 					{
 						kind: 'p',
-						text: 'The Activity tab lets you review aggregated stats by mob, tag, or weapon.',
+						text: 'The Hunting tab lets you review aggregated stats by mob or tag.',
 					},
 					{
 						kind: 'p',
 						text: 'The currently most interesting stat is PES/100, showing which activity results in the most skilling per 100 PED cycled.',
 					},
-					{ kind: 'p', text: 'More activity insights to come.' },
+					{ kind: 'p', text: 'More hunting insights to come.' },
 				],
 				note: [
 					{ text: 'See ' },
@@ -326,7 +326,7 @@ export const analyticsSurface: GuideSurface = {
 			},
 			async play({ demoApi, wait }) {
 				const api = demoApi as Partial<AnalyticsDemoApi>;
-				api.setTab?.('activity');
+				api.setTab?.('hunting');
 				await wait(500);
 			},
 			resetDemo() {
@@ -401,7 +401,7 @@ export const analyticsSurface: GuideSurface = {
 			},
 			resetDemo() {
 				sessionsApi().collapseAllSessions?.();
-				analyticsApi().setTab?.('activity');
+				analyticsApi().setTab?.('hunting');
 			},
 		},
 	],

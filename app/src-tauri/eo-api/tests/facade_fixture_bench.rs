@@ -140,7 +140,8 @@ fn facade_fixture_bench() {
         bench!("overview_30d", api.analytics_overview("30d"));
         bench!("overview_90d", api.analytics_overview("90d"));
         bench!("overview_1y", api.analytics_overview("1y"));
-        bench!("activity", api.analytics_activity());
+        bench!("hunting", api.analytics_hunting());
+        bench!("harvest", api.analytics_harvest());
         bench!("session_list", api.tracking_sessions(None, None));
         bench!("ledger_page", api.ledger_list(None, None));
 

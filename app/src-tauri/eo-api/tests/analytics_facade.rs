@@ -76,14 +76,26 @@ async fn the_empty_overview_serialises_to_the_float_typed_zeros() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_empty_activity_serialises_to_three_empty_tables() {
+async fn the_empty_hunting_serialises_to_two_empty_tables() {
     let dir = tempfile::tempdir().unwrap();
     let api = analytics_api(dir.path()).await;
 
-    let activity = api.analytics_activity().await.unwrap();
+    let hunting = api.analytics_hunting().await.unwrap();
     assert_eq!(
-        serde_json::to_string(&activity).unwrap(),
-        "{\"mobComparisons\":[],\"tagComparisons\":[],\"weaponComparisons\":[]}"
+        serde_json::to_string(&hunting).unwrap(),
+        "{\"mobComparisons\":[],\"tagComparisons\":[]}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_empty_harvest_serialises_to_an_empty_tool_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = analytics_api(dir.path()).await;
+
+    let harvest = api.analytics_harvest().await.unwrap();
+    assert_eq!(
+        serde_json::to_string(&harvest).unwrap(),
+        "{\"toolComparisons\":[]}"
     );
 }
 

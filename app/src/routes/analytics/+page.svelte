@@ -3,7 +3,8 @@
 	import Tabs from '$lib/components/Tabs.svelte';
 	import OverviewTab from './OverviewTab.svelte';
 	import LedgerTab from './LedgerTab.svelte';
-	import ActivityTab from './ActivityTab.svelte';
+	import HuntingTab from './HuntingTab.svelte';
+	import TreeCuttingTab from './TreeCuttingTab.svelte';
 	import SessionsTab from './SessionsTab.svelte';
 	import { getPreference } from '$lib/preferences';
 	import { guideState, registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
@@ -13,7 +14,8 @@
 	const tabs = [
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'ledger', label: 'Ledger' },
-		{ id: 'activity', label: 'Activity' },
+		{ id: 'hunting', label: 'Hunting' },
+		{ id: 'treecutting', label: 'Tree Cutting' },
 		{ id: 'sessions', label: 'Sessions' }
 	];
 
@@ -76,7 +78,7 @@
 	<!-- Tab bar -->
 	<Tabs {tabs} active={activeTab} onchange={(id) => (activeTab = id)} />
 
-	<!-- Tab content (lazy-loaded). Keyed on guideState so all four tabs
+	<!-- Tab content (lazy-loaded). Keyed on guideState so all five tabs
 	     re-mount when the user flips into or out of guide-mode; that re-runs
 	     their data $effects against the swapped /demo/* endpoints. -->
 	{#key guideState.isActive}
@@ -85,8 +87,10 @@
 				<OverviewTab />
 			{:else if activeTab === 'ledger'}
 				<LedgerTab />
-			{:else if activeTab === 'activity'}
-				<ActivityTab />
+			{:else if activeTab === 'hunting'}
+				<HuntingTab />
+			{:else if activeTab === 'treecutting'}
+				<TreeCuttingTab />
 			{:else if activeTab === 'sessions'}
 				<SessionsTab />
 			{/if}

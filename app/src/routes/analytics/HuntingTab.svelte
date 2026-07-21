@@ -6,16 +6,15 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import {
 		ACTION_KEY,
-		createActivityModel,
+		createHuntingModel,
 		mobColumns,
 		rowKey,
-		tagColumns,
-		weaponColumns
-	} from '$lib/features/analytics/activityModel.svelte';
-	import type { MobComparison, TagComparison, WeaponComparison } from '$lib/types/analytics';
+		tagColumns
+	} from '$lib/features/analytics/huntingModel.svelte';
+	import type { MobComparison, TagComparison } from '$lib/types/analytics';
 	import { formatPed, formatPercent } from '$lib/utils/format';
 
-	const model = createActivityModel();
+	const model = createHuntingModel();
 
 	$effect(() => {
 		void model.loadData();
@@ -76,7 +75,7 @@
 	{@const isRestore = model.viewMode === 'archive'}
 	<div class="inline-flex items-center gap-3">
 		<span class="text-xs text-text-secondary">
-			{isRestore ? 'Send back to main activity records?' : 'Send record to archive?'}
+			{isRestore ? 'Send back to main hunting records?' : 'Send record to archive?'}
 		</span>
 		<button
 			type="button"
@@ -127,26 +126,12 @@
 	{/if}
 {/snippet}
 
-{#snippet weaponCell({ column, value, row }: { column: { key: string }; value: unknown; row: WeaponComparison })}
-	{#if column.key === 'cycled'}
-		<span class="tabular-nums">{formatPed(Number(value))}</span>
-	{:else if column.key === 'pesPer100Ped'}
-		<span class="tabular-nums">{Number(value).toFixed(2)}</span>
-	{:else if column.key === 'lootRate'}
-		<span class="tabular-nums">{formatPercent(Number(value))}</span>
-	{:else if column.key === ACTION_KEY}
-		{@render archiveAction('weapon', row.weaponName)}
-	{:else}
-		{value}
-	{/if}
-{/snippet}
-
 {#if model.loading}
-	<p class="text-sm text-text-secondary">Loading activity data...</p>
+	<p class="text-sm text-text-secondary">Loading hunting data...</p>
 {:else if model.error && !model.data}
 	<ErrorNotice message={model.error} />
 {:else if model.data}
-	<div class="space-y-6" data-guide-anchor="analytics-activity-area">
+	<div class="space-y-6" data-guide-anchor="analytics-hunting-area">
 		<ErrorNotice message={model.error} />
 		{#if model.viewMode === 'archive'}
 			<div class="flex items-center justify-between">
@@ -170,10 +155,6 @@
 		{#snippet tagOverlay({ row }: { row: TagComparison })}
 			{@render confirmPrompt('tag', row.tagName)}
 		{/snippet}
-		{#snippet weaponOverlay({ row }: { row: WeaponComparison })}
-			{@render confirmPrompt('weapon', row.weaponName)}
-		{/snippet}
-
 		<!-- Per-mob comparison -->
 		<div>
 			<h3 class="eyebrow mb-3">Per-Mob Comparison</h3>
@@ -206,25 +187,6 @@
 				overlayKey={model.confirmKey}
 				rowOverlay={tagOverlay}
 				emptyMessage={model.viewMode === 'archive' ? 'No archived tags' : 'No tagged hunt data available'}
-			/>
-		</div>
-
-		<Divider />
-
-		<!-- Per-weapon comparison -->
-		<div>
-			<h3 class="eyebrow mb-3">Per-Weapon Comparison</h3>
-			<DataTable
-				columns={weaponColumns}
-				rows={model.sortedWeapons}
-				bind:sortKey={model.weaponSortKey}
-				bind:sortDir={model.weaponSortDir}
-				cell={weaponCell}
-				fixedLayout={true}
-				rowKeyFn={(r: WeaponComparison) => rowKey('weapon', r.weaponName)}
-				overlayKey={model.confirmKey}
-				rowOverlay={weaponOverlay}
-				emptyMessage={model.viewMode === 'archive' ? 'No archived weapons' : 'No weapon data available'}
 			/>
 		</div>
 
@@ -273,7 +235,7 @@
 {:else}
 	<Card class="p-6">
 		<p class="text-sm text-text-tertiary text-center">
-			No tracking data yet. Complete sessions to see activity comparisons.
+			No tracking data yet. Complete sessions to see hunting comparisons.
 		</p>
 	</Card>
 {/if}

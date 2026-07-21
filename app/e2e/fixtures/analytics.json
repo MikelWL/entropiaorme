@@ -87,16 +87,19 @@
       }
     ]
   },
-  "activity": {
+  "hunting": {
     "mobComparisons": [
       { "mobName": "Atrox Young", "sessions": 5, "kills": 320, "hours": 4.5, "cycled": 1200.0, "pesPer100Ped": 8.2, "lootRate": 0.91 },
       { "mobName": "Combibo Old", "sessions": 3, "kills": 180, "hours": 2.1, "cycled": 640.0, "pesPer100Ped": 6.7, "lootRate": 0.88 }
     ],
     "tagComparisons": [
       { "tagName": "Daily Hunt", "sessions": 6, "kills": 400, "hours": 5.0, "cycled": 1500.0, "pesPer100Ped": 7.9, "lootRate": 0.9 }
-    ],
-    "weaponComparisons": [
-      { "weaponName": "Sollomate Opalo", "sessions": 8, "kills": 500, "hours": 6.6, "cycled": 1840.0, "pesPer100Ped": 7.5, "lootRate": 0.89 }
+    ]
+  },
+  "harvest": {
+    "toolComparisons": [
+      { "toolName": "Terratech PH-1 (L)", "swings": 420, "cycled": 8.4, "lootRate": 0.985 },
+      { "toolName": "Terratech PH-3", "swings": 96, "cycled": 9.6, "lootRate": 0.9121 }
     ]
   },
   "ledger": [

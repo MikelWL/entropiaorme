@@ -193,7 +193,8 @@ fn facade_microbench() {
         // sessions). The Overview brings the daily rollups current before
         // aggregating, so it stays the family's costliest read even empty.
         bench!("analytics_overview", api.analytics_overview("all"));
-        bench!("analytics_activity", api.analytics_activity());
+        bench!("analytics_hunting", api.analytics_hunting());
+        bench!("analytics_harvest", api.analytics_harvest());
         bench!("ledger_list", api.ledger_list(None, None));
         bench!("ledger_presets_list", api.ledger_presets_list());
         bench!("inventory_list", api.inventory_list());

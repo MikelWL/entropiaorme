@@ -14,7 +14,7 @@ use schemars::schema_for;
 use serde_json::Value;
 
 use crate::analytics::{
-    AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
+    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
     InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
     LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
@@ -491,9 +491,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(AnalyticsOverview))),
         },
         CommandSpec {
-            name: "analytics_activity",
+            name: "analytics_hunting",
             args: Vec::new(),
-            returns: Some(schema(schema_for!(AnalyticsActivity))),
+            returns: Some(schema(schema_for!(AnalyticsHunting))),
+        },
+        CommandSpec {
+            name: "analytics_harvest",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AnalyticsHarvest))),
         },
         CommandSpec {
             name: "ledger_list",
@@ -927,9 +932,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(AnalyticsOverview))),
         },
         CommandSpec {
-            name: "demo_analytics_activity",
+            name: "demo_analytics_hunting",
             args: Vec::new(),
-            returns: Some(schema(schema_for!(AnalyticsActivity))),
+            returns: Some(schema(schema_for!(AnalyticsHunting))),
+        },
+        CommandSpec {
+            name: "demo_analytics_harvest",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AnalyticsHarvest))),
         },
         CommandSpec {
             name: "demo_ledger_list",

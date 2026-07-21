@@ -70,17 +70,31 @@ describe('analytics visual regression (native Tauri shell)', () => {
 		expect(mismatch).toBeLessThanOrEqual(BUDGET);
 	});
 
-	it('matches the activity tab baseline', async () => {
-		await selectTab('activity');
-		const area = await $('[data-guide-anchor="analytics-activity-area"]');
+	it('matches the hunting tab baseline', async () => {
+		await selectTab('hunting');
+		const area = await $('[data-guide-anchor="analytics-hunting-area"]');
 		await area.waitForExist({ timeout: 15000 });
 		await browser.waitUntil(async () => (await area.getText()).includes('Atrox Young'), {
 			timeout: 12000,
-			timeoutMsg: 'activity never hydrated the fixture comparisons',
+			timeoutMsg: 'hunting never hydrated the fixture comparisons',
 		});
 		await browser.pause(500);
 		await ensureViewport(browser);
-		const mismatch = await browser.checkElement(area, 'analytics-activity', VISUAL_OPTS);
+		const mismatch = await browser.checkElement(area, 'analytics-hunting', VISUAL_OPTS);
+		expect(mismatch).toBeLessThanOrEqual(BUDGET);
+	});
+
+	it('matches the tree cutting tab baseline', async () => {
+		await selectTab('treecutting');
+		const area = await $('[data-guide-anchor="analytics-treecutting-area"]');
+		await area.waitForExist({ timeout: 15000 });
+		await browser.waitUntil(async () => (await area.getText()).includes('Terratech PH-1'), {
+			timeout: 12000,
+			timeoutMsg: 'tree cutting never hydrated the fixture comparisons',
+		});
+		await browser.pause(500);
+		await ensureViewport(browser);
+		const mismatch = await browser.checkElement(area, 'analytics-treecutting', VISUAL_OPTS);
 		expect(mismatch).toBeLessThanOrEqual(BUDGET);
 	});
 });

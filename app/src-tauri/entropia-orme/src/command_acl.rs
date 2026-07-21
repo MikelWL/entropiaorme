@@ -2,7 +2,8 @@
 // one permission per command and a trusted-window default set from this list;
 // narrow overlay capabilities opt into only the commands they actually use.
 pub const APP_COMMANDS: &[&str] = &[
-    "analytics_activity",
+    "analytics_harvest",
+    "analytics_hunting",
     "analytics_overview",
     "begin_navigation_area_selection",
     "capture_png",
@@ -28,7 +29,8 @@ pub const APP_COMMANDS: &[&str] = &[
     "codex_species",
     "codex_species_ranks",
     "codex_unclaim",
-    "demo_analytics_activity",
+    "demo_analytics_harvest",
+    "demo_analytics_hunting",
     "demo_analytics_overview",
     "demo_inventory_list",
     "demo_ledger_list",

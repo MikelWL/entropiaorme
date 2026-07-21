@@ -75,12 +75,18 @@ export interface ActivityRecommenderResult {
 }
 
 /**
- * The Activity aggregate: the three comparison tables.
+ * The Tree Cutting aggregate: the per-tool comparison table.
  */
-export interface AnalyticsActivity {
+export interface AnalyticsHarvest {
+	toolComparisons: HarvestToolComparison[];
+}
+
+/**
+ * The Hunting aggregate: the per-mob and per-tag comparison tables.
+ */
+export interface AnalyticsHunting {
 	mobComparisons: MobComparison[];
 	tagComparisons: TagComparison[];
-	weaponComparisons: WeaponComparison[];
 }
 
 /**
@@ -560,6 +566,16 @@ export interface HarvestSummary {
 	successes: number;
 	lootTt: number;
 	cost: number;
+}
+
+/**
+ * One row of the Tree Cutting per-tool comparison.
+ */
+export interface HarvestToolComparison {
+	toolName: string;
+	swings: number;
+	cycled: number;
+	lootRate: number;
 }
 
 /**
@@ -2185,19 +2201,6 @@ export interface Warning {
  */
 export type WeaponAttribution = 'hotbar' | 'trifecta';
 
-/**
- * One row of the per-weapon activity comparison.
- */
-export interface WeaponComparison {
-	weaponName: string;
-	sessions: number;
-	kills: number;
-	hours: number;
-	cycled: number;
-	pesPer100Ped: number;
-	lootRate: number;
-}
-
 export async function equipmentSearch(q: string, kind: SearchKind): Promise<EquipmentSearchHit[]> {
 	return invokeCommand('equipment_search', { q, kind });
 }
@@ -2386,8 +2389,12 @@ export async function analyticsOverview(period: string): Promise<AnalyticsOvervi
 	return invokeCommand('analytics_overview', { period });
 }
 
-export async function analyticsActivity(): Promise<AnalyticsActivity> {
-	return invokeCommand('analytics_activity', {});
+export async function analyticsHunting(): Promise<AnalyticsHunting> {
+	return invokeCommand('analytics_hunting', {});
+}
+
+export async function analyticsHarvest(): Promise<AnalyticsHarvest> {
+	return invokeCommand('analytics_harvest', {});
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {
@@ -2586,8 +2593,12 @@ export async function demoAnalyticsOverview(period: string): Promise<AnalyticsOv
 	return invokeCommand('demo_analytics_overview', { period });
 }
 
-export async function demoAnalyticsActivity(): Promise<AnalyticsActivity> {
-	return invokeCommand('demo_analytics_activity', {});
+export async function demoAnalyticsHunting(): Promise<AnalyticsHunting> {
+	return invokeCommand('demo_analytics_hunting', {});
+}
+
+export async function demoAnalyticsHarvest(): Promise<AnalyticsHarvest> {
+	return invokeCommand('demo_analytics_harvest', {});
 }
 
 export async function demoLedgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

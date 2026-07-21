@@ -155,17 +155,33 @@ pub struct TimelinePoint {
     pub ledger_losses: std::collections::BTreeMap<String, f64>,
 }
 
-/// The Activity aggregate: the three comparison tables.
+/// The Hunting aggregate: the per-mob and per-tag comparison tables.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ActivityData {
+pub struct HuntingData {
     pub mob_comparisons: Vec<ActivityRow>,
     pub tag_comparisons: Vec<ActivityRow>,
-    pub weapon_comparisons: Vec<ActivityRow>,
 }
 
-/// One row of an Activity comparison table; the caller labels the name
-/// (`mobName` / `tagName` / `weaponName`).
+/// The Tree Cutting aggregate: the per-tool comparison table.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestData {
+    pub tool_comparisons: Vec<HarvestToolRow>,
+}
+
+/// One row of the Tree Cutting per-tool comparison.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestToolRow {
+    pub name: String,
+    pub swings: i64,
+    pub cycled: f64,
+    pub loot_rate: f64,
+}
+
+/// One row of a Hunting comparison table; the caller labels the name
+/// (`mobName` / `tagName`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityRow {
@@ -1289,7 +1305,7 @@ fn breakdown_points(
     Ok(points)
 }
 
-// ── activity_impl ──
+// ── hunting_impl / harvest_impl ──
 
 /// One completed session's aggregates (`_load_activity_sessions`).
 #[derive(Default)]
@@ -1308,7 +1324,6 @@ struct SessionAgg {
     dominant_mob_kills: i64,
     dominant_tag: Option<String>,
     dominant_tag_kills: i64,
-    dominant_weapon: Option<String>,
     cycled_ped: f64,
 }
 
@@ -1381,7 +1396,7 @@ fn read_summary_activity_aggs(
 ) -> Result<std::collections::HashMap<String, SessionAgg>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT session_id, duration_hours, kills, loot_tt, cycled_ped, activity_skill_tt, \
-         dominant_mob, dominant_tag, dominant_weapon, dominant_mob_kills, dominant_tag_kills \
+         dominant_mob, dominant_tag, dominant_mob_kills, dominant_tag_kills \
          FROM session_summaries",
     )?;
     let mut rows = stmt.query([])?;
@@ -1398,9 +1413,8 @@ fn read_summary_activity_aggs(
                 skill_tt: as_float(row, 5),
                 dominant_mob: row.get::<_, Option<String>>(6)?,
                 dominant_tag: row.get::<_, Option<String>>(7)?,
-                dominant_weapon: row.get::<_, Option<String>>(8)?,
-                dominant_mob_kills: row.get::<_, i64>(9).unwrap_or(0),
-                dominant_tag_kills: row.get::<_, i64>(10).unwrap_or(0),
+                dominant_mob_kills: row.get::<_, i64>(8).unwrap_or(0),
+                dominant_tag_kills: row.get::<_, i64>(9).unwrap_or(0),
                 ..SessionAgg::default()
             },
         );
@@ -1488,26 +1502,6 @@ fn raw_session_agg(
         }
     }
 
-    let tool_rows: Vec<(String, f64)> = {
-        let mut stmt = conn.prepare(
-            "SELECT ts.tool_name, COALESCE(SUM(ts.shots_fired), 0) \
-             FROM kill_tool_stats ts JOIN kills k ON k.id = ts.kill_id \
-             WHERE k.session_id = ? AND ts.tool_name IS NOT NULL AND ts.tool_name != 'Unknown' \
-             GROUP BY ts.tool_name ORDER BY SUM(ts.shots_fired) DESC, ts.tool_name ASC",
-        )?;
-        let mapped = stmt.query_map(rusqlite::params![session_id], |row| {
-            Ok((row.get::<_, String>(0)?, as_float(row, 1)))
-        })?;
-        mapped.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    if !tool_rows.is_empty() {
-        let total_shots: f64 = tool_rows.iter().map(|r| r.1).sum();
-        let (top_name, top_shots) = tool_rows[0].clone();
-        if total_shots > 0.0 && top_shots / total_shots >= ACTIVITY_DOMINANCE_THRESHOLD {
-            agg.dominant_weapon = Some(top_name);
-        }
-    }
-
     agg.cycled_ped = eo_wire::normalizer::round_half_even(
         agg.weapon_cost + agg.enhancer_cost + agg.armour_cost + agg.heal_cost + agg.dangling_cost,
         4,
@@ -1579,7 +1573,7 @@ fn build_activity_slice_rows(
     rows.into_iter().map(|(_, _, _, row)| row).collect()
 }
 
-async fn activity_impl(db: &Db) -> Result<ActivityData, DbError> {
+async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
     let sessions = load_activity_sessions(db).await?;
     let mob = build_activity_slice_rows(
         &sessions,
@@ -1591,13 +1585,66 @@ async fn activity_impl(db: &Db) -> Result<ActivityData, DbError> {
         |s| s.dominant_tag.clone(),
         |s| s.dominant_tag_kills,
     );
-    // Weapon comparisons key kills off the session total (not a
-    // dominant-weapon kill count).
-    let weapon = build_activity_slice_rows(&sessions, |s| s.dominant_weapon.clone(), |s| s.kills);
-    Ok(ActivityData {
+    Ok(HuntingData {
         mob_comparisons: mob,
         tag_comparisons: tag,
-        weapon_comparisons: weapon,
+    })
+}
+
+/// The Tree Cutting per-tool aggregate, grouped straight off the raw
+/// `harvest_events` table. A tab-open read, not a hot path: the scan is
+/// O(total harvest events), acceptable at harvesting volumes; promote it
+/// to a maintained projection only if that stops holding. Swings with no
+/// recorded tool (a rare attribution gap) are excluded rather than
+/// surfaced as a phantom row.
+async fn harvest_impl(db: &Db) -> Result<HarvestData, DbError> {
+    let raw: Vec<(String, i64, f64, f64)> = db
+        .with_reader(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT tool_name, COUNT(*), COALESCE(SUM(cost_ped), 0), \
+                 COALESCE(SUM(loot_total_ped), 0) FROM harvest_events \
+                 WHERE tool_name IS NOT NULL AND tool_name != '' \
+                 GROUP BY tool_name",
+            )?;
+            let mapped = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    as_float(row, 2),
+                    as_float(row, 3),
+                ))
+            })?;
+            Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await?;
+
+    let mut rows: Vec<(i64, f64, String, HarvestToolRow)> = raw
+        .into_iter()
+        .map(|(name, swings, cost, loot_tt)| {
+            let cycled = eo_wire::normalizer::round_half_even(cost, 2);
+            let loot_rate = if cost > 0.0 {
+                eo_wire::normalizer::round_half_even(loot_tt / cost, 4)
+            } else {
+                0.0
+            };
+            let row = HarvestToolRow {
+                name: name.clone(),
+                swings,
+                cycled,
+                loot_rate,
+            };
+            (swings, cost, name, row)
+        })
+        .collect();
+    // sort by (-swings, -cycled, name), mirroring the Hunting slices'
+    // (-kills, -cycled, name) order.
+    rows.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+            .then(a.2.cmp(&b.2))
+    });
+    Ok(HarvestData {
+        tool_comparisons: rows.into_iter().map(|(_, _, _, row)| row).collect(),
     })
 }
 
@@ -1615,10 +1662,16 @@ impl AnalyticsService {
         Ok(overview_impl(&self.db, now, period).await?)
     }
 
-    /// The Activity aggregate: the per-mob / per-tag / per-weapon
-    /// comparison tables over the completed sessions.
-    pub async fn activity(&self) -> Result<ActivityData, AnalyticsError> {
-        Ok(activity_impl(&self.db).await?)
+    /// The Hunting aggregate: the per-mob / per-tag comparison tables
+    /// over the completed sessions.
+    pub async fn hunting(&self) -> Result<HuntingData, AnalyticsError> {
+        Ok(hunting_impl(&self.db).await?)
+    }
+
+    /// The Tree Cutting aggregate: the per-tool comparison table over
+    /// every recorded harvest swing.
+    pub async fn harvest(&self) -> Result<HarvestData, AnalyticsError> {
+        Ok(harvest_impl(&self.db).await?)
     }
 
     /// The whole-ledger summary for a named period (`30d` / `90d` / `1y`,
@@ -2379,13 +2432,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_activity_emits_three_empty_tables() {
+    async fn empty_hunting_emits_two_empty_tables() {
         let (_dir, db) = open_env().await;
-        let value = to_json(activity_impl(&db).await.unwrap());
+        let value = to_json(hunting_impl(&db).await.unwrap());
         assert_eq!(
             to_wire_json(&value),
-            "{\"mobComparisons\":[],\"tagComparisons\":[],\"weaponComparisons\":[]}"
+            "{\"mobComparisons\":[],\"tagComparisons\":[]}"
         );
+    }
+
+    #[tokio::test]
+    async fn empty_harvest_emits_an_empty_tool_table() {
+        let (_dir, db) = open_env().await;
+        let value = to_json(harvest_impl(&db).await.unwrap());
+        assert_eq!(to_wire_json(&value), "{\"toolComparisons\":[]}");
+    }
+
+    /// The Tree Cutting aggregate groups swings by tool, sums cost and loot
+    /// into the cycled and rate figures, sorts by (-swings, -cycled, name),
+    /// and excludes swings with no recorded tool.
+    #[tokio::test]
+    async fn harvest_groups_swings_by_tool_and_excludes_toolless_swings() {
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at) VALUES('hs',1000.0,4600.0)",
+                [],
+            )?;
+            let rows: [(&str, Option<&str>, i64, f64, f64); 6] = [
+                ("h1", Some("Axe A"), 1, 0.1, 0.3),
+                ("h2", Some("Axe A"), 0, 0.1, 0.0),
+                ("h3", Some("Axe A"), 1, 0.1, 0.06),
+                ("h4", Some("Axe B"), 1, 0.2, 0.1),
+                ("h5", None, 1, 0.0, 0.0),
+                ("h6", Some(""), 1, 0.0, 0.0),
+            ];
+            for (id, tool, success, cost, loot) in rows {
+                conn.execute(
+                    "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,cost_ped,loot_total_ped) \
+                     VALUES(?1,'hs',1000.0,?2,?3,?4,?5)",
+                    rusqlite::params![id, success, tool, cost, loot],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let v = to_json(harvest_impl(&db).await.unwrap());
+        let tools = v["toolComparisons"].as_array().unwrap();
+        assert_eq!(tools.len(), 2, "NULL and empty tool names are excluded");
+        // Axe A: 3 swings (failed swings still count), 0.3 cycled, 0.36 loot.
+        assert_eq!(tools[0]["name"], json!("Axe A"));
+        assert_eq!(tools[0]["swings"], json!(3));
+        assert_eq!(tools[0]["cycled"], json!(0.3));
+        assert_eq!(tools[0]["lootRate"], json!(1.2));
+        assert_eq!(tools[1]["name"], json!("Axe B"));
+        assert_eq!(tools[1]["swings"], json!(1));
+        assert_eq!(tools[1]["cycled"], json!(0.2));
+        assert_eq!(tools[1]["lootRate"], json!(0.5));
     }
 
     /// Seed the representative scenario the live probe grounded, with the
@@ -2522,11 +2626,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seeded_activity_dominance_and_filters() {
+    async fn seeded_hunting_dominance_and_filters() {
         let now = 1_800_000_000.0;
         let (_dir, db) = open_env().await;
         seed_scenario(&db, now).await;
-        let v = to_json(activity_impl(&db).await.unwrap());
+        let v = to_json(hunting_impl(&db).await.unwrap());
         // sess-z (zero kills) filtered out; sess-a -> dominant mob, sess-b -> tag.
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
@@ -2544,16 +2648,6 @@ mod tests {
         assert_eq!(tags[0]["cycled"], json!(2.4));
         assert_eq!(tags[0]["pesPer100Ped"], json!(41.67));
         assert_eq!(tags[0]["lootRate"], json!(6.25));
-        // weapon comparison keys kills off the session total (5 + 3 = 8) and
-        // aggregates both sessions' hours / cycled / rates.
-        let weapons = v["weaponComparisons"].as_array().unwrap();
-        assert_eq!(weapons.len(), 1);
-        assert_eq!(weapons[0]["name"], json!("Opalo"));
-        assert_eq!(weapons[0]["kills"], json!(8));
-        assert_eq!(weapons[0]["hours"], json!(2.0));
-        assert_eq!(weapons[0]["cycled"], json!(9.15));
-        assert_eq!(weapons[0]["pesPer100Ped"], json!(43.72));
-        assert_eq!(weapons[0]["lootRate"], json!(7.1038));
     }
 
     /// The activity filter drops a session failing ANY of the three guards
@@ -2569,7 +2663,7 @@ mod tests {
         seed_filter_session(&db, "zcost", "Zerocost", 1000.0, 1000.0 + 3600.0, 0.0, 2).await;
         // zero duration (start == end) -> dropped by the duration guard alone.
         seed_filter_session(&db, "zdur", "Zerodur", 1000.0, 1000.0, 5.0, 2).await;
-        let v = to_json(activity_impl(&db).await.unwrap());
+        let v = to_json(hunting_impl(&db).await.unwrap());
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1, "only the keeper survives the OR filter");
         assert_eq!(mobs[0]["name"], json!("Keeper"));
@@ -2710,7 +2804,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let v = to_json(activity_impl(&db).await.unwrap());
+        let v = to_json(hunting_impl(&db).await.unwrap());
         assert_eq!(v["mobComparisons"].as_array().unwrap().len(), 0);
         assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
 
@@ -2734,7 +2828,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let v = to_json(activity_impl(&db).await.unwrap());
+        let v = to_json(hunting_impl(&db).await.unwrap());
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["name"], json!("Foo"));
@@ -2761,7 +2855,7 @@ mod tests {
         .await
         .unwrap();
         // Only the real session's mob is compared; the orphan is ignored.
-        let v = to_json(activity_impl(&db).await.unwrap());
+        let v = to_json(hunting_impl(&db).await.unwrap());
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["name"], json!("Real"));
@@ -3473,8 +3567,6 @@ mod tests {
         assert_eq!(agg.dominant_mob, Some("Young Atrox".to_string()));
         assert_eq!(agg.dominant_mob_kills, 3);
         assert_eq!(agg.dominant_tag, None);
-        // Rifle 30 of 40 shots = 0.75 -> dominant weapon.
-        assert_eq!(agg.dominant_weapon, Some("Rifle".to_string()));
         // weapon 1.6 + enhancer 0.1 + armour 0.07 + heal 0.11 + dangling 0.13.
         assert_eq!(agg.cycled_ped, 2.01);
     }
@@ -3502,61 +3594,6 @@ mod tests {
             .unwrap();
         assert_eq!(agg.dominant_tag, Some("Thing".to_string()));
         assert_eq!(agg.dominant_mob, None);
-    }
-
-    /// Weapon dominance admits the exact 60% threshold and above, refusing
-    /// below it.
-    #[tokio::test]
-    async fn raw_session_agg_weapon_dominance_threshold() {
-        let (_dir, db) = open_env().await;
-        assert_eq!(
-            weapon_dominance(&db, "a", 60, Some(40)).await,
-            Some("Main".to_string())
-        );
-        assert_eq!(
-            weapon_dominance(&db, "c", 70, Some(30)).await,
-            Some("Main".to_string())
-        );
-        assert_eq!(weapon_dominance(&db, "b", 55, Some(45)).await, None);
-    }
-
-    /// Seed one kill and its tool stats (a main tool, optionally a second), then
-    /// return the raw aggregate's dominant weapon.
-    async fn weapon_dominance(db: &Db, sid: &str, main: i64, alt: Option<i64>) -> Option<String> {
-        let sid_s = sid.to_string();
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO kills (id, session_id, mob_name, timestamp, enhancer_cost, loot_total_ped) \
-                 VALUES (?1, ?2, 'M', 1.0, 0, 1.0)",
-                rusqlite::params![format!("{sid_s}-k"), sid_s],
-            )?;
-            conn.execute(
-                "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, cost_per_shot) \
-                 VALUES (?1, 'Main', ?2, 0.0)",
-                rusqlite::params![format!("{sid_s}-k"), main],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-        if let Some(alt) = alt {
-            let sid_s = sid.to_string();
-            db.with_writer(move |conn| {
-                conn.execute(
-                    "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, cost_per_shot) \
-                     VALUES (?1, 'Alt', ?2, 0.0)",
-                    rusqlite::params![format!("{sid_s}-k"), alt],
-                )?;
-                Ok(())
-            })
-            .await
-            .unwrap();
-        }
-        let sid_s = sid.to_string();
-        db.with_reader(move |conn| raw_session_agg(conn, &sid_s, 1000.0, 4600.0, 0.0, 0.0, 0.0))
-            .await
-            .unwrap()
-            .dominant_weapon
     }
 
     /// The trend compares the recent-30d window (lower bound `now - 30*86400`)

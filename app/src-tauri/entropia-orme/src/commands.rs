@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use eo_api::analytics::{
-    AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
+    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
     InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
     LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
@@ -440,15 +440,28 @@ pub async fn analytics_overview(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn analytics_activity(app: tauri::AppHandle) -> Result<AnalyticsActivity, ApiError> {
+pub async fn analytics_hunting(app: tauri::AppHandle) -> Result<AnalyticsHunting, ApiError> {
     #[cfg(feature = "e2e-stub")]
     {
         let _ = &app;
-        e2e_analytics("activity")
+        e2e_analytics("hunting")
     }
     #[cfg(not(feature = "e2e-stub"))]
     {
-        facade(&app)?.analytics_activity().await
+        facade(&app)?.analytics_hunting().await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn analytics_harvest(app: tauri::AppHandle) -> Result<AnalyticsHarvest, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = &app;
+        e2e_analytics("harvest")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.analytics_harvest().await
     }
 }
 
@@ -914,8 +927,13 @@ pub async fn demo_analytics_overview(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn demo_analytics_activity(app: tauri::AppHandle) -> Result<AnalyticsActivity, ApiError> {
-    facade(&app)?.demo_analytics_activity().await
+pub async fn demo_analytics_hunting(app: tauri::AppHandle) -> Result<AnalyticsHunting, ApiError> {
+    facade(&app)?.demo_analytics_hunting().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_analytics_harvest(app: tauri::AppHandle) -> Result<AnalyticsHarvest, ApiError> {
+    facade(&app)?.demo_analytics_harvest().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1315,7 +1333,8 @@ mod tests {
         "playlist_delete",
         "playlists_analytics",
         "analytics_overview",
-        "analytics_activity",
+        "analytics_hunting",
+        "analytics_harvest",
         "ledger_list",
         "ledger_summary",
         "ledger_create",
@@ -1365,7 +1384,8 @@ mod tests {
         "tracking_repair_scan",
         "tracking_session_delete",
         "demo_analytics_overview",
-        "demo_analytics_activity",
+        "demo_analytics_hunting",
+        "demo_analytics_harvest",
         "demo_ledger_list",
         "demo_ledger_summary",
         "demo_ledger_presets_list",

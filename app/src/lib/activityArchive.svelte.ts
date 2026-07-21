@@ -1,16 +1,15 @@
 import { getPreference, setPreference } from './preferences';
 
-export type ArchiveKind = 'mob' | 'tag' | 'weapon';
+export type ArchiveKind = 'mob' | 'tag';
 
 export type ActivityArchiveState = {
 	mobs: string[];
 	tags: string[];
-	weapons: string[];
 };
 
 const KEY = 'activityArchive';
 
-const EMPTY: ActivityArchiveState = { mobs: [], tags: [], weapons: [] };
+const EMPTY: ActivityArchiveState = { mobs: [], tags: [] };
 
 let archiveState = $state<ActivityArchiveState>(EMPTY);
 
@@ -31,10 +30,11 @@ function sanitise(value: unknown): ActivityArchiveState {
 		Array.isArray(x)
 			? Array.from(new Set(x.filter((s): s is string => typeof s === 'string')))
 			: [];
+	// A stored `weapons` bucket from the retired per-weapon comparison is
+	// dropped here on read and gone on the next persisted write.
 	return {
 		mobs: arr(v.mobs),
 		tags: arr(v.tags),
-		weapons: arr(v.weapons),
 	};
 }
 
@@ -44,7 +44,7 @@ export async function initActivityArchive(): Promise<void> {
 }
 
 function bucketKey(kind: ArchiveKind): keyof ActivityArchiveState {
-	return kind === 'mob' ? 'mobs' : kind === 'tag' ? 'tags' : 'weapons';
+	return kind === 'mob' ? 'mobs' : 'tags';
 }
 
 export async function archive(kind: ArchiveKind, name: string): Promise<void> {

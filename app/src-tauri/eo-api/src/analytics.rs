@@ -166,26 +166,29 @@ pub struct TagComparison {
     pub loot_rate: f64,
 }
 
-/// One row of the per-weapon activity comparison.
+/// The Hunting aggregate: the per-mob and per-tag comparison tables.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct WeaponComparison {
-    pub weapon_name: String,
-    pub sessions: i64,
-    pub kills: i64,
-    pub hours: f64,
+pub struct AnalyticsHunting {
+    pub mob_comparisons: Vec<MobComparison>,
+    pub tag_comparisons: Vec<TagComparison>,
+}
+
+/// One row of the Tree Cutting per-tool comparison.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestToolComparison {
+    pub tool_name: String,
+    pub swings: i64,
     pub cycled: f64,
-    pub pes_per100_ped: f64,
     pub loot_rate: f64,
 }
 
-/// The Activity aggregate: the three comparison tables.
+/// The Tree Cutting aggregate: the per-tool comparison table.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AnalyticsActivity {
-    pub mob_comparisons: Vec<MobComparison>,
-    pub tag_comparisons: Vec<TagComparison>,
-    pub weapon_comparisons: Vec<WeaponComparison>,
+pub struct AnalyticsHarvest {
+    pub tool_comparisons: Vec<HarvestToolComparison>,
 }
 
 // ── Ledger / preset / inventory DTOs ────────────────────────────────
@@ -334,14 +337,24 @@ impl Api {
         Ok(overview_dto(value))
     }
 
-    /// The Activity aggregate: the per-mob / per-tag / per-weapon tables.
-    pub async fn analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
+    /// The Hunting aggregate: the per-mob / per-tag tables.
+    pub async fn analytics_hunting(&self) -> Result<AnalyticsHunting, ApiError> {
         let value = self
             .analytics
-            .activity()
+            .hunting()
             .await
-            .map_err(analytics_error("analytics activity"))?;
-        Ok(activity_dto(value))
+            .map_err(analytics_error("analytics hunting"))?;
+        Ok(hunting_dto(value))
+    }
+
+    /// The Tree Cutting aggregate: the per-tool table.
+    pub async fn analytics_harvest(&self) -> Result<AnalyticsHarvest, ApiError> {
+        let value = self
+            .analytics
+            .harvest()
+            .await
+            .map_err(analytics_error("analytics harvest"))?;
+        Ok(harvest_dto(value))
     }
 
     /// One keyset page of ledger entries (newest first) plus the cursor for
@@ -602,8 +615,8 @@ pub(crate) fn overview_dto(data: eo_services::analytics::OverviewData) -> Analyt
     }
 }
 
-pub(crate) fn activity_dto(data: eo_services::analytics::ActivityData) -> AnalyticsActivity {
-    AnalyticsActivity {
+pub(crate) fn hunting_dto(data: eo_services::analytics::HuntingData) -> AnalyticsHunting {
+    AnalyticsHunting {
         mob_comparisons: data
             .mob_comparisons
             .into_iter()
@@ -630,16 +643,18 @@ pub(crate) fn activity_dto(data: eo_services::analytics::ActivityData) -> Analyt
                 loot_rate: row.loot_rate,
             })
             .collect(),
-        weapon_comparisons: data
-            .weapon_comparisons
+    }
+}
+
+pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> AnalyticsHarvest {
+    AnalyticsHarvest {
+        tool_comparisons: data
+            .tool_comparisons
             .into_iter()
-            .map(|row| WeaponComparison {
-                weapon_name: row.name,
-                sessions: row.sessions,
-                kills: row.kills,
-                hours: row.hours,
+            .map(|row| HarvestToolComparison {
+                tool_name: row.name,
+                swings: row.swings,
                 cycled: row.cycled,
-                pes_per100_ped: row.pes_per100_ped,
                 loot_rate: row.loot_rate,
             })
             .collect(),
