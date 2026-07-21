@@ -819,7 +819,10 @@ mod tests {
         let mut updates = Map::new();
         updates.insert("harvest_guardrail".into(), serde_json::json!("garbled"));
         svc.update(&updates).unwrap();
-        assert_eq!(svc.get().harvest_guardrail, HarvestGuardrailConfig::default());
+        assert_eq!(
+            svc.get().harvest_guardrail,
+            HarvestGuardrailConfig::default()
+        );
     }
 
     #[test]
