@@ -226,6 +226,17 @@ pub struct TrackingSession {
     pub hofs: i64,
 }
 
+/// A keyset page of session-list rows plus the opaque cursor for the
+/// next page (`null` on the last page) and the whole-table session
+/// count, mirroring the ledger's [`crate::analytics::LedgerPage`] shape.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPage {
+    pub sessions: Vec<TrackingSession>,
+    pub next_cursor: Nullable<String>,
+    pub total: i64,
+}
+
 /// The session-detail cost split.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -612,15 +623,33 @@ pub struct RepairScanResult {
 // ── Facade methods ──────────────────────────────────────────────────
 
 impl Api {
-    /// The recent sessions (newest first), each shaped from its summary or
-    /// raw tables. Heals ended-session summaries first (a write on the read
-    /// path, preserved from the reference).
-    pub async fn tracking_sessions(&self) -> Result<Vec<TrackingSession>, ApiError> {
+    /// One keyset page of sessions (newest first), each shaped from its
+    /// summary or raw tables. Heals ended-session summaries first (a write
+    /// on the read path, preserved from the reference). A malformed cursor
+    /// is a bad-request.
+    pub async fn tracking_sessions(
+        &self,
+        cursor: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<SessionPage, ApiError> {
+        let seek = match cursor.as_deref() {
+            None => None,
+            Some(token) => match decode_session_cursor(token) {
+                Some(key) => Some(key),
+                None => return Err(ApiError::bad_request("Invalid cursor")),
+            },
+        };
         let now = naive_to_epoch(self.clock.now());
-        let value = list_sessions_impl(&self.db, now)
+        let page = list_sessions_impl(&self.db, now, seek, limit)
             .await
             .map_err(ApiError::internal("tracking sessions"))?;
-        serde_json::from_value(value).map_err(ApiError::internal("tracking sessions shaping"))
+        let sessions: Vec<TrackingSession> = serde_json::from_value(page.sessions)
+            .map_err(ApiError::internal("tracking sessions shaping"))?;
+        Ok(SessionPage {
+            sessions,
+            next_cursor: page.next_cursor.into(),
+            total: page.total,
+        })
     }
 
     /// One session's full detail; an absent session is a not-found.

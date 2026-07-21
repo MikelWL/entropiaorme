@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::analytics::{
     AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
     InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput,
+    LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -50,8 +50,8 @@ use crate::scan::{
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionQuestLinkSuggestion,
-    StartResult, StopResult, TagLockResult, TrackingSession, TrackingSnapshot,
+    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
+    SessionQuestLinkSuggestion, StartResult, StopResult, TagLockResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -510,6 +510,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(LedgerPage))),
         },
         CommandSpec {
+            name: "ledger_summary",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(LedgerSummary))),
+        },
+        CommandSpec {
             name: "ledger_create",
             args: vec![ArgSpec {
                 name: "entry",
@@ -706,8 +714,17 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "tracking_sessions",
-            args: Vec::new(),
-            returns: Some(schema(schema_for!(Vec<TrackingSession>))),
+            args: vec![
+                ArgSpec {
+                    name: "cursor",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "limit",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionPage))),
         },
         CommandSpec {
             name: "tracking_session_detail",
@@ -929,6 +946,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(LedgerPage))),
         },
         CommandSpec {
+            name: "demo_ledger_summary",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(LedgerSummary))),
+        },
+        CommandSpec {
             name: "demo_ledger_presets_list",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Vec<LedgerPreset>))),
@@ -940,8 +965,17 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "demo_tracking_sessions",
-            args: Vec::new(),
-            returns: Some(schema(schema_for!(Vec<TrackingSession>))),
+            args: vec![
+                ArgSpec {
+                    name: "cursor",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "limit",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionPage))),
         },
         CommandSpec {
             name: "demo_tracking_session_detail",

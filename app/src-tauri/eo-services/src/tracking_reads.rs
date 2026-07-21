@@ -127,6 +127,7 @@ struct ListSummary {
     enhancer_cost: f64,
     armour_cost: f64,
     dangling_cost: f64,
+    harvest_cost: f64,
     loot_tt: f64,
     primary_mobs: Value,
     primary_weapons: Value,
@@ -134,41 +135,110 @@ struct ListSummary {
     hofs: i64,
 }
 
-pub async fn list_sessions_impl(db: &Db, now: f64) -> Result<Value, DbError> {
+/// The default session page size when the client names no `limit`.
+const SESSION_PAGE_DEFAULT: i64 = 50;
+/// The largest session page a client may request; larger `limit` values
+/// clamp here, bounding the work a single request can ask for.
+const SESSION_PAGE_MAX: i64 = 200;
+
+/// One keyset page of session-list rows plus the cursor for the next page
+/// (`None` on the last page) and the whole-table session count (so a
+/// pager can report true bounds while loading windows on demand).
+pub struct SessionListPage {
+    pub sessions: Value,
+    pub next_cursor: Option<String>,
+    pub total: i64,
+}
+
+/// The opaque keyset cursor over `[started_at, id]` of the last row on a
+/// page (the shared [`crate::keyset`] codec).
+fn encode_session_cursor(started_at: f64, id: &str) -> String {
+    crate::keyset::encode_cursor(&(started_at, id))
+}
+
+/// Decode a keyset cursor back to its `(started_at, id)` seek key, or
+/// `None` for a malformed token (which the facade answers as a bad
+/// request).
+pub fn decode_session_cursor(token: &str) -> Option<(f64, String)> {
+    crate::keyset::decode_cursor(token)
+}
+
+pub async fn list_sessions_impl(
+    db: &Db,
+    now: f64,
+    seek: Option<(f64, String)>,
+    limit: Option<i64>,
+) -> Result<SessionListPage, DbError> {
     // Heal so ended sessions carry current summaries (a write on the read
-    // path, preserved), then read each recent session's row as one
+    // path, preserved), then read each page session's row as one
     // synchronous unit on a reader-core connection.
     db.with_writer(|conn| crate::session_summary::heal_summaries(conn))
         .await?;
-    db.with_reader(move |conn| list_sessions_read(conn, now))
+    db.with_reader(move |conn| list_sessions_read(conn, now, seek.as_ref(), limit))
         .await
 }
 
-/// The session-list read proper: the recent-session rows, their summaries,
-/// and each row shaped from its summary (ended) or the raw tables. One
-/// synchronous pass over a reader-core connection.
-pub fn list_sessions_read(conn: &rusqlite::Connection, now: f64) -> Result<Value, DbError> {
+/// The session-list read proper: keyset (seek) pagination newest first
+/// over `(started_at DESC, id DESC)`, each page row shaped from its
+/// summary (ended) or the raw tables. One synchronous pass over a
+/// reader-core connection; one extra row is fetched to detect a further
+/// page.
+pub fn list_sessions_read(
+    conn: &rusqlite::Connection,
+    now: f64,
+    seek: Option<&(f64, String)>,
+    limit: Option<i64>,
+) -> Result<SessionListPage, DbError> {
+    let page = limit
+        .unwrap_or(SESSION_PAGE_DEFAULT)
+        .clamp(1, SESSION_PAGE_MAX);
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+        row.get(0)
+    })?;
+    let mut sql = String::from("SELECT id, started_at, ended_at, is_active FROM tracking_sessions");
+    if seek.is_some() {
+        sql.push_str(" WHERE started_at < ? OR (started_at = ? AND id < ?)");
+    }
+    sql.push_str(" ORDER BY started_at DESC, id DESC LIMIT ?");
+
     let meta: Vec<(String, Option<f64>, Option<f64>, bool)> = {
-        let mut stmt = conn.prepare(
-            "SELECT id, started_at, ended_at, is_active \
-             FROM tracking_sessions ORDER BY started_at DESC LIMIT 20",
-        )?;
-        let rows = stmt.query_map([], |row| {
+        let mut stmt = conn.prepare(&sql)?;
+        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<_> {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<f64>>(1)?,
                 row.get::<_, Option<f64>>(2)?,
                 row.get::<_, i64>(3)? != 0,
             ))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let rows = match seek {
+            Some((started_at, id)) => stmt
+                .query_map(
+                    rusqlite::params![started_at, started_at, id, page + 1],
+                    map_row,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+            None => stmt
+                .query_map(rusqlite::params![page + 1], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+        };
+        rows
     };
 
-    let ids: Vec<String> = meta.iter().map(|(id, ..)| id.clone()).collect();
+    // A full extra row means another page follows: drop it and cut the
+    // next cursor from the last row actually served.
+    let has_more = meta.len() as i64 > page;
+    let kept = if has_more {
+        &meta[..page as usize]
+    } else {
+        &meta[..]
+    };
+
+    let ids: Vec<String> = kept.iter().map(|(id, ..)| id.clone()).collect();
     let summaries = fetch_list_summaries(conn, &ids)?;
 
-    let mut sessions = Vec::with_capacity(meta.len());
-    for (sid, started_at, ended_at, is_active) in &meta {
+    let mut sessions = Vec::with_capacity(kept.len());
+    for (sid, started_at, ended_at, is_active) in kept {
         let session = match summaries.get(sid) {
             Some(summary) if !*is_active => {
                 list_row_from_summary(sid, *started_at, *ended_at, *is_active, now, summary)
@@ -177,7 +247,15 @@ pub fn list_sessions_read(conn: &rusqlite::Connection, now: f64) -> Result<Value
         };
         sessions.push(session);
     }
-    Ok(Value::Array(sessions))
+    let next_cursor = has_more
+        .then(|| kept.last())
+        .flatten()
+        .map(|(id, started_at, ..)| encode_session_cursor(started_at.unwrap_or(0.0), id));
+    Ok(SessionListPage {
+        sessions: Value::Array(sessions),
+        next_cursor,
+        total,
+    })
 }
 
 fn fetch_list_summaries(
@@ -190,7 +268,7 @@ fn fetch_list_summaries(
     let placeholders = vec!["?"; ids.len()].join(", ");
     let sql = format!(
         "SELECT session_id, weapon_cost, heal_cost, enhancer_cost, armour_cost, dangling_cost, \
-         loot_tt, primary_mobs_json, primary_weapons_json, globals, hofs \
+         harvest_cost, loot_tt, primary_mobs_json, primary_weapons_json, globals, hofs \
          FROM session_summaries WHERE session_id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -206,11 +284,12 @@ fn fetch_list_summaries(
                 enhancer_cost: as_f64(&sql_number(row, 3)),
                 armour_cost: as_f64(&sql_number(row, 4)),
                 dangling_cost: as_f64(&sql_number(row, 5)),
-                loot_tt: as_f64(&sql_number(row, 6)),
-                primary_mobs: parse_string_array(&row.get::<_, String>(7)?),
-                primary_weapons: parse_string_array(&row.get::<_, String>(8)?),
-                globals: row.get::<_, i64>(9)?,
-                hofs: row.get::<_, i64>(10)?,
+                harvest_cost: as_f64(&sql_number(row, 6)),
+                loot_tt: as_f64(&sql_number(row, 7)),
+                primary_mobs: parse_string_array(&row.get::<_, String>(8)?),
+                primary_weapons: parse_string_array(&row.get::<_, String>(9)?),
+                globals: row.get::<_, i64>(10)?,
+                hofs: row.get::<_, i64>(11)?,
             },
         );
     }
@@ -230,11 +309,15 @@ fn list_row_from_summary(
     summary: &ListSummary,
 ) -> Value {
     let duration = duration_seconds(started_at, ended_at, is_active, now);
+    // Cost mirrors the summary's own cycled composition (weapon + heal +
+    // enhancer + armour + dangling + harvest swing decay), matching the
+    // detail read; loot_tt already folds harvest loot in.
     let cost = summary.weapon_cost
         + summary.heal_cost
         + summary.enhancer_cost
         + summary.armour_cost
-        + summary.dangling_cost;
+        + summary.dangling_cost
+        + summary.harvest_cost;
     let returns = summary.loot_tt;
     let net = returns - cost;
     let return_rate = if cost > 0.0 { returns / cost } else { 0.0 };
@@ -288,15 +371,23 @@ pub fn list_row_from_raw(
             ))
         },
     )?;
+    // Harvest loot and swing decay join the raw shape symmetrically (the
+    // summary path and the detail read both carry them).
+    let (harvest_loot, harvest_cost) = conn.query_row(
+        "SELECT COALESCE(SUM(loot_total_ped), 0), COALESCE(SUM(cost_ped), 0) \
+         FROM harvest_events WHERE session_id = ?",
+        rusqlite::params![session_id],
+        |row| Ok((as_f64(&sql_number(row, 0)), as_f64(&sql_number(row, 1)))),
+    )?;
     let weapon_cost = as_f64(&weapon_cost);
     let enhancer_cost = as_f64(&enhancer_cost);
-    let cost = weapon_cost + heal_cost + enhancer_cost + armour_cost + dangling_cost;
+    let cost = weapon_cost + heal_cost + enhancer_cost + armour_cost + dangling_cost + harvest_cost;
 
     let returns = as_f64(&scalar(
         conn,
         "SELECT COALESCE(SUM(loot_total_ped), 0) FROM kills WHERE session_id = ?",
         session_id,
-    )?);
+    )?) + harvest_loot;
 
     let primary_mobs = string_column(
         conn,
@@ -1781,6 +1872,7 @@ mod tests {
             enhancer_cost: 3.0,
             armour_cost: 4.0,
             dangling_cost: 5.0,
+            harvest_cost: 6.0,
             loot_tt: 30.0,
             primary_mobs: json!(["Argonaut"]),
             primary_weapons: json!(["Gun"]),
@@ -1797,10 +1889,10 @@ mod tests {
                 "duration": 3600,
                 "primaryMobs": ["Argonaut"],
                 "primaryWeapons": ["Gun"],
-                "cost": 15.0,
+                "cost": 21.0,
                 "returns": 30.0,
-                "net": 15.0,
-                "returnRate": 2.0,
+                "net": 9.0,
+                "returnRate": round(30.0 / 21.0, 4),
                 "globals": 2,
                 "hofs": 1,
             })
@@ -1989,11 +2081,11 @@ mod tests {
         .await
         .unwrap();
 
-        let value = db
-            .with_reader(|conn| list_sessions_read(conn, 5000.0))
+        let page = db
+            .with_reader(|conn| list_sessions_read(conn, 5000.0, None, None))
             .await
             .unwrap();
-        let rows = value.as_array().unwrap();
+        let rows = page.sessions.as_array().unwrap();
         assert_eq!(rows.len(), 2);
         // Ordered by started_at DESC: the active session first.
         assert_eq!(rows[0]["id"], json!("s-active"));
@@ -2350,8 +2442,8 @@ mod tests {
         })
         .await
         .unwrap();
-        let value = list_sessions_impl(&db, 5000.0).await.unwrap();
-        let rows = value.as_array().unwrap();
+        let page = list_sessions_impl(&db, 5000.0, None, None).await.unwrap();
+        let rows = page.sessions.as_array().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["id"], json!("s1"));
     }
@@ -2997,6 +3089,7 @@ mod tests {
             enhancer_cost: 0.0,
             armour_cost: 0.0,
             dangling_cost: 0.0,
+            harvest_cost: 0.0,
             loot_tt: 30.0,
             primary_mobs: json!([]),
             primary_weapons: json!([]),

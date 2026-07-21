@@ -140,7 +140,7 @@ describe('guide-mode demo dispatch', () => {
 			'getTrackingSessions',
 			() => api.getTrackingSessions(),
 			'tracking_sessions',
-			{},
+			{ cursor: null, limit: null },
 			'demo_tracking_sessions',
 		],
 		[
@@ -203,17 +203,28 @@ describe('analytics wrappers dispatch typed commands', () => {
 	});
 
 	it('getLedgerEntries invokes ledger_list and reshapes the page (cursor from the body)', async () => {
-		tauriInvoke.mockResolvedValue({ entries: [{ id: 'e1' }], nextCursor: 'cur' });
+		tauriInvoke.mockResolvedValue({ entries: [{ id: 'e1' }], nextCursor: 'cur', total: 9 });
 		const page = await api.getLedgerEntries('seek', 25);
 		expect(tauriInvoke).toHaveBeenCalledWith('ledger_list', { cursor: 'seek', limit: 25 });
-		expect(page).toEqual({ items: [{ id: 'e1' }], nextCursor: 'cur' });
+		expect(page).toEqual({ items: [{ id: 'e1' }], nextCursor: 'cur', total: 9 });
 	});
 
 	it('getLedgerEntries passes nulls for an unpaged first read', async () => {
-		tauriInvoke.mockResolvedValue({ entries: [], nextCursor: null });
+		tauriInvoke.mockResolvedValue({ entries: [], nextCursor: null, total: 0 });
 		const page = await api.getLedgerEntries();
 		expect(tauriInvoke).toHaveBeenCalledWith('ledger_list', { cursor: null, limit: null });
 		expect(page.nextCursor).toBeNull();
+	});
+
+	it('getLedgerSummary invokes the live command, or the demo command in guide mode', async () => {
+		guideState.isActive = false;
+		await api.getLedgerSummary('all');
+		expect(tauriInvoke).toHaveBeenCalledWith('ledger_summary', { period: 'all' });
+
+		tauriInvoke.mockClear();
+		guideState.isActive = true;
+		await api.getLedgerSummary('30d');
+		expect(tauriInvoke).toHaveBeenCalledWith('demo_ledger_summary', { period: '30d' });
 	});
 
 	it('getLedgerPresets / getInventoryItems invoke their list commands live', async () => {

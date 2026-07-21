@@ -22,6 +22,12 @@ mod common;
 /// `settings.json` into the data dir first (for the config-flag reads);
 /// `seed` places one ended session with two `Atrox` kills.
 async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
+    make_api_db(dir, seed, settings).await.0
+}
+
+/// [`make_api`] plus a clone of the underlying database handle, for tests
+/// that seed or verify rows directly.
+async fn make_api_db(dir: &Path, seed: bool, settings: Option<&str>) -> (Api, Db) {
     let snapshot = dir.join("snapshot");
     std::fs::create_dir_all(&snapshot).unwrap();
     let data_dir = dir.join("data");
@@ -35,10 +41,11 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
     if seed {
         seed_ended(&db).await;
     }
+    let verify = db.clone();
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
     let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
-    Api::new(
+    let api = Api::new(
         db,
         game_data,
         clock,
@@ -56,7 +63,8 @@ async fn make_api(dir: &Path, seed: bool, settings: Option<&str>) -> Api {
         None,
         None,
         None,
-    )
+    );
+    (api, verify)
 }
 
 /// One ended session (`ended`) with two `Atrox` kills carrying loot.
@@ -81,11 +89,127 @@ async fn seed_ended(db: &Db) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_empty_session_list_serialises_to_the_empty_array() {
+async fn the_empty_session_list_serialises_to_the_empty_page() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), false, None).await;
-    let sessions = api.tracking_sessions().await.unwrap();
-    assert_eq!(serde_json::to_string(&sessions).unwrap(), "[]");
+    let page = api.tracking_sessions(None, None).await.unwrap();
+    assert_eq!(
+        serde_json::to_string(&page).unwrap(),
+        "{\"sessions\":[],\"nextCursor\":null,\"total\":0}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_malformed_session_cursor_is_a_bad_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(dir.path(), false, None).await;
+    let error = api
+        .tracking_sessions(Some("not-a-cursor".to_string()), None)
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&error).unwrap()["kind"], "badRequest");
+}
+
+/// Seed `count` ended one-kill sessions at distinct start times (newest
+/// last inserted), for the pagination walks.
+async fn seed_many_sessions(db: &Db, count: usize) {
+    db.with_writer(move |conn| {
+        for i in 0..count {
+            let sid = format!("s{i:03}");
+            let start = 1000.0 + (i as f64) * 10_000.0;
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at,is_active,armour_cost,\
+                 heal_cost,dangling_cost,mob_tracking_mode,updated_at) \
+                 VALUES(?1,?2,?3,0,0,0,0,'mob',?3)",
+                rusqlite::params![sid, start, start + 600.0],
+            )?;
+            conn.execute(
+                "INSERT INTO kills(id,session_id,mob_name,timestamp,loot_total_ped) \
+                 VALUES(?1,?2,'Atrox',?3,5.0)",
+                rusqlite::params![format!("{sid}-k"), sid, start + 1.0],
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_harvest_session_nets_the_same_on_the_list_and_the_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    // A harvest-only ended session: swings cost 26.43 in decay, loot
+    // returned 16.45. No kills, so every non-harvest cost family is zero.
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id,started_at,ended_at,is_active,armour_cost,\
+             heal_cost,dangling_cost,mob_tracking_mode,updated_at) \
+             VALUES('woods',1000.0,4600.0,0,0,0,0,'mob',4600.0)",
+            [],
+        )?;
+        for (id, cost, loot) in [("h1", 13.21, 16.45), ("h2", 13.22, 0.0)] {
+            conn.execute(
+                "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,cost_ped,\
+                 loot_total_ped) VALUES(?1,'woods',1001.0,1,'Axe',?2,?3)",
+                rusqlite::params![id, cost, loot],
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    // The list row (served from the healed summary) and the detail read
+    // must agree: net = harvest loot - harvest swing decay.
+    let page = api.tracking_sessions(None, None).await.unwrap();
+    assert_eq!(page.sessions.len(), 1);
+    let row = &page.sessions[0];
+    let detail = api
+        .tracking_session_detail("woods".to_string())
+        .await
+        .unwrap();
+    assert_eq!(row.cost, 26.43);
+    assert_eq!(row.returns, 16.45);
+    assert_eq!(row.net, -9.98);
+    assert_eq!(row.net, detail.summary.net);
+    assert_eq!(row.cost, detail.summary.cost);
+    assert_eq!(row.returns, detail.summary.returns);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_keyset_walk_serves_every_session_exactly_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    seed_many_sessions(&db, 25).await;
+
+    // First page: newest first, the whole-table count riding along, a
+    // further page signalled by the cursor.
+    let first = api.tracking_sessions(None, Some(10)).await.unwrap();
+    assert_eq!(first.sessions.len(), 10);
+    assert_eq!(first.total, 25);
+    assert_eq!(first.sessions[0].id, "s024");
+    let cursor = first.next_cursor.0.clone().expect("a further page follows");
+
+    // Walk the cursor to exhaustion: every session appears exactly once.
+    let mut seen: Vec<String> = first.sessions.iter().map(|s| s.id.clone()).collect();
+    let mut token = Some(cursor);
+    while let Some(current) = token {
+        let page = api
+            .tracking_sessions(Some(current), Some(10))
+            .await
+            .unwrap();
+        seen.extend(page.sessions.iter().map(|s| s.id.clone()));
+        token = page.next_cursor.0.clone();
+    }
+    assert_eq!(seen.len(), 25, "every session is served");
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 25, "no session is served twice");
+    // The walk is newest-first end to end.
+    assert_eq!(seen.first().map(String::as_str), Some("s024"));
+    assert_eq!(seen.last().map(String::as_str), Some("s000"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

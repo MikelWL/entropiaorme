@@ -72,10 +72,13 @@ export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
 export const getSessionQuestLinkSuggestion = commands.trackingQuestLinkSuggestion;
 
-export const getTrackingSessions = guideSwapped(
-	commands.trackingSessions,
-	commands.demoTrackingSessions,
-);
+const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
+
+/** One keyset page of sessions plus the cursor for the next page (null on
+ * the last page). */
+export async function getTrackingSessions(cursor?: string, limit?: number) {
+	return readSessionsPage(cursor ?? null, limit ?? null);
+}
 export const getSessionDetail = guideSwapped(
 	commands.trackingSessionDetail,
 	commands.demoTrackingSessionDetail,

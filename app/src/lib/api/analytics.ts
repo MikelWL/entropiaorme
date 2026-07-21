@@ -15,6 +15,10 @@ export async function getAnalyticsOverview(period: string = 'all') {
 	return readOverview(period);
 }
 
+/** The whole-ledger per-tag summary for a period, independent of the
+ * paginated entry list: the Net Ledger Impact card's source of truth. */
+export const getLedgerSummary = guideSwapped(commands.ledgerSummary, commands.demoLedgerSummary);
+
 export const getAnalyticsActivity = guideSwapped(
 	commands.analyticsActivity,
 	commands.demoAnalyticsActivity,
@@ -35,11 +39,13 @@ export const deleteInventoryItem = commands.inventoryDelete;
 export const sellInventoryItem = commands.inventorySell;
 
 /** One keyset page of ledger entries plus the cursor for the next page
- * (null on the last page). Frontend-owned reshape of the generated
- * `LedgerPage` (`entries` reads as `items` at the consumer). */
+ * (null on the last page) and the whole-ledger row count. Frontend-owned
+ * reshape of the generated `LedgerPage` (`entries` reads as `items` at
+ * the consumer). */
 export interface LedgerPage {
 	items: LedgerItem[];
 	nextCursor: string | null;
+	total: number;
 }
 
 const readLedgerPage = guideSwapped(commands.ledgerList, commands.demoLedgerList);
@@ -49,5 +55,6 @@ export async function getLedgerEntries(cursor?: string, limit?: number): Promise
 	return {
 		items: page.entries,
 		nextCursor: page.nextCursor ?? null,
+		total: page.total,
 	};
 }

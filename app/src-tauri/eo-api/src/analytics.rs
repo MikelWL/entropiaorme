@@ -202,14 +202,28 @@ pub struct LedgerItem {
     pub tag: String,
 }
 
+/// The whole-ledger summary for a period: the per-tag markup (gain) and
+/// expense (loss) totals over every entry in the window, independent of
+/// the paginated list. The Ledger tab's net-impact and source cards read
+/// this instead of folding the loaded page window.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerSummary {
+    pub gains: BTreeMap<String, f64>,
+    pub losses: BTreeMap<String, f64>,
+}
+
 /// A page of ledger entries plus the opaque cursor for the next page
-/// (`null` on the last page): the keyset `X-Next-Cursor` header folded
-/// into the typed return, since a command answers one structured payload.
+/// (`null` on the last page) and the whole-ledger row count, so a pager
+/// can report true bounds while loading windows on demand: the keyset
+/// `X-Next-Cursor` header folded into the typed return, since a command
+/// answers one structured payload.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LedgerPage {
     pub entries: Vec<LedgerItem>,
     pub next_cursor: Nullable<String>,
+    pub total: i64,
 }
 
 /// One ledger preset (a reusable ledger-entry template).
@@ -345,6 +359,21 @@ impl Api {
         Ok(LedgerPage {
             entries: page.entries.into_iter().map(ledger_item_dto).collect(),
             next_cursor: page.next_cursor.into(),
+            total: page.total,
+        })
+    }
+
+    /// The whole-ledger per-tag summary for a named period (`30d` / `90d` /
+    /// `1y`, or all-time for any other value).
+    pub async fn ledger_summary(&self, period: &str) -> Result<LedgerSummary, ApiError> {
+        let summary = self
+            .analytics
+            .ledger_summary(period)
+            .await
+            .map_err(analytics_error("ledger summary"))?;
+        Ok(LedgerSummary {
+            gains: summary.gains,
+            losses: summary.losses,
         })
     }
 

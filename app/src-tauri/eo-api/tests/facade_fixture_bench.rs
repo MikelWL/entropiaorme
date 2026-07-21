@@ -141,12 +141,15 @@ fn facade_fixture_bench() {
         bench!("overview_90d", api.analytics_overview("90d"));
         bench!("overview_1y", api.analytics_overview("1y"));
         bench!("activity", api.analytics_activity());
-        bench!("session_list", api.tracking_sessions());
+        bench!("session_list", api.tracking_sessions(None, None));
         bench!("ledger_page", api.ledger_list(None, None));
 
         // The newest session's full detail, the O(session-size) read.
-        let sessions = api.tracking_sessions().await.expect("session list");
-        if let Some(newest) = sessions.first() {
+        let page = api
+            .tracking_sessions(None, None)
+            .await
+            .expect("session list");
+        if let Some(newest) = page.sessions.first() {
             let id = newest.id.clone();
             bench!("session_detail", api.tracking_session_detail(id.clone()));
         } else {
