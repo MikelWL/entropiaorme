@@ -20,8 +20,8 @@ parse, and commits it.
 - `eo-services/src/market_paste.rs` parses the paste fail-soft: rows it
   cannot read are skipped and reported, a no-sales window (`N/A`)
   becomes a null markup rather than a zero, and sales volumes normalise
-  to PED. The committed result is one `market_submissions` row and one
-  `market_observations` row per item and horizon (migration
+  to PED. The committed result is one `market_submissions` row recording the
+  paste, and one `market_observations` row per item and horizon (migration
   `0005_market_observations.sql`; column detail in the
   [schema reference](database-schema.md)).
 - `eo-services/src/market_service.rs` serves the reads: the tracked-item
@@ -56,9 +56,10 @@ Client-side, the flow is deliberately consent-shaped
   nothing uploads automatically.
 - All of it routes through the app's one hardened outbound HTTP gateway
   (`app/src/lib/outboundHttp.ts`), and the service domain is pinned in
-  the CSP `connect-src` beside the news feed. The app still fetches no
-  game data at runtime; market observations always enter by a user's
-  paste, locally or via another contributor's.
+  the CSP `connect-src` beside the news feed. The app never scrapes or
+  fetches anything from the game itself at runtime; market observations
+  always enter by a user's paste, locally or via another contributor's,
+  and the shared snapshot is the only market feed it downloads.
 
 ## The accounting boundary
 
