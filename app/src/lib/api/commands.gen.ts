@@ -557,6 +557,17 @@ export interface HarvestGuardrailSettings {
 }
 
 /**
+ * One item in a tool's harvest loot composition: realised TT only.
+ * The market markup column is merged in at the frontend from the
+ * market layer, never joined into this accounting DTO.
+ */
+export interface HarvestLootItem {
+	itemName: string;
+	quantity: number;
+	valuePed: number;
+}
+
+/**
  * A session's harvesting (tree cutting) totals: every swing is a
  * counted event (successes arrive as wood loot groups, fails as the
  * explicit harvest-fail line).
@@ -569,13 +580,16 @@ export interface HarvestSummary {
 }
 
 /**
- * One row of the Tree Cutting per-tool comparison.
+ * One row of the Tree Cutting per-tool comparison. `returns` is the
+ * realised loot TT; `loot_items` its per-item composition.
  */
 export interface HarvestToolComparison {
 	toolName: string;
 	swings: number;
 	cycled: number;
+	returns: number;
 	lootRate: number;
+	lootItems: HarvestLootItem[];
 }
 
 /**

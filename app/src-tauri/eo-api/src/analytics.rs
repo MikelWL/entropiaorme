@@ -174,14 +174,28 @@ pub struct AnalyticsHunting {
     pub tag_comparisons: Vec<TagComparison>,
 }
 
-/// One row of the Tree Cutting per-tool comparison.
+/// One item in a tool's harvest loot composition: realised TT only.
+/// The market markup column is merged in at the frontend from the
+/// market layer, never joined into this accounting DTO.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestLootItem {
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: f64,
+}
+
+/// One row of the Tree Cutting per-tool comparison. `returns` is the
+/// realised loot TT; `loot_items` its per-item composition.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestToolComparison {
     pub tool_name: String,
     pub swings: i64,
     pub cycled: f64,
+    pub returns: f64,
     pub loot_rate: f64,
+    pub loot_items: Vec<HarvestLootItem>,
 }
 
 /// The Tree Cutting aggregate: the per-tool comparison table.
@@ -655,7 +669,17 @@ pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> Analytic
                 tool_name: row.name,
                 swings: row.swings,
                 cycled: row.cycled,
+                returns: row.returns,
                 loot_rate: row.loot_rate,
+                loot_items: row
+                    .loot_items
+                    .into_iter()
+                    .map(|item| HarvestLootItem {
+                        item_name: item.item_name,
+                        quantity: item.quantity,
+                        value_ped: item.value_ped,
+                    })
+                    .collect(),
             })
             .collect(),
     }

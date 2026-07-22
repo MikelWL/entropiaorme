@@ -170,14 +170,28 @@ pub struct HarvestData {
     pub tool_comparisons: Vec<HarvestToolRow>,
 }
 
-/// One row of the Tree Cutting per-tool comparison.
+/// One row of the Tree Cutting per-tool comparison. `returns` is the
+/// realised loot TT the tool pulled; `loot_items` is its per-item
+/// composition (active loot only), for the section's breakdown list.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestToolRow {
     pub name: String,
     pub swings: i64,
     pub cycled: f64,
+    pub returns: f64,
     pub loot_rate: f64,
+    pub loot_items: Vec<HarvestLootItemRow>,
+}
+
+/// One item in a tool's harvest loot composition: realised TT figures
+/// only (markup is the market layer's, merged in at the frontend).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestLootItemRow {
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: f64,
 }
 
 /// One row of a Hunting comparison table; the caller labels the name
@@ -1598,7 +1612,10 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
 /// recorded tool (a rare attribution gap) are excluded rather than
 /// surfaced as a phantom row.
 async fn harvest_impl(db: &Db) -> Result<HarvestData, DbError> {
-    let raw: Vec<(String, i64, f64, f64)> = db
+    let (raw, composition): (
+        Vec<(String, i64, f64, f64)>,
+        Vec<(String, String, i64, f64)>,
+    ) = db
         .with_reader(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT tool_name, COUNT(*), COALESCE(SUM(cost_ped), 0), \
@@ -1606,22 +1623,69 @@ async fn harvest_impl(db: &Db) -> Result<HarvestData, DbError> {
                  WHERE tool_name IS NOT NULL AND tool_name != '' \
                  GROUP BY tool_name",
             )?;
-            let mapped = stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    as_float(row, 2),
-                    as_float(row, 3),
-                ))
-            })?;
-            Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+            let raw = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        as_float(row, 2),
+                        as_float(row, 3),
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            // Per-tool, per-item active loot composition. Grouped on the
+            // recording tool so each section's breakdown reflects only
+            // what that tool pulled.
+            let mut comp_stmt = conn.prepare(
+                "SELECT h.tool_name, l.item_name, SUM(l.quantity), \
+                 COALESCE(SUM(l.value_ped), 0) \
+                 FROM harvest_loot_items l JOIN harvest_events h ON h.id = l.harvest_id \
+                 WHERE h.tool_name IS NOT NULL AND h.tool_name != '' \
+                   AND l.deactivated_at IS NULL \
+                 GROUP BY h.tool_name, l.item_name",
+            )?;
+            let composition = comp_stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2).unwrap_or(0),
+                        as_float(row, 3),
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok((raw, composition))
         })
         .await?;
+
+    // Fold the flat composition rows into per-tool item lists, TT-desc.
+    let mut items_by_tool: std::collections::HashMap<String, Vec<HarvestLootItemRow>> =
+        std::collections::HashMap::new();
+    for (tool, item_name, quantity, value_ped) in composition {
+        items_by_tool
+            .entry(tool)
+            .or_default()
+            .push(HarvestLootItemRow {
+                item_name,
+                quantity,
+                value_ped: eo_wire::normalizer::round_half_even(value_ped, 2),
+            });
+    }
+    for items in items_by_tool.values_mut() {
+        items.sort_by(|a, b| {
+            b.value_ped
+                .partial_cmp(&a.value_ped)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.item_name.cmp(&b.item_name))
+        });
+    }
 
     let mut rows: Vec<(i64, f64, String, HarvestToolRow)> = raw
         .into_iter()
         .map(|(name, swings, cost, loot_tt)| {
             let cycled = eo_wire::normalizer::round_half_even(cost, 2);
+            let returns = eo_wire::normalizer::round_half_even(loot_tt, 2);
             let loot_rate = if cost > 0.0 {
                 eo_wire::normalizer::round_half_even(loot_tt / cost, 4)
             } else {
@@ -1631,7 +1695,9 @@ async fn harvest_impl(db: &Db) -> Result<HarvestData, DbError> {
                 name: name.clone(),
                 swings,
                 cycled,
+                returns,
                 loot_rate,
+                loot_items: items_by_tool.remove(&name).unwrap_or_default(),
             };
             (swings, cost, name, row)
         })
@@ -2485,11 +2551,74 @@ mod tests {
         assert_eq!(tools[0]["name"], json!("Axe A"));
         assert_eq!(tools[0]["swings"], json!(3));
         assert_eq!(tools[0]["cycled"], json!(0.3));
+        assert_eq!(tools[0]["returns"], json!(0.36));
         assert_eq!(tools[0]["lootRate"], json!(1.2));
         assert_eq!(tools[1]["name"], json!("Axe B"));
         assert_eq!(tools[1]["swings"], json!(1));
         assert_eq!(tools[1]["cycled"], json!(0.2));
+        assert_eq!(tools[1]["returns"], json!(0.1));
         assert_eq!(tools[1]["lootRate"], json!(0.5));
+    }
+
+    /// Per-tool loot composition: active items only, grouped by the
+    /// recording tool and ordered TT-descending, with deactivated loot
+    /// excluded.
+    #[tokio::test]
+    async fn harvest_composition_groups_active_loot_by_tool() {
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at) VALUES('hs',1000.0,4600.0)",
+                [],
+            )?;
+            // Two swings on Axe A, one on Axe B.
+            for (id, tool) in [("h1", "Axe A"), ("h2", "Axe A"), ("h3", "Axe B")] {
+                conn.execute(
+                    "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,cost_ped,loot_total_ped) \
+                     VALUES(?1,'hs',1000.0,1,?2,0.1,1.0)",
+                    rusqlite::params![id, tool],
+                )?;
+            }
+            // Loot: Axe A pulled Long Moonleaf Board (higher TT) and Wood
+            // Shavings; one deactivated Wood Shavings row is excluded. Axe B
+            // pulled Short Moonleaf Board only.
+            let loot: [(&str, &str, i64, f64, Option<f64>); 4] = [
+                ("h1", "Long Moonleaf Board", 2, 0.8, None),
+                ("h1", "Wood Shavings", 5, 0.2, None),
+                ("h2", "Wood Shavings", 3, 0.15, Some(2000.0)),
+                ("h3", "Short Moonleaf Board", 4, 0.5, None),
+            ];
+            for (hid, item, qty, val, deact) in loot {
+                conn.execute(
+                    "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped,deactivated_at) \
+                     VALUES(?1,?2,?3,?4,?5)",
+                    rusqlite::params![hid, item, qty, val, deact],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let v = to_json(harvest_impl(&db).await.unwrap());
+        let tools = v["toolComparisons"].as_array().unwrap();
+        // Axe A: two active items, TT-desc (Long Moonleaf Board first);
+        // the deactivated Wood Shavings row is excluded from its total.
+        let a = &tools[0];
+        assert_eq!(a["name"], json!("Axe A"));
+        let a_items = a["lootItems"].as_array().unwrap();
+        assert_eq!(a_items.len(), 2);
+        assert_eq!(a_items[0]["itemName"], json!("Long Moonleaf Board"));
+        assert_eq!(a_items[0]["quantity"], json!(2));
+        assert_eq!(a_items[0]["valuePed"], json!(0.8));
+        assert_eq!(a_items[1]["itemName"], json!("Wood Shavings"));
+        assert_eq!(a_items[1]["quantity"], json!(5));
+        assert_eq!(a_items[1]["valuePed"], json!(0.2));
+        // Axe B: one item.
+        let b = &tools[1];
+        assert_eq!(b["name"], json!("Axe B"));
+        let b_items = b["lootItems"].as_array().unwrap();
+        assert_eq!(b_items.len(), 1);
+        assert_eq!(b_items[0]["itemName"], json!("Short Moonleaf Board"));
     }
 
     /// Seed the representative scenario the live probe grounded, with the

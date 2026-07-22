@@ -20,6 +20,7 @@ export type {
 	ComputedCharacterStats,
 	CycledBreakdown,
 	ExcludedSkill,
+	HarvestLootItem,
 	HarvestToolComparison,
 	HpOptimizerAttribute,
 	HpOptimizerResult,
