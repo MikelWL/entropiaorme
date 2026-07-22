@@ -75,26 +75,27 @@
 			<InfoTip label="How markup confidence works">
 				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
 					<p class="text-text">
-						Sets which items count their markup in the MU figures, based on how much
-						of each item the market buys.
+						Sets which items count toward the MU figures, based on how much of each
+						item the market buys.
 					</p>
 					<ul class="space-y-1.5">
 						<li>
 							<span class="text-text font-medium">High Vol.</span> sells easily, so you
-							should get this markup.
+							should get that MU.
 						</li>
 						<li>
 							<span class="text-text font-medium">Mid Vol.</span> you hold a lot compared
-							to what sells, so this markup is not certain.
+							to what sells, so selling all your loot and getting that MU may be
+							difficult.
 						</li>
 						<li>
 							<span class="text-text font-medium">Low Vol.</span> barely sells, so you
-							likely can't get this markup.
+							likely can't get that MU.
 						</li>
 					</ul>
 					<p>
 						Items you leave out are valued at what you'd get by recycling them into
-						nanocubes instead, with their markup struck through.
+						nanocubes instead, with their MU struck through.
 					</p>
 				</div>
 			</InfoTip>
