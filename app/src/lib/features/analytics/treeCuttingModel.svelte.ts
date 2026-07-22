@@ -40,6 +40,12 @@ const MODE_THRESHOLD: Record<ConfidenceMode, number> = { liquid: 3, liquidMiddli
 
 const WEEKS_PER_MONTH = 4.345;
 const WEEKS_PER_YEAR = 52.14;
+/**
+ * The opportunity thresholds below are provisional market heuristics.
+ * Recalibrate them through dogfooding as more real items are bought and
+ * sold, so the model stays aligned with the lived difficulty of realising
+ * markup rather than becoming anchored to the first available examples.
+ */
 /** The minimum auction fee (PED) the markup gain must clear to be worth
  * realising. Replace with the exact fee curve once known. */
 const AUCTION_FEE_PED = 0.5;
@@ -153,11 +159,17 @@ export function marketOpportunity(
 }
 
 /** Preserve the established High / Mid / Low volume UI over the richer
- * holding-independent opportunity model. These are presentation tiers:
- * Broad is high, Niche is mid, and Thin or unsupported is low. */
+ * holding-independent opportunity model. Weekly thin markets have enough
+ * observed cadence for medium confidence; fallback-horizon thin markets
+ * and unsupported recycling routes remain low confidence. */
 export function opportunityTier(opportunity: MarketOpportunity): ConfidenceTier {
 	if (opportunity.kind === 'broad') return 'liquid';
-	if (opportunity.kind === 'niche') return 'middling';
+	if (
+		opportunity.kind === 'niche' ||
+		(opportunity.kind === 'thin' && opportunity.horizon === 'week')
+	) {
+		return 'middling';
+	}
 	return 'illiquid';
 }
 

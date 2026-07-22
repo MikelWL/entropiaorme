@@ -171,19 +171,29 @@ describe('marketOpportunity', () => {
 	it('maps opportunity evidence onto the established confidence chrome', () => {
 		const broad = marketOpportunity(obs('Broad', 110, 'week', 10_000), 100.6);
 		const niche = marketOpportunity(obs('Niche', 3000, 'month', 20), 100.6);
-		const thin = marketOpportunity(obs('Thin', 110, 'month', 360), 100.6);
+		const weeklyThin = marketOpportunity(obs('Weekly thin', 105.29, 'week', 603.08), 100.84);
+		const fallbackThin = marketOpportunity(obs('Fallback thin', 110, 'month', 360), 100.6);
+		const unsupportedWeekly = marketOpportunity(obs('Unsupported weekly', 105, 'week', 100), 100.6);
 
 		expect(opportunityTier(broad)).toBe('liquid');
 		expect(opportunityTier(niche)).toBe('middling');
-		expect(opportunityTier(thin)).toBe('illiquid');
-		expect(effectiveMarkup(thin, 100.6, 'liquidMiddling')).toEqual({
+		expect(weeklyThin.kind).toBe('thin');
+		expect(opportunityTier(weeklyThin)).toBe('middling');
+		expect(effectiveMarkup(weeklyThin, 100.84, 'liquidMiddling')).toEqual({
+			markupPct: 105.29,
+			floored: false,
+		});
+		expect(opportunityTier(fallbackThin)).toBe('illiquid');
+		expect(effectiveMarkup(fallbackThin, 100.6, 'liquidMiddling')).toEqual({
 			markupPct: 100.6,
 			floored: true,
 		});
-		expect(effectiveMarkup(thin, 100.6, 'all')).toEqual({
+		expect(effectiveMarkup(fallbackThin, 100.6, 'all')).toEqual({
 			markupPct: 110,
 			floored: false,
 		});
+		expect(unsupportedWeekly.kind).toBe('recycle');
+		expect(opportunityTier(unsupportedWeekly)).toBe('illiquid');
 	});
 });
 

@@ -36,6 +36,12 @@
 				detail: `The direct market can amortise fees despite its cadence.${floorNote}`,
 			};
 		}
+		if (item.opportunity.kind === 'thin' && item.markupHorizon === 'week') {
+			return {
+				lead: `Medium confidence: ~${formatPed(item.salesPed ?? 0)} PED TT traded last week.`,
+				detail: 'A fee-efficient parcel fits observed turnover, but would take a meaningful share of it.',
+			};
+		}
 		if (item.markupHorizon && item.markupHorizon !== 'week') {
 			const weekly = item.weeklySalesPed;
 			const lead =
