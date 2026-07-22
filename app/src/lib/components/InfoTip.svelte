@@ -1,16 +1,19 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	// A small circled "i" that reveals a text popover on hover or keyboard
-	// focus (no click). The popover anchors to the icon; `align` picks the
-	// edge it grows from so it never spills past a right-hung control.
+	// A hover/focus text popover (no click). By default the trigger is a
+	// small circled "i"; pass a `trigger` snippet to hang the same popover
+	// off any glyph instead. `align` picks the edge it grows from so it
+	// never spills past a right-hung control.
 	let {
 		children,
+		trigger,
 		align = 'right',
 		width = 'w-72',
 		label = 'More information',
 	}: {
 		children: Snippet;
+		trigger?: Snippet;
 		align?: 'left' | 'right';
 		width?: string;
 		label?: string;
@@ -21,13 +24,14 @@
 	<button
 		type="button"
 		aria-label={label}
-		class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border/70
-			text-[10px] font-semibold leading-none text-text-tertiary cursor-help
+		class="inline-flex items-center justify-center rounded leading-none cursor-help
 			transition-colors duration-[var(--duration-fast)]
-			hover:text-text hover:border-border
-			focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+			focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60
+			{trigger
+			? ''
+			: 'h-4 w-4 rounded-full border border-border/70 text-[10px] font-semibold text-text-tertiary hover:text-text hover:border-border'}"
 	>
-		i
+		{#if trigger}{@render trigger()}{:else}i{/if}
 	</button>
 	<!-- Transparent bridge (pt-2) keeps hover continuous between icon and
 		popover; the styled box sits inside it. -->

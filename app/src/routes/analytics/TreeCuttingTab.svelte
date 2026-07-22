@@ -61,6 +61,10 @@
 	}
 </script>
 
+{#snippet confidenceBody(item: TreeCuttingItem)}
+	<p class="text-xs leading-relaxed text-text-secondary">{confidenceTooltip(item)}</p>
+{/snippet}
+
 {#if model.loading}
 	<p class="text-sm text-text-secondary">Loading tree cutting data...</p>
 {:else if model.error && !model.sections.length}
@@ -177,20 +181,29 @@
 										{item.sharePct.toFixed(1)}%
 									</span>
 
-									<!-- Markup: neutral number + a separate confidence glyph;
-										floored markups are struck through and shown at the
-										nanocube recycling rate. -->
+									<!-- Markup: neutral number + a separate confidence glyph
+										carrying its own hover explanation; floored markups
+										are struck through and shown at the nanocube rate. -->
 									<span
 										class="text-sm tabular-nums shrink-0 w-36 text-right flex items-center justify-end gap-1.5"
-										title={hasMarket(section.muProjectedReturns) ? confidenceTooltip(item) : ''}
 									>
 										{#if !hasMarket(section.muProjectedReturns)}
 											<span class="text-text-tertiary">{NO_DATA}</span>
 										{:else}
 											{#if item.tier === 'middling'}
-												<span class="text-warning shrink-0" aria-label="Medium volume">⚠</span>
+												<InfoTip align="right" label="Medium volume">
+													{#snippet trigger()}
+														<span class="text-warning">⚠</span>
+													{/snippet}
+													{@render confidenceBody(item)}
+												</InfoTip>
 											{:else if item.tier === 'illiquid'}
-												<span class="text-error font-semibold shrink-0" aria-label="Low volume">!</span>
+												<InfoTip align="right" label="Low volume">
+													{#snippet trigger()}
+														<span class="text-error font-semibold">!</span>
+													{/snippet}
+													{@render confidenceBody(item)}
+												</InfoTip>
 											{/if}
 											{#if item.floored && item.ownMarkupPct !== null}
 												<span class="text-text-tertiary line-through">
