@@ -295,11 +295,12 @@
 						cell with Cycled to its right, then Net / Rate, then the
 						confidence-driven MU Net / MU Rate. -->
 					<div class="grid grid-cols-[auto_auto] items-baseline gap-x-10 gap-y-4">
-						<div class="flex flex-col gap-0.5">
-							<span class="text-2xl font-semibold tracking-tight leading-none text-text">
-								Overall
-							</span>
-							<span class="eyebrow text-accent/70">All tools</span>
+						<!-- Mirror a StatDisplay stack (an invisible eyebrow placeholder) so
+							the title drops onto the value row, aligned with the first figures
+							rather than the stat labels. -->
+						<div class="flex flex-col gap-1.5">
+							<span class="eyebrow invisible" aria-hidden="true">Overall</span>
+							<span class="text-2xl font-semibold tracking-tight leading-none text-text">Overall</span>
 						</div>
 						<StatDisplay label="Cycled" value={formatPed(model.overall.cycled)} unit="PED" />
 						<StatDisplay
