@@ -224,6 +224,10 @@ pub struct MarketHarvestItem {
     pub markup_pct: Nullable<f64>,
     pub horizon: Nullable<String>,
     pub sales_ped: Nullable<f64>,
+    /// Sales volume (PED) on the week horizon specifically. Zero is the
+    /// "no weekly sales" signal a fallback horizon's volume would mask;
+    /// null when the item has no week observation.
+    pub weekly_sales_ped: Nullable<f64>,
 }
 
 /// The estimated market signals for the harvest-looted items, plus the
@@ -511,6 +515,7 @@ impl Api {
                     markup_pct: item.markup_pct.into(),
                     horizon: item.horizon.into(),
                     sales_ped: item.sales_ped.into(),
+                    weekly_sales_ped: item.weekly_sales_ped.into(),
                 })
                 .collect(),
         })

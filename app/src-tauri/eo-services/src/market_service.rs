@@ -140,6 +140,12 @@ pub struct HarvestItemMarkup {
     pub horizon: Option<String>,
     /// Sales volume (PED) at the resolved horizon: the liquidity signal.
     pub sales_ped: Option<f64>,
+    /// Sales volume (PED) on the week horizon specifically, carried even
+    /// when the week has no markup (so it did not supply the reading).
+    /// Zero here is the strong signal that the item did not sell at all in
+    /// the last week, which a fallback horizon's volume would otherwise
+    /// mask. None when the item has no week observation row.
+    pub weekly_sales_ped: Option<f64>,
 }
 
 /// The modelled TT-return rate (percent) of a hunting loadout: the
@@ -474,12 +480,22 @@ impl MarketService {
                     String,
                     std::collections::HashMap<String, (f64, f64)>,
                 > = std::collections::HashMap::new();
+                // The week horizon's sales volume per item, captured even
+                // when its markup is NULL (a NULL-markup week never enters
+                // the fallback, but a zero here is the "no weekly sales"
+                // signal the tooltip leads with).
+                let mut weekly_sales: std::collections::HashMap<String, f64> =
+                    std::collections::HashMap::new();
                 let mut rows = obs_stmt.query([])?;
                 while let Some(row) = rows.next()? {
                     let item: String = row.get(0)?;
                     let horizon: String = row.get(1)?;
-                    if let Some(markup) = row.get::<_, Option<f64>>(2)? {
-                        let sales: f64 = row.get(3)?;
+                    let markup: Option<f64> = row.get(2)?;
+                    let sales: f64 = row.get(3)?;
+                    if horizon == "week" {
+                        weekly_sales.insert(item.clone(), sales);
+                    }
+                    if let Some(markup) = markup {
                         per_item
                             .entry(item)
                             .or_default()
@@ -513,6 +529,7 @@ impl MarketService {
                     .into_iter()
                     .map(|name| {
                         let resolved = resolve(&name);
+                        let weekly_sales_ped = weekly_sales.get(&name).copied();
                         let (markup_pct, horizon, sales_ped) = match resolved {
                             Some((m, h, s)) => (Some(m), Some(h), Some(s)),
                             None => (None, None, None),
@@ -522,6 +539,7 @@ impl MarketService {
                             markup_pct,
                             horizon,
                             sales_ped,
+                            weekly_sales_ped,
                         }
                     })
                     .collect();
@@ -814,15 +832,23 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
         assert_eq!(by_name["Wood Shavings"].markup_pct, Some(120.0));
         assert_eq!(by_name["Wood Shavings"].horizon.as_deref(), Some("week"));
         assert_eq!(by_name["Wood Shavings"].sales_ped, Some(10.0));
+        // Week supplied the reading, so its volume is also the weekly one.
+        assert_eq!(by_name["Wood Shavings"].weekly_sales_ped, Some(10.0));
         assert_eq!(by_name["Short Moonleaf Board"].markup_pct, Some(200.0));
         assert_eq!(by_name["Short Moonleaf Board"].horizon.as_deref(), Some("month"));
         assert_eq!(by_name["Short Moonleaf Board"].sales_ped, Some(30.0));
+        // Fell back to month, but the week row (NULL markup, 0 PEC) still
+        // reports zero weekly sales.
+        assert_eq!(by_name["Short Moonleaf Board"].weekly_sales_ped, Some(0.0));
         assert_eq!(by_name["Moonleaf Board"].markup_pct, Some(300.0));
         assert_eq!(by_name["Moonleaf Board"].horizon.as_deref(), Some("year"));
         assert_eq!(by_name["Moonleaf Board"].sales_ped, Some(40.0));
+        assert_eq!(by_name["Moonleaf Board"].weekly_sales_ped, Some(0.0));
         assert_eq!(by_name["Long Moonleaf Board"].markup_pct, None);
         assert_eq!(by_name["Long Moonleaf Board"].horizon, None);
         assert_eq!(by_name["Long Moonleaf Board"].sales_ped, None);
+        // No observation at all: no week row either.
+        assert_eq!(by_name["Long Moonleaf Board"].weekly_sales_ped, None);
     }
 
     #[test]

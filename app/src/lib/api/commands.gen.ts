@@ -991,6 +991,8 @@ export interface MarketHarvestItem {
 	markupPct: number | null;
 	horizon: string | null;
 	salesPed: number | null;
+	/** Sales volume (PED) on the week horizon specifically. Zero is the "no weekly sales" signal a fallback horizon's volume would mask; null when the item has no week observation. */
+	weeklySalesPed: number | null;
 }
 
 /**

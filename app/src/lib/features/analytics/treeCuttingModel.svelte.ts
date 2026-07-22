@@ -134,7 +134,11 @@ export type TreeCuttingItem = {
 	floored: boolean;
 	// Tooltip inputs.
 	positionTt: number;
-	weeklyEquivVolume: number;
+	/** Raw sales volume (PED) at the resolved horizon, un-normalised. */
+	salesPed: number | null;
+	/** Raw week-horizon sales volume (PED); 0 means the item did not sell
+	 * at all last week, the signal the tooltip leads with on a fallback. */
+	weeklySalesPed: number | null;
 };
 
 export type TreeCuttingSection = {
@@ -209,7 +213,8 @@ function toSection(
 			effectiveMarkupPct,
 			floored,
 			positionTt,
-			weeklyEquivVolume: weeklyEquivalentVolume(m?.salesPed ?? null, m?.horizon ?? null),
+			salesPed: m?.salesPed ?? null,
+				weeklySalesPed: m?.weeklySalesPed ?? null,
 		};
 	});
 

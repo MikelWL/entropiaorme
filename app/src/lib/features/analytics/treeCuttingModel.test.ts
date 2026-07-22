@@ -31,8 +31,9 @@ function obs(
 	markupPct: number | null,
 	horizon: string | null,
 	salesPed: number | null,
+	weeklySalesPed: number | null = null,
 ): MarketHarvestItem {
-	return { itemName: name, markupPct, horizon, salesPed };
+	return { itemName: name, markupPct, horizon, salesPed, weeklySalesPed };
 }
 
 // Mirrors the maintainer's real tree-cutting data closely enough to
@@ -65,9 +66,10 @@ function market(): MarketHarvestData {
 		nanocubeMarkupPct: 100.84,
 		items: [
 			// Liquid: weekly, position 34.26 is ~11% of 320 weekly volume.
-			obs('Long Moonleaf Board', 353.69, 'week', 320.34),
-			// Illiquid: month fallback, position 87.38 exceeds weekly-equiv (~84).
-			obs('Wood Shavings', 110.01, 'month', 363.61),
+			obs('Long Moonleaf Board', 353.69, 'week', 320.34, 320.34),
+			// Illiquid: month fallback, position 87.38 exceeds weekly-equiv
+			// (~84), and nothing sold in the last week.
+			obs('Wood Shavings', 110.01, 'month', 363.61, 0),
 		],
 	};
 }
@@ -169,11 +171,16 @@ describe('sections', () => {
 		expect(long.tier).toBe('liquid');
 		expect(long.floored).toBe(false);
 		expect(long.effectiveMarkupPct).toBe(353.69);
+		expect(long.salesPed).toBe(320.34);
+		expect(long.weeklySalesPed).toBe(320.34);
 
 		const wood = model.sections[1].items[0];
 		expect(wood.tier).toBe('illiquid');
 		expect(wood.floored).toBe(true); // illiquid < liquidMiddling threshold
 		expect(wood.effectiveMarkupPct).toBe(100.84); // nanocube floor
+		// Un-normalised fallback volume, and zero weekly sales.
+		expect(wood.salesPed).toBe(363.61);
+		expect(wood.weeklySalesPed).toBe(0);
 	});
 
 	it('recomputes MU projected returns when the mode changes', async () => {

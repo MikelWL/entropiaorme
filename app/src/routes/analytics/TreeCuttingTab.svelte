@@ -34,35 +34,54 @@
 		return mu !== null;
 	}
 
-	function confidenceTooltip(item: TreeCuttingItem): string {
-		const pos = `your position ${formatPed(item.positionTt)} PED`;
-		const vol =
-			item.weeklyEquivVolume > 0
-				? `~${formatPed(item.weeklyEquivVolume)} PED/wk traded`
-				: 'no recent sales';
-		let reason: string;
+	// The per-item confidence explanation, split into a lead (the headline
+	// signal, emphasised) and a detail line. A fallback horizon leads with
+	// the absence of weekly sales rather than a weekly figure normalised
+	// down from the month/year, which would understate how thin it is.
+	function confidenceTip(item: TreeCuttingItem): { lead: string; detail?: string } {
+		const floorNote = item.floored ? ' Valued at the nanocube rate instead.' : '';
+		const pos = `Your position: ${formatPed(item.positionTt)} PED.`;
+
 		if (item.ownMarkupPct == null) {
-			reason = 'No market observation for this item.';
-		} else if (item.tier === 'liquid') {
-			reason = `High volume: ${pos} is a small share of ${vol}.`;
-		} else if (item.tier === 'middling') {
-			reason = `Medium volume: ${pos} vs ${vol}${
-				item.markupHorizon && item.markupHorizon !== 'week'
-					? ` (markup from the ${item.markupHorizon} horizon)`
-					: ''
-			}.`;
-		} else {
-			reason = `Low volume: ${pos} vs ${vol} may not sell at this markup.`;
+			return { lead: 'No market data for this item.', detail: floorNote.trim() || undefined };
 		}
-		if (item.floored) {
-			reason += ' Showing the nanocube recycling floor instead.';
+
+		if (item.markupHorizon && item.markupHorizon !== 'week') {
+			const weekly = item.weeklySalesPed;
+			const lead =
+				weekly == null || weekly <= 0
+					? 'No sales in the last week.'
+					: `Only ${formatPed(weekly)} PED sold last week.`;
+			const range =
+				item.salesPed != null
+					? `Priced from the last ${item.markupHorizon} (${formatPed(item.salesPed)} PED traded). `
+					: '';
+			return { lead, detail: `${range}${pos}${floorNote}` };
 		}
-		return reason;
+
+		const vol = `~${formatPed(item.salesPed ?? 0)} PED traded last week`;
+		if (item.tier === 'liquid') {
+			return { lead: `High volume: ${vol}.`, detail: `${pos} A small share, so this markup is realistic.` };
+		}
+		if (item.tier === 'middling') {
+			return {
+				lead: `Medium volume: ${vol}.`,
+				detail: `${pos} A sizeable share, so selling it all at this markup may be difficult.${floorNote}`,
+			};
+		}
+		return {
+			lead: `Low volume: ${vol}.`,
+			detail: `${pos} May not sell at this markup.${floorNote}`,
+		};
 	}
 </script>
 
 {#snippet confidenceBody(item: TreeCuttingItem)}
-	<p class="text-xs leading-relaxed text-text-secondary">{confidenceTooltip(item)}</p>
+	{@const tip = confidenceTip(item)}
+	<p class="text-xs leading-relaxed text-text">{tip.lead}</p>
+	{#if tip.detail}
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">{tip.detail}</p>
+	{/if}
 {/snippet}
 
 {#if model.loading}
