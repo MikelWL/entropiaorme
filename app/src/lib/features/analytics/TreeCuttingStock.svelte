@@ -27,6 +27,16 @@
 		}
 		return 'Low markup confidence: Do not rely on realising this markup';
 	};
+	const markupLabel = (item: TreeCuttingStock) => {
+		if (item.effectiveMarkupPct == null) return 'No markup available';
+		if (item.floored && item.markupPct !== null) {
+			return `Observed markup ${formatPercent(item.markupPct / 100)}; projections use ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube markup`;
+		}
+		if (item.markupPct == null) {
+			return `Projections use ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube markup`;
+		}
+		return `Markup ${formatPercent(item.effectiveMarkupPct / 100)}`;
+	};
 
 	function confidenceTip(item: TreeCuttingStock): {
 		title: string;
@@ -177,18 +187,39 @@
 				</span>
 
 				<div class="w-20 shrink-0 flex items-center justify-end">
-					{#if item.markupPct !== null}
-						{@const markup = item.markupPct}
-						<InfoTip align="right" width="w-96" label="Markup by horizon">
+					{#if item.effectiveMarkupPct !== null && item.markupPct !== null}
+						{@const observedMarkup = item.markupPct}
+						{@const appliedMarkup = item.effectiveMarkupPct}
+						<InfoTip align="right" width="w-96" label={markupLabel(item)}>
 							{#snippet trigger()}
 								<span
-									class="text-sm tabular-nums text-text-secondary border-b border-dotted border-border/70"
+									class="inline-flex h-5 flex-col items-end justify-center tabular-nums
+										border-b border-dotted border-border/70"
 								>
-									{formatPercent(markup / 100)}
+									{#if item.floored}
+										<span class="text-[9px] leading-[9px] text-text-tertiary line-through">
+											{formatPercent(observedMarkup / 100)}
+										</span>
+										<span class="text-xs leading-[11px] text-text-secondary">
+											{formatPercent(appliedMarkup / 100)}
+										</span>
+									{:else}
+										<span class="text-sm leading-5 text-text-secondary">
+											{formatPercent(appliedMarkup / 100)}
+										</span>
+									{/if}
 								</span>
 							{/snippet}
 							{@render markupBreakdown(item.readings)}
 						</InfoTip>
+					{:else if item.effectiveMarkupPct !== null}
+						{@const appliedMarkup = item.effectiveMarkupPct}
+						<span
+							class="inline-flex h-5 items-center text-sm tabular-nums text-text-secondary"
+							aria-label={markupLabel(item)}
+						>
+							{formatPercent(appliedMarkup / 100)}
+						</span>
 					{:else}
 						<span class="text-sm text-text-tertiary">{NO_DATA}</span>
 					{/if}

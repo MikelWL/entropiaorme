@@ -281,15 +281,21 @@ describe('sections', () => {
 		await model.loadData();
 
 		const woodAtDefault = sectionOf(model, PH4);
+		const woodStockAtDefault = stockOf(model, 'Wood Shavings');
 		expect(model.confidenceMode).toBe('liquidMiddling');
 		expect(woodAtDefault.items[0].tier).toBe('illiquid');
 		expect(woodAtDefault.items[0].floored).toBe(true);
 		expect(woodAtDefault.items[0].effectiveMarkupPct).toBe(100.84);
+		expect(woodStockAtDefault.floored).toBe(true);
+		expect(woodStockAtDefault.effectiveMarkupPct).toBe(100.84);
 
 		model.confidenceMode = 'all';
 		const woodAtAll = sectionOf(model, PH4);
+		const woodStockAtAll = stockOf(model, 'Wood Shavings');
 		expect(woodAtAll.items[0].floored).toBe(false);
 		expect(woodAtAll.items[0].effectiveMarkupPct).toBe(110.01);
+		expect(woodStockAtAll.floored).toBe(false);
+		expect(woodStockAtAll.effectiveMarkupPct).toBe(110.01);
 		expect(woodAtAll.muProjectedReturns).toBeGreaterThan(
 			required(woodAtDefault.muProjectedReturns, 'default MU return'),
 		);

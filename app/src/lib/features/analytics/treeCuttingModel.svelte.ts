@@ -296,6 +296,8 @@ export type TreeCuttingStock = {
 	markupPct: number | null;
 	markupHorizon: string | null;
 	tier: ConfidenceTier | null;
+	effectiveMarkupPct: number | null;
+	floored: boolean;
 	salesPed: number | null;
 	weeklySalesPed: number | null;
 };
@@ -423,6 +425,8 @@ export function createTreeCuttingModel() {
 			const unitTt = item.quantity > 0 ? item.valuePed / item.quantity : 0;
 			const m = marketByItem.get(itemName);
 			const heldTt = heldQty * unitTt;
+			const opportunity = market ? marketOpportunity(m, nanocube) : null;
+			const applied = opportunity ? effectiveMarkup(opportunity, nanocube, confidenceMode) : null;
 			return {
 				itemName,
 				lootedQty: item.quantity,
@@ -434,10 +438,12 @@ export function createTreeCuttingModel() {
 					markupPct: r.markupPct,
 					salesPed: r.salesPed,
 				})),
-				opportunity: market ? marketOpportunity(m, nanocube) : null,
+				opportunity,
 				markupPct: m?.markupPct ?? null,
 				markupHorizon: m?.horizon ?? null,
-				tier: market ? opportunityTier(marketOpportunity(m, nanocube)) : null,
+				tier: opportunity ? opportunityTier(opportunity) : null,
+				effectiveMarkupPct: applied?.markupPct ?? null,
+				floored: applied?.floored ?? false,
 				salesPed: m?.salesPed ?? null,
 				weeklySalesPed: m?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null,
 			};
