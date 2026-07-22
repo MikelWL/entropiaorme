@@ -318,6 +318,27 @@
 							label="MU Rate"
 							value={model.overall.muRate !== null ? formatPercent(model.overall.muRate) : NO_DATA}
 						/>
+
+						<!-- Confirmed Net / Confirmed Rate: the realised counterpart to the MU
+							estimates above. Where MU Net projects what the current loot could be
+							worth at today's markup, this pair reports gains actually banked, from
+							sales that completed at a confirmed markup: money in hand, not an
+							estimate.
+
+							Currently a stub: it mirrors Net (loot returns minus cycled) until
+							there is confirmed-sale data to drive it, at which point it will sum
+							the realised confirmed-markup proceeds instead.
+
+							Unlike MU Net (kept neutral, since an unrealised estimate should not
+							read as banked profit), a positive Confirmed figure is realised gain,
+							so it is allowed the positive tone. -->
+						<StatDisplay
+							label="Confirmed Net"
+							value={signedPed(model.overall.returns - model.overall.cycled)}
+							valueClass={netTone(model.overall.returns - model.overall.cycled)}
+							unit="PED"
+						/>
+						<StatDisplay label="Confirmed Rate" value={formatPercent(model.overall.lootRate)} />
 					</div>
 
 					<!-- Current stock: the market-position overlay on recorded
