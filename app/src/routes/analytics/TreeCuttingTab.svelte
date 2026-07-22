@@ -294,7 +294,7 @@
 					<!-- Headline stats in a 2-up grid: the title anchors the top-left
 						cell with Cycled to its right, then Net / Rate, then the
 						confidence-driven MU Net / MU Rate. -->
-					<div class="grid grid-cols-[auto_auto] items-end gap-x-10 gap-y-4">
+					<div class="grid grid-cols-[auto_auto] content-start items-end gap-x-10 gap-y-4">
 						<!-- Bottom-aligned with the first stat value (grid items-end) so the
 							title sits level with the numbers despite its larger size. -->
 						<span class="text-3xl font-bold tracking-tight leading-none text-text">Overall</span>
