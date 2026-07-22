@@ -300,7 +300,7 @@
 							rather than the stat labels. -->
 						<div class="flex flex-col gap-1.5">
 							<span class="eyebrow invisible" aria-hidden="true">Overall</span>
-							<span class="text-2xl font-semibold tracking-tight leading-none text-text">Overall</span>
+							<span class="text-3xl font-bold tracking-tight leading-none text-text">Overall</span>
 						</div>
 						<StatDisplay label="Cycled" value={formatPed(model.overall.cycled)} unit="PED" />
 						<StatDisplay
