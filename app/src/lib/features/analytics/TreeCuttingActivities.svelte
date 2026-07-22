@@ -33,6 +33,15 @@
 		}
 		return 'Low markup confidence: Do not rely on realising this markup';
 	};
+	const markupLabel = (item: TreeCuttingItem) => {
+		if (item.floored && item.ownMarkupPct !== null) {
+			return `Observed markup ${formatPercent(item.ownMarkupPct / 100)}; projections use ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube markup`;
+		}
+		if (item.ownMarkupPct == null) {
+			return `Projections use ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube markup`;
+		}
+		return `Markup ${formatPercent(item.effectiveMarkupPct / 100)}`;
+	};
 
 	function confidenceTip(item: TreeCuttingItem): {
 		title: string;
@@ -171,7 +180,8 @@
 								<span class="eyebrow flex-1 min-w-0">Item</span>
 								<span class="eyebrow w-20 text-right shrink-0">TT</span>
 								<span class="eyebrow w-14 text-right shrink-0">Share</span>
-								<span class="eyebrow w-36 text-right shrink-0">Markup</span>
+								<span class="eyebrow w-20 text-right shrink-0">Markup</span>
+								<span class="eyebrow w-12 text-center shrink-0">Conf</span>
 							</div>
 
 							<ul class="flex flex-col gap-1">
@@ -200,49 +210,53 @@
 											{item.sharePct.toFixed(1)}%
 										</span>
 
-									<span
-										class="text-sm tabular-nums shrink-0 w-36 text-right flex items-center justify-end gap-1.5"
-									>
+									<div class="w-20 shrink-0 flex items-center justify-end">
 										{#if selected.muProjectedReturns === null}
-											<span class="text-text-tertiary">{NO_DATA}</span>
+											<span class="text-sm text-text-tertiary">{NO_DATA}</span>
 										{:else}
-											{#if item.tier === 'middling'}
-												<InfoTip
-													align="right"
-													width="w-96"
-													label={confidenceTitle(item.tier)}
-												>
-													{#snippet trigger()}
-														<span class="text-warning">⚠</span>
-													{/snippet}
-													{@render confidenceBody(item)}
-												</InfoTip>
-											{:else if item.tier === 'illiquid'}
-												<InfoTip
-													align="right"
-													width="w-96"
-													label={confidenceTitle(item.tier)}
-												>
-													{#snippet trigger()}
-														<span class="text-error font-semibold">!</span>
-													{/snippet}
-													{@render confidenceBody(item)}
-												</InfoTip>
-											{/if}
-											{#if item.floored && item.ownMarkupPct !== null}
-												<span class="text-text-tertiary line-through">
-													{formatPercent(item.ownMarkupPct / 100)}
-												</span>
-												<span class="text-text-secondary">
-													{formatPercent(item.effectiveMarkupPct / 100)}
-												</span>
-											{:else}
-												<span class="text-text-secondary">
-													{formatPercent(item.effectiveMarkupPct / 100)}
-												</span>
-											{/if}
+											<span
+												class="inline-flex h-5 flex-col items-end justify-center tabular-nums"
+												aria-label={markupLabel(item)}
+											>
+												{#if item.floored && item.ownMarkupPct !== null}
+													{@const observedMarkup = item.ownMarkupPct}
+													<span class="text-[9px] leading-[9px] text-text-tertiary line-through">
+														{formatPercent(observedMarkup / 100)}
+													</span>
+													<span class="text-xs leading-[11px] text-text-secondary">
+														{formatPercent(item.effectiveMarkupPct / 100)}
+													</span>
+												{:else}
+													<span class="text-sm leading-5 text-text-secondary">
+														{formatPercent(item.effectiveMarkupPct / 100)}
+													</span>
+												{/if}
+											</span>
 										{/if}
-									</span>
+									</div>
+
+									<div class="w-12 shrink-0 flex items-center justify-center">
+										{#if selected.muProjectedReturns === null}
+											<span class="text-sm text-text-tertiary">{NO_DATA}</span>
+										{:else}
+											<InfoTip
+												align="right"
+												width="w-96"
+												label={confidenceTitle(item.tier)}
+											>
+												{#snippet trigger()}
+													{#if item.tier === 'liquid'}
+														<span class="text-positive" aria-label="High volume">✓</span>
+													{:else if item.tier === 'middling'}
+														<span class="text-warning" aria-label="Medium volume">⚠</span>
+													{:else}
+														<span class="text-error font-semibold" aria-label="Low volume">!</span>
+													{/if}
+												{/snippet}
+												{@render confidenceBody(item)}
+											</InfoTip>
+										{/if}
+									</div>
 									</li>
 								{/each}
 							</ul>
