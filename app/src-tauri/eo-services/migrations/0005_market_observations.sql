@@ -7,7 +7,7 @@
 -- market data is fetched at runtime. One submission row records one
 -- accepted paste; its observations carry the pasted readings verbatim,
 -- five rows per item (markup NULL where the game reported N/A, meaning
--- no sales in that horizon; sales volume normalised to PED).
+-- no sales in that horizon; Sales is TT turnover normalised to PED).
 --
 -- These tables are an INFORMATIONAL layer: estimated markup never joins
 -- the ledger or any realised P&L figure, so nothing here references the

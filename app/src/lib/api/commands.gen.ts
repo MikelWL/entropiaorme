@@ -990,8 +990,9 @@ export interface MarketContributionItem {
  * The estimated market signals for the harvest-looted items, plus the
  * nanocube recycling floor. Markup is item-intrinsic, so this is a flat
  * per-item list; the frontend merges it with the per-tool composition,
- * derives per-item liquidity confidence, and computes the MU aggregates.
- * Estimated markup, informational only, never a realised figure.
+ * derives holding-independent market opportunity, and computes the
+ * current-market aggregates. Estimated markup is informational only,
+ * never a realised figure.
  */
 export interface MarketHarvestData {
 	/** The nanocube item's resolved markup (percent): the universal recycling floor. Null when no nanocube observation exists (the frontend then falls back to a constant). */
@@ -1001,7 +1002,7 @@ export interface MarketHarvestData {
 
 /**
  * One horizon's reading for a harvest item: its markup (null where the
- * game reported N/A) and its sales volume (PED).
+ * game reported N/A) and TT turnover (PED).
  */
 export interface MarketHarvestHorizon {
 	/** "day" | "week" | "month" | "year". */
@@ -1013,9 +1014,9 @@ export interface MarketHarvestHorizon {
 /**
  * One harvest-looted item's resolved market signals plus the per-horizon
  * breakdown. The resolved markup/horizon/sales are the display default
- * and confidence input (week preferred, then month, then year; all null
- * when no observation covers the item). `readings` carries every horizon
- * (day, week, month, year) for the detail view.
+ * and market-opportunity input (week preferred, then month, then year;
+ * all null when no observation covers the item). `readings` carries every
+ * horizon (day, week, month, year) for the detail view.
  */
 export interface MarketHarvestItem {
 	itemName: string;

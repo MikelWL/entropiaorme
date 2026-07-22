@@ -5,8 +5,9 @@
 //! "copy CSV" buttons emit the same bytes): a header row, then one row
 //! per item carrying `Item, Tier` and five aggregation horizons of
 //! `Markup, Sales` pairs (day, week, month, year, decade). Markup is a
-//! percentage or `N/A` (no sales in that horizon); sales volume is a
-//! number with an optional `K`/`M` multiplier and a `PEC`/`PED` unit.
+//! percentage or `N/A` (no sales in that horizon); Sales is TT turnover,
+//! represented as a number with an optional `K`/`M` multiplier and a
+//! `PEC`/`PED` unit.
 //!
 //! Parsing follows the chat-log parser's discipline: pure functions
 //! over lines, no panics, malformed input degrades per line rather

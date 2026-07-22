@@ -38,7 +38,8 @@ export const deleteLedgerEntry = commands.ledgerDelete;
 export const addLedgerPreset = commands.ledgerPresetCreate;
 export const deleteLedgerPreset = commands.ledgerPresetDelete;
 // The harvest-stock removed overlay (per-item quantity already sold or
-// spent): the market-position lever behind markup confidence. No demo
+// spent): operational position context for sale and recycling actions.
+// It does not influence holding-independent market opportunity. No demo
 // variant; the reader degrades to an empty overlay in guide mode.
 export const getHarvestStock = commands.harvestStock;
 export const setHarvestStock = commands.harvestStockSet;

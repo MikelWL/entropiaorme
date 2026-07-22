@@ -214,7 +214,7 @@ pub struct MarketMobRankingRow {
 }
 
 /// One horizon's reading for a harvest item: its markup (null where the
-/// game reported N/A) and its sales volume (PED).
+/// game reported N/A) and TT turnover (PED).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketHarvestHorizon {
@@ -226,9 +226,9 @@ pub struct MarketHarvestHorizon {
 
 /// One harvest-looted item's resolved market signals plus the per-horizon
 /// breakdown. The resolved markup/horizon/sales are the display default
-/// and confidence input (week preferred, then month, then year; all null
-/// when no observation covers the item). `readings` carries every horizon
-/// (day, week, month, year) for the detail view.
+/// and market-opportunity input (week preferred, then month, then year;
+/// all null when no observation covers the item). `readings` carries every
+/// horizon (day, week, month, year) for the detail view.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketHarvestItem {
@@ -243,8 +243,9 @@ pub struct MarketHarvestItem {
 /// The estimated market signals for the harvest-looted items, plus the
 /// nanocube recycling floor. Markup is item-intrinsic, so this is a flat
 /// per-item list; the frontend merges it with the per-tool composition,
-/// derives per-item liquidity confidence, and computes the MU aggregates.
-/// Estimated markup, informational only, never a realised figure.
+/// derives holding-independent market opportunity, and computes the
+/// current-market aggregates. Estimated markup is informational only,
+/// never a realised figure.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketHarvestData {

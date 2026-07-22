@@ -7,10 +7,10 @@ import type {
 } from '$lib/api/commands.gen';
 import {
 	createTreeCuttingModel,
-	effectiveMarkup,
-	itemTier,
+	marketOpportunity,
 	NANOCUBE_FALLBACK_MARKUP,
 	primaryTree,
+	weeklyEquivalentVolume,
 } from './treeCuttingModel.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -28,8 +28,22 @@ const mocked = vi.mocked(api);
 // section by its tool rather than a positional index.
 const PH1 = 'Terratech PH-1 (L)'; // Long Moonleaf Board
 const PH4 = 'Terratech PH-4 (L)'; // Wood Shavings
+
+function required<T>(value: T | null | undefined, label: string): T {
+	if (value == null) throw new Error(`Expected ${label}`);
+	return value;
+}
+
 const sectionOf = (model: ReturnType<typeof createTreeCuttingModel>, tool: string) =>
-	model.sections.find((s) => s.toolName === tool)!;
+	required(
+		model.sections.find((section) => section.toolName === tool),
+		`section ${tool}`,
+	);
+const stockOf = (model: ReturnType<typeof createTreeCuttingModel>, itemName: string) =>
+	required(
+		model.stock.find((item) => item.itemName === itemName),
+		`stock item ${itemName}`,
+	);
 
 function loot(name: string, quantity: number, valuePed: number): HarvestLootItem {
 	return { itemName: name, quantity, valuePed };
@@ -55,7 +69,7 @@ function obs(
 }
 
 // Mirrors the maintainer's real tree-cutting data closely enough to
-// exercise each tier.
+// exercise broad and thin market opportunities.
 function harvest(): AnalyticsHarvest {
 	return {
 		toolComparisons: [
@@ -83,10 +97,9 @@ function market(): MarketHarvestData {
 	return {
 		nanocubeMarkupPct: 100.84,
 		items: [
-			// Liquid: weekly, position 34.26 is ~11% of 320 weekly volume.
+			// Broad: strong premium with weekly turnover.
 			obs('Long Moonleaf Board', 353.69, 'week', 320.34, 320.34),
-			// Illiquid: month fallback, position 87.38 exceeds weekly-equiv
-			// (~84), and nothing sold in the last week.
+			// Thin: modest premium, month fallback, and no weekly sales.
 			obs('Wood Shavings', 110.01, 'month', 363.61, 0),
 		],
 	};
@@ -108,64 +121,49 @@ describe('primaryTree', () => {
 	});
 });
 
-describe('itemTier', () => {
-	it('is liquid when the position is a small share of weekly volume', () => {
-		expect(itemTier(obs('X', 350, 'week', 320), 34)).toBe('liquid');
+describe('marketOpportunity', () => {
+	it('normalises supported horizons to weekly turnover', () => {
+		expect(weeklyEquivalentVolume(434.5, 'month')).toBeCloseTo(100, 4);
+		expect(weeklyEquivalentVolume(5214, 'year')).toBeCloseTo(100, 4);
+		expect(weeklyEquivalentVolume(100, null)).toBe(0);
 	});
 
-	it('is middling when the position is a sizeable share of weekly volume', () => {
-		// 73 / 184 = ~0.40 absorption, weekly horizon.
-		expect(itemTier(obs('X', 110, 'week', 184), 73)).toBe('middling');
+	it('classifies a fee-efficient weekly market as broad', () => {
+		const opportunity = marketOpportunity(obs('X', 100.8, 'week', 2_600_000), 100.6);
+		expect(opportunity.kind).toBe('broad');
+		expect(opportunity.usesNanocube).toBe(false);
+		expect(opportunity.efficientBatchTt).toBeCloseTo(625, 4);
+		expect(opportunity.weeklyPremiumThroughput).toBeCloseTo(20_800, 4);
 	});
 
-	it('is illiquid when the position exceeds weekly throughput', () => {
-		// Wood Shavings: month fallback, weekly-equiv ~84, position 87 -> >0.75.
-		expect(itemTier(obs('X', 110, 'month', 363.61), 87.38)).toBe('illiquid');
+	it('preserves a sparse high-margin market as niche', () => {
+		const opportunity = marketOpportunity(obs('X', 3000, 'month', 20), 100.6);
+		expect(opportunity.kind).toBe('niche');
+		expect(opportunity.usesNanocube).toBe(false);
+		expect(opportunity.efficientBatchTt).toBeCloseTo(0.5 / (0.1 * 29), 4);
 	});
 
-	it('is illiquid when uncovered or when the gain cannot clear the fee', () => {
-		expect(itemTier(undefined, 100)).toBe('illiquid');
-		expect(itemTier(obs('X', null, null, null), 100)).toBe('illiquid');
-		// 5 PED position at 105% -> 0.25 PED gain < 0.5 fee.
-		expect(itemTier(obs('X', 105, 'week', 10000), 5)).toBe('illiquid');
-	});
-});
-
-describe('effectiveMarkup', () => {
-	it('trusts the own markup when the tier clears the mode threshold', () => {
-		expect(effectiveMarkup('liquid', 350, 100.84, 'liquid')).toEqual({
-			markupPct: 350,
-			floored: false,
-		});
-		expect(effectiveMarkup('middling', 110, 100.84, 'liquidMiddling')).toEqual({
-			markupPct: 110,
-			floored: false,
-		});
+	it('preserves a modest-premium month market as thin when an efficient batch fits', () => {
+		const opportunity = marketOpportunity(obs('X', 110, 'month', 360), 100.6);
+		expect(opportunity.kind).toBe('thin');
+		expect(opportunity.usesNanocube).toBe(false);
+		expect(opportunity.efficientBatchTt).toBeCloseTo(50, 4);
+		expect(opportunity.efficientBatchMarketShare).toBeCloseTo(50 / 360, 4);
+		expect(opportunity.efficientBatchMarketWeeks).toBeCloseTo(50 / (360 / 4.345), 4);
 	});
 
-	it('floors to nanocube when the tier is below the mode threshold', () => {
-		expect(effectiveMarkup('middling', 110, 100.84, 'liquid')).toEqual({
-			markupPct: 100.84,
-			floored: true,
-		});
-		expect(effectiveMarkup('illiquid', 110, 100.84, 'liquidMiddling')).toEqual({
-			markupPct: 100.84,
-			floored: true,
-		});
-	});
+	it('uses the recycling floor for unsupported or economically inferior direct markets', () => {
+		const unsupported = marketOpportunity(obs('X', 101, 'year', 1), 100.6);
+		expect(unsupported.kind).toBe('recycle');
+		expect(unsupported.appliedMarkupPct).toBe(100.6);
 
-	it('shows own markup for any tier under the "all" mode', () => {
-		expect(effectiveMarkup('illiquid', 110, 100.84, 'all')).toEqual({
-			markupPct: 110,
-			floored: false,
-		});
-	});
+		const inferior = marketOpportunity(obs('X', 100.2, 'week', 1_000_000), 100.6);
+		expect(inferior.kind).toBe('recycle');
+		expect(inferior.appliedMarkupPct).toBe(100.6);
 
-	it('always floors an uncovered item (no own markup to show)', () => {
-		expect(effectiveMarkup('illiquid', null, 100.84, 'all')).toEqual({
-			markupPct: 100.84,
-			floored: true,
-		});
+		const uncovered = marketOpportunity(undefined, 100.84);
+		expect(uncovered.kind).toBe('recycle');
+		expect(uncovered.appliedMarkupPct).toBe(100.84);
 	});
 });
 
@@ -180,27 +178,28 @@ describe('loadData', () => {
 });
 
 describe('sections', () => {
-	it('assigns tiers and floors sub-threshold markups by mode', async () => {
+	it('applies holding-independent opportunity to every sub-activity', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
-		const model = createTreeCuttingModel(); // default mode: liquidMiddling
+		const model = createTreeCuttingModel();
 
 		await model.loadData();
 
 		const long = sectionOf(model, PH1).items[0];
-		expect(long.tier).toBe('liquid');
-		expect(long.floored).toBe(false);
-		expect(long.effectiveMarkupPct).toBe(353.69);
-		expect(long.salesPed).toBe(320.34);
-		expect(long.weeklySalesPed).toBe(320.34);
+		expect(long.opportunity.kind).toBe('broad');
+		expect(long.opportunity.usesNanocube).toBe(false);
+		expect(long.opportunity.appliedMarkupPct).toBe(353.69);
+		expect(long.opportunity.salesPed).toBe(320.34);
+		expect(long.opportunity.weeklySalesPed).toBe(320.34);
 
 		const wood = sectionOf(model, PH4).items[0];
-		expect(wood.tier).toBe('illiquid');
-		expect(wood.floored).toBe(true); // illiquid < liquidMiddling threshold
-		expect(wood.effectiveMarkupPct).toBe(100.84); // nanocube floor
-		// Un-normalised fallback volume, and zero weekly sales.
-		expect(wood.salesPed).toBe(363.61);
-		expect(wood.weeklySalesPed).toBe(0);
+		expect(wood.opportunity.kind).toBe('thin');
+		expect(wood.opportunity.usesNanocube).toBe(false);
+		expect(wood.opportunity.appliedMarkupPct).toBe(110.01);
+		// Un-normalised fallback volume and zero weekly sales remain visible
+		// evidence, but neither consults the player's holding.
+		expect(wood.opportunity.salesPed).toBe(363.61);
+		expect(wood.opportunity.weeklySalesPed).toBe(0);
 	});
 
 	it('combines every tool into the overall aggregate', async () => {
@@ -209,16 +208,17 @@ describe('sections', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		const overall = model.overall!;
+		const overall = required(model.overall, 'overall stats');
 		// Cycled and returns sum across both tools; rate is volume-weighted.
 		expect(overall.cycled).toBeCloseTo(91.24 + 111.13, 4);
 		expect(overall.returns).toBeCloseTo(34.26 + 87.38, 4);
 		expect(overall.lootRate).toBeCloseTo((34.26 + 87.38) / (91.24 + 111.13), 4);
-		// MU projected sums the per-section (mode-respecting) figures.
-		expect(overall.muProjectedReturns).toBeCloseTo(
-			model.sections[0].muProjectedReturns! + model.sections[1].muProjectedReturns!,
-			4,
-		);
+		// Current market sums the per-section holding-independent figures.
+		const firstMarket = required(model.sections[0].marketReturns, 'first market return');
+		const secondMarket = required(model.sections[1].marketReturns, 'second market return');
+		expect(overall.marketReturns).toBeCloseTo(firstMarket + secondMarket, 4);
+		expect(overall.realisedReturns).toBeCloseTo(overall.returns, 4);
+		expect(overall.realisedRate).toBeCloseTo(overall.lootRate, 4);
 	});
 
 	it('drops overall market figures when the market feed is unavailable', async () => {
@@ -226,36 +226,34 @@ describe('sections', () => {
 		mocked.getMarketHarvestMarkups.mockResolvedValue(null as unknown as MarketHarvestData);
 		const model = createTreeCuttingModel();
 		await model.loadData();
-		expect(model.overall!.muProjectedReturns).toBeNull();
-		expect(model.overall!.muRate).toBeNull();
-		expect(model.overall!.returns).toBeCloseTo(34.26 + 87.38, 4);
+		const overall = required(model.overall, 'overall stats');
+		expect(overall.marketReturns).toBeNull();
+		expect(overall.marketRate).toBeNull();
+		expect(overall.returns).toBeCloseTo(34.26 + 87.38, 4);
 	});
 
-	it('recomputes MU projected returns when the mode changes', async () => {
+	it('does not change activity opportunity when current holdings change', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		// Wood Shavings section: illiquid item.
-		// Default (liquidMiddling): floored to nanocube -> 87.38 * 1.0084.
-		expect(sectionOf(model, PH4).muProjectedReturns).toBeCloseTo((87.38 * 100.84) / 100, 4);
-
-		// "all": trusts the item's own 110.01% markup.
-		model.confidenceMode = 'all';
-		expect(sectionOf(model, PH4).muProjectedReturns).toBeCloseTo((87.38 * 110.01) / 100, 4);
+		const before = sectionOf(model, PH1).marketReturns;
+		await model.setHeld('Long Moonleaf Board', 3);
+		expect(sectionOf(model, PH1).marketReturns).toBe(before);
+		expect(sectionOf(model, PH1).items[0].opportunity.kind).toBe('broad');
 	});
 
-	it('uses the nanocube fallback constant when the feed lacks a nanocube row', async () => {
+	it('uses the nanocube fallback constant for an uncovered item when the feed lacks it', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue({
 			nanocubeMarkupPct: null,
-			items: [obs('Wood Shavings', 110.01, 'month', 363.61)],
+			items: [],
 		});
 		const model = createTreeCuttingModel();
 		await model.loadData();
-		// Wood Shavings floored to the constant.
-		expect(model.sections[1].items[0].effectiveMarkupPct).toBe(NANOCUBE_FALLBACK_MARKUP);
+		expect(model.sections[0].items[0].opportunity.appliedMarkupPct).toBe(NANOCUBE_FALLBACK_MARKUP);
+		expect(model.sections[0].items[0].opportunity.kind).toBe('recycle');
 	});
 
 	it('degrades to the realised view when the market feed fails', async () => {
@@ -267,8 +265,8 @@ describe('sections', () => {
 		expect(model.error).toBeNull();
 		expect(model.sections).toHaveLength(2);
 		const long = sectionOf(model, PH1);
-		expect(long.muProjectedReturns).toBeNull();
-		expect(long.muRate).toBeNull();
+		expect(long.marketReturns).toBeNull();
+		expect(long.marketRate).toBeNull();
 		expect(long.returns).toBe(34.26);
 	});
 
@@ -297,7 +295,7 @@ describe('stock', () => {
 		// Ordered by stock TT, most-held first: Wood Shavings (87.38) then
 		// Long Moonleaf Board (34.26).
 		expect(model.stock.map((s) => s.itemName)).toEqual(['Wood Shavings', 'Long Moonleaf Board']);
-		const long = model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!;
+		const long = stockOf(model, 'Long Moonleaf Board');
 		expect(long.lootedQty).toBe(571);
 		expect(long.removedQty).toBe(0);
 		expect(long.heldQty).toBe(571);
@@ -306,13 +304,11 @@ describe('stock', () => {
 
 	it('reflects a removed overlay loaded from the backend', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getHarvestStock.mockResolvedValue([
-			{ itemName: 'Long Moonleaf Board', removedQty: 71 },
-		]);
+		mocked.getHarvestStock.mockResolvedValue([{ itemName: 'Long Moonleaf Board', removedQty: 71 }]);
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		const long = model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!;
+		const long = stockOf(model, 'Long Moonleaf Board');
 		expect(long.removedQty).toBe(71);
 		expect(long.heldQty).toBe(500);
 		// TT scales with the held fraction.
@@ -329,23 +325,23 @@ describe('stock', () => {
 			itemName: 'Long Moonleaf Board',
 			removedQty: 71,
 		});
-		expect(model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!.heldQty).toBe(500);
+		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(500);
 	});
 
-	it('feeds markup confidence: selling down to a thin position turns illiquid', async () => {
+	it('keeps market opportunity stable while selling down current stock', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		// Fully held, Long Moonleaf Board is liquid.
-		expect(sectionOf(model, PH1).items[0].tier).toBe('liquid');
+		expect(sectionOf(model, PH1).items[0].opportunity.kind).toBe('broad');
 
-		// Sell almost everything: the tiny remaining position cannot clear
-		// the auction fee, so the markup floors.
+		// Selling changes current stock, not what the observed market says
+		// about repeating the source activity.
 		await model.setHeld('Long Moonleaf Board', 3);
-		expect(sectionOf(model, PH1).items[0].tier).toBe('illiquid');
-		expect(sectionOf(model, PH1).items[0].floored).toBe(true);
+		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(3);
+		expect(sectionOf(model, PH1).items[0].opportunity.kind).toBe('broad');
+		expect(sectionOf(model, PH1).items[0].opportunity.appliedMarkupPct).toBe(353.69);
 	});
 
 	it('joins each stock row to its resolved markup and horizon breakdown', async () => {
@@ -354,16 +350,18 @@ describe('stock', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		const long = model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!;
-		expect(long.markupPct).toBe(353.69);
-		expect(long.markupHorizon).toBe('week');
+		const long = stockOf(model, 'Long Moonleaf Board');
+		expect(long.opportunity?.ownMarkupPct).toBe(353.69);
+		expect(long.opportunity?.horizon).toBe('week');
+		expect(long.opportunity?.kind).toBe('broad');
 		// Ordered day, week, month, year, from the synthesised breakdown.
 		expect(long.readings.map((r) => r.horizon)).toEqual(['day', 'week', 'month', 'year']);
 		expect(long.readings.find((r) => r.horizon === 'week')?.markupPct).toBe(353.69);
 
-		const wood = model.stock.find((s) => s.itemName === 'Wood Shavings')!;
-		expect(wood.markupPct).toBe(110.01);
-		expect(wood.markupHorizon).toBe('month');
+		const wood = stockOf(model, 'Wood Shavings');
+		expect(wood.opportunity?.ownMarkupPct).toBe(110.01);
+		expect(wood.opportunity?.horizon).toBe('month');
+		expect(wood.opportunity?.kind).toBe('thin');
 	});
 
 	it('clears the overlay row when held is set back to full', async () => {
@@ -377,6 +375,6 @@ describe('stock', () => {
 			itemName: 'Long Moonleaf Board',
 			removedQty: 0,
 		});
-		expect(model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!.removedQty).toBe(0);
+		expect(stockOf(model, 'Long Moonleaf Board').removedQty).toBe(0);
 	});
 });

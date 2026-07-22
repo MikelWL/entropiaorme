@@ -391,7 +391,8 @@ impl Api {
     }
 
     /// The harvest-stock removed overlay (per-item quantity already sold or
-    /// spent). The market-position lever behind markup confidence.
+    /// spent). Operational position context for sale and recycling actions;
+    /// it does not influence holding-independent market opportunity.
     pub async fn harvest_stock(&self) -> Result<Vec<HarvestStockRemoval>, ApiError> {
         let rows = self
             .analytics

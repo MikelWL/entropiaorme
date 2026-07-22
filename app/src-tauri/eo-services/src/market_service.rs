@@ -113,9 +113,9 @@ pub struct MobRankingRow {
 /// nanocube recycling floor. Markup is item-intrinsic (independent of
 /// which tool looted the item), so this is a flat per-item list; the
 /// analytics side owns the per-tool composition, and the frontend merges
-/// the two, derives per-item liquidity confidence, and computes the
-/// (toggle-dependent) MU aggregates. Estimated markup: informational
-/// only, never a realised figure.
+/// the two, derives holding-independent market opportunity, and computes
+/// the current-market aggregates. Estimated markup is informational only,
+/// never a realised figure.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarvestMarketData {
     /// The nanocube item's resolved markup (percent): the universal
@@ -128,7 +128,7 @@ pub struct HarvestMarketData {
 }
 
 /// One horizon's reading for an item: its markup (None where the game
-/// reported N/A) and its sales volume (PED).
+/// reported N/A) and TT turnover (PED) for percentage-markup items.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarvestHorizonReading {
     /// "day" | "week" | "month" | "year".
@@ -139,10 +139,10 @@ pub struct HarvestHorizonReading {
 
 /// One harvest-looted item's resolved market signals plus the per-horizon
 /// breakdown. The resolved markup/horizon/sales are the display default
-/// and confidence input (week preferred, then month, then year; all None
-/// when no observation covers the item). `readings` carries every horizon
-/// (day, week, month, year) for the detail view, including a zero-volume,
-/// no-markup week that a fallback would otherwise mask.
+/// and market-opportunity input (week preferred, then month, then year;
+/// all None when no observation covers the item). `readings` carries every
+/// horizon (day, week, month, year) for the detail view, including a
+/// zero-volume, no-markup week that a fallback would otherwise mask.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarvestItemMarkup {
     pub item_name: String,
@@ -150,7 +150,7 @@ pub struct HarvestItemMarkup {
     /// The horizon that supplied the reading ("week" | "month" | "year"),
     /// None when uncovered.
     pub horizon: Option<String>,
-    /// Sales volume (PED) at the resolved horizon: the liquidity signal.
+    /// TT turnover (PED) at the resolved horizon: market-capacity evidence.
     pub sales_ped: Option<f64>,
     /// Every horizon's reading, ordered day, week, month, year.
     pub readings: Vec<HarvestHorizonReading>,
@@ -461,7 +461,7 @@ impl MarketService {
 
     /// The estimated market signals for every active harvest-looted
     /// item, plus the nanocube recycling floor. Each item's resolved
-    /// markup and sales volume follow a horizon fallback: the latest week
+    /// markup and TT turnover follow a horizon fallback: the latest week
     /// reading, else the latest month, else the latest year. The per-item
     /// `readings` carry every horizon (day, week, month, year) for the
     /// detail view; decade is the only horizon skipped. Items are ordered
@@ -505,7 +505,7 @@ impl MarketService {
                 }
                 // Resolve one item's reading by the week -> month -> year
                 // preference (only horizons with a markup qualify): the
-                // markup, its horizon, and that horizon's sales volume.
+                // markup, its horizon, and that horizon's TT turnover.
                 let resolve = |item: &str| -> Option<(f64, String, f64)> {
                     let by_horizon = per_item.get(item)?;
                     for horizon in ["week", "month", "year"] {
@@ -848,7 +848,7 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
         let by_name: std::collections::HashMap<&str, &HarvestItemMarkup> =
             data.items.iter().map(|i| (i.item_name.as_str(), i)).collect();
         // Each item resolves to its finest available horizon, with that
-        // horizon's sales volume.
+        // horizon's TT turnover.
         // Every item's breakdown is ordered day, week, month, year.
         let markups = |name: &str| {
             by_name[name]
