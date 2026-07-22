@@ -111,17 +111,17 @@
 })}
 	<!-- Selected sub-activity's stats. The sub-activity list carries the
 		heading, so the detail leads straight into the figures: realised on
-		the top row, MU estimates below. Net = returns - cycled (the app's
+		the top row, MU estimates below. TT Net = returns - cycled (the app's
 		"Net" precedent). -->
 	<div class="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3">
 		<StatDisplay label="Cycled" value={formatPed(g.cycled)} unit="PED" />
 		<StatDisplay
-			label="Net"
+			label="TT Net"
 			value={signedPed(g.returns - g.cycled)}
 			valueClass={netTone(g.returns - g.cycled)}
 			unit="PED"
 		/>
-		<StatDisplay label="Rate" value={formatPercent(g.lootRate)} />
+		<StatDisplay label="TT Rate" value={formatPercent(g.lootRate)} />
 
 		<StatDisplay
 			label="MU Net"
@@ -137,7 +137,7 @@
 
 {#snippet subActivityRow(section: TreeCuttingSection, selected: boolean)}
 	<!-- One sub-activity as a single row aligned to the static column
-		headers: Activity name, then its Cycled / Net / MU Net headline.
+		headers: Activity name, then its Cycled / TT Net / MU Net headline.
 		Clicking opens its detail on the right; the selected row is
 		accent-highlighted. -->
 	<li>
@@ -282,7 +282,7 @@
 		<!-- Overall: the header box the per-tool cards are anchored beneath. A
 			distinct elevated treatment (accent wash + border + shadow) sets it
 			apart as the summary the subordinate tool cards explain. Two
-			columns: the headline stats (Cycled / Net / MU Net) left, current
+			columns: the headline stats (Cycled / TT Net / MU Net) left, current
 			stock right. hover:z-20 keeps its stock info tip above the card
 			below. -->
 		{#if model.overall}
@@ -292,7 +292,7 @@
 			>
 				<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_minmax(0,1fr)]">
 					<!-- Headline stats in a 2-up grid: the title anchors the top-left
-						cell with Cycled to its right, then Net / Rate, then the
+						cell with Cycled to its right, then TT Net / TT Rate, then the
 						confidence-driven MU Net / MU Rate. -->
 					<div class="grid grid-cols-[auto_auto] content-start items-end gap-x-10 gap-y-4">
 						<!-- Bottom-aligned with the first stat value (grid items-end) so the
@@ -300,12 +300,12 @@
 						<span class="text-3xl font-bold tracking-tight leading-none text-text">Overall</span>
 						<StatDisplay label="Cycled" value={formatPed(model.overall.cycled)} unit="PED" />
 						<StatDisplay
-							label="Net"
+							label="TT Net"
 							value={signedPed(model.overall.returns - model.overall.cycled)}
 							valueClass={netTone(model.overall.returns - model.overall.cycled)}
 							unit="PED"
 						/>
-						<StatDisplay label="Rate" value={formatPercent(model.overall.lootRate)} />
+						<StatDisplay label="TT Rate" value={formatPercent(model.overall.lootRate)} />
 
 						<StatDisplay
 							label="MU Net"
@@ -325,7 +325,7 @@
 							sales that completed at a confirmed markup: money in hand, not an
 							estimate.
 
-							Currently a stub: it mirrors Net (loot returns minus cycled) until
+							Currently a stub: it mirrors TT Net (loot returns minus cycled) until
 							there is confirmed-sale data to drive it, at which point it will sum
 							the realised confirmed-markup proceeds instead.
 
@@ -472,7 +472,7 @@
 		<Card class="hover:z-20">
 			<div class="grid sm:grid-cols-[minmax(0,21rem)_1fr]">
 				<!-- Sub-activity list: a row per activity under static column
-					headers (Activity / Cycled / Net / MU Net), scrollable and
+					headers (Activity / Cycled / TT Net / MU Net), scrollable and
 					volume-ranked. The headers stay put while the rows scroll, the
 					shape this pattern will lean on once an activity carries many
 					more sub-activities. -->
@@ -485,7 +485,7 @@
 						>
 							<span class="eyebrow flex-1 min-w-0">Activity</span>
 							<span class="eyebrow w-16 shrink-0 text-right">Cycled</span>
-							<span class="eyebrow w-16 shrink-0 text-right">Net</span>
+							<span class="eyebrow w-16 shrink-0 text-right">TT Net</span>
 							<span class="eyebrow w-16 shrink-0 text-right">MU Net</span>
 						</div>
 					</div>
@@ -602,7 +602,7 @@
 
 		<div class="space-y-1 text-xs text-text-tertiary">
 			<p>
-				<span class="text-text-secondary">Net / Rate:</span>
+				<span class="text-text-secondary">TT Net / TT Rate:</span>
 				realised loot TT minus cycled PED, and loot-only TT return per cycled PED.
 			</p>
 			<p>
