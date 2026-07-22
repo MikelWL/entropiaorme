@@ -2,23 +2,41 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
 	AnalyticsHarvest,
 	HarvestLootItem,
-	MarketToolRankingRow,
+	MarketHarvestData,
+	MarketHarvestItem,
 } from '$lib/api/commands.gen';
-import { createTreeCuttingModel, primaryTree } from './treeCuttingModel.svelte';
+import {
+	createTreeCuttingModel,
+	effectiveMarkup,
+	itemTier,
+	NANOCUBE_FALLBACK_MARKUP,
+	primaryTree,
+} from './treeCuttingModel.svelte';
 
 vi.mock('$lib/api', () => ({
 	getAnalyticsHarvest: vi.fn(),
-	getMarketToolRanking: vi.fn(),
+	getMarketHarvestMarkups: vi.fn(),
 }));
 
 import * as api from '$lib/api';
 
 const mocked = vi.mocked(api);
 
-function item(name: string, quantity: number, valuePed: number): HarvestLootItem {
+function loot(name: string, quantity: number, valuePed: number): HarvestLootItem {
 	return { itemName: name, quantity, valuePed };
 }
 
+function obs(
+	name: string,
+	markupPct: number | null,
+	horizon: string | null,
+	salesPed: number | null,
+): MarketHarvestItem {
+	return { itemName: name, markupPct, horizon, salesPed };
+}
+
+// Mirrors the maintainer's real tree-cutting data closely enough to
+// exercise each tier.
 function harvest(): AnalyticsHarvest {
 	return {
 		toolComparisons: [
@@ -26,82 +44,110 @@ function harvest(): AnalyticsHarvest {
 				toolName: 'Terratech PH-1 (L)',
 				swings: 4562,
 				cycled: 91.24,
-				returns: 91.38,
+				returns: 34.26,
 				lootRate: 1.0015,
-				lootItems: [
-					item('Long Moonleaf Board', 120, 60.0),
-					item('Wood Shavings', 800, 31.38),
-				],
+				lootItems: [loot('Long Moonleaf Board', 571, 34.26)],
 			},
 			{
-				toolName: 'Terratech PH-3',
-				swings: 969,
-				cycled: 96.9,
-				returns: 94.33,
-				lootRate: 0.9735,
-				lootItems: [item('Short Moonleaf Board', 40, 94.33)],
+				toolName: 'Terratech PH-4 (L)',
+				swings: 127,
+				cycled: 111.13,
+				returns: 87.38,
+				lootRate: 0.6133,
+				lootItems: [loot('Wood Shavings', 87431, 87.38)],
 			},
 		],
 	};
 }
 
-function marketRanking(): MarketToolRankingRow[] {
-	return [
-		{
-			toolName: 'Terratech PH-1 (L)',
-			lootTt: 91.38,
-			coveredTt: 91.38,
-			// 60 * 3.50 + 31.38 * 1.10 = 210 + 34.518 = 244.52 (rounded)
-			muProjectedReturns: 244.52,
-			items: [
-				{ itemName: 'Long Moonleaf Board', markupPct: 350.0, horizon: 'week' },
-				{ itemName: 'Wood Shavings', markupPct: 110.0, horizon: 'month' },
-			],
-		},
-	];
+function market(): MarketHarvestData {
+	return {
+		nanocubeMarkupPct: 100.84,
+		items: [
+			// Liquid: weekly, position 34.26 is ~11% of 320 weekly volume.
+			obs('Long Moonleaf Board', 353.69, 'week', 320.34),
+			// Illiquid: month fallback, position 87.38 exceeds weekly-equiv (~84).
+			obs('Wood Shavings', 110.01, 'month', 363.61),
+		],
+	};
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mocked.getMarketToolRanking.mockResolvedValue([]);
+	mocked.getMarketHarvestMarkups.mockResolvedValue({ nanocubeMarkupPct: null, items: [] });
 });
 
 describe('primaryTree', () => {
 	it('maps the dominant board type to its tree size', () => {
-		expect(primaryTree([item('Long Moonleaf Board', 1, 5), item('Wood Shavings', 1, 2)])).toBe(
-			'Huge',
-		);
-		expect(primaryTree([item('Short Moonleaf Board', 1, 5)])).toBe('Small');
-		expect(primaryTree([item('Moonleaf Board', 1, 5)])).toBe('Long');
+		expect(primaryTree([loot('Long Moonleaf Board', 1, 5)])).toBe('Huge');
+		expect(primaryTree([loot('Short Moonleaf Board', 1, 5)])).toBe('Small');
+		expect(primaryTree([loot('Moonleaf Board', 1, 5)])).toBe('Long');
+		expect(primaryTree([loot('Wood Shavings', 1, 5)])).toBeNull();
+	});
+});
+
+describe('itemTier', () => {
+	it('is liquid when the position is a small share of weekly volume', () => {
+		expect(itemTier(obs('X', 350, 'week', 320), 34)).toBe('liquid');
 	});
 
-	it('picks the highest-TT board when several are present', () => {
-		expect(
-			primaryTree([
-				item('Short Moonleaf Board', 1, 2),
-				item('Long Moonleaf Board', 1, 9),
-				item('Moonleaf Board', 1, 4),
-			]),
-		).toBe('Huge');
+	it('is middling when the position is a sizeable share of weekly volume', () => {
+		// 73 / 184 = ~0.40 absorption, weekly horizon.
+		expect(itemTier(obs('X', 110, 'week', 184), 73)).toBe('middling');
 	});
 
-	it('is null when no board loot has been recorded', () => {
-		expect(primaryTree([item('Wood Shavings', 1, 5)])).toBeNull();
-		expect(primaryTree([])).toBeNull();
+	it('is illiquid when the position exceeds weekly throughput', () => {
+		// Wood Shavings: month fallback, weekly-equiv ~84, position 87 -> >0.75.
+		expect(itemTier(obs('X', 110, 'month', 363.61), 87.38)).toBe('illiquid');
+	});
+
+	it('is illiquid when uncovered or when the gain cannot clear the fee', () => {
+		expect(itemTier(undefined, 100)).toBe('illiquid');
+		expect(itemTier(obs('X', null, null, null), 100)).toBe('illiquid');
+		// 5 PED position at 105% -> 0.25 PED gain < 0.5 fee.
+		expect(itemTier(obs('X', 105, 'week', 10000), 5)).toBe('illiquid');
+	});
+});
+
+describe('effectiveMarkup', () => {
+	it('trusts the own markup when the tier clears the mode threshold', () => {
+		expect(effectiveMarkup('liquid', 350, 100.84, 'liquid')).toEqual({
+			markupPct: 350,
+			floored: false,
+		});
+		expect(effectiveMarkup('middling', 110, 100.84, 'liquidMiddling')).toEqual({
+			markupPct: 110,
+			floored: false,
+		});
+	});
+
+	it('floors to nanocube when the tier is below the mode threshold', () => {
+		expect(effectiveMarkup('middling', 110, 100.84, 'liquid')).toEqual({
+			markupPct: 100.84,
+			floored: true,
+		});
+		expect(effectiveMarkup('illiquid', 110, 100.84, 'liquidMiddling')).toEqual({
+			markupPct: 100.84,
+			floored: true,
+		});
+	});
+
+	it('shows own markup for any tier under the "all" mode', () => {
+		expect(effectiveMarkup('illiquid', 110, 100.84, 'all')).toEqual({
+			markupPct: 110,
+			floored: false,
+		});
+	});
+
+	it('always floors an uncovered item (no own markup to show)', () => {
+		expect(effectiveMarkup('illiquid', null, 100.84, 'all')).toEqual({
+			markupPct: 100.84,
+			floored: true,
+		});
 	});
 });
 
 describe('loadData', () => {
-	it('loads the harvest data', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		expect(model.data?.toolComparisons).toHaveLength(2);
-		expect(model.loading).toBe(false);
-		expect(model.error).toBeNull();
-	});
-
 	it('surfaces a load failure', async () => {
 		mocked.getAnalyticsHarvest.mockRejectedValue(new Error('backend unreachable'));
 		const model = createTreeCuttingModel();
@@ -112,64 +158,61 @@ describe('loadData', () => {
 });
 
 describe('sections', () => {
-	it('builds a section per tool with the inferred tree and item shares', async () => {
+	it('assigns tiers and floors sub-threshold markups by mode', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel(); // default mode: liquidMiddling
+
+		await model.loadData();
+
+		const long = model.sections[0].items[0];
+		expect(long.tier).toBe('liquid');
+		expect(long.floored).toBe(false);
+		expect(long.effectiveMarkupPct).toBe(353.69);
+
+		const wood = model.sections[1].items[0];
+		expect(wood.tier).toBe('illiquid');
+		expect(wood.floored).toBe(true); // illiquid < liquidMiddling threshold
+		expect(wood.effectiveMarkupPct).toBe(100.84); // nanocube floor
+	});
+
+	it('recomputes MU projected returns when the mode changes', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		expect(model.sections.map((s) => s.toolName)).toEqual([
-			'Terratech PH-1 (L)',
-			'Terratech PH-3',
-		]);
+		// Wood Shavings section: illiquid item.
+		// Default (liquidMiddling): floored to nanocube -> 87.38 * 1.0084.
+		expect(model.sections[1].muProjectedReturns).toBeCloseTo((87.38 * 100.84) / 100, 4);
 
-		const ph1 = model.sections[0];
-		expect(ph1.tree).toBe('Huge');
-		expect(ph1.returns).toBe(91.38);
-		// Shares over the tool's own loot TT (60 + 31.38 = 91.38).
-		expect(ph1.items[0].name).toBe('Long Moonleaf Board');
-		expect(ph1.items[0].sharePct).toBeCloseTo((60 / 91.38) * 100, 4);
-		expect(ph1.items[1].sharePct).toBeCloseTo((31.38 / 91.38) * 100, 4);
-
-		expect(model.sections[1].tree).toBe('Small');
+		// "all": trusts the item's own 110.01% markup.
+		model.confidenceMode = 'all';
+		expect(model.sections[1].muProjectedReturns).toBeCloseTo((87.38 * 110.01) / 100, 4);
 	});
 
-	it('is empty before any data loads', () => {
-		const model = createTreeCuttingModel();
-		expect(model.sections).toEqual([]);
-	});
-
-	it('merges the market feed into MU figures and per-item markup', async () => {
+	it('uses the nanocube fallback constant when the feed lacks a nanocube row', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getMarketToolRanking.mockResolvedValue(marketRanking());
+		mocked.getMarketHarvestMarkups.mockResolvedValue({
+			nanocubeMarkupPct: null,
+			items: [obs('Wood Shavings', 110.01, 'month', 363.61)],
+		});
 		const model = createTreeCuttingModel();
 		await model.loadData();
-
-		const ph1 = model.sections[0];
-		expect(ph1.muProjectedReturns).toBe(244.52);
-		// MU rate = projected / cycled.
-		expect(ph1.muRate).toBeCloseTo(244.52 / 91.24, 6);
-		expect(ph1.coverage).toBeCloseTo(1, 6);
-		expect(ph1.items[0].markupPct).toBe(350.0);
-		expect(ph1.items[0].markupHorizon).toBe('week');
-		expect(ph1.items[1].markupPct).toBe(110.0);
-
-		// PH-3 has no market row: MU figures are null, markup uncovered.
-		const ph3 = model.sections[1];
-		expect(ph3.muProjectedReturns).toBeNull();
-		expect(ph3.muRate).toBeNull();
-		expect(ph3.coverage).toBeNull();
-		expect(ph3.items[0].markupPct).toBeNull();
+		// Wood Shavings floored to the constant.
+		expect(model.sections[1].items[0].effectiveMarkupPct).toBe(NANOCUBE_FALLBACK_MARKUP);
 	});
 
 	it('degrades to the realised view when the market feed fails', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getMarketToolRanking.mockRejectedValue(new Error('market offline'));
+		mocked.getMarketHarvestMarkups.mockResolvedValue(null as unknown as MarketHarvestData);
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
 		expect(model.error).toBeNull();
 		expect(model.sections).toHaveLength(2);
 		expect(model.sections[0].muProjectedReturns).toBeNull();
-		expect(model.sections[0].returns).toBe(91.38);
+		expect(model.sections[0].muRate).toBeNull();
+		expect(model.sections[0].returns).toBe(34.26);
 	});
 });

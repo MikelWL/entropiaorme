@@ -381,7 +381,7 @@ pub fn run() {
             commands::market_contribution_batch,
             commands::market_break_even,
             commands::market_mob_ranking,
-            commands::market_tool_ranking,
+            commands::market_harvest_markups,
             commands::market_item_history,
             commands::scan_status,
             commands::scan_start,

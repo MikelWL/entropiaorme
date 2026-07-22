@@ -968,6 +968,32 @@ export interface MarketContributionItem {
 }
 
 /**
+ * The estimated market signals for the harvest-looted items, plus the
+ * nanocube recycling floor. Markup is item-intrinsic, so this is a flat
+ * per-item list; the frontend merges it with the per-tool composition,
+ * derives per-item liquidity confidence, and computes the MU aggregates.
+ * Estimated markup, informational only, never a realised figure.
+ */
+export interface MarketHarvestData {
+	/** The nanocube item's resolved markup (percent): the universal recycling floor. Null when no nanocube observation exists (the frontend then falls back to a constant). */
+	nanocubeMarkupPct: number | null;
+	items: MarketHarvestItem[];
+}
+
+/**
+ * One harvest-looted item's resolved market signals: the markup, the
+ * horizon it came from (week preferred, then month, then year), and
+ * that horizon's sales volume (the liquidity signal). All null when no
+ * observation covers the item.
+ */
+export interface MarketHarvestItem {
+	itemName: string;
+	markupPct: number | null;
+	horizon: string | null;
+	salesPed: number | null;
+}
+
+/**
  * One point of an item's per-horizon history, oldest first.
  */
 export interface MarketHistoryPoint {
@@ -1061,33 +1087,6 @@ export interface MarketSkippedLine {
 	lineNumber: number;
 	content: string;
 	reason: string;
-}
-
-/**
- * One item's resolved markup in a tool's breakdown: the markup and the
- * horizon it came from (week preferred, then month, then year), or null
- * when no observation covers the item.
- */
-export interface MarketToolItemMarkup {
-	itemName: string;
-	markupPct: number | null;
-	horizon: string | null;
-}
-
-/**
- * One harvesting tool's estimated-markup row: its recorded loot
- * composition resolved against markup observations, with the per-item
- * markup breakdown. `mu_projected_returns` projects the whole pool
- * (covered items at their markup, uncovered floored at TT); the MU rate
- * is that over the realised cycled cost, derived at the frontend.
- * Estimated markup, informational only, never a realised figure.
- */
-export interface MarketToolRankingRow {
-	toolName: string;
-	lootTt: number;
-	coveredTt: number;
-	muProjectedReturns: number;
-	items: MarketToolItemMarkup[];
 }
 
 /**
@@ -2510,8 +2509,8 @@ export async function marketMobRanking(horizon: MarketHorizon): Promise<MarketMo
 	return invokeCommand('market_mob_ranking', { horizon });
 }
 
-export async function marketToolRanking(): Promise<MarketToolRankingRow[]> {
-	return invokeCommand('market_tool_ranking', {});
+export async function marketHarvestMarkups(): Promise<MarketHarvestData> {
+	return invokeCommand('market_harvest_markups', {});
 }
 
 export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {

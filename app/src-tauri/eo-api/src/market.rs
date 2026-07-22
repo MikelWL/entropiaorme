@@ -213,31 +213,32 @@ pub struct MarketMobRankingRow {
     pub est_markup_pct: Nullable<f64>,
 }
 
-/// One item's resolved markup in a tool's breakdown: the markup and the
-/// horizon it came from (week preferred, then month, then year), or null
-/// when no observation covers the item.
+/// One harvest-looted item's resolved market signals: the markup, the
+/// horizon it came from (week preferred, then month, then year), and
+/// that horizon's sales volume (the liquidity signal). All null when no
+/// observation covers the item.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct MarketToolItemMarkup {
+pub struct MarketHarvestItem {
     pub item_name: String,
     pub markup_pct: Nullable<f64>,
     pub horizon: Nullable<String>,
+    pub sales_ped: Nullable<f64>,
 }
 
-/// One harvesting tool's estimated-markup row: its recorded loot
-/// composition resolved against markup observations, with the per-item
-/// markup breakdown. `mu_projected_returns` projects the whole pool
-/// (covered items at their markup, uncovered floored at TT); the MU rate
-/// is that over the realised cycled cost, derived at the frontend.
+/// The estimated market signals for the harvest-looted items, plus the
+/// nanocube recycling floor. Markup is item-intrinsic, so this is a flat
+/// per-item list; the frontend merges it with the per-tool composition,
+/// derives per-item liquidity confidence, and computes the MU aggregates.
 /// Estimated markup, informational only, never a realised figure.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct MarketToolRankingRow {
-    pub tool_name: String,
-    pub loot_tt: f64,
-    pub covered_tt: f64,
-    pub mu_projected_returns: f64,
-    pub items: Vec<MarketToolItemMarkup>,
+pub struct MarketHarvestData {
+    /// The nanocube item's resolved markup (percent): the universal
+    /// recycling floor. Null when no nanocube observation exists (the
+    /// frontend then falls back to a constant).
+    pub nanocube_markup_pct: Nullable<f64>,
+    pub items: Vec<MarketHarvestItem>,
 }
 
 /// One looter profession and its believed-current level.
@@ -491,32 +492,27 @@ impl Api {
             .collect())
     }
 
-    /// Every harvesting tool's estimated loot markup and per-item markup
-    /// breakdown, best projected return first. Each item's markup
-    /// resolves via the week -> month -> year horizon fallback.
-    pub async fn market_tool_ranking(&self) -> Result<Vec<MarketToolRankingRow>, ApiError> {
-        let rows = self
+    /// The estimated market signals for every active harvest-looted item
+    /// plus the nanocube recycling floor. Each item's markup and sales
+    /// volume resolve via the week -> month -> year horizon fallback.
+    pub async fn market_harvest_markups(&self) -> Result<MarketHarvestData, ApiError> {
+        let data = self
             .market
-            .tool_ranking()
+            .harvest_markups()
             .await
-            .map_err(ApiError::internal("market tool ranking"))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| MarketToolRankingRow {
-                tool_name: row.tool_name,
-                loot_tt: row.loot_tt,
-                covered_tt: row.covered_tt,
-                mu_projected_returns: row.mu_projected_returns,
-                items: row
-                    .items
-                    .into_iter()
-                    .map(|item| MarketToolItemMarkup {
-                        item_name: item.item_name,
-                        markup_pct: item.markup_pct.into(),
-                        horizon: item.horizon.into(),
-                    })
-                    .collect(),
-            })
-            .collect())
+            .map_err(ApiError::internal("market harvest markups"))?;
+        Ok(MarketHarvestData {
+            nanocube_markup_pct: data.nanocube_markup_pct.into(),
+            items: data
+                .items
+                .into_iter()
+                .map(|item| MarketHarvestItem {
+                    item_name: item.item_name,
+                    markup_pct: item.markup_pct.into(),
+                    horizon: item.horizon.into(),
+                    sales_ped: item.sales_ped.into(),
+                })
+                .collect(),
+        })
     }
 }

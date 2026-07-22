@@ -36,7 +36,7 @@ use eo_api::maps::{
 };
 use eo_api::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
-    MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview, MarketToolRankingRow,
+    MarketHarvestData, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -646,10 +646,8 @@ pub async fn market_mob_ranking(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn market_tool_ranking(
-    app: tauri::AppHandle,
-) -> Result<Vec<MarketToolRankingRow>, ApiError> {
-    facade(&app)?.market_tool_ranking().await
+pub async fn market_harvest_markups(app: tauri::AppHandle) -> Result<MarketHarvestData, ApiError> {
+    facade(&app)?.market_harvest_markups().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1360,7 +1358,7 @@ mod tests {
         "market_contribution_batch",
         "market_break_even",
         "market_mob_ranking",
-        "market_tool_ranking",
+        "market_harvest_markups",
         "market_item_history",
         "scan_status",
         "scan_start",
