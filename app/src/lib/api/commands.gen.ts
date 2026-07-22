@@ -1000,18 +1000,30 @@ export interface MarketHarvestData {
 }
 
 /**
- * One harvest-looted item's resolved market signals: the markup, the
- * horizon it came from (week preferred, then month, then year), and
- * that horizon's sales volume (the liquidity signal). All null when no
- * observation covers the item.
+ * One horizon's reading for a harvest item: its markup (null where the
+ * game reported N/A) and its sales volume (PED).
+ */
+export interface MarketHarvestHorizon {
+	/** "day" | "week" | "month" | "year". */
+	horizon: string;
+	markupPct: number | null;
+	salesPed: number;
+}
+
+/**
+ * One harvest-looted item's resolved market signals plus the per-horizon
+ * breakdown. The resolved markup/horizon/sales are the display default
+ * and confidence input (week preferred, then month, then year; all null
+ * when no observation covers the item). `readings` carries every horizon
+ * (day, week, month, year) for the detail view.
  */
 export interface MarketHarvestItem {
 	itemName: string;
 	markupPct: number | null;
 	horizon: string | null;
 	salesPed: number | null;
-	/** Sales volume (PED) on the week horizon specifically. Zero is the "no weekly sales" signal a fallback horizon's volume would mask; null when the item has no week observation. */
-	weeklySalesPed: number | null;
+	/** Every horizon's reading, ordered day, week, month, year. */
+	readings: MarketHarvestHorizon[];
 }
 
 /**

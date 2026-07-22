@@ -36,6 +36,7 @@ export type {
 	MarketPastePreview,
 	MarketPastePreviewRow,
 	MarketHarvestData,
+	MarketHarvestHorizon,
 	MarketHarvestItem,
 	MarketReading,
 	MarketSkippedLine,

@@ -197,15 +197,31 @@ function lootedByItem(tools: HarvestToolComparison[]): Map<string, LootedItem> {
 	return looted;
 }
 
+/** One horizon's market reading (day/week/month/year) for the stock row's
+ * markup detail view. */
+export type StockHorizonReading = {
+	horizon: string;
+	markupPct: number | null;
+	salesPed: number;
+};
+
 /** One item's current stock: the recorded looted quantity, how much has
  * been removed (sold or spent), and the resulting held quantity and TT.
- * The held TT is the position feeding the markup-confidence check. */
+ * The held TT is the position feeding the markup-confidence check. The
+ * market fields are the raw (non-confidence-adjusted) signals for the
+ * markup column and its per-horizon detail view. */
 export type TreeCuttingStock = {
 	itemName: string;
 	lootedQty: number;
 	removedQty: number;
 	heldQty: number;
 	heldTt: number;
+	/** The resolved market markup (percent): week, then month, then year;
+	 * null when no observation covers the item. */
+	markupPct: number | null;
+	markupHorizon: string | null;
+	/** The day/week/month/year breakdown for the detail view. */
+	readings: StockHorizonReading[];
 };
 
 /** The held TT per item: looted TT scaled by the fraction still held
@@ -258,7 +274,7 @@ function toSection(
 			floored,
 			positionTt,
 			salesPed: m?.salesPed ?? null,
-				weeklySalesPed: m?.weeklySalesPed ?? null,
+				weeklySalesPed: m?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null,
 		};
 	});
 
@@ -332,16 +348,25 @@ export function createTreeCuttingModel() {
 	const stock = $derived.by<TreeCuttingStock[]>(() => {
 		if (!data) return [];
 		const looted = lootedByItem(data.toolComparisons);
+		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
 		const rows = [...looted.entries()].map(([itemName, item]) => {
 			const gone = Math.min(Math.max(removed.get(itemName) ?? 0, 0), item.quantity);
 			const heldQty = item.quantity - gone;
 			const unitTt = item.quantity > 0 ? item.valuePed / item.quantity : 0;
+			const m = marketByItem.get(itemName);
 			return {
 				itemName,
 				lootedQty: item.quantity,
 				removedQty: gone,
 				heldQty,
 				heldTt: heldQty * unitTt,
+				markupPct: m?.markupPct ?? null,
+				markupHorizon: m?.horizon ?? null,
+				readings: (m?.readings ?? []).map((r) => ({
+					horizon: r.horizon,
+					markupPct: r.markupPct,
+					salesPed: r.salesPed,
+				})),
 			};
 		});
 		rows.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName));

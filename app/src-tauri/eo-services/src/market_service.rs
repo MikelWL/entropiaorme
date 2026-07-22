@@ -127,10 +127,22 @@ pub struct HarvestMarketData {
     pub items: Vec<HarvestItemMarkup>,
 }
 
-/// One harvest-looted item's resolved market signals: the markup, the
-/// horizon it came from (week preferred, then month, then year), and
-/// that horizon's sales volume (the liquidity signal). All None when no
-/// observation covers the item.
+/// One horizon's reading for an item: its markup (None where the game
+/// reported N/A) and its sales volume (PED).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestHorizonReading {
+    /// "day" | "week" | "month" | "year".
+    pub horizon: String,
+    pub markup_pct: Option<f64>,
+    pub sales_ped: f64,
+}
+
+/// One harvest-looted item's resolved market signals plus the per-horizon
+/// breakdown. The resolved markup/horizon/sales are the display default
+/// and confidence input (week preferred, then month, then year; all None
+/// when no observation covers the item). `readings` carries every horizon
+/// (day, week, month, year) for the detail view, including a zero-volume,
+/// no-markup week that a fallback would otherwise mask.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarvestItemMarkup {
     pub item_name: String,
@@ -140,12 +152,8 @@ pub struct HarvestItemMarkup {
     pub horizon: Option<String>,
     /// Sales volume (PED) at the resolved horizon: the liquidity signal.
     pub sales_ped: Option<f64>,
-    /// Sales volume (PED) on the week horizon specifically, carried even
-    /// when the week has no markup (so it did not supply the reading).
-    /// Zero here is the strong signal that the item did not sell at all in
-    /// the last week, which a fallback horizon's volume would otherwise
-    /// mask. None when the item has no week observation row.
-    pub weekly_sales_ped: Option<f64>,
+    /// Every horizon's reading, ordered day, week, month, year.
+    pub readings: Vec<HarvestHorizonReading>,
 }
 
 /// The modelled TT-return rate (percent) of a hunting loadout: the
@@ -452,10 +460,12 @@ impl MarketService {
     }
 
     /// The estimated market signals for every active harvest-looted
-    /// item, plus the nanocube recycling floor. Each item's markup and
-    /// sales volume resolve via a horizon fallback: the latest week
-    /// reading, else the latest month, else the latest year (day and
-    /// decade are deliberately skipped). Items are ordered by name.
+    /// item, plus the nanocube recycling floor. Each item's resolved
+    /// markup and sales volume follow a horizon fallback: the latest week
+    /// reading, else the latest month, else the latest year. The per-item
+    /// `readings` carry every horizon (day, week, month, year) for the
+    /// detail view; decade is the only horizon skipped. Items are ordered
+    /// by name.
     ///
     /// Reading `harvest_loot_items` here (to scope the item set) is the
     /// sanctioned direction of the market boundary; nothing flows back,
@@ -463,13 +473,15 @@ impl MarketService {
     pub async fn harvest_markups(&self) -> Result<HarvestMarketData, DbError> {
         self.db
             .with_reader(move |connection| {
-                // Per item, the (markup, sales) at the latest submission
-                // for each of week/month/year. A NULL markup is "no value
-                // on that horizon" and does not enter the fallback.
+                // Per item, the (markup, sales) at the latest submission for
+                // each of day/week/month/year. Markup is kept as an Option:
+                // a NULL markup is "no value on that horizon" and does not
+                // enter the resolution fallback, but its (zero) volume still
+                // shows in the breakdown.
                 let mut obs_stmt = connection.prepare(
                     "SELECT o.item_name, o.horizon, o.markup_pct, o.sales_ped \
                      FROM market_observations o \
-                     WHERE o.horizon IN ('week', 'month', 'year') \
+                     WHERE o.horizon IN ('day', 'week', 'month', 'year') \
                        AND o.submission_id = (SELECT MAX(o2.submission_id) \
                                               FROM market_observations o2 \
                                               WHERE o2.item_name = o.item_name \
@@ -478,41 +490,49 @@ impl MarketService {
                 // item -> horizon -> (markup, sales_ped).
                 let mut per_item: std::collections::HashMap<
                     String,
-                    std::collections::HashMap<String, (f64, f64)>,
+                    std::collections::HashMap<String, (Option<f64>, f64)>,
                 > = std::collections::HashMap::new();
-                // The week horizon's sales volume per item, captured even
-                // when its markup is NULL (a NULL-markup week never enters
-                // the fallback, but a zero here is the "no weekly sales"
-                // signal the tooltip leads with).
-                let mut weekly_sales: std::collections::HashMap<String, f64> =
-                    std::collections::HashMap::new();
                 let mut rows = obs_stmt.query([])?;
                 while let Some(row) = rows.next()? {
                     let item: String = row.get(0)?;
                     let horizon: String = row.get(1)?;
                     let markup: Option<f64> = row.get(2)?;
                     let sales: f64 = row.get(3)?;
-                    if horizon == "week" {
-                        weekly_sales.insert(item.clone(), sales);
-                    }
-                    if let Some(markup) = markup {
-                        per_item
-                            .entry(item)
-                            .or_default()
-                            .insert(horizon, (markup, sales));
-                    }
+                    per_item
+                        .entry(item)
+                        .or_default()
+                        .insert(horizon, (markup, sales));
                 }
                 // Resolve one item's reading by the week -> month -> year
-                // preference: the markup, its horizon, and that horizon's
-                // sales volume.
+                // preference (only horizons with a markup qualify): the
+                // markup, its horizon, and that horizon's sales volume.
                 let resolve = |item: &str| -> Option<(f64, String, f64)> {
                     let by_horizon = per_item.get(item)?;
                     for horizon in ["week", "month", "year"] {
-                        if let Some((markup, sales)) = by_horizon.get(horizon) {
-                            return Some((*markup, horizon.to_string(), *sales));
+                        if let Some(&(Some(markup), sales)) = by_horizon.get(horizon) {
+                            return Some((markup, horizon.to_string(), sales));
                         }
                     }
                     None
+                };
+                // The day/week/month/year breakdown for an item (missing
+                // horizons read as no markup, zero volume).
+                let readings_of = |item: &str| -> Vec<HarvestHorizonReading> {
+                    let by_horizon = per_item.get(item);
+                    ["day", "week", "month", "year"]
+                        .into_iter()
+                        .map(|horizon| {
+                            let (markup_pct, sales_ped) = by_horizon
+                                .and_then(|m| m.get(horizon))
+                                .copied()
+                                .unwrap_or((None, 0.0));
+                            HarvestHorizonReading {
+                                horizon: horizon.to_string(),
+                                markup_pct,
+                                sales_ped,
+                            }
+                        })
+                        .collect()
                 };
 
                 let nanocube_markup_pct = resolve("Nanocube").map(|(markup, _, _)| markup);
@@ -529,7 +549,7 @@ impl MarketService {
                     .into_iter()
                     .map(|name| {
                         let resolved = resolve(&name);
-                        let weekly_sales_ped = weekly_sales.get(&name).copied();
+                        let readings = readings_of(&name);
                         let (markup_pct, horizon, sales_ped) = match resolved {
                             Some((m, h, s)) => (Some(m), Some(h), Some(s)),
                             None => (None, None, None),
@@ -539,7 +559,7 @@ impl MarketService {
                             markup_pct,
                             horizon,
                             sales_ped,
-                            weekly_sales_ped,
+                            readings,
                         }
                     })
                     .collect();
@@ -829,26 +849,57 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
             data.items.iter().map(|i| (i.item_name.as_str(), i)).collect();
         // Each item resolves to its finest available horizon, with that
         // horizon's sales volume.
+        // Every item's breakdown is ordered day, week, month, year.
+        let markups = |name: &str| {
+            by_name[name]
+                .readings
+                .iter()
+                .map(|r| (r.horizon.as_str(), r.markup_pct, r.sales_ped))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(by_name["Wood Shavings"].markup_pct, Some(120.0));
         assert_eq!(by_name["Wood Shavings"].horizon.as_deref(), Some("week"));
         assert_eq!(by_name["Wood Shavings"].sales_ped, Some(10.0));
-        // Week supplied the reading, so its volume is also the weekly one.
-        assert_eq!(by_name["Wood Shavings"].weekly_sales_ped, Some(10.0));
+        // Full day/week/month/year breakdown, markup and volume per horizon.
+        assert_eq!(
+            markups("Wood Shavings"),
+            vec![
+                ("day", Some(110.0), 5.0),
+                ("week", Some(120.0), 10.0),
+                ("month", Some(130.0), 20.0),
+                ("year", Some(140.0), 30.0),
+            ],
+        );
         assert_eq!(by_name["Short Moonleaf Board"].markup_pct, Some(200.0));
         assert_eq!(by_name["Short Moonleaf Board"].horizon.as_deref(), Some("month"));
         assert_eq!(by_name["Short Moonleaf Board"].sales_ped, Some(30.0));
-        // Fell back to month, but the week row (NULL markup, 0 PEC) still
-        // reports zero weekly sales.
-        assert_eq!(by_name["Short Moonleaf Board"].weekly_sales_ped, Some(0.0));
+        // Fell back to month; the day/week rows carry no markup and zero
+        // volume, still present in the breakdown.
+        assert_eq!(
+            markups("Short Moonleaf Board"),
+            vec![
+                ("day", None, 0.0),
+                ("week", None, 0.0),
+                ("month", Some(200.0), 30.0),
+                ("year", Some(210.0), 40.0),
+            ],
+        );
         assert_eq!(by_name["Moonleaf Board"].markup_pct, Some(300.0));
         assert_eq!(by_name["Moonleaf Board"].horizon.as_deref(), Some("year"));
         assert_eq!(by_name["Moonleaf Board"].sales_ped, Some(40.0));
-        assert_eq!(by_name["Moonleaf Board"].weekly_sales_ped, Some(0.0));
         assert_eq!(by_name["Long Moonleaf Board"].markup_pct, None);
         assert_eq!(by_name["Long Moonleaf Board"].horizon, None);
         assert_eq!(by_name["Long Moonleaf Board"].sales_ped, None);
-        // No observation at all: no week row either.
-        assert_eq!(by_name["Long Moonleaf Board"].weekly_sales_ped, None);
+        // No observation at all: every horizon reads empty.
+        assert_eq!(
+            markups("Long Moonleaf Board"),
+            vec![
+                ("day", None, 0.0),
+                ("week", None, 0.0),
+                ("month", None, 0.0),
+                ("year", None, 0.0),
+            ],
+        );
     }
 
     #[test]

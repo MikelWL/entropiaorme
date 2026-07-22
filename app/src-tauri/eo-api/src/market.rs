@@ -213,10 +213,22 @@ pub struct MarketMobRankingRow {
     pub est_markup_pct: Nullable<f64>,
 }
 
-/// One harvest-looted item's resolved market signals: the markup, the
-/// horizon it came from (week preferred, then month, then year), and
-/// that horizon's sales volume (the liquidity signal). All null when no
-/// observation covers the item.
+/// One horizon's reading for a harvest item: its markup (null where the
+/// game reported N/A) and its sales volume (PED).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketHarvestHorizon {
+    /// "day" | "week" | "month" | "year".
+    pub horizon: String,
+    pub markup_pct: Nullable<f64>,
+    pub sales_ped: f64,
+}
+
+/// One harvest-looted item's resolved market signals plus the per-horizon
+/// breakdown. The resolved markup/horizon/sales are the display default
+/// and confidence input (week preferred, then month, then year; all null
+/// when no observation covers the item). `readings` carries every horizon
+/// (day, week, month, year) for the detail view.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketHarvestItem {
@@ -224,10 +236,8 @@ pub struct MarketHarvestItem {
     pub markup_pct: Nullable<f64>,
     pub horizon: Nullable<String>,
     pub sales_ped: Nullable<f64>,
-    /// Sales volume (PED) on the week horizon specifically. Zero is the
-    /// "no weekly sales" signal a fallback horizon's volume would mask;
-    /// null when the item has no week observation.
-    pub weekly_sales_ped: Nullable<f64>,
+    /// Every horizon's reading, ordered day, week, month, year.
+    pub readings: Vec<MarketHarvestHorizon>,
 }
 
 /// The estimated market signals for the harvest-looted items, plus the
@@ -515,7 +525,15 @@ impl Api {
                     markup_pct: item.markup_pct.into(),
                     horizon: item.horizon.into(),
                     sales_ped: item.sales_ped.into(),
-                    weekly_sales_ped: item.weekly_sales_ped.into(),
+                    readings: item
+                        .readings
+                        .into_iter()
+                        .map(|r| MarketHarvestHorizon {
+                            horizon: r.horizon,
+                            markup_pct: r.markup_pct.into(),
+                            sales_ped: r.sales_ped,
+                        })
+                        .collect(),
                 })
                 .collect(),
         })

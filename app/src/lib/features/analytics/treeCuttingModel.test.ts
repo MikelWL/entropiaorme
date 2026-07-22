@@ -33,9 +33,18 @@ function obs(
 	markupPct: number | null,
 	horizon: string | null,
 	salesPed: number | null,
-	weeklySalesPed: number | null = null,
+	weeklyVolume: number | null = null,
 ): MarketHarvestItem {
-	return { itemName: name, markupPct, horizon, salesPed, weeklySalesPed };
+	// Synthesise a day/week/month/year breakdown: the resolved horizon
+	// carries (markup, salesPed), the week carries the weekly volume, the
+	// rest are empty. Enough to exercise the resolved fields and the
+	// weekly-sales signal derived from readings.
+	const readings = ['day', 'week', 'month', 'year'].map((h) => ({
+		horizon: h,
+		markupPct: h === horizon ? markupPct : null,
+		salesPed: h === horizon ? (salesPed ?? 0) : h === 'week' ? (weeklyVolume ?? 0) : 0,
+	}));
+	return { itemName: name, markupPct, horizon, salesPed, readings };
 }
 
 // Mirrors the maintainer's real tree-cutting data closely enough to
@@ -314,6 +323,24 @@ describe('stock', () => {
 		await model.setHeld('Long Moonleaf Board', 3);
 		expect(model.sections[0].items[0].tier).toBe('illiquid');
 		expect(model.sections[0].items[0].floored).toBe(true);
+	});
+
+	it('joins each stock row to its resolved markup and horizon breakdown', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		const long = model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!;
+		expect(long.markupPct).toBe(353.69);
+		expect(long.markupHorizon).toBe('week');
+		// Ordered day, week, month, year, from the synthesised breakdown.
+		expect(long.readings.map((r) => r.horizon)).toEqual(['day', 'week', 'month', 'year']);
+		expect(long.readings.find((r) => r.horizon === 'week')?.markupPct).toBe(353.69);
+
+		const wood = model.stock.find((s) => s.itemName === 'Wood Shavings')!;
+		expect(wood.markupPct).toBe(110.01);
+		expect(wood.markupHorizon).toBe('month');
 	});
 
 	it('clears the overlay row when held is set back to full', async () => {

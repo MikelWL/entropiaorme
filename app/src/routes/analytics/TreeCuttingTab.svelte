@@ -155,6 +155,34 @@
 	</button>
 {/snippet}
 
+{#snippet markupBreakdown(
+	readings: { horizon: string; markupPct: number | null; salesPed: number }[],
+)}
+	<!-- MU and Volume across day/week/month/year. The horizon labels sit as
+		subtle headers over the MU numbers; the row labels (MU / Volume) share
+		that subtle style, subordinate to the figures. -->
+	<div class="grid grid-cols-[auto_repeat(4,minmax(2.25rem,1fr))] items-center gap-x-3 gap-y-1.5">
+		<span></span>
+		{#each readings as r (r.horizon)}
+			<span class="eyebrow text-right">{r.horizon}</span>
+		{/each}
+
+		<span class="eyebrow">MU</span>
+		{#each readings as r (r.horizon)}
+			<span class="text-right text-sm tabular-nums text-text">
+				{r.markupPct !== null ? formatPercent(r.markupPct / 100) : NO_DATA}
+			</span>
+		{/each}
+
+		<span class="eyebrow">Volume</span>
+		{#each readings as r (r.horizon)}
+			<span class="text-right text-sm tabular-nums text-text-secondary">
+				{r.salesPed > 0 ? formatPed(r.salesPed) : NO_DATA}
+			</span>
+		{/each}
+	</div>
+{/snippet}
+
 {#snippet confidenceBody(item: TreeCuttingItem)}
 	{@const tip = confidenceTip(item)}
 	<p class="text-xs leading-relaxed text-text">{tip.lead}</p>
@@ -297,13 +325,25 @@
 											{formatPed(s.heldTt)}
 										</span>
 
-										<!-- Markup (placeholder): weekly markup with month/year
-											fallback, wired next. Designed to become a dynamic cell
-											whose hover opens a window of markup across day/week/
-											month/year plus trading volume and the reading's age. -->
-										<span class="w-20 text-right shrink-0 text-sm tabular-nums text-text-tertiary">
-											—
-										</span>
+										<!-- Markup: the resolved weekly markup (month/year
+											fallback); hovering opens the day/week/month/year MU
+											and volume breakdown. -->
+										<div class="w-20 shrink-0 flex items-center justify-end">
+											{#if s.markupPct !== null}
+												{@const mk = s.markupPct}
+												<InfoTip align="right" width="w-96" label="Markup by horizon">
+													{#snippet trigger()}
+														<span class="text-sm tabular-nums text-text-secondary
+															border-b border-dotted border-border/70">
+															{formatPercent(mk / 100)}
+														</span>
+													{/snippet}
+													{@render markupBreakdown(s.readings)}
+												</InfoTip>
+											{:else}
+												<span class="text-sm tabular-nums text-text-tertiary">—</span>
+											{/if}
+										</div>
 
 										<!-- Conf (placeholder): the confidence marker, wired next
 											(green tick / amber warning / red low, each with a hover
