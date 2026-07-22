@@ -12,7 +12,8 @@
 use std::sync::Arc;
 
 use eo_api::analytics::{
-    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
+    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, HarvestStockInput, HarvestStockRemoval,
+    InventoryItem, InventoryItemInput, InventoryPatch,
     InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
     LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
@@ -463,6 +464,21 @@ pub async fn analytics_harvest(app: tauri::AppHandle) -> Result<AnalyticsHarvest
     {
         facade(&app)?.analytics_harvest().await
     }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn harvest_stock(
+    app: tauri::AppHandle,
+) -> Result<Vec<HarvestStockRemoval>, ApiError> {
+    facade(&app)?.harvest_stock().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn harvest_stock_set(
+    app: tauri::AppHandle,
+    input: HarvestStockInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.harvest_stock_set(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1340,6 +1356,8 @@ mod tests {
         "analytics_overview",
         "analytics_hunting",
         "analytics_harvest",
+        "harvest_stock",
+        "harvest_stock_set",
         "ledger_list",
         "ledger_summary",
         "ledger_create",

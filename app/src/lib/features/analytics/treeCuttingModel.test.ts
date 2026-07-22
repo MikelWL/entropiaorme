@@ -16,6 +16,8 @@ import {
 vi.mock('$lib/api', () => ({
 	getAnalyticsHarvest: vi.fn(),
 	getMarketHarvestMarkups: vi.fn(),
+	getHarvestStock: vi.fn(),
+	setHarvestStock: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -77,6 +79,8 @@ function market(): MarketHarvestData {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocked.getMarketHarvestMarkups.mockResolvedValue({ nanocubeMarkupPct: null, items: [] });
+	mocked.getHarvestStock.mockResolvedValue([]);
+	mocked.setHarvestStock.mockResolvedValue(undefined);
 });
 
 describe('primaryTree', () => {
@@ -249,5 +253,79 @@ describe('sections', () => {
 		expect(model.sections[0].muProjectedReturns).toBeNull();
 		expect(model.sections[0].muRate).toBeNull();
 		expect(model.sections[0].returns).toBe(34.26);
+	});
+});
+
+describe('stock', () => {
+	it('defaults every recorded item to fully held', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		// Name-ordered: Long Moonleaf Board, Wood Shavings.
+		expect(model.stock.map((s) => s.itemName)).toEqual(['Long Moonleaf Board', 'Wood Shavings']);
+		const long = model.stock[0];
+		expect(long.lootedQty).toBe(571);
+		expect(long.removedQty).toBe(0);
+		expect(long.heldQty).toBe(571);
+		expect(long.heldTt).toBeCloseTo(34.26, 4);
+	});
+
+	it('reflects a removed overlay loaded from the backend', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getHarvestStock.mockResolvedValue([
+			{ itemName: 'Long Moonleaf Board', removedQty: 71 },
+		]);
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		const long = model.stock[0];
+		expect(long.removedQty).toBe(71);
+		expect(long.heldQty).toBe(500);
+		// TT scales with the held fraction.
+		expect(long.heldTt).toBeCloseTo((34.26 * 500) / 571, 4);
+	});
+
+	it('persists the derived removed quantity when held is edited', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		await model.setHeld('Long Moonleaf Board', 500);
+		expect(mocked.setHarvestStock).toHaveBeenCalledWith({
+			itemName: 'Long Moonleaf Board',
+			removedQty: 71,
+		});
+		expect(model.stock[0].heldQty).toBe(500);
+	});
+
+	it('feeds markup confidence: selling down to a thin position turns illiquid', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		// Fully held, Long Moonleaf Board is liquid.
+		expect(model.sections[0].items[0].tier).toBe('liquid');
+
+		// Sell almost everything: the tiny remaining position cannot clear
+		// the auction fee, so the markup floors.
+		await model.setHeld('Long Moonleaf Board', 3);
+		expect(model.sections[0].items[0].tier).toBe('illiquid');
+		expect(model.sections[0].items[0].floored).toBe(true);
+	});
+
+	it('clears the overlay row when held is set back to full', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		await model.setHeld('Long Moonleaf Board', 571);
+		// removedQty 0 clears rather than stores.
+		expect(mocked.setHarvestStock).toHaveBeenCalledWith({
+			itemName: 'Long Moonleaf Board',
+			removedQty: 0,
+		});
+		expect(model.stock[0].removedQty).toBe(0);
 	});
 });

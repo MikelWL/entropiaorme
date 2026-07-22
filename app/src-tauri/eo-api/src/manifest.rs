@@ -14,7 +14,8 @@ use schemars::schema_for;
 use serde_json::Value;
 
 use crate::analytics::{
-    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
+    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, HarvestStockInput, HarvestStockRemoval,
+    InventoryItem, InventoryItemInput, InventoryPatch,
     InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
     LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
@@ -499,6 +500,19 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "analytics_harvest",
             args: Vec::new(),
             returns: Some(schema(schema_for!(AnalyticsHarvest))),
+        },
+        CommandSpec {
+            name: "harvest_stock",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<HarvestStockRemoval>))),
+        },
+        CommandSpec {
+            name: "harvest_stock_set",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(HarvestStockInput)),
+            }],
+            returns: None,
         },
         CommandSpec {
             name: "ledger_list",

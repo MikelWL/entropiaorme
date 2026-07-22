@@ -52,6 +52,8 @@ pub const APP_COMMANDS: &[&str] = &[
     "equipment_search",
     "equipment_update",
     "get_update_channel",
+    "harvest_stock",
+    "harvest_stock_set",
     "hide_navigation_overlays",
     "hide_scan_overlay",
     "install_update",

@@ -198,6 +198,71 @@
 					muRate: model.overall.muRate,
 					primary: true,
 				})}
+
+				<!-- Current stock: the market-position overlay on recorded
+					harvest. Editable held quantity; drives markup confidence,
+					never the stat lines above. -->
+				{#if model.stock.length > 0}
+					<div class="mt-5 border-t border-border/50 pt-4">
+						<div class="flex items-center gap-2 px-2.5 pb-2">
+							<span class="eyebrow">Current stock</span>
+							<InfoTip label="What current stock means">
+								<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+									<p class="text-text">
+										How much of each item you still hold, out of everything you have
+										recorded harvesting.
+									</p>
+									<p>
+										This is what markup confidence uses: selling stock lowers your
+										position and shifts which markups are realistic. It never changes
+										the stats above, which record what your harvesting actually
+										produced.
+									</p>
+									<p>Edit the held count to match what you have. Ledger sync comes later.</p>
+								</div>
+							</InfoTip>
+						</div>
+
+						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+							<span class="eyebrow flex-1 min-w-0">Item</span>
+							<span class="eyebrow w-28 text-right shrink-0">Held</span>
+							<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
+						</div>
+
+						<ul class="flex flex-col gap-1">
+							{#each model.stock as s (s.itemName)}
+								<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
+									<span class="flex-1 min-w-0 text-sm font-medium truncate tracking-tight text-text">
+										{s.itemName}
+									</span>
+
+									<div class="w-28 shrink-0 flex items-center justify-end gap-1.5">
+										<input
+											type="number"
+											min="0"
+											max={s.lootedQty}
+											value={s.heldQty}
+											aria-label="Held quantity of {s.itemName}"
+											onchange={(e) => model.setHeld(s.itemName, e.currentTarget.valueAsNumber)}
+											class="w-16 text-right tabular-nums text-sm rounded border border-border/60
+												bg-surface-hover/40 px-1.5 py-0.5 text-text
+												focus:outline-none focus:border-accent/60 focus:bg-surface-hover/70
+												transition-colors duration-[var(--duration-fast)]
+												[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+										/>
+										<span class="text-xs text-text-tertiary tabular-nums shrink-0">
+											/ {s.lootedQty}
+										</span>
+									</div>
+
+									<span class="w-24 text-right shrink-0 text-sm tabular-nums font-medium text-text">
+										{formatPed(s.heldTt)}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
 			</Card>
 		{/if}
 

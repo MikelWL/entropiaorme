@@ -276,7 +276,26 @@ pub struct InventorySellResult {
     pub sold_item: InventoryItem,
 }
 
+/// One item's harvest-stock removed overlay: how much of the recorded
+/// harvest loot has already left the player's holdings. Current position =
+/// recorded looted quantity minus this. Feeds the markup-confidence
+/// estimate only; never the recorded activity stats or the ledger.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestStockRemoval {
+    pub item_name: String,
+    pub removed_qty: i64,
+}
+
 // ── Request DTOs ────────────────────────────────────────────────────
+
+/// A harvest-stock removed-overlay write payload.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestStockInput {
+    pub item_name: String,
+    pub removed_qty: i64,
+}
 
 /// A ledger-entry create payload.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -369,6 +388,33 @@ impl Api {
             .await
             .map_err(analytics_error("analytics harvest"))?;
         Ok(harvest_dto(value))
+    }
+
+    /// The harvest-stock removed overlay (per-item quantity already sold or
+    /// spent). The market-position lever behind markup confidence.
+    pub async fn harvest_stock(&self) -> Result<Vec<HarvestStockRemoval>, ApiError> {
+        let rows = self
+            .analytics
+            .harvest_stock_removed()
+            .await
+            .map_err(analytics_error("harvest stock"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| HarvestStockRemoval {
+                item_name: r.item_name,
+                removed_qty: r.removed_qty,
+            })
+            .collect())
+    }
+
+    /// Set an item's removed quantity (zero clears it). Writes the
+    /// market-position lever alone: no activity stats, no ledger.
+    pub async fn harvest_stock_set(&self, input: HarvestStockInput) -> Result<(), ApiError> {
+        self.analytics
+            .set_harvest_stock_removed(&input.item_name, input.removed_qty)
+            .await
+            .map_err(analytics_error("harvest stock set"))?;
+        Ok(())
     }
 
     /// One keyset page of ledger entries (newest first) plus the cursor for

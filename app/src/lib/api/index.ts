@@ -22,6 +22,8 @@ export type {
 	AnalyticsHarvest as HarvestData,
 	AnalyticsHunting as HuntingData,
 	ApiErrorKind,
+	HarvestStockInput,
+	HarvestStockRemoval,
 	ManualMobSuggestion,
 	MarketBreakEven,
 	MarketBreakEvenCell,

@@ -363,6 +363,8 @@ pub fn run() {
             commands::analytics_overview,
             commands::analytics_hunting,
             commands::analytics_harvest,
+            commands::harvest_stock,
+            commands::harvest_stock_set,
             commands::ledger_list,
             commands::ledger_summary,
             commands::ledger_create,

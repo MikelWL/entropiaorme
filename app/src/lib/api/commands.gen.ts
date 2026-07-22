@@ -568,6 +568,25 @@ export interface HarvestLootItem {
 }
 
 /**
+ * A harvest-stock removed-overlay write payload.
+ */
+export interface HarvestStockInput {
+	itemName: string;
+	removedQty: number;
+}
+
+/**
+ * One item's harvest-stock removed overlay: how much of the recorded
+ * harvest loot has already left the player's holdings. Current position =
+ * recorded looted quantity minus this. Feeds the markup-confidence
+ * estimate only; never the recorded activity stats or the ledger.
+ */
+export interface HarvestStockRemoval {
+	itemName: string;
+	removedQty: number;
+}
+
+/**
  * A session's harvesting (tree cutting) totals: every swing is a
  * counted event (successes arrive as wood loot groups, fails as the
  * explicit harvest-fail line).
@@ -2437,6 +2456,14 @@ export async function analyticsHunting(): Promise<AnalyticsHunting> {
 
 export async function analyticsHarvest(): Promise<AnalyticsHarvest> {
 	return invokeCommand('analytics_harvest', {});
+}
+
+export async function harvestStock(): Promise<HarvestStockRemoval[]> {
+	return invokeCommand('harvest_stock', {});
+}
+
+export async function harvestStockSet(input: HarvestStockInput): Promise<void> {
+	return invokeCommand('harvest_stock_set', { input });
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

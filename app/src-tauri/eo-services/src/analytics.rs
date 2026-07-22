@@ -81,6 +81,19 @@ pub struct InventoryRow {
     pub acquired_at: String,
 }
 
+/// One item's "already removed" harvest-stock overlay: how much of the
+/// item has left the player's holdings (sold or spent) relative to the
+/// lifetime recorded harvest quantity. Current position = recorded looted
+/// quantity minus this. An isolated market-position lever: it feeds the
+/// markup-confidence estimate only, never the recorded activity stats or
+/// the ledger.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestStockRemoval {
+    pub item_name: String,
+    pub removed_qty: i64,
+}
+
 /// A realised inventory sale: the ledger entry it wrote (`None` for a
 /// zero-delta sale) and the sold item.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -2090,6 +2103,63 @@ impl AnalyticsService {
             .await?)
     }
 
+    /// The harvest-stock removed overlay: the per-item quantity already
+    /// removed from holdings. Absent items are simply zero (still fully
+    /// held), so the map carries only the non-default rows.
+    pub async fn harvest_stock_removed(&self) -> Result<Vec<HarvestStockRemoval>, AnalyticsError> {
+        Ok(self
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT item_name, removed_qty FROM harvest_stock_removed \
+                     ORDER BY item_name",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        Ok(HarvestStockRemoval {
+                            item_name: row.get(0)?,
+                            removed_qty: row.get(1)?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
+    }
+
+    /// Set an item's removed quantity. A non-positive quantity clears the
+    /// overlay row (the item is fully held again), keeping the table to
+    /// meaningful rows only. This writes the market-position lever alone;
+    /// it never touches recorded activity or the ledger.
+    pub async fn set_harvest_stock_removed(
+        &self,
+        item_name: &str,
+        removed_qty: i64,
+    ) -> Result<(), AnalyticsError> {
+        let item_name = item_name.to_string();
+        let now = naive_to_epoch(self.clock.now());
+        self.db
+            .with_writer(move |conn| {
+                if removed_qty > 0 {
+                    conn.execute(
+                        "INSERT INTO harvest_stock_removed (item_name, removed_qty, updated_at) \
+                         VALUES (?, ?, ?) \
+                         ON CONFLICT(item_name) DO UPDATE SET \
+                             removed_qty = excluded.removed_qty, updated_at = excluded.updated_at",
+                        rusqlite::params![item_name, removed_qty, now],
+                    )?;
+                } else {
+                    conn.execute(
+                        "DELETE FROM harvest_stock_removed WHERE item_name = ?",
+                        rusqlite::params![item_name],
+                    )?;
+                }
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
     /// The stored inventory row re-read and shaped (the create / patch
     /// reply). A row that has vanished since the write is a driver-level
     /// invariant break, surfaced as [`AnalyticsError::Storage`].
@@ -3123,6 +3193,57 @@ mod tests {
         ));
         // Only the two valid presets were written.
         assert_eq!(service.list_ledger_presets().await.unwrap().len(), 2);
+    }
+
+    /// The harvest-stock removed overlay round-trips, upserts on repeat,
+    /// and clears its row when set back to zero.
+    #[tokio::test]
+    async fn harvest_stock_removed_upserts_and_clears() {
+        let (_dir, service) = write_service().await;
+        assert!(service.harvest_stock_removed().await.unwrap().is_empty());
+
+        service
+            .set_harvest_stock_removed("Long Moonleaf Board", 12)
+            .await
+            .unwrap();
+        service
+            .set_harvest_stock_removed("Wood Shavings", 5)
+            .await
+            .unwrap();
+        let rows = service.harvest_stock_removed().await.unwrap();
+        // Name-ordered.
+        assert_eq!(
+            rows,
+            vec![
+                HarvestStockRemoval {
+                    item_name: "Long Moonleaf Board".into(),
+                    removed_qty: 12,
+                },
+                HarvestStockRemoval {
+                    item_name: "Wood Shavings".into(),
+                    removed_qty: 5,
+                },
+            ],
+        );
+
+        // Upsert replaces the quantity for the same item.
+        service
+            .set_harvest_stock_removed("Long Moonleaf Board", 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            service.harvest_stock_removed().await.unwrap()[0].removed_qty,
+            20,
+        );
+
+        // Zero clears the row entirely (fully held again).
+        service
+            .set_harvest_stock_removed("Long Moonleaf Board", 0)
+            .await
+            .unwrap();
+        let rows = service.harvest_stock_removed().await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].item_name, "Wood Shavings");
     }
 
     /// Create with the optional fields absent: notes is null and acquired_at

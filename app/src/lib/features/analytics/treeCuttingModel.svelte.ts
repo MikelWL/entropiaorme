@@ -21,7 +21,9 @@
 
 import {
 	getAnalyticsHarvest,
+	getHarvestStock,
 	getMarketHarvestMarkups,
+	setHarvestStock,
 	type HarvestData,
 	type MarketHarvestData,
 	type MarketHarvestItem,
@@ -177,18 +179,49 @@ export function primaryTree(items: HarvestLootItem[]): string | null {
 	return best?.tree ?? null;
 }
 
-/** Total looted TT per item across every tool (the position for the
- * liquidity check). This is the position seam: today it is historical
- * looted TT; a future holdings primitive (looted minus sold) swaps in
- * here without touching the confidence logic. */
-function positionByItem(tools: HarvestToolComparison[]): Map<string, number> {
-	const position = new Map<string, number>();
+/** Lifetime recorded harvest per item across every tool: the quantity
+ * and TT value looted. This is the ground-truth base the stock overlay
+ * sits on. */
+type LootedItem = { quantity: number; valuePed: number };
+function lootedByItem(tools: HarvestToolComparison[]): Map<string, LootedItem> {
+	const looted = new Map<string, LootedItem>();
 	for (const tool of tools) {
 		for (const item of tool.lootItems) {
-			position.set(item.itemName, (position.get(item.itemName) ?? 0) + item.valuePed);
+			const prev = looted.get(item.itemName) ?? { quantity: 0, valuePed: 0 };
+			looted.set(item.itemName, {
+				quantity: prev.quantity + item.quantity,
+				valuePed: prev.valuePed + item.valuePed,
+			});
 		}
 	}
-	return position;
+	return looted;
+}
+
+/** One item's current stock: the recorded looted quantity, how much has
+ * been removed (sold or spent), and the resulting held quantity and TT.
+ * The held TT is the position feeding the markup-confidence check. */
+export type TreeCuttingStock = {
+	itemName: string;
+	lootedQty: number;
+	removedQty: number;
+	heldQty: number;
+	heldTt: number;
+};
+
+/** The held TT per item: looted TT scaled by the fraction still held
+ * (looted quantity minus removed). This is the position seam: the market
+ * position that gates markup confidence, kept distinct from the recorded
+ * activity stats. */
+function heldTtByItem(
+	looted: Map<string, LootedItem>,
+	removed: Map<string, number>,
+): Map<string, number> {
+	const held = new Map<string, number>();
+	for (const [name, item] of looted) {
+		const gone = Math.min(Math.max(removed.get(name) ?? 0, 0), item.quantity);
+		held.set(name, item.quantity > 0 ? (item.valuePed * (item.quantity - gone)) / item.quantity : 0);
+	}
+	return held;
 }
 
 function toSection(
@@ -249,6 +282,10 @@ function toSection(
 export function createTreeCuttingModel() {
 	let data = $state<HarvestData | null>(null);
 	let market = $state<MarketHarvestData | null>(null);
+	// The removed overlay (item -> quantity sold/spent), the market-position
+	// lever behind markup confidence. Reassigned wholesale so derivations
+	// re-run.
+	let removed = $state<Map<string, number>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
@@ -257,15 +294,18 @@ export function createTreeCuttingModel() {
 		loading = true;
 		error = null;
 		try {
-			// The realised aggregate is the spine; the market feed is
-			// best-effort context, so a market failure degrades to the
-			// realised view (MU figures blank) rather than blanking the tab.
-			const [harvest, markets] = await Promise.all([
+			// The realised aggregate is the spine; the market feed and the
+			// stock overlay are best-effort context, so either failing
+			// degrades gracefully (MU figures blank / no removals) rather
+			// than blanking the tab.
+			const [harvest, markets, stock] = await Promise.all([
 				getAnalyticsHarvest(),
 				getMarketHarvestMarkups().catch(() => null),
+				getHarvestStock().catch(() => []),
 			]);
 			data = harvest;
 			market = markets;
+			removed = new Map(stock.map((r) => [r.itemName, r.removedQty]));
 		} catch (e) {
 			error = describeError(e, 'Failed to load tree cutting data');
 		} finally {
@@ -276,11 +316,55 @@ export function createTreeCuttingModel() {
 	const sections = $derived.by<TreeCuttingSection[]>(() => {
 		if (!data) return [];
 		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
-		const position = positionByItem(data.toolComparisons);
+		// Position feeding markup confidence is the current held TT, not the
+		// lifetime looted TT: selling stock changes the position without
+		// touching the recorded activity stats.
+		const position = heldTtByItem(lootedByItem(data.toolComparisons), removed);
 		return data.toolComparisons.map((tool) =>
 			toSection(tool, market, marketByItem, position, confidenceMode),
 		);
 	});
+
+	/** The current stock line for the Overall block: per-item held quantity
+	 * and TT, name-ordered. Its held TT is what markup confidence uses. */
+	const stock = $derived.by<TreeCuttingStock[]>(() => {
+		if (!data) return [];
+		const looted = lootedByItem(data.toolComparisons);
+		return [...looted.entries()]
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([itemName, item]) => {
+				const gone = Math.min(Math.max(removed.get(itemName) ?? 0, 0), item.quantity);
+				const heldQty = item.quantity - gone;
+				const unitTt = item.quantity > 0 ? item.valuePed / item.quantity : 0;
+				return {
+					itemName,
+					lootedQty: item.quantity,
+					removedQty: gone,
+					heldQty,
+					heldTt: heldQty * unitTt,
+				};
+			});
+	});
+
+	/** Set an item's currently-held quantity (clamped to [0, looted]); we
+	 * persist the derived removed quantity. Optimistic: the local overlay
+	 * updates immediately, then the write lands. */
+	async function setHeld(itemName: string, heldQty: number) {
+		if (!data) return;
+		const looted = lootedByItem(data.toolComparisons).get(itemName);
+		if (!looted) return;
+		const held = Math.min(Math.max(Math.floor(heldQty), 0), looted.quantity);
+		const removedQty = looted.quantity - held;
+		const next = new Map(removed);
+		if (removedQty > 0) next.set(itemName, removedQty);
+		else next.delete(itemName);
+		removed = next;
+		try {
+			await setHarvestStock({ itemName, removedQty });
+		} catch (e) {
+			error = describeError(e, 'Failed to update stock');
+		}
+	}
 
 	const overall = $derived.by<TreeCuttingOverall | null>(() => {
 		if (sections.length === 0) return null;
@@ -314,6 +398,9 @@ export function createTreeCuttingModel() {
 		get sections() {
 			return sections;
 		},
+		get stock() {
+			return stock;
+		},
 		get confidenceMode() {
 			return confidenceMode;
 		},
@@ -321,6 +408,7 @@ export function createTreeCuttingModel() {
 			confidenceMode = value;
 		},
 		loadData,
+		setHeld,
 	};
 }
 
