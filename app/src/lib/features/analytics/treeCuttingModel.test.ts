@@ -262,9 +262,10 @@ describe('stock', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		// Name-ordered: Long Moonleaf Board, Wood Shavings.
-		expect(model.stock.map((s) => s.itemName)).toEqual(['Long Moonleaf Board', 'Wood Shavings']);
-		const long = model.stock[0];
+		// Ordered by stock TT, most-held first: Wood Shavings (87.38) then
+		// Long Moonleaf Board (34.26).
+		expect(model.stock.map((s) => s.itemName)).toEqual(['Wood Shavings', 'Long Moonleaf Board']);
+		const long = model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!;
 		expect(long.lootedQty).toBe(571);
 		expect(long.removedQty).toBe(0);
 		expect(long.heldQty).toBe(571);
@@ -279,7 +280,7 @@ describe('stock', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		const long = model.stock[0];
+		const long = model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!;
 		expect(long.removedQty).toBe(71);
 		expect(long.heldQty).toBe(500);
 		// TT scales with the held fraction.
@@ -296,7 +297,7 @@ describe('stock', () => {
 			itemName: 'Long Moonleaf Board',
 			removedQty: 71,
 		});
-		expect(model.stock[0].heldQty).toBe(500);
+		expect(model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!.heldQty).toBe(500);
 	});
 
 	it('feeds markup confidence: selling down to a thin position turns illiquid', async () => {
@@ -326,6 +327,6 @@ describe('stock', () => {
 			itemName: 'Long Moonleaf Board',
 			removedQty: 0,
 		});
-		expect(model.stock[0].removedQty).toBe(0);
+		expect(model.stock.find((s) => s.itemName === 'Long Moonleaf Board')!.removedQty).toBe(0);
 	});
 });

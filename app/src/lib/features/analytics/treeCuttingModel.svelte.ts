@@ -326,24 +326,26 @@ export function createTreeCuttingModel() {
 	});
 
 	/** The current stock line for the Overall block: per-item held quantity
-	 * and TT, name-ordered. Its held TT is what markup confidence uses. */
+	 * and TT, ordered by stock TT (most-held first), since market position
+	 * is about TT value, not item count. Its held TT is what markup
+	 * confidence uses. */
 	const stock = $derived.by<TreeCuttingStock[]>(() => {
 		if (!data) return [];
 		const looted = lootedByItem(data.toolComparisons);
-		return [...looted.entries()]
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([itemName, item]) => {
-				const gone = Math.min(Math.max(removed.get(itemName) ?? 0, 0), item.quantity);
-				const heldQty = item.quantity - gone;
-				const unitTt = item.quantity > 0 ? item.valuePed / item.quantity : 0;
-				return {
-					itemName,
-					lootedQty: item.quantity,
-					removedQty: gone,
-					heldQty,
-					heldTt: heldQty * unitTt,
-				};
-			});
+		const rows = [...looted.entries()].map(([itemName, item]) => {
+			const gone = Math.min(Math.max(removed.get(itemName) ?? 0, 0), item.quantity);
+			const heldQty = item.quantity - gone;
+			const unitTt = item.quantity > 0 ? item.valuePed / item.quantity : 0;
+			return {
+				itemName,
+				lootedQty: item.quantity,
+				removedQty: gone,
+				heldQty,
+				heldTt: heldQty * unitTt,
+			};
+		});
+		rows.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName));
+		return rows;
 	});
 
 	/** Set an item's currently-held quantity (clamped to [0, looted]); we

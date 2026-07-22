@@ -128,6 +128,33 @@
 	</div>
 {/snippet}
 
+{#snippet actionButton(letter: string, label: string, expandedWidth: string)}
+	<!-- Placeholder action: collapsed to its initial, expanding on hover to
+		the full label (letter and label cross-fade as the pill grows). Wired
+		to the sell / recycle flow in a later pass. -->
+	<button
+		type="button"
+		aria-label={label}
+		class="group/act relative inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden
+			rounded-md border border-border/60 bg-surface-hover/40 text-xs font-semibold text-text-secondary
+			transition-[width,background-color,color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
+			{expandedWidth} hover:text-text hover:border-border hover:bg-surface-hover/70"
+	>
+		<span
+			class="absolute inset-0 flex items-center justify-center
+				transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-0"
+		>
+			{letter}
+		</span>
+		<span
+			class="absolute inset-0 flex items-center justify-center whitespace-nowrap px-2
+				opacity-0 transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-100"
+		>
+			{label}
+		</span>
+	</button>
+{/snippet}
+
 {#snippet confidenceBody(item: TreeCuttingItem)}
 	{@const tip = confidenceTip(item)}
 	<p class="text-xs leading-relaxed text-text">{tip.lead}</p>
@@ -252,8 +279,10 @@
 
 							<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 								<span class="eyebrow flex-1 min-w-0">Item</span>
-								<span class="eyebrow w-28 text-right shrink-0">Held</span>
 								<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
+								<span class="eyebrow w-20 text-right shrink-0">Markup</span>
+								<span class="eyebrow w-12 text-center shrink-0">Conf</span>
+								<span class="w-[3.375rem] shrink-0"></span>
 							</div>
 
 							<ul class="flex flex-col gap-1">
@@ -263,18 +292,33 @@
 											{s.itemName}
 										</span>
 
-										<div class="w-28 shrink-0 flex items-baseline justify-end gap-1.5">
-											<span class="text-sm tabular-nums font-medium text-text">
-												{s.heldQty}
-											</span>
-											<span class="text-xs text-text-tertiary tabular-nums shrink-0">
-												/ {s.lootedQty}
-											</span>
-										</div>
-
+										<!-- Stock TT: the market position, sorted on. -->
 										<span class="w-24 text-right shrink-0 text-sm tabular-nums font-medium text-text">
 											{formatPed(s.heldTt)}
 										</span>
+
+										<!-- Markup (placeholder): weekly markup with month/year
+											fallback, wired next. Designed to become a dynamic cell
+											whose hover opens a window of markup across day/week/
+											month/year plus trading volume and the reading's age. -->
+										<span class="w-20 text-right shrink-0 text-sm tabular-nums text-text-tertiary">
+											—
+										</span>
+
+										<!-- Conf (placeholder): the confidence marker, wired next
+											(green tick / amber warning / red low, each with a hover
+											explanation). -->
+										<span class="w-12 text-center shrink-0 text-sm text-text-tertiary">
+											—
+										</span>
+
+										<!-- Actions (placeholders): recycle to nanocube, and sell.
+											Auto-width so a button expanding on hover is absorbed by
+											the name column rather than overflowing. -->
+										<div class="shrink-0 flex items-center justify-end gap-1.5">
+											{@render actionButton('N', 'Turn into Nanocube', 'hover:w-44')}
+											{@render actionButton('S', 'Sell', 'hover:w-16')}
+										</div>
 									</li>
 								{/each}
 							</ul>
