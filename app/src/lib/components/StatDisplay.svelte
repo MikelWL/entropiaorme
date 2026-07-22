@@ -7,6 +7,7 @@
 		unit = '',
 		trend,
 		comparison,
+		valueClass = '',
 		class: className = ''
 	}: {
 		label: string;
@@ -14,6 +15,9 @@
 		unit?: string;
 		trend?: Trend;
 		comparison?: string;
+		/** Extra classes on the value text (e.g. a positive/negative tone
+		 * for a net figure). Defaults to the neutral text colour. */
+		valueClass?: string;
 		class?: string;
 	} = $props();
 
@@ -35,7 +39,7 @@
 		{label}
 	</span>
 	<div class="flex items-baseline gap-1.5">
-		<span class="text-2xl font-semibold tabular-nums text-text leading-none">
+		<span class="text-2xl font-semibold tabular-nums leading-none {valueClass || 'text-text'}">
 			{value}
 		</span>
 		{#if unit}

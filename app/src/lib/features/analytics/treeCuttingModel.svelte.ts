@@ -141,6 +141,17 @@ export type TreeCuttingItem = {
 	weeklySalesPed: number | null;
 };
 
+/** The combined stat line across every tool (the "Overall" block): the
+ * same five stats, weighted by volume where they are rates. The market
+ * figures respect the active confidence mode via the per-section sums. */
+export type TreeCuttingOverall = {
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	muProjectedReturns: number | null;
+	muRate: number | null;
+};
+
 export type TreeCuttingSection = {
 	toolName: string;
 	tree: string | null;
@@ -271,9 +282,28 @@ export function createTreeCuttingModel() {
 		);
 	});
 
+	const overall = $derived.by<TreeCuttingOverall | null>(() => {
+		if (sections.length === 0) return null;
+		const cycled = sections.reduce((sum, s) => sum + s.cycled, 0);
+		const returns = sections.reduce((sum, s) => sum + s.returns, 0);
+		const lootRate = cycled > 0 ? returns / cycled : 0;
+		// Market figures aggregate only when at least one section carries
+		// them; a section without market context contributes nothing.
+		const anyMarket = sections.some((s) => s.muProjectedReturns !== null);
+		const muProjectedReturns = anyMarket
+			? sections.reduce((sum, s) => sum + (s.muProjectedReturns ?? 0), 0)
+			: null;
+		const muRate =
+			muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
+		return { cycled, returns, lootRate, muProjectedReturns, muRate };
+	});
+
 	return {
 		get data() {
 			return data;
+		},
+		get overall() {
+			return overall;
 		},
 		get loading() {
 			return loading;

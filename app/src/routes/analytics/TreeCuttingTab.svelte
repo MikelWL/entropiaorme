@@ -19,6 +19,12 @@
 
 	const NO_DATA = '—';
 
+	// Net figures follow the app's "Net" precedent (Overview): sign-aware
+	// text, positive/negative tone. The realised Net is toned; the MU Net
+	// stays neutral (it is estimated, so it is not painted as banked gain).
+	const signedPed = (v: number) => `${v >= 0 ? '+' : ''}${formatPed(v)}`;
+	const netTone = (v: number) => (v >= 0 ? 'text-positive' : 'text-negative');
+
 	// User-facing framing is trading-volume, not the internal tier names:
 	// each option widens which items' own markup is trusted by how readily
 	// the market can absorb the player's looted position.
@@ -76,6 +82,55 @@
 	}
 </script>
 
+{#snippet statGrid(g: {
+	title: string;
+	subtitle: string | null;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	muProjected: number | null;
+	muRate: number | null;
+	primary: boolean;
+})}
+	<!-- Stat area as a 2x3 grid: the title anchors the top-left cell as the
+		box's heading, MU figures fill out row 1, realised stats sit in row
+		2. Net = returns - cycled (the app's "Net" precedent). -->
+	<div class="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3">
+		<div
+			class="col-span-2 sm:col-span-1 flex flex-col justify-center gap-0.5
+				rounded-lg border-l-2 border-accent px-3.5 py-2 {g.primary
+				? 'bg-accent/10'
+				: 'bg-accent/[0.05]'}"
+		>
+			<span class="text-lg font-semibold tracking-tight leading-tight text-text">
+				{g.title}
+			</span>
+			{#if g.subtitle}
+				<span class="text-xs text-text-secondary">{g.subtitle}</span>
+			{/if}
+		</div>
+
+		<StatDisplay
+			label="MU Net"
+			value={g.muProjected !== null ? signedPed(g.muProjected - g.cycled) : NO_DATA}
+			unit={g.muProjected !== null ? 'PED' : ''}
+		/>
+		<StatDisplay
+			label="MU Rate"
+			value={g.muRate !== null ? formatPercent(g.muRate) : NO_DATA}
+		/>
+
+		<StatDisplay label="Cycled" value={formatPed(g.cycled)} unit="PED" />
+		<StatDisplay
+			label="Net"
+			value={signedPed(g.returns - g.cycled)}
+			valueClass={netTone(g.returns - g.cycled)}
+			unit="PED"
+		/>
+		<StatDisplay label="Rate" value={formatPercent(g.lootRate)} />
+	</div>
+{/snippet}
+
 {#snippet confidenceBody(item: TreeCuttingItem)}
 	{@const tip = confidenceTip(item)}
 	<p class="text-xs leading-relaxed text-text">{tip.lead}</p>
@@ -129,44 +184,39 @@
 			/>
 		</div>
 
+		<!-- Overall: the combined stat line across every tool, shown first as
+			the summary block (no per-item breakdown). -->
+		{#if model.overall}
+			<Card class="p-5">
+				{@render statGrid({
+					title: 'Overall',
+					subtitle: null,
+					cycled: model.overall.cycled,
+					returns: model.overall.returns,
+					lootRate: model.overall.lootRate,
+					muProjected: model.overall.muProjectedReturns,
+					muRate: model.overall.muRate,
+					primary: true,
+				})}
+			</Card>
+		{/if}
+
 		{#each model.sections as section (section.toolName)}
 			<!-- hover:z-20 lifts the whole card above later sibling cards so a
 				row tooltip that overflows the card bottom is not painted behind
 				the next one (each card is its own stacking context via
 				backdrop-blur, so the tooltip's own z-index can't escape). -->
 			<Card class="p-5 hover:z-20">
-				<!-- Stat area as a 2x3 grid: the title occupies the top-left
-					cell as the box's heading, MU figures fill out row 1, and
-					the realised stats sit in row 2. -->
-				<div class="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3">
-					<div
-						class="col-span-2 sm:col-span-1 flex flex-col justify-center gap-0.5
-							rounded-lg border-l-2 border-accent bg-accent/[0.05] px-3.5 py-2"
-					>
-						<span class="text-lg font-semibold tracking-tight leading-tight text-text">
-							{section.tree ? `${section.tree} Trees` : section.toolName}
-						</span>
-						{#if section.tree}
-							<span class="text-xs text-text-secondary">{section.toolName}</span>
-						{/if}
-					</div>
-
-					<StatDisplay
-						label="MU Proj. Returns"
-						value={section.muProjectedReturns !== null
-							? formatPed(section.muProjectedReturns)
-							: NO_DATA}
-						unit={section.muProjectedReturns !== null ? 'PED' : ''}
-					/>
-					<StatDisplay
-						label="MU Rate"
-						value={section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
-					/>
-
-					<StatDisplay label="Cycled" value={formatPed(section.cycled)} unit="PED" />
-					<StatDisplay label="Returns" value={formatPed(section.returns)} unit="PED" />
-					<StatDisplay label="Rate" value={formatPercent(section.lootRate)} />
-				</div>
+				{@render statGrid({
+					title: section.tree ? `${section.tree} Trees` : section.toolName,
+					subtitle: section.tree ? section.toolName : null,
+					cycled: section.cycled,
+					returns: section.returns,
+					lootRate: section.lootRate,
+					muProjected: section.muProjectedReturns,
+					muRate: section.muRate,
+					primary: false,
+				})}
 
 				<!-- Per-item breakdown -->
 				{#if section.items.length > 0}
@@ -256,11 +306,11 @@
 
 		<div class="space-y-1 text-xs text-text-tertiary">
 			<p>
-				<span class="text-text-secondary">Rate:</span>
-				loot-only TT return per cycled PED on that tool.
+				<span class="text-text-secondary">Net / Rate:</span>
+				realised loot TT minus cycled PED, and loot-only TT return per cycled PED.
 			</p>
 			<p>
-				<span class="text-text-secondary">MU figures:</span>
+				<span class="text-text-secondary">MU Net / MU figures:</span>
 				estimated from market data, never realised P&L. Markup resolves from the weekly
 				horizon (falling back to monthly, then yearly). A
 				<span class="text-warning">⚠</span> flags a markup the market may only partly absorb;

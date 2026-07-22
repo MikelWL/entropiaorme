@@ -183,6 +183,34 @@ describe('sections', () => {
 		expect(wood.weeklySalesPed).toBe(0);
 	});
 
+	it('combines every tool into the overall aggregate', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		const overall = model.overall!;
+		// Cycled and returns sum across both tools; rate is volume-weighted.
+		expect(overall.cycled).toBeCloseTo(91.24 + 111.13, 4);
+		expect(overall.returns).toBeCloseTo(34.26 + 87.38, 4);
+		expect(overall.lootRate).toBeCloseTo((34.26 + 87.38) / (91.24 + 111.13), 4);
+		// MU projected sums the per-section (mode-respecting) figures.
+		expect(overall.muProjectedReturns).toBeCloseTo(
+			model.sections[0].muProjectedReturns! + model.sections[1].muProjectedReturns!,
+			4,
+		);
+	});
+
+	it('drops overall market figures when the market feed is unavailable', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(null as unknown as MarketHarvestData);
+		const model = createTreeCuttingModel();
+		await model.loadData();
+		expect(model.overall!.muProjectedReturns).toBeNull();
+		expect(model.overall!.muRate).toBeNull();
+		expect(model.overall!.returns).toBeCloseTo(34.26 + 87.38, 4);
+	});
+
 	it('recomputes MU projected returns when the mode changes', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
