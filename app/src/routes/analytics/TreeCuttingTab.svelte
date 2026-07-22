@@ -200,25 +200,34 @@
 				})}
 
 				<!-- Current stock: the market-position overlay on recorded
-					harvest. Editable held quantity; drives markup confidence,
-					never the stat lines above. -->
+					harvest. Held quantity drives markup confidence, never the
+					stat lines above.
+
+					Held is display-only for now: hand-editing a position is
+					deliberately switched off until current stock is driven
+					automatically from recorded sales, so the two cannot drift
+					apart by hand in the meantime. The full write path behind it
+					(model.setHeld -> the stored removed quantity) is kept intact
+					and ready to switch back on when that automatic link lands. -->
 				{#if model.stock.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">
 						<div class="flex items-center gap-2 px-2.5 pb-2">
 							<span class="eyebrow">Current stock</span>
-							<InfoTip label="What current stock means">
+							<InfoTip align="left" label="What current stock means">
 								<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
 									<p class="text-text">
 										How much of each item you still hold, out of everything you have
 										recorded harvesting.
 									</p>
 									<p>
-										This is what markup confidence uses: selling stock lowers your
-										position and shifts which markups are realistic. It never changes
-										the stats above, which record what your harvesting actually
-										produced.
+										This is what markup confidence uses: holding less shifts which
+										markups are realistic. It never changes the stats above, which
+										record what your harvesting actually produced.
 									</p>
-									<p>Edit the held count to match what you have. Ledger sync comes later.</p>
+									<p>
+										For now this shows everything you have harvested; it will start
+										to track what you have sold once recorded sales feed into it.
+									</p>
 								</div>
 							</InfoTip>
 						</div>
@@ -236,20 +245,10 @@
 										{s.itemName}
 									</span>
 
-									<div class="w-28 shrink-0 flex items-center justify-end gap-1.5">
-										<input
-											type="number"
-											min="0"
-											max={s.lootedQty}
-											value={s.heldQty}
-											aria-label="Held quantity of {s.itemName}"
-											onchange={(e) => model.setHeld(s.itemName, e.currentTarget.valueAsNumber)}
-											class="w-16 text-right tabular-nums text-sm rounded border border-border/60
-												bg-surface-hover/40 px-1.5 py-0.5 text-text
-												focus:outline-none focus:border-accent/60 focus:bg-surface-hover/70
-												transition-colors duration-[var(--duration-fast)]
-												[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-										/>
+									<div class="w-28 shrink-0 flex items-baseline justify-end gap-1.5">
+										<span class="text-sm tabular-nums font-medium text-text">
+											{s.heldQty}
+										</span>
 										<span class="text-xs text-text-tertiary tabular-nums shrink-0">
 											/ {s.lootedQty}
 										</span>
