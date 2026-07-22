@@ -75,28 +75,26 @@
 			<InfoTip label="How markup confidence works">
 				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
 					<p class="text-text">
-						Which items' market markup is trusted in the MU figures, by whether the
-						market's <span class="text-text">trading volume</span> can absorb your looted
-						position at that markup.
+						Sets which items count their markup in the MU figures, based on how much
+						of each item the market buys.
 					</p>
 					<ul class="space-y-1.5">
 						<li>
-							<span class="text-text font-medium">High Vol.</span> weekly volume easily
-							covers your position: the markup is realistically achievable.
+							<span class="text-text font-medium">High Vol.</span> sells easily, so you
+							should get this markup.
 						</li>
 						<li>
-							<span class="text-text font-medium">Mid Vol.</span> your position is a
-							sizeable share of volume: selling it all at this markup is uncertain.
+							<span class="text-text font-medium">Mid Vol.</span> you hold a lot compared
+							to what sells, so this markup is not certain.
 						</li>
 						<li>
-							<span class="text-text font-medium">Low Vol.</span> thinly traded: your
-							position would flood the market and the markup is unlikely to hold.
+							<span class="text-text font-medium">Low Vol.</span> barely sells, so you
+							likely can't get this markup.
 						</li>
 					</ul>
 					<p>
-						Items outside your choice fall back to the nanocube recycling floor: a
-						TT-neutral conversion any item can realise, shown struck through with the
-						floor value.
+						Items you leave out are valued at what you'd get by recycling them into
+						nanocubes instead, with their markup struck through.
 					</p>
 				</div>
 			</InfoTip>
