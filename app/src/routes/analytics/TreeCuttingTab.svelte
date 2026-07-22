@@ -294,14 +294,10 @@
 					<!-- Headline stats in a 2-up grid: the title anchors the top-left
 						cell with Cycled to its right, then Net / Rate, then the
 						confidence-driven MU Net / MU Rate. -->
-					<div class="grid grid-cols-[auto_auto] items-baseline gap-x-10 gap-y-4">
-						<!-- Mirror a StatDisplay stack (an invisible eyebrow placeholder) so
-							the title drops onto the value row, aligned with the first figures
-							rather than the stat labels. -->
-						<div class="flex flex-col gap-1.5">
-							<span class="eyebrow invisible" aria-hidden="true">Overall</span>
-							<span class="text-3xl font-bold tracking-tight leading-none text-text">Overall</span>
-						</div>
+					<div class="grid grid-cols-[auto_auto] items-end gap-x-10 gap-y-4">
+						<!-- Bottom-aligned with the first stat value (grid items-end) so the
+							title sits level with the numbers despite its larger size. -->
+						<span class="text-3xl font-bold tracking-tight leading-none text-text">Overall</span>
 						<StatDisplay label="Cycled" value={formatPed(model.overall.cycled)} unit="PED" />
 						<StatDisplay
 							label="Net"
