@@ -103,29 +103,25 @@
 </script>
 
 {#snippet statGrid(g: {
-	title: string;
-	subtitle: string | null;
 	cycled: number;
 	returns: number;
 	lootRate: number;
 	muProjected: number | null;
 	muRate: number | null;
 })}
-	<!-- Per-tool stat area as a 2x3 grid: the title anchors the top-left
-		cell as the box's heading, MU figures fill out row 1, realised stats
-		sit in row 2. Net = returns - cycled (the app's "Net" precedent). -->
+	<!-- Selected sub-activity's stats. The sub-activity list carries the
+		heading, so the detail leads straight into the figures: realised on
+		the top row, MU estimates below. Net = returns - cycled (the app's
+		"Net" precedent). -->
 	<div class="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3">
-		<div
-			class="col-span-2 sm:col-span-1 flex flex-col justify-center gap-0.5
-				rounded-lg border-l-2 border-accent bg-accent/[0.05] px-3.5 py-2"
-		>
-			<span class="text-lg font-semibold tracking-tight leading-tight text-text">
-				{g.title}
-			</span>
-			{#if g.subtitle}
-				<span class="text-xs text-text-secondary">{g.subtitle}</span>
-			{/if}
-		</div>
+		<StatDisplay label="Cycled" value={formatPed(g.cycled)} unit="PED" />
+		<StatDisplay
+			label="Net"
+			value={signedPed(g.returns - g.cycled)}
+			valueClass={netTone(g.returns - g.cycled)}
+			unit="PED"
+		/>
+		<StatDisplay label="Rate" value={formatPercent(g.lootRate)} />
 
 		<StatDisplay
 			label="MU Net"
@@ -136,61 +132,41 @@
 			label="MU Rate"
 			value={g.muRate !== null ? formatPercent(g.muRate) : NO_DATA}
 		/>
-
-		<StatDisplay label="Cycled" value={formatPed(g.cycled)} unit="PED" />
-		<StatDisplay
-			label="Net"
-			value={signedPed(g.returns - g.cycled)}
-			valueClass={netTone(g.returns - g.cycled)}
-			unit="PED"
-		/>
-		<StatDisplay label="Rate" value={formatPercent(g.lootRate)} />
 	</div>
 {/snippet}
 
 {#snippet subActivityRow(section: TreeCuttingSection, selected: boolean)}
-	<!-- One sub-activity's at-a-glance headline: Name over a compact Cycled /
-		Net / MU Net trio, mirroring the Overall hero's stats. Clicking opens
-		its detail on the right; the selected row is accent-highlighted. -->
+	<!-- One sub-activity as a single row aligned to the static column
+		headers: Activity name, then its Cycled / Net / MU Net headline.
+		Clicking opens its detail on the right; the selected row is
+		accent-highlighted. -->
 	<li>
 		<button
 			type="button"
 			aria-pressed={selected}
 			onclick={() => model.selectSection(section.toolName)}
-			class="w-full text-left rounded-lg border px-3 py-2.5
+			class="w-full flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left
 				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
 				{selected
 				? 'border-accent/40 bg-accent/[0.08]'
 				: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
 		>
-			<div class="flex flex-col gap-0.5">
-				<span class="truncate text-sm font-semibold tracking-tight text-text">
-					{section.tree ? `${section.tree} Trees` : section.toolName}
-				</span>
-				{#if section.tree}
-					<span class="truncate text-[11px] text-text-tertiary">{section.toolName}</span>
-				{/if}
-			</div>
-			<div class="mt-2 grid grid-cols-3 gap-2">
-				<div class="flex flex-col gap-0.5">
-					<span class="eyebrow">Cycled</span>
-					<span class="text-xs tabular-nums font-medium text-text">{formatPed(section.cycled)}</span>
-				</div>
-				<div class="flex flex-col gap-0.5">
-					<span class="eyebrow">Net</span>
-					<span class="text-xs tabular-nums font-medium {netTone(section.returns - section.cycled)}">
-						{signedPed(section.returns - section.cycled)}
-					</span>
-				</div>
-				<div class="flex flex-col gap-0.5">
-					<span class="eyebrow">MU Net</span>
-					<span class="text-xs tabular-nums font-medium text-text">
-						{section.muProjectedReturns !== null
-							? signedPed(section.muProjectedReturns - section.cycled)
-							: NO_DATA}
-					</span>
-				</div>
-			</div>
+			<span class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text">
+				{section.tree ? `${section.tree} Trees` : section.toolName}
+			</span>
+			<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
+				{formatPed(section.cycled)}
+			</span>
+			<span
+				class="w-16 shrink-0 text-right text-xs tabular-nums {netTone(section.returns - section.cycled)}"
+			>
+				{signedPed(section.returns - section.cycled)}
+			</span>
+			<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
+				{section.muProjectedReturns !== null
+					? signedPed(section.muProjectedReturns - section.cycled)
+					: NO_DATA}
+			</span>
 		</button>
 	</li>
 {/snippet}
@@ -468,14 +444,26 @@
 			hover:z-20 lifts the card so a detail-row tooltip overflowing its
 			bottom is not painted behind whatever follows. -->
 		<Card class="hover:z-20">
-			<div class="grid sm:grid-cols-[minmax(0,17rem)_1fr]">
-				<!-- Sub-activity list: at-a-glance headline per activity,
-					scrollable and volume-ranked. -->
+			<div class="grid sm:grid-cols-[minmax(0,21rem)_1fr]">
+				<!-- Sub-activity list: a row per activity under static column
+					headers (Activity / Cycled / Net / MU Net), scrollable and
+					volume-ranked. The headers stay put while the rows scroll, the
+					shape this pattern will lean on once an activity carries many
+					more sub-activities. -->
 				<div class="border-b border-border/40 sm:border-b-0 sm:border-r">
-					<div class="px-4 pt-4 pb-1.5">
-						<span class="eyebrow">Sub-activities</span>
+					<!-- The transparent border and px mirror the row buttons below
+						so the header columns line up with the row figures. -->
+					<div class="px-2 pt-4">
+						<div
+							class="flex items-center gap-2.5 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
+						>
+							<span class="eyebrow flex-1 min-w-0">Activity</span>
+							<span class="eyebrow w-16 shrink-0 text-right">Cycled</span>
+							<span class="eyebrow w-16 shrink-0 text-right">Net</span>
+							<span class="eyebrow w-16 shrink-0 text-right">MU Net</span>
+						</div>
 					</div>
-					<ul class="flex flex-col gap-1 px-2 pb-3 max-h-[28rem] overflow-y-auto">
+					<ul class="flex flex-col gap-1 px-2 pb-3 max-h-[26rem] overflow-y-auto">
 						{#each model.sections as section (section.toolName)}
 							{@render subActivityRow(
 								section,
@@ -485,14 +473,12 @@
 					</ul>
 				</div>
 
-				<!-- Detail panel: the selected sub-activity's full stat grid and
-					per-item loot breakdown. -->
+				<!-- Detail panel: the selected sub-activity's stat grid and
+					per-item loot breakdown. The list row carries the heading. -->
 				{#if model.selectedSection}
 					{@const section = model.selectedSection}
 					<div class="p-5">
 						{@render statGrid({
-							title: section.tree ? `${section.tree} Trees` : section.toolName,
-							subtitle: section.tree ? section.toolName : null,
 							cycled: section.cycled,
 							returns: section.returns,
 							lootRate: section.lootRate,
