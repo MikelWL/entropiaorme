@@ -111,7 +111,11 @@
 		</div>
 
 		{#each model.sections as section (section.toolName)}
-			<Card class="p-5">
+			<!-- hover:z-20 lifts the whole card above later sibling cards so a
+				row tooltip that overflows the card bottom is not painted behind
+				the next one (each card is its own stacking context via
+				backdrop-blur, so the tooltip's own z-index can't escape). -->
+			<Card class="p-5 hover:z-20">
 				<!-- Stat area as a 2x3 grid: the title occupies the top-left
 					cell as the box's heading, MU figures fill out row 1, and
 					the realised stats sit in row 2. -->
