@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Card from '$lib/components/Card.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
+	import InfoTip from '$lib/components/InfoTip.svelte';
+	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import {
 		type ConfidenceMode,
@@ -17,10 +19,13 @@
 
 	const NO_DATA = '—';
 
-	const MODES: { value: ConfidenceMode; label: string }[] = [
-		{ value: 'liquid', label: 'Liquid' },
-		{ value: 'liquidMiddling', label: 'Liquid + Middling' },
-		{ value: 'all', label: 'All' },
+	// User-facing framing is trading-volume, not the internal tier names:
+	// each option widens which items' own markup is trusted by how readily
+	// the market can absorb the player's looted position.
+	const MODE_OPTIONS: { id: ConfidenceMode; label: string }[] = [
+		{ id: 'liquid', label: 'High Vol. Only' },
+		{ id: 'liquidMiddling', label: 'High & Mid Vol.' },
+		{ id: 'all', label: 'High, Mid & Low Vol.' },
 	];
 
 	// Whether a section carries market context at all (null MU = the
@@ -33,21 +38,21 @@
 		const pos = `your position ${formatPed(item.positionTt)} PED`;
 		const vol =
 			item.weeklyEquivVolume > 0
-				? `market ~${formatPed(item.weeklyEquivVolume)} PED/wk`
+				? `~${formatPed(item.weeklyEquivVolume)} PED/wk traded`
 				: 'no recent sales';
 		let reason: string;
 		if (item.ownMarkupPct == null) {
 			reason = 'No market observation for this item.';
 		} else if (item.tier === 'liquid') {
-			reason = `Liquid: ${pos} is a small share of ${vol}.`;
+			reason = `High volume: ${pos} is a small share of ${vol}.`;
 		} else if (item.tier === 'middling') {
-			reason = `Moderate confidence: ${pos} vs ${vol}${
+			reason = `Medium volume: ${pos} vs ${vol}${
 				item.markupHorizon && item.markupHorizon !== 'week'
 					? ` (markup from the ${item.markupHorizon} horizon)`
 					: ''
 			}.`;
 		} else {
-			reason = `Low confidence: ${pos} vs ${vol} may not sell at this markup.`;
+			reason = `Low volume: ${pos} vs ${vol} may not sell at this markup.`;
 		}
 		if (item.floored) {
 			reason += ' Showing the nanocube recycling floor instead.';
@@ -61,55 +66,65 @@
 {:else if model.error && !model.sections.length}
 	<ErrorNotice message={model.error} />
 {:else if model.sections.length > 0}
-	<div class="space-y-6" data-guide-anchor="analytics-treecutting-area">
+	<div class="space-y-5" data-guide-anchor="analytics-treecutting-area">
 		<ErrorNotice message={model.error} />
 
-		<!-- Markup-confidence toggle -->
-		<div class="flex items-center gap-3 flex-wrap">
+		<!-- Markup-confidence toggle: right-hung, explanation behind an info tip -->
+		<div class="flex items-center justify-end gap-2.5">
 			<span class="eyebrow">Markup confidence</span>
-			<div class="inline-flex rounded-md border border-border/60 overflow-hidden text-xs">
-				{#each MODES as m (m.value)}
-					<button
-						type="button"
-						class="px-3 py-1.5 transition-colors duration-[var(--duration-fast)]
-							{model.confidenceMode === m.value
-							? 'bg-surface-raised text-text'
-							: 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover/40'}"
-						aria-pressed={model.confidenceMode === m.value}
-						onclick={() => (model.confidenceMode = m.value)}
-					>
-						{m.label}
-					</button>
-				{/each}
-			</div>
-			<span class="text-xs text-text-tertiary">
-				sets which markups feed MU; the rest fall back to the nanocube recycling floor.
-			</span>
+			<InfoTip label="How markup confidence works">
+				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+					<p class="text-text">
+						Which items' market markup is trusted in the MU figures, by whether the
+						market's <span class="text-text">trading volume</span> can absorb your looted
+						position at that markup.
+					</p>
+					<ul class="space-y-1.5">
+						<li>
+							<span class="text-text font-medium">High Vol.</span> weekly volume easily
+							covers your position: the markup is realistically achievable.
+						</li>
+						<li>
+							<span class="text-text font-medium">Mid Vol.</span> your position is a
+							sizeable share of volume: selling it all at this markup is uncertain.
+						</li>
+						<li>
+							<span class="text-text font-medium">Low Vol.</span> thinly traded: your
+							position would flood the market and the markup is unlikely to hold.
+						</li>
+					</ul>
+					<p>
+						Items outside your choice fall back to the nanocube recycling floor: a
+						TT-neutral conversion any item can realise, shown struck through with the
+						floor value.
+					</p>
+				</div>
+			</InfoTip>
+			<SegmentedControl
+				options={MODE_OPTIONS}
+				active={model.confidenceMode}
+				onchange={(id) => (model.confidenceMode = id as ConfidenceMode)}
+			/>
 		</div>
 
 		{#each model.sections as section (section.toolName)}
 			<Card class="p-5">
-				<header class="mb-4">
-					{#if section.tree}
-						<h3 class="text-lg font-semibold tracking-tight text-text">
-							{section.tree} Trees
-						</h3>
-						<p class="text-sm text-text-secondary">{section.toolName}</p>
-					{:else}
-						<h3 class="text-lg font-semibold tracking-tight text-text">
-							{section.toolName}
-						</h3>
-					{/if}
-				</header>
+				<!-- Stat area as a 2x3 grid: the title occupies the top-left
+					cell as the box's heading, MU figures fill out row 1, and
+					the realised stats sit in row 2. -->
+				<div class="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3">
+					<div
+						class="col-span-2 sm:col-span-1 flex flex-col justify-center gap-0.5
+							rounded-lg border-l-2 border-accent bg-accent/[0.05] px-3.5 py-2"
+					>
+						<span class="text-lg font-semibold tracking-tight leading-tight text-text">
+							{section.tree ? `${section.tree} Trees` : section.toolName}
+						</span>
+						{#if section.tree}
+							<span class="text-xs text-text-secondary">{section.toolName}</span>
+						{/if}
+					</div>
 
-				<!-- Top strip: realised stats + estimated MU -->
-				<div
-					class="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3 lg:grid-cols-6 border-b border-border/50 pb-5"
-				>
-					<StatDisplay label="Swings" value={section.swings} />
-					<StatDisplay label="Cycled" value={formatPed(section.cycled)} unit="PED" />
-					<StatDisplay label="Returns" value={formatPed(section.returns)} unit="PED" />
-					<StatDisplay label="Rate" value={formatPercent(section.lootRate)} />
 					<StatDisplay
 						label="MU Proj. Returns"
 						value={section.muProjectedReturns !== null
@@ -121,17 +136,20 @@
 						label="MU Rate"
 						value={section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
 					/>
+
+					<StatDisplay label="Cycled" value={formatPed(section.cycled)} unit="PED" />
+					<StatDisplay label="Returns" value={formatPed(section.returns)} unit="PED" />
+					<StatDisplay label="Rate" value={formatPercent(section.lootRate)} />
 				</div>
 
 				<!-- Per-item breakdown -->
 				{#if section.items.length > 0}
-					<div class="mt-4">
+					<div class="mt-5 border-t border-border/50 pt-4">
 						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 							<span class="eyebrow flex-1 min-w-0">Item</span>
-							<span class="hidden sm:block w-20 shrink-0"></span>
 							<span class="eyebrow w-20 text-right shrink-0">TT</span>
 							<span class="eyebrow w-14 text-right shrink-0">Share</span>
-							<span class="eyebrow w-24 text-right shrink-0">Markup</span>
+							<span class="eyebrow w-36 text-right shrink-0">Markup</span>
 						</div>
 
 						<ul class="flex flex-col gap-1">
@@ -141,20 +159,13 @@
 										hover:bg-surface-hover/30 hover:border-border/40
 										transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
 								>
-									<div class="flex-1 min-w-0 flex items-center gap-2">
+									<div class="flex-1 min-w-0 flex items-baseline gap-2">
 										<span class="text-sm font-medium truncate tracking-tight text-text">
 											{item.name}
 										</span>
 										<span class="text-xs text-text-tertiary tabular-nums shrink-0">
 											×{item.quantity}
 										</span>
-									</div>
-
-									<div class="hidden sm:block w-20 h-1 rounded-full bg-base/60 overflow-hidden shrink-0">
-										<div
-											class="h-full rounded-full bg-accent transition-[width] duration-[var(--duration-slow)] ease-[var(--ease-out)]"
-											style="width: {item.sharePct}%;"
-										></div>
 									</div>
 
 									<span class="text-sm tabular-nums font-medium text-text shrink-0 w-20 text-right">
@@ -171,16 +182,16 @@
 										floored markups are struck through and shown at the
 										nanocube recycling rate. -->
 									<span
-										class="text-sm tabular-nums shrink-0 w-24 text-right flex items-center justify-end gap-1"
+										class="text-sm tabular-nums shrink-0 w-36 text-right flex items-center justify-end gap-1.5"
 										title={hasMarket(section.muProjectedReturns) ? confidenceTooltip(item) : ''}
 									>
 										{#if !hasMarket(section.muProjectedReturns)}
 											<span class="text-text-tertiary">{NO_DATA}</span>
 										{:else}
 											{#if item.tier === 'middling'}
-												<span class="text-warning" aria-label="Moderate confidence">⚠</span>
+												<span class="text-warning shrink-0" aria-label="Medium volume">⚠</span>
 											{:else if item.tier === 'illiquid'}
-												<span class="text-error font-semibold" aria-label="Low confidence">!</span>
+												<span class="text-error font-semibold shrink-0" aria-label="Low volume">!</span>
 											{/if}
 											{#if item.floored && item.ownMarkupPct !== null}
 												<span class="text-text-tertiary line-through">
@@ -214,12 +225,12 @@
 				loot-only TT return per cycled PED on that tool.
 			</p>
 			<p>
-				<span class="text-text-secondary">MU Proj. Returns / MU Rate / Markup:</span>
+				<span class="text-text-secondary">MU figures:</span>
 				estimated from market data, never realised P&L. Markup resolves from the weekly
 				horizon (falling back to monthly, then yearly). A
-				<span class="text-warning">⚠</span> flags a markup the market may not fully absorb; a
-				<span class="text-error font-semibold">!</span> flags one that likely cannot be sold at
-				that rate, where the realistic value is the nanocube recycling floor.
+				<span class="text-warning">⚠</span> flags a markup the market may only partly absorb;
+				a <span class="text-error font-semibold">!</span> flags one that likely cannot be sold
+				at that rate, shown struck through with the nanocube recycling floor.
 			</p>
 		</div>
 	</div>
