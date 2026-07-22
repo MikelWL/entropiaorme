@@ -12,44 +12,44 @@
 		if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
 		return formatPed(value);
 	}
+	const marketPeriod = (horizon: string) =>
+		horizon === 'week' || horizon === 'month' || horizon === 'year'
+			? `last ${horizon}`
+			: `over the last ${horizon}`;
+	const marketShare = (value: number) => {
+		const percent = value * 100;
+		return percent < 0.1 ? 'less than 0.1%' : `${percent.toFixed(1)}%`;
+	};
 
 	function confidenceTip(item: TreeCuttingStock): { lead: string; detail?: string } {
 		if (item.markupPct == null || !item.opportunity) {
-			return { lead: 'No market data for this item.' };
+			return { lead: 'No market MU is available for this item.' };
 		}
-		if (item.opportunity.kind === 'broad') {
-			return {
-				lead: `High volume: ~${formatPed(item.salesPed ?? 0)} PED TT traded last week.`,
-				detail: 'The fee-efficient parcel is small beside observed weekly turnover.',
-			};
-		}
-		if (item.opportunity.kind === 'niche') {
-			return {
-				lead: 'Medium confidence: sparse trading, but strong unit markup.',
-				detail: 'The direct market can amortise fees despite its cadence.',
-			};
-		}
-		if (item.opportunity.kind === 'thin' && item.markupHorizon === 'week') {
-			return {
-				lead: `Medium confidence: ~${formatPed(item.salesPed ?? 0)} PED TT traded last week.`,
-				detail: 'A fee-efficient parcel fits observed turnover, but would take a meaningful share of it.',
-			};
-		}
-		if (item.markupHorizon && item.markupHorizon !== 'week') {
-			const lead =
+
+		const horizon = item.markupHorizon;
+		const salesPed = item.salesPed;
+		let lead = 'No recent sales data is available for this item.';
+		if (horizon && salesPed !== null) {
+			if (horizon === 'week') {
+				lead = `${formatPed(salesPed)} PED TT sold last week at ${formatPercent(item.markupPct / 100)} MU.`;
+			} else {
+			const weeklyReading =
 				item.weeklySalesPed == null || item.weeklySalesPed <= 0
 					? 'No sales in the last week.'
-					: `Only ${formatPed(item.weeklySalesPed)} PED TT traded last week.`;
-			const detail =
-				item.salesPed != null
-					? `Priced from the last ${item.markupHorizon} (${formatPed(item.salesPed)} PED TT traded).`
-					: undefined;
-			return { lead, detail };
+					: `${formatPed(item.weeklySalesPed)} PED TT sold last week.`;
+			lead = `${weeklyReading} The current ${formatPercent(item.markupPct / 100)} MU comes from ${formatPed(salesPed)} PED TT sold ${marketPeriod(horizon)}.`;
+			}
 		}
-		return {
-			lead: `Low volume: ~${formatPed(item.salesPed ?? 0)} PED TT traded last week.`,
-			detail: 'The direct premium has constrained fee-efficient capacity.',
-		};
+
+		const batchTt = item.opportunity.efficientBatchTt;
+		const batchShare = item.opportunity.efficientBatchMarketShare;
+		const batchMarkup =
+			batchTt === null ? null : batchTt * Math.max(0, item.markupPct / 100 - 1);
+		const detail =
+			batchTt !== null && batchMarkup !== null && batchShare !== null && horizon
+				? `A ${formatPed(batchTt)} PED TT sale at this MU produces about ${formatPed(batchMarkup)} PED of markup. The minimum auction fee is 0.5 PED, or 10% of that markup. This sale is ${marketShare(batchShare)} of the TT sold ${marketPeriod(horizon)}.`
+				: 'The recorded MU does not provide enough markup to calculate a sale after fees.';
+		return { lead, detail };
 	}
 </script>
 
@@ -119,8 +119,9 @@
 					How much of each item you still hold, out of everything you have recorded harvesting.
 				</p>
 				<p>
-					Markup confidence now uses market-wide MU, TT turnover, and fee economics. Your stock
-					never changes the MU figures beside it.
+					Confidence uses market-wide MU and TT sales. It finds the sale amount that produces 5
+					PED of markup. At that amount, the 0.5 PED minimum auction fee is 10% of the markup.
+					The amount you hold does not affect it.
 				</p>
 				<p>
 					For now this shows recorded harvest. Confirmed transactions will later keep the position

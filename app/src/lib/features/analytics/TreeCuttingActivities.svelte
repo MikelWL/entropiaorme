@@ -18,46 +18,51 @@
 	const NO_DATA = String.fromCharCode(8212);
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
+	const marketPeriod = (horizon: string) =>
+		horizon === 'week' || horizon === 'month' || horizon === 'year'
+			? `last ${horizon}`
+			: `over the last ${horizon}`;
+	const marketShare = (value: number) => {
+		const percent = value * 100;
+		return percent < 0.1 ? 'less than 0.1%' : `${percent.toFixed(1)}%`;
+	};
 
 	function confidenceTip(item: TreeCuttingItem): { lead: string; detail?: string } {
-		const floorNote = item.floored ? ' Valued at the nanocube rate instead.' : '';
+		const projectionNote = item.floored
+			? ` With the current confidence setting, MU projections use the ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube MU instead.`
+			: '';
 		if (item.ownMarkupPct == null) {
-			return { lead: 'No market data for this item.', detail: floorNote.trim() || undefined };
-		}
-		if (item.opportunity.kind === 'broad') {
 			return {
-				lead: `High volume: ~${formatPed(item.salesPed ?? 0)} PED TT traded last week.`,
-				detail: 'The fee-efficient parcel is small beside observed weekly turnover.',
+				lead: 'No market MU is available for this item.',
+				detail: projectionNote.trim() || undefined,
 			};
 		}
-		if (item.opportunity.kind === 'niche') {
-			return {
-				lead: 'Medium confidence: sparse trading, but strong unit markup.',
-				detail: `The direct market can amortise fees despite its cadence.${floorNote}`,
-			};
+
+		const horizon = item.markupHorizon;
+		const salesPed = item.salesPed;
+		let lead = 'No recent sales data is available for this item.';
+		if (horizon && salesPed !== null) {
+			if (horizon === 'week') {
+				lead = `${formatPed(salesPed)} PED TT sold last week at ${formatPercent(item.ownMarkupPct / 100)} MU.`;
+			} else {
+				const weekly = item.weeklySalesPed;
+				const weeklyReading =
+					weekly == null || weekly <= 0
+						? 'No sales in the last week.'
+						: `${formatPed(weekly)} PED TT sold last week.`;
+				lead = `${weeklyReading} The current ${formatPercent(item.ownMarkupPct / 100)} MU comes from ${formatPed(salesPed)} PED TT sold ${marketPeriod(horizon)}.`;
+			}
 		}
-		if (item.opportunity.kind === 'thin' && item.markupHorizon === 'week') {
-			return {
-				lead: `Medium confidence: ~${formatPed(item.salesPed ?? 0)} PED TT traded last week.`,
-				detail: 'A fee-efficient parcel fits observed turnover, but would take a meaningful share of it.',
-			};
-		}
-		if (item.markupHorizon && item.markupHorizon !== 'week') {
-			const weekly = item.weeklySalesPed;
-			const lead =
-				weekly == null || weekly <= 0
-					? 'No sales in the last week.'
-					: `Only ${formatPed(weekly)} PED TT traded last week.`;
-			const range =
-				item.salesPed != null
-					? `Priced from the last ${item.markupHorizon} (${formatPed(item.salesPed)} PED TT traded).`
-					: '';
-			return { lead, detail: `${range}${floorNote}` };
-		}
-		return {
-			lead: `Low volume: ~${formatPed(item.salesPed ?? 0)} PED TT traded last week.`,
-			detail: `The direct premium has constrained fee-efficient capacity.${floorNote}`,
-		};
+
+		const batchTt = item.opportunity.efficientBatchTt;
+		const batchShare = item.opportunity.efficientBatchMarketShare;
+		const batchMarkup =
+			batchTt === null ? null : batchTt * Math.max(0, item.ownMarkupPct / 100 - 1);
+		const saleMath =
+			batchTt !== null && batchMarkup !== null && batchShare !== null && horizon
+				? `A ${formatPed(batchTt)} PED TT sale at this MU produces about ${formatPed(batchMarkup)} PED of markup. The minimum auction fee is 0.5 PED, or 10% of that markup. This sale is ${marketShare(batchShare)} of the TT sold ${marketPeriod(horizon)}.`
+				: 'The recorded MU does not provide enough markup to calculate a sale after fees.';
+		return { lead, detail: `${saleMath}${projectionNote}` };
 	}
 </script>
 
