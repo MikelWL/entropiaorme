@@ -7,8 +7,10 @@ import type {
 } from '$lib/api/commands.gen';
 import {
 	createTreeCuttingModel,
+	effectiveMarkup,
 	marketOpportunity,
 	NANOCUBE_FALLBACK_MARKUP,
+	opportunityTier,
 	primaryTree,
 	weeklyEquivalentVolume,
 } from './treeCuttingModel.svelte';
@@ -165,6 +167,24 @@ describe('marketOpportunity', () => {
 		expect(uncovered.kind).toBe('recycle');
 		expect(uncovered.appliedMarkupPct).toBe(100.84);
 	});
+
+	it('maps opportunity evidence onto the established confidence chrome', () => {
+		const broad = marketOpportunity(obs('Broad', 110, 'week', 10_000), 100.6);
+		const niche = marketOpportunity(obs('Niche', 3000, 'month', 20), 100.6);
+		const thin = marketOpportunity(obs('Thin', 110, 'month', 360), 100.6);
+
+		expect(opportunityTier(broad)).toBe('liquid');
+		expect(opportunityTier(niche)).toBe('middling');
+		expect(opportunityTier(thin)).toBe('illiquid');
+		expect(effectiveMarkup(thin, 100.6, 'liquidMiddling')).toEqual({
+			markupPct: 100.6,
+			floored: true,
+		});
+		expect(effectiveMarkup(thin, 100.6, 'all')).toEqual({
+			markupPct: 110,
+			floored: false,
+		});
+	});
 });
 
 describe('loadData', () => {
@@ -214,9 +234,9 @@ describe('sections', () => {
 		expect(overall.returns).toBeCloseTo(34.26 + 87.38, 4);
 		expect(overall.lootRate).toBeCloseTo((34.26 + 87.38) / (91.24 + 111.13), 4);
 		// Current market sums the per-section holding-independent figures.
-		const firstMarket = required(model.sections[0].marketReturns, 'first market return');
-		const secondMarket = required(model.sections[1].marketReturns, 'second market return');
-		expect(overall.marketReturns).toBeCloseTo(firstMarket + secondMarket, 4);
+		const firstMarket = required(model.sections[0].muProjectedReturns, 'first market return');
+		const secondMarket = required(model.sections[1].muProjectedReturns, 'second market return');
+		expect(overall.muProjectedReturns).toBeCloseTo(firstMarket + secondMarket, 4);
 		expect(overall.realisedReturns).toBeCloseTo(overall.returns, 4);
 		expect(overall.realisedRate).toBeCloseTo(overall.lootRate, 4);
 	});
@@ -227,8 +247,8 @@ describe('sections', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 		const overall = required(model.overall, 'overall stats');
-		expect(overall.marketReturns).toBeNull();
-		expect(overall.marketRate).toBeNull();
+		expect(overall.muProjectedReturns).toBeNull();
+		expect(overall.muRate).toBeNull();
 		expect(overall.returns).toBeCloseTo(34.26 + 87.38, 4);
 	});
 
@@ -238,10 +258,31 @@ describe('sections', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		const before = sectionOf(model, PH1).marketReturns;
+		const before = sectionOf(model, PH1).muProjectedReturns;
 		await model.setHeld('Long Moonleaf Board', 3);
-		expect(sectionOf(model, PH1).marketReturns).toBe(before);
+		expect(sectionOf(model, PH1).muProjectedReturns).toBe(before);
 		expect(sectionOf(model, PH1).items[0].opportunity.kind).toBe('broad');
+	});
+
+	it('lets the confidence toggle choose which supported MU tiers feed the aggregate', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		const woodAtDefault = sectionOf(model, PH4);
+		expect(model.confidenceMode).toBe('liquidMiddling');
+		expect(woodAtDefault.items[0].tier).toBe('illiquid');
+		expect(woodAtDefault.items[0].floored).toBe(true);
+		expect(woodAtDefault.items[0].effectiveMarkupPct).toBe(100.84);
+
+		model.confidenceMode = 'all';
+		const woodAtAll = sectionOf(model, PH4);
+		expect(woodAtAll.items[0].floored).toBe(false);
+		expect(woodAtAll.items[0].effectiveMarkupPct).toBe(110.01);
+		expect(woodAtAll.muProjectedReturns).toBeGreaterThan(
+			required(woodAtDefault.muProjectedReturns, 'default MU return'),
+		);
 	});
 
 	it('uses the nanocube fallback constant for an uncovered item when the feed lacks it', async () => {
@@ -265,8 +306,8 @@ describe('sections', () => {
 		expect(model.error).toBeNull();
 		expect(model.sections).toHaveLength(2);
 		const long = sectionOf(model, PH1);
-		expect(long.marketReturns).toBeNull();
-		expect(long.marketRate).toBeNull();
+		expect(long.muProjectedReturns).toBeNull();
+		expect(long.muRate).toBeNull();
 		expect(long.returns).toBe(34.26);
 	});
 

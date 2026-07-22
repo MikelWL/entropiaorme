@@ -32,6 +32,11 @@ import { describeError } from '$lib/view/errorState';
 // ── Holding-independent market opportunity ────────────────────────────
 
 export type OpportunityKind = 'broad' | 'niche' | 'thin' | 'recycle';
+export type ConfidenceTier = 'liquid' | 'middling' | 'illiquid';
+export type ConfidenceMode = 'liquid' | 'liquidMiddling' | 'all';
+
+const TIER_RANK: Record<ConfidenceTier, number> = { liquid: 3, middling: 2, illiquid: 1 };
+const MODE_THRESHOLD: Record<ConfidenceMode, number> = { liquid: 3, liquidMiddling: 2, all: 1 };
 
 const WEEKS_PER_MONTH = 4.345;
 const WEEKS_PER_YEAR = 52.14;
@@ -147,6 +152,32 @@ export function marketOpportunity(
 	};
 }
 
+/** Preserve the established High / Mid / Low volume UI over the richer
+ * holding-independent opportunity model. These are presentation tiers:
+ * Broad is high, Niche is mid, and Thin or unsupported is low. */
+export function opportunityTier(opportunity: MarketOpportunity): ConfidenceTier {
+	if (opportunity.kind === 'broad') return 'liquid';
+	if (opportunity.kind === 'niche') return 'middling';
+	return 'illiquid';
+}
+
+/** Select the multiplier used by the MU aggregate. The user-facing
+ * confidence toggle keeps its established behaviour, but eligibility is
+ * now based on market-wide evidence rather than the player's holding. */
+export function effectiveMarkup(
+	opportunity: MarketOpportunity,
+	nanocubeMarkupPct: number,
+	mode: ConfidenceMode,
+): { markupPct: number; floored: boolean } {
+	const tier = opportunityTier(opportunity);
+	const trustsTier = TIER_RANK[tier] >= MODE_THRESHOLD[mode];
+	const trustsDirect = !opportunity.usesNanocube && trustsTier;
+	return {
+		markupPct: trustsDirect ? opportunity.appliedMarkupPct : nanocubeMarkupPct,
+		floored: !trustsDirect,
+	};
+}
+
 // ── Section derivation ─────────────────────────────────────────────────
 
 const BOARD_TO_TREE: Record<string, string> = {
@@ -161,6 +192,13 @@ export type TreeCuttingItem = {
 	ttValue: number;
 	sharePct: number;
 	opportunity: MarketOpportunity;
+	ownMarkupPct: number | null;
+	markupHorizon: string | null;
+	tier: ConfidenceTier;
+	effectiveMarkupPct: number;
+	floored: boolean;
+	salesPed: number | null;
+	weeklySalesPed: number | null;
 };
 
 /** The combined stat line across every tool (the "Overall" block). */
@@ -168,8 +206,8 @@ export type TreeCuttingOverall = {
 	cycled: number;
 	returns: number;
 	lootRate: number;
-	marketReturns: number | null;
-	marketRate: number | null;
+	muProjectedReturns: number | null;
+	muRate: number | null;
 	/** Confirmed-sale MU has not landed yet, so realised currently equals
 	 * TT. Keeping this field explicit makes the recognition boundary
 	 * visible and gives the sale-attribution work one honest seam. */
@@ -186,8 +224,8 @@ export type TreeCuttingSection = {
 	lootRate: number;
 	/** Present-market counterfactual over this activity's observed output
 	 * composition. Holding-independent and estimated only. */
-	marketReturns: number | null;
-	marketRate: number | null;
+	muProjectedReturns: number | null;
+	muRate: number | null;
 	realisedReturns: number;
 	realisedRate: number;
 	items: TreeCuttingItem[];
@@ -243,12 +281,18 @@ export type TreeCuttingStock = {
 	/** The day/week/month/year breakdown for the detail view. */
 	readings: StockHorizonReading[];
 	opportunity: MarketOpportunity | null;
+	markupPct: number | null;
+	markupHorizon: string | null;
+	tier: ConfidenceTier | null;
+	salesPed: number | null;
+	weeklySalesPed: number | null;
 };
 
 function toSection(
 	tool: HarvestToolComparison,
 	market: MarketHarvestData | null,
 	marketByItem: Map<string, MarketHarvestItem>,
+	confidenceMode: ConfidenceMode,
 ): TreeCuttingSection {
 	const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
 	const totalTt = tool.lootItems.reduce((sum, item) => sum + item.valuePed, 0);
@@ -257,18 +301,28 @@ function toSection(
 	const items: TreeCuttingItem[] = tool.lootItems.map((item) => {
 		const m = marketByItem.get(item.itemName);
 		const opportunity = marketOpportunity(m, nanocube);
-		marketProjected += (item.valuePed * opportunity.appliedMarkupPct) / 100;
+		const tier = opportunityTier(opportunity);
+		const applied = effectiveMarkup(opportunity, nanocube, confidenceMode);
+		marketProjected += (item.valuePed * applied.markupPct) / 100;
 		return {
 			name: item.itemName,
 			quantity: item.quantity,
 			ttValue: item.valuePed,
 			sharePct: totalTt > 0 ? (item.valuePed / totalTt) * 100 : 0,
 			opportunity,
+			ownMarkupPct: opportunity.ownMarkupPct,
+			markupHorizon: opportunity.horizon,
+			tier,
+			effectiveMarkupPct: applied.markupPct,
+			floored: applied.floored,
+			salesPed: opportunity.salesPed,
+			weeklySalesPed: opportunity.weeklySalesPed,
 		};
 	});
 
-	const marketReturns = market ? marketProjected : null;
-	const marketRate = marketReturns !== null && tool.cycled > 0 ? marketReturns / tool.cycled : null;
+	const muProjectedReturns = market ? marketProjected : null;
+	const muRate =
+		muProjectedReturns !== null && tool.cycled > 0 ? muProjectedReturns / tool.cycled : null;
 
 	return {
 		toolName: tool.toolName,
@@ -277,8 +331,8 @@ function toSection(
 		cycled: tool.cycled,
 		returns: tool.returns,
 		lootRate: tool.lootRate,
-		marketReturns,
-		marketRate,
+		muProjectedReturns,
+		muRate,
 		realisedReturns: tool.returns,
 		realisedRate: tool.lootRate,
 		items,
@@ -294,6 +348,7 @@ export function createTreeCuttingModel() {
 	let removed = $state<Map<string, number>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
 	// Which sub-activity's detail is open. Keyed by tool name; null falls
 	// back to the highest-volume section, so the busiest activity opens by
 	// default and a stale key (a tool that dropped out of the data) degrades
@@ -330,7 +385,7 @@ export function createTreeCuttingModel() {
 		// list order and the fallback selection, and it scales cleanly to an
 		// activity with dozens of sub-activities.
 		return data.toolComparisons
-			.map((tool) => toSection(tool, market, marketByItem))
+			.map((tool) => toSection(tool, market, marketByItem, confidenceMode))
 			.sort((a, b) => b.cycled - a.cycled || a.toolName.localeCompare(b.toolName));
 	});
 
@@ -368,6 +423,11 @@ export function createTreeCuttingModel() {
 					salesPed: r.salesPed,
 				})),
 				opportunity: market ? marketOpportunity(m, nanocube) : null,
+				markupPct: m?.markupPct ?? null,
+				markupHorizon: m?.horizon ?? null,
+				tier: market ? opportunityTier(marketOpportunity(m, nanocube)) : null,
+				salesPed: m?.salesPed ?? null,
+				weeklySalesPed: m?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null,
 			};
 		});
 		rows.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName));
@@ -401,17 +461,17 @@ export function createTreeCuttingModel() {
 		const lootRate = cycled > 0 ? returns / cycled : 0;
 		// Market figures aggregate only when at least one section carries
 		// them; a section without market context contributes nothing.
-		const anyMarket = sections.some((s) => s.marketReturns !== null);
-		const marketReturns = anyMarket
-			? sections.reduce((sum, s) => sum + (s.marketReturns ?? 0), 0)
+		const anyMarket = sections.some((s) => s.muProjectedReturns !== null);
+		const muProjectedReturns = anyMarket
+			? sections.reduce((sum, s) => sum + (s.muProjectedReturns ?? 0), 0)
 			: null;
-		const marketRate = marketReturns !== null && cycled > 0 ? marketReturns / cycled : null;
+		const muRate = muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
 		return {
 			cycled,
 			returns,
 			lootRate,
-			marketReturns,
-			marketRate,
+			muProjectedReturns,
+			muRate,
 			realisedReturns: returns,
 			realisedRate: lootRate,
 		};
@@ -429,6 +489,12 @@ export function createTreeCuttingModel() {
 		},
 		get error() {
 			return error;
+		},
+		get confidenceMode() {
+			return confidenceMode;
+		},
+		set confidenceMode(mode: ConfidenceMode) {
+			confidenceMode = mode;
 		},
 		get sections() {
 			return sections;
