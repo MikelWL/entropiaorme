@@ -20,10 +20,25 @@
 		const percent = value * 100;
 		return percent < 0.1 ? 'less than 0.1%' : `${percent.toFixed(1)}%`;
 	};
+	const confidenceTitle = (tier: TreeCuttingStock['tier']) => {
+		if (tier === 'liquid') return 'High markup confidence: This markup should be practical to realise';
+		if (tier === 'middling') {
+			return 'Medium markup confidence: It may be difficult to realise this markup';
+		}
+		return 'Low markup confidence: Do not rely on realising this markup';
+	};
 
-	function confidenceTip(item: TreeCuttingStock): { lead: string; detail?: string } {
+	function confidenceTip(item: TreeCuttingStock): {
+		title: string;
+		subtitle: string;
+		example?: string;
+		note?: string;
+	} {
 		if (item.markupPct == null || !item.opportunity) {
-			return { lead: 'No market MU is available for this item.' };
+			return {
+				title: confidenceTitle(item.tier),
+				subtitle: 'No market MU is available for this item.',
+			};
 		}
 
 		const horizon = item.markupHorizon;
@@ -45,11 +60,18 @@
 		const batchShare = item.opportunity.efficientBatchMarketShare;
 		const batchMarkup =
 			batchTt === null ? null : batchTt * Math.max(0, item.markupPct / 100 - 1);
-		const detail =
+		const example =
 			batchTt !== null && batchMarkup !== null && batchShare !== null && horizon
-				? `A ${formatPed(batchTt)} PED TT sale at this MU produces about ${formatPed(batchMarkup)} PED of markup. The minimum auction fee is 0.5 PED, or 10% of that markup. This sale is ${marketShare(batchShare)} of the TT sold ${marketPeriod(horizon)}.`
-				: 'The recorded MU does not provide enough markup to calculate a sale after fees.';
-		return { lead, detail };
+				? `For example: A ${formatPed(batchTt)} PED TT sale at this MU would produce about ${formatPed(batchMarkup)} PED of markup. The minimum auction fee is 0.5 PED, or 10% of that markup. That sale would be ${marketShare(batchShare)} of the TT sold ${marketPeriod(horizon)}.`
+				: undefined;
+		return {
+			title: confidenceTitle(item.tier),
+			subtitle: lead,
+			example,
+			note: example
+				? undefined
+				: 'The recorded MU does not provide enough markup to calculate a sale after fees.',
+		};
 	}
 </script>
 
@@ -79,9 +101,13 @@
 
 {#snippet confidenceBody(item: TreeCuttingStock)}
 	{@const tip = confidenceTip(item)}
-	<p class="text-xs leading-relaxed text-text">{tip.lead}</p>
-	{#if tip.detail}
-		<p class="mt-1 text-xs leading-relaxed text-text-secondary">{tip.detail}</p>
+	<p class="text-xs font-semibold leading-relaxed text-text">{tip.title}</p>
+	<p class="mt-1 text-xs leading-relaxed text-text-secondary">{tip.subtitle}</p>
+	{#if tip.example}
+		<p class="mt-2 text-xs leading-relaxed text-text-secondary">{tip.example}</p>
+	{/if}
+	{#if tip.note}
+		<p class="mt-2 text-xs leading-relaxed text-text-tertiary">{tip.note}</p>
 	{/if}
 {/snippet}
 
@@ -170,7 +196,11 @@
 
 				<div class="w-12 shrink-0 flex items-center justify-center">
 					{#if item.tier}
-						<InfoTip align="right" label="Confidence">
+						<InfoTip
+							align="right"
+							width="w-96"
+							label={confidenceTitle(item.tier)}
+						>
 							{#snippet trigger()}
 								{#if item.tier === 'liquid'}
 									<span class="text-positive" aria-label="High volume">✓</span>

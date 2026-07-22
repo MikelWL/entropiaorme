@@ -26,15 +26,28 @@
 		const percent = value * 100;
 		return percent < 0.1 ? 'less than 0.1%' : `${percent.toFixed(1)}%`;
 	};
+	const confidenceTitle = (tier: TreeCuttingItem['tier']) => {
+		if (tier === 'liquid') return 'High markup confidence: This markup should be practical to realise';
+		if (tier === 'middling') {
+			return 'Medium markup confidence: It may be difficult to realise this markup';
+		}
+		return 'Low markup confidence: Do not rely on realising this markup';
+	};
 
-	function confidenceTip(item: TreeCuttingItem): { lead: string; detail?: string } {
+	function confidenceTip(item: TreeCuttingItem): {
+		title: string;
+		subtitle: string;
+		example?: string;
+		note?: string;
+	} {
 		const projectionNote = item.floored
-			? ` With the current confidence setting, MU projections use the ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube MU instead.`
-			: '';
+			? `With the current confidence setting, MU projections use the ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube MU instead.`
+			: undefined;
 		if (item.ownMarkupPct == null) {
 			return {
-				lead: 'No market MU is available for this item.',
-				detail: projectionNote.trim() || undefined,
+				title: confidenceTitle(item.tier),
+				subtitle: 'No market MU is available for this item.',
+				note: projectionNote,
 			};
 		}
 
@@ -58,19 +71,33 @@
 		const batchShare = item.opportunity.efficientBatchMarketShare;
 		const batchMarkup =
 			batchTt === null ? null : batchTt * Math.max(0, item.ownMarkupPct / 100 - 1);
-		const saleMath =
+		const example =
 			batchTt !== null && batchMarkup !== null && batchShare !== null && horizon
-				? `A ${formatPed(batchTt)} PED TT sale at this MU produces about ${formatPed(batchMarkup)} PED of markup. The minimum auction fee is 0.5 PED, or 10% of that markup. This sale is ${marketShare(batchShare)} of the TT sold ${marketPeriod(horizon)}.`
-				: 'The recorded MU does not provide enough markup to calculate a sale after fees.';
-		return { lead, detail: `${saleMath}${projectionNote}` };
+				? `For example: A ${formatPed(batchTt)} PED TT sale at this MU would produce about ${formatPed(batchMarkup)} PED of markup. The minimum auction fee is 0.5 PED, or 10% of that markup. That sale would be ${marketShare(batchShare)} of the TT sold ${marketPeriod(horizon)}.`
+				: undefined;
+		const noExampleNote = example
+			? projectionNote
+			: ['The recorded MU does not provide enough markup to calculate a sale after fees.', projectionNote]
+					.filter(Boolean)
+					.join(' ');
+		return {
+			title: confidenceTitle(item.tier),
+			subtitle: lead,
+			example,
+			note: noExampleNote || undefined,
+		};
 	}
 </script>
 
 {#snippet confidenceBody(item: TreeCuttingItem)}
 	{@const tip = confidenceTip(item)}
-	<p class="text-xs leading-relaxed text-text">{tip.lead}</p>
-	{#if tip.detail}
-		<p class="mt-1 text-xs leading-relaxed text-text-secondary">{tip.detail}</p>
+	<p class="text-xs font-semibold leading-relaxed text-text">{tip.title}</p>
+	<p class="mt-1 text-xs leading-relaxed text-text-secondary">{tip.subtitle}</p>
+	{#if tip.example}
+		<p class="mt-2 text-xs leading-relaxed text-text-secondary">{tip.example}</p>
+	{/if}
+	{#if tip.note}
+		<p class="mt-2 text-xs leading-relaxed text-text-tertiary">{tip.note}</p>
 	{/if}
 {/snippet}
 
@@ -180,14 +207,22 @@
 											<span class="text-text-tertiary">{NO_DATA}</span>
 										{:else}
 											{#if item.tier === 'middling'}
-												<InfoTip align="right" label="Medium volume">
+												<InfoTip
+													align="right"
+													width="w-96"
+													label={confidenceTitle(item.tier)}
+												>
 													{#snippet trigger()}
 														<span class="text-warning">⚠</span>
 													{/snippet}
 													{@render confidenceBody(item)}
 												</InfoTip>
 											{:else if item.tier === 'illiquid'}
-												<InfoTip align="right" label="Low volume">
+												<InfoTip
+													align="right"
+													width="w-96"
+													label={confidenceTitle(item.tier)}
+												>
 													{#snippet trigger()}
 														<span class="text-error font-semibold">!</span>
 													{/snippet}
