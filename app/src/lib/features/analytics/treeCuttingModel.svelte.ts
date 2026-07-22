@@ -222,6 +222,13 @@ export type TreeCuttingStock = {
 	markupHorizon: string | null;
 	/** The day/week/month/year breakdown for the detail view. */
 	readings: StockHorizonReading[];
+	/** The liquidity confidence of realising this markup at the current
+	 * held position; null when no markup covers the item. */
+	tier: ConfidenceTier | null;
+	/** Resolved-horizon and weekly sales volumes, for the confidence
+	 * explanation. */
+	salesPed: number | null;
+	weeklySalesPed: number | null;
 };
 
 /** The held TT per item: looted TT scaled by the fraction still held
@@ -354,12 +361,13 @@ export function createTreeCuttingModel() {
 			const heldQty = item.quantity - gone;
 			const unitTt = item.quantity > 0 ? item.valuePed / item.quantity : 0;
 			const m = marketByItem.get(itemName);
+			const heldTt = heldQty * unitTt;
 			return {
 				itemName,
 				lootedQty: item.quantity,
 				removedQty: gone,
 				heldQty,
-				heldTt: heldQty * unitTt,
+				heldTt,
 				markupPct: m?.markupPct ?? null,
 				markupHorizon: m?.horizon ?? null,
 				readings: (m?.readings ?? []).map((r) => ({
@@ -367,6 +375,11 @@ export function createTreeCuttingModel() {
 					markupPct: r.markupPct,
 					salesPed: r.salesPed,
 				})),
+				// Confidence at the held position (same computation the per-tool
+				// items use); null when no markup covers the item.
+				tier: m && m.markupPct != null ? itemTier(m, heldTt) : null,
+				salesPed: m?.salesPed ?? null,
+				weeklySalesPed: m?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null,
 			};
 		});
 		rows.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName));

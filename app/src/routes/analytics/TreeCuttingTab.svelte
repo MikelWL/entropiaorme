@@ -6,10 +6,29 @@
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import {
 		type ConfidenceMode,
+		type ConfidenceTier,
 		createTreeCuttingModel,
-		type TreeCuttingItem,
 	} from '$lib/features/analytics/treeCuttingModel.svelte';
 	import { formatPed, formatPercent } from '$lib/utils/format';
+
+	// The fields the confidence explanation needs, shared by the per-tool
+	// items and the current-stock rows.
+	type ConfidenceInput = {
+		ownMarkupPct: number | null;
+		tier: ConfidenceTier;
+		markupHorizon: string | null;
+		salesPed: number | null;
+		weeklySalesPed: number | null;
+		positionTt: number;
+		floored: boolean;
+	};
+
+	// Compact trading volume: 1,000s as x.xK, 1,000,000s as x.xM, else PED.
+	function formatVolume(v: number): string {
+		if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+		if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+		return formatPed(v);
+	}
 
 	const model = createTreeCuttingModel();
 
@@ -44,7 +63,7 @@
 	// signal, emphasised) and a detail line. A fallback horizon leads with
 	// the absence of weekly sales rather than a weekly figure normalised
 	// down from the month/year, which would understate how thin it is.
-	function confidenceTip(item: TreeCuttingItem): { lead: string; detail?: string } {
+	function confidenceTip(item: ConfidenceInput): { lead: string; detail?: string } {
 		const floorNote = item.floored ? ' Valued at the nanocube rate instead.' : '';
 		const pos = `Your position: ${formatPed(item.positionTt)} PED.`;
 
@@ -177,13 +196,13 @@
 		<span class="eyebrow">Volume</span>
 		{#each readings as r (r.horizon)}
 			<span class="text-right text-sm tabular-nums text-text-secondary">
-				{r.salesPed > 0 ? formatPed(r.salesPed) : NO_DATA}
+				{r.salesPed > 0 ? formatVolume(r.salesPed) : NO_DATA}
 			</span>
 		{/each}
 	</div>
 {/snippet}
 
-{#snippet confidenceBody(item: TreeCuttingItem)}
+{#snippet confidenceBody(item: ConfidenceInput)}
 	{@const tip = confidenceTip(item)}
 	<p class="text-xs leading-relaxed text-text">{tip.lead}</p>
 	{#if tip.detail}
@@ -345,12 +364,36 @@
 											{/if}
 										</div>
 
-										<!-- Conf (placeholder): the confidence marker, wired next
-											(green tick / amber warning / red low, each with a hover
-											explanation). -->
-										<span class="w-12 text-center shrink-0 text-sm text-text-tertiary">
-											—
-										</span>
+										<!-- Conf: the confidence marker at the held position, with a
+											hover explanation. Green tick (high), amber warning (mid),
+											red exclamation (low). -->
+										<div class="w-12 shrink-0 flex items-center justify-center">
+											{#if s.tier}
+												{@const conf = {
+													ownMarkupPct: s.markupPct,
+													tier: s.tier,
+													markupHorizon: s.markupHorizon,
+													salesPed: s.salesPed,
+													weeklySalesPed: s.weeklySalesPed,
+													positionTt: s.heldTt,
+													floored: false,
+												}}
+												<InfoTip align="right" label="Confidence">
+													{#snippet trigger()}
+														{#if s.tier === 'liquid'}
+															<span class="text-positive" aria-label="High volume">✓</span>
+														{:else if s.tier === 'middling'}
+															<span class="text-warning" aria-label="Medium volume">⚠</span>
+														{:else}
+															<span class="text-error font-semibold" aria-label="Low volume">!</span>
+														{/if}
+													{/snippet}
+													{@render confidenceBody(conf)}
+												</InfoTip>
+											{:else}
+												<span class="text-sm text-text-tertiary">—</span>
+											{/if}
+										</div>
 
 										<!-- Actions (placeholders): recycle to nanocube, and sell.
 											Auto-width so a button expanding on hover is absorbed by
