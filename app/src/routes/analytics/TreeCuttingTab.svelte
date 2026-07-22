@@ -90,17 +90,14 @@
 	lootRate: number;
 	muProjected: number | null;
 	muRate: number | null;
-	primary: boolean;
 })}
-	<!-- Stat area as a 2x3 grid: the title anchors the top-left cell as the
-		box's heading, MU figures fill out row 1, realised stats sit in row
-		2. Net = returns - cycled (the app's "Net" precedent). -->
+	<!-- Per-tool stat area as a 2x3 grid: the title anchors the top-left
+		cell as the box's heading, MU figures fill out row 1, realised stats
+		sit in row 2. Net = returns - cycled (the app's "Net" precedent). -->
 	<div class="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3">
 		<div
 			class="col-span-2 sm:col-span-1 flex flex-col justify-center gap-0.5
-				rounded-lg border-l-2 border-accent px-3.5 py-2 {g.primary
-				? 'bg-accent/10'
-				: 'bg-accent/[0.05]'}"
+				rounded-lg border-l-2 border-accent bg-accent/[0.05] px-3.5 py-2"
 		>
 			<span class="text-lg font-semibold tracking-tight leading-tight text-text">
 				{g.title}
@@ -184,85 +181,107 @@
 			/>
 		</div>
 
-		<!-- Overall: the combined stat line across every tool, shown first as
-			the summary block (no per-item breakdown). -->
+		<!-- Overall: the header box the per-tool cards are anchored beneath. A
+			distinct elevated treatment (accent wash + border + shadow) sets it
+			apart as the summary the subordinate tool cards explain. Two
+			columns: the headline stats (Cycled / Net / MU Net) left, current
+			stock right. hover:z-20 keeps its stock info tip above the card
+			below. -->
 		{#if model.overall}
-			<Card class="p-5">
-				{@render statGrid({
-					title: 'Overall',
-					subtitle: null,
-					cycled: model.overall.cycled,
-					returns: model.overall.returns,
-					lootRate: model.overall.lootRate,
-					muProjected: model.overall.muProjectedReturns,
-					muRate: model.overall.muRate,
-					primary: true,
-				})}
-
-				<!-- Current stock: the market-position overlay on recorded
-					harvest. Held quantity drives markup confidence, never the
-					stat lines above.
-
-					Held is display-only for now: hand-editing a position is
-					deliberately switched off until current stock is driven
-					automatically from recorded sales, so the two cannot drift
-					apart by hand in the meantime. The full write path behind it
-					(model.setHeld -> the stored removed quantity) is kept intact
-					and ready to switch back on when that automatic link lands. -->
-				{#if model.stock.length > 0}
-					<div class="mt-5 border-t border-border/50 pt-4">
-						<div class="flex items-center gap-2 px-2.5 pb-2">
-							<span class="eyebrow">Current stock</span>
-							<InfoTip align="left" label="What current stock means">
-								<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
-									<p class="text-text">
-										How much of each item you still hold, out of everything you have
-										recorded harvesting.
-									</p>
-									<p>
-										This is what markup confidence uses: holding less shifts which
-										markups are realistic. It never changes the stats above, which
-										record what your harvesting actually produced.
-									</p>
-									<p>
-										For now this shows everything you have harvested; it will start
-										to track what you have sold once recorded sales feed into it.
-									</p>
-								</div>
-							</InfoTip>
+			<div
+				class="relative hover:z-20 rounded-xl border border-accent/30 p-6 shadow-lg
+					backdrop-blur-[2px] bg-gradient-to-br from-accent/[0.12] via-surface/70 to-surface/70"
+			>
+				<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_1fr]">
+					<!-- Headline stats, stacked top-down -->
+					<div class="flex flex-col gap-4">
+						<div class="flex flex-col gap-0.5">
+							<span class="text-2xl font-semibold tracking-tight leading-none text-text">
+								Overall
+							</span>
+							<span class="eyebrow text-accent/70">All tools</span>
 						</div>
-
-						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
-							<span class="eyebrow flex-1 min-w-0">Item</span>
-							<span class="eyebrow w-28 text-right shrink-0">Held</span>
-							<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
-						</div>
-
-						<ul class="flex flex-col gap-1">
-							{#each model.stock as s (s.itemName)}
-								<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
-									<span class="flex-1 min-w-0 text-sm font-medium truncate tracking-tight text-text">
-										{s.itemName}
-									</span>
-
-									<div class="w-28 shrink-0 flex items-baseline justify-end gap-1.5">
-										<span class="text-sm tabular-nums font-medium text-text">
-											{s.heldQty}
-										</span>
-										<span class="text-xs text-text-tertiary tabular-nums shrink-0">
-											/ {s.lootedQty}
-										</span>
-									</div>
-
-									<span class="w-24 text-right shrink-0 text-sm tabular-nums font-medium text-text">
-										{formatPed(s.heldTt)}
-									</span>
-								</li>
-							{/each}
-						</ul>
+						<StatDisplay label="Cycled" value={formatPed(model.overall.cycled)} unit="PED" />
+						<StatDisplay
+							label="Net"
+							value={signedPed(model.overall.returns - model.overall.cycled)}
+							valueClass={netTone(model.overall.returns - model.overall.cycled)}
+							unit="PED"
+						/>
+						<StatDisplay
+							label="MU Net"
+							value={model.overall.muProjectedReturns !== null
+								? signedPed(model.overall.muProjectedReturns - model.overall.cycled)
+								: NO_DATA}
+							unit={model.overall.muProjectedReturns !== null ? 'PED' : ''}
+						/>
 					</div>
-				{/if}
-			</Card>
+
+					<!-- Current stock: the market-position overlay on recorded
+						harvest. Held quantity drives markup confidence, never the
+						stat lines beside it.
+
+						Held is display-only for now: hand-editing a position is
+						deliberately switched off until current stock is driven
+						automatically from recorded sales, so the two cannot drift
+						apart by hand in the meantime. The full write path behind it
+						(model.setHeld -> the stored removed quantity) is kept intact
+						and ready to switch back on when that automatic link lands. -->
+					{#if model.stock.length > 0}
+						<div class="sm:border-l sm:border-border/40 sm:pl-8">
+							<div class="flex items-center gap-2 pb-2">
+								<span class="eyebrow">Current stock</span>
+								<InfoTip align="right" label="What current stock means">
+									<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+										<p class="text-text">
+											How much of each item you still hold, out of everything you have
+											recorded harvesting.
+										</p>
+										<p>
+											This is what markup confidence uses: holding less shifts which
+											markups are realistic. It never changes the stats beside it, which
+											record what your harvesting actually produced.
+										</p>
+										<p>
+											For now this shows everything you have harvested; it will start
+											to track what you have sold once recorded sales feed into it.
+										</p>
+									</div>
+								</InfoTip>
+							</div>
+
+							<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+								<span class="eyebrow flex-1 min-w-0">Item</span>
+								<span class="eyebrow w-28 text-right shrink-0">Held</span>
+								<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
+							</div>
+
+							<ul class="flex flex-col gap-1">
+								{#each model.stock as s (s.itemName)}
+									<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
+										<span class="flex-1 min-w-0 text-sm font-medium truncate tracking-tight text-text">
+											{s.itemName}
+										</span>
+
+										<div class="w-28 shrink-0 flex items-baseline justify-end gap-1.5">
+											<span class="text-sm tabular-nums font-medium text-text">
+												{s.heldQty}
+											</span>
+											<span class="text-xs text-text-tertiary tabular-nums shrink-0">
+												/ {s.lootedQty}
+											</span>
+										</div>
+
+										<span class="w-24 text-right shrink-0 text-sm tabular-nums font-medium text-text">
+											{formatPed(s.heldTt)}
+										</span>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+				</div>
+			</div>
 		{/if}
 
 		{#each model.sections as section (section.toolName)}
@@ -279,7 +298,6 @@
 					lootRate: section.lootRate,
 					muProjected: section.muProjectedReturns,
 					muRate: section.muRate,
-					primary: false,
 				})}
 
 				<!-- Per-item breakdown -->
