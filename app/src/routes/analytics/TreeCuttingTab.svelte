@@ -26,7 +26,7 @@
 				class="relative hover:z-20 rounded-xl border border-accent/30 p-6 shadow-lg
 					backdrop-blur-[2px] bg-gradient-to-br from-accent/[0.12] via-surface/70 to-surface/70"
 			>
-				<div class="grid gap-x-8 gap-y-6 xl:grid-cols-[minmax(28rem,0.9fr)_minmax(30rem,1.1fr)]">
+				<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_minmax(0,1fr)]">
 					<TreeCuttingStats
 						heading="Overall"
 						cycled={model.overall.cycled}

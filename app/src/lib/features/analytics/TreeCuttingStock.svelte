@@ -64,7 +64,7 @@
 	</div>
 {/snippet}
 
-<div class="xl:border-l xl:border-border/40 xl:pl-8">
+<div class="sm:border-l sm:border-border/40 sm:pl-8">
 	<div class="flex items-center gap-2 pb-2">
 		<span class="eyebrow">Current stock</span>
 		<InfoTip align="right" label="What current stock means">

@@ -57,8 +57,8 @@
 {/snippet}
 
 <Card class="hover:z-20">
-	<div class="grid lg:grid-cols-[minmax(0,23rem)_1fr]">
-		<div class="border-b border-border/40 lg:border-b-0 lg:border-r">
+	<div class="grid sm:grid-cols-[minmax(0,21rem)_1fr]">
+		<div class="border-b border-border/40 sm:border-b-0 sm:border-r">
 			<div class="px-2 pt-4">
 				<div
 					class="flex items-center gap-2.5 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
