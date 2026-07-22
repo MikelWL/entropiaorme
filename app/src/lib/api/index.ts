@@ -35,6 +35,8 @@ export type {
 	MarketPastePreviewRow,
 	MarketReading,
 	MarketSkippedLine,
+	MarketToolItemMarkup,
+	MarketToolRankingRow,
 	MarketWeaponBreakEven,
 	SessionQuestLinkSuggestion,
 } from './commands.gen';

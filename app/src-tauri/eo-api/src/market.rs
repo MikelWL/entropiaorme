@@ -213,6 +213,33 @@ pub struct MarketMobRankingRow {
     pub est_markup_pct: Nullable<f64>,
 }
 
+/// One item's resolved markup in a tool's breakdown: the markup and the
+/// horizon it came from (week preferred, then month, then year), or null
+/// when no observation covers the item.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketToolItemMarkup {
+    pub item_name: String,
+    pub markup_pct: Nullable<f64>,
+    pub horizon: Nullable<String>,
+}
+
+/// One harvesting tool's estimated-markup row: its recorded loot
+/// composition resolved against markup observations, with the per-item
+/// markup breakdown. `mu_projected_returns` projects the whole pool
+/// (covered items at their markup, uncovered floored at TT); the MU rate
+/// is that over the realised cycled cost, derived at the frontend.
+/// Estimated markup, informational only, never a realised figure.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketToolRankingRow {
+    pub tool_name: String,
+    pub loot_tt: f64,
+    pub covered_tt: f64,
+    pub mu_projected_returns: f64,
+    pub items: Vec<MarketToolItemMarkup>,
+}
+
 /// One looter profession and its believed-current level.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -460,6 +487,35 @@ impl Api {
                 item_count: row.item_count,
                 covered_item_count: row.covered_item_count,
                 est_markup_pct: row.est_markup_pct.into(),
+            })
+            .collect())
+    }
+
+    /// Every harvesting tool's estimated loot markup and per-item markup
+    /// breakdown, best projected return first. Each item's markup
+    /// resolves via the week -> month -> year horizon fallback.
+    pub async fn market_tool_ranking(&self) -> Result<Vec<MarketToolRankingRow>, ApiError> {
+        let rows = self
+            .market
+            .tool_ranking()
+            .await
+            .map_err(ApiError::internal("market tool ranking"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| MarketToolRankingRow {
+                tool_name: row.tool_name,
+                loot_tt: row.loot_tt,
+                covered_tt: row.covered_tt,
+                mu_projected_returns: row.mu_projected_returns,
+                items: row
+                    .items
+                    .into_iter()
+                    .map(|item| MarketToolItemMarkup {
+                        item_name: item.item_name,
+                        markup_pct: item.markup_pct.into(),
+                        horizon: item.horizon.into(),
+                    })
+                    .collect(),
             })
             .collect())
     }

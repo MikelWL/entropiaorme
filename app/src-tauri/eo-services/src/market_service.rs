@@ -109,6 +109,39 @@ pub struct MobRankingRow {
     pub est_markup_pct: Option<f64>,
 }
 
+/// One harvesting tool's estimated-markup row: the tool's recorded loot
+/// composition resolved against markup observations, with a per-item
+/// markup breakdown for the section's per-item column. Mirrors
+/// [`MobRankingRow`]'s coverage discipline; `mu_projected_returns`
+/// projects the whole pool (covered items at their markup, uncovered
+/// floored at TT), so it reads directly against the realised returns.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolRankingRow {
+    pub tool_name: String,
+    /// Total active recorded loot TT for the tool (PED).
+    pub loot_tt: f64,
+    /// The share of that TT whose items have a resolved markup (PED).
+    pub covered_tt: f64,
+    /// Whole-pool projected return: covered items at their markup,
+    /// uncovered items floored at TT (100%). Estimated: informational
+    /// only, never a realised figure.
+    pub mu_projected_returns: f64,
+    /// Per-item resolved markup, item order matching the composition.
+    pub items: Vec<ToolItemMarkup>,
+}
+
+/// One item's resolved markup for a tool's breakdown: the markup and the
+/// horizon it came from (week preferred, then month, then year), or None
+/// when no observation covers the item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolItemMarkup {
+    pub item_name: String,
+    pub markup_pct: Option<f64>,
+    /// The horizon that supplied the markup ("week" | "month" | "year"),
+    /// None when uncovered.
+    pub horizon: Option<String>,
+}
+
 /// The modelled TT-return rate (percent) of a hunting loadout: the
 /// community returns model, roughly linear in weapon efficiency and
 /// looter profession level (86% baseline, ~7pp each across 0-100).
@@ -411,6 +444,159 @@ impl MarketService {
             })
             .await
     }
+
+    /// Every harvesting tool's estimated loot markup and per-item
+    /// markup breakdown. Each item's markup resolves via a horizon
+    /// fallback: the latest week reading, else the latest month, else
+    /// the latest year (day and decade are deliberately skipped). Best
+    /// projected return first; tools with no covered item last.
+    ///
+    /// Reading the harvest accounting tables here is the sanctioned
+    /// direction of the market boundary (composition drives the
+    /// aggregation); nothing flows back.
+    pub async fn tool_ranking(&self) -> Result<Vec<ToolRankingRow>, DbError> {
+        self.db
+            .with_reader(move |connection| {
+                // Per item, the markup at the latest submission for each
+                // of week/month/year (markup may be NULL = N/A). The
+                // fallback preference is applied below, in Rust.
+                let mut markup_stmt = connection.prepare(
+                    "SELECT o.item_name, o.horizon, o.markup_pct \
+                     FROM market_observations o \
+                     WHERE o.horizon IN ('week', 'month', 'year') \
+                       AND o.submission_id = (SELECT MAX(o2.submission_id) \
+                                              FROM market_observations o2 \
+                                              WHERE o2.item_name = o.item_name \
+                                                AND o2.horizon = o.horizon)",
+                )?;
+                // item -> (horizon -> markup). Only non-null markups are
+                // stored; a NULL reading is "no value on that horizon".
+                let mut per_item: std::collections::HashMap<
+                    String,
+                    std::collections::HashMap<String, f64>,
+                > = std::collections::HashMap::new();
+                let mut rows = markup_stmt.query([])?;
+                while let Some(row) = rows.next()? {
+                    let item: String = row.get(0)?;
+                    let horizon: String = row.get(1)?;
+                    if let Some(markup) = row.get::<_, Option<f64>>(2)? {
+                        per_item.entry(item).or_default().insert(horizon, markup);
+                    }
+                }
+                // Resolve one item's markup by the week -> month -> year
+                // preference, returning the markup and the winning horizon.
+                let resolve = |item: &str| -> Option<(f64, String)> {
+                    let by_horizon = per_item.get(item)?;
+                    for horizon in ["week", "month", "year"] {
+                        if let Some(markup) = by_horizon.get(horizon) {
+                            return Some((*markup, horizon.to_string()));
+                        }
+                    }
+                    None
+                };
+
+                // Per-tool, per-item active harvest loot composition.
+                let mut comp_stmt = connection.prepare(
+                    "SELECT h.tool_name, l.item_name, SUM(l.value_ped) \
+                     FROM harvest_loot_items l \
+                     JOIN harvest_events h ON h.id = l.harvest_id \
+                     WHERE h.tool_name IS NOT NULL AND h.tool_name != '' \
+                       AND l.deactivated_at IS NULL \
+                     GROUP BY h.tool_name, l.item_name",
+                )?;
+                // Preserve item insertion order per tool for a stable
+                // breakdown (TT-desc is applied at the end).
+                let mut ranking: std::collections::BTreeMap<String, ToolRankingRow> =
+                    std::collections::BTreeMap::new();
+                let mut item_tt: std::collections::HashMap<(String, String), f64> =
+                    std::collections::HashMap::new();
+                let mut rows = comp_stmt.query([])?;
+                while let Some(row) = rows.next()? {
+                    let tool: String = row.get(0)?;
+                    let item: String = row.get(1)?;
+                    let tt: f64 = row.get(2)?;
+                    let resolved = resolve(&item);
+                    let (markup, horizon) = match resolved {
+                        Some((m, h)) => (Some(m), Some(h)),
+                        None => (None, None),
+                    };
+                    let entry =
+                        ranking
+                            .entry(tool.clone())
+                            .or_insert_with(|| ToolRankingRow {
+                                tool_name: tool.clone(),
+                                loot_tt: 0.0,
+                                covered_tt: 0.0,
+                                mu_projected_returns: 0.0,
+                                items: Vec::new(),
+                            });
+                    entry.loot_tt += tt;
+                    // Projection: covered items at their markup, uncovered
+                    // floored at TT (100%). markup_pct is a percent
+                    // (106.88 = 106.88%), so scale by 1/100 into PED.
+                    match markup {
+                        Some(m) => {
+                            entry.covered_tt += tt;
+                            entry.mu_projected_returns += tt * m / 100.0;
+                        }
+                        None => entry.mu_projected_returns += tt,
+                    }
+                    entry.items.push(ToolItemMarkup {
+                        item_name: item.clone(),
+                        markup_pct: markup,
+                        horizon,
+                    });
+                    item_tt.insert((tool, item), tt);
+                }
+
+                let mut result: Vec<ToolRankingRow> = ranking
+                    .into_values()
+                    .map(|mut row| {
+                        row.loot_tt = eo_wire::normalizer::round_half_even(row.loot_tt, 2);
+                        row.covered_tt = eo_wire::normalizer::round_half_even(row.covered_tt, 2);
+                        row.mu_projected_returns =
+                            eo_wire::normalizer::round_half_even(row.mu_projected_returns, 2);
+                        // Item breakdown TT-desc, matching the analytics
+                        // section's own ordering.
+                        let tool = row.tool_name.clone();
+                        row.items.sort_by(|a, b| {
+                            let at = item_tt
+                                .get(&(tool.clone(), a.item_name.clone()))
+                                .copied()
+                                .unwrap_or(0.0);
+                            let bt = item_tt
+                                .get(&(tool.clone(), b.item_name.clone()))
+                                .copied()
+                                .unwrap_or(0.0);
+                            bt.total_cmp(&at).then(a.item_name.cmp(&b.item_name))
+                        });
+                        row
+                    })
+                    .collect();
+                // Best projected return rate first; tools with no covered
+                // item (nothing to project above TT) last, by TT.
+                result.sort_by(|a, b| {
+                    let ar = if a.loot_tt > 0.0 {
+                        a.mu_projected_returns / a.loot_tt
+                    } else {
+                        0.0
+                    };
+                    let br = if b.loot_tt > 0.0 {
+                        b.mu_projected_returns / b.loot_tt
+                    } else {
+                        0.0
+                    };
+                    match (a.covered_tt > 0.0, b.covered_tt > 0.0) {
+                        (true, true) => br.total_cmp(&ar),
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        (false, false) => b.loot_tt.total_cmp(&a.loot_tt),
+                    }
+                });
+                Ok(result)
+            })
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -640,6 +826,97 @@ Carabok Leg Fur\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t109.380%\t6.
         assert_eq!(decade[0].covered_tt, 200.0);
         let est = decade[0].est_markup_pct.unwrap();
         assert!((est - 249.01).abs() < 1e-9, "got {est}");
+    }
+
+    #[test]
+    fn tool_ranking_resolves_markup_by_week_month_year_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, service, _clock) = rig(dir.path());
+        // One tool's harvest loot: four items exercising each fallback
+        // rung and the uncovered case.
+        //  - Wood Shavings         -> week present (120%)
+        //  - Short Moonleaf Board  -> week N/A, month present (200%)
+        //  - Moonleaf Board        -> week+month N/A, year present (300%)
+        //  - Long Moonleaf Board   -> no observation at all (uncovered)
+        runtime
+            .block_on(service.db.with_writer(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO harvest_events (id, session_id, timestamp, success, tool_name, cost_ped, loot_total_ped) VALUES \
+                       ('h1', 's1', 0, 1, 'Terratech PH-4 (L)', 1.0, 4.0); \
+                     INSERT INTO harvest_loot_items (harvest_id, item_name, quantity, value_ped) VALUES \
+                       ('h1', 'Wood Shavings', 1, 100.0), \
+                       ('h1', 'Short Moonleaf Board', 1, 100.0), \
+                       ('h1', 'Moonleaf Board', 1, 100.0), \
+                       ('h1', 'Long Moonleaf Board', 1, 100.0);",
+                )?;
+                Ok(())
+            }))
+            .unwrap();
+        // day, week, month, year, decade columns per item.
+        let paste = "Wood Shavings\t0\t110.000%\t10.000 PED\t120.000%\t10.000 PED\t\
+130.000%\t10.000 PED\t140.000%\t10.000 PED\t150.000%\t10.000 PED\n\
+Short Moonleaf Board\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t200.000%\t10.000 PED\t\
+210.000%\t10.000 PED\t220.000%\t10.000 PED\n\
+Moonleaf Board\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t300.000%\t10.000 PED\t\
+320.000%\t10.000 PED";
+        runtime.block_on(service.commit_paste(paste)).unwrap();
+
+        let ranking = runtime.block_on(service.tool_ranking()).unwrap();
+        assert_eq!(ranking.len(), 1);
+        let row = &ranking[0];
+        assert_eq!(row.tool_name, "Terratech PH-4 (L)");
+        assert_eq!(row.loot_tt, 400.0);
+        // Three of four items covered.
+        assert_eq!(row.covered_tt, 300.0);
+        // Projected: 100*1.20 + 100*2.00 + 100*3.00 + 100*1.00 (floor) = 720.
+        assert_eq!(row.mu_projected_returns, 720.0);
+
+        // Per-item resolved markup + winning horizon. Items are TT-desc;
+        // all four share 100 TT, so ties break by name.
+        let by_name: std::collections::HashMap<&str, &ToolItemMarkup> =
+            row.items.iter().map(|i| (i.item_name.as_str(), i)).collect();
+        assert_eq!(by_name["Wood Shavings"].markup_pct, Some(120.0));
+        assert_eq!(by_name["Wood Shavings"].horizon.as_deref(), Some("week"));
+        assert_eq!(by_name["Short Moonleaf Board"].markup_pct, Some(200.0));
+        assert_eq!(by_name["Short Moonleaf Board"].horizon.as_deref(), Some("month"));
+        assert_eq!(by_name["Moonleaf Board"].markup_pct, Some(300.0));
+        assert_eq!(by_name["Moonleaf Board"].horizon.as_deref(), Some("year"));
+        assert_eq!(by_name["Long Moonleaf Board"].markup_pct, None);
+        assert_eq!(by_name["Long Moonleaf Board"].horizon, None);
+    }
+
+    #[test]
+    fn tool_ranking_orders_by_projected_rate_and_sinks_uncovered_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, service, _clock) = rig(dir.path());
+        runtime
+            .block_on(service.db.with_writer(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO harvest_events (id, session_id, timestamp, success, tool_name, cost_ped, loot_total_ped) VALUES \
+                       ('h1', 's1', 0, 1, 'Rich Tool', 1.0, 1.0), \
+                       ('h2', 's1', 0, 1, 'Lean Tool', 1.0, 1.0), \
+                       ('h3', 's1', 0, 1, 'Blind Tool', 1.0, 1.0); \
+                     INSERT INTO harvest_loot_items (harvest_id, item_name, quantity, value_ped) VALUES \
+                       ('h1', 'Wood Shavings', 1, 100.0), \
+                       ('h2', 'Short Moonleaf Board', 1, 100.0), \
+                       ('h3', 'Unlisted Board', 1, 100.0);",
+                )?;
+                Ok(())
+            }))
+            .unwrap();
+        // Wood Shavings week 250%, Short Moonleaf Board week 110%.
+        let paste = "Wood Shavings\t0\t250.000%\t10.000 PED\t250.000%\t10.000 PED\t\
+250.000%\t10.000 PED\t250.000%\t10.000 PED\t250.000%\t10.000 PED\n\
+Short Moonleaf Board\t0\t110.000%\t10.000 PED\t110.000%\t10.000 PED\t\
+110.000%\t10.000 PED\t110.000%\t10.000 PED\t110.000%\t10.000 PED";
+        runtime.block_on(service.commit_paste(paste)).unwrap();
+
+        let ranking = runtime.block_on(service.tool_ranking()).unwrap();
+        assert_eq!(
+            ranking.iter().map(|r| r.tool_name.as_str()).collect::<Vec<_>>(),
+            vec!["Rich Tool", "Lean Tool", "Blind Tool"],
+            "covered tools by projected rate desc, uncovered last"
+        );
     }
 
     #[test]

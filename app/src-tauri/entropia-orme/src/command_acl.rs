@@ -89,6 +89,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "market_overview",
     "market_paste_commit",
     "market_paste_preview",
+    "market_tool_ranking",
     "navigation_end",
     "navigation_mark_visited",
     "navigation_resolve_harvest",

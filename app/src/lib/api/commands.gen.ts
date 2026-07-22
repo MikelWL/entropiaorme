@@ -1064,6 +1064,33 @@ export interface MarketSkippedLine {
 }
 
 /**
+ * One item's resolved markup in a tool's breakdown: the markup and the
+ * horizon it came from (week preferred, then month, then year), or null
+ * when no observation covers the item.
+ */
+export interface MarketToolItemMarkup {
+	itemName: string;
+	markupPct: number | null;
+	horizon: string | null;
+}
+
+/**
+ * One harvesting tool's estimated-markup row: its recorded loot
+ * composition resolved against markup observations, with the per-item
+ * markup breakdown. `mu_projected_returns` projects the whole pool
+ * (covered items at their markup, uncovered floored at TT); the MU rate
+ * is that over the realised cycled cost, derived at the frontend.
+ * Estimated markup, informational only, never a realised figure.
+ */
+export interface MarketToolRankingRow {
+	toolName: string;
+	lootTt: number;
+	coveredTt: number;
+	muProjectedReturns: number;
+	items: MarketToolItemMarkup[];
+}
+
+/**
  * One library weapon's break-even row: its catalogue efficiency (null
  * when the bundled catalogue does not carry the weapon) and the cells
  * across the player's looter professions.
@@ -2481,6 +2508,10 @@ export async function marketBreakEven(): Promise<MarketBreakEven> {
 
 export async function marketMobRanking(horizon: MarketHorizon): Promise<MarketMobRankingRow[]> {
 	return invokeCommand('market_mob_ranking', { horizon });
+}
+
+export async function marketToolRanking(): Promise<MarketToolRankingRow[]> {
+	return invokeCommand('market_tool_ranking', {});
 }
 
 export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {

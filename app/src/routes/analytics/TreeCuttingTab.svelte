@@ -11,9 +11,14 @@
 		void model.loadData();
 	});
 
-	// Placeholder marker for the market-derived cells until the MU feed
-	// is merged in.
-	const MU_PENDING = '—';
+	// Shown where a market figure is unavailable (no observation covers
+	// the tool/item yet).
+	const NO_DATA = '—';
+
+	function markupTitle(horizon: string | null): string {
+		if (!horizon) return 'No market observation for this item';
+		return `Estimated markup (${horizon} horizon)`;
+	}
 </script>
 
 {#if model.loading}
@@ -48,8 +53,17 @@
 					<StatDisplay label="Cycled" value={formatPed(section.cycled)} unit="PED" />
 					<StatDisplay label="Returns" value={formatPed(section.returns)} unit="PED" />
 					<StatDisplay label="Rate" value={formatPercent(section.lootRate)} />
-					<StatDisplay label="MU Proj. Returns" value={MU_PENDING} />
-					<StatDisplay label="MU Rate" value={MU_PENDING} />
+					<StatDisplay
+						label="MU Proj. Returns"
+						value={section.muProjectedReturns !== null
+							? formatPed(section.muProjectedReturns)
+							: NO_DATA}
+						unit={section.muProjectedReturns !== null ? 'PED' : ''}
+					/>
+					<StatDisplay
+						label="MU Rate"
+						value={section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
+					/>
 				</div>
 
 				<!-- Per-item breakdown -->
@@ -101,12 +115,13 @@
 										{item.sharePct.toFixed(1)}%
 									</span>
 
-									<!-- Markup (arrives with market data) -->
+									<!-- Estimated market markup -->
 									<span
-										class="text-sm tabular-nums text-text-tertiary shrink-0 w-16 text-right"
-										title="Arrives with market data"
+										class="text-sm tabular-nums shrink-0 w-16 text-right
+											{item.markupPct !== null ? 'text-text-secondary' : 'text-text-tertiary'}"
+										title={markupTitle(item.markupHorizon)}
 									>
-										{MU_PENDING}
+										{item.markupPct !== null ? formatPercent(item.markupPct / 100) : NO_DATA}
 									</span>
 								</li>
 							{/each}
@@ -127,7 +142,9 @@
 			</p>
 			<p>
 				<span class="text-text-secondary">MU Proj. Returns / MU Rate / Markup:</span>
-				markup-adjusted figures; populate once market data is connected.
+				estimated from market data, never realised P&L. Markup resolves from the weekly
+				horizon, falling back to monthly then yearly. Projected returns value covered items at
+				their markup and floor unlisted items at TT.
 			</p>
 		</div>
 	</div>

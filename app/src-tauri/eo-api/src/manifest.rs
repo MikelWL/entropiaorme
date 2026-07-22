@@ -39,6 +39,7 @@ use crate::maps::{
 use crate::market::{
     MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
     MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+    MarketToolRankingRow,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -646,6 +647,11 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(MarketHorizon)),
             }],
             returns: Some(schema(schema_for!(Vec<MarketMobRankingRow>))),
+        },
+        CommandSpec {
+            name: "market_tool_ranking",
+            args: vec![],
+            returns: Some(schema(schema_for!(Vec<MarketToolRankingRow>))),
         },
         CommandSpec {
             name: "market_item_history",

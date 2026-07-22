@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AnalyticsHarvest, HarvestLootItem } from '$lib/api/commands.gen';
+import type {
+	AnalyticsHarvest,
+	HarvestLootItem,
+	MarketToolRankingRow,
+} from '$lib/api/commands.gen';
 import { createTreeCuttingModel, primaryTree } from './treeCuttingModel.svelte';
 
 vi.mock('$lib/api', () => ({
 	getAnalyticsHarvest: vi.fn(),
+	getMarketToolRanking: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -40,8 +45,25 @@ function harvest(): AnalyticsHarvest {
 	};
 }
 
+function marketRanking(): MarketToolRankingRow[] {
+	return [
+		{
+			toolName: 'Terratech PH-1 (L)',
+			lootTt: 91.38,
+			coveredTt: 91.38,
+			// 60 * 3.50 + 31.38 * 1.10 = 210 + 34.518 = 244.52 (rounded)
+			muProjectedReturns: 244.52,
+			items: [
+				{ itemName: 'Long Moonleaf Board', markupPct: 350.0, horizon: 'week' },
+				{ itemName: 'Wood Shavings', markupPct: 110.0, horizon: 'month' },
+			],
+		},
+	];
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocked.getMarketToolRanking.mockResolvedValue([]);
 });
 
 describe('primaryTree', () => {
@@ -114,5 +136,40 @@ describe('sections', () => {
 	it('is empty before any data loads', () => {
 		const model = createTreeCuttingModel();
 		expect(model.sections).toEqual([]);
+	});
+
+	it('merges the market feed into MU figures and per-item markup', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketToolRanking.mockResolvedValue(marketRanking());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		const ph1 = model.sections[0];
+		expect(ph1.muProjectedReturns).toBe(244.52);
+		// MU rate = projected / cycled.
+		expect(ph1.muRate).toBeCloseTo(244.52 / 91.24, 6);
+		expect(ph1.coverage).toBeCloseTo(1, 6);
+		expect(ph1.items[0].markupPct).toBe(350.0);
+		expect(ph1.items[0].markupHorizon).toBe('week');
+		expect(ph1.items[1].markupPct).toBe(110.0);
+
+		// PH-3 has no market row: MU figures are null, markup uncovered.
+		const ph3 = model.sections[1];
+		expect(ph3.muProjectedReturns).toBeNull();
+		expect(ph3.muRate).toBeNull();
+		expect(ph3.coverage).toBeNull();
+		expect(ph3.items[0].markupPct).toBeNull();
+	});
+
+	it('degrades to the realised view when the market feed fails', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketToolRanking.mockRejectedValue(new Error('market offline'));
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		expect(model.error).toBeNull();
+		expect(model.sections).toHaveLength(2);
+		expect(model.sections[0].muProjectedReturns).toBeNull();
+		expect(model.sections[0].returns).toBe(91.38);
 	});
 });
