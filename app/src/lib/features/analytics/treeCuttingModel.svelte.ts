@@ -312,6 +312,11 @@ export function createTreeCuttingModel() {
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
+	// Which sub-activity's detail is open. Keyed by tool name; null falls
+	// back to the highest-volume section, so the busiest activity opens by
+	// default and a stale key (a tool that dropped out of the data) degrades
+	// to that same fallback rather than an empty panel.
+	let selectedTool = $state<string | null>(null);
 
 	async function loadData() {
 		loading = true;
@@ -343,9 +348,20 @@ export function createTreeCuttingModel() {
 		// lifetime looted TT: selling stock changes the position without
 		// touching the recorded activity stats.
 		const position = heldTtByItem(lootedByItem(data.toolComparisons), removed);
-		return data.toolComparisons.map((tool) =>
-			toSection(tool, market, marketByItem, position, confidenceMode),
-		);
+		// Ordered by cycled volume (busiest first): this is the sub-activity
+		// list order and the fallback selection, and it scales cleanly to an
+		// activity with dozens of sub-activities.
+		return data.toolComparisons
+			.map((tool) => toSection(tool, market, marketByItem, position, confidenceMode))
+			.sort((a, b) => b.cycled - a.cycled || a.toolName.localeCompare(b.toolName));
+	});
+
+	/** The sub-activity whose detail panel is open: the selected tool, or the
+	 * highest-volume section when nothing is selected or the selection no
+	 * longer resolves. */
+	const selectedSection = $derived.by<TreeCuttingSection | null>(() => {
+		if (sections.length === 0) return null;
+		return sections.find((s) => s.toolName === selectedTool) ?? sections[0];
 	});
 
 	/** The current stock line for the Overall block: per-item held quantity
@@ -437,6 +453,12 @@ export function createTreeCuttingModel() {
 		},
 		get sections() {
 			return sections;
+		},
+		get selectedSection() {
+			return selectedSection;
+		},
+		selectSection(toolName: string) {
+			selectedTool = toolName;
 		},
 		get stock() {
 			return stock;

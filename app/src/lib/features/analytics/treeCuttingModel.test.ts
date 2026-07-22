@@ -24,6 +24,13 @@ import * as api from '$lib/api';
 
 const mocked = vi.mocked(api);
 
+// Sections are ordered by cycled volume, not data order, so tests select a
+// section by its tool rather than a positional index.
+const PH1 = 'Terratech PH-1 (L)'; // Long Moonleaf Board
+const PH4 = 'Terratech PH-4 (L)'; // Wood Shavings
+const sectionOf = (model: ReturnType<typeof createTreeCuttingModel>, tool: string) =>
+	model.sections.find((s) => s.toolName === tool)!;
+
 function loot(name: string, quantity: number, valuePed: number): HarvestLootItem {
 	return { itemName: name, quantity, valuePed };
 }
@@ -180,14 +187,14 @@ describe('sections', () => {
 
 		await model.loadData();
 
-		const long = model.sections[0].items[0];
+		const long = sectionOf(model, PH1).items[0];
 		expect(long.tier).toBe('liquid');
 		expect(long.floored).toBe(false);
 		expect(long.effectiveMarkupPct).toBe(353.69);
 		expect(long.salesPed).toBe(320.34);
 		expect(long.weeklySalesPed).toBe(320.34);
 
-		const wood = model.sections[1].items[0];
+		const wood = sectionOf(model, PH4).items[0];
 		expect(wood.tier).toBe('illiquid');
 		expect(wood.floored).toBe(true); // illiquid < liquidMiddling threshold
 		expect(wood.effectiveMarkupPct).toBe(100.84); // nanocube floor
@@ -232,11 +239,11 @@ describe('sections', () => {
 
 		// Wood Shavings section: illiquid item.
 		// Default (liquidMiddling): floored to nanocube -> 87.38 * 1.0084.
-		expect(model.sections[1].muProjectedReturns).toBeCloseTo((87.38 * 100.84) / 100, 4);
+		expect(sectionOf(model, PH4).muProjectedReturns).toBeCloseTo((87.38 * 100.84) / 100, 4);
 
 		// "all": trusts the item's own 110.01% markup.
 		model.confidenceMode = 'all';
-		expect(model.sections[1].muProjectedReturns).toBeCloseTo((87.38 * 110.01) / 100, 4);
+		expect(sectionOf(model, PH4).muProjectedReturns).toBeCloseTo((87.38 * 110.01) / 100, 4);
 	});
 
 	it('uses the nanocube fallback constant when the feed lacks a nanocube row', async () => {
@@ -259,9 +266,25 @@ describe('sections', () => {
 
 		expect(model.error).toBeNull();
 		expect(model.sections).toHaveLength(2);
-		expect(model.sections[0].muProjectedReturns).toBeNull();
-		expect(model.sections[0].muRate).toBeNull();
-		expect(model.sections[0].returns).toBe(34.26);
+		const long = sectionOf(model, PH1);
+		expect(long.muProjectedReturns).toBeNull();
+		expect(long.muRate).toBeNull();
+		expect(long.returns).toBe(34.26);
+	});
+
+	it('orders sections by cycled volume and opens the busiest by default', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		// PH-4 cycled 111.13 outranks PH-1's 91.24, so it leads the list and
+		// opens as the default selection.
+		expect(model.sections.map((s) => s.toolName)).toEqual([PH4, PH1]);
+		expect(model.selectedSection?.toolName).toBe(PH4);
+
+		// Selecting another sub-activity swaps the open detail.
+		model.selectSection(PH1);
+		expect(model.selectedSection?.toolName).toBe(PH1);
 	});
 });
 
@@ -316,13 +339,13 @@ describe('stock', () => {
 		await model.loadData();
 
 		// Fully held, Long Moonleaf Board is liquid.
-		expect(model.sections[0].items[0].tier).toBe('liquid');
+		expect(sectionOf(model, PH1).items[0].tier).toBe('liquid');
 
 		// Sell almost everything: the tiny remaining position cannot clear
 		// the auction fee, so the markup floors.
 		await model.setHeld('Long Moonleaf Board', 3);
-		expect(model.sections[0].items[0].tier).toBe('illiquid');
-		expect(model.sections[0].items[0].floored).toBe(true);
+		expect(sectionOf(model, PH1).items[0].tier).toBe('illiquid');
+		expect(sectionOf(model, PH1).items[0].floored).toBe(true);
 	});
 
 	it('joins each stock row to its resolved markup and horizon breakdown', async () => {

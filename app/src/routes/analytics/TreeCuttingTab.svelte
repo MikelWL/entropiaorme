@@ -7,6 +7,7 @@
 	import {
 		type ConfidenceMode,
 		type ConfidenceTier,
+		type TreeCuttingSection,
 		createTreeCuttingModel,
 	} from '$lib/features/analytics/treeCuttingModel.svelte';
 	import { formatPed, formatPercent } from '$lib/utils/format';
@@ -145,6 +146,53 @@
 		/>
 		<StatDisplay label="Rate" value={formatPercent(g.lootRate)} />
 	</div>
+{/snippet}
+
+{#snippet subActivityRow(section: TreeCuttingSection, selected: boolean)}
+	<!-- One sub-activity's at-a-glance headline: Name over a compact Cycled /
+		Net / MU Net trio, mirroring the Overall hero's stats. Clicking opens
+		its detail on the right; the selected row is accent-highlighted. -->
+	<li>
+		<button
+			type="button"
+			aria-pressed={selected}
+			onclick={() => model.selectSection(section.toolName)}
+			class="w-full text-left rounded-lg border px-3 py-2.5
+				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
+				{selected
+				? 'border-accent/40 bg-accent/[0.08]'
+				: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
+		>
+			<div class="flex flex-col gap-0.5">
+				<span class="truncate text-sm font-semibold tracking-tight text-text">
+					{section.tree ? `${section.tree} Trees` : section.toolName}
+				</span>
+				{#if section.tree}
+					<span class="truncate text-[11px] text-text-tertiary">{section.toolName}</span>
+				{/if}
+			</div>
+			<div class="mt-2 grid grid-cols-3 gap-2">
+				<div class="flex flex-col gap-0.5">
+					<span class="eyebrow">Cycled</span>
+					<span class="text-xs tabular-nums font-medium text-text">{formatPed(section.cycled)}</span>
+				</div>
+				<div class="flex flex-col gap-0.5">
+					<span class="eyebrow">Net</span>
+					<span class="text-xs tabular-nums font-medium {netTone(section.returns - section.cycled)}">
+						{signedPed(section.returns - section.cycled)}
+					</span>
+				</div>
+				<div class="flex flex-col gap-0.5">
+					<span class="eyebrow">MU Net</span>
+					<span class="text-xs tabular-nums font-medium text-text">
+						{section.muProjectedReturns !== null
+							? signedPed(section.muProjectedReturns - section.cycled)
+							: NO_DATA}
+					</span>
+				</div>
+			</div>
+		</button>
+	</li>
 {/snippet}
 
 {#snippet actionButton(letter: string, label: string, expandedWidth: string)}
@@ -411,107 +459,134 @@
 			</div>
 		{/if}
 
-		{#each model.sections as section (section.toolName)}
-			<!-- hover:z-20 lifts the whole card above later sibling cards so a
-				row tooltip that overflows the card bottom is not painted behind
-				the next one (each card is its own stacking context via
-				backdrop-blur, so the tooltip's own z-index can't escape). -->
-			<Card class="p-5 hover:z-20">
-				{@render statGrid({
-					title: section.tree ? `${section.tree} Trees` : section.toolName,
-					subtitle: section.tree ? section.toolName : null,
-					cycled: section.cycled,
-					returns: section.returns,
-					lootRate: section.lootRate,
-					muProjected: section.muProjectedReturns,
-					muRate: section.muRate,
-				})}
-
-				<!-- Per-item breakdown -->
-				{#if section.items.length > 0}
-					<div class="mt-5 border-t border-border/50 pt-4">
-						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
-							<span class="eyebrow flex-1 min-w-0">Item</span>
-							<span class="eyebrow w-20 text-right shrink-0">TT</span>
-							<span class="eyebrow w-14 text-right shrink-0">Share</span>
-							<span class="eyebrow w-36 text-right shrink-0">Markup</span>
-						</div>
-
-						<ul class="flex flex-col gap-1">
-							{#each section.items as item (item.name)}
-								<li
-									class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
-										hover:bg-surface-hover/30 hover:border-border/40
-										transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
-								>
-									<div class="flex-1 min-w-0 flex items-baseline gap-2">
-										<span class="text-sm font-medium truncate tracking-tight text-text">
-											{item.name}
-										</span>
-										<span class="text-xs text-text-tertiary tabular-nums shrink-0">
-											×{item.quantity}
-										</span>
-									</div>
-
-									<span class="text-sm tabular-nums font-medium text-text shrink-0 w-20 text-right">
-										{formatPed(item.ttValue)}
-									</span>
-
-									<span
-										class="text-sm tabular-nums font-semibold text-accent shrink-0 w-14 text-right tracking-tight"
-									>
-										{item.sharePct.toFixed(1)}%
-									</span>
-
-									<!-- Markup: neutral number + a separate confidence glyph
-										carrying its own hover explanation; floored markups
-										are struck through and shown at the nanocube rate. -->
-									<span
-										class="text-sm tabular-nums shrink-0 w-36 text-right flex items-center justify-end gap-1.5"
-									>
-										{#if !hasMarket(section.muProjectedReturns)}
-											<span class="text-text-tertiary">{NO_DATA}</span>
-										{:else}
-											{#if item.tier === 'middling'}
-												<InfoTip align="right" label="Medium volume">
-													{#snippet trigger()}
-														<span class="text-warning">⚠</span>
-													{/snippet}
-													{@render confidenceBody(item)}
-												</InfoTip>
-											{:else if item.tier === 'illiquid'}
-												<InfoTip align="right" label="Low volume">
-													{#snippet trigger()}
-														<span class="text-error font-semibold">!</span>
-													{/snippet}
-													{@render confidenceBody(item)}
-												</InfoTip>
-											{/if}
-											{#if item.floored && item.ownMarkupPct !== null}
-												<span class="text-text-tertiary line-through">
-													{formatPercent(item.ownMarkupPct / 100)}
-												</span>
-												<span class="text-text-secondary">
-													{formatPercent(item.effectiveMarkupPct / 100)}
-												</span>
-											{:else}
-												<span class="text-text-secondary">
-													{formatPercent(item.effectiveMarkupPct / 100)}
-												</span>
-											{/if}
-										{/if}
-									</span>
-								</li>
-							{/each}
-						</ul>
+		<!-- Sub-activities: the per-tool detail folded to one panel at a time,
+			selected from the list on the left. Mirrors the Overall box's
+			hairline split (compact headlines left, full detail right). A
+			deliberately scalable pattern: tree cutting has three tools today,
+			but the same selector carries an activity with dozens of
+			sub-activities (hunting mobs, mining resources) unchanged.
+			hover:z-20 lifts the card so a detail-row tooltip overflowing its
+			bottom is not painted behind whatever follows. -->
+		<Card class="hover:z-20">
+			<div class="grid sm:grid-cols-[minmax(0,17rem)_1fr]">
+				<!-- Sub-activity list: at-a-glance headline per activity,
+					scrollable and volume-ranked. -->
+				<div class="border-b border-border/40 sm:border-b-0 sm:border-r">
+					<div class="px-4 pt-4 pb-1.5">
+						<span class="eyebrow">Sub-activities</span>
 					</div>
-				{:else}
-					<p class="mt-4 text-xs text-text-tertiary px-2.5">
-						No loot recorded on this tool yet.
-					</p>
+					<ul class="flex flex-col gap-1 px-2 pb-3 max-h-[28rem] overflow-y-auto">
+						{#each model.sections as section (section.toolName)}
+							{@render subActivityRow(
+								section,
+								section.toolName === model.selectedSection?.toolName,
+							)}
+						{/each}
+					</ul>
+				</div>
+
+				<!-- Detail panel: the selected sub-activity's full stat grid and
+					per-item loot breakdown. -->
+				{#if model.selectedSection}
+					{@const section = model.selectedSection}
+					<div class="p-5">
+						{@render statGrid({
+							title: section.tree ? `${section.tree} Trees` : section.toolName,
+							subtitle: section.tree ? section.toolName : null,
+							cycled: section.cycled,
+							returns: section.returns,
+							lootRate: section.lootRate,
+							muProjected: section.muProjectedReturns,
+							muRate: section.muRate,
+						})}
+
+						<!-- Per-item breakdown -->
+						{#if section.items.length > 0}
+							<div class="mt-5 border-t border-border/50 pt-4">
+								<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+									<span class="eyebrow flex-1 min-w-0">Item</span>
+									<span class="eyebrow w-20 text-right shrink-0">TT</span>
+									<span class="eyebrow w-14 text-right shrink-0">Share</span>
+									<span class="eyebrow w-36 text-right shrink-0">Markup</span>
+								</div>
+
+								<ul class="flex flex-col gap-1">
+									{#each section.items as item (item.name)}
+										<li
+											class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
+												hover:bg-surface-hover/30 hover:border-border/40
+												transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
+										>
+											<div class="flex-1 min-w-0 flex items-baseline gap-2">
+												<span class="text-sm font-medium truncate tracking-tight text-text">
+													{item.name}
+												</span>
+												<span class="text-xs text-text-tertiary tabular-nums shrink-0">
+													×{item.quantity}
+												</span>
+											</div>
+
+											<span class="text-sm tabular-nums font-medium text-text shrink-0 w-20 text-right">
+												{formatPed(item.ttValue)}
+											</span>
+
+											<span
+												class="text-sm tabular-nums font-semibold text-accent shrink-0 w-14 text-right tracking-tight"
+											>
+												{item.sharePct.toFixed(1)}%
+											</span>
+
+											<!-- Markup: neutral number + a separate confidence glyph
+												carrying its own hover explanation; floored markups
+												are struck through and shown at the nanocube rate. -->
+											<span
+												class="text-sm tabular-nums shrink-0 w-36 text-right flex items-center justify-end gap-1.5"
+											>
+												{#if !hasMarket(section.muProjectedReturns)}
+													<span class="text-text-tertiary">{NO_DATA}</span>
+												{:else}
+													{#if item.tier === 'middling'}
+														<InfoTip align="right" label="Medium volume">
+															{#snippet trigger()}
+																<span class="text-warning">⚠</span>
+															{/snippet}
+															{@render confidenceBody(item)}
+														</InfoTip>
+													{:else if item.tier === 'illiquid'}
+														<InfoTip align="right" label="Low volume">
+															{#snippet trigger()}
+																<span class="text-error font-semibold">!</span>
+															{/snippet}
+															{@render confidenceBody(item)}
+														</InfoTip>
+													{/if}
+													{#if item.floored && item.ownMarkupPct !== null}
+														<span class="text-text-tertiary line-through">
+															{formatPercent(item.ownMarkupPct / 100)}
+														</span>
+														<span class="text-text-secondary">
+															{formatPercent(item.effectiveMarkupPct / 100)}
+														</span>
+													{:else}
+														<span class="text-text-secondary">
+															{formatPercent(item.effectiveMarkupPct / 100)}
+														</span>
+													{/if}
+												{/if}
+											</span>
+										</li>
+									{/each}
+								</ul>
+							</div>
+						{:else}
+							<p class="mt-4 text-xs text-text-tertiary px-2.5">
+								No loot recorded on this tool yet.
+							</p>
+						{/if}
+					</div>
 				{/if}
-			</Card>
-		{/each}
+			</div>
+		</Card>
 
 		<div class="space-y-1 text-xs text-text-tertiary">
 			<p>
