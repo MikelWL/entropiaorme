@@ -92,7 +92,7 @@ async fn the_empty_harvest_serialises_to_an_empty_tool_table() {
     let dir = tempfile::tempdir().unwrap();
     let api = analytics_api(dir.path()).await;
 
-    let harvest = api.analytics_harvest().await.unwrap();
+    let harvest = api.analytics_harvest("all").await.unwrap();
     assert_eq!(
         serde_json::to_string(&harvest).unwrap(),
         "{\"toolComparisons\":[]}"

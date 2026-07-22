@@ -47,8 +47,8 @@ use serde::Deserialize;
 use tokio::sync::OnceCell;
 
 use crate::analytics::{
-    analytics_error, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem, LedgerPage, LedgerPreset,
-    LedgerSummary,
+    analytics_error, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem,
+    LedgerPage, LedgerPreset, LedgerSummary,
 };
 use crate::tracking::{
     build_snapshot_value, SessionDetail, SessionPage, TrackingSession, TrackingSnapshot,
@@ -219,10 +219,10 @@ impl DemoState {
         Ok(crate::analytics::hunting_dto(value))
     }
 
-    async fn analytics_harvest(&self) -> Result<AnalyticsHarvest, ApiError> {
+    async fn analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
         let value = self
             .analytics
-            .harvest()
+            .harvest(period)
             .await
             .map_err(analytics_error("demo analytics harvest"))?;
         Ok(crate::analytics::harvest_dto(value))
@@ -643,9 +643,9 @@ impl Api {
         self.ensure_demo().await?.analytics_hunting().await
     }
 
-    /// The demo Tree Cutting aggregate.
-    pub async fn demo_analytics_harvest(&self) -> Result<AnalyticsHarvest, ApiError> {
-        self.ensure_demo().await?.analytics_harvest().await
+    /// The demo Tree Cutting aggregate for a named period.
+    pub async fn demo_analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
+        self.ensure_demo().await?.analytics_harvest(period).await
     }
 
     /// One demo ledger page plus the cursor for the next page.
@@ -837,7 +837,7 @@ mod tests {
         );
         assert_matches_golden(
             "analytics_harvest",
-            &to_json(&demo.analytics_harvest().await.expect("harvest")),
+            &to_json(&demo.analytics_harvest("all").await.expect("harvest")),
         );
         assert_matches_golden(
             "analytics_ledger",

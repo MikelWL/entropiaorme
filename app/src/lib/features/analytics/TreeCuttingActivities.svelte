@@ -1,23 +1,44 @@
 <script lang="ts">
 	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import type { TreeCuttingItem, TreeCuttingSection } from './treeCuttingModel.svelte';
-	import TreeCuttingStats from './TreeCuttingStats.svelte';
+	import StatDisplay from '$lib/components/StatDisplay.svelte';
+	import type { SortDir, SortKey } from '$lib/view/tableModel.svelte';
+	import {
+		treeCuttingActivityName,
+		type TreeCuttingActivitySortKey,
+		type TreeCuttingItem,
+		type TreeCuttingSection,
+	} from './treeCuttingModel.svelte';
 	import { formatPed, formatPercent } from '$lib/utils/format';
 
 	let {
 		sections,
 		selected,
 		onselect,
+		sortKey,
+		sortDir,
+		onsort,
 	}: {
 		sections: TreeCuttingSection[];
 		selected: TreeCuttingSection | null;
 		onselect: (toolName: string) => void;
+		sortKey: SortKey<TreeCuttingSection> | undefined;
+		sortDir: SortDir;
+		onsort: (key: TreeCuttingActivitySortKey) => void;
 	} = $props();
 
 	const NO_DATA = String.fromCharCode(8212);
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
+	const realisedMuTone = (value: number) =>
+		value > 0 ? 'text-positive' : value < 0 ? 'text-negative' : 'text-text-secondary';
+	const rateTone = (value: number) => netTone(value - 1);
+	const sortArrow = (key: TreeCuttingActivitySortKey) =>
+		sortKey === key ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '';
+	const sortDescription = (key: TreeCuttingActivitySortKey, label: string) => {
+		if (sortKey !== key) return `Sort by ${label}`;
+		return `Sort by ${label}, currently ${sortDir === 'asc' ? 'ascending' : 'descending'}`;
+	};
 	const marketPeriod = (horizon: string) =>
 		horizon === 'week' || horizon === 'month' || horizon === 'year'
 			? `last ${horizon}`
@@ -116,46 +137,79 @@
 			type="button"
 			aria-pressed={isSelected}
 			onclick={() => onselect(section.toolName)}
-			class="w-full flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left
+			class="w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left
 				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
 				{isSelected
 					? 'border-accent/40 bg-accent/[0.08]'
 					: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
 		>
-			<span class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text">
-				{section.tree ? `${section.tree} Trees` : section.toolName}
+			<span
+				class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text"
+				title={treeCuttingActivityName(section)}
+			>
+				{treeCuttingActivityName(section)}
 			</span>
-			<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
+			<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
 				{formatPed(section.cycled)}
 			</span>
-			<span
-				class="w-16 shrink-0 text-right text-xs tabular-nums {netTone(section.returns - section.cycled)}"
-			>
-				{signedPed(section.returns - section.cycled)}
-			</span>
 			<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
-				{section.muProjectedReturns !== null
-					? signedPed(section.muProjectedReturns - section.cycled)
-					: NO_DATA}
+				{section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
+			</span>
+			<span
+				class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}"
+			>
+				{formatPercent(section.realisedRate)}
 			</span>
 		</button>
 	</li>
 {/snippet}
 
 <Card class="hover:z-20">
-	<div class="grid sm:grid-cols-[minmax(0,21rem)_1fr]">
-		<div class="border-b border-border/40 sm:border-b-0 sm:border-r">
+	<div class="grid sm:grid-cols-[minmax(21rem,40%)_minmax(0,1fr)]">
+		<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 			<div class="px-2 pt-4">
 				<div
-					class="flex items-center gap-2.5 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
+					class="flex items-center gap-2 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
 				>
-					<span class="eyebrow flex-1 min-w-0">Activity</span>
-					<span class="eyebrow w-16 shrink-0 text-right">Cycled</span>
-					<span class="eyebrow w-16 shrink-0 text-right">TT Net</span>
-					<span class="eyebrow w-16 shrink-0 text-right">MU Net</span>
+					<button
+						type="button"
+						class="eyebrow flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
+						aria-label={sortDescription('toolName', 'Activity')}
+						onclick={() => onsort('toolName')}
+					>
+						Activity
+						{#if sortKey === 'toolName'}<span class="text-accent">{sortArrow('toolName')}</span>{/if}
+					</button>
+					<button
+						type="button"
+						class="eyebrow flex w-14 shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						aria-label={sortDescription('cycled', 'Cycled')}
+						onclick={() => onsort('cycled')}
+					>
+						Cycled
+						{#if sortKey === 'cycled'}<span class="text-accent">{sortArrow('cycled')}</span>{/if}
+					</button>
+					<button
+						type="button"
+						class="eyebrow flex w-16 shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						aria-label={sortDescription('muRate', 'MU Rate')}
+						onclick={() => onsort('muRate')}
+					>
+						MU Rate
+						{#if sortKey === 'muRate'}<span class="text-accent">{sortArrow('muRate')}</span>{/if}
+					</button>
+					<button
+						type="button"
+						class="eyebrow flex w-[4.5rem] shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						aria-label={sortDescription('realisedRate', 'Realised Rate')}
+						onclick={() => onsort('realisedRate')}
+					>
+						Realised Rate
+						{#if sortKey === 'realisedRate'}<span class="text-accent">{sortArrow('realisedRate')}</span>{/if}
+					</button>
 				</div>
 			</div>
-			<ul class="flex flex-col gap-1 px-2 pb-3 max-h-[26rem] overflow-y-auto">
+			<ul class="flex max-h-[32rem] flex-col gap-1 overflow-y-auto px-2 pb-3">
 				{#each sections as section (section.toolName)}
 					{@render subActivityRow(section, section.toolName === selected?.toolName)}
 				{/each}
@@ -163,16 +217,47 @@
 		</div>
 
 		{#if selected}
-			<div class="p-5">
-				<TreeCuttingStats
-					cycled={selected.cycled}
-					returns={selected.returns}
-					lootRate={selected.lootRate}
-					muProjectedReturns={selected.muProjectedReturns}
-					muRate={selected.muRate}
-					realisedReturns={selected.realisedReturns}
-					realisedRate={selected.realisedRate}
-				/>
+			<div class="min-w-0 p-5">
+				<div class="grid grid-cols-3 gap-x-5">
+					<StatDisplay
+						label="TT Net"
+						value={signedPed(selected.returns - selected.cycled)}
+						unit="PED"
+					/>
+					<StatDisplay
+						label="MU Net"
+						value={selected.muProjectedReturns !== null
+							? signedPed(selected.muProjectedReturns - selected.cycled)
+							: NO_DATA}
+						unit={selected.muProjectedReturns !== null ? 'PED' : ''}
+					/>
+					<StatDisplay
+						label="Realised MU"
+						value={signedPed(selected.realisedReturns - selected.returns)}
+						valueClass={realisedMuTone(selected.realisedReturns - selected.returns)}
+						unit="PED"
+					>
+						{#snippet labelSuffix()}
+							<InfoTip align="right" width="w-80" label="How Realised MU is calculated">
+								<p class="text-xs font-semibold leading-relaxed text-text">
+									Realised MU: Markup confirmed by completed sales
+								</p>
+								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+									Loot TT is already counted when it is acquired. A sale adds only the amount
+									received above TT, after auction fees.
+								</p>
+								<p class="mt-2 text-xs leading-relaxed text-text-secondary">
+									That net markup is split between the activities that produced the sold stock,
+									based on each activity's share of that stock.
+								</p>
+								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+									This activity currently has
+									{signedPed(selected.realisedReturns - selected.returns)} PED of Realised MU.
+								</p>
+							</InfoTip>
+						{/snippet}
+					</StatDisplay>
+				</div>
 
 				{#if selected.items.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">

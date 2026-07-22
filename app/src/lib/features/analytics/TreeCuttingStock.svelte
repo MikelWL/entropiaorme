@@ -148,20 +148,18 @@
 
 <div class="sm:border-l sm:border-border/40 sm:pl-8">
 	<div class="flex items-center gap-2 pb-2">
-		<span class="eyebrow">Current stock</span>
+		<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
 		<InfoTip align="right" label="What current stock means">
 			<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
-				<p class="text-text">
-					How much of each item you still hold, out of everything you have recorded harvesting.
+				<p class="font-semibold text-text">
+					Your Current Stock: Loot you still hold
 				</p>
 				<p>
-					Confidence uses market-wide MU and TT sales. It finds the sale amount that produces 5
-					PED of markup. At that amount, the 0.5 PED minimum auction fee is 10% of the markup.
-					The amount you hold does not affect it.
+					Loot recorded from tree cutting, minus loot you have already sold or converted.
 				</p>
 				<p>
-					For now this shows recorded harvest. Confirmed transactions will later keep the position
-					and realised results in sync automatically.
+					Stock TT is its Trade Terminal value. Market markup only becomes a realised gain when a
+					sale is confirmed.
 				</p>
 			</div>
 		</InfoTip>
@@ -249,7 +247,7 @@
 				</div>
 
 				<div class="shrink-0 flex items-center justify-end gap-1.5">
-					{@render actionButton('N', 'Turn into Nanocube', 'hover:w-44')}
+					{@render actionButton('N', 'Nanocube', 'hover:w-44')}
 					{@render actionButton('S', 'Sell', 'hover:w-16')}
 				</div>
 			</li>

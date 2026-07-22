@@ -380,11 +380,12 @@ impl Api {
         Ok(hunting_dto(value))
     }
 
-    /// The Tree Cutting aggregate: the per-tool table.
-    pub async fn analytics_harvest(&self) -> Result<AnalyticsHarvest, ApiError> {
+    /// The Tree Cutting aggregate for a named period: the per-tool table
+    /// and its matching loot composition.
+    pub async fn analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
         let value = self
             .analytics
-            .harvest()
+            .harvest(period)
             .await
             .map_err(analytics_error("analytics harvest"))?;
         Ok(harvest_dto(value))

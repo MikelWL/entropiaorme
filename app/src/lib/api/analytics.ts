@@ -23,10 +23,10 @@ export const getAnalyticsHunting = guideSwapped(
 	commands.analyticsHunting,
 	commands.demoAnalyticsHunting,
 );
-export const getAnalyticsHarvest = guideSwapped(
-	commands.analyticsHarvest,
-	commands.demoAnalyticsHarvest,
-);
+const readAnalyticsHarvest = guideSwapped(commands.analyticsHarvest, commands.demoAnalyticsHarvest);
+export async function getAnalyticsHarvest(period: string = 'all') {
+	return readAnalyticsHarvest(period);
+}
 export const getLedgerPresets = guideSwapped(
 	commands.ledgerPresetsList,
 	commands.demoLedgerPresetsList,

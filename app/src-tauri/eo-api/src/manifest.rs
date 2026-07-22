@@ -15,9 +15,8 @@ use serde_json::Value;
 
 use crate::analytics::{
     AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, HarvestStockInput, HarvestStockRemoval,
-    InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput, LedgerSummary,
+    InventoryItem, InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult,
+    LedgerEntryInput, LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -38,8 +37,8 @@ use crate::maps::{
     PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use crate::market::{
-    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
-    MarketHarvestData, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHarvestData,
+    MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -498,7 +497,10 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "analytics_harvest",
-            args: Vec::new(),
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
             returns: Some(schema(schema_for!(AnalyticsHarvest))),
         },
         CommandSpec {
@@ -957,7 +959,10 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "demo_analytics_harvest",
-            args: Vec::new(),
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
             returns: Some(schema(schema_for!(AnalyticsHarvest))),
         },
         CommandSpec {

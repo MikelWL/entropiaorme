@@ -1624,20 +1624,21 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
 /// to a maintained projection only if that stops holding. Swings with no
 /// recorded tool (a rare attribution gap) are excluded rather than
 /// surfaced as a phantom row.
-async fn harvest_impl(db: &Db) -> Result<HarvestData, DbError> {
+async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, DbError> {
     let (raw, composition): (
         Vec<(String, i64, f64, f64)>,
         Vec<(String, String, i64, f64)>,
     ) = db
-        .with_reader(|conn| {
+        .with_reader(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT tool_name, COUNT(*), COALESCE(SUM(cost_ped), 0), \
-                 COALESCE(SUM(loot_total_ped), 0) FROM harvest_events \
-                 WHERE tool_name IS NOT NULL AND tool_name != '' \
+                 COALESCE(SUM(loot_total_ped), 0) FROM harvest_events h \
+                 WHERE h.tool_name IS NOT NULL AND h.tool_name != '' \
+                   AND (?1 IS NULL OR h.timestamp >= ?1) \
                  GROUP BY tool_name",
             )?;
             let raw = stmt
-                .query_map([], |row| {
+                .query_map([epoch_start], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, i64>(1)?,
@@ -1655,11 +1656,12 @@ async fn harvest_impl(db: &Db) -> Result<HarvestData, DbError> {
                  COALESCE(SUM(l.value_ped), 0) \
                  FROM harvest_loot_items l JOIN harvest_events h ON h.id = l.harvest_id \
                  WHERE h.tool_name IS NOT NULL AND h.tool_name != '' \
+                   AND (?1 IS NULL OR h.timestamp >= ?1) \
                    AND l.deactivated_at IS NULL \
                  GROUP BY h.tool_name, l.item_name",
             )?;
             let composition = comp_stmt
-                .query_map([], |row| {
+                .query_map([epoch_start], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
@@ -1747,10 +1749,12 @@ impl AnalyticsService {
         Ok(hunting_impl(&self.db).await?)
     }
 
-    /// The Tree Cutting aggregate: the per-tool comparison table over
-    /// every recorded harvest swing.
-    pub async fn harvest(&self) -> Result<HarvestData, AnalyticsError> {
-        Ok(harvest_impl(&self.db).await?)
+    /// The Tree Cutting aggregate for a named period (`30d` / `90d` /
+    /// `1y`, or all-time for any other value): the per-tool comparison
+    /// table and its matching loot composition.
+    pub async fn harvest(&self, period: &str) -> Result<HarvestData, AnalyticsError> {
+        let now = naive_to_epoch(self.clock.now());
+        Ok(harvest_impl(&self.db, period_epoch(period, now)).await?)
     }
 
     /// The whole-ledger summary for a named period (`30d` / `90d` / `1y`,
@@ -2580,7 +2584,7 @@ mod tests {
     #[tokio::test]
     async fn empty_harvest_emits_an_empty_tool_table() {
         let (_dir, db) = open_env().await;
-        let value = to_json(harvest_impl(&db).await.unwrap());
+        let value = to_json(harvest_impl(&db, None).await.unwrap());
         assert_eq!(to_wire_json(&value), "{\"toolComparisons\":[]}");
     }
 
@@ -2614,7 +2618,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let v = to_json(harvest_impl(&db).await.unwrap());
+        let v = to_json(harvest_impl(&db, None).await.unwrap());
         let tools = v["toolComparisons"].as_array().unwrap();
         assert_eq!(tools.len(), 2, "NULL and empty tool names are excluded");
         // Axe A: 3 swings (failed swings still count), 0.3 cycled, 0.36 loot.
@@ -2628,6 +2632,45 @@ mod tests {
         assert_eq!(tools[1]["cycled"], json!(0.2));
         assert_eq!(tools[1]["returns"], json!(0.1));
         assert_eq!(tools[1]["lootRate"], json!(0.5));
+    }
+
+    #[tokio::test]
+    async fn harvest_period_scopes_totals_and_loot_composition_to_the_same_events() {
+        let (_dir, db) = open_env().await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at) VALUES('hs',100.0,2000.0)",
+                [],
+            )?;
+            for (id, timestamp, tool, cost, loot) in [
+                ("old", 100.0, "Old Tool", 1.0, 2.0),
+                ("recent", 1000.0, "Recent Tool", 3.0, 6.0),
+            ] {
+                conn.execute(
+                    "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,cost_ped,loot_total_ped) \
+                     VALUES(?1,'hs',?2,1,?3,?4,?5)",
+                    rusqlite::params![id, timestamp, tool, cost, loot],
+                )?;
+                conn.execute(
+                    "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped) \
+                     VALUES(?1,?2,1,?3)",
+                    rusqlite::params![id, format!("{tool} Loot"), loot],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let period = harvest_impl(&db, Some(500.0)).await.unwrap();
+        assert_eq!(period.tool_comparisons.len(), 1);
+        let row = &period.tool_comparisons[0];
+        assert_eq!(row.name, "Recent Tool");
+        assert_eq!(row.cycled, 3.0);
+        assert_eq!(row.returns, 6.0);
+        assert_eq!(row.loot_items.len(), 1);
+        assert_eq!(row.loot_items[0].item_name, "Recent Tool Loot");
+        assert_eq!(row.loot_items[0].value_ped, 6.0);
     }
 
     /// Per-tool loot composition: active items only, grouped by the
@@ -2669,7 +2712,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let v = to_json(harvest_impl(&db).await.unwrap());
+        let v = to_json(harvest_impl(&db, None).await.unwrap());
         let tools = v["toolComparisons"].as_array().unwrap();
         // Axe A: two active items, TT-desc (Long Moonleaf Board first);
         // the deactivated Wood Shavings row is excluded from its total.

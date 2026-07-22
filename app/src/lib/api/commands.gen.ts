@@ -2467,8 +2467,8 @@ export async function analyticsHunting(): Promise<AnalyticsHunting> {
 	return invokeCommand('analytics_hunting', {});
 }
 
-export async function analyticsHarvest(): Promise<AnalyticsHarvest> {
-	return invokeCommand('analytics_harvest', {});
+export async function analyticsHarvest(period: string): Promise<AnalyticsHarvest> {
+	return invokeCommand('analytics_harvest', { period });
 }
 
 export async function harvestStock(): Promise<HarvestStockRemoval[]> {
@@ -2683,8 +2683,8 @@ export async function demoAnalyticsHunting(): Promise<AnalyticsHunting> {
 	return invokeCommand('demo_analytics_hunting', {});
 }
 
-export async function demoAnalyticsHarvest(): Promise<AnalyticsHarvest> {
-	return invokeCommand('demo_analytics_harvest', {});
+export async function demoAnalyticsHarvest(period: string): Promise<AnalyticsHarvest> {
+	return invokeCommand('demo_analytics_harvest', { period });
 }
 
 export async function demoLedgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

@@ -28,6 +28,8 @@ import {
 } from '$lib/api';
 import type { HarvestLootItem, HarvestToolComparison } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
+import { createTableModel } from '$lib/view/tableModel.svelte';
+import { analyticsPeriod, type AnalyticsRange, isAnalyticsRange } from './analyticsRange';
 
 // ── Holding-independent market opportunity ────────────────────────────
 
@@ -243,6 +245,12 @@ export type TreeCuttingSection = {
 	items: TreeCuttingItem[];
 };
 
+export type TreeCuttingActivitySortKey = 'toolName' | 'cycled' | 'realisedRate' | 'muRate';
+
+export function treeCuttingActivityName(section: TreeCuttingSection): string {
+	return section.tree ? `${section.tree} Trees` : section.toolName;
+}
+
 export function primaryTree(items: HarvestLootItem[]): string | null {
 	let best: { tree: string; tt: number } | null = null;
 	for (const item of items) {
@@ -355,6 +363,9 @@ function toSection(
 
 export function createTreeCuttingModel() {
 	let data = $state<HarvestData | null>(null);
+	// Current stock is a lifetime position even when the analytics evidence
+	// is scoped to a shorter period.
+	let stockData = $state<HarvestData | null>(null);
 	let market = $state<MarketHarvestData | null>(null);
 	// The removed overlay (item -> quantity sold/spent) drives current stock
 	// only. Reassigned wholesale so derivations re-run without changing the
@@ -363,13 +374,17 @@ export function createTreeCuttingModel() {
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
+	let activeRange = $state<AnalyticsRange>('All Time');
 	// Which sub-activity's detail is open. Keyed by tool name; null falls
 	// back to the highest-volume section, so the busiest activity opens by
 	// default and a stale key (a tool that dropped out of the data) degrades
 	// to that same fallback rather than an empty panel.
 	let selectedTool = $state<string | null>(null);
 
-	async function loadData() {
+	let loadEpoch = 0;
+
+	async function loadData(period: string = 'all') {
+		const epoch = ++loadEpoch;
 		loading = true;
 		error = null;
 		try {
@@ -377,18 +392,24 @@ export function createTreeCuttingModel() {
 			// stock overlay are best-effort context, so either failing
 			// degrades gracefully (MU figures blank / no removals) rather
 			// than blanking the tab.
-			const [harvest, markets, stock] = await Promise.all([
-				getAnalyticsHarvest(),
+			const harvestRequest = getAnalyticsHarvest(period);
+			const lifetimeHarvestRequest = period === 'all' ? harvestRequest : getAnalyticsHarvest('all');
+			const [harvest, lifetimeHarvest, markets, stock] = await Promise.all([
+				harvestRequest,
+				lifetimeHarvestRequest,
 				getMarketHarvestMarkups().catch(() => null),
 				getHarvestStock().catch(() => []),
 			]);
+			if (epoch !== loadEpoch) return;
 			data = harvest;
+			stockData = lifetimeHarvest;
 			market = markets;
 			removed = new Map(stock.map((r) => [r.itemName, r.removedQty]));
 		} catch (e) {
+			if (epoch !== loadEpoch) return;
 			error = describeError(e, 'Failed to load tree cutting data');
 		} finally {
-			loading = false;
+			if (epoch === loadEpoch) loading = false;
 		}
 	}
 
@@ -403,6 +424,21 @@ export function createTreeCuttingModel() {
 			.sort((a, b) => b.cycled - a.cycled || a.toolName.localeCompare(b.toolName));
 	});
 
+	const activityTable = createTableModel<TreeCuttingSection>({
+		rows: () => sections,
+		pageSize: Number.MAX_SAFE_INTEGER,
+		initialSort: { key: 'cycled', dir: 'desc' },
+		defaultSortDirs: {
+			toolName: 'asc',
+			cycled: 'desc',
+			realisedRate: 'desc',
+			muRate: 'desc',
+		},
+		comparators: {
+			toolName: (a, b) => treeCuttingActivityName(a).localeCompare(treeCuttingActivityName(b)),
+		},
+	});
+
 	/** The sub-activity whose detail panel is open: the selected tool, or the
 	 * highest-volume section when nothing is selected or the selection no
 	 * longer resolves. */
@@ -415,8 +451,8 @@ export function createTreeCuttingModel() {
 	 * and TT, ordered by stock TT (most-held first). The item's market
 	 * opportunity is intrinsic and therefore does not consume held TT. */
 	const stock = $derived.by<TreeCuttingStock[]>(() => {
-		if (!data) return [];
-		const looted = lootedByItem(data.toolComparisons);
+		if (!stockData) return [];
+		const looted = lootedByItem(stockData.toolComparisons);
 		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
 		const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
 		const rows = [...looted.entries()].map(([itemName, item]) => {
@@ -456,8 +492,8 @@ export function createTreeCuttingModel() {
 	 * persist the derived removed quantity. Optimistic: the local overlay
 	 * updates immediately, then the write lands. */
 	async function setHeld(itemName: string, heldQty: number) {
-		if (!data) return;
-		const looted = lootedByItem(data.toolComparisons).get(itemName);
+		if (!stockData) return;
+		const looted = lootedByItem(stockData.toolComparisons).get(itemName);
 		if (!looted) return;
 		const held = Math.min(Math.max(Math.floor(heldQty), 0), looted.quantity);
 		const removedQty = looted.quantity - held;
@@ -514,8 +550,20 @@ export function createTreeCuttingModel() {
 		set confidenceMode(mode: ConfidenceMode) {
 			confidenceMode = mode;
 		},
+		get activeRange() {
+			return activeRange;
+		},
+		set activeRange(value: string) {
+			if (isAnalyticsRange(value)) activeRange = value;
+		},
+		get period() {
+			return analyticsPeriod(activeRange);
+		},
 		get sections() {
 			return sections;
+		},
+		get activityTable() {
+			return activityTable;
 		},
 		get selectedSection() {
 			return selectedSection;

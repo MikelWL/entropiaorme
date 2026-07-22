@@ -194,7 +194,7 @@ fn facade_microbench() {
         // aggregating, so it stays the family's costliest read even empty.
         bench!("analytics_overview", api.analytics_overview("all"));
         bench!("analytics_hunting", api.analytics_hunting());
-        bench!("analytics_harvest", api.analytics_harvest());
+        bench!("analytics_harvest", api.analytics_harvest("all"));
         bench!("ledger_list", api.ledger_list(None, None));
         bench!("ledger_presets_list", api.ledger_presets_list());
         bench!("inventory_list", api.inventory_list());

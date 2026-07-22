@@ -22,6 +22,10 @@ export interface TableModelOptions<T> {
 	 */
 	comparators?: Partial<Record<SortKey<T>, (a: T, b: T) => number>>;
 	initialSort?: { key: SortKey<T>; dir: SortDir };
+	/** Direction to use when a key becomes active for the first time.
+	 * Text normally reads ascending, while magnitude comparisons often
+	 * benefit from showing the largest values first. */
+	defaultSortDirs?: Partial<Record<SortKey<T>, SortDir>>;
 }
 
 export interface TableModel<T> {
@@ -54,7 +58,7 @@ function defaultCompare(aVal: unknown, bVal: unknown, dir: 1 | -1): number {
  * page into range without losing the user's position unnecessarily.
  */
 export function createTableModel<T>(options: TableModelOptions<T>): TableModel<T> {
-	const { rows, pageSize, searchText, categoryOf, comparators } = options;
+	const { rows, pageSize, searchText, categoryOf, comparators, defaultSortDirs } = options;
 
 	let search = $state('');
 	let category = $state<string | null>(null);
@@ -158,7 +162,7 @@ export function createTableModel<T>(options: TableModelOptions<T>): TableModel<T
 				sortDir = sortDir === 'asc' ? 'desc' : 'asc';
 			} else {
 				sortKey = key;
-				sortDir = 'asc';
+				sortDir = defaultSortDirs?.[key] ?? 'asc';
 			}
 			rawPage = 0;
 		},

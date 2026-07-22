@@ -198,12 +198,42 @@ describe('marketOpportunity', () => {
 });
 
 describe('loadData', () => {
+	it('maps the selected analytics range to the backend period', () => {
+		const model = createTreeCuttingModel();
+		expect(model.period).toBe('all');
+		model.activeRange = '30d';
+		expect(model.period).toBe('30d');
+		model.activeRange = '90d';
+		expect(model.period).toBe('90d');
+	});
+
 	it('surfaces a load failure', async () => {
 		mocked.getAnalyticsHarvest.mockRejectedValue(new Error('backend unreachable'));
 		const model = createTreeCuttingModel();
 		await model.loadData();
 		expect(model.error).toBe('backend unreachable');
 		expect(model.data).toBeNull();
+	});
+
+	it('scopes activity evidence while keeping current stock all-time', async () => {
+		const allTime = harvest();
+		const recent: AnalyticsHarvest = { toolComparisons: [allTime.toolComparisons[0]] };
+		mocked.getAnalyticsHarvest.mockImplementation(async (period = 'all') =>
+			period === '30d' ? recent : allTime,
+		);
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel();
+
+		model.activeRange = '30d';
+		await model.loadData(model.period);
+
+		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledWith('30d');
+		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledWith('all');
+		expect(model.sections.map((section) => section.toolName)).toEqual([PH1]);
+		expect(model.stock.map((item) => item.itemName)).toEqual([
+			'Wood Shavings',
+			'Long Moonleaf Board',
+		]);
 	});
 });
 
@@ -340,6 +370,46 @@ describe('sections', () => {
 		// Selecting another sub-activity swaps the open detail.
 		model.selectSection(PH1);
 		expect(model.selectedSection?.toolName).toBe(PH1);
+	});
+
+	it('sorts the activity comparison by either economic rate without changing selection', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		expect(model.activityTable.sortKey).toBe('cycled');
+		expect(model.activityTable.sortDir).toBe('desc');
+		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH4, PH1]);
+
+		model.selectSection(PH4);
+		model.activityTable.setSort('realisedRate');
+		expect(model.activityTable.sortDir).toBe('desc');
+		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH1, PH4]);
+		expect(model.selectedSection?.toolName).toBe(PH4);
+
+		model.activityTable.setSort('muRate');
+		expect(model.activityTable.sortDir).toBe('desc');
+		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH1, PH4]);
+		expect(model.selectedSection?.toolName).toBe(PH4);
+	});
+
+	it('reactively reorders an active MU Rate sort when confidence changes', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const changingMarket = market();
+		changingMarket.items = [
+			obs('Long Moonleaf Board', 300, 'week', 320.34, 320.34),
+			obs('Wood Shavings', 150, 'month', 363.61, 0),
+		];
+		mocked.getMarketHarvestMarkups.mockResolvedValue(changingMarket);
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		model.activityTable.setSort('muRate');
+		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH1, PH4]);
+
+		model.confidenceMode = 'all';
+		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH4, PH1]);
 	});
 });
 

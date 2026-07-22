@@ -3,13 +3,13 @@
 	import Divider from '$lib/components/Divider.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
 	import {
 		createOverviewModel,
 		labelFor,
 		PIE_C,
 		PIE_R,
-		PROGRESSION_GAIN_TAGS,
-		ranges
+		PROGRESSION_GAIN_TAGS
 	} from '$lib/features/analytics/overviewModel.svelte';
 	import { formatDate, formatPed, formatPercent } from '$lib/utils/format';
 
@@ -42,7 +42,7 @@
 
 					<SegmentedControl
 						class="flex-shrink-0"
-						options={ranges.map((r) => ({ id: r, label: r }))}
+						options={ANALYTICS_RANGES.map((r) => ({ id: r, label: r }))}
 						active={model.activeRange}
 						onchange={(id) => (model.activeRange = id)}
 					/>

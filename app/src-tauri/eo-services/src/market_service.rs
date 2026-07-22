@@ -842,11 +842,22 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
         assert_eq!(data.nanocube_markup_pct, Some(100.84));
         // Only the harvest-looted items, name-ordered.
         assert_eq!(
-            data.items.iter().map(|i| i.item_name.as_str()).collect::<Vec<_>>(),
-            vec!["Long Moonleaf Board", "Moonleaf Board", "Short Moonleaf Board", "Wood Shavings"],
+            data.items
+                .iter()
+                .map(|i| i.item_name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Long Moonleaf Board",
+                "Moonleaf Board",
+                "Short Moonleaf Board",
+                "Wood Shavings"
+            ],
         );
-        let by_name: std::collections::HashMap<&str, &HarvestItemMarkup> =
-            data.items.iter().map(|i| (i.item_name.as_str(), i)).collect();
+        let by_name: std::collections::HashMap<&str, &HarvestItemMarkup> = data
+            .items
+            .iter()
+            .map(|i| (i.item_name.as_str(), i))
+            .collect();
         // Each item resolves to its finest available horizon, with that
         // horizon's TT turnover.
         // Every item's breakdown is ordered day, week, month, year.
@@ -871,7 +882,10 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
             ],
         );
         assert_eq!(by_name["Short Moonleaf Board"].markup_pct, Some(200.0));
-        assert_eq!(by_name["Short Moonleaf Board"].horizon.as_deref(), Some("month"));
+        assert_eq!(
+            by_name["Short Moonleaf Board"].horizon.as_deref(),
+            Some("month")
+        );
         assert_eq!(by_name["Short Moonleaf Board"].sales_ped, Some(30.0));
         // Fell back to month; the day/week rows carry no markup and zero
         // volume, still present in the breakdown.

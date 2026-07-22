@@ -30,17 +30,12 @@ import type {
 } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 import { createTableModel } from '$lib/view/tableModel.svelte';
+import { ANALYTICS_RANGES, analyticsPeriod, type AnalyticsRange } from './analyticsRange';
 
 export const PAGE_SIZE = 5;
 
-export const netRanges = ['All Time', '30d', '90d', '1y'] as const;
-export type NetRange = (typeof netRanges)[number];
-const netRangePeriods: Record<NetRange, string> = {
-	'All Time': 'all',
-	'30d': '30d',
-	'90d': '90d',
-	'1y': '1y',
-};
+export const netRanges = ANALYTICS_RANGES;
+export type NetRange = AnalyticsRange;
 
 export const tagLabels: Record<string, string> = {
 	equipment: 'Equipment',
@@ -66,7 +61,7 @@ export function createLedgerModel() {
 
 	async function loadSummary() {
 		try {
-			const summary = await getLedgerSummary(netRangePeriods[netRange]);
+			const summary = await getLedgerSummary(analyticsPeriod(netRange));
 			summaryGains = summary.gains;
 			summaryLosses = summary.losses;
 		} catch (e) {

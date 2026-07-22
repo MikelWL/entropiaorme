@@ -6,6 +6,7 @@
 	import TreeCuttingActivities from '$lib/features/analytics/TreeCuttingActivities.svelte';
 	import TreeCuttingStats from '$lib/features/analytics/TreeCuttingStats.svelte';
 	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
+	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
 	import {
 		createTreeCuttingModel,
 		type ConfidenceMode,
@@ -14,7 +15,7 @@
 	const model = createTreeCuttingModel();
 
 	$effect(() => {
-		void model.loadData();
+		void model.loadData(model.period);
 	});
 
 	const MODE_OPTIONS: { id: ConfidenceMode; label: string }[] = [
@@ -32,37 +33,50 @@
 	<div class="space-y-5" data-guide-anchor="analytics-treecutting-area">
 		<ErrorNotice message={model.error} />
 
-		<div class="flex items-center justify-end gap-2.5">
-			<span class="eyebrow">Markup confidence</span>
-			<InfoTip label="How markup confidence works">
-				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
-					<p class="text-text">
-						Sets which items count toward the MU figures, based on market-wide markup, TT
-						turnover, evidence horizon, and fee economics.
-					</p>
-					<ul class="space-y-1.5">
-						<li>
-							<span class="text-text font-medium">High Vol.</span> has broad weekly capacity.
-						</li>
-						<li>
-							<span class="text-text font-medium">Mid Vol.</span> has sparse capacity but enough
-							unit margin to amortise fees.
-						</li>
-						<li>
-							<span class="text-text font-medium">Low Vol.</span> has a constrained direct market.
-						</li>
-					</ul>
-					<p>
-						Items left out are valued at the nanocube rate instead. The classification is
-						independent of how much stock you currently hold.
-					</p>
-				</div>
-			</InfoTip>
+		<div class="flex flex-wrap items-center justify-between gap-3">
 			<SegmentedControl
-				options={MODE_OPTIONS}
-				active={model.confidenceMode}
-				onchange={(id) => (model.confidenceMode = id as ConfidenceMode)}
+				options={ANALYTICS_RANGES.map((range) => ({ id: range, label: range }))}
+				active={model.activeRange}
+				onchange={(id) => (model.activeRange = id)}
 			/>
+
+			<div class="flex items-center gap-2.5">
+				<span class="eyebrow">Markup confidence</span>
+				<InfoTip label="How markup confidence works">
+					<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+						<p class="font-semibold text-text">
+							Markup confidence: Choose which market prices to use
+						</p>
+						<p>
+							Each level uses the item's markup, how much TT value has sold, how recent those
+							sales are, and whether the markup can cover the auction fee.
+						</p>
+						<ul class="space-y-1.5">
+							<li>
+								<span class="text-text font-medium">High Vol.</span> Enough TT value sells each
+								week to make the markup practical to realise.
+							</li>
+							<li>
+								<span class="text-text font-medium">Mid Vol.</span> Sales are less frequent, but the
+								markup is high enough for a practical sale to cover the 0.5 PED minimum fee.
+							</li>
+							<li>
+								<span class="text-text font-medium">Low Vol.</span> Too little TT value has sold
+								recently to rely on the markup.
+							</li>
+						</ul>
+						<p>
+							Excluded items use the Nanocube markup instead. The amount you currently hold does
+							not affect these levels.
+						</p>
+					</div>
+				</InfoTip>
+				<SegmentedControl
+					options={MODE_OPTIONS}
+					active={model.confidenceMode}
+					onchange={(id) => (model.confidenceMode = id as ConfidenceMode)}
+				/>
+			</div>
 		</div>
 
 		{#if model.overall}
@@ -90,9 +104,12 @@
 		{/if}
 
 		<TreeCuttingActivities
-			sections={model.sections}
+			sections={model.activityTable.filtered}
 			selected={model.selectedSection}
 			onselect={(toolName) => model.selectSection(toolName)}
+			sortKey={model.activityTable.sortKey}
+			sortDir={model.activityTable.sortDir}
+			onsort={(key) => model.activityTable.setSort(key)}
 		/>
 
 		<div class="space-y-1 text-xs text-text-tertiary">

@@ -13,9 +13,8 @@ use std::sync::Arc;
 
 use eo_api::analytics::{
     AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, HarvestStockInput, HarvestStockRemoval,
-    InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput, LedgerSummary,
+    InventoryItem, InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult,
+    LedgerEntryInput, LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -36,8 +35,8 @@ use eo_api::maps::{
     PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use eo_api::market::{
-    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
-    MarketHarvestData, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHarvestData,
+    MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -454,22 +453,23 @@ pub async fn analytics_hunting(app: tauri::AppHandle) -> Result<AnalyticsHunting
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn analytics_harvest(app: tauri::AppHandle) -> Result<AnalyticsHarvest, ApiError> {
+pub async fn analytics_harvest(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsHarvest, ApiError> {
     #[cfg(feature = "e2e-stub")]
     {
-        let _ = &app;
+        let _ = (&app, &period);
         e2e_analytics("harvest")
     }
     #[cfg(not(feature = "e2e-stub"))]
     {
-        facade(&app)?.analytics_harvest().await
+        facade(&app)?.analytics_harvest(&period).await
     }
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn harvest_stock(
-    app: tauri::AppHandle,
-) -> Result<Vec<HarvestStockRemoval>, ApiError> {
+pub async fn harvest_stock(app: tauri::AppHandle) -> Result<Vec<HarvestStockRemoval>, ApiError> {
     facade(&app)?.harvest_stock().await
 }
 
@@ -953,8 +953,11 @@ pub async fn demo_analytics_hunting(app: tauri::AppHandle) -> Result<AnalyticsHu
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn demo_analytics_harvest(app: tauri::AppHandle) -> Result<AnalyticsHarvest, ApiError> {
-    facade(&app)?.demo_analytics_harvest().await
+pub async fn demo_analytics_harvest(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsHarvest, ApiError> {
+    facade(&app)?.demo_analytics_harvest(&period).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
