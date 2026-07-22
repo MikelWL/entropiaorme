@@ -290,9 +290,11 @@
 				class="relative hover:z-20 rounded-xl border border-accent/30 p-6 shadow-lg
 					backdrop-blur-[2px] bg-gradient-to-br from-accent/[0.12] via-surface/70 to-surface/70"
 			>
-				<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_1fr]">
-					<!-- Headline stats, stacked top-down -->
-					<div class="flex flex-col gap-4">
+				<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)]">
+					<!-- Headline stats in a 2-up grid: the title anchors the top-left
+						cell with Cycled to its right, then Net / Rate, then the
+						confidence-driven MU Net / MU Rate. -->
+					<div class="grid grid-cols-2 items-baseline gap-x-8 gap-y-4">
 						<div class="flex flex-col gap-0.5">
 							<span class="text-2xl font-semibold tracking-tight leading-none text-text">
 								Overall
@@ -306,12 +308,18 @@
 							valueClass={netTone(model.overall.returns - model.overall.cycled)}
 							unit="PED"
 						/>
+						<StatDisplay label="Rate" value={formatPercent(model.overall.lootRate)} />
+
 						<StatDisplay
 							label="MU Net"
 							value={model.overall.muProjectedReturns !== null
 								? signedPed(model.overall.muProjectedReturns - model.overall.cycled)
 								: NO_DATA}
 							unit={model.overall.muProjectedReturns !== null ? 'PED' : ''}
+						/>
+						<StatDisplay
+							label="MU Rate"
+							value={model.overall.muRate !== null ? formatPercent(model.overall.muRate) : NO_DATA}
 						/>
 					</div>
 
