@@ -84,9 +84,9 @@ pub struct InventoryRow {
 /// One item's "already removed" harvest-stock overlay: how much of the
 /// item has left the player's holdings (sold or spent) relative to the
 /// lifetime recorded harvest quantity. Current position = recorded looted
-/// quantity minus this. An isolated market-position lever: it feeds the
-/// markup-confidence estimate only, never the recorded activity stats or
-/// the ledger.
+/// quantity minus this. Position context only: it never feeds market
+/// opportunity or its confidence levels, which stay holding-independent,
+/// and never the recorded activity stats or the ledger.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestStockRemoval {

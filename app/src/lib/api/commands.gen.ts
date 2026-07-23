@@ -578,8 +578,9 @@ export interface HarvestStockInput {
 /**
  * One item's harvest-stock removed overlay: how much of the recorded
  * harvest loot has already left the player's holdings. Current position =
- * recorded looted quantity minus this. Feeds the markup-confidence
- * estimate only; never the recorded activity stats or the ledger.
+ * recorded looted quantity minus this. Position context only: it never
+ * feeds market opportunity or its confidence levels, which stay
+ * holding-independent, and never the recorded activity stats or the ledger.
  */
 export interface HarvestStockRemoval {
 	itemName: string;
