@@ -1618,6 +1618,12 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
     })
 }
 
+/// One `harvest_events` group: tool name, swing count, cycled cost, loot total.
+type HarvestToolTotals = (String, i64, f64, f64);
+
+/// One per-tool loot-composition group: tool name, item name, quantity, TT value.
+type HarvestToolItemTotals = (String, String, i64, f64);
+
 /// The Tree Cutting per-tool aggregate, grouped straight off the raw
 /// `harvest_events` table. A tab-open read, not a hot path: the scan is
 /// O(total harvest events), acceptable at harvesting volumes; promote it
@@ -1625,10 +1631,7 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
 /// recorded tool (a rare attribution gap) are excluded rather than
 /// surfaced as a phantom row.
 async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, DbError> {
-    let (raw, composition): (
-        Vec<(String, i64, f64, f64)>,
-        Vec<(String, String, i64, f64)>,
-    ) = db
+    let (raw, composition): (Vec<HarvestToolTotals>, Vec<HarvestToolItemTotals>) = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT tool_name, COUNT(*), COALESCE(SUM(cost_ped), 0), \

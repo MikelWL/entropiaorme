@@ -30,7 +30,7 @@ import type {
 } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 import { createTableModel } from '$lib/view/tableModel.svelte';
-import { ANALYTICS_RANGES, analyticsPeriod, type AnalyticsRange } from './analyticsRange';
+import { ANALYTICS_RANGES, type AnalyticsRange, analyticsPeriod } from './analyticsRange';
 
 export const PAGE_SIZE = 5;
 

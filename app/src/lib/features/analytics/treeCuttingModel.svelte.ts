@@ -29,7 +29,7 @@ import {
 import type { HarvestLootItem, HarvestToolComparison } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 import { createTableModel } from '$lib/view/tableModel.svelte';
-import { analyticsPeriod, type AnalyticsRange, isAnalyticsRange } from './analyticsRange';
+import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
 
 // ── Holding-independent market opportunity ────────────────────────────
 

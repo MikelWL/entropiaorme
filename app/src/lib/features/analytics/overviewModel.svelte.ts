@@ -8,7 +8,7 @@
 import { getAnalyticsOverview } from '$lib/api';
 import type { MonthlyEntry, OverviewStats, TimelineDay } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
-import { analyticsPeriod, type AnalyticsRange, isAnalyticsRange } from './analyticsRange';
+import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
 
 // lootTt (gains) and trackingCost (losses) are always on; not in config.
 export const PROGRESSION_GAIN_TAGS = new Set(['codex']);
