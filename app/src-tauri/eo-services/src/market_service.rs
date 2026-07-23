@@ -109,6 +109,53 @@ pub struct MobRankingRow {
     pub est_markup_pct: Option<f64>,
 }
 
+/// The estimated market signals for the harvest-looted items, plus the
+/// nanocube recycling floor. Markup is item-intrinsic (independent of
+/// which tool looted the item), so this is a flat per-item list; the
+/// analytics side owns the per-tool composition, and the frontend merges
+/// the two, derives holding-independent market opportunity, and computes
+/// the current-market aggregates. Estimated markup is informational only,
+/// never a realised figure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestMarketData {
+    /// The nanocube item's resolved markup (percent): the universal
+    /// recycling floor for items that cannot be sold at their own
+    /// markup (recycling is TT-neutral, so any item converts to
+    /// nanocubes at full TT). None when no nanocube observation exists;
+    /// the frontend then falls back to a constant.
+    pub nanocube_markup_pct: Option<f64>,
+    pub items: Vec<HarvestItemMarkup>,
+}
+
+/// One horizon's reading for an item: its markup (None where the game
+/// reported N/A) and TT turnover (PED) for percentage-markup items.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestHorizonReading {
+    /// "day" | "week" | "month" | "year".
+    pub horizon: String,
+    pub markup_pct: Option<f64>,
+    pub sales_ped: f64,
+}
+
+/// One harvest-looted item's resolved market signals plus the per-horizon
+/// breakdown. The resolved markup/horizon/sales are the display default
+/// and market-opportunity input (week preferred, then month, then year;
+/// all None when no observation covers the item). `readings` carries every
+/// horizon (day, week, month, year) for the detail view, including a
+/// zero-volume, no-markup week that a fallback would otherwise mask.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestItemMarkup {
+    pub item_name: String,
+    pub markup_pct: Option<f64>,
+    /// The horizon that supplied the reading ("week" | "month" | "year"),
+    /// None when uncovered.
+    pub horizon: Option<String>,
+    /// TT turnover (PED) at the resolved horizon: market-capacity evidence.
+    pub sales_ped: Option<f64>,
+    /// Every horizon's reading, ordered day, week, month, year.
+    pub readings: Vec<HarvestHorizonReading>,
+}
+
 /// The modelled TT-return rate (percent) of a hunting loadout: the
 /// community returns model, roughly linear in weapon efficiency and
 /// looter profession level (86% baseline, ~7pp each across 0-100).
@@ -411,6 +458,119 @@ impl MarketService {
             })
             .await
     }
+
+    /// The estimated market signals for every active harvest-looted
+    /// item, plus the nanocube recycling floor. Each item's resolved
+    /// markup and TT turnover follow a horizon fallback: the latest week
+    /// reading, else the latest month, else the latest year. The per-item
+    /// `readings` carry every horizon (day, week, month, year) for the
+    /// detail view; decade is the only horizon skipped. Items are ordered
+    /// by name.
+    ///
+    /// Reading `harvest_loot_items` here (to scope the item set) is the
+    /// sanctioned direction of the market boundary; nothing flows back,
+    /// and no realised figure is computed.
+    pub async fn harvest_markups(&self) -> Result<HarvestMarketData, DbError> {
+        self.db
+            .with_reader(move |connection| {
+                // Per item, the (markup, sales) at the latest submission for
+                // each of day/week/month/year. Markup is kept as an Option:
+                // a NULL markup is "no value on that horizon" and does not
+                // enter the resolution fallback, but its (zero) volume still
+                // shows in the breakdown.
+                let mut obs_stmt = connection.prepare(
+                    "SELECT o.item_name, o.horizon, o.markup_pct, o.sales_ped \
+                     FROM market_observations o \
+                     WHERE o.horizon IN ('day', 'week', 'month', 'year') \
+                       AND o.submission_id = (SELECT MAX(o2.submission_id) \
+                                              FROM market_observations o2 \
+                                              WHERE o2.item_name = o.item_name \
+                                                AND o2.horizon = o.horizon)",
+                )?;
+                // item -> horizon -> (markup, sales_ped).
+                let mut per_item: std::collections::HashMap<
+                    String,
+                    std::collections::HashMap<String, (Option<f64>, f64)>,
+                > = std::collections::HashMap::new();
+                let mut rows = obs_stmt.query([])?;
+                while let Some(row) = rows.next()? {
+                    let item: String = row.get(0)?;
+                    let horizon: String = row.get(1)?;
+                    let markup: Option<f64> = row.get(2)?;
+                    let sales: f64 = row.get(3)?;
+                    per_item
+                        .entry(item)
+                        .or_default()
+                        .insert(horizon, (markup, sales));
+                }
+                // Resolve one item's reading by the week -> month -> year
+                // preference (only horizons with a markup qualify): the
+                // markup, its horizon, and that horizon's TT turnover.
+                let resolve = |item: &str| -> Option<(f64, String, f64)> {
+                    let by_horizon = per_item.get(item)?;
+                    for horizon in ["week", "month", "year"] {
+                        if let Some(&(Some(markup), sales)) = by_horizon.get(horizon) {
+                            return Some((markup, horizon.to_string(), sales));
+                        }
+                    }
+                    None
+                };
+                // The day/week/month/year breakdown for an item (missing
+                // horizons read as no markup, zero volume).
+                let readings_of = |item: &str| -> Vec<HarvestHorizonReading> {
+                    let by_horizon = per_item.get(item);
+                    ["day", "week", "month", "year"]
+                        .into_iter()
+                        .map(|horizon| {
+                            let (markup_pct, sales_ped) = by_horizon
+                                .and_then(|m| m.get(horizon))
+                                .copied()
+                                .unwrap_or((None, 0.0));
+                            HarvestHorizonReading {
+                                horizon: horizon.to_string(),
+                                markup_pct,
+                                sales_ped,
+                            }
+                        })
+                        .collect()
+                };
+
+                let nanocube_markup_pct = resolve("Nanocube").map(|(markup, _, _)| markup);
+
+                // The active harvest-looted item set (name-ordered).
+                let mut item_stmt = connection.prepare(
+                    "SELECT DISTINCT item_name FROM harvest_loot_items \
+                     WHERE deactivated_at IS NULL ORDER BY item_name",
+                )?;
+                let names = item_stmt
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                let items = names
+                    .into_iter()
+                    .map(|name| {
+                        let resolved = resolve(&name);
+                        let readings = readings_of(&name);
+                        let (markup_pct, horizon, sales_ped) = match resolved {
+                            Some((m, h, s)) => (Some(m), Some(h), Some(s)),
+                            None => (None, None, None),
+                        };
+                        HarvestItemMarkup {
+                            item_name: name,
+                            markup_pct,
+                            horizon,
+                            sales_ped,
+                            readings,
+                        }
+                    })
+                    .collect();
+
+                Ok(HarvestMarketData {
+                    nanocube_markup_pct,
+                    items,
+                })
+            })
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -640,6 +800,130 @@ Carabok Leg Fur\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t109.380%\t6.
         assert_eq!(decade[0].covered_tt, 200.0);
         let est = decade[0].est_markup_pct.unwrap();
         assert!((est - 249.01).abs() < 1e-9, "got {est}");
+    }
+
+    #[test]
+    fn harvest_markups_resolve_by_week_month_year_fallback_with_sales() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, service, _clock) = rig(dir.path());
+        // Harvest loot: four items exercising each fallback rung and the
+        // uncovered case.
+        //  - Wood Shavings         -> week present (120%, 10 PED)
+        //  - Short Moonleaf Board  -> week N/A, month present (200%, 30 PED)
+        //  - Moonleaf Board        -> week+month N/A, year present (300%, 40 PED)
+        //  - Long Moonleaf Board   -> no observation at all (uncovered)
+        runtime
+            .block_on(service.db.with_writer(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO harvest_events (id, session_id, timestamp, success, tool_name, cost_ped, loot_total_ped) VALUES \
+                       ('h1', 's1', 0, 1, 'Terratech PH-4 (L)', 1.0, 4.0); \
+                     INSERT INTO harvest_loot_items (harvest_id, item_name, quantity, value_ped) VALUES \
+                       ('h1', 'Wood Shavings', 1, 100.0), \
+                       ('h1', 'Short Moonleaf Board', 1, 100.0), \
+                       ('h1', 'Moonleaf Board', 1, 100.0), \
+                       ('h1', 'Long Moonleaf Board', 1, 100.0);",
+                )?;
+                Ok(())
+            }))
+            .unwrap();
+        // day, week, month, year, decade columns per item. A Nanocube row
+        // provides the recycling floor.
+        let paste = "Wood Shavings\t0\t110.000%\t5.000 PED\t120.000%\t10.000 PED\t\
+130.000%\t20.000 PED\t140.000%\t30.000 PED\t150.000%\t40.000 PED\n\
+Short Moonleaf Board\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t200.000%\t30.000 PED\t\
+210.000%\t40.000 PED\t220.000%\t50.000 PED\n\
+Moonleaf Board\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t300.000%\t40.000 PED\t\
+320.000%\t50.000 PED\n\
+Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
+100.650%\t300.000 PED\t100.820%\t400.000 PED\t101.210%\t500.000 PED";
+        runtime.block_on(service.commit_paste(paste)).unwrap();
+
+        let data = runtime.block_on(service.harvest_markups()).unwrap();
+        assert_eq!(data.nanocube_markup_pct, Some(100.84));
+        // Only the harvest-looted items, name-ordered.
+        assert_eq!(
+            data.items
+                .iter()
+                .map(|i| i.item_name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Long Moonleaf Board",
+                "Moonleaf Board",
+                "Short Moonleaf Board",
+                "Wood Shavings"
+            ],
+        );
+        let by_name: std::collections::HashMap<&str, &HarvestItemMarkup> = data
+            .items
+            .iter()
+            .map(|i| (i.item_name.as_str(), i))
+            .collect();
+        // Each item resolves to its finest available horizon, with that
+        // horizon's TT turnover.
+        // Every item's breakdown is ordered day, week, month, year.
+        let markups = |name: &str| {
+            by_name[name]
+                .readings
+                .iter()
+                .map(|r| (r.horizon.as_str(), r.markup_pct, r.sales_ped))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(by_name["Wood Shavings"].markup_pct, Some(120.0));
+        assert_eq!(by_name["Wood Shavings"].horizon.as_deref(), Some("week"));
+        assert_eq!(by_name["Wood Shavings"].sales_ped, Some(10.0));
+        // Full day/week/month/year breakdown, markup and volume per horizon.
+        assert_eq!(
+            markups("Wood Shavings"),
+            vec![
+                ("day", Some(110.0), 5.0),
+                ("week", Some(120.0), 10.0),
+                ("month", Some(130.0), 20.0),
+                ("year", Some(140.0), 30.0),
+            ],
+        );
+        assert_eq!(by_name["Short Moonleaf Board"].markup_pct, Some(200.0));
+        assert_eq!(
+            by_name["Short Moonleaf Board"].horizon.as_deref(),
+            Some("month")
+        );
+        assert_eq!(by_name["Short Moonleaf Board"].sales_ped, Some(30.0));
+        // Fell back to month; the day/week rows carry no markup and zero
+        // volume, still present in the breakdown.
+        assert_eq!(
+            markups("Short Moonleaf Board"),
+            vec![
+                ("day", None, 0.0),
+                ("week", None, 0.0),
+                ("month", Some(200.0), 30.0),
+                ("year", Some(210.0), 40.0),
+            ],
+        );
+        assert_eq!(by_name["Moonleaf Board"].markup_pct, Some(300.0));
+        assert_eq!(by_name["Moonleaf Board"].horizon.as_deref(), Some("year"));
+        assert_eq!(by_name["Moonleaf Board"].sales_ped, Some(40.0));
+        assert_eq!(by_name["Long Moonleaf Board"].markup_pct, None);
+        assert_eq!(by_name["Long Moonleaf Board"].horizon, None);
+        assert_eq!(by_name["Long Moonleaf Board"].sales_ped, None);
+        // No observation at all: every horizon reads empty.
+        assert_eq!(
+            markups("Long Moonleaf Board"),
+            vec![
+                ("day", None, 0.0),
+                ("week", None, 0.0),
+                ("month", None, 0.0),
+                ("year", None, 0.0),
+            ],
+        );
+    }
+
+    #[test]
+    fn harvest_markups_are_empty_without_harvest_loot() {
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, service, _clock) = rig(dir.path());
+        runtime.block_on(service.commit_paste(SAMPLE)).unwrap();
+        let data = runtime.block_on(service.harvest_markups()).unwrap();
+        assert!(data.items.is_empty());
+        assert_eq!(data.nanocube_markup_pct, None);
     }
 
     #[test]

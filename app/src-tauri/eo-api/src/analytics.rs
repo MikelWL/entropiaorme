@@ -166,26 +166,43 @@ pub struct TagComparison {
     pub loot_rate: f64,
 }
 
-/// One row of the per-weapon activity comparison.
+/// The Hunting aggregate: the per-mob and per-tag comparison tables.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct WeaponComparison {
-    pub weapon_name: String,
-    pub sessions: i64,
-    pub kills: i64,
-    pub hours: f64,
-    pub cycled: f64,
-    pub pes_per100_ped: f64,
-    pub loot_rate: f64,
-}
-
-/// The Activity aggregate: the three comparison tables.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyticsActivity {
+pub struct AnalyticsHunting {
     pub mob_comparisons: Vec<MobComparison>,
     pub tag_comparisons: Vec<TagComparison>,
-    pub weapon_comparisons: Vec<WeaponComparison>,
+}
+
+/// One item in a tool's harvest loot composition: realised TT only.
+/// The market markup column is merged in at the frontend from the
+/// market layer, never joined into this accounting DTO.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestLootItem {
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: f64,
+}
+
+/// One row of the Tree Cutting per-tool comparison. `returns` is the
+/// realised loot TT; `loot_items` its per-item composition.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestToolComparison {
+    pub tool_name: String,
+    pub swings: i64,
+    pub cycled: f64,
+    pub returns: f64,
+    pub loot_rate: f64,
+    pub loot_items: Vec<HarvestLootItem>,
+}
+
+/// The Tree Cutting aggregate: the per-tool comparison table.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsHarvest {
+    pub tool_comparisons: Vec<HarvestToolComparison>,
 }
 
 // ── Ledger / preset / inventory DTOs ────────────────────────────────
@@ -259,7 +276,27 @@ pub struct InventorySellResult {
     pub sold_item: InventoryItem,
 }
 
+/// One item's harvest-stock removed overlay: how much of the recorded
+/// harvest loot has already left the player's holdings. Current position =
+/// recorded looted quantity minus this. Position context only: it never
+/// feeds market opportunity or its confidence levels, which stay
+/// holding-independent, and never the recorded activity stats or the ledger.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestStockRemoval {
+    pub item_name: String,
+    pub removed_qty: i64,
+}
+
 // ── Request DTOs ────────────────────────────────────────────────────
+
+/// A harvest-stock removed-overlay write payload.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestStockInput {
+    pub item_name: String,
+    pub removed_qty: i64,
+}
 
 /// A ledger-entry create payload.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -334,14 +371,60 @@ impl Api {
         Ok(overview_dto(value))
     }
 
-    /// The Activity aggregate: the per-mob / per-tag / per-weapon tables.
-    pub async fn analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
+    /// The Hunting aggregate: the per-mob / per-tag tables.
+    pub async fn analytics_hunting(&self) -> Result<AnalyticsHunting, ApiError> {
         let value = self
             .analytics
-            .activity()
+            .hunting()
             .await
-            .map_err(analytics_error("analytics activity"))?;
-        Ok(activity_dto(value))
+            .map_err(analytics_error("analytics hunting"))?;
+        Ok(hunting_dto(value))
+    }
+
+    /// The Tree Cutting aggregate for a named period: the per-tool table
+    /// and its matching loot composition.
+    pub async fn analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
+        let value = self
+            .analytics
+            .harvest(period)
+            .await
+            .map_err(analytics_error("analytics harvest"))?;
+        Ok(harvest_dto(value))
+    }
+
+    /// The harvest-stock removed overlay (per-item quantity already sold or
+    /// spent). Operational position context for sale and recycling actions;
+    /// it does not influence holding-independent market opportunity.
+    pub async fn harvest_stock(&self) -> Result<Vec<HarvestStockRemoval>, ApiError> {
+        let rows = self
+            .analytics
+            .harvest_stock_removed()
+            .await
+            .map_err(analytics_error("harvest stock"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| HarvestStockRemoval {
+                item_name: r.item_name,
+                removed_qty: r.removed_qty,
+            })
+            .collect())
+    }
+
+    /// Set an item's removed quantity (zero clears it). Writes the
+    /// market-position lever alone: no activity stats, no ledger.
+    pub async fn harvest_stock_set(&self, input: HarvestStockInput) -> Result<(), ApiError> {
+        // Zero clears the overlay row; a negative quantity is meaningless and
+        // would clear it just as silently, so it is a bad-request instead.
+        if input.removed_qty < 0 {
+            return Err(ApiError::bad_request(
+                "removed quantity must not be negative",
+            ));
+        }
+        self.analytics
+            .set_harvest_stock_removed(&input.item_name, input.removed_qty)
+            .await
+            .map_err(analytics_error("harvest stock set"))?;
+        Ok(())
     }
 
     /// One keyset page of ledger entries (newest first) plus the cursor for
@@ -602,8 +685,8 @@ pub(crate) fn overview_dto(data: eo_services::analytics::OverviewData) -> Analyt
     }
 }
 
-pub(crate) fn activity_dto(data: eo_services::analytics::ActivityData) -> AnalyticsActivity {
-    AnalyticsActivity {
+pub(crate) fn hunting_dto(data: eo_services::analytics::HuntingData) -> AnalyticsHunting {
+    AnalyticsHunting {
         mob_comparisons: data
             .mob_comparisons
             .into_iter()
@@ -630,17 +713,29 @@ pub(crate) fn activity_dto(data: eo_services::analytics::ActivityData) -> Analyt
                 loot_rate: row.loot_rate,
             })
             .collect(),
-        weapon_comparisons: data
-            .weapon_comparisons
+    }
+}
+
+pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> AnalyticsHarvest {
+    AnalyticsHarvest {
+        tool_comparisons: data
+            .tool_comparisons
             .into_iter()
-            .map(|row| WeaponComparison {
-                weapon_name: row.name,
-                sessions: row.sessions,
-                kills: row.kills,
-                hours: row.hours,
+            .map(|row| HarvestToolComparison {
+                tool_name: row.name,
+                swings: row.swings,
                 cycled: row.cycled,
-                pes_per100_ped: row.pes_per100_ped,
+                returns: row.returns,
                 loot_rate: row.loot_rate,
+                loot_items: row
+                    .loot_items
+                    .into_iter()
+                    .map(|item| HarvestLootItem {
+                        item_name: item.item_name,
+                        quantity: item.quantity,
+                        value_ped: item.value_ped,
+                    })
+                    .collect(),
             })
             .collect(),
     }

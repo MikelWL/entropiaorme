@@ -155,6 +155,20 @@ describe('sorting', () => {
 		]);
 	});
 
+	it('supports a per-key first-sort direction', () => {
+		const model = createTableModel<Row>({
+			rows: () => baseRows,
+			pageSize: 10,
+			defaultSortDirs: { level: 'desc' },
+		});
+		model.setSort('level');
+		expect(model.sortDir).toBe('desc');
+		expect(names(model.filtered).slice(0, 3)).toEqual(['Rifle', 'Pistol', 'Sword']);
+
+		model.setSort('name');
+		expect(model.sortDir).toBe('asc');
+	});
+
 	it('setSort on the same key toggles the direction each time', () => {
 		const model = makeModel();
 		model.setSort('level');

@@ -14,9 +14,9 @@ use schemars::schema_for;
 use serde_json::Value;
 
 use crate::analytics::{
-    AnalyticsActivity, AnalyticsOverview, InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput, LedgerSummary,
+    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, HarvestStockInput, HarvestStockRemoval,
+    InventoryItem, InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult,
+    LedgerEntryInput, LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -37,8 +37,8 @@ use crate::maps::{
     PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use crate::market::{
-    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHistoryPoint,
-    MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHarvestData,
+    MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
@@ -491,9 +491,30 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(AnalyticsOverview))),
         },
         CommandSpec {
-            name: "analytics_activity",
+            name: "analytics_hunting",
             args: Vec::new(),
-            returns: Some(schema(schema_for!(AnalyticsActivity))),
+            returns: Some(schema(schema_for!(AnalyticsHunting))),
+        },
+        CommandSpec {
+            name: "analytics_harvest",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsHarvest))),
+        },
+        CommandSpec {
+            name: "harvest_stock",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<HarvestStockRemoval>))),
+        },
+        CommandSpec {
+            name: "harvest_stock_set",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(HarvestStockInput)),
+            }],
+            returns: None,
         },
         CommandSpec {
             name: "ledger_list",
@@ -641,6 +662,11 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(MarketHorizon)),
             }],
             returns: Some(schema(schema_for!(Vec<MarketMobRankingRow>))),
+        },
+        CommandSpec {
+            name: "market_harvest_markups",
+            args: vec![],
+            returns: Some(schema(schema_for!(MarketHarvestData))),
         },
         CommandSpec {
             name: "market_item_history",
@@ -927,9 +953,17 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(AnalyticsOverview))),
         },
         CommandSpec {
-            name: "demo_analytics_activity",
+            name: "demo_analytics_hunting",
             args: Vec::new(),
-            returns: Some(schema(schema_for!(AnalyticsActivity))),
+            returns: Some(schema(schema_for!(AnalyticsHunting))),
+        },
+        CommandSpec {
+            name: "demo_analytics_harvest",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsHarvest))),
         },
         CommandSpec {
             name: "demo_ledger_list",

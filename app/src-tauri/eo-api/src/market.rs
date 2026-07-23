@@ -213,6 +213,49 @@ pub struct MarketMobRankingRow {
     pub est_markup_pct: Nullable<f64>,
 }
 
+/// One horizon's reading for a harvest item: its markup (null where the
+/// game reported N/A) and TT turnover (PED).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketHarvestHorizon {
+    /// "day" | "week" | "month" | "year".
+    pub horizon: String,
+    pub markup_pct: Nullable<f64>,
+    pub sales_ped: f64,
+}
+
+/// One harvest-looted item's resolved market signals plus the per-horizon
+/// breakdown. The resolved markup/horizon/sales are the display default
+/// and market-opportunity input (week preferred, then month, then year;
+/// all null when no observation covers the item). `readings` carries every
+/// horizon (day, week, month, year) for the detail view.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketHarvestItem {
+    pub item_name: String,
+    pub markup_pct: Nullable<f64>,
+    pub horizon: Nullable<String>,
+    pub sales_ped: Nullable<f64>,
+    /// Every horizon's reading, ordered day, week, month, year.
+    pub readings: Vec<MarketHarvestHorizon>,
+}
+
+/// The estimated market signals for the harvest-looted items, plus the
+/// nanocube recycling floor. Markup is item-intrinsic, so this is a flat
+/// per-item list; the frontend merges it with the per-tool composition,
+/// derives holding-independent market opportunity, and computes the
+/// current-market aggregates. Estimated markup is informational only,
+/// never a realised figure.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketHarvestData {
+    /// The nanocube item's resolved markup (percent): the universal
+    /// recycling floor. Null when no nanocube observation exists (the
+    /// frontend then falls back to a constant).
+    pub nanocube_markup_pct: Nullable<f64>,
+    pub items: Vec<MarketHarvestItem>,
+}
+
 /// One looter profession and its believed-current level.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -462,5 +505,38 @@ impl Api {
                 est_markup_pct: row.est_markup_pct.into(),
             })
             .collect())
+    }
+
+    /// The estimated market signals for every active harvest-looted item
+    /// plus the nanocube recycling floor. Each item's markup and sales
+    /// volume resolve via the week -> month -> year horizon fallback.
+    pub async fn market_harvest_markups(&self) -> Result<MarketHarvestData, ApiError> {
+        let data = self
+            .market
+            .harvest_markups()
+            .await
+            .map_err(ApiError::internal("market harvest markups"))?;
+        Ok(MarketHarvestData {
+            nanocube_markup_pct: data.nanocube_markup_pct.into(),
+            items: data
+                .items
+                .into_iter()
+                .map(|item| MarketHarvestItem {
+                    item_name: item.item_name,
+                    markup_pct: item.markup_pct.into(),
+                    horizon: item.horizon.into(),
+                    sales_ped: item.sales_ped.into(),
+                    readings: item
+                        .readings
+                        .into_iter()
+                        .map(|r| MarketHarvestHorizon {
+                            horizon: r.horizon,
+                            markup_pct: r.markup_pct.into(),
+                            sales_ped: r.sales_ped,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
     }
 }

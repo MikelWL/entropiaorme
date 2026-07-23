@@ -75,12 +75,18 @@ export interface ActivityRecommenderResult {
 }
 
 /**
- * The Activity aggregate: the three comparison tables.
+ * The Tree Cutting aggregate: the per-tool comparison table.
  */
-export interface AnalyticsActivity {
+export interface AnalyticsHarvest {
+	toolComparisons: HarvestToolComparison[];
+}
+
+/**
+ * The Hunting aggregate: the per-mob and per-tag comparison tables.
+ */
+export interface AnalyticsHunting {
 	mobComparisons: MobComparison[];
 	tagComparisons: TagComparison[];
-	weaponComparisons: WeaponComparison[];
 }
 
 /**
@@ -551,6 +557,37 @@ export interface HarvestGuardrailSettings {
 }
 
 /**
+ * One item in a tool's harvest loot composition: realised TT only.
+ * The market markup column is merged in at the frontend from the
+ * market layer, never joined into this accounting DTO.
+ */
+export interface HarvestLootItem {
+	itemName: string;
+	quantity: number;
+	valuePed: number;
+}
+
+/**
+ * A harvest-stock removed-overlay write payload.
+ */
+export interface HarvestStockInput {
+	itemName: string;
+	removedQty: number;
+}
+
+/**
+ * One item's harvest-stock removed overlay: how much of the recorded
+ * harvest loot has already left the player's holdings. Current position =
+ * recorded looted quantity minus this. Position context only: it never
+ * feeds market opportunity or its confidence levels, which stay
+ * holding-independent, and never the recorded activity stats or the ledger.
+ */
+export interface HarvestStockRemoval {
+	itemName: string;
+	removedQty: number;
+}
+
+/**
  * A session's harvesting (tree cutting) totals: every swing is a
  * counted event (successes arrive as wood loot groups, fails as the
  * explicit harvest-fail line).
@@ -560,6 +597,19 @@ export interface HarvestSummary {
 	successes: number;
 	lootTt: number;
 	cost: number;
+}
+
+/**
+ * One row of the Tree Cutting per-tool comparison. `returns` is the
+ * realised loot TT; `loot_items` its per-item composition.
+ */
+export interface HarvestToolComparison {
+	toolName: string;
+	swings: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	lootItems: HarvestLootItem[];
 }
 
 /**
@@ -935,6 +985,47 @@ export interface MarketContributionItem {
 	month: MarketReading;
 	year: MarketReading;
 	decade: MarketReading;
+}
+
+/**
+ * The estimated market signals for the harvest-looted items, plus the
+ * nanocube recycling floor. Markup is item-intrinsic, so this is a flat
+ * per-item list; the frontend merges it with the per-tool composition,
+ * derives holding-independent market opportunity, and computes the
+ * current-market aggregates. Estimated markup is informational only,
+ * never a realised figure.
+ */
+export interface MarketHarvestData {
+	/** The nanocube item's resolved markup (percent): the universal recycling floor. Null when no nanocube observation exists (the frontend then falls back to a constant). */
+	nanocubeMarkupPct: number | null;
+	items: MarketHarvestItem[];
+}
+
+/**
+ * One horizon's reading for a harvest item: its markup (null where the
+ * game reported N/A) and TT turnover (PED).
+ */
+export interface MarketHarvestHorizon {
+	/** "day" | "week" | "month" | "year". */
+	horizon: string;
+	markupPct: number | null;
+	salesPed: number;
+}
+
+/**
+ * One harvest-looted item's resolved market signals plus the per-horizon
+ * breakdown. The resolved markup/horizon/sales are the display default
+ * and market-opportunity input (week preferred, then month, then year;
+ * all null when no observation covers the item). `readings` carries every
+ * horizon (day, week, month, year) for the detail view.
+ */
+export interface MarketHarvestItem {
+	itemName: string;
+	markupPct: number | null;
+	horizon: string | null;
+	salesPed: number | null;
+	/** Every horizon's reading, ordered day, week, month, year. */
+	readings: MarketHarvestHorizon[];
 }
 
 /**
@@ -2185,19 +2276,6 @@ export interface Warning {
  */
 export type WeaponAttribution = 'hotbar' | 'trifecta';
 
-/**
- * One row of the per-weapon activity comparison.
- */
-export interface WeaponComparison {
-	weaponName: string;
-	sessions: number;
-	kills: number;
-	hours: number;
-	cycled: number;
-	pesPer100Ped: number;
-	lootRate: number;
-}
-
 export async function equipmentSearch(q: string, kind: SearchKind): Promise<EquipmentSearchHit[]> {
 	return invokeCommand('equipment_search', { q, kind });
 }
@@ -2386,8 +2464,20 @@ export async function analyticsOverview(period: string): Promise<AnalyticsOvervi
 	return invokeCommand('analytics_overview', { period });
 }
 
-export async function analyticsActivity(): Promise<AnalyticsActivity> {
-	return invokeCommand('analytics_activity', {});
+export async function analyticsHunting(): Promise<AnalyticsHunting> {
+	return invokeCommand('analytics_hunting', {});
+}
+
+export async function analyticsHarvest(period: string): Promise<AnalyticsHarvest> {
+	return invokeCommand('analytics_harvest', { period });
+}
+
+export async function harvestStock(): Promise<HarvestStockRemoval[]> {
+	return invokeCommand('harvest_stock', {});
+}
+
+export async function harvestStockSet(input: HarvestStockInput): Promise<void> {
+	return invokeCommand('harvest_stock_set', { input });
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {
@@ -2460,6 +2550,10 @@ export async function marketBreakEven(): Promise<MarketBreakEven> {
 
 export async function marketMobRanking(horizon: MarketHorizon): Promise<MarketMobRankingRow[]> {
 	return invokeCommand('market_mob_ranking', { horizon });
+}
+
+export async function marketHarvestMarkups(): Promise<MarketHarvestData> {
+	return invokeCommand('market_harvest_markups', {});
 }
 
 export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {
@@ -2586,8 +2680,12 @@ export async function demoAnalyticsOverview(period: string): Promise<AnalyticsOv
 	return invokeCommand('demo_analytics_overview', { period });
 }
 
-export async function demoAnalyticsActivity(): Promise<AnalyticsActivity> {
-	return invokeCommand('demo_analytics_activity', {});
+export async function demoAnalyticsHunting(): Promise<AnalyticsHunting> {
+	return invokeCommand('demo_analytics_hunting', {});
+}
+
+export async function demoAnalyticsHarvest(period: string): Promise<AnalyticsHarvest> {
+	return invokeCommand('demo_analytics_harvest', { period });
 }
 
 export async function demoLedgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

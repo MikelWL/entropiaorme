@@ -68,7 +68,7 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 |---|---|
 | Quests | quest list and create; `mobs`; `analytics`; playlists list/create, playlist analytics, playlist update/delete; quest read/update/delete; quest `start`, `complete`, `cancel` |
 | Codex | `species`; species `ranks`; `recommend`; `calibrate`; `claim`; meta `claim`; meta `attributes` |
-| Analytics | `overview`; `activity`; the ledger (paged list, whole-ledger `summary`, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
+| Analytics | period-scoped `overview`; `hunting`; period-scoped `harvest`; harvest stock read/update; the ledger (paged list, whole-ledger `summary`, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
 | Market | paste `preview` and `commit`; `overview`; item `history`; `break-even`; mob `ranking` |
 | Tracking (reads) | `sessions` (paged); session read; `tag-suggestions`; `snapshot` |
 | Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `tag-lock` |
@@ -77,7 +77,7 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 | Maps | planet-map catalogue and coordinate scan; pin list/viewport/nearby/create/update/delete; named map list/create/rename/delete; coordinate calibration start/cancel/status; navigation snapshot/start/update/mark-visited/skip/resolve-harvest/undo/end; radar calibration start/cancel/status/geometry |
 | Settings | settings read/patch; overlay-position read/update |
 | Character | `calibration`, `stats`, `skills`, `professions`, `prospect-options`, `prospect`, `profession-optimizer`, `profession-path-optimizer`, `hp-optimizer` |
-| Demo (guide mode) | the guide-mode reads: analytics `overview`, `activity`, `ledger`, ledger `summary`, ledger `presets`, `inventory`; tracking `sessions`, session read, `snapshot` |
+| Demo (guide mode) | the guide-mode reads: analytics `overview`, `hunting`, `harvest`, ledger, ledger `summary`, ledger `presets`, `inventory`; tracking `sessions`, session read, `snapshot` |
 
 The settings patch and reset writes signal the live producers (restarting the chat-log watcher on a path change, toggling the hotbar hooks, and reloading the tracker configuration) so a settings change reconciles without a restart. The demo namespace is a parallel set of typed commands sharing the live commands' DTO types, backed by a lazily-built demo state over a writable clone of the bundled demo database. Domain events do not travel as commands; they reach the frontend over the Tauri event bridge described in the [System overview](overview.md). Beyond the areas above sit the developer-mode-gated dev-tools operations (the metrics snapshot and the crash-reporting toggle); these are gated on developer mode and decline when it is disabled, so they sit off the equivalence-covered surface.
 

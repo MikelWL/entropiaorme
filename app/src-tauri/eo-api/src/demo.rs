@@ -47,8 +47,8 @@ use serde::Deserialize;
 use tokio::sync::OnceCell;
 
 use crate::analytics::{
-    analytics_error, AnalyticsActivity, AnalyticsOverview, InventoryItem, LedgerPage, LedgerPreset,
-    LedgerSummary,
+    analytics_error, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem,
+    LedgerPage, LedgerPreset, LedgerSummary,
 };
 use crate::tracking::{
     build_snapshot_value, SessionDetail, SessionPage, TrackingSession, TrackingSnapshot,
@@ -210,13 +210,22 @@ impl DemoState {
         Ok(crate::analytics::overview_dto(value))
     }
 
-    async fn analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
+    async fn analytics_hunting(&self) -> Result<AnalyticsHunting, ApiError> {
         let value = self
             .analytics
-            .activity()
+            .hunting()
             .await
-            .map_err(analytics_error("demo analytics activity"))?;
-        Ok(crate::analytics::activity_dto(value))
+            .map_err(analytics_error("demo analytics hunting"))?;
+        Ok(crate::analytics::hunting_dto(value))
+    }
+
+    async fn analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
+        let value = self
+            .analytics
+            .harvest(period)
+            .await
+            .map_err(analytics_error("demo analytics harvest"))?;
+        Ok(crate::analytics::harvest_dto(value))
     }
 
     async fn ledger_list(
@@ -629,9 +638,14 @@ impl Api {
         self.ensure_demo().await?.analytics_overview(period).await
     }
 
-    /// The demo Activity aggregate.
-    pub async fn demo_analytics_activity(&self) -> Result<AnalyticsActivity, ApiError> {
-        self.ensure_demo().await?.analytics_activity().await
+    /// The demo Hunting aggregate.
+    pub async fn demo_analytics_hunting(&self) -> Result<AnalyticsHunting, ApiError> {
+        self.ensure_demo().await?.analytics_hunting().await
+    }
+
+    /// The demo Tree Cutting aggregate for a named period.
+    pub async fn demo_analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
+        self.ensure_demo().await?.analytics_harvest(period).await
     }
 
     /// One demo ledger page plus the cursor for the next page.
@@ -818,8 +832,12 @@ mod tests {
             &to_json(&demo.analytics_overview("30d").await.expect("overview 30d")),
         );
         assert_matches_golden(
-            "analytics_activity",
-            &to_json(&demo.analytics_activity().await.expect("activity")),
+            "analytics_hunting",
+            &to_json(&demo.analytics_hunting().await.expect("hunting")),
+        );
+        assert_matches_golden(
+            "analytics_harvest",
+            &to_json(&demo.analytics_harvest("all").await.expect("harvest")),
         );
         assert_matches_golden(
             "analytics_ledger",

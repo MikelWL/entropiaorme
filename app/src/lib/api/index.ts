@@ -15,15 +15,22 @@ export * from './analytics';
 export * from './character';
 export { ApiError, type ThrownErrorKind } from './client';
 export * from './codex';
-// The generated shapes consumers reach through this barrel; `ActivityData`
-// is the established consumer-facing name of `AnalyticsActivity`.
+// The generated shapes consumers reach through this barrel; `HuntingData`
+// and `HarvestData` are the consumer-facing names of the analytics
+// aggregates.
 export type {
-	AnalyticsActivity as ActivityData,
+	AnalyticsHarvest as HarvestData,
+	AnalyticsHunting as HuntingData,
 	ApiErrorKind,
+	HarvestStockInput,
+	HarvestStockRemoval,
 	ManualMobSuggestion,
 	MarketBreakEven,
 	MarketBreakEvenCell,
 	MarketCommitResult,
+	MarketHarvestData,
+	MarketHarvestHorizon,
+	MarketHarvestItem,
 	MarketHistoryPoint,
 	MarketHorizon,
 	MarketLooterLevel,

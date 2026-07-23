@@ -197,9 +197,17 @@ describe('analytics wrappers dispatch typed commands', () => {
 		expect(tauriInvoke).toHaveBeenCalledWith('analytics_overview', { period: 'all' });
 	});
 
-	it('getAnalyticsActivity invokes the command live', async () => {
-		await api.getAnalyticsActivity();
-		expect(tauriInvoke).toHaveBeenCalledWith('analytics_activity', {});
+	it('getAnalyticsHunting invokes the command live', async () => {
+		await api.getAnalyticsHunting();
+		expect(tauriInvoke).toHaveBeenCalledWith('analytics_hunting', {});
+	});
+
+	it('getAnalyticsHarvest forwards the selected period and defaults to all time', async () => {
+		await api.getAnalyticsHarvest('30d');
+		expect(tauriInvoke).toHaveBeenCalledWith('analytics_harvest', { period: '30d' });
+
+		await api.getAnalyticsHarvest();
+		expect(tauriInvoke).toHaveBeenLastCalledWith('analytics_harvest', { period: 'all' });
 	});
 
 	it('getLedgerEntries invokes ledger_list and reshapes the page (cursor from the body)', async () => {

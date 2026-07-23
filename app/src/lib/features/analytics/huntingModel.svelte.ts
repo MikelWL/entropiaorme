@@ -1,6 +1,6 @@
 /**
- * Activity-tab view model: the per-mob, per-tag, and per-weapon comparison
- * data, the archive/main view split with its confirm flow, and the sorted
+ * Hunting-tab view model: the per-mob and per-tag comparison data, the
+ * archive/main view split with its confirm flow, and the sorted
  * projections. Presentation lives in the tab component; it composes over
  * this state.
  */
@@ -12,8 +12,8 @@ import {
 	isArchived,
 	unarchive as unarchiveItem,
 } from '$lib/activityArchive.svelte';
-import { type ActivityData, getAnalyticsActivity } from '$lib/api';
-import type { MobComparison, TagComparison, WeaponComparison } from '$lib/types/analytics';
+import { getAnalyticsHunting, type HuntingData } from '$lib/api';
+import type { MobComparison, TagComparison } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 
 export type SortDir = 'asc' | 'desc';
@@ -89,40 +89,6 @@ export const tagColumns = [
 	{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
 ];
 
-export const weaponColumns = [
-	{ key: 'weaponName', label: 'Weapon', sortable: true, widthClass: 'w-[26%]' },
-	{
-		key: 'sessions',
-		label: 'Sessions',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[10%]',
-	},
-	{ key: 'kills', label: 'Kills', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-	{
-		key: 'cycled',
-		label: 'Cycled',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{
-		key: 'pesPer100Ped',
-		label: 'PES/100',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{
-		key: 'lootRate',
-		label: 'Loot',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
-];
-
 export function rowKey(kind: ArchiveKind, name: string): string {
 	return `${kind}:${name}`;
 }
@@ -140,8 +106,8 @@ function sortComparisons<T>(rows: T[], key: keyof T & string, dir: SortDir): T[]
 	});
 }
 
-export function createActivityModel() {
-	let data = $state<ActivityData | null>(null);
+export function createHuntingModel() {
+	let data = $state<HuntingData | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -152,9 +118,9 @@ export function createActivityModel() {
 		loading = true;
 		error = null;
 		try {
-			data = await getAnalyticsActivity();
+			data = await getAnalyticsHunting();
 		} catch (e) {
-			error = describeError(e, 'Failed to load activity data');
+			error = describeError(e, 'Failed to load hunting data');
 		} finally {
 			loading = false;
 		}
@@ -206,20 +172,6 @@ export function createActivityModel() {
 		);
 		if (!tagSortKey) return filtered;
 		return sortComparisons(filtered, tagSortKey, tagSortDir);
-	});
-
-	let weaponSortKey = $state<(keyof WeaponComparison & string) | undefined>('cycled');
-	let weaponSortDir = $state<SortDir>('desc');
-
-	const sortedWeapons = $derived.by(() => {
-		if (!data) return [];
-		const filtered = data.weaponComparisons.filter((w) =>
-			viewMode === 'archive'
-				? isArchived(activityArchive.current, 'weapon', w.weaponName)
-				: !isArchived(activityArchive.current, 'weapon', w.weaponName),
-		);
-		if (!weaponSortKey) return filtered;
-		return sortComparisons(filtered, weaponSortKey, weaponSortDir);
 	});
 
 	return {
@@ -277,26 +229,10 @@ export function createActivityModel() {
 			return sortedTags;
 		},
 
-		get weaponSortKey() {
-			return weaponSortKey;
-		},
-		set weaponSortKey(value: (keyof WeaponComparison & string) | undefined) {
-			weaponSortKey = value;
-		},
-		get weaponSortDir() {
-			return weaponSortDir;
-		},
-		set weaponSortDir(value: SortDir) {
-			weaponSortDir = value;
-		},
-		get sortedWeapons() {
-			return sortedWeapons;
-		},
-
 		loadData,
 		onArchiveConfirm,
 		onUnarchiveConfirm,
 	};
 }
 
-export type ActivityModel = ReturnType<typeof createActivityModel>;
+export type HuntingModel = ReturnType<typeof createHuntingModel>;

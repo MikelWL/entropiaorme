@@ -5,8 +5,9 @@
 //! "copy CSV" buttons emit the same bytes): a header row, then one row
 //! per item carrying `Item, Tier` and five aggregation horizons of
 //! `Markup, Sales` pairs (day, week, month, year, decade). Markup is a
-//! percentage or `N/A` (no sales in that horizon); sales volume is a
-//! number with an optional `K`/`M` multiplier and a `PEC`/`PED` unit.
+//! percentage or `N/A` (no sales in that horizon); Sales is TT turnover,
+//! represented as a number with an optional `K`/`M` multiplier and a
+//! `PEC`/`PED` unit.
 //!
 //! Parsing follows the chat-log parser's discipline: pure functions
 //! over lines, no panics, malformed input degrades per line rather
@@ -176,7 +177,7 @@ fn parse_row(fields: &[&str]) -> Result<MarketPasteRow, String> {
             markup_pct: parse_markup(markup_cell)
                 .map_err(|_| format!("unreadable markup {markup_cell:?}"))?,
             sales_ped: parse_sales(sales_cell)
-                .map_err(|_| format!("unreadable sales volume {sales_cell:?}"))?,
+                .map_err(|_| format!("unreadable sales turnover {sales_cell:?}"))?,
         };
     }
     Ok(MarketPasteRow {
@@ -307,7 +308,9 @@ Animal Oil Residue\t0\t104.000%\t100.000 PED\t100.540%\t6.400K PED\t100.570%\t23
         assert_eq!(parse.skipped.len(), 3);
         assert_eq!(parse.skipped[0].line_number, 1);
         assert!(parse.skipped[0].reason.contains("expected 12 columns"));
-        assert!(parse.skipped[1].reason.contains("unreadable sales volume"));
+        assert!(parse.skipped[1]
+            .reason
+            .contains("unreadable sales turnover"));
         assert!(parse.skipped[2].reason.contains("unreadable tier"));
     }
 
