@@ -413,6 +413,13 @@ impl Api {
     /// Set an item's removed quantity (zero clears it). Writes the
     /// market-position lever alone: no activity stats, no ledger.
     pub async fn harvest_stock_set(&self, input: HarvestStockInput) -> Result<(), ApiError> {
+        // Zero clears the overlay row; a negative quantity is meaningless and
+        // would clear it just as silently, so it is a bad-request instead.
+        if input.removed_qty < 0 {
+            return Err(ApiError::bad_request(
+                "removed quantity must not be negative",
+            ));
+        }
         self.analytics
             .set_harvest_stock_removed(&input.item_name, input.removed_qty)
             .await

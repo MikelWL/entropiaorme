@@ -1,3 +1,6 @@
+/** The placeholder a numeric readout shows when it has no value to report. */
+export const NO_DATA = '–';
+
 /** Format a PED value to 2 decimal places */
 export function formatPed(value: number): string {
 	return value.toFixed(2);

@@ -177,7 +177,7 @@ fn parse_row(fields: &[&str]) -> Result<MarketPasteRow, String> {
             markup_pct: parse_markup(markup_cell)
                 .map_err(|_| format!("unreadable markup {markup_cell:?}"))?,
             sales_ped: parse_sales(sales_cell)
-                .map_err(|_| format!("unreadable sales volume {sales_cell:?}"))?,
+                .map_err(|_| format!("unreadable sales turnover {sales_cell:?}"))?,
         };
     }
     Ok(MarketPasteRow {
@@ -308,7 +308,9 @@ Animal Oil Residue\t0\t104.000%\t100.000 PED\t100.540%\t6.400K PED\t100.570%\t23
         assert_eq!(parse.skipped.len(), 3);
         assert_eq!(parse.skipped[0].line_number, 1);
         assert!(parse.skipped[0].reason.contains("expected 12 columns"));
-        assert!(parse.skipped[1].reason.contains("unreadable sales volume"));
+        assert!(parse.skipped[1]
+            .reason
+            .contains("unreadable sales turnover"));
         assert!(parse.skipped[2].reason.contains("unreadable tier"));
     }
 

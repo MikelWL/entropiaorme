@@ -9,7 +9,7 @@
 		type TreeCuttingItem,
 		type TreeCuttingSection,
 	} from './treeCuttingModel.svelte';
-	import { formatPed, formatPercent } from '$lib/utils/format';
+	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
 	let {
 		sections,
@@ -27,7 +27,6 @@
 		onsort: (key: TreeCuttingActivitySortKey) => void;
 	} = $props();
 
-	const NO_DATA = String.fromCharCode(8212);
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
 	const realisedMuTone = (value: number) =>

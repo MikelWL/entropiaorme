@@ -1,11 +1,10 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
-	import { formatPed, formatPercent } from '$lib/utils/format';
+	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
 	let { stock }: { stock: TreeCuttingStock[] } = $props();
 
-	const NO_DATA = String.fromCharCode(8212);
 
 	function formatVolume(value: number): string {
 		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;

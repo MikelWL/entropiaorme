@@ -14,7 +14,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use eo_api::analytics::{InventorySellInput, LedgerEntryInput, LedgerPresetInput};
+use eo_api::analytics::{
+    HarvestStockInput, InventorySellInput, LedgerEntryInput, LedgerPresetInput,
+};
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -225,6 +227,31 @@ async fn a_malformed_cursor_is_a_bad_request() {
             .await
             .unwrap_err(),
         ApiError::bad_request("Invalid cursor")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_negative_removed_quantity_is_a_bad_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = analytics_api(dir.path()).await;
+
+    // Zero is a legitimate "nothing removed" and clears the overlay row;
+    // a negative quantity would clear it just as silently, so it is rejected.
+    api.harvest_stock_set(HarvestStockInput {
+        item_name: "Long Moonleaf Board".to_string(),
+        removed_qty: 0,
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        api.harvest_stock_set(HarvestStockInput {
+            item_name: "Long Moonleaf Board".to_string(),
+            removed_qty: -1,
+        })
+        .await
+        .unwrap_err(),
+        ApiError::bad_request("removed quantity must not be negative")
     );
 }
 

@@ -18,12 +18,16 @@
 		width?: string;
 		label?: string;
 	} = $props();
+
+	// Each instance needs its own id so the trigger describes its own popover.
+	const tooltipId = `infotip-${crypto.randomUUID()}`;
 </script>
 
 <span class="group relative inline-flex items-center">
 	<button
 		type="button"
 		aria-label={label}
+		aria-describedby={tooltipId}
 		class="inline-flex items-center justify-center rounded leading-none cursor-help
 			transition-colors duration-[var(--duration-fast)]
 			focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60
@@ -36,6 +40,7 @@
 	<!-- Transparent bridge (pt-2) keeps hover continuous between icon and
 		popover; the styled box sits inside it. -->
 	<span
+		id={tooltipId}
 		role="tooltip"
 		class="pointer-events-none absolute top-full z-30 pt-2 {width}
 			opacity-0 translate-y-0.5
