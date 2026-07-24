@@ -41,12 +41,9 @@
 	<span class="text-xs text-text-tertiary tabular-nums shrink-0">{economyLine(item)}</span>
 {/snippet}
 
-{#snippet selectionLine(item: EquipmentSearchResult, clear: () => void, action: string)}
-	<div class="flex items-center gap-3 min-w-0">
-		<span class="text-sm text-text font-medium truncate flex-1">{item.name}</span>
-		<span class="text-xs text-text-tertiary tabular-nums shrink-0">{economyLine(item)}</span>
-		<button type="button" class="linklet shrink-0" onclick={clear}>{action}</button>
-	</div>
+{#snippet selectionLine(item: EquipmentSearchResult)}
+	<span class="text-text font-medium truncate flex-1">{item.name}</span>
+	<span class="text-xs text-text-tertiary tabular-nums shrink-0">{economyLine(item)}</span>
 {/snippet}
 
 {#snippet consumableCustomRow()}
@@ -66,7 +63,7 @@
      and its pricing sit left; companion attachments sit right; the live
      cost and actions form a fixed summary bar so the whole form stays
      within one screen. -->
-<Modal bind:open={model.showAddModal} title={model.editingEquipmentId ? 'Edit Equipment' : 'Add Equipment'} class="max-w-5xl">
+<Modal bind:open={model.showAddModal} title={model.editingEquipmentId ? 'Edit Equipment' : 'Add Equipment'} class="max-w-3xl">
 	<div class="flex flex-col">
 		<div class="space-y-5">
 			<!-- Type toggle -->
@@ -92,20 +89,32 @@
 							<label for="equipment-weapon-search" class="block eyebrow mb-1.5">
 								Weapon
 							</label>
-							<PickerInput id="equipment-weapon-search" model={model.weaponPicker}>
+							<PickerInput id="equipment-weapon-search" model={model.weaponPicker} placeholder="">
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Change')}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 							</PickerInput>
+							{#if model.weaponPicker.selected?.isLimited}
+								<div class="mt-1.5 flex items-center justify-end gap-2">
+									<label for="equipment-item-markup" class="text-xs text-text-tertiary">Weapon markup %</label>
+									<Input id="equipment-item-markup" type="number" bind:value={model.markupPercent} min={100} max={10000} class="w-20" />
+								</div>
+							{/if}
 						</div>
 
 						<div>
 							<label for="equipment-amp-search" class="block eyebrow mb-1.5">
 								Amplifier
 							</label>
-							<PickerInput id="equipment-amp-search" model={model.ampPicker}>
+							<PickerInput id="equipment-amp-search" model={model.ampPicker} placeholder="">
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 							</PickerInput>
+							{#if model.ampPicker.selected?.isLimited}
+								<div class="mt-1.5 flex items-center justify-end gap-2">
+									<label for="equipment-amp-markup" class="text-xs text-text-tertiary">Amplifier markup %</label>
+									<Input id="equipment-amp-markup" type="number" bind:value={model.ampMarkupPercent} min={100} max={10000} class="w-20" />
+								</div>
+							{/if}
 						</div>
 
 						<div class="grid grid-cols-2 gap-4">
@@ -115,14 +124,6 @@
 								</label>
 								<Input id="equipment-damage-enhancers" type="number" bind:value={model.damageEnhancers} min={0} class="w-full" />
 							</div>
-							{#if model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited}
-								<div>
-									<label for="equipment-item-markup" class="block eyebrow mb-1.5">
-										Item markup %
-									</label>
-									<Input id="equipment-item-markup" type="number" bind:value={model.markupPercent} min={100} max={10000} class="w-full" />
-								</div>
-							{/if}
 						</div>
 						{#if model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited}
 							<p class="text-xs text-text-tertiary">
@@ -137,9 +138,9 @@
 							<label for="equipment-scope-search" class="block eyebrow mb-1.5">
 								Scope
 							</label>
-							<PickerInput id="equipment-scope-search" model={model.scopePicker}>
+							<PickerInput id="equipment-scope-search" model={model.scopePicker} placeholder="">
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 							</PickerInput>
 							{#if model.scopePicker.selected?.isLimited}
 								<div class="mt-1.5 flex items-center justify-end gap-2">
@@ -153,9 +154,9 @@
 							<label for="equipment-absorber-search" class="block eyebrow mb-1.5">
 								Extender / Absorber
 							</label>
-							<PickerInput id="equipment-absorber-search" model={model.absorberPicker}>
+							<PickerInput id="equipment-absorber-search" model={model.absorberPicker} placeholder="">
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 							</PickerInput>
 							{#if model.absorberPicker.selected?.isLimited}
 								<div class="mt-1.5 flex items-center justify-end gap-2">
@@ -169,9 +170,9 @@
 							<label for="equipment-implant-search" class="block eyebrow mb-1.5">
 								Mindforce implant
 							</label>
-							<PickerInput id="equipment-implant-search" model={model.implantPicker}>
+							<PickerInput id="equipment-implant-search" model={model.implantPicker} placeholder="">
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 							</PickerInput>
 							{#if model.implantPicker.selected?.isLimited}
 								<div class="mt-1.5 flex items-center justify-end gap-2">
@@ -189,30 +190,30 @@
 							<label for="equipment-healer-search" class="block eyebrow mb-1.5">
 								Healing Tool
 							</label>
-							<PickerInput id="equipment-healer-search" model={model.healerPicker}>
+							<PickerInput id="equipment-healer-search" model={model.healerPicker} placeholder="">
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Change')}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 							</PickerInput>
+							{#if model.healerPicker.selected?.isLimited}
+								<div class="mt-1.5 flex items-center justify-end gap-2">
+									<label for="equipment-heal-markup" class="text-xs text-text-tertiary">Healer markup %</label>
+									<Input id="equipment-heal-markup" type="number" bind:value={model.markupPercent} min={100} max={10000} class="w-20" />
+								</div>
+							{/if}
 						</div>
 						{#if model.healerPicker.selected?.isLimited}
-							<div>
-								<label for="equipment-heal-markup" class="block eyebrow mb-1.5">
-									Item markup %
-								</label>
-								<Input id="equipment-heal-markup" type="number" bind:value={model.markupPercent} min={100} max={10000} class="w-full" />
-								<p class="text-xs text-text-tertiary mt-1">
-									Replacement cost for limited items. 200% means each PEC of decay costs 2 PEC to replace.
-								</p>
-							</div>
+							<p class="text-xs text-text-tertiary">
+								Markup is the replacement cost of limited items: 200% means each PEC of decay costs 2 PEC to replace.
+							</p>
 						{/if}
 					</div>
 					<div>
 						<label for="equipment-heal-implant-search" class="block eyebrow mb-1.5">
 							Mindforce implant
 						</label>
-						<PickerInput id="equipment-heal-implant-search" model={model.implantPicker}>
+						<PickerInput id="equipment-heal-implant-search" model={model.implantPicker} placeholder="">
 							{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-							{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
+							{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 						</PickerInput>
 						{#if model.implantPicker.selected?.isLimited}
 							<div class="mt-1.5 flex items-center justify-end gap-2">
@@ -229,19 +230,17 @@
 							<label for="equipment-tool-search" class="block eyebrow mb-1.5">
 								Harvesting Tool
 							</label>
-							<PickerInput id="equipment-tool-search" model={model.toolPicker}>
+							<PickerInput id="equipment-tool-search" model={model.toolPicker} placeholder="">
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Change')}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
 							</PickerInput>
+							{#if model.toolPicker.selected?.isLimited}
+								<div class="mt-1.5 flex items-center justify-end gap-2">
+									<label for="equipment-tool-markup" class="text-xs text-text-tertiary">Tool markup %</label>
+									<Input id="equipment-tool-markup" type="number" bind:value={model.markupPercent} min={100} max={10000} class="w-20" />
+								</div>
+							{/if}
 						</div>
-						{#if model.toolPicker.selected?.isLimited}
-							<div>
-								<label for="equipment-tool-markup" class="block eyebrow mb-1.5">
-									Item markup %
-								</label>
-								<Input id="equipment-tool-markup" type="number" bind:value={model.markupPercent} min={100} max={10000} class="w-full" />
-							</div>
-						{/if}
 					</div>
 				</div>
 			{:else if model.addType === 'consumable'}
@@ -259,14 +258,11 @@
 							{#snippet result({ item })}
 								<span class="text-text truncate">{item.name}</span>
 							{/snippet}
-							{#snippet selection({ item, clear })}
-								<div class="flex items-center gap-3 min-w-0">
-									<span class="text-sm text-text font-medium truncate flex-1">{item.name}</span>
-									{#if !item.catalogId}
-										<span class="text-xs text-text-tertiary shrink-0">Custom entry</span>
-									{/if}
-									<button type="button" class="linklet shrink-0" onclick={clear}>Change</button>
-								</div>
+							{#snippet selection({ item })}
+								<span class="text-text font-medium truncate flex-1">{item.name}</span>
+								{#if !item.catalogId}
+									<span class="text-xs text-text-tertiary shrink-0">Custom entry</span>
+								{/if}
 							{/snippet}
 						</PickerInput>
 					</div>

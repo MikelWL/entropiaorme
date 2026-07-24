@@ -64,6 +64,7 @@ export function createLibraryModel() {
 	let editingEquipmentId = $state<string | null>(null);
 	let saving = $state(false);
 	let markupPercent = $state(100);
+	let ampMarkupPercent = $state(100);
 	let scopeMarkupPercent = $state(100);
 	let absorberMarkupPercent = $state(100);
 	let damageEnhancers = $state(0);
@@ -129,6 +130,7 @@ export function createLibraryModel() {
 			absorber: absorberPicker.selected,
 			implant: implantPicker.selected,
 			markupPercent,
+			ampMarkupPercent,
 			scopeMarkupPercent,
 			absorberMarkupPercent,
 			implantMarkupPercent,
@@ -200,6 +202,7 @@ export function createLibraryModel() {
 		for (const picker of pickers) picker.clear();
 		if (prefill) weaponPicker.query = prefill;
 		markupPercent = 100;
+		ampMarkupPercent = 100;
 		scopeMarkupPercent = 100;
 		absorberMarkupPercent = 100;
 		damageEnhancers = 0;
@@ -261,6 +264,7 @@ export function createLibraryModel() {
 		}
 		healerPicker.clear();
 		markupPercent = detail.weapon.markupPercent;
+		ampMarkupPercent = detail.amplifier?.markupPercent ?? 100;
 		scopeMarkupPercent = detail.scope?.markupPercent ?? 100;
 		absorberMarkupPercent = detail.absorber?.markupPercent ?? 100;
 		implantMarkupPercent = detail.implant?.markupPercent ?? 100;
@@ -359,7 +363,7 @@ export function createLibraryModel() {
 					scope_catalog_id: scopePicker.selected?.catalogId ?? null,
 					absorber_catalog_id: absorberPicker.selected?.catalogId ?? null,
 					weapon_markup: weapon.isLimited ? markupPercent : 100,
-					amp_markup: ampPicker.selected?.isLimited ? markupPercent : 100,
+					amp_markup: ampPicker.selected?.isLimited ? ampMarkupPercent : 100,
 					scope_markup: scopePicker.selected?.isLimited ? scopeMarkupPercent : 100,
 					absorber_markup: absorberPicker.selected?.isLimited ? absorberMarkupPercent : 100,
 					damage_enhancers: damageEnhancers,
@@ -519,6 +523,12 @@ export function createLibraryModel() {
 		},
 		set markupPercent(value: number) {
 			markupPercent = value;
+		},
+		get ampMarkupPercent() {
+			return ampMarkupPercent;
+		},
+		set ampMarkupPercent(value: number) {
+			ampMarkupPercent = value;
 		},
 		get scopeMarkupPercent() {
 			return scopeMarkupPercent;

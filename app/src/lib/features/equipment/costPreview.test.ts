@@ -33,6 +33,7 @@ function input(overrides: Partial<CostPreviewInput> = {}): CostPreviewInput {
 		absorber: null,
 		implant: null,
 		markupPercent: 100,
+		ampMarkupPercent: 100,
 		scopeMarkupPercent: 100,
 		absorberMarkupPercent: 100,
 		implantMarkupPercent: 100,
@@ -76,8 +77,11 @@ describe('previewCostPerUse', () => {
 		expect(previewCostPerUse(input({ amp, damageEnhancers: 2 }))).toBeCloseTo(4.3, 10);
 	});
 
-	it('applies the shared markup input to a limited amp decay only', () => {
-		expect(previewCostPerUse(input({ amp: limitedAmp, markupPercent: 200 }))).toBeCloseTo(4.2, 10);
+	it('applies the amp markup input to a limited amp decay only', () => {
+		expect(previewCostPerUse(input({ amp: limitedAmp, ampMarkupPercent: 200 }))).toBeCloseTo(
+			4.2,
+			10,
+		);
 	});
 
 	it('adds scope decay with its own markup input for limited scopes', () => {

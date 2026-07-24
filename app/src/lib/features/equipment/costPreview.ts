@@ -3,8 +3,8 @@
  * backend cost engine's per-use pricing (eo-services/src/cost_engine.rs) for
  * instant feedback while the form is edited: markup applies to decay only
  * (percent / 100, limited items only), each damage-enhancer slot adds 10% to
- * weapon decay and ammo, the amp shares the weapon's markup input, and the
- * decay-absorption devices take their catalogue shares of the weapon's decay
+ * weapon decay and ammo, and the decay-absorption devices take their
+ * catalogue shares of the weapon's decay
  * (implant first, then the absorber/extender on the remainder) at their own
  * markups. Consumables do not move it. The stored entry's authoritative cost
  * comes back from the save.
@@ -27,8 +27,9 @@ export interface CostPreviewInput {
 	scope: PreviewComponent | null;
 	absorber: PreviewComponent | null;
 	implant: PreviewComponent | null;
-	/** Shared markup percent for the weapon and amp (limited items only). */
+	/** Weapon markup percent (limited items only). */
 	markupPercent: number;
+	ampMarkupPercent: number;
 	scopeMarkupPercent: number;
 	absorberMarkupPercent: number;
 	implantMarkupPercent: number;
@@ -56,7 +57,7 @@ export function previewCostPerUse(input: CostPreviewInput): number | null {
 		absorberDecay * limitedMult(absorber, input.absorberMarkupPercent) +
 		weapon.ammoBurn * enhancerMult;
 	if (amp) {
-		cost += amp.decay * limitedMult(amp, markupPercent) + amp.ammoBurn;
+		cost += amp.decay * limitedMult(amp, input.ampMarkupPercent) + amp.ammoBurn;
 	}
 	if (scope) {
 		cost += scope.decay * limitedMult(scope, input.scopeMarkupPercent);

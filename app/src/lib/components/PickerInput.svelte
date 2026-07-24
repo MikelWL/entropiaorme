@@ -32,7 +32,7 @@
 		model: PickerModel;
 		/** Renders one dropdown row for a search hit. */
 		result: Snippet<[{ item: T }]>;
-		/** Renders the selected chip's content; `clear` releases the selection. */
+		/** Renders the confirmed selection inside the search box; `clear` releases it. */
 		selection: Snippet<[{ item: T; clear: () => void }]>;
 		/** Optional trailing dropdown row (e.g. an "Add custom" affordance). */
 		extraRow?: Snippet;
@@ -88,18 +88,52 @@
 </script>
 
 <div class={className}>
-	<SearchInput
-		{id}
-		{placeholder}
-		bind:value={model.query}
-		loading={model.loading}
-		role="combobox"
-		aria-expanded={showDropdown}
-		aria-autocomplete="list"
-		aria-controls={showDropdown ? listboxId : undefined}
-		aria-activedescendant={activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
-		onkeydown={handleKeydown}
-	/>
+	{#if model.selected}
+		<!-- The search box itself holds the confirmed selection; the X (or a
+		     click anywhere on it) releases it back into a search box. -->
+		<button
+			{id}
+			type="button"
+			class="relative w-full h-9 pl-3 pr-8 text-sm bg-surface text-text rounded-md
+				border border-border flex items-center gap-3 min-w-0 text-left cursor-pointer
+				transition-[border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
+				hover:border-border-bright
+				focus:outline-none focus:border-accent/60"
+			onclick={() => model.clear()}
+			aria-label="Clear selection"
+		>
+			{@render selection({ item: model.selected, clear: () => model.clear() })}
+			<span
+				class="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center
+					justify-center rounded-full text-text-tertiary"
+				aria-hidden="true"
+			>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					viewBox="0 0 20 20"
+					fill="currentColor"
+					class="h-3.5 w-3.5"
+				>
+					<path
+						d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+					/>
+				</svg>
+			</span>
+		</button>
+	{:else}
+		<SearchInput
+			{id}
+			{placeholder}
+			bind:value={model.query}
+			loading={model.loading}
+			role="combobox"
+			aria-expanded={showDropdown}
+			aria-autocomplete="list"
+			aria-controls={showDropdown ? listboxId : undefined}
+			aria-activedescendant={activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
+			onkeydown={handleKeydown}
+		/>
+	{/if}
 
 	{#if showDropdown}
 		<div
@@ -125,12 +159,6 @@
 			{#if extraRow}
 				{@render extraRow()}
 			{/if}
-		</div>
-	{/if}
-
-	{#if model.selected}
-		<div class="mt-2 px-3 py-2 bg-surface rounded-md border border-border/50 text-sm">
-			{@render selection({ item: model.selected, clear: () => model.clear() })}
 		</div>
 	{/if}
 
