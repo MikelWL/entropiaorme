@@ -190,7 +190,7 @@
 
 						<!-- Mindforce implant (manual decay split) -->
 						<div>
-							<label for="equipment-implant-share" class="block eyebrow mb-1.5">
+							<label for="equipment-implant-name" class="block eyebrow mb-1.5">
 								Mindforce implant
 							</label>
 							<div class="flex items-center gap-2">
@@ -207,7 +207,7 @@
 
 						<!-- Extender (manual decay split) -->
 						<div>
-							<label for="equipment-extender-share" class="block eyebrow mb-1.5">
+							<label for="equipment-extender-name" class="block eyebrow mb-1.5">
 								Extender
 							</label>
 							<div class="flex items-center gap-2">
@@ -274,7 +274,7 @@
 
 			<!-- Mindforce implant (manual decay split; healing chips fire through one too) -->
 			<div>
-				<label for="equipment-heal-implant-share" class="block eyebrow mb-1.5">
+				<label for="equipment-heal-implant-name" class="block eyebrow mb-1.5">
 					Mindforce implant <span class="font-normal text-text-tertiary">(optional)</span>
 				</label>
 				<div class="flex items-center gap-2">
@@ -288,7 +288,7 @@
 
 			<!-- Extender (manual decay split) -->
 			<div>
-				<label for="equipment-heal-extender-share" class="block eyebrow mb-1.5">
+				<label for="equipment-heal-extender-name" class="block eyebrow mb-1.5">
 					Extender <span class="font-normal text-text-tertiary">(optional)</span>
 				</label>
 				<div class="flex items-center gap-2">
