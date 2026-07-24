@@ -12,14 +12,30 @@ const amp: PreviewComponent = { decay: 0.5, ammoBurn: 0.2, isLimited: false };
 const limitedAmp: PreviewComponent = { decay: 0.5, ammoBurn: 0.2, isLimited: true };
 const scope: PreviewComponent = { decay: 0.3, ammoBurn: 0, isLimited: false };
 const limitedScope: PreviewComponent = { decay: 0.3, ammoBurn: 0, isLimited: true };
+const implant: PreviewComponent = {
+	decay: 0,
+	ammoBurn: 0,
+	isLimited: true,
+	absorptionPercent: 20,
+};
+const extender: PreviewComponent = {
+	decay: 0,
+	ammoBurn: 0,
+	isLimited: true,
+	absorptionPercent: 20,
+};
 
 function input(overrides: Partial<CostPreviewInput> = {}): CostPreviewInput {
 	return {
 		weapon,
 		amp: null,
 		scope: null,
+		absorber: null,
+		implant: null,
 		markupPercent: 100,
 		scopeMarkupPercent: 100,
+		absorberMarkupPercent: 100,
+		implantMarkupPercent: 100,
 		damageEnhancers: 0,
 		...overrides,
 	};
@@ -72,33 +88,31 @@ describe('previewCostPerUse', () => {
 		);
 	});
 
-	it('routes split-device shares out of weapon decay at their own markups', () => {
-		// Implant 20% of 2.0 = 0.4 @ 1.10; extender 20% of the 1.6
+	it('routes implant and absorber shares out of weapon decay at their own markups', () => {
+		// Implant 20% of 2.0 = 0.4 @ 1.10; extender/absorber 20% of the 1.6
 		// remainder = 0.32 @ 1.08; weapon keeps 1.28 @ 15.0; ammo 1.0.
 		expect(
 			previewCostPerUse(
 				input({
 					weapon: limitedWeapon,
 					markupPercent: 1500,
-					implantSharePercent: 20,
+					implant,
 					implantMarkupPercent: 110,
-					extenderAbsorptionPercent: 20,
-					extenderMarkupPercent: 108,
+					absorber: extender,
+					absorberMarkupPercent: 108,
 				}),
 			),
 		).toBeCloseTo(1.28 * 15 + 0.4 * 1.1 + 0.32 * 1.08 + 1.0, 10);
 	});
 
-	it('scales split shares with enhancers and ignores null shares', () => {
+	it('scales absorption shares with enhancers and ignores shareless devices', () => {
 		// Enhancer mult 1.2: scaled decay 2.4; implant 0.48; weapon 1.92;
-		// ammo 1.2. Null/0 shares change nothing.
+		// ammo 1.2. An unlimited implant prices its share at par.
 		expect(
-			previewCostPerUse(
-				input({ damageEnhancers: 2, implantSharePercent: 20, implantMarkupPercent: 100 }),
-			),
+			previewCostPerUse(input({ damageEnhancers: 2, implant: { ...implant, isLimited: false } })),
 		).toBeCloseTo(1.92 + 0.48 + 1.2, 10);
 		expect(
-			previewCostPerUse(input({ implantSharePercent: null, extenderAbsorptionPercent: 0 })),
+			previewCostPerUse(input({ implant: { ...implant, absorptionPercent: null } })),
 		).toBeCloseTo(3.0, 10);
 	});
 

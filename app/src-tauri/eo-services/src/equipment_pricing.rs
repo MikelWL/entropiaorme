@@ -10,7 +10,7 @@
 use serde_json::Value;
 
 use crate::cost_engine::{
-    cost_per_shot_from_props, heal_cost_per_use_with_splits, heal_reload_seconds, DecaySplits,
+    cost_per_shot_from_props, heal_cost_per_use_with_implant, heal_reload_seconds,
 };
 use crate::db::DbError;
 
@@ -53,8 +53,14 @@ pub fn heal_cost_from_props(properties_json: &str) -> (f64, f64) {
         return (0.0, 2.5);
     };
     let markup = props.get("markup").and_then(Value::as_f64).unwrap_or(100.0) / 100.0;
+    let implant = props.get("implant_entity").filter(|value| !value.is_null());
+    let implant_markup = props
+        .get("implant_markup")
+        .and_then(Value::as_f64)
+        .unwrap_or(100.0)
+        / 100.0;
     (
-        heal_cost_per_use_with_splits(tool, markup, &DecaySplits::from_props(&props)) / 100.0,
+        heal_cost_per_use_with_implant(tool, markup, implant, implant_markup) / 100.0,
         heal_reload_seconds(tool),
     )
 }

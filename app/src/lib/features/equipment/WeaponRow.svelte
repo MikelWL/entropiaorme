@@ -167,25 +167,12 @@
 				{#if detail.implant}
 					<div class="flex items-center justify-between">
 						<span class="text-text">
-							{detail.implant.name ?? 'Mindforce implant'}
+							{detail.implant.name}
 						</span>
 						<span class="text-text-secondary text-xs tabular-nums">
-							-{detail.implant.sharePercent}% weapon decay
+							-{detail.implant.absorptionPercent}% weapon decay
 							{#if detail.implant.markupPercent !== 100}
 								· {detail.implant.markupPercent}%
-							{/if}
-						</span>
-					</div>
-				{/if}
-				{#if detail.extender}
-					<div class="flex items-center justify-between">
-						<span class="text-text">
-							{detail.extender.name ?? 'Extender'}
-						</span>
-						<span class="text-text-secondary text-xs tabular-nums">
-							-{detail.extender.sharePercent}% remaining decay
-							{#if detail.extender.markupPercent !== 100}
-								· {detail.extender.markupPercent}%
 							{/if}
 						</span>
 					</div>

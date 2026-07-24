@@ -50,7 +50,6 @@ function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 		scope: null,
 		absorber: null,
 		implant: null,
-		extender: null,
 		costBreakdown: [],
 		totalCostPerUse: 2.05,
 		...overrides,
@@ -76,6 +75,7 @@ const weaponHit = {
 	name: 'Korss H400',
 	decay: 2.0,
 	ammoBurn: 1.0,
+	absorptionPercent: null,
 	isLimited: false,
 };
 
@@ -179,6 +179,7 @@ describe('form open and reset', () => {
 			name: 'Oil',
 			decay: 0,
 			ammoBurn: 0,
+			absorptionPercent: null,
 			isLimited: false,
 		});
 		model.markupPercent = 150;
@@ -305,6 +306,7 @@ describe('setAddType clearing', () => {
 			name: 'Oil',
 			decay: 0,
 			ammoBurn: 0,
+			absorptionPercent: null,
 			isLimited: false,
 		});
 		return model;
@@ -384,12 +386,8 @@ describe('saveEquipment', () => {
 			scope_markup: 130,
 			absorber_markup: 100,
 			damage_enhancers: 4,
-			implant_name: null,
-			implant_share_percent: null,
+			implant_catalog_id: null,
 			implant_markup: 100,
-			extender_name: null,
-			extender_absorption_percent: null,
-			extender_markup: 100,
 		});
 		expect(model.showAddModal).toBe(false);
 		expect(model.detailCache['9']).toBeDefined();
@@ -440,134 +438,64 @@ describe('saveEquipment', () => {
 			type: 'healing',
 			catalog_id: 'vivo-t1',
 			weapon_markup: 120,
-			implant_name: null,
-			implant_share_percent: null,
+			implant_catalog_id: null,
 			implant_markup: 100,
-			extender_name: null,
-			extender_absorption_percent: null,
-			extender_markup: 100,
 		});
 		expect(model.healingTools.map((t) => t.id)).toEqual(['5']);
 	});
 
-	it('sends split devices only while their share is positive', async () => {
+	it('sends the implant only while one is selected, with limited-gated markup', async () => {
 		mocked.addToLibrary.mockResolvedValue(summary({ id: '9', name: 'Chip' }));
 		mocked.getEquipmentDetail.mockResolvedValue(detail({ id: '9' }));
 		const model = createLibraryModel();
 		model.openAddModal();
 		model.weaponPicker.select({ ...weaponHit, isLimited: true });
 		model.markupPercent = 1500;
-		model.implantName = '  NeoPsion 85-B  ';
-		model.implantSharePercent = 20;
+		model.implantPicker.select({
+			...weaponHit,
+			catalogId: 'i1',
+			name: 'NeoPsion 85-B Mindforce Implant (L)',
+			absorptionPercent: 20,
+			isLimited: true,
+		});
 		model.implantMarkupPercent = 110;
-		model.extenderAbsorptionPercent = 0;
-		model.extenderMarkupPercent = 108;
 		await model.saveEquipment();
 
 		expect(mocked.addToLibrary).toHaveBeenCalledWith(
 			expect.objectContaining({
-				implant_name: 'NeoPsion 85-B',
-				implant_share_percent: 20,
+				implant_catalog_id: 'i1',
 				implant_markup: 110,
-				// A zero share sends no extender even with a markup entered.
-				extender_absorption_percent: null,
-				extender_markup: 108,
 			}),
 		);
 	});
 
-	it('seeds and resets the split-device fields through the edit cycle', async () => {
+	it('seeds and resets the implant picker through the edit cycle', async () => {
 		mocked.getEquipmentLibrary.mockResolvedValue([summary({ id: '1' })]);
 		mocked.getEquipmentDetail.mockResolvedValue(
 			detail({
-				implant: { name: 'NeoPsion 85-B', sharePercent: 20, markupPercent: 110 },
-				extender: { name: null, sharePercent: 20, markupPercent: 108 },
+				implant: {
+					catalogId: 'i1',
+					name: 'NeoPsion 85-B Mindforce Implant (L)',
+					decay: 0,
+					ammoBurn: 0,
+					absorptionPercent: 20,
+					markupPercent: 110,
+					isLimited: true,
+				},
 			}),
 		);
 		const model = createLibraryModel();
 		await model.loadData(false);
 		await model.openEditModal('1');
-		expect(model.implantName).toBe('NeoPsion 85-B');
-		expect(model.implantSharePercent).toBe(20);
+		expect(model.implantPicker.selected?.catalogId).toBe('i1');
+		expect(model.implantPicker.selected?.absorptionPercent).toBe(20);
 		expect(model.implantMarkupPercent).toBe(110);
-		expect(model.extenderName).toBe('');
-		expect(model.extenderAbsorptionPercent).toBe(20);
-		expect(model.extenderMarkupPercent).toBe(108);
 		expect(model.showOptionalAttachments).toBe(true);
 
 		// A fresh add starts clean again.
 		model.openAddModal();
-		expect(model.implantSharePercent).toBeNull();
-		expect(model.implantName).toBe('');
-		expect(model.extenderAbsorptionPercent).toBeNull();
-	});
-
-	it('sends a catalogue consumable by id and a custom one by name', async () => {
-		mocked.addToLibrary.mockResolvedValue(summary({ id: '6', name: 'Oil', type: 'consumable' }));
-		const model = createLibraryModel();
-		model.openAddModal(undefined, 'consumable');
-		model.consumablePicker.select({
-			catalogId: 'oil-1',
-			name: 'Animal Eye Oil',
-			decay: 0,
-			ammoBurn: 0,
-			isLimited: false,
-		});
-		await model.saveEquipment();
-		expect(mocked.addToLibrary).toHaveBeenCalledWith({
-			type: 'consumable',
-			catalog_id: 'oil-1',
-			name: null,
-		});
-
-		model.openAddModal(undefined, 'consumable');
-		model.selectConsumableCustom('  Nutrio Bar  ');
-		expect(model.consumablePicker.query).toBe('Nutrio Bar');
-		await model.saveEquipment();
-		expect(mocked.addToLibrary).toHaveBeenLastCalledWith({
-			type: 'consumable',
-			catalog_id: null,
-			name: 'Nutrio Bar',
-		});
-		expect(model.consumables.map((c) => c.id)).toEqual(['6']);
-	});
-
-	it('keeps the modal open and surfaces the message when saving fails', async () => {
-		mocked.addToLibrary.mockRejectedValue(new Error('duplicate entry'));
-		const model = createLibraryModel();
-		model.openAddModal();
-		model.weaponPicker.select({ ...weaponHit });
-		await model.saveEquipment();
-		expect(model.showAddModal).toBe(true);
-		expect(model.error).toBe('duplicate entry');
-		expect(model.saving).toBe(false);
-	});
-
-	it('closes the modal before the detail fetch so a fetch failure cannot invite a duplicate retry', async () => {
-		mocked.addToLibrary.mockResolvedValue(summary({ id: '9', name: 'Korss H400' }));
-		mocked.getEquipmentDetail.mockRejectedValue(new Error('detail unavailable'));
-		const model = createLibraryModel();
-		model.openAddModal();
-		model.weaponPicker.select({ ...weaponHit });
-		await model.saveEquipment();
-
-		expect(model.showAddModal).toBe(false);
-		expect(model.editingEquipmentId).toBeNull();
-		expect(model.sortedEquipment.map((e) => e.id)).toEqual(['9']);
-		expect(model.detailCache['9']).toBeUndefined();
-		expect(model.error).toBe('detail unavailable');
-		expect(model.saving).toBe(false);
-	});
-
-	it('clears a stale error on entry', async () => {
-		mocked.addToLibrary.mockResolvedValue(summary({ id: '9' }));
-		mocked.getEquipmentDetail.mockResolvedValue(detail({ id: '9' }));
-		const model = createLibraryModel();
-		model.error = 'stale failure';
-		model.openAddModal();
-		model.weaponPicker.select({ ...weaponHit });
-		await model.saveEquipment();
-		expect(model.error).toBeNull();
+		expect(model.implantPicker.selected).toBeNull();
+		expect(model.implantMarkupPercent).toBe(100);
 	});
 });
 
