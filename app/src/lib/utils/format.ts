@@ -1,3 +1,8 @@
+/** The placeholder a numeric readout shows when it has no value to report:
+ *  the same dash the app's other empty states render, written as an escape
+ *  rather than the literal glyph so the authoring lint stays honest. */
+export const NO_DATA = '\u2014';
+
 /** Format a PED value to 2 decimal places */
 export function formatPed(value: number): string {
 	return value.toFixed(2);

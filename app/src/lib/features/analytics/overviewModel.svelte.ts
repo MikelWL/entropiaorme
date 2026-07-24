@@ -8,6 +8,7 @@
 import { getAnalyticsOverview } from '$lib/api';
 import type { MonthlyEntry, OverviewStats, TimelineDay } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
+import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
 
 // lootTt (gains) and trackingCost (losses) are always on; not in config.
 export const PROGRESSION_GAIN_TAGS = new Set(['codex']);
@@ -16,14 +17,6 @@ export interface ReturnConfig {
 	gainTags: Record<string, boolean>;
 	lossTags: Record<string, boolean>;
 }
-
-export const ranges = ['All Time', '30d', '90d', '1y'];
-const periodMap: Record<string, string> = {
-	'All Time': 'all',
-	'30d': '30d',
-	'90d': '90d',
-	'1y': '1y',
-};
 
 // ── Donut chart geometry ──
 export const PIE_R = 50;
@@ -74,7 +67,7 @@ export function createOverviewModel() {
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let config = $state<ReturnConfig>({ gainTags: {}, lossTags: {} });
-	let activeRange = $state('All Time');
+	let activeRange = $state<AnalyticsRange>('All Time');
 	let showBreakdown = $state(false);
 
 	function initConfig(stats: OverviewStats) {
@@ -260,10 +253,10 @@ export function createOverviewModel() {
 			return activeRange;
 		},
 		set activeRange(value: string) {
-			activeRange = value;
+			if (isAnalyticsRange(value)) activeRange = value;
 		},
 		get period() {
-			return periodMap[activeRange];
+			return analyticsPeriod(activeRange);
 		},
 		get showBreakdown() {
 			return showBreakdown;

@@ -507,7 +507,7 @@ per aggregation horizon).
 | `tier` | INTEGER | Not null; the item tier the export reported. |
 | `horizon` | TEXT | Not null; one of `day`, `week`, `month`, `year`, `decade`. |
 | `markup_pct` | REAL | Null where the export reported `N/A` (no sales in that horizon). |
-| `sales_ped` | REAL | Not null; the horizon's sales volume, normalised to PED. |
+| `sales_ped` | REAL | Not null; TT turnover over the horizon, normalised to PED. |
 
 ### Cartography
 

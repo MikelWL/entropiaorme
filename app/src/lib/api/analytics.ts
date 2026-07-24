@@ -1,5 +1,5 @@
 /**
- * The analytics family: the Overview and Activity aggregates, the
+ * The analytics family: the Overview, Hunting, and Tree Cutting aggregates, the
  * ledger (entries and presets), and the inventory ledger. Thin
  * wrappers over the generated typed commands; the reads swap onto the
  * parallel `demo_*` commands while the guide is active (see `./guide`).
@@ -19,10 +19,14 @@ export async function getAnalyticsOverview(period: string = 'all') {
  * paginated entry list: the Net Ledger Impact card's source of truth. */
 export const getLedgerSummary = guideSwapped(commands.ledgerSummary, commands.demoLedgerSummary);
 
-export const getAnalyticsActivity = guideSwapped(
-	commands.analyticsActivity,
-	commands.demoAnalyticsActivity,
+export const getAnalyticsHunting = guideSwapped(
+	commands.analyticsHunting,
+	commands.demoAnalyticsHunting,
 );
+const readAnalyticsHarvest = guideSwapped(commands.analyticsHarvest, commands.demoAnalyticsHarvest);
+export async function getAnalyticsHarvest(period: string = 'all') {
+	return readAnalyticsHarvest(period);
+}
 export const getLedgerPresets = guideSwapped(
 	commands.ledgerPresetsList,
 	commands.demoLedgerPresetsList,
@@ -33,6 +37,13 @@ export const addLedgerEntry = commands.ledgerCreate;
 export const deleteLedgerEntry = commands.ledgerDelete;
 export const addLedgerPreset = commands.ledgerPresetCreate;
 export const deleteLedgerPreset = commands.ledgerPresetDelete;
+// The harvest-stock removed overlay (per-item quantity already sold or
+// spent): operational position context for sale and recycling actions.
+// It does not influence holding-independent market opportunity. No demo
+// variant; the reader degrades to an empty overlay in guide mode.
+export const getHarvestStock = commands.harvestStock;
+export const setHarvestStock = commands.harvestStockSet;
+
 export const addInventoryItem = commands.inventoryCreate;
 export const updateInventoryItem = commands.inventoryUpdate;
 export const deleteInventoryItem = commands.inventoryDelete;
