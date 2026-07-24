@@ -66,7 +66,7 @@
      and its pricing sit left; companion attachments sit right; the live
      cost and actions form a fixed summary bar so the whole form stays
      within one screen. -->
-<Modal bind:open={model.showAddModal} title={model.editingEquipmentId ? 'Edit Equipment' : 'Add Equipment'} class="max-w-3xl">
+<Modal bind:open={model.showAddModal} title={model.editingEquipmentId ? 'Edit Equipment' : 'Add Equipment'} class="max-w-5xl">
 	<div class="flex flex-col">
 		<div class="space-y-5">
 			<!-- Type toggle -->
@@ -92,7 +92,7 @@
 							<label for="equipment-weapon-search" class="block eyebrow mb-1.5">
 								Weapon
 							</label>
-							<PickerInput id="equipment-weapon-search" model={model.weaponPicker} placeholder="Search weapons…">
+							<PickerInput id="equipment-weapon-search" model={model.weaponPicker}>
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Change')}{/snippet}
 							</PickerInput>
@@ -100,9 +100,9 @@
 
 						<div>
 							<label for="equipment-amp-search" class="block eyebrow mb-1.5">
-								Amplifier <span class="font-normal text-text-tertiary">(optional)</span>
+								Amplifier
 							</label>
-							<PickerInput id="equipment-amp-search" model={model.ampPicker} placeholder="Search amplifiers…">
+							<PickerInput id="equipment-amp-search" model={model.ampPicker}>
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
 							</PickerInput>
@@ -111,7 +111,7 @@
 						<div class="grid grid-cols-2 gap-4">
 							<div>
 								<label for="equipment-damage-enhancers" class="block eyebrow mb-1.5">
-									Damage enhancers
+									Damage Enhancer Tier
 								</label>
 								<Input id="equipment-damage-enhancers" type="number" bind:value={model.damageEnhancers} min={0} class="w-full" />
 							</div>
@@ -124,21 +124,20 @@
 								</div>
 							{/if}
 						</div>
-						<p class="text-xs text-text-tertiary">
-							Each enhancer slot is treated as a full stack at session start.
-							{#if model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited}
+						{#if model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited}
+							<p class="text-xs text-text-tertiary">
 								Markup is the replacement cost of limited items: 200% means each PEC of decay costs 2 PEC to replace.
-							{/if}
-						</p>
+							</p>
+						{/if}
 					</div>
 
 					<!-- Column: attachments -->
 					<div class="space-y-4">
 						<div>
 							<label for="equipment-scope-search" class="block eyebrow mb-1.5">
-								Scope <span class="font-normal text-text-tertiary">(optional)</span>
+								Scope
 							</label>
-							<PickerInput id="equipment-scope-search" model={model.scopePicker} placeholder="Search scopes…">
+							<PickerInput id="equipment-scope-search" model={model.scopePicker}>
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
 							</PickerInput>
@@ -152,9 +151,9 @@
 
 						<div>
 							<label for="equipment-absorber-search" class="block eyebrow mb-1.5">
-								Extender / Absorber <span class="font-normal text-text-tertiary">(optional)</span>
+								Extender / Absorber
 							</label>
-							<PickerInput id="equipment-absorber-search" model={model.absorberPicker} placeholder="Search extenders and absorbers…">
+							<PickerInput id="equipment-absorber-search" model={model.absorberPicker}>
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
 							</PickerInput>
@@ -168,9 +167,9 @@
 
 						<div>
 							<label for="equipment-implant-search" class="block eyebrow mb-1.5">
-								Mindforce implant <span class="font-normal text-text-tertiary">(optional)</span>
+								Mindforce implant
 							</label>
-							<PickerInput id="equipment-implant-search" model={model.implantPicker} placeholder="Search Mindforce implants…">
+							<PickerInput id="equipment-implant-search" model={model.implantPicker}>
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
 							</PickerInput>
@@ -190,7 +189,7 @@
 							<label for="equipment-healer-search" class="block eyebrow mb-1.5">
 								Healing Tool
 							</label>
-							<PickerInput id="equipment-healer-search" model={model.healerPicker} placeholder="Search medical tools…">
+							<PickerInput id="equipment-healer-search" model={model.healerPicker}>
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Change')}{/snippet}
 							</PickerInput>
@@ -209,9 +208,9 @@
 					</div>
 					<div>
 						<label for="equipment-heal-implant-search" class="block eyebrow mb-1.5">
-							Mindforce implant <span class="font-normal text-text-tertiary">(optional)</span>
+							Mindforce implant
 						</label>
-						<PickerInput id="equipment-heal-implant-search" model={model.implantPicker} placeholder="Search Mindforce implants…">
+						<PickerInput id="equipment-heal-implant-search" model={model.implantPicker}>
 							{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 							{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Remove')}{/snippet}
 						</PickerInput>
@@ -230,7 +229,7 @@
 							<label for="equipment-tool-search" class="block eyebrow mb-1.5">
 								Harvesting Tool
 							</label>
-							<PickerInput id="equipment-tool-search" model={model.toolPicker} placeholder="Search harvesting tools…">
+							<PickerInput id="equipment-tool-search" model={model.toolPicker}>
 								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
 								{#snippet selection({ item, clear })}{@render selectionLine(item, clear, 'Change')}{/snippet}
 							</PickerInput>
