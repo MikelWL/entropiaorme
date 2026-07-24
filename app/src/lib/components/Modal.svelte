@@ -17,6 +17,12 @@
 
 	let panelEl = $state<HTMLDivElement | null>(null);
 
+	// The default panel width applies only when the caller supplies no
+	// max-width of its own: two max-w-* utilities on one element resolve by
+	// stylesheet order, not class order, so appending a caller width after
+	// a hardcoded default would not reliably override it.
+	const sizeClass = $derived(/(^|\s)max-w-/.test(className) ? '' : 'max-w-md');
+
 	const FOCUSABLE_SELECTOR =
 		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -88,7 +94,7 @@
 
 		<div
 			bind:this={panelEl}
-			class="relative z-10 w-full max-w-md rounded-lg border border-border-bright/60
+			class="relative z-10 w-full {sizeClass} rounded-lg border border-border-bright/60
 				bg-surface-raised/95 shadow-lg backdrop-blur-md
 				focus:outline-hidden
 				before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit]
