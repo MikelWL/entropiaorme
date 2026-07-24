@@ -38,7 +38,7 @@ const resultSnippet = createRawSnippet((args: () => { item: unknown }) => ({
 	render: () => `<span>${(args().item as Item).name}</span>`,
 }));
 
-const selectionSnippet = createRawSnippet((args: () => { item: unknown; clear: () => void }) => ({
+const selectionSnippet = createRawSnippet((args: () => { item: unknown }) => ({
 	render: () => `<span>Selected: ${(args().item as Item).name}</span>`,
 }));
 

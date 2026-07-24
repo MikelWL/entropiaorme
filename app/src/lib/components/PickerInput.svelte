@@ -32,8 +32,8 @@
 		model: PickerModel;
 		/** Renders one dropdown row for a search hit. */
 		result: Snippet<[{ item: T }]>;
-		/** Renders the confirmed selection inside the search box; `clear` releases it. */
-		selection: Snippet<[{ item: T; clear: () => void }]>;
+		/** Renders the confirmed selection inside the search box. */
+		selection: Snippet<[{ item: T }]>;
 		/** Optional trailing dropdown row (e.g. an "Add custom" affordance). */
 		extraRow?: Snippet;
 		class?: string;
@@ -100,9 +100,9 @@
 				hover:border-border-bright
 				focus:outline-none focus:border-accent/60"
 			onclick={() => model.clear()}
-			aria-label="Clear selection"
 		>
-			{@render selection({ item: model.selected, clear: () => model.clear() })}
+			{@render selection({ item: model.selected })}
+			<span class="sr-only">, clear selection</span>
 			<span
 				class="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center
 					justify-center rounded-full text-text-tertiary"

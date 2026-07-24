@@ -125,7 +125,7 @@
 								<Input id="equipment-damage-enhancers" type="number" bind:value={model.damageEnhancers} min={0} class="w-full" />
 							</div>
 						</div>
-						{#if model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited}
+						{#if model.weaponPicker.selected?.isLimited || model.ampPicker.selected?.isLimited || model.scopePicker.selected?.isLimited || model.absorberPicker.selected?.isLimited || model.implantPicker.selected?.isLimited}
 							<p class="text-xs text-text-tertiary">
 								Markup is the replacement cost of limited items: 200% means each PEC of decay costs 2 PEC to replace.
 							</p>
@@ -201,7 +201,7 @@
 								</div>
 							{/if}
 						</div>
-						{#if model.healerPicker.selected?.isLimited}
+						{#if model.healerPicker.selected?.isLimited || model.implantPicker.selected?.isLimited}
 							<p class="text-xs text-text-tertiary">
 								Markup is the replacement cost of limited items: 200% means each PEC of decay costs 2 PEC to replace.
 							</p>
