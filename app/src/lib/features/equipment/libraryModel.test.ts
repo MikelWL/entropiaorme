@@ -184,7 +184,6 @@ describe('form open and reset', () => {
 		});
 		model.markupPercent = 150;
 		model.damageEnhancers = 3;
-		model.showOptionalAttachments = true;
 
 		model.openAddModal(undefined, 'consumable');
 		expect(model.showAddModal).toBe(true);
@@ -196,7 +195,6 @@ describe('form open and reset', () => {
 		expect(model.scopeMarkupPercent).toBe(100);
 		expect(model.absorberMarkupPercent).toBe(100);
 		expect(model.damageEnhancers).toBe(0);
-		expect(model.showOptionalAttachments).toBe(false);
 		expect(model.liveCostPreview).toBeNull();
 	});
 
@@ -264,7 +262,6 @@ describe('openEditModal', () => {
 		expect(model.scopePicker.selected?.catalogId).toBe('scope-1');
 		expect(model.absorberPicker.selected).toBeNull();
 		expect(model.healerPicker.selected).toBeNull();
-		expect(model.showOptionalAttachments).toBe(true);
 		expect(model.markupPercent).toBe(140);
 		expect(model.scopeMarkupPercent).toBe(120);
 		expect(model.absorberMarkupPercent).toBe(100);
@@ -275,7 +272,6 @@ describe('openEditModal', () => {
 		mocked.getEquipmentDetail.mockResolvedValue(detail());
 		const model = createLibraryModel();
 		await model.openEditModal('1');
-		expect(model.showOptionalAttachments).toBe(false);
 	});
 
 	it('reuses the cached detail without refetching', async () => {
@@ -490,7 +486,6 @@ describe('saveEquipment', () => {
 		expect(model.implantPicker.selected?.catalogId).toBe('i1');
 		expect(model.implantPicker.selected?.absorptionPercent).toBe(20);
 		expect(model.implantMarkupPercent).toBe(110);
-		expect(model.showOptionalAttachments).toBe(true);
 
 		// A fresh add starts clean again.
 		model.openAddModal();

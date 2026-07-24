@@ -13,7 +13,6 @@ type EquipmentDemoApi = {
 	collapseRow(): void;
 	openAddModal(type: 'weapon' | 'healing' | 'consumable'): void;
 	closeAddModal(): void;
-	setShowOptionalAttachments(value: boolean): void;
 	setDemoHotbarEnabled(value: boolean): void;
 };
 
@@ -30,7 +29,6 @@ export const equipmentSurface: GuideSurface = {
 		api.setDemoHotbarEnabled?.(true);
 		api.collapseRow?.();
 		api.closeAddModal?.();
-		api.setShowOptionalAttachments?.(false);
 	},
 	steps: [
 		{

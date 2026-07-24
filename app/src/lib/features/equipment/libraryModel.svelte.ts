@@ -63,7 +63,6 @@ export function createLibraryModel() {
 	let addType = $state<EquipmentFormType>('weapon');
 	let editingEquipmentId = $state<string | null>(null);
 	let saving = $state(false);
-	let showOptionalAttachments = $state(false);
 	let markupPercent = $state(100);
 	let scopeMarkupPercent = $state(100);
 	let absorberMarkupPercent = $state(100);
@@ -200,7 +199,6 @@ export function createLibraryModel() {
 		addType = type;
 		for (const picker of pickers) picker.clear();
 		if (prefill) weaponPicker.query = prefill;
-		showOptionalAttachments = false;
 		markupPercent = 100;
 		scopeMarkupPercent = 100;
 		absorberMarkupPercent = 100;
@@ -262,7 +260,6 @@ export function createLibraryModel() {
 			implantPicker.clear();
 		}
 		healerPicker.clear();
-		showOptionalAttachments = !!detail.scope || !!detail.absorber || !!detail.implant;
 		markupPercent = detail.weapon.markupPercent;
 		scopeMarkupPercent = detail.scope?.markupPercent ?? 100;
 		absorberMarkupPercent = detail.absorber?.markupPercent ?? 100;
@@ -516,12 +513,6 @@ export function createLibraryModel() {
 		},
 		get saving() {
 			return saving;
-		},
-		get showOptionalAttachments() {
-			return showOptionalAttachments;
-		},
-		set showOptionalAttachments(value: boolean) {
-			showOptionalAttachments = value;
 		},
 		get markupPercent() {
 			return markupPercent;
