@@ -9,7 +9,9 @@
 
 use serde_json::Value;
 
-use crate::cost_engine::{cost_per_shot_from_props, heal_cost_per_use, heal_reload_seconds};
+use crate::cost_engine::{
+    cost_per_shot_from_props, heal_cost_per_use_with_splits, heal_reload_seconds, DecaySplits,
+};
 use crate::db::DbError;
 
 /// The per-shot cost in PED derived from a weapon's properties:
@@ -52,7 +54,7 @@ pub fn heal_cost_from_props(properties_json: &str) -> (f64, f64) {
     };
     let markup = props.get("markup").and_then(Value::as_f64).unwrap_or(100.0) / 100.0;
     (
-        heal_cost_per_use(tool, markup) / 100.0,
+        heal_cost_per_use_with_splits(tool, markup, &DecaySplits::from_props(&props)) / 100.0,
         heal_reload_seconds(tool),
     )
 }

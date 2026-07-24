@@ -126,7 +126,7 @@
 							{model.showOptionalAttachments ? 'rotate-180' : ''}">
 						<path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
 					</svg>
-					Optional attachments (scope, absorber)
+					Optional attachments (scope, absorber, implant, extender)
 				</button>
 				{#if model.showOptionalAttachments}
 					<div class="mt-3 pl-4 space-y-4 border-l border-border">
@@ -187,6 +187,40 @@
 								</div>
 							{/if}
 						</div>
+
+						<!-- Mindforce implant (manual decay split) -->
+						<div>
+							<label for="equipment-implant-share" class="block eyebrow mb-1.5">
+								Mindforce implant
+							</label>
+							<div class="flex items-center gap-2">
+								<Input id="equipment-implant-name" type="text" bind:value={model.implantName} placeholder="Implant name (optional)" class="flex-1" />
+								<label for="equipment-implant-share" class="text-xs text-text-tertiary">Decay share %</label>
+								<Input id="equipment-implant-share" type="number" bind:value={model.implantSharePercent} min={0} max={100} class="w-20" />
+								<label for="equipment-implant-markup" class="text-xs text-text-tertiary">Markup %</label>
+								<Input id="equipment-implant-markup" type="number" bind:value={model.implantMarkupPercent} min={100} max={10000} class="w-20" />
+							</div>
+							<p class="text-xs text-text-tertiary mt-1">
+								Share of this weapon's decay the implant takes per use (~2 for a plain implant, the stated absorption for an absorbing one). 0 removes it.
+							</p>
+						</div>
+
+						<!-- Extender (manual decay split) -->
+						<div>
+							<label for="equipment-extender-share" class="block eyebrow mb-1.5">
+								Extender
+							</label>
+							<div class="flex items-center gap-2">
+								<Input id="equipment-extender-name" type="text" bind:value={model.extenderName} placeholder="Extender name (optional)" class="flex-1" />
+								<label for="equipment-extender-share" class="text-xs text-text-tertiary">Absorption %</label>
+								<Input id="equipment-extender-share" type="number" bind:value={model.extenderAbsorptionPercent} min={0} max={100} class="w-20" />
+								<label for="equipment-extender-markup" class="text-xs text-text-tertiary">Markup %</label>
+								<Input id="equipment-extender-markup" type="number" bind:value={model.extenderMarkupPercent} min={100} max={10000} class="w-20" />
+							</div>
+							<p class="text-xs text-text-tertiary mt-1">
+								Share of the remaining decay the extender absorbs (after the implant's share). 0 removes it.
+							</p>
+						</div>
 					</div>
 				{/if}
 			</div>
@@ -236,6 +270,34 @@
 						</div>
 					{/snippet}
 				</PickerInput>
+			</div>
+
+			<!-- Mindforce implant (manual decay split; healing chips fire through one too) -->
+			<div>
+				<label for="equipment-heal-implant-share" class="block eyebrow mb-1.5">
+					Mindforce implant <span class="font-normal text-text-tertiary">(optional)</span>
+				</label>
+				<div class="flex items-center gap-2">
+					<Input id="equipment-heal-implant-name" type="text" bind:value={model.implantName} placeholder="Implant name (optional)" class="flex-1" />
+					<label for="equipment-heal-implant-share" class="text-xs text-text-tertiary">Decay share %</label>
+					<Input id="equipment-heal-implant-share" type="number" bind:value={model.implantSharePercent} min={0} max={100} class="w-20" />
+					<label for="equipment-heal-implant-markup" class="text-xs text-text-tertiary">Markup %</label>
+					<Input id="equipment-heal-implant-markup" type="number" bind:value={model.implantMarkupPercent} min={100} max={10000} class="w-20" />
+				</div>
+			</div>
+
+			<!-- Extender (manual decay split) -->
+			<div>
+				<label for="equipment-heal-extender-share" class="block eyebrow mb-1.5">
+					Extender <span class="font-normal text-text-tertiary">(optional)</span>
+				</label>
+				<div class="flex items-center gap-2">
+					<Input id="equipment-heal-extender-name" type="text" bind:value={model.extenderName} placeholder="Extender name (optional)" class="flex-1" />
+					<label for="equipment-heal-extender-share" class="text-xs text-text-tertiary">Absorption %</label>
+					<Input id="equipment-heal-extender-share" type="number" bind:value={model.extenderAbsorptionPercent} min={0} max={100} class="w-20" />
+					<label for="equipment-heal-extender-markup" class="text-xs text-text-tertiary">Markup %</label>
+					<Input id="equipment-heal-extender-markup" type="number" bind:value={model.extenderMarkupPercent} min={100} max={10000} class="w-20" />
+				</div>
 			</div>
 		{:else if model.addType === 'tool'}
 			<!-- Harvesting tool selection -->

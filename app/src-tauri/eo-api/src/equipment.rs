@@ -12,8 +12,8 @@
 
 use eo_services::config_service::load_config_readonly;
 use eo_services::cost_engine::{
-    cost_per_shot_from_props, get_weapon_damage_profile, heal_cost_per_use, heal_reload_seconds,
-    is_limited,
+    cost_per_shot_from_props, get_weapon_damage_profile, heal_cost_per_use,
+    heal_cost_per_use_with_splits, heal_reload_seconds, is_limited, DecaySplits,
 };
 use eo_wire::normalizer::{round_half_even, to_python_json_dumps};
 use schemars::JsonSchema;
@@ -133,6 +133,19 @@ pub struct AbsorberComponent {
     pub is_limited: bool,
 }
 
+/// A manually configured decay-split device (Mindforce implant or
+/// extender) on a stored setup: no catalogue entity, just the user's
+/// stated share and markup. For an implant the share is the fraction of
+/// the tool's decay it takes; for an extender, the fraction of the
+/// post-implant remainder.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualDeviceComponent {
+    pub name: Nullable<String>,
+    pub share_percent: f64,
+    pub markup_percent: f64,
+}
+
 /// One line of a cost breakdown.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +165,8 @@ pub struct EquipmentDetail {
     pub amplifier: Nullable<EquipmentComponent>,
     pub scope: Nullable<EquipmentComponent>,
     pub absorber: Nullable<AbsorberComponent>,
+    pub implant: Nullable<ManualDeviceComponent>,
+    pub extender: Nullable<ManualDeviceComponent>,
     pub cost_breakdown: Vec<CostBreakdownLine>,
     pub total_cost_per_use: f64,
 }
@@ -182,10 +197,66 @@ pub struct EquipmentRequest {
     pub absorber_markup: i64,
     #[serde(default)]
     pub damage_enhancers: i64,
+    #[serde(default)]
+    pub implant_name: Option<String>,
+    #[serde(default)]
+    pub implant_share_percent: Option<f64>,
+    #[serde(default = "default_markup")]
+    pub implant_markup: i64,
+    #[serde(default)]
+    pub extender_name: Option<String>,
+    #[serde(default)]
+    pub extender_absorption_percent: Option<f64>,
+    #[serde(default = "default_markup")]
+    pub extender_markup: i64,
 }
 
 fn default_markup() -> i64 {
     100
+}
+
+/// The stored JSON for a manual decay-split device: present only when a
+/// positive share was supplied; the share clamps to `[0, 100]` percent.
+fn manual_device_props(
+    name: Option<&str>,
+    share_percent: Option<f64>,
+    markup: i64,
+    share_key: &str,
+) -> Value {
+    match share_percent {
+        Some(share) if share > 0.0 => {
+            let name = name.map(py_strip).filter(|n| !n.is_empty());
+            json!({
+                "name": name,
+                share_key: share.clamp(0.0, 100.0),
+                "markup_percent": markup,
+            })
+        }
+        _ => Value::Null,
+    }
+}
+
+/// A stored manual device as its typed component, when present.
+fn manual_device_component(
+    props: &Value,
+    key: &str,
+    share_key: &str,
+) -> Option<ManualDeviceComponent> {
+    props
+        .get(key)
+        .filter(|value| json_truthy(value))
+        .map(|device| ManualDeviceComponent {
+            name: device
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .into(),
+            share_percent: device.get(share_key).and_then(Value::as_f64).unwrap_or(0.0),
+            markup_percent: device
+                .get("markup_percent")
+                .and_then(Value::as_f64)
+                .unwrap_or(100.0),
+        })
 }
 
 /// Python `str.strip()`: `char::is_whitespace` plus the four
@@ -381,7 +452,11 @@ fn row_to_summary(
         name: name.to_string(),
         kind: EquipmentKind::Healing,
         amplifier_name: None.into(),
-        cost_per_use: heal_cost_per_use(tool_e, markup),
+        cost_per_use: heal_cost_per_use_with_splits(
+            tool_e,
+            markup,
+            &DecaySplits::from_props(props),
+        ),
         damage_min: None.into(),
         damage_max: None.into(),
         reload_seconds: Some(round_half_even(heal_reload_seconds(tool_e), 2)).into(),
@@ -469,6 +544,8 @@ fn row_to_detail(
             amplifier: component("amp_entity", "amp_catalog_id", "amp_markup")?.into(),
             scope: component("scope_entity", "scope_catalog_id", "scope_markup")?.into(),
             absorber: absorber.into(),
+            implant: manual_device_component(props, "implant", "decay_share_percent").into(),
+            extender: manual_device_component(props, "extender", "absorption_percent").into(),
             cost_breakdown: breakdown_lines(&cost_result)?,
             total_cost_per_use: cost_result["totalCostPerUse"].as_f64().unwrap_or(0.0),
         });
@@ -489,6 +566,8 @@ fn row_to_detail(
             amplifier: None.into(),
             scope: None.into(),
             absorber: None.into(),
+            implant: None.into(),
+            extender: None.into(),
             cost_breakdown: Vec::new(),
             total_cost_per_use: 0.0,
         });
@@ -502,14 +581,37 @@ fn row_to_detail(
             ApiError::invalid_state(format!("stored healing row {id} missing tool_entity"))
         })?;
     let markup_pct = stored_markup(props, "markup");
-    let cost = heal_cost_per_use(tool_e, markup_pct / 100.0);
+    let splits = DecaySplits::from_props(props);
+    let cost = heal_cost_per_use_with_splits(tool_e, markup_pct / 100.0, &splits);
     let decay = eco_or_zero(tool_e, "decay");
-    let mut breakdown = vec![CostBreakdownLine {
+    // The decay the tool itself keeps after the split devices take their
+    // shares (identical to `decay` when no device is configured).
+    let implant_decay = decay * splits.implant_share;
+    let extender_decay = (decay - implant_decay) * splits.extender_share;
+    let tool_decay = decay - implant_decay - extender_decay;
+    let mut breakdown = Vec::new();
+    if implant_decay > 0.0 {
+        breakdown.push(CostBreakdownLine {
+            component: "Implant decay".to_string(),
+            cost_pec: round_half_even(implant_decay, 4),
+            markup_multiplier: splits.implant_markup,
+            effective_cost_pec: round_half_even(implant_decay * splits.implant_markup, 4),
+        });
+    }
+    if extender_decay > 0.0 {
+        breakdown.push(CostBreakdownLine {
+            component: "Extender decay".to_string(),
+            cost_pec: round_half_even(extender_decay, 4),
+            markup_multiplier: splits.extender_markup,
+            effective_cost_pec: round_half_even(extender_decay * splits.extender_markup, 4),
+        });
+    }
+    breakdown.push(CostBreakdownLine {
         component: "Decay".to_string(),
-        cost_pec: decay,
+        cost_pec: tool_decay,
         markup_multiplier: markup_pct / 100.0,
-        effective_cost_pec: round_half_even(decay * markup_pct / 100.0, 4),
-    }];
+        effective_cost_pec: round_half_even(tool_decay * markup_pct / 100.0, 4),
+    });
     let ammo_pec = eco_or_zero(tool_e, "ammo_burn") / 100.0;
     if ammo_pec > 0.0 {
         breakdown.push(CostBreakdownLine {
@@ -538,6 +640,8 @@ fn row_to_detail(
         amplifier: None.into(),
         scope: None.into(),
         absorber: None.into(),
+        implant: manual_device_component(props, "implant", "decay_share_percent").into(),
+        extender: manual_device_component(props, "extender", "absorption_percent").into(),
         cost_breakdown: breakdown,
         total_cost_per_use: cost,
     })
@@ -740,6 +844,27 @@ impl Api {
                     "damage_enhancers".into(),
                     json!(req.damage_enhancers.max(0)),
                 );
+                // Split-device keys are stored only when configured, so a
+                // split-free write keeps the byte shape the DB-state
+                // goldens pin.
+                let implant = manual_device_props(
+                    req.implant_name.as_deref(),
+                    req.implant_share_percent,
+                    req.implant_markup,
+                    "decay_share_percent",
+                );
+                if !implant.is_null() {
+                    props.insert("implant".into(), implant);
+                }
+                let extender = manual_device_props(
+                    req.extender_name.as_deref(),
+                    req.extender_absorption_percent,
+                    req.extender_markup,
+                    "absorption_percent",
+                );
+                if !extender.is_null() {
+                    props.insert("extender".into(), extender);
+                }
                 Ok(BuiltProps {
                     name,
                     stored_catalog_id: Some(catalog_id.to_string()),
@@ -758,6 +883,27 @@ impl Api {
                 props.insert("tool_entity".into(), tool_e);
                 props.insert("tool_catalog_id".into(), json!(catalog_id));
                 props.insert("markup".into(), json!(req.weapon_markup));
+                // Split-device keys are stored only when configured, so a
+                // split-free write keeps the byte shape the DB-state
+                // goldens pin.
+                let implant = manual_device_props(
+                    req.implant_name.as_deref(),
+                    req.implant_share_percent,
+                    req.implant_markup,
+                    "decay_share_percent",
+                );
+                if !implant.is_null() {
+                    props.insert("implant".into(), implant);
+                }
+                let extender = manual_device_props(
+                    req.extender_name.as_deref(),
+                    req.extender_absorption_percent,
+                    req.extender_markup,
+                    "absorption_percent",
+                );
+                if !extender.is_null() {
+                    props.insert("extender".into(), extender);
+                }
                 Ok(BuiltProps {
                     name,
                     stored_catalog_id: Some(catalog_id.to_string()),

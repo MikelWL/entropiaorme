@@ -444,6 +444,8 @@ export interface EquipmentDetail {
 	amplifier: EquipmentComponent | null;
 	scope: EquipmentComponent | null;
 	absorber: AbsorberComponent | null;
+	implant: ManualDeviceComponent | null;
+	extender: ManualDeviceComponent | null;
 	costBreakdown: CostBreakdownLine[];
 	totalCostPerUse: number;
 }
@@ -471,6 +473,12 @@ export interface EquipmentRequest {
 	scope_markup?: number;
 	absorber_markup?: number;
 	damage_enhancers?: number;
+	implant_name?: string | null;
+	implant_share_percent?: number | null;
+	implant_markup?: number;
+	extender_name?: string | null;
+	extender_absorption_percent?: number | null;
+	extender_markup?: number;
 }
 
 /**
@@ -825,6 +833,19 @@ export interface LossesBreakdown {
 	trackingCost: number;
 	cycledBreakdown: CycledBreakdown;
 	ledger: Record<string, number>;
+}
+
+/**
+ * A manually configured decay-split device (Mindforce implant or
+ * extender) on a stored setup: no catalogue entity, just the user's
+ * stated share and markup. For an implant the share is the fraction of
+ * the tool's decay it takes; for an extender, the fraction of the
+ * post-implant remainder.
+ */
+export interface ManualDeviceComponent {
+	name: string | null;
+	sharePercent: number;
+	markupPercent: number;
 }
 
 /**

@@ -49,6 +49,8 @@ function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 		amplifier: null,
 		scope: null,
 		absorber: null,
+		implant: null,
+		extender: null,
 		costBreakdown: [],
 		totalCostPerUse: 2.05,
 		...overrides,
@@ -382,6 +384,12 @@ describe('saveEquipment', () => {
 			scope_markup: 130,
 			absorber_markup: 100,
 			damage_enhancers: 4,
+			implant_name: null,
+			implant_share_percent: null,
+			implant_markup: 100,
+			extender_name: null,
+			extender_absorption_percent: null,
+			extender_markup: 100,
 		});
 		expect(model.showAddModal).toBe(false);
 		expect(model.detailCache['9']).toBeDefined();
@@ -432,8 +440,66 @@ describe('saveEquipment', () => {
 			type: 'healing',
 			catalog_id: 'vivo-t1',
 			weapon_markup: 120,
+			implant_name: null,
+			implant_share_percent: null,
+			implant_markup: 100,
+			extender_name: null,
+			extender_absorption_percent: null,
+			extender_markup: 100,
 		});
 		expect(model.healingTools.map((t) => t.id)).toEqual(['5']);
+	});
+
+	it('sends split devices only while their share is positive', async () => {
+		mocked.addToLibrary.mockResolvedValue(summary({ id: '9', name: 'Chip' }));
+		mocked.getEquipmentDetail.mockResolvedValue(detail({ id: '9' }));
+		const model = createLibraryModel();
+		model.openAddModal();
+		model.weaponPicker.select({ ...weaponHit, isLimited: true });
+		model.markupPercent = 1500;
+		model.implantName = '  NeoPsion 85-B  ';
+		model.implantSharePercent = 20;
+		model.implantMarkupPercent = 110;
+		model.extenderAbsorptionPercent = 0;
+		model.extenderMarkupPercent = 108;
+		await model.saveEquipment();
+
+		expect(mocked.addToLibrary).toHaveBeenCalledWith(
+			expect.objectContaining({
+				implant_name: 'NeoPsion 85-B',
+				implant_share_percent: 20,
+				implant_markup: 110,
+				// A zero share sends no extender even with a markup entered.
+				extender_absorption_percent: null,
+				extender_markup: 108,
+			}),
+		);
+	});
+
+	it('seeds and resets the split-device fields through the edit cycle', async () => {
+		mocked.getEquipmentLibrary.mockResolvedValue([summary({ id: '1' })]);
+		mocked.getEquipmentDetail.mockResolvedValue(
+			detail({
+				implant: { name: 'NeoPsion 85-B', sharePercent: 20, markupPercent: 110 },
+				extender: { name: null, sharePercent: 20, markupPercent: 108 },
+			}),
+		);
+		const model = createLibraryModel();
+		await model.loadData(false);
+		await model.openEditModal('1');
+		expect(model.implantName).toBe('NeoPsion 85-B');
+		expect(model.implantSharePercent).toBe(20);
+		expect(model.implantMarkupPercent).toBe(110);
+		expect(model.extenderName).toBe('');
+		expect(model.extenderAbsorptionPercent).toBe(20);
+		expect(model.extenderMarkupPercent).toBe(108);
+		expect(model.showOptionalAttachments).toBe(true);
+
+		// A fresh add starts clean again.
+		model.openAddModal();
+		expect(model.implantSharePercent).toBeNull();
+		expect(model.implantName).toBe('');
+		expect(model.extenderAbsorptionPercent).toBeNull();
 	});
 
 	it('sends a catalogue consumable by id and a custom one by name', async () => {

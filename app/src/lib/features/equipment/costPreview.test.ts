@@ -72,6 +72,36 @@ describe('previewCostPerUse', () => {
 		);
 	});
 
+	it('routes split-device shares out of weapon decay at their own markups', () => {
+		// Implant 20% of 2.0 = 0.4 @ 1.10; extender 20% of the 1.6
+		// remainder = 0.32 @ 1.08; weapon keeps 1.28 @ 15.0; ammo 1.0.
+		expect(
+			previewCostPerUse(
+				input({
+					weapon: limitedWeapon,
+					markupPercent: 1500,
+					implantSharePercent: 20,
+					implantMarkupPercent: 110,
+					extenderAbsorptionPercent: 20,
+					extenderMarkupPercent: 108,
+				}),
+			),
+		).toBeCloseTo(1.28 * 15 + 0.4 * 1.1 + 0.32 * 1.08 + 1.0, 10);
+	});
+
+	it('scales split shares with enhancers and ignores null shares', () => {
+		// Enhancer mult 1.2: scaled decay 2.4; implant 0.48; weapon 1.92;
+		// ammo 1.2. Null/0 shares change nothing.
+		expect(
+			previewCostPerUse(
+				input({ damageEnhancers: 2, implantSharePercent: 20, implantMarkupPercent: 100 }),
+			),
+		).toBeCloseTo(1.92 + 0.48 + 1.2, 10);
+		expect(
+			previewCostPerUse(input({ implantSharePercent: null, extenderAbsorptionPercent: 0 })),
+		).toBeCloseTo(3.0, 10);
+	});
+
 	it('applies the markup as given, with no floor of its own', () => {
 		// The form's input clamps markup to a minimum of 100; the formula
 		// itself applies whatever it receives.

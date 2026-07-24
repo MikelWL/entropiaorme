@@ -68,6 +68,13 @@ export function createLibraryModel() {
 	let scopeMarkupPercent = $state(100);
 	let absorberMarkupPercent = $state(100);
 	let damageEnhancers = $state(0);
+	// Manual decay-split devices: active when their share is > 0.
+	let implantName = $state('');
+	let implantSharePercent = $state<number | null>(null);
+	let implantMarkupPercent = $state(100);
+	let extenderName = $state('');
+	let extenderAbsorptionPercent = $state<number | null>(null);
+	let extenderMarkupPercent = $state(100);
 
 	// ── Catalogue pickers ──
 	const label = (item: EquipmentSearchResult) => item.name;
@@ -124,6 +131,10 @@ export function createLibraryModel() {
 			markupPercent,
 			scopeMarkupPercent,
 			damageEnhancers,
+			implantSharePercent,
+			implantMarkupPercent,
+			extenderAbsorptionPercent,
+			extenderMarkupPercent,
 		}),
 	);
 
@@ -195,7 +206,17 @@ export function createLibraryModel() {
 		scopeMarkupPercent = 100;
 		absorberMarkupPercent = 100;
 		damageEnhancers = 0;
+		resetSplitDevices();
 		showAddModal = true;
+	}
+
+	function resetSplitDevices() {
+		implantName = '';
+		implantSharePercent = null;
+		implantMarkupPercent = 100;
+		extenderName = '';
+		extenderAbsorptionPercent = null;
+		extenderMarkupPercent = 100;
 	}
 
 	async function openEditModal(id: string) {
@@ -244,7 +265,19 @@ export function createLibraryModel() {
 			absorberPicker.clear();
 		}
 		healerPicker.clear();
-		showOptionalAttachments = !!detail.scope || !!detail.absorber;
+		resetSplitDevices();
+		if (detail.implant) {
+			implantName = detail.implant.name ?? '';
+			implantSharePercent = detail.implant.sharePercent;
+			implantMarkupPercent = detail.implant.markupPercent;
+		}
+		if (detail.extender) {
+			extenderName = detail.extender.name ?? '';
+			extenderAbsorptionPercent = detail.extender.sharePercent;
+			extenderMarkupPercent = detail.extender.markupPercent;
+		}
+		showOptionalAttachments =
+			!!detail.scope || !!detail.absorber || !!detail.implant || !!detail.extender;
 		markupPercent = detail.weapon.markupPercent;
 		scopeMarkupPercent = detail.scope?.markupPercent ?? 100;
 		absorberMarkupPercent = detail.absorber?.markupPercent ?? 100;
@@ -323,6 +356,23 @@ export function createLibraryModel() {
 		}
 	}
 
+	// The split-device request fields: a device is sent only while its
+	// share is positive, so clearing the share removes it on save.
+	function splitDevicePayload() {
+		return {
+			implant_name: implantName.trim() || null,
+			implant_share_percent:
+				implantSharePercent && implantSharePercent > 0 ? implantSharePercent : null,
+			implant_markup: implantMarkupPercent,
+			extender_name: extenderName.trim() || null,
+			extender_absorption_percent:
+				extenderAbsorptionPercent && extenderAbsorptionPercent > 0
+					? extenderAbsorptionPercent
+					: null,
+			extender_markup: extenderMarkupPercent,
+		};
+	}
+
 	async function saveEquipment() {
 		error = null;
 		saving = true;
@@ -341,6 +391,7 @@ export function createLibraryModel() {
 					scope_markup: scopePicker.selected?.isLimited ? scopeMarkupPercent : 100,
 					absorber_markup: absorberPicker.selected?.isLimited ? absorberMarkupPercent : 100,
 					damage_enhancers: damageEnhancers,
+					...splitDevicePayload(),
 				};
 				const item = editingEquipmentId
 					? await updateLibrary(editingEquipmentId, payload)
@@ -359,6 +410,7 @@ export function createLibraryModel() {
 					type: 'healing',
 					catalog_id: healer.catalogId,
 					weapon_markup: healer.isLimited ? markupPercent : 100,
+					...splitDevicePayload(),
 				});
 				replaceEquipment(item);
 			} else if (addType === 'tool') {
@@ -520,6 +572,42 @@ export function createLibraryModel() {
 		},
 		get liveCostPreview() {
 			return liveCostPreview;
+		},
+		get implantName() {
+			return implantName;
+		},
+		set implantName(value: string) {
+			implantName = value;
+		},
+		get implantSharePercent() {
+			return implantSharePercent;
+		},
+		set implantSharePercent(value: number | null) {
+			implantSharePercent = value;
+		},
+		get implantMarkupPercent() {
+			return implantMarkupPercent;
+		},
+		set implantMarkupPercent(value: number) {
+			implantMarkupPercent = value;
+		},
+		get extenderName() {
+			return extenderName;
+		},
+		set extenderName(value: string) {
+			extenderName = value;
+		},
+		get extenderAbsorptionPercent() {
+			return extenderAbsorptionPercent;
+		},
+		set extenderAbsorptionPercent(value: number | null) {
+			extenderAbsorptionPercent = value;
+		},
+		get extenderMarkupPercent() {
+			return extenderMarkupPercent;
+		},
+		set extenderMarkupPercent(value: number) {
+			extenderMarkupPercent = value;
 		},
 
 		// ── Pickers ──

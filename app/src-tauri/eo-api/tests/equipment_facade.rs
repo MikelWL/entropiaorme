@@ -82,6 +82,12 @@ fn consumable(name: &str) -> EquipmentRequest {
         scope_markup: 100,
         absorber_markup: 100,
         damage_enhancers: 0,
+        implant_name: None,
+        implant_share_percent: None,
+        implant_markup: 100,
+        extender_name: None,
+        extender_absorption_percent: None,
+        extender_markup: 100,
     }
 }
 
@@ -245,6 +251,60 @@ async fn a_weapon_setup_stores_and_lists_with_its_catalogue_economy() {
     assert!(detail.amplifier.is_none());
     assert!(detail.scope.is_none());
     assert!(detail.absorber.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_split_devices_round_trip_and_reprice_the_weapon() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, _db) = api_over(dir.path()).await;
+
+    let mut req = consumable("");
+    req.kind = EquipmentKind::Weapon;
+    req.name = None;
+    req.catalog_id = Some("w1".to_string());
+    req.weapon_markup = 1500;
+    req.implant_name = Some("NeoPsion 85-B Mindforce Implant (L)".to_string());
+    req.implant_share_percent = Some(20.0);
+    req.implant_markup = 110;
+    req.extender_absorption_percent = Some(20.0);
+    req.extender_markup = 108;
+    let added = api.equipment_add(&req).await.unwrap();
+    // Implant 20% of 0.5 decay @ 1.10 = 0.11; extender 20% of the 0.4
+    // remainder @ 1.08 = 0.0864; weapon keeps 0.32 @ 15.0 = 4.8; ammo 3.0.
+    assert_eq!(added.cost_per_use, 7.9964);
+
+    let detail = api.equipment_detail(1).await.unwrap();
+    let implant = detail.implant.as_ref().unwrap();
+    assert_eq!(
+        implant.name.as_deref(),
+        Some("NeoPsion 85-B Mindforce Implant (L)")
+    );
+    assert_eq!(implant.share_percent, 20.0);
+    assert_eq!(implant.markup_percent, 110.0);
+    let extender = detail.extender.as_ref().unwrap();
+    assert!(extender.name.is_none());
+    assert_eq!(extender.share_percent, 20.0);
+    assert_eq!(extender.markup_percent, 108.0);
+    let components: Vec<&str> = detail
+        .cost_breakdown
+        .iter()
+        .map(|line| line.component.as_str())
+        .collect();
+    assert_eq!(
+        components,
+        ["Implant decay", "Extender decay", "Weapon decay", "Ammo"]
+    );
+    assert_eq!(detail.total_cost_per_use, 7.9964);
+
+    // Clearing the shares on update removes the devices entirely.
+    let mut cleared = req.clone();
+    cleared.implant_share_percent = None;
+    cleared.extender_absorption_percent = None;
+    let updated = api.equipment_update(1, &cleared).await.unwrap();
+    assert_eq!(updated.cost_per_use, 10.5);
+    let detail = api.equipment_detail(1).await.unwrap();
+    assert!(detail.implant.is_none());
+    assert!(detail.extender.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
