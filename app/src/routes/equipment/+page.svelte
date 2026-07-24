@@ -52,9 +52,6 @@
 			closeAddModal: () => {
 				model.showAddModal = false;
 			},
-			setShowOptionalAttachments: (value: boolean) => {
-				model.showOptionalAttachments = value;
-			},
 			setDemoHotbarEnabled: (value: boolean) => {
 				demoHotbarEnabled = value;
 			}

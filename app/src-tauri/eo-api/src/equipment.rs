@@ -12,8 +12,8 @@
 
 use eo_services::config_service::load_config_readonly;
 use eo_services::cost_engine::{
-    cost_per_shot_from_props, get_weapon_damage_profile, heal_cost_per_use, heal_reload_seconds,
-    is_limited,
+    cost_per_shot_from_props, get_weapon_damage_profile, heal_cost_per_use,
+    heal_cost_per_use_with_implant, heal_reload_seconds, is_limited,
 };
 use eo_wire::normalizer::{round_half_even, to_python_json_dumps};
 use schemars::JsonSchema;
@@ -37,6 +37,7 @@ pub enum SearchKind {
     Absorber,
     Consumable,
     Tool,
+    Implant,
 }
 
 impl SearchKind {
@@ -49,6 +50,7 @@ impl SearchKind {
             SearchKind::Absorber => "absorbers",
             SearchKind::Consumable => "stimulants",
             SearchKind::Tool => "harvesting_tools",
+            SearchKind::Implant => "mindforce_implants",
         }
     }
 }
@@ -86,6 +88,9 @@ pub struct EquipmentSearchHit {
     pub decay: f64,
     /// Ammo burn per use, PEC (catalogue units / 100).
     pub ammo_burn: f64,
+    /// Decay-absorption share, percent, for absorbers/extenders and
+    /// Mindforce implants; null for catalogue rows without one.
+    pub absorption_percent: Nullable<f64>,
     pub is_limited: bool,
 }
 
@@ -152,6 +157,10 @@ pub struct EquipmentDetail {
     pub amplifier: Nullable<EquipmentComponent>,
     pub scope: Nullable<EquipmentComponent>,
     pub absorber: Nullable<AbsorberComponent>,
+    /// The Mindforce implant powering the item, when configured; shares
+    /// the absorber component shape (its absorption is the decay share it
+    /// takes per use).
+    pub implant: Nullable<AbsorberComponent>,
     pub cost_breakdown: Vec<CostBreakdownLine>,
     pub total_cost_per_use: f64,
 }
@@ -182,6 +191,10 @@ pub struct EquipmentRequest {
     pub absorber_markup: i64,
     #[serde(default)]
     pub damage_enhancers: i64,
+    #[serde(default)]
+    pub implant_catalog_id: Option<String>,
+    #[serde(default = "default_markup")]
+    pub implant_markup: i64,
 }
 
 fn default_markup() -> i64 {
@@ -219,6 +232,36 @@ fn json_truthy(value: &Value) -> bool {
 /// Python truthiness over an optional stored entity (`if props.get(..)`).
 fn entity_truthy(props: &Value, key: &str) -> bool {
     props.get(key).map(json_truthy).unwrap_or(false)
+}
+
+/// An absorber-shaped stored entity (absorber/extender or Mindforce
+/// implant) as its typed component, when present.
+fn absorption_component(
+    props: &Value,
+    entity_key: &str,
+    id_key: &str,
+    markup_key: &str,
+) -> Result<Option<AbsorberComponent>, ApiError> {
+    match props.get(entity_key).filter(|v| !v.is_null()) {
+        Some(entity) => {
+            let absorption_pct = entity
+                .get("economy")
+                .and_then(|eco| eco.get("absorption"))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+                * 100.0;
+            Ok(Some(AbsorberComponent {
+                catalog_id: props.get(id_key).and_then(id_string).into(),
+                name: entity_name(entity)?,
+                decay: eco_or_zero(entity, "decay"),
+                ammo_burn: eco_or_zero(entity, "ammo_burn") / 100.0,
+                absorption_percent: round_half_even(absorption_pct, 1),
+                markup_percent: stored_markup(props, markup_key),
+                is_limited: is_limited(entity),
+            }))
+        }
+        None => Ok(None),
+    }
 }
 
 /// Enrichment level from the configured components.
@@ -275,6 +318,12 @@ fn search_hit(row: &Value) -> EquipmentSearchHit {
         name: row["item_name"].as_str().unwrap_or_default().to_string(),
         decay: eco_or_zero(entity, "decay"),
         ammo_burn: eco_or_zero(entity, "ammo_burn") / 100.0,
+        absorption_percent: entity
+            .get("economy")
+            .and_then(|eco| eco.get("absorption"))
+            .and_then(Value::as_f64)
+            .map(|share| round_half_even(share * 100.0, 1))
+            .into(),
         is_limited: is_limited(entity),
     }
 }
@@ -381,7 +430,7 @@ fn row_to_summary(
         name: name.to_string(),
         kind: EquipmentKind::Healing,
         amplifier_name: None.into(),
-        cost_per_use: heal_cost_per_use(tool_e, markup),
+        cost_per_use: heal_cost_with_stored_implant(props, tool_e, markup),
         damage_min: None.into(),
         damage_max: None.into(),
         reload_seconds: Some(round_half_even(heal_reload_seconds(tool_e), 2)).into(),
@@ -429,26 +478,12 @@ fn row_to_detail(
             }
         };
 
-        let absorber = match props.get("absorber_entity").filter(|v| !v.is_null()) {
-            Some(absorber_e) => {
-                let absorption_pct = absorber_e
-                    .get("economy")
-                    .and_then(|eco| eco.get("absorption"))
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0)
-                    * 100.0;
-                Some(AbsorberComponent {
-                    catalog_id: props.get("absorber_catalog_id").and_then(id_string).into(),
-                    name: entity_name(absorber_e)?,
-                    decay: eco_or_zero(absorber_e, "decay"),
-                    ammo_burn: eco_or_zero(absorber_e, "ammo_burn") / 100.0,
-                    absorption_percent: round_half_even(absorption_pct, 1),
-                    markup_percent: stored_markup(props, "absorber_markup"),
-                    is_limited: is_limited(absorber_e),
-                })
-            }
-            None => None,
-        };
+        let absorber = absorption_component(
+            props,
+            "absorber_entity",
+            "absorber_catalog_id",
+            "absorber_markup",
+        )?;
 
         // `props.get("weapon_catalog_id") or <row catalog_id>`.
         let weapon_catalog_id = match props.get("weapon_catalog_id").filter(|v| json_truthy(v)) {
@@ -469,6 +504,13 @@ fn row_to_detail(
             amplifier: component("amp_entity", "amp_catalog_id", "amp_markup")?.into(),
             scope: component("scope_entity", "scope_catalog_id", "scope_markup")?.into(),
             absorber: absorber.into(),
+            implant: absorption_component(
+                props,
+                "implant_entity",
+                "implant_catalog_id",
+                "implant_markup",
+            )?
+            .into(),
             cost_breakdown: breakdown_lines(&cost_result)?,
             total_cost_per_use: cost_result["totalCostPerUse"].as_f64().unwrap_or(0.0),
         });
@@ -489,6 +531,7 @@ fn row_to_detail(
             amplifier: None.into(),
             scope: None.into(),
             absorber: None.into(),
+            implant: None.into(),
             cost_breakdown: Vec::new(),
             total_cost_per_use: 0.0,
         });
@@ -502,14 +545,35 @@ fn row_to_detail(
             ApiError::invalid_state(format!("stored healing row {id} missing tool_entity"))
         })?;
     let markup_pct = stored_markup(props, "markup");
-    let cost = heal_cost_per_use(tool_e, markup_pct / 100.0);
+    let implant = props.get("implant_entity").filter(|v| !v.is_null());
+    let implant_markup = stored_markup(props, "implant_markup") / 100.0;
+    let cost = heal_cost_per_use_with_implant(tool_e, markup_pct / 100.0, implant, implant_markup);
     let decay = eco_or_zero(tool_e, "decay");
-    let mut breakdown = vec![CostBreakdownLine {
+    // The decay the tool itself keeps after the implant takes its share
+    // (identical to `decay` when no implant is configured).
+    let implant_share = implant
+        .and_then(|entity| entity.get("economy"))
+        .and_then(|eco| eco.get("absorption"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    let implant_decay = decay * implant_share;
+    let tool_decay = decay - implant_decay;
+    let mut breakdown = Vec::new();
+    if implant_decay > 0.0 {
+        breakdown.push(CostBreakdownLine {
+            component: "Implant decay".to_string(),
+            cost_pec: round_half_even(implant_decay, 4),
+            markup_multiplier: implant_markup,
+            effective_cost_pec: round_half_even(implant_decay * implant_markup, 4),
+        });
+    }
+    breakdown.push(CostBreakdownLine {
         component: "Decay".to_string(),
-        cost_pec: decay,
+        cost_pec: tool_decay,
         markup_multiplier: markup_pct / 100.0,
-        effective_cost_pec: round_half_even(decay * markup_pct / 100.0, 4),
-    }];
+        effective_cost_pec: round_half_even(tool_decay * markup_pct / 100.0, 4),
+    });
     let ammo_pec = eco_or_zero(tool_e, "ammo_burn") / 100.0;
     if ammo_pec > 0.0 {
         breakdown.push(CostBreakdownLine {
@@ -538,6 +602,13 @@ fn row_to_detail(
         amplifier: None.into(),
         scope: None.into(),
         absorber: None.into(),
+        implant: absorption_component(
+            props,
+            "implant_entity",
+            "implant_catalog_id",
+            "implant_markup",
+        )?
+        .into(),
         cost_breakdown: breakdown,
         total_cost_per_use: cost,
     })
@@ -740,6 +811,15 @@ impl Api {
                     "damage_enhancers".into(),
                     json!(req.damage_enhancers.max(0)),
                 );
+                // Implant keys are stored only when one is configured, so an
+                // implant-free write keeps the byte shape the DB-state
+                // goldens pin.
+                let implant_e = optional("mindforce_implants", req.implant_catalog_id.as_deref())?;
+                if !implant_e.is_null() {
+                    props.insert("implant_entity".into(), implant_e);
+                    props.insert("implant_catalog_id".into(), json!(req.implant_catalog_id));
+                    props.insert("implant_markup".into(), json!(req.implant_markup));
+                }
                 Ok(BuiltProps {
                     name,
                     stored_catalog_id: Some(catalog_id.to_string()),
@@ -758,6 +838,19 @@ impl Api {
                 props.insert("tool_entity".into(), tool_e);
                 props.insert("tool_catalog_id".into(), json!(catalog_id));
                 props.insert("markup".into(), json!(req.weapon_markup));
+                let implant_e = match req
+                    .implant_catalog_id
+                    .as_deref()
+                    .filter(|id| !id.is_empty())
+                {
+                    Some(id) => self.fetch_entity("mindforce_implants", id)?,
+                    None => Value::Null,
+                };
+                if !implant_e.is_null() {
+                    props.insert("implant_entity".into(), implant_e);
+                    props.insert("implant_catalog_id".into(), json!(req.implant_catalog_id));
+                    props.insert("implant_markup".into(), json!(req.implant_markup));
+                }
                 Ok(BuiltProps {
                     name,
                     stored_catalog_id: Some(catalog_id.to_string()),
@@ -817,6 +910,17 @@ impl Api {
             }
         }
     }
+}
+
+/// The healing per-use cost over a row's stored props: the tool at its
+/// markup plus any configured implant at its own.
+fn heal_cost_with_stored_implant(props: &Value, tool_e: &Value, markup: f64) -> f64 {
+    heal_cost_per_use_with_implant(
+        tool_e,
+        markup,
+        props.get("implant_entity").filter(|v| !v.is_null()),
+        stored_markup(props, "implant_markup") / 100.0,
+    )
 }
 
 /// Shape one library row (id, name, item_type, properties_json) to the

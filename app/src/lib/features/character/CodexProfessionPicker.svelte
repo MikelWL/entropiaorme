@@ -170,7 +170,7 @@
 						<Badge variant="positive">HP</Badge>
 					{/if}
 				{/snippet}
-				{#snippet selection({ item }: { item: PickerRow; clear: () => void })}
+				{#snippet selection({ item }: { item: PickerRow })}
 					<!-- At most a one-frame flash: a selection immediately
 					     hands the target up and closes the panel. -->
 					<span>{targetLabel(rowToTarget(item))}</span>

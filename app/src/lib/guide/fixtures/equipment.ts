@@ -88,6 +88,7 @@ export const equipmentDemoDetails: Record<string, EquipmentDetail> = {
 		amplifier: null,
 		scope: null,
 		absorber: null,
+		implant: null,
 		costBreakdown: [
 			{
 				component: 'Jester D-1 decay',
@@ -126,6 +127,7 @@ export const equipmentDemoDetails: Record<string, EquipmentDetail> = {
 		},
 		scope: null,
 		absorber: null,
+		implant: null,
 		costBreakdown: [
 			{
 				component: 'Korss H400 decay',

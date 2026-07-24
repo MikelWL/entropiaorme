@@ -180,7 +180,7 @@
 	}
 </script>
 
-<Modal bind:open title="Configure pin overlay" class="max-w-2xl! overflow-hidden">
+<Modal bind:open title="Configure pin overlay" class="max-w-2xl overflow-hidden">
 	<p class="mb-2 text-xs text-text-secondary">Pins for {planet ?? 'no planet'} · {mapName}</p>
 	<div class="flex max-h-[calc(100vh-13rem)] min-h-0 flex-col">
 		<div class="min-h-0 space-y-3 overflow-y-auto pr-2">

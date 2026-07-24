@@ -21,8 +21,14 @@ describe('enrichment ladder', () => {
 });
 
 describe('formatPec', () => {
-	it('renders two decimal places', () => {
+	it('renders two decimal places at ordinary magnitudes', () => {
 		expect(formatPec(0.426)).toBe('0.43');
 		expect(formatPec(4)).toBe('4.00');
+	});
+
+	it('keeps four decimals for slow-decay amounts below 0.1', () => {
+		expect(formatPec(0.011)).toBe('0.0110');
+		expect(formatPec(0.0002)).toBe('0.0002');
+		expect(formatPec(0)).toBe('0.00');
 	});
 });

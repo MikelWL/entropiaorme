@@ -145,6 +145,15 @@ pub fn heal_reload_seconds(tool: &Value) -> f64 {
     }
 }
 
+/// A device's decay-absorption fraction from its catalogue economy
+/// (`absorption`, 0..=1). Measured in-game behaviour: absorption
+/// redistributes the host item's catalogue decay rather than adding to
+/// it, and standard (non-absorbing) Mindforce implants publish ~0.02:
+/// they still take their small share of every powered use.
+fn absorption_share(device: &Value) -> f64 {
+    num_or_zero(&economy(device), "absorption").clamp(0.0, 1.0)
+}
+
 /// Calculate the cost breakdown for a weapon configuration, returning
 /// `{"costBreakdown": [...], "totalCostPerUse": float}`.
 #[allow(clippy::too_many_arguments)]
@@ -159,6 +168,40 @@ pub fn cost_per_shot(
     scope_markup: f64,
     absorber_markup: f64,
 ) -> Value {
+    cost_per_shot_with_implant(
+        weapon,
+        amp,
+        scope,
+        absorber,
+        None,
+        damage_enhancers,
+        weapon_markup,
+        amp_markup,
+        scope_markup,
+        absorber_markup,
+        1.0,
+    )
+}
+
+/// [`cost_per_shot`] with a Mindforce implant powering the weapon: the
+/// implant's catalogue absorption share leaves the weapon's decay first
+/// (measured order: implant, then absorber/extender on the remainder),
+/// priced at the implant's own markup as an "Implant decay" line. With no
+/// implant the figures are bit-identical to [`cost_per_shot`].
+#[allow(clippy::too_many_arguments)]
+pub fn cost_per_shot_with_implant(
+    weapon: &Value,
+    amp: Option<&Value>,
+    scope: Option<&Value>,
+    absorber: Option<&Value>,
+    implant: Option<&Value>,
+    damage_enhancers: i64,
+    weapon_markup: f64,
+    amp_markup: f64,
+    scope_markup: f64,
+    absorber_markup: f64,
+    implant_markup: f64,
+) -> Value {
     let eco = economy(weapon);
     let base_decay = num_or_zero(&eco, "decay");
     let base_ammo_pec = num_or_zero(&eco, "ammo_burn") / 100.0;
@@ -166,6 +209,13 @@ pub fn cost_per_shot(
     let enhancer_mult = 1.0 + damage_enhancers as f64 * 0.1;
     let mut weapon_decay = base_decay * enhancer_mult;
     let weapon_ammo = base_ammo_pec * enhancer_mult;
+
+    let implant_truthy = implant.map(is_truthy).unwrap_or(false);
+    let mut implant_decay = 0.0;
+    if implant_truthy {
+        implant_decay = weapon_decay * absorption_share(implant.unwrap());
+        weapon_decay -= implant_decay;
+    }
 
     // `if absorber:` is a truthiness check (empty dict is falsy).
     let absorber_truthy = absorber.map(is_truthy).unwrap_or(false);
@@ -198,6 +248,9 @@ pub fn cost_per_shot(
         total += effective;
     };
 
+    if implant_truthy && implant_decay > 0.0 {
+        add_line("Implant decay", implant_decay, implant_markup);
+    }
     if absorber_truthy && absorber_decay > 0.0 {
         add_line("Absorber decay", absorber_decay, absorber_markup);
     }
@@ -251,25 +304,47 @@ pub fn cost_per_shot_from_props(props: &Value, damage_enhancers: Option<i64>) ->
         .filter(|v| !v.is_null())
         .expect("cost_per_shot_from_props requires a non-null weapon_entity");
 
-    cost_per_shot(
+    cost_per_shot_with_implant(
         weapon,
         opt("amp_entity"),
         opt("scope_entity"),
         opt("absorber_entity"),
+        opt("implant_entity"),
         enhancers,
         markup("weapon_markup"),
         markup("amp_markup"),
         markup("scope_markup"),
         markup("absorber_markup"),
+        markup("implant_markup"),
     )
 }
 
 /// Cost per use for a medical tool: `(decay + ammo) * markup` in PEC, rounded.
 pub fn heal_cost_per_use(tool: &Value, markup: f64) -> f64 {
+    heal_cost_per_use_with_implant(tool, markup, None, 1.0)
+}
+
+/// [`heal_cost_per_use`] with a Mindforce implant powering the tool: the
+/// implant's catalogue absorption share of the tool's decay is priced at
+/// the implant's markup; the tool keeps the rest (and its ammo) at the
+/// tool's markup. With no implant the figure is bit-identical to
+/// [`heal_cost_per_use`].
+pub fn heal_cost_per_use_with_implant(
+    tool: &Value,
+    markup: f64,
+    implant: Option<&Value>,
+    implant_markup: f64,
+) -> f64 {
     let eco = economy(tool);
     let decay = num_or_zero(&eco, "decay");
     let ammo_pec = num_or_zero(&eco, "ammo_burn") / 100.0;
-    round4((decay + ammo_pec) * markup)
+    let implant_share = implant
+        .filter(|device| is_truthy(device))
+        .map(absorption_share)
+        .unwrap_or(0.0);
+    let implant_decay = decay * implant_share;
+    let tool_decay = decay - implant_decay;
+    round4(implant_decay * implant_markup + (tool_decay + ammo_pec) * markup)
 }
 
 #[cfg(test)]
@@ -535,6 +610,134 @@ mod tests {
     #[should_panic(expected = "weapon_entity")]
     fn from_props_rejects_a_null_weapon_entity() {
         let _ = cost_per_shot_from_props(&json!({"weapon_entity": null}), None);
+    }
+
+    // The implant expectations below pin the measured in-game decay-split
+    // model (catalogue decay conserved and redistributed; the implant's
+    // absorption share leaves first, the absorber/extender's share applies
+    // to the remainder, so the composition is multiplicative).
+
+    #[test]
+    fn implant_and_extender_split_decay_at_their_own_markups() {
+        // The measured 20% implant + 20% extender case at three markups:
+        // implant 20% @ 1.10, extender 20% of the remainder = 16% @ 1.08,
+        // weapon keeps 64% @ 15.00 (the 1500% limited-chip scenario).
+        let weapon = json!({"economy": {"decay": 1.0, "ammo_burn": 0}});
+        let implant = json!({"name": "NeoPsion 85-B Mindforce Implant (L)",
+                             "economy": {"absorption": 0.2}});
+        let extender = json!({"name": "ArMatrix Extender P20 (L)",
+                              "economy": {"absorption": 0.2}});
+        let result = cost_per_shot_with_implant(
+            &weapon,
+            None,
+            None,
+            Some(&extender),
+            Some(&implant),
+            0,
+            15.0,
+            1.0,
+            1.0,
+            1.08,
+            1.1,
+        );
+        let breakdown = result["costBreakdown"].as_array().unwrap();
+        let components: Vec<&str> = breakdown
+            .iter()
+            .map(|line| line["component"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            components,
+            ["Implant decay", "Absorber decay", "Weapon decay"]
+        );
+        assert_eq!(breakdown[0]["costPec"], json!(0.2));
+        assert_eq!(breakdown[0]["effectiveCostPec"], json!(0.22));
+        assert_eq!(breakdown[1]["costPec"], json!(0.16));
+        assert_eq!(breakdown[1]["effectiveCostPec"], json!(0.1728));
+        assert_eq!(breakdown[2]["costPec"], json!(0.64));
+        assert_eq!(breakdown[2]["effectiveCostPec"], json!(9.6));
+        // Effective markup ~999% of base decay, not the additive 943%.
+        assert_eq!(result["totalCostPerUse"], json!(9.9928));
+    }
+
+    #[test]
+    fn standard_implant_takes_its_published_two_percent() {
+        // A standard (non-absorbing) implant publishes absorption 0.02 and
+        // still takes that slice of every powered use.
+        let weapon = json!({"economy": {"decay": 0.572, "ammo_burn": 523}});
+        let implant = json!({"economy": {"absorption": 0.02}});
+        let result = cost_per_shot_with_implant(
+            &weapon,
+            None,
+            None,
+            None,
+            Some(&implant),
+            0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        );
+        let breakdown = result["costBreakdown"].as_array().unwrap();
+        assert_eq!(breakdown[0]["component"], json!("Implant decay"));
+        assert_eq!(breakdown[0]["costPec"], json!(0.0114));
+        assert_eq!(breakdown[1]["component"], json!("Weapon decay"));
+        assert_eq!(breakdown[1]["costPec"], json!(0.5606));
+        // Total decay is conserved (0.572) and the ammo line is untouched.
+        assert_eq!(result["totalCostPerUse"], json!(5.802));
+    }
+
+    #[test]
+    fn no_implant_is_bit_identical_to_the_plain_engine() {
+        let weapon = json!({"economy": {"decay": 0.123456, "ammo_burn": 200}});
+        let plain = cost_per_shot(&weapon, None, None, None, 2, 1.15, 1.0, 1.0, 1.0);
+        for falsy in [None, Some(json!({})), Some(json!(null))] {
+            let with_implant = cost_per_shot_with_implant(
+                &weapon,
+                None,
+                None,
+                None,
+                falsy.as_ref(),
+                2,
+                1.15,
+                1.0,
+                1.0,
+                1.0,
+                1.7,
+            );
+            assert_eq!(plain, with_implant);
+        }
+    }
+
+    #[test]
+    fn from_props_applies_a_stored_implant() {
+        let props = json!({
+            "weapon_entity": {"economy": {"decay": 1.0, "ammo_burn": 0}},
+            "weapon_markup": 1500,
+            "implant_entity": {"economy": {"absorption": 0.2}},
+            "implant_markup": 110,
+            "absorber_entity": {"economy": {"absorption": 0.2}},
+            "absorber_markup": 108,
+        });
+        let result = cost_per_shot_from_props(&props, None);
+        assert_eq!(result["totalCostPerUse"], json!(9.9928));
+    }
+
+    #[test]
+    fn heal_implant_prices_its_share_and_keeps_the_legacy_figure_without_one() {
+        let tool = json!({"economy": {"decay": 0.0512, "ammo_burn": 30}});
+        // No implant reproduces heal_cost_per_use exactly.
+        assert_eq!(
+            heal_cost_per_use_with_implant(&tool, 1.1, None, 1.7),
+            heal_cost_per_use(&tool, 1.1)
+        );
+        // 20% implant: 0.01024 @ 1.1; tool keeps 0.04096 + ammo 0.3 @ 1.5.
+        let implant = json!({"economy": {"absorption": 0.2}});
+        let expected = round4(0.01024 * 1.1 + (0.04096 + 0.3) * 1.5);
+        assert_eq!(
+            heal_cost_per_use_with_implant(&tool, 1.5, Some(&implant), 1.1),
+            expected
+        );
     }
 
     #[test]

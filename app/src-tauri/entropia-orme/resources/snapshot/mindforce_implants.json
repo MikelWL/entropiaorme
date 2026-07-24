@@ -1,0 +1,308 @@
+[
+  {
+    "id": "00000056f9ad",
+    "name": "NeoPsion 55-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 142
+    }
+  },
+  {
+    "id": "00000056f9b5",
+    "name": "NeoPsion 85 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 175
+    }
+  },
+  {
+    "id": "00000056f9b8",
+    "name": "NeoPsion 100 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 200
+    }
+  },
+  {
+    "id": "00000056f9b9",
+    "name": "NeoPsion Mindforce Implant, Adjusted",
+    "economy": {
+      "decay": null,
+      "absorption": 0.05,
+      "max_tt": 250
+    }
+  },
+  {
+    "id": "00000056f9ba",
+    "name": "NeoPsion Mindforce Implant, Augmented",
+    "economy": {
+      "decay": null,
+      "absorption": 0.3,
+      "max_tt": 1200
+    }
+  },
+  {
+    "id": "00000056f9bb",
+    "name": "NeoPsion Mindforce Implant, Improved",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 400
+    }
+  },
+  {
+    "id": "00000056f9bc",
+    "name": "NeoPsion Mindforce Implant, Modified",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 800
+    }
+  },
+  {
+    "id": "00000056f9bd",
+    "name": "NeoPsion Mindforce Implant, Perfected",
+    "economy": {
+      "decay": null,
+      "absorption": 0.4,
+      "max_tt": 1600
+    }
+  },
+  {
+    "id": "00000056f9be",
+    "name": "NeoPsion Mindforce Implant, TWEN Edition",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 1000
+    }
+  },
+  {
+    "id": "00000056f9a1",
+    "name": "NeoPsion 10-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 40
+    }
+  },
+  {
+    "id": "00000056f9a2",
+    "name": "NeoPsion 10-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 42
+    }
+  },
+  {
+    "id": "00000056f9a3",
+    "name": "NeoPsion 10 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 21.99
+    }
+  },
+  {
+    "id": "00000056f9a4",
+    "name": "NeoPsion 20-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 68
+    }
+  },
+  {
+    "id": "00000056f9a5",
+    "name": "NeoPsion 20-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 72
+    }
+  },
+  {
+    "id": "00000056f9a6",
+    "name": "NeoPsion 20 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 82
+    }
+  },
+  {
+    "id": "00000056f9a7",
+    "name": "NeoPsion 30-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 94
+    }
+  },
+  {
+    "id": "00000056f9a8",
+    "name": "NeoPsion 30-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 98
+    }
+  },
+  {
+    "id": "00000056f9a9",
+    "name": "NeoPsion 30 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 65
+    }
+  },
+  {
+    "id": "00000056f9aa",
+    "name": "NeoPsion 50-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 190
+    }
+  },
+  {
+    "id": "00000056f9ab",
+    "name": "NeoPsion 50-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 200
+    }
+  },
+  {
+    "id": "00000056f9ac",
+    "name": "NeoPsion 50 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 89
+    }
+  },
+  {
+    "id": "00000056f9ae",
+    "name": "NeoPsion 55-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 149
+    }
+  },
+  {
+    "id": "00000056f9af",
+    "name": "NeoPsion 55 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 132
+    }
+  },
+  {
+    "id": "00000056f9b0",
+    "name": "NeoPsion 70-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 150
+    }
+  },
+  {
+    "id": "00000056f9b1",
+    "name": "NeoPsion 70-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 162
+    }
+  },
+  {
+    "id": "00000056f9b2",
+    "name": "NeoPsion 70 Mindforce Implant",
+    "economy": {
+      "decay": null,
+      "absorption": 0.02,
+      "max_tt": 150
+    }
+  },
+  {
+    "id": "00000056f9b3",
+    "name": "NeoPsion 85-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 175
+    }
+  },
+  {
+    "id": "00000056f9b4",
+    "name": "NeoPsion 85-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 188
+    }
+  },
+  {
+    "id": "00000056f9b6",
+    "name": "NeoPsion 100-A Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.1,
+      "max_tt": 200
+    }
+  },
+  {
+    "id": "00000056f9b7",
+    "name": "NeoPsion 100-B Mindforce Implant (L)",
+    "economy": {
+      "decay": null,
+      "absorption": 0.2,
+      "max_tt": 220
+    }
+  },
+  {
+    "id": "00000056f9c0",
+    "name": "NeoPsion Booster Implant, Prototype",
+    "economy": {
+      "decay": null,
+      "absorption": 0,
+      "max_tt": 10
+    }
+  },
+  {
+    "id": "00000056f9c1",
+    "name": "NeoPsion Booster Implant, \"The Mole\"",
+    "economy": {
+      "decay": null,
+      "absorption": 0,
+      "max_tt": 10
+    }
+  },
+  {
+    "id": "00000056f9c2",
+    "name": "NeoPsion Booster Implant, \"Glass Cannon\"",
+    "economy": {
+      "decay": null,
+      "absorption": 0,
+      "max_tt": 10
+    }
+  },
+  {
+    "id": "00000056f9c3",
+    "name": "NeoPsion Booster Implant, \"Harlequin\"",
+    "economy": {
+      "decay": null,
+      "absorption": 0,
+      "max_tt": 10
+    }
+  }
+]

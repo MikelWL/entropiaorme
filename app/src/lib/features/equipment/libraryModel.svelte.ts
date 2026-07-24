@@ -63,11 +63,12 @@ export function createLibraryModel() {
 	let addType = $state<EquipmentFormType>('weapon');
 	let editingEquipmentId = $state<string | null>(null);
 	let saving = $state(false);
-	let showOptionalAttachments = $state(false);
 	let markupPercent = $state(100);
+	let ampMarkupPercent = $state(100);
 	let scopeMarkupPercent = $state(100);
 	let absorberMarkupPercent = $state(100);
 	let damageEnhancers = $state(0);
+	let implantMarkupPercent = $state(100);
 
 	// ── Catalogue pickers ──
 	const label = (item: EquipmentSearchResult) => item.name;
@@ -95,6 +96,10 @@ export function createLibraryModel() {
 		search: (q) => searchEquipmentItems(q, 'absorber'),
 		labelOf: label,
 	});
+	const implantPicker = createTypeahead<EquipmentSearchResult>({
+		search: (q) => searchEquipmentItems(q, 'implant'),
+		labelOf: label,
+	});
 	const consumablePicker = createTypeahead<EquipmentSearchResult>({
 		search: (q) => searchEquipmentItems(q, 'consumable'),
 		labelOf: label,
@@ -109,6 +114,7 @@ export function createLibraryModel() {
 		healerPicker,
 		scopePicker,
 		absorberPicker,
+		implantPicker,
 		consumablePicker,
 		toolPicker,
 	];
@@ -121,8 +127,13 @@ export function createLibraryModel() {
 			weapon: weaponPicker.selected,
 			amp: ampPicker.selected,
 			scope: scopePicker.selected,
+			absorber: absorberPicker.selected,
+			implant: implantPicker.selected,
 			markupPercent,
+			ampMarkupPercent,
 			scopeMarkupPercent,
+			absorberMarkupPercent,
+			implantMarkupPercent,
 			damageEnhancers,
 		}),
 	);
@@ -190,11 +201,12 @@ export function createLibraryModel() {
 		addType = type;
 		for (const picker of pickers) picker.clear();
 		if (prefill) weaponPicker.query = prefill;
-		showOptionalAttachments = false;
 		markupPercent = 100;
+		ampMarkupPercent = 100;
 		scopeMarkupPercent = 100;
 		absorberMarkupPercent = 100;
 		damageEnhancers = 0;
+		implantMarkupPercent = 100;
 		showAddModal = true;
 	}
 
@@ -218,6 +230,7 @@ export function createLibraryModel() {
 			ammoBurn: detail.weapon.ammoBurn,
 			markupPercent: detail.weapon.markupPercent,
 			isLimited: detail.weapon.isLimited,
+			absorptionPercent: null,
 			damageEnhancers: detail.weapon.damageEnhancers,
 		});
 		if (detail.amplifier) {
@@ -233,6 +246,7 @@ export function createLibraryModel() {
 				ammoBurn: detail.scope.ammoBurn,
 				markupPercent: detail.scope.markupPercent,
 				isLimited: detail.scope.isLimited,
+				absorptionPercent: null,
 				damageEnhancers: detail.scope.damageEnhancers,
 			});
 		} else {
@@ -243,16 +257,23 @@ export function createLibraryModel() {
 		} else {
 			absorberPicker.clear();
 		}
+		if (detail.implant) {
+			selectCompanion(implantPicker, detail.implant);
+		} else {
+			implantPicker.clear();
+		}
 		healerPicker.clear();
-		showOptionalAttachments = !!detail.scope || !!detail.absorber;
 		markupPercent = detail.weapon.markupPercent;
+		ampMarkupPercent = detail.amplifier?.markupPercent ?? 100;
 		scopeMarkupPercent = detail.scope?.markupPercent ?? 100;
 		absorberMarkupPercent = detail.absorber?.markupPercent ?? 100;
+		implantMarkupPercent = detail.implant?.markupPercent ?? 100;
 		damageEnhancers = detail.weapon.damageEnhancers;
 		showAddModal = true;
 	}
 
-	// Amp and absorber components seed with no enhancer slots of their own.
+	// Amp, absorber and implant components seed with no enhancer slots of
+	// their own; absorption rides along for the cost preview when present.
 	function selectCompanion(
 		picker: (typeof pickers)[number],
 		component: {
@@ -262,6 +283,7 @@ export function createLibraryModel() {
 			ammoBurn: number;
 			markupPercent: number;
 			isLimited: boolean;
+			absorptionPercent?: number;
 		},
 	) {
 		picker.select({
@@ -271,6 +293,7 @@ export function createLibraryModel() {
 			ammoBurn: component.ammoBurn,
 			markupPercent: component.markupPercent,
 			isLimited: component.isLimited,
+			absorptionPercent: component.absorptionPercent ?? null,
 			damageEnhancers: 0,
 		});
 	}
@@ -288,11 +311,13 @@ export function createLibraryModel() {
 			weaponPicker.clear();
 			ampPicker.clear();
 			healerPicker.clear();
+			implantPicker.clear();
 		} else {
 			weaponPicker.clear();
 			ampPicker.clear();
 			healerPicker.clear();
 			toolPicker.clear();
+			implantPicker.clear();
 		}
 	}
 
@@ -304,6 +329,7 @@ export function createLibraryModel() {
 			name: trimmed,
 			decay: 0,
 			ammoBurn: 0,
+			absorptionPercent: null,
 			isLimited: false,
 		});
 	}
@@ -337,10 +363,12 @@ export function createLibraryModel() {
 					scope_catalog_id: scopePicker.selected?.catalogId ?? null,
 					absorber_catalog_id: absorberPicker.selected?.catalogId ?? null,
 					weapon_markup: weapon.isLimited ? markupPercent : 100,
-					amp_markup: ampPicker.selected?.isLimited ? markupPercent : 100,
+					amp_markup: ampPicker.selected?.isLimited ? ampMarkupPercent : 100,
 					scope_markup: scopePicker.selected?.isLimited ? scopeMarkupPercent : 100,
 					absorber_markup: absorberPicker.selected?.isLimited ? absorberMarkupPercent : 100,
 					damage_enhancers: damageEnhancers,
+					implant_catalog_id: implantPicker.selected?.catalogId ?? null,
+					implant_markup: implantPicker.selected?.isLimited ? implantMarkupPercent : 100,
 				};
 				const item = editingEquipmentId
 					? await updateLibrary(editingEquipmentId, payload)
@@ -359,6 +387,8 @@ export function createLibraryModel() {
 					type: 'healing',
 					catalog_id: healer.catalogId,
 					weapon_markup: healer.isLimited ? markupPercent : 100,
+					implant_catalog_id: implantPicker.selected?.catalogId ?? null,
+					implant_markup: implantPicker.selected?.isLimited ? implantMarkupPercent : 100,
 				});
 				replaceEquipment(item);
 			} else if (addType === 'tool') {
@@ -488,17 +518,17 @@ export function createLibraryModel() {
 		get saving() {
 			return saving;
 		},
-		get showOptionalAttachments() {
-			return showOptionalAttachments;
-		},
-		set showOptionalAttachments(value: boolean) {
-			showOptionalAttachments = value;
-		},
 		get markupPercent() {
 			return markupPercent;
 		},
 		set markupPercent(value: number) {
 			markupPercent = value;
+		},
+		get ampMarkupPercent() {
+			return ampMarkupPercent;
+		},
+		set ampMarkupPercent(value: number) {
+			ampMarkupPercent = value;
 		},
 		get scopeMarkupPercent() {
 			return scopeMarkupPercent;
@@ -521,6 +551,12 @@ export function createLibraryModel() {
 		get liveCostPreview() {
 			return liveCostPreview;
 		},
+		get implantMarkupPercent() {
+			return implantMarkupPercent;
+		},
+		set implantMarkupPercent(value: number) {
+			implantMarkupPercent = value;
+		},
 
 		// ── Pickers ──
 		weaponPicker,
@@ -528,6 +564,7 @@ export function createLibraryModel() {
 		healerPicker,
 		scopePicker,
 		absorberPicker,
+		implantPicker,
 		consumablePicker,
 		toolPicker,
 
