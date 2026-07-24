@@ -18,5 +18,8 @@ export function enrichmentColor(level: number): EnrichmentColor {
 }
 
 export function formatPec(pec: number): string {
-	return pec.toFixed(2);
+	// Two decimals reads best at ordinary magnitudes, but very slow decays
+	// (below 0.1 PEC per use) would collapse to "0.01" or "0.00"; those get
+	// four decimals so the figure stays honest.
+	return pec.toFixed(pec !== 0 && Math.abs(pec) < 0.1 ? 4 : 2);
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Badge, Button, Divider } from '$lib/components';
+	import { Badge, Button, DataTable } from '$lib/components';
 	import type { Equipment } from '$lib/types';
 	import { enrichmentColor, enrichmentLabel, formatPec } from './display';
 	import type { LibraryModel } from './libraryModel.svelte';
@@ -7,6 +7,39 @@
 	let { model, item }: { model: LibraryModel; item: Equipment } = $props();
 
 	const detail = $derived(model.detailCache[item.id] ?? null);
+
+	// Absorption annotation for a breakdown line, mirroring the markup
+	// multiplier tag: the split devices show the share of weapon decay they
+	// take (the absorber acts on what the implant leaves), and the weapon
+	// line shows the fraction it keeps.
+	const pct = (value: number) => `${Number(value.toFixed(1))}%`;
+	function absorptionTag(component: string): string | null {
+		const implantShare = detail?.implant?.absorptionPercent ?? 0;
+		const absorberShare = detail?.absorber?.absorptionPercent ?? 0;
+		if (component === 'Implant decay' && implantShare > 0) {
+			return `${pct(implantShare)} of decay`;
+		}
+		if (component === 'Absorber decay' && absorberShare > 0) {
+			return implantShare > 0
+				? `${pct(absorberShare)} of remainder`
+				: `${pct(absorberShare)} of decay`;
+		}
+		if (component === 'Weapon decay' && (implantShare > 0 || absorberShare > 0)) {
+			const kept = (1 - implantShare / 100) * (1 - absorberShare / 100) * 100;
+			return `${pct(kept)} kept`;
+		}
+		return null;
+	}
+
+	const breakdownRows = $derived(
+		(detail?.costBreakdown ?? []).map((line) => ({
+			component: line.component,
+			absorption: absorptionTag(line.component) ?? '',
+			costPec: line.costPec,
+			markupMultiplier: line.markupMultiplier,
+			effectiveCostPec: line.effectiveCostPec,
+		})),
+	);
 </script>
 
 <!-- Equipment row -->
@@ -78,27 +111,36 @@
 			<h3 class="eyebrow mb-3">
 				Cost Breakdown
 			</h3>
-			<div class="space-y-2 mb-4">
-				{#each detail.costBreakdown as line}
-					<div class="flex items-center justify-between text-sm">
-						<span class="text-text-secondary">{line.component}</span>
-						<div class="flex items-center gap-3 tabular-nums">
-							<span class="text-text-tertiary text-xs">
-								{formatPec(line.costPec)} PEC
-								{#if line.markupMultiplier !== 1}
-									<span class="text-warning">
-										x{line.markupMultiplier.toFixed(2)}
-									</span>
-								{/if}
-							</span>
-							<span class="text-text font-medium w-16 text-right">
-								{formatPec(line.effectiveCostPec)}
-							</span>
-						</div>
-					</div>
-				{/each}
-				<Divider />
-				<div class="flex items-center justify-between text-sm font-medium">
+			<div class="mb-4">
+				<DataTable
+					columns={[
+						{ key: 'component', label: 'Component' },
+						{ key: 'absorption', label: 'Absorption' },
+						{ key: 'costPec', label: 'Base PEC', align: 'right' },
+						{ key: 'markupMultiplier', label: 'Markup', align: 'right' },
+						{ key: 'effectiveCostPec', label: 'Per Use PEC', align: 'right' }
+					]}
+					rows={breakdownRows}
+				>
+					{#snippet cell({ row, column })}
+						{#if column.key === 'component'}
+							<span class="text-text-secondary">{row.component}</span>
+						{:else if column.key === 'absorption'}
+							{#if row.absorption}
+								<span class="text-positive text-xs">{row.absorption}</span>
+							{/if}
+						{:else if column.key === 'costPec'}
+							<span class="text-text-tertiary text-xs">{formatPec(row.costPec)}</span>
+						{:else if column.key === 'markupMultiplier'}
+							{#if row.markupMultiplier !== 1}
+								<span class="text-warning text-xs">x{row.markupMultiplier.toFixed(2)}</span>
+							{/if}
+						{:else}
+							<span class="text-text font-medium">{formatPec(row.effectiveCostPec)}</span>
+						{/if}
+					{/snippet}
+				</DataTable>
+				<div class="flex items-center justify-between text-sm font-medium px-3 py-2.5">
 					<span class="text-text">Total per use</span>
 					<span class="text-accent tabular-nums">
 						{formatPec(detail.totalCostPerUse)} PEC
