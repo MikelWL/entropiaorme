@@ -314,7 +314,9 @@ describe('trifecta selector', () => {
 		// The recorded tool must stay readable in full: no truncation.
 		expect(recording.className).toContain('whitespace-nowrap');
 		expect(recording.className).not.toContain('truncate');
-		expect(alert.title).toBe('Tree loot says Terratech PH-1 (L); hotbar shows Terratech PH-4 (L)');
+		expect(alert.title).toBe(
+			'Board output says Terratech PH-1 (L); hotbar shows Terratech PH-4 (L)',
+		);
 	});
 
 	it('names the no-tool case in the guardrail alert', () => {
@@ -334,7 +336,7 @@ describe('trifecta selector', () => {
 		});
 		expect(screen.getByText('No tool').className).toContain('text-red-400');
 		expect(screen.getByTestId('guardrail-alert').title).toBe(
-			'Tree loot says Terratech PH-1 (L); hotbar shows no tool',
+			'Board output says Terratech PH-1 (L); hotbar shows no tool',
 		);
 	});
 });

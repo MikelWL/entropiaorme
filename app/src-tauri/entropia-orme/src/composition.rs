@@ -1391,8 +1391,8 @@ impl EquipmentLibrary for LiveEquipmentLibrary {
     }
 
     fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools> {
-        // Resolve the configured intent per tree size off the live
-        // config and the equipment library. A size whose id is unset,
+        // Resolve the configured intent per board-output class off the live
+        // config and the equipment library. A class whose id is unset,
         // unknown, or not a harvesting tool resolves to None; a fully
         // empty resolution reads as no guardrail at all. The per-use
         // cost recipe matches the hotbar resolver's "tool" branch, so

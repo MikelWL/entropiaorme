@@ -200,9 +200,9 @@ export function effectiveMarkup(
 // ── Section derivation ─────────────────────────────────────────────────
 
 const TIER_LABEL: Record<HarvestYieldTier, string> = {
-	short: 'Small',
-	long: 'Long',
-	huge: 'Huge',
+	short: 'Short Boards',
+	long: 'Boards',
+	huge: 'Long Boards',
 	unknown: 'Unclassified',
 };
 
@@ -267,8 +267,7 @@ export type TreeCuttingToolStrategy = {
 export type TreeCuttingActivitySortKey = 'yieldTier' | 'cycled' | 'realisedRate' | 'muRate';
 
 export function treeCuttingActivityName(section: TreeCuttingSection): string {
-	const label = TIER_LABEL[section.yieldTier];
-	return section.yieldTier === 'unknown' ? label : `${label} Trees`;
+	return TIER_LABEL[section.yieldTier];
 }
 
 export function harvestTierLabel(tier: HarvestYieldTier): string {
@@ -468,13 +467,14 @@ export function createTreeCuttingModel() {
 	const sections = $derived.by<TreeCuttingSection[]>(() => {
 		if (!data) return [];
 		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
-		// Ordered by cycled volume (busiest first): this is the sub-activity
-		// list order and the fallback selection, and it scales cleanly to an
-		// activity with dozens of sub-activities.
+		// Ordered by cycled volume (busiest first), with the diagnostic
+		// Unclassified bucket kept after the three attributable activities.
+		// This is also the fallback selection order.
 		return data.tierComparisons
 			.map((tier) => toSection(tier, market, marketByItem, confidenceMode))
 			.sort(
 				(a, b) =>
+					Number(a.yieldTier === 'unknown') - Number(b.yieldTier === 'unknown') ||
 					b.cycled - a.cycled ||
 					treeCuttingActivityName(a).localeCompare(treeCuttingActivityName(b)),
 			);

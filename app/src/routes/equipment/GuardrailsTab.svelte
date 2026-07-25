@@ -28,14 +28,14 @@
 		guardrail = { ...initialGuardrail };
 	});
 
-	const treeSizes: {
+	const boardClasses: {
 		key: 'shortToolId' | 'longToolId' | 'hugeToolId';
 		label: string;
 		hint: string;
 	}[] = [
-		{ key: 'shortToolId', label: 'Short trees', hint: 'drop Short boards' },
-		{ key: 'longToolId', label: 'Long trees', hint: 'drop plain boards' },
-		{ key: 'hugeToolId', label: 'Huge trees', hint: 'drop Long boards' }
+		{ key: 'shortToolId', label: 'Short Boards', hint: 'e.g. Short Moonleaf Board' },
+		{ key: 'longToolId', label: 'Boards', hint: 'e.g. Moonleaf Board' },
+		{ key: 'hugeToolId', label: 'Long Boards', hint: 'e.g. Long Moonleaf Board' }
 	];
 
 	function toolFor(id: number | null): Equipment | null {
@@ -78,11 +78,11 @@
 
 	<div class="flex items-start justify-between gap-4">
 		<div>
-			<h2 class="text-sm font-medium text-text">Tree-cutting tool guardrail</h2>
+			<h2 class="text-sm font-medium text-text">Board-output tool guardrail</h2>
 			<p class="mt-1 text-sm leading-6 text-text-secondary max-w-xl">
-				Declare the tool you intend to use on each tree size. While tracking, the board type
-				in each loot names the tree, so costs are attributed to the intended tool even if the
-				hotbar missed a switch, and the overlay flags the disagreement in red.
+				Declare the tool you intend to use for each board output. While tracking, the yielded
+				board class selects the intended tool, so costs are attributed to it even if the hotbar
+				missed a switch, and the overlay flags the disagreement in red.
 			</p>
 		</div>
 		<Toggle
@@ -95,25 +95,25 @@
 	<div class={guardrail.enabled ? '' : 'opacity-40 pointer-events-none select-none'}>
 		{#if harvestingTools.length === 0}
 			<p class="text-sm text-text-tertiary py-4">
-				Add harvesting tools in the Library tab first, then assign one per tree size here.
+				Add harvesting tools in the Library tab first, then assign one per board class here.
 			</p>
 		{:else}
 			<div class="space-y-1">
-				{#each treeSizes as size}
-					{@const tool = toolFor(guardrail[size.key])}
+				{#each boardClasses as boardClass}
+					{@const tool = toolFor(guardrail[boardClass.key])}
 					<div
 						class="flex items-center gap-3 px-3 py-2.5 rounded-md
 							{tool ? 'bg-surface-hover/30' : 'hover:bg-surface-hover/20'}
 							transition-colors duration-[var(--duration-fast)]"
 					>
 						<div class="shrink-0 w-28">
-							<span class="text-sm font-medium text-text">{size.label}</span>
-							<span class="block text-xs text-text-tertiary">{size.hint}</span>
+							<span class="text-sm font-medium text-text">{boardClass.label}</span>
+							<span class="block text-xs text-text-tertiary">{boardClass.hint}</span>
 						</div>
 						<div class="flex-1 min-w-0">
 							<Select
-								value={guardrail[size.key] != null ? String(guardrail[size.key]) : ''}
-								onchange={(e) => assignTool(size.key, e.currentTarget.value || null)}
+								value={guardrail[boardClass.key] != null ? String(guardrail[boardClass.key]) : ''}
+								onchange={(e) => assignTool(boardClass.key, e.currentTarget.value || null)}
 								disabled={!guardrail.enabled}
 							>
 								<option value="">– No intended tool –</option>

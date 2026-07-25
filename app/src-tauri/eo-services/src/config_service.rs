@@ -51,9 +51,9 @@ impl TrifectaPresetConfig {
     }
 }
 
-/// The harvesting tool guardrail: the tool the user intends to use on
-/// each tree size. While enabled, harvest swings whose loot names a
-/// tree size are attributed to the intended tool for that size, and a
+/// The harvesting tool guardrail: the tool the user intends to use for
+/// each board-output class. While enabled, harvest swings whose loot
+/// identifies a board class are attributed to its intended tool, and a
 /// disagreement with the hotbar-equipped tool is surfaced rather than
 /// silently recorded.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

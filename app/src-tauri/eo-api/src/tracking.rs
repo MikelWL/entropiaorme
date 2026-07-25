@@ -499,7 +499,7 @@ pub struct TrackingSnapshot {
 }
 
 /// A harvest-guardrail disagreement on the snapshot: the tool the loot
-/// evidence expects for the tree size, the tool the hotbar believed
+/// evidence expects for the board-output class, the tool the hotbar believed
 /// (null when none was equipped), and when the evidence arrived.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -510,7 +510,8 @@ pub struct HarvestGuardrailAlert {
     pub at_epoch: f64,
 }
 
-/// The closed tree-size vocabulary the guardrail names.
+/// The guardrail's closed board-yield vocabulary. The compatibility
+/// type and field names do not claim a physical tree size.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TreeSizeName {

@@ -12,6 +12,7 @@ import {
 	marketOpportunity,
 	NANOCUBE_FALLBACK_MARKUP,
 	opportunityTier,
+	treeCuttingActivityName,
 	weeklyEquivalentVolume,
 } from './treeCuttingModel.svelte';
 
@@ -144,9 +145,9 @@ beforeEach(() => {
 
 describe('harvestTierLabel', () => {
 	it('maps the durable vocabulary to its UI labels', () => {
-		expect(harvestTierLabel('short')).toBe('Small');
-		expect(harvestTierLabel('long')).toBe('Long');
-		expect(harvestTierLabel('huge')).toBe('Huge');
+		expect(harvestTierLabel('short')).toBe('Short Boards');
+		expect(harvestTierLabel('long')).toBe('Boards');
+		expect(harvestTierLabel('huge')).toBe('Long Boards');
 		expect(harvestTierLabel('unknown')).toBe('Unclassified');
 	});
 });
@@ -290,7 +291,7 @@ describe('sections', () => {
 		expect(wood.opportunity.weeklySalesPed).toBe(0);
 	});
 
-	it('keeps PH-3 and PH-4 as separate strategies inside the Huge yield tier', async () => {
+	it('keeps PH-3 and PH-4 as separate strategies inside the Long Boards activity', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
 		const model = createTreeCuttingModel();
@@ -332,7 +333,28 @@ describe('sections', () => {
 
 		const unknown = sectionOf(model, 'unknown');
 		expect(harvestTierLabel(unknown.yieldTier)).toBe('Unclassified');
+		expect(treeCuttingActivityName(unknown)).toBe('Unclassified');
+		expect(treeCuttingActivityName(sectionOf(model, HUGE))).toBe('Long Boards');
 		expect(unknown.tools[0].toolName).toBe('Unknown tool');
+	});
+
+	it('keeps Unclassified last and out of the default selection', async () => {
+		const data = harvest();
+		data.tierComparisons.push({
+			yieldTier: 'unknown',
+			swings: 400,
+			cycled: 400,
+			returns: 0,
+			lootRate: 0,
+			lootItems: [],
+			toolComparisons: [],
+		});
+		mocked.getAnalyticsHarvest.mockResolvedValue(data);
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		expect(model.sections.map((section) => section.yieldTier)).toEqual([LONG, HUGE, 'unknown']);
+		expect(model.selectedSection?.yieldTier).toBe(LONG);
 	});
 
 	it('combines every yield tier into the overall aggregate', async () => {

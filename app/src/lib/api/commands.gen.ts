@@ -530,7 +530,7 @@ export interface GameConnection {
 
 /**
  * A harvest-guardrail disagreement on the snapshot: the tool the loot
- * evidence expects for the tree size, the tool the hotbar believed
+ * evidence expects for the board-output class, the tool the hotbar believed
  * (null when none was equipped), and when the evidence arrived.
  */
 export interface HarvestGuardrailAlert {
@@ -553,7 +553,7 @@ export interface HarvestGuardrailInput {
 
 /**
  * The harvest-guardrail block: the enabled flag and the intended tool
- * id per tree size (null while a size has no intended tool).
+ * id per board-output class (null while a class has no intended tool).
  */
 export interface HarvestGuardrailSettings {
 	enabled: boolean;
@@ -2195,7 +2195,8 @@ export interface TrackingSnapshot {
 export type TrackingState = 'idle' | 'active';
 
 /**
- * The closed tree-size vocabulary the guardrail names.
+ * The guardrail's closed board-yield vocabulary. The compatibility
+ * type and field names do not claim a physical tree size.
  */
 export type TreeSizeName = 'short' | 'long' | 'huge';
 

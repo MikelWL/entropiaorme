@@ -13,7 +13,8 @@ use crate::harvest_yield::HarvestYieldTier;
 /// known.
 pub type EquipmentProfile = Option<Map<String, Value>>;
 
-/// Guardrail compatibility name for the shared yield-tier vocabulary.
+/// Guardrail compatibility name for the shared board-yield vocabulary.
+/// Despite the legacy type name, this does not claim a physical tree size.
 pub type TreeSize = HarvestYieldTier;
 
 /// One intended harvesting tool, resolved from the equipment library.
@@ -23,8 +24,8 @@ pub struct GuardrailTool {
     pub cost_per_use_ped: f64,
 }
 
-/// The resolved harvest guardrail: the intended tool per tree size.
-/// A size with no configured tool carries None and stays outside the
+/// The resolved harvest guardrail: the intended tool per board class.
+/// A class with no configured tool carries None and stays outside the
 /// guardrail's reach.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HarvestGuardrailTools {
@@ -34,7 +35,7 @@ pub struct HarvestGuardrailTools {
 }
 
 impl HarvestGuardrailTools {
-    /// The intended tool for a tree size, when one is configured.
+    /// The intended tool for a board-output class, when configured.
     pub fn for_size(&self, size: TreeSize) -> Option<&GuardrailTool> {
         match size {
             TreeSize::Short => self.short.as_ref(),
@@ -60,7 +61,7 @@ pub trait EquipmentLibrary: Send + Sync {
     fn resolve_trifecta(&self) -> Option<Map<String, Value>>;
 
     /// Resolve the harvest guardrail's intended tools, when the
-    /// guardrail is enabled and at least one size names a tool the
+    /// guardrail is enabled and at least one board class names a tool the
     /// library knows.
     fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools>;
 }

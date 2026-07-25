@@ -164,8 +164,9 @@ pub struct ActiveSessionView {
 
 /// A harvest-guardrail disagreement as the read surfaces consume it:
 /// the tool the loot evidence expects, the tool the hotbar believed
-/// (None when none was equipped), the closed tree-size vocabulary
-/// ("short" | "long" | "huge"), and when the evidence arrived.
+/// (None when none was equipped), the closed board-yield vocabulary
+/// ("short" | "long" | "huge"), and when the evidence arrived. The
+/// compatibility field name does not claim a physical tree size.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarvestGuardrailMismatchView {
     pub expected_tool: String,

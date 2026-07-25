@@ -49,17 +49,17 @@ pub(super) fn is_harvest_loot_group(items: &[LootItem]) -> bool {
             .all(|item| is_harvest_loot_item(&item.item_name))
 }
 
-/// The tree size a loot group testifies to: its board item's size (a
-/// harvest bundle never carries two board types; shavings-only groups
-/// testify to nothing).
+/// The board-output class a loot group testifies to (a harvest bundle
+/// never carries two board types; shavings-only groups testify to
+/// nothing).
 pub(super) fn tree_size_for_group(items: &[LootItem]) -> Option<TreeSize> {
     yield_tier_for_names(items.iter().map(|item| item.item_name.as_str()))
 }
 
-/// The guardrail intent a loot group resolves to: the evidenced tree
-/// size paired with its configured tool. None when the group carries
-/// no board, and equally when the evidenced size has no configured
-/// tool: that size is outside the guardrail's remit, so neither the
+/// The guardrail intent a loot group resolves to: the evidenced board
+/// class paired with its configured tool. None when the group carries
+/// no board, and equally when the evidenced class has no configured
+/// tool: that class is outside the guardrail's remit, so neither the
 /// attribution override nor the retro pass may act on it.
 pub(super) fn guardrail_intent<'a>(
     guardrail: Option<&'a HarvestGuardrailTools>,
@@ -174,7 +174,7 @@ impl TrackerActor {
     }
 
     /// The swing's tool identity and cost under the guardrail: the
-    /// board evidence names the tree size, the configured intent names
+    /// board evidence names the output class, the configured intent names
     /// the tool, and the attribution follows the intent even when the
     /// hotbar disagrees (a desynced hotbar belief poisons every swing
     /// until the next press; the evidence is per-swing and unforgeable).
@@ -190,9 +190,9 @@ impl TrackerActor {
         at_epoch: f64,
     ) -> (Option<String>, Ped) {
         let Some((size, tool)) = guardrail_intent(guardrail, items) else {
-            // Board evidence naming a size with no configured tool is
+            // Board evidence naming a class with no configured tool is
             // outside the guardrail's remit: the hotbar belief stands
-            // directly, and a mismatch from a DIFFERENT tree size must
+            // directly, and a mismatch from a different board class must
             // not leak its tool onto a swing whose own evidence
             // contradicts that size.
             if tree_size_for_group(items).is_some() {
@@ -206,9 +206,8 @@ impl TrackerActor {
         } else {
             if !active.guardrail_warning_emitted {
                 active.warnings.push(format!(
-                    "Harvest guardrail: {} tree loot arrived while {} was equipped; \
+                    "Harvest guardrail: board output arrived while {} was equipped; \
                      costs are attributed to {}",
-                    size.as_str(),
                     observed.as_deref().unwrap_or("no tool"),
                     tool.name
                 ));
