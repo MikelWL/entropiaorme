@@ -72,6 +72,16 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      # A surface that ships ahead of its capability is declared once in the
+      # in-development register and marked where it renders; graduating it
+      # removes both halves together, and a published build must stamp the
+      # channel that hides such surfaces. A whole-tree cargo xtask guard.
+      - id: in-development
+        name: in-development register matches its consumers (frontend)
+        entry: bash -c 'cd app/src-tauri && cargo run -q -p xtask -- in-development'
+        language: system
+        pass_filenames: false
+        always_run: true
       # The authoring lint is diff-scoped (it inspects the lines a change adds,
       # against HEAD here); the version-stamp parity check reads the manifests
       # whole, so both always_run. Both are cargo xtask subcommands.

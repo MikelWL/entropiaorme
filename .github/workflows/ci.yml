@@ -184,14 +184,17 @@ jobs:
         # polling discipline, the frozen svelte/store legacy surface (new
         # shared state is runes-native), the route line ceilings (routes
         # stay thin shells over feature modules; ceilings only ratchet
-        # down), and the market accounting boundary (estimated markup is
-        # informational and never joins a realised figure). All bind at PR
-        # and merge-queue time through this required job.
+        # down), the market accounting boundary (estimated markup is
+        # informational and never joins a realised figure), and the
+        # in-development register (a surface shipping ahead of its capability
+        # is declared once and marked where it renders; graduating it deletes
+        # both). All bind at PR and merge-queue time through this required job.
         run: |
           cargo run -q -p xtask -- no-bare-setinterval
           cargo run -q -p xtask -- no-new-writable
           cargo run -q -p xtask -- route-ceilings
           cargo run -q -p xtask -- market-isolation
+          cargo run -q -p xtask -- in-development
 
   frontend:
     name: Frontend (build + check + test)

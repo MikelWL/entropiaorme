@@ -58,5 +58,15 @@ export default defineConfig({
 		// e2e's own Vite build; unset (so '') in every shipped build. See
 		// app/src/lib/preferences.ts.
 		'import.meta.env.E2E_ISOLATED_PREFS': JSON.stringify(process.env.E2E_ISOLATED_PREFS ?? ''),
+		// Marks a build as a published stable artefact, which hides surfaces
+		// registered as in-development. Set to '1' only by the release pipeline,
+		// the one build path whose output reaches people who did not build it;
+		// unset (so '') for a locally built installer, a source build, and the
+		// dev server, all of which show those surfaces marked. Baking this at
+		// build time rather than reading the build mode is deliberate: an
+		// installer built from the latest source is a production Vite build, so
+		// build mode cannot tell it apart from a published release.
+		// See app/src/lib/inDevelopment/channel.ts.
+		'import.meta.env.STABLE_CHANNEL': JSON.stringify(process.env.ENTROPIAORME_STABLE_CHANNEL ?? ''),
 	},
 });
