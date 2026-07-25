@@ -23,8 +23,11 @@ rollup projections), `0007_map_pins.sql` (the cartography pins),
 `0009_map_navigation.sql` (persisted routes, stop progress, pin visits, radar
 calibration, and cartography spatial indexes),
 `0010_navigation_runtime_fields.sql` (the last-position timestamp and
-flow-scoped route hotkey), and `0011_pin_configs.sql` (the per-preset pin
-palette, with each placed pin referencing one configuration). The
+flow-scoped route hotkey), `0011_pin_configs.sql` (the per-preset pin
+palette, with each placed pin referencing one configuration),
+`0012_harvest_stock_removed.sql` (the interim per-item current-stock
+overlay), and `0013_harvest_yield_tier.sql` (durable Tree Cutting yield
+activity plus its historical backfill). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
@@ -434,15 +437,20 @@ group; a failed swing arrives as the explicit "Harvest attempt failed" chat
 line, so every swing is directly counted rather than inferred. The tool
 identity and per-swing cost are captured at swing time, so later equipment
 edits cannot rewrite history; `tool_name` is null when no harvesting tool was
-known and the swing recorded at zero cost.
+known and the swing recorded at zero cost. The effective yield tier is stored
+independently: board evidence classifies the swing as short, long, or huge,
+while bounded neighbouring evidence may classify boardless swings. Unsupported
+evidence remains explicitly unknown.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | TEXT | Primary key. |
-| `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed (`idx_harvest_session`). |
-| `timestamp` | REAL | Not null. |
+| `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed alone (`idx_harvest_session`) and with tool and timestamp (`idx_harvest_session_tool_time`). |
+| `timestamp` | REAL | Not null. Indexed with yield tier and tool (`idx_harvest_time_tier_tool`) for period-scoped analytics. |
 | `success` | INTEGER | Not null; defaults to 1 (boolean flag). |
 | `tool_name` | TEXT | Optional; the harvesting tool equipped via the hotbar at swing time. |
+| `yield_tier` | TEXT | Not null; `short`, `long`, `huge`, or `unknown` (migration `0013`). This is the effective board yield, not a physical-tree observation. |
+| `yield_tier_source` | TEXT | Optional; `board` for direct evidence or `inferred` for bounded neighbouring evidence. Null when the tier remains unknown. |
 | `cost_ped` | REAL | Defaults to 0; the tool's per-use decay (markup-weighted) at swing time. |
 | `loot_total_ped` | REAL | Defaults to 0; denormalised per-swing loot total beside the per-item rows. |
 
@@ -458,6 +466,18 @@ The individual wood items a successful swing dropped.
 | `quantity` | INTEGER | Defaults to 1. |
 | `value_ped` | REAL | Defaults to 0. |
 | `deactivated_at` | REAL | Null when active; mirrors `kill_loot_items` so the loot-edit flow can extend to harvest loot without a schema move. |
+
+#### `harvest_stock_removed`
+
+Interim per-item quantity already removed from the lifetime recorded harvest
+position (migration `0012`). It affects the Current Stock projection only;
+recorded activity totals and market confidence remain independent.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `item_name` | TEXT | Primary key; canonical harvested item name. |
+| `removed_qty` | INTEGER | Not null; defaults to 0. |
+| `updated_at` | REAL | Not null; Unix-epoch update time. |
 
 #### `notable_events`
 
@@ -765,7 +785,8 @@ additions (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
 `0005_market_observations.sql`, `0006_harvest_events.sql`,
 `0007_map_pins.sql`, `0008_map_views.sql`, `0009_map_navigation.sql`,
-`0010_navigation_runtime_fields.sql`, `0011_pin_configs.sql`); the runner
+`0010_navigation_runtime_fields.sql`, `0011_pin_configs.sql`,
+`0012_harvest_stock_removed.sql`, `0013_harvest_yield_tier.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

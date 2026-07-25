@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::harvest_yield::{HarvestYieldSource, HarvestYieldTier};
 use crate::ped::Ped;
 
 /// A single item received from a loot drop. Serialises to its wire
@@ -94,6 +95,10 @@ pub struct HarvestEvent {
     pub timestamp: f64,
     pub success: bool,
     pub tool_name: Option<String>,
+    /// Effective board-yield activity, independent of the tool.
+    pub yield_tier: HarvestYieldTier,
+    /// None only when the tier remains genuinely unknown.
+    pub yield_tier_source: Option<HarvestYieldSource>,
     pub cost_ped: Ped,
     pub loot_total_ped: Ped,
     pub loot_items: Vec<LootItem>,

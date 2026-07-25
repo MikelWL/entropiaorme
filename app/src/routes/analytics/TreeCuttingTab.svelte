@@ -106,7 +106,7 @@
 		<TreeCuttingActivities
 			sections={model.activityTable.filtered}
 			selected={model.selectedSection}
-			onselect={(toolName) => model.selectSection(toolName)}
+			onselect={(yieldTier) => model.selectSection(yieldTier)}
 			sortKey={model.activityTable.sortKey}
 			sortDir={model.activityTable.sortDir}
 			onsort={(key) => model.activityTable.setSort(key)}
@@ -130,7 +130,7 @@
 {:else}
 	<Card class="p-6">
 		<p class="text-sm text-text-tertiary text-center" data-guide-anchor="analytics-treecutting-area">
-			No tree cutting data yet. Harvest trees during a tracked session to see per-tool sections.
+			No tree cutting data yet. Harvest trees during a tracked session to compare yield tiers.
 		</p>
 	</Card>
 {/if}

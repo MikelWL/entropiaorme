@@ -11,6 +11,7 @@
 //! historical costs are recomputable from the recorded facts.
 
 use crate::bus_events::BusEvent;
+use crate::harvest_yield::{yield_tier_for_names, HarvestYieldSource, HarvestYieldTier};
 use crate::ped::Ped;
 use crate::tracking_models::{HarvestEvent, LootItem};
 
@@ -48,29 +49,11 @@ pub(super) fn is_harvest_loot_group(items: &[LootItem]) -> bool {
             .all(|item| is_harvest_loot_item(&item.item_name))
 }
 
-/// The tree size a board name testifies to: the "Short "/"Long "
-/// prefixes name the short and huge trees, a bare board the long tree.
-/// Non-board items (the shavings by-product) testify to nothing.
-pub(super) fn tree_size_for_board(name: &str) -> Option<TreeSize> {
-    if !name.ends_with(" Board") {
-        return None;
-    }
-    if name.starts_with("Short ") {
-        Some(TreeSize::Short)
-    } else if name.starts_with("Long ") {
-        Some(TreeSize::Huge)
-    } else {
-        Some(TreeSize::Long)
-    }
-}
-
 /// The tree size a loot group testifies to: its board item's size (a
 /// harvest bundle never carries two board types; shavings-only groups
 /// testify to nothing).
 pub(super) fn tree_size_for_group(items: &[LootItem]) -> Option<TreeSize> {
-    items
-        .iter()
-        .find_map(|item| tree_size_for_board(&item.item_name))
+    yield_tier_for_names(items.iter().map(|item| item.item_name.as_str()))
 }
 
 /// The guardrail intent a loot group resolves to: the evidenced tree
@@ -123,7 +106,7 @@ impl TrackerActor {
             // a cue is a readout change, so it nudges even for a
             // re-press of the same tool.
             let cleared_mismatch = active.guardrail_mismatch.take().is_some();
-            active.guardrail_retro_floor = active.session.harvests.len();
+            active.harvest_press_floor = active.session.harvests.len();
             if changed || hand_changed || cleared_mismatch {
                 Some(active.session.id.clone())
             } else {
@@ -165,6 +148,12 @@ impl TrackerActor {
                 harvest_guardrail.as_ref(),
                 harvest_tool.as_ref(),
             );
+            let (yield_tier, yield_tier_source) = Self::yield_for_no_evidence(
+                &active.session.harvests,
+                active.harvest_press_floor,
+                tool_name.as_deref(),
+                now_epoch,
+            );
             active.dirty = true;
             let harvest = HarvestEvent {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -172,6 +161,8 @@ impl TrackerActor {
                 timestamp: now_epoch,
                 success: false,
                 tool_name,
+                yield_tier,
+                yield_tier_source,
                 cost_ped: cost,
                 loot_total_ped: Ped::ZERO,
                 loot_items: Vec::new(),
@@ -255,7 +246,7 @@ impl TrackerActor {
         let mut chain_epoch = evidence_epoch;
         let start = floor.min(harvests.len());
         for harvest in harvests[start..].iter_mut().rev() {
-            if tree_size_for_group(&harvest.loot_items).is_some() {
+            if harvest.yield_tier_source == Some(HarvestYieldSource::Board) {
                 break;
             }
             if chain_epoch - harvest.timestamp > super::GUARDRAIL_RETRO_WINDOW_SECONDS {
@@ -268,6 +259,92 @@ impl TrackerActor {
             harvest.tool_name = Some(evidence_tool.to_string());
             harvest.cost_ped = evidence_cost;
             restamps.push((harvest.id.clone(), evidence_tool.to_string(), evidence_cost));
+        }
+        restamps
+    }
+
+    /// Attribute a boardless swing from the nearest preceding direct
+    /// board evidence in the same hotkey regime, tool, and 30-second
+    /// window.
+    pub(super) fn yield_for_no_evidence(
+        harvests: &[HarvestEvent],
+        floor: usize,
+        tool_name: Option<&str>,
+        at_epoch: f64,
+    ) -> (HarvestYieldTier, Option<HarvestYieldSource>) {
+        let start = floor.min(harvests.len());
+        for harvest in harvests[start..].iter().rev() {
+            let age = at_epoch - harvest.timestamp;
+            if age < 0.0 {
+                continue;
+            }
+            if age > super::HARVEST_YIELD_WINDOW_SECONDS {
+                break;
+            }
+            if harvest.tool_name.as_deref() != tool_name {
+                break;
+            }
+            if harvest.yield_tier_source == Some(HarvestYieldSource::Board) {
+                return (harvest.yield_tier, Some(HarvestYieldSource::Inferred));
+            }
+        }
+        (HarvestYieldTier::Unknown, None)
+    }
+
+    /// Reconcile boardless swings immediately before new direct board
+    /// evidence. Each candidate compares its nearest direct evidence on
+    /// both temporal sides: agreeing or one-sided evidence infers the
+    /// tier, while conflicting evidence leaves it unknown. Direct board
+    /// rows are never rewritten.
+    pub(super) fn restamp_preceding_yield_tiers(
+        harvests: &mut [HarvestEvent],
+        floor: usize,
+        evidence_tool: Option<&str>,
+        evidence_tier: HarvestYieldTier,
+        evidence_epoch: f64,
+    ) -> Vec<(String, HarvestYieldTier, Option<HarvestYieldSource>)> {
+        let start = floor.min(harvests.len());
+        let mut desired = Vec::new();
+
+        for index in (start..harvests.len()).rev() {
+            let harvest = &harvests[index];
+            let age = evidence_epoch - harvest.timestamp;
+            if age < 0.0 {
+                continue;
+            }
+            if age > super::HARVEST_YIELD_WINDOW_SECONDS {
+                break;
+            }
+            if harvest.tool_name.as_deref() != evidence_tool {
+                break;
+            }
+            if harvest.yield_tier_source == Some(HarvestYieldSource::Board) {
+                break;
+            }
+
+            let previous_direct = harvests[start..index].iter().rev().find(|previous| {
+                previous.tool_name.as_deref() == evidence_tool
+                    && previous.yield_tier_source == Some(HarvestYieldSource::Board)
+                    && harvest.timestamp >= previous.timestamp
+                    && harvest.timestamp - previous.timestamp <= super::HARVEST_YIELD_WINDOW_SECONDS
+            });
+            let (tier, source) = match previous_direct {
+                Some(previous) if previous.yield_tier != evidence_tier => {
+                    (HarvestYieldTier::Unknown, None)
+                }
+                _ => (evidence_tier, Some(HarvestYieldSource::Inferred)),
+            };
+            if harvest.yield_tier != tier || harvest.yield_tier_source != source {
+                desired.push((index, tier, source));
+            }
+        }
+
+        let mut restamps = Vec::with_capacity(desired.len());
+        for (index, tier, source) in desired {
+            let harvest = &mut harvests[index];
+            harvest.yield_tier = tier;
+            harvest.yield_tier_source = source;
+            restamps.push((harvest.id.clone(), tier, source));
         }
         restamps
     }

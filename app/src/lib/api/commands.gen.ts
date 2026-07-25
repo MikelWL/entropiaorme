@@ -75,10 +75,10 @@ export interface ActivityRecommenderResult {
 }
 
 /**
- * The Tree Cutting aggregate: the per-tool comparison table.
+ * The Tree Cutting aggregate: the tier-first comparison table.
  */
 export interface AnalyticsHarvest {
-	toolComparisons: HarvestToolComparison[];
+	tierComparisons: HarvestTierComparison[];
 }
 
 /**
@@ -606,17 +606,34 @@ export interface HarvestSummary {
 }
 
 /**
- * One row of the Tree Cutting per-tool comparison. `returns` is the
- * realised loot TT; `loot_items` its per-item composition.
+ * One effective yield activity and its nested tool strategies.
+ */
+export interface HarvestTierComparison {
+	yieldTier: HarvestYieldTier;
+	swings: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	lootItems: HarvestLootItem[];
+	toolComparisons: HarvestToolComparison[];
+}
+
+/**
+ * One tool strategy inside a yield tier.
  */
 export interface HarvestToolComparison {
-	toolName: string;
+	toolName?: string | null;
 	swings: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
 	lootItems: HarvestLootItem[];
 }
+
+/**
+ * Tree Cutting's durable source-activity vocabulary.
+ */
+export type HarvestYieldTier = 'short' | 'long' | 'huge' | 'unknown';
 
 /**
  * One latency-histogram bucket: the inclusive upper bound in

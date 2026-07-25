@@ -7,30 +7,14 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
+use crate::harvest_yield::HarvestYieldTier;
+
 /// An equipment profile from the library lookup, when the tool is
 /// known.
 pub type EquipmentProfile = Option<Map<String, Value>>;
 
-/// A tree size, named by the board its felling loot carries: a bare
-/// board is a long tree; the "Short "/"Long " prefixes name the short
-/// and huge trees respectively.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TreeSize {
-    Short,
-    Long,
-    Huge,
-}
-
-impl TreeSize {
-    /// The closed wire/display vocabulary for the size.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TreeSize::Short => "short",
-            TreeSize::Long => "long",
-            TreeSize::Huge => "huge",
-        }
-    }
-}
+/// Guardrail compatibility name for the shared yield-tier vocabulary.
+pub type TreeSize = HarvestYieldTier;
 
 /// One intended harvesting tool, resolved from the equipment library.
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +40,7 @@ impl HarvestGuardrailTools {
             TreeSize::Short => self.short.as_ref(),
             TreeSize::Long => self.long.as_ref(),
             TreeSize::Huge => self.huge.as_ref(),
+            TreeSize::Unknown => None,
         }
     }
 }

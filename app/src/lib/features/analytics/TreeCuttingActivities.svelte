@@ -21,7 +21,7 @@
 	}: {
 		sections: TreeCuttingSection[];
 		selected: TreeCuttingSection | null;
-		onselect: (toolName: string) => void;
+		onselect: (yieldTier: TreeCuttingSection['yieldTier']) => void;
 		sortKey: SortKey<TreeCuttingSection> | undefined;
 		sortDir: SortDir;
 		onsort: (key: TreeCuttingActivitySortKey) => void;
@@ -135,7 +135,7 @@
 		<button
 			type="button"
 			aria-pressed={isSelected}
-			onclick={() => onselect(section.toolName)}
+			onclick={() => onselect(section.yieldTier)}
 			class="w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left
 				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
 				{isSelected
@@ -173,11 +173,11 @@
 					<button
 						type="button"
 						class="eyebrow flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
-						aria-label={sortDescription('toolName', 'Activity')}
-						onclick={() => onsort('toolName')}
+						aria-label={sortDescription('yieldTier', 'Activity')}
+						onclick={() => onsort('yieldTier')}
 					>
 						Activity
-						{#if sortKey === 'toolName'}<span class="text-accent">{sortArrow('toolName')}</span>{/if}
+						{#if sortKey === 'yieldTier'}<span class="text-accent">{sortArrow('yieldTier')}</span>{/if}
 					</button>
 					<button
 						type="button"
@@ -209,8 +209,8 @@
 				</div>
 			</div>
 			<ul class="flex max-h-[32rem] flex-col gap-1 overflow-y-auto px-2 pb-3">
-				{#each sections as section (section.toolName)}
-					{@render subActivityRow(section, section.toolName === selected?.toolName)}
+				{#each sections as section (section.yieldTier)}
+					{@render subActivityRow(section, section.yieldTier === selected?.yieldTier)}
 				{/each}
 			</ul>
 		</div>
@@ -257,6 +257,54 @@
 						{/snippet}
 					</StatDisplay>
 				</div>
+
+				{#if selected.tools.length > 0}
+					<div class="mt-5 border-t border-border/50 pt-4">
+						<div class="flex items-center gap-1.5 px-2.5 pb-2">
+							<span class="eyebrow">Tool strategy</span>
+							<InfoTip label="How yield tiers and tools are assigned" width="w-80">
+								<p class="text-xs font-semibold leading-relaxed text-text">
+									The activity follows the board yield
+								</p>
+								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+									Small, Long, and Huge describe the boards the recorded swings made
+									available to the equipped tool. The app does not claim to detect the physical
+									tree.
+								</p>
+								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+									Tools remain separate here so their cost and resulting markup rate can be
+									compared within the same yield tier.
+								</p>
+							</InfoTip>
+						</div>
+						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+							<span class="eyebrow flex-1 min-w-0">Tool</span>
+							<span class="eyebrow w-20 text-right shrink-0">Cycled</span>
+							<span class="eyebrow w-20 text-right shrink-0">MU Rate</span>
+							<span class="eyebrow w-24 text-right shrink-0">Realised Rate</span>
+						</div>
+						<ul class="flex flex-col gap-1">
+							{#each selected.tools as tool (tool.key)}
+								<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
+									<span class="flex-1 min-w-0 truncate text-sm font-medium text-text">
+										{tool.toolName}
+									</span>
+									<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
+										{formatPed(tool.cycled)}
+									</span>
+									<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
+										{tool.muRate !== null ? formatPercent(tool.muRate) : NO_DATA}
+									</span>
+									<span
+										class="w-24 shrink-0 text-right text-sm tabular-nums font-medium {rateTone(tool.realisedRate)}"
+									>
+										{formatPercent(tool.realisedRate)}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
 
 				{#if selected.items.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">

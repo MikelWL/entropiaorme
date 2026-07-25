@@ -90,14 +90,14 @@ async fn the_empty_hunting_serialises_to_two_empty_tables() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_empty_harvest_serialises_to_an_empty_tool_table() {
+async fn the_empty_harvest_serialises_to_an_empty_tier_table() {
     let dir = tempfile::tempdir().unwrap();
     let api = analytics_api(dir.path()).await;
 
     let harvest = api.analytics_harvest("all").await.unwrap();
     assert_eq!(
         serde_json::to_string(&harvest).unwrap(),
-        "{\"toolComparisons\":[]}"
+        "{\"tierComparisons\":[]}"
     );
 }
 

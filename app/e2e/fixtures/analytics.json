@@ -97,26 +97,81 @@
     ]
   },
   "harvest": {
-    "toolComparisons": [
+    "tierComparisons": [
       {
-        "toolName": "Terratech PH-1 (L)",
+        "yieldTier": "huge",
         "swings": 420,
         "cycled": 8.4,
-        "returns": 8.274,
-        "lootRate": 0.985,
+        "returns": 5.4,
+        "lootRate": 0.6429,
         "lootItems": [
-          { "itemName": "Long Moonleaf Board", "quantity": 18, "valuePed": 5.4 },
-          { "itemName": "Moonleaf Board", "quantity": 12, "valuePed": 2.874 }
+          { "itemName": "Long Moonleaf Board", "quantity": 18, "valuePed": 5.4 }
+        ],
+        "toolComparisons": [
+          {
+            "toolName": "Terratech PH-3",
+            "swings": 4,
+            "cycled": 0.4,
+            "returns": 0.3,
+            "lootRate": 0.75,
+            "lootItems": [
+              { "itemName": "Long Moonleaf Board", "quantity": 1, "valuePed": 0.3 }
+            ]
+          },
+          {
+            "toolName": "Terratech PH-4 (L)",
+            "swings": 416,
+            "cycled": 8.0,
+            "returns": 5.1,
+            "lootRate": 0.6375,
+            "lootItems": [
+              { "itemName": "Long Moonleaf Board", "quantity": 17, "valuePed": 5.1 }
+            ]
+          }
         ]
       },
       {
-        "toolName": "Terratech PH-3",
+        "yieldTier": "long",
+        "swings": 120,
+        "cycled": 12.0,
+        "returns": 2.874,
+        "lootRate": 0.2395,
+        "lootItems": [
+          { "itemName": "Moonleaf Board", "quantity": 12, "valuePed": 2.874 }
+        ],
+        "toolComparisons": [
+          {
+            "toolName": "Terratech PH-3",
+            "swings": 120,
+            "cycled": 12.0,
+            "returns": 2.874,
+            "lootRate": 0.2395,
+            "lootItems": [
+              { "itemName": "Moonleaf Board", "quantity": 12, "valuePed": 2.874 }
+            ]
+          }
+        ]
+      },
+      {
+        "yieldTier": "short",
         "swings": 96,
         "cycled": 9.6,
         "returns": 8.756,
         "lootRate": 0.9121,
         "lootItems": [
           { "itemName": "Short Moonleaf Board", "quantity": 26, "valuePed": 8.756 }
+        ],
+        "toolComparisons": [
+          {
+            "toolName": "Terratech PH-3",
+            "swings": 96,
+            "cycled": 9.6,
+            "returns": 8.756,
+            "lootRate": 0.9121,
+            "lootItems": [
+              { "itemName": "Short Moonleaf Board", "quantity": 26, "valuePed": 8.756 }
+            ]
+          }
         ]
       }
     ]

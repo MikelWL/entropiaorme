@@ -163,14 +163,16 @@ impl TrackerActor {
                 tx.execute(
                     "INSERT OR REPLACE INTO harvest_events \
                      (id, session_id, timestamp, success, tool_name, \
-                      cost_ped, loot_total_ped) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      yield_tier, yield_tier_source, cost_ped, loot_total_ped) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         harvest.id,
                         harvest.session_id,
                         harvest.timestamp,
                         i64::from(harvest.success),
                         harvest.tool_name,
+                        harvest.yield_tier.as_str(),
+                        harvest.yield_tier_source.map(|source| source.as_str()),
                         harvest.cost_ped.value(),
                         harvest.loot_total_ped.value(),
                     ],
@@ -224,6 +226,36 @@ impl TrackerActor {
                     tx.execute(
                         "UPDATE harvest_events SET tool_name = ?, cost_ped = ? WHERE id = ?",
                         rusqlite::params![tool_name, cost.value(), id],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await;
+        // Contained like the other persistence failures.
+        let _ = result;
+    }
+
+    /// Persist event-level yield inference corrections made when later
+    /// direct board evidence closes a bounded action sequence.
+    pub(super) async fn persist_harvest_yield_restamps(
+        &self,
+        restamps: &[(
+            String,
+            crate::harvest_yield::HarvestYieldTier,
+            Option<crate::harvest_yield::HarvestYieldSource>,
+        )],
+    ) {
+        let restamps = restamps.to_vec();
+        let result = self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                for (id, tier, source) in &restamps {
+                    tx.execute(
+                        "UPDATE harvest_events SET yield_tier = ?, yield_tier_source = ? \
+                         WHERE id = ? AND yield_tier_source IS NOT 'board'",
+                        rusqlite::params![tier.as_str(), source.map(|value| value.as_str()), id],
                     )?;
                 }
                 tx.commit()?;
