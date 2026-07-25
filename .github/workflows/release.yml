@@ -57,6 +57,11 @@ jobs:
         working-directory: app
       - name: Build and bundle the Linux package
         working-directory: app
+        # Marks the artefact as a published build, which hides surfaces still
+        # registered as in-development. Only this pipeline sets it: a locally
+        # built installer shows them, since whoever built it is working on them.
+        env:
+          ENTROPIAORME_STABLE_CHANNEL: '1'
         run: npm run tauri -- build --config src-tauri/entropia-orme/tauri.linux.conf.json --bundles deb
       - name: Stage the package under its brand-canonical name
         shell: bash
@@ -148,6 +153,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Marks the artefact as a published build, which hides surfaces still
+          # registered as in-development. Only this pipeline sets it: a locally
+          # built installer shows them, since whoever built it is working on them.
+          ENTROPIAORME_STABLE_CHANNEL: '1'
         run: ./scripts/build-installer.ps1
 
       - name: Download the Linux package into the asset set

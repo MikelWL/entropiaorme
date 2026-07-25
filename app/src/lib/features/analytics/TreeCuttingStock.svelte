@@ -1,5 +1,6 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
@@ -84,13 +85,19 @@
 </script>
 
 {#snippet actionButton(letter: string, label: string, expandedWidth: string)}
+	<!-- Disabled on purpose: these actions have no capability behind them yet,
+		so the control reads as unavailable rather than merely doing nothing when
+		pressed. The column is registered as in-development and its header
+		carries the marker explaining what will make them work. -->
 	<button
 		type="button"
-		aria-label={label}
+		disabled
+		aria-label="{label} (in development)"
 		class="group/act relative inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden
-			rounded-md border border-border/60 bg-surface-hover/40 text-xs font-semibold text-text-secondary
-			transition-[width,background-color,color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
-			{expandedWidth} hover:text-text hover:border-border hover:bg-surface-hover/70"
+			rounded-md border border-dashed border-border/40 bg-transparent text-xs font-semibold text-text-tertiary
+			cursor-not-allowed
+			transition-[width,color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
+			{expandedWidth} hover:text-text-secondary hover:border-border/70"
 	>
 		<span
 			class="absolute inset-0 flex items-center justify-center
@@ -168,7 +175,11 @@
 		<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
 		<span class="eyebrow w-20 text-right shrink-0">Markup</span>
 		<span class="eyebrow w-12 text-center shrink-0">Conf</span>
-		<span class="w-[3.375rem] shrink-0"></span>
+		{#if inDevelopment.visible}
+			<span class="w-[3.375rem] shrink-0 flex items-center justify-end">
+				<InDevelopmentMark id="harvest-stock-actions" />
+			</span>
+		{/if}
 	</div>
 
 	<ul class="flex flex-col gap-1">
@@ -244,10 +255,12 @@
 					{/if}
 				</div>
 
-				<div class="shrink-0 flex items-center justify-end gap-1.5">
-					{@render actionButton('N', 'Nanocube', 'hover:w-44')}
-					{@render actionButton('S', 'Sell', 'hover:w-16')}
-				</div>
+				{#if inDevelopment.visible}
+					<div class="shrink-0 flex items-center justify-end gap-1.5">
+						{@render actionButton('N', 'Nanocube', 'hover:w-44')}
+						{@render actionButton('S', 'Sell', 'hover:w-16')}
+					</div>
+				{/if}
 			</li>
 		{/each}
 	</ul>

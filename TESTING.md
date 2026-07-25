@@ -256,10 +256,25 @@ The configured hooks are:
 
 - **Biome** (lint + format) over the frontend, mirroring the CI `npm run lint` step through the lockfile-pinned binary (run `npm ci` in `app/` once so the hook can resolve it).
 - **`no-bare-setinterval`**: the frontend polling-discipline guard (a `cargo xtask` subcommand), forbidding a bare `setInterval` outside the visibility-gated helper and any reference to the retired tracking event.
+- **`in-development`**: the in-development surface guard (a `cargo xtask` subcommand); see "In-development surfaces" below.
 - **authoring lint** (em dash + UK spelling), diff-scoped against the staged change, and **version-stamp parity**, both `cargo xtask` subcommands (see "Authoring lint" below).
 - general hygiene: end-of-file and trailing-whitespace fixers, YAML and TOML validity, merge-conflict markers, and a mixed-line-ending check (line-ending policy itself is set per file type in `.gitattributes`).
 
 The xtask guards compile the in-tree `xtask` crate once (cached thereafter) and run the same logic CI runs. The CI `pre-commit` job exercises the hygiene hooks in pre-commit's own managed environments; Biome is skipped there (no `node_modules`), the dedicated frontend job being its enforcing gate.
+
+## In-development surfaces
+
+Development lands on the main line continuously, so a control or a panel can reach the tree before the capability behind it. Such a surface must not read as finished, and the rule is enforced mechanically rather than remembered.
+
+Three parts, in `app/src/lib/inDevelopment/`:
+
+- **The register** (`registry.ts`) declares each in-development surface once, with the user-facing text explaining what is unavailable and what will make it work. One register rather than a flag per component keeps the set auditable; graduating a surface means deleting its entry.
+- **The marker** (`InDevelopmentMark.svelte`) is the single affordance every such surface renders, so the disclosure reaches the person using the app rather than only a reader of the change history.
+- **The channel** (`channel.ts`) decides whether these surfaces render at all. It is stamped at build time via `ENTROPIAORME_STABLE_CHANNEL`, set only by the release workflow: a published artefact hides them, while a locally built installer, a source build, and the dev server show them marked. The stamp is a build-time input rather than a build-mode check because an installer built from the latest source is itself a production build, so build mode cannot tell the two apart.
+
+`cargo xtask in-development` (a required CI check and a pre-commit hook) fails on three conditions: a marker referencing an id the register does not declare, a register entry no consumer references (a surface finished without removing its entry), and a release build step that does not stamp the channel. The third is checked because losing that stamp is invisible in CI and visible only to whoever downloads the release.
+
+Only genuinely misleading surfaces belong in the register: a control that does nothing when used, or a figure whose value can diverge from the truth with nothing signalling it. A figure that sits beside unbuilt work but is already correct needs no entry.
 
 ## Authoring lint
 
