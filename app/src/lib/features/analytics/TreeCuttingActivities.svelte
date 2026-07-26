@@ -182,8 +182,14 @@
 <Card class="hover:z-20">
 	<!-- The list pane's width is shared with the market panel the toggle swaps
 		to: the two are the same frame with different contents, so the hairline
-		has to fall in the same place in both. -->
-	<div class="grid sm:grid-cols-[minmax(25.25rem,46%)_minmax(0,1fr)]">
+		has to fall in the same place in both.
+
+		A proportion, not a floor. A minimum width on this track refuses to give
+		anything back as the card narrows, so the whole of an expanding
+		sidebar's cost lands on the detail pane and its rightmost column leaves
+		the screen. Both sides narrow together instead, and the column headers
+		below are free to wrap once they are genuinely short of room. -->
+	<div class="grid sm:grid-cols-[46%_minmax(0,1fr)]">
 		<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 			<div class="px-2 pt-4">
 				<div
@@ -218,7 +224,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-[7.5rem] shrink-0 cursor-pointer items-center justify-end gap-1 whitespace-nowrap text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow flex w-[7.5rem] shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('realisedRate', 'Realised Rate')}
 						onclick={() => onsort('realisedRate')}
 					>
