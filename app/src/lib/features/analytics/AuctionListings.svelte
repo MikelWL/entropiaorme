@@ -249,23 +249,7 @@
 								value={signedPed(netMarkup)}
 								unit="PED"
 								valueClass={netTone(netMarkup)}
-							>
-								{#snippet labelSuffix()}
-									<InfoTip label="How net markup is calculated" width="w-80">
-										<p class="text-xs font-semibold leading-relaxed text-text">
-											Net markup on this sale
-										</p>
-										<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-											What it sold for, less its TT (which was already yours, whether it was
-											tracked loot or not) and both auction fees. Fees come off because they are
-											the direct cost of capturing the markup.
-										</p>
-										<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-											This is the whole gain, and it is what reached your ledger.
-										</p>
-									</InfoTip>
-								{/snippet}
-							</StatDisplay>
+							/>
 							<StatDisplay
 								label="Credited to activities"
 								value={signedPed(selected.activityNetMarkup ?? 0)}

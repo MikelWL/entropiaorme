@@ -28,6 +28,35 @@ function section(
 }
 
 describe('TreeCuttingActivities', () => {
+	// The detail pane reports the same three nets as Overall. A markup-only
+	// figure here broke that pairing and left no row answering "what did this
+	// activity actually make".
+	it('reports Realised Net against cycled, matching its TT Net sibling', () => {
+		const huge = section('huge', {
+			cycled: 10,
+			returns: 8,
+			realisedReturns: 12,
+			realisedMarkup: 4,
+		});
+		render(TreeCuttingActivities, {
+			props: {
+				sections: [huge],
+				selected: huge,
+				onselect: vi.fn(),
+				sortKey: 'cycled',
+				sortDir: 'desc',
+				onsort: vi.fn(),
+			},
+		});
+
+		expect(screen.getByText('Realised Net')).not.toBeNull();
+		expect(screen.queryByText('Realised MU')).toBeNull();
+		// TT Net is 8 - 10; Realised Net folds in the 4 of confirmed markup and
+		// is measured against cycled, not against TT Net.
+		expect(screen.getByText('-2.00')).not.toBeNull();
+		expect(screen.getByText('+2.00')).not.toBeNull();
+	});
+
 	it('presents Unclassified as a diagnostic without activity economics', () => {
 		const unclassified = section('unknown', {
 			swings: 4,
@@ -114,8 +143,8 @@ describe('TreeCuttingActivities', () => {
 		const names = screen.getAllByText(/Terratech PH-[34]/).map((node) => node.textContent?.trim());
 		expect(names).toEqual(['Terratech PH-4 (L)', 'Terratech PH-3']);
 		// A tool with no market evidence reads as no data, never as a zero rate.
-		// Scoped to the tool table, since Realised MU also reads as no data while
-		// sale attribution does not exist.
+		// Scoped to the tool table, since the detail pane's MU Net reads as no
+		// data on the same fixture for the same reason.
 		const toolRows = screen.getAllByText(/Terratech PH-[34]/).map((n) => n.closest('li'));
 		const ph4Row = toolRows[0];
 		expect(ph4Row).not.toBeNull();

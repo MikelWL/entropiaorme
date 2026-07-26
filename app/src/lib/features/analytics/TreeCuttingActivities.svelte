@@ -38,8 +38,6 @@
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
-	const realisedMuTone = (value: number) =>
-		value > 0 ? 'text-positive' : 'text-text';
 	const rateTone = (value: number) => netTone(value - 1);
 	const sortArrow = (key: TreeCuttingActivitySortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '';
@@ -276,28 +274,24 @@
 						unit={selected.muProjectedReturns !== null ? 'PED' : ''}
 					/>
 					<StatDisplay
-						label="Realised MU"
-						value={signedPed(selected.realisedReturns - selected.returns)}
-						valueClass={realisedMuTone(selected.realisedReturns - selected.returns)}
+						label="Realised Net"
+						value={signedPed(selected.realisedReturns - selected.cycled)}
+						valueClass={netTone(selected.realisedReturns - selected.cycled)}
 						unit="PED"
 					>
 						{#snippet labelSuffix()}
-							<InfoTip align="right" width="w-80" label="What Realised MU reports">
+							<InfoTip align="right" width="w-80" label="What Realised Net reports">
 								<p class="text-xs font-semibold leading-relaxed text-text">
-									Realised MU: markup confirmed by completed sales
+									Realised Net: what this activity actually achieved
 								</p>
 								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									No sale is linked to an activity yet, so this is zero for every activity. A
-									sale recorded directly in the Ledger is not linked, and will not appear here
-									until it is.
-								</p>
-								<p class="mt-2 text-xs leading-relaxed text-text-secondary">
-									Once sales are linked: loot TT is already counted when it is acquired, so a
-									sale will add only the amount received above TT, after auction fees.
+									Loot TT less cycled PED, plus the markup confirmed sales of this activity's
+									output have realised, after auction fees.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-									That net markup will be split between the activities that produced the sold
-									stock, based on each activity's share of it.
+									It reads the same as TT Net until stock this activity produced is sold and the
+									sale confirmed, because until then no markup has been realised. A sale recorded
+									directly in the Ledger carries no link to an activity and does not reach here.
 								</p>
 							</InfoTip>
 						{/snippet}
