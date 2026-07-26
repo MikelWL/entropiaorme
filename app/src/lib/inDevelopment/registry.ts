@@ -29,15 +29,6 @@ export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
 			'These actions start working once conversions and sales are recorded as transactions ' +
 			'that move stock and keep their own history.',
 	},
-	{
-		id: 'harvest-realised-mu',
-		summary:
-			'Realised markup cannot be attributed to a board activity yet, so this reads as no ' +
-			'data even when a sale has been recorded elsewhere.',
-		graduates:
-			'This figure starts reporting once a confirmed sale can be traced back to the activity ' +
-			'whose loot it came from, net of fees.',
-	},
 ] as const;
 
 /** The registered surface for `id`. Throws on an unregistered id, matching
