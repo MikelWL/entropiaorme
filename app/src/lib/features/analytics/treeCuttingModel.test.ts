@@ -120,24 +120,6 @@ function harvest(): AnalyticsHarvest {
 				returns: 34.26,
 				lootRate: 0.3755,
 				lootItems: [loot('Long Moonleaf Board', 571, 34.26)],
-				toolComparisons: [
-					{
-						toolName: 'Terratech PH-3',
-						swings: 4,
-						cycled: 0.4,
-						returns: 0.3,
-						lootRate: 0.75,
-						lootItems: [loot('Long Moonleaf Board', 5, 0.3)],
-					},
-					{
-						toolName: 'Terratech PH-4 (L)',
-						swings: 4558,
-						cycled: 90.84,
-						returns: 33.96,
-						lootRate: 0.3738,
-						lootItems: [loot('Long Moonleaf Board', 566, 33.96)],
-					},
-				],
 			},
 			{
 				yieldTier: 'long',
@@ -146,16 +128,6 @@ function harvest(): AnalyticsHarvest {
 				returns: 87.38,
 				lootRate: 0.7863,
 				lootItems: [loot('Wood Shavings', 87431, 87.38)],
-				toolComparisons: [
-					{
-						toolName: 'Terratech PH-4 (L)',
-						swings: 127,
-						cycled: 111.13,
-						returns: 87.38,
-						lootRate: 0.7863,
-						lootItems: [loot('Wood Shavings', 87431, 87.38)],
-					},
-				],
 			},
 		],
 	};
@@ -339,23 +311,7 @@ describe('sections', () => {
 		expect(wood.opportunity.weeklySalesPed).toBe(0);
 	});
 
-	it('keeps PH-3 and PH-4 as separate strategies inside the Long Boards activity', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		const huge = sectionOf(model, HUGE);
-		expect(huge.tools.map((tool) => tool.toolName)).toEqual([
-			'Terratech PH-3',
-			'Terratech PH-4 (L)',
-		]);
-		expect(huge.tools[0].cycled).toBe(0.4);
-		expect(huge.tools[0].muRate).not.toBeNull();
-		expect(huge.tools[1].cycled).toBe(90.84);
-	});
-
-	it('surfaces genuine tier and tool attribution gaps explicitly', async () => {
+	it('surfaces a genuine tier attribution gap explicitly', async () => {
 		const data = harvest();
 		data.tierComparisons.push({
 			yieldTier: 'unknown',
@@ -364,16 +320,6 @@ describe('sections', () => {
 			returns: 0,
 			lootRate: 0,
 			lootItems: [],
-			toolComparisons: [
-				{
-					toolName: null,
-					swings: 1,
-					cycled: 0.1,
-					returns: 0,
-					lootRate: 0,
-					lootItems: [],
-				},
-			],
 		});
 		mocked.getAnalyticsHarvest.mockResolvedValue(data);
 		const model = createTreeCuttingModel();
@@ -383,7 +329,6 @@ describe('sections', () => {
 		expect(harvestTierLabel(unknown.yieldTier)).toBe('Unclassified');
 		expect(treeCuttingActivityName(unknown)).toBe('Unclassified');
 		expect(treeCuttingActivityName(sectionOf(model, HUGE))).toBe('Long Boards');
-		expect(unknown.tools[0].toolName).toBe('Unknown tool');
 	});
 
 	it('keeps Unclassified last and out of the default selection', async () => {
@@ -395,7 +340,6 @@ describe('sections', () => {
 			returns: 0,
 			lootRate: 0,
 			lootItems: [],
-			toolComparisons: [],
 		});
 		mocked.getAnalyticsHarvest.mockResolvedValue(data);
 		const model = createTreeCuttingModel();
@@ -709,7 +653,7 @@ describe('realised figures', () => {
 
 	it('folds confirmed markup into the tier and the overall aggregate', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, toolName: null, netMarkup: 4.5 }]);
+		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, netMarkup: 4.5 }]);
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
@@ -730,7 +674,7 @@ describe('realised figures', () => {
 	it('leaves the market projection untouched when markup is realised', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
-		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, toolName: null, netMarkup: 4.5 }]);
+		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, netMarkup: 4.5 }]);
 		const model = createTreeCuttingModel();
 		await model.loadData();
 

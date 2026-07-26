@@ -212,11 +212,7 @@ mod tests {
         }
     }
 
-    fn tier_with_tool(
-        tier: HarvestYieldTier,
-        tool: &str,
-        quantity: f64,
-    ) -> TierPosition<'_> {
+    fn tier_with_tool(tier: HarvestYieldTier, tool: &str, quantity: f64) -> TierPosition<'_> {
         TierPosition {
             yield_tier: Some(tier),
             tool_name: Some(tool),

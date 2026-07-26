@@ -24,7 +24,6 @@ export type {
 	ExcludedSkill,
 	HarvestLootItem,
 	HarvestTierComparison,
-	HarvestToolComparison,
 	HarvestYieldTier,
 	HpOptimizerAttribute,
 	HpOptimizerResult,

@@ -654,19 +654,6 @@ export interface HarvestTierComparison {
 	returns: number;
 	lootRate: number;
 	lootItems: HarvestLootItem[];
-	toolComparisons: HarvestToolComparison[];
-}
-
-/**
- * One tool strategy inside a yield tier.
- */
-export interface HarvestToolComparison {
-	toolName?: string | null;
-	swings: number;
-	cycled: number;
-	returns: number;
-	lootRate: number;
-	lootItems: HarvestLootItem[];
 }
 
 /**
@@ -1826,13 +1813,10 @@ export interface RadarGeometry {
 }
 
 /**
- * One source's net realised markup from confirmed sales, as a leaf row per
- * (yield tier, tool). `toolName` is null only when the producing swings
- * recorded no tool; a tier's own figure is the sum of its rows.
+ * One yield tier's net realised markup from confirmed sales.
  */
 export interface RealisedTierMarkup {
 	yieldTier: HarvestYieldTier;
-	toolName: string | null;
 	netMarkup: number;
 }
 

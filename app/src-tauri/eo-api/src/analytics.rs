@@ -206,18 +206,6 @@ impl From<eo_services::harvest_yield::HarvestYieldTier> for HarvestYieldTier {
     }
 }
 
-/// One tool strategy inside a yield tier.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct HarvestToolComparison {
-    pub tool_name: Option<String>,
-    pub swings: i64,
-    pub cycled: f64,
-    pub returns: f64,
-    pub loot_rate: f64,
-    pub loot_items: Vec<HarvestLootItem>,
-}
-
 /// One effective yield activity and its nested tool strategies.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -228,7 +216,6 @@ pub struct HarvestTierComparison {
     pub returns: f64,
     pub loot_rate: f64,
     pub loot_items: Vec<HarvestLootItem>,
-    pub tool_comparisons: Vec<HarvestToolComparison>,
 }
 
 /// The Tree Cutting aggregate: the tier-first comparison table.
@@ -353,14 +340,11 @@ pub struct AuctionListing {
     pub gross_markup: Nullable<f64>,
 }
 
-/// One source's net realised markup from confirmed sales, as a leaf row per
-/// (yield tier, tool). `toolName` is null only when the producing swings
-/// recorded no tool; a tier's own figure is the sum of its rows.
+/// One yield tier's net realised markup from confirmed sales.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RealisedTierMarkup {
     pub yield_tier: HarvestYieldTier,
-    pub tool_name: Nullable<String>,
     pub net_markup: f64,
 }
 
@@ -613,7 +597,6 @@ impl Api {
             .into_iter()
             .map(|row| RealisedTierMarkup {
                 yield_tier: row.yield_tier.into(),
-                tool_name: row.tool_name.into(),
                 net_markup: row.net_markup,
             })
             .collect())
@@ -950,26 +933,6 @@ pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> Analytic
                         item_name: item.item_name,
                         quantity: item.quantity,
                         value_ped: item.value_ped,
-                    })
-                    .collect(),
-                tool_comparisons: row
-                    .tool_comparisons
-                    .into_iter()
-                    .map(|tool| HarvestToolComparison {
-                        tool_name: tool.name,
-                        swings: tool.swings,
-                        cycled: tool.cycled,
-                        returns: tool.returns,
-                        loot_rate: tool.loot_rate,
-                        loot_items: tool
-                            .loot_items
-                            .into_iter()
-                            .map(|item| HarvestLootItem {
-                                item_name: item.item_name,
-                                quantity: item.quantity,
-                                value_ped: item.value_ped,
-                            })
-                            .collect(),
                     })
                     .collect(),
             })

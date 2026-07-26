@@ -36,7 +36,6 @@ import type {
 	AuctionListingInput,
 	HarvestLootItem,
 	HarvestTierComparison,
-	HarvestToolComparison,
 	HarvestYieldTier,
 	RealisedTierMarkup,
 	StockPosition,
@@ -265,23 +264,6 @@ export type TreeCuttingSection = {
 	realisedReturns: number;
 	realisedRate: number;
 	items: TreeCuttingItem[];
-	tools: TreeCuttingToolStrategy[];
-};
-
-export type TreeCuttingToolStrategy = {
-	key: string;
-	toolName: string;
-	swings: number;
-	cycled: number;
-	returns: number;
-	lootRate: number;
-	muProjectedReturns: number | null;
-	muRate: number | null;
-	realisedReturns: number;
-	realisedRate: number;
-	/** Markup confirmed sales of this strategy's output have realised,
-	 * already inside `realisedReturns`. */
-	realisedMarkup: number;
 };
 
 export type TreeCuttingActivitySortKey = 'yieldTier' | 'cycled' | 'realisedRate' | 'muRate';
@@ -292,31 +274,6 @@ export function treeCuttingActivityName(section: TreeCuttingSection): string {
 
 export function harvestTierLabel(tier: HarvestYieldTier): string {
 	return TIER_LABEL[tier];
-}
-
-/** Fold the realised-markup leaf rows into the two lookups the view needs:
- * the tier's own total, and each tool strategy within it. A row whose tool is
- * null counts toward its tier but has no strategy to credit, so the tool rows
- * of a tier need not sum to it. */
-export function foldRealised(
-	rows: RealisedTierMarkup[],
-): { byTier: Map<HarvestYieldTier, number>; byTool: Map<string, number> } {
-	const byTier = new Map<HarvestYieldTier, number>();
-	const byTool = new Map<string, number>();
-	for (const row of rows) {
-		byTier.set(row.yieldTier, (byTier.get(row.yieldTier) ?? 0) + row.netMarkup);
-		if (row.toolName !== null) {
-			const key = toolKey(row.yieldTier, row.toolName);
-			byTool.set(key, (byTool.get(key) ?? 0) + row.netMarkup);
-		}
-	}
-	return { byTier, byTool };
-}
-
-/** The composite key pairing a tool strategy with the tier that owns it: the
- * same tool works several tiers, and its realised markup differs in each. */
-export function toolKey(tier: HarvestYieldTier, toolName: string | null | undefined): string {
-	return `${tier}|${toolName ?? ''}`;
 }
 
 /** One horizon's market reading (day/week/month/year) for the stock row's
@@ -392,38 +349,12 @@ function projectLoot(
 	return { items, muProjectedReturns, muRate };
 }
 
-function toToolStrategy(
-	tool: HarvestToolComparison,
-	index: number,
-	market: MarketHarvestData | null,
-	marketByItem: Map<string, MarketHarvestItem>,
-	confidenceMode: ConfidenceMode,
-	realisedMarkup: number,
-): TreeCuttingToolStrategy {
-	const projection = projectLoot(tool.lootItems, tool.cycled, market, marketByItem, confidenceMode);
-	const toolName = tool.toolName?.trim() || 'Unknown tool';
-	return {
-		key: `${toolName}:${index}`,
-		toolName,
-		swings: tool.swings,
-		cycled: tool.cycled,
-		returns: tool.returns,
-		lootRate: tool.lootRate,
-		muProjectedReturns: projection.muProjectedReturns,
-		muRate: projection.muRate,
-		realisedReturns: tool.returns + realisedMarkup,
-		realisedRate: tool.cycled > 0 ? (tool.returns + realisedMarkup) / tool.cycled : 0,
-		realisedMarkup,
-	};
-}
-
 function toSection(
 	tier: HarvestTierComparison,
 	market: MarketHarvestData | null,
 	marketByItem: Map<string, MarketHarvestItem>,
 	confidenceMode: ConfidenceMode,
 	realisedMarkup: number,
-	toolRealised: Map<string, number>,
 ): TreeCuttingSection {
 	const projection = projectLoot(tier.lootItems, tier.cycled, market, marketByItem, confidenceMode);
 
@@ -439,16 +370,6 @@ function toSection(
 		realisedRate: tier.cycled > 0 ? (tier.returns + realisedMarkup) / tier.cycled : 0,
 		realisedMarkup,
 		items: projection.items,
-		tools: tier.toolComparisons.map((tool, index) =>
-			toToolStrategy(
-				tool,
-				index,
-				market,
-				marketByItem,
-				confidenceMode,
-				toolRealised.get(toolKey(tier.yieldTier, tool.toolName)) ?? 0,
-			),
-		),
 	};
 }
 
@@ -460,11 +381,7 @@ export function createTreeCuttingModel() {
 	// realised figures only, never the holding-independent opportunity.
 	let positions = $state<StockPosition[]>([]);
 	let listings = $state<AuctionListing[]>([]);
-	// Leaf rows keyed `tier` and `tier|tool`, so a tier's own figure and each
-	// strategy inside it both read straight off the same measured allocation
-	// rather than one being apportioned from the other.
 	let realisedByTier = $state<Map<HarvestYieldTier, number>>(new Map());
-	let realisedByTool = $state<Map<string, number>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
@@ -498,7 +415,7 @@ export function createTreeCuttingModel() {
 			market = markets;
 			positions = stock;
 			listings = openListings;
-			({ byTier: realisedByTier, byTool: realisedByTool } = foldRealised(realised));
+			realisedByTier = new Map(realised.map((row) => [row.yieldTier, row.netMarkup]));
 		} catch (e) {
 			if (epoch !== loadEpoch) return;
 			error = describeError(e, 'Failed to load tree cutting data');
@@ -521,7 +438,6 @@ export function createTreeCuttingModel() {
 					marketByItem,
 					confidenceMode,
 					realisedByTier.get(tier.yieldTier) ?? 0,
-					realisedByTool,
 				),
 			)
 			.sort(
@@ -617,7 +533,7 @@ export function createTreeCuttingModel() {
 		]);
 		positions = stock;
 		listings = allListings;
-		({ byTier: realisedByTier, byTool: realisedByTool } = foldRealised(realised));
+		realisedByTier = new Map(realised.map((row) => [row.yieldTier, row.netMarkup]));
 	}
 
 	/** List stock on the auction. The quantity leaves holdings now and the

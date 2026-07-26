@@ -129,17 +129,12 @@ pub struct AuctionListingRow {
     pub gross_markup: Option<f64>,
 }
 
-/// One source's realised markup from confirmed sales, for the Tree Cutting
-/// Realised figures.
-///
-/// A row per (tier, tool): the tier row is the activity's own figure and the
-/// tool rows are the strategies inside it. `tool_name` is `None` when the
-/// producing swings recorded no tool.
+/// One yield tier's realised markup from confirmed sales, for the Tree
+/// Cutting Realised figures.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RealisedTierMarkup {
     pub yield_tier: HarvestYieldTier,
-    pub tool_name: Option<String>,
     pub net_markup: f64,
 }
 
@@ -243,23 +238,9 @@ pub struct HarvestTierRow {
     pub returns: f64,
     pub loot_rate: f64,
     pub loot_items: Vec<HarvestLootItemRow>,
-    pub tool_comparisons: Vec<HarvestToolRow>,
 }
 
-/// One execution strategy within an effective yield tier. A missing
-/// name preserves tool-attribution gaps instead of dropping their cost.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HarvestToolRow {
-    pub name: Option<String>,
-    pub swings: i64,
-    pub cycled: f64,
-    pub returns: f64,
-    pub loot_rate: f64,
-    pub loot_items: Vec<HarvestLootItemRow>,
-}
-
-/// One item in a tool's harvest loot composition: realised TT figures
+/// One item in a yield tier's harvest loot composition: realised TT figures
 /// only (markup is the market layer's, merged in at the frontend).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1683,64 +1664,60 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
     })
 }
 
-/// One tier/tool group: tier, optional tool, swing count, cost, loot TT.
-type HarvestToolTotals = (String, Option<String>, i64, f64, f64);
+/// One tier group: tier, swing count, cost, loot TT.
+type HarvestTierTotals = (String, i64, f64, f64);
 
-/// One tier/tool item group: tier, optional tool, item, quantity, TT.
-type HarvestToolItemTotals = (String, Option<String>, String, i64, f64);
-
-struct HarvestTierBuilder {
-    swings: i64,
-    cost: f64,
-    loot_tt: f64,
-    tools: Vec<(i64, f64, String, HarvestToolRow)>,
-}
+/// One tier item group: tier, item, quantity, TT.
+type HarvestTierItemTotals = (String, String, i64, f64);
 
 /// The Tree Cutting tier-first aggregate, grouped straight off the
 /// durable event attribution. A tab-open read, not a hot path: the scan
 /// is O(total harvest events), acceptable at harvesting volumes.
+///
+/// The yield tier is the whole grouping. The tool is deliberately not a
+/// dimension here: it is an input to the activity, not an outcome of it, and
+/// its principal effect is which tier a swing reaches, which grouping inside
+/// a tier holds constant. Comparing tools belongs with equipment, on cost.
 async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, DbError> {
-    let (raw, composition): (Vec<HarvestToolTotals>, Vec<HarvestToolItemTotals>) = db
+    let (raw, composition): (Vec<HarvestTierTotals>, Vec<HarvestTierItemTotals>) = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT yield_tier, NULLIF(tool_name, ''), COUNT(*), \
+                "SELECT yield_tier, COUNT(*), \
                  COALESCE(SUM(cost_ped), 0), \
                  COALESCE(SUM(loot_total_ped), 0) FROM harvest_events h \
                  WHERE (?1 IS NULL OR h.timestamp >= ?1) \
-                 GROUP BY yield_tier, NULLIF(tool_name, '')",
+                 GROUP BY yield_tier",
             )?;
             let raw = stmt
                 .query_map([epoch_start], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(1)?,
+                        as_float(row, 2),
                         as_float(row, 3),
-                        as_float(row, 4),
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            // Active item composition follows the durable tier and tool.
-            // Deactivated rows stay evidence for migration but never enter
-            // the accounting totals served here.
+            // Active item composition follows the durable tier. Deactivated
+            // rows stay evidence for migration but never enter the accounting
+            // totals served here.
             let mut comp_stmt = conn.prepare(
-                "SELECT h.yield_tier, NULLIF(h.tool_name, ''), l.item_name, \
+                "SELECT h.yield_tier, l.item_name, \
                  SUM(l.quantity), \
                  COALESCE(SUM(l.value_ped), 0) \
                  FROM harvest_loot_items l JOIN harvest_events h ON h.id = l.harvest_id \
                  WHERE (?1 IS NULL OR h.timestamp >= ?1) \
                    AND l.deactivated_at IS NULL \
-                 GROUP BY h.yield_tier, NULLIF(h.tool_name, ''), l.item_name",
+                 GROUP BY h.yield_tier, l.item_name",
             )?;
             let composition = comp_stmt
                 .query_map([epoch_start], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3).unwrap_or(0),
-                        as_float(row, 4),
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2).unwrap_or(0),
+                        as_float(row, 3),
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1748,27 +1725,20 @@ async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, 
         })
         .await?;
 
-    let mut items_by_tool: std::collections::HashMap<
-        (HarvestYieldTier, Option<String>),
-        Vec<HarvestLootItemRow>,
-    > = std::collections::HashMap::new();
-    let mut tier_item_totals: std::collections::HashMap<(HarvestYieldTier, String), (i64, f64)> =
+    let mut items_by_tier: std::collections::HashMap<HarvestYieldTier, Vec<HarvestLootItemRow>> =
         std::collections::HashMap::new();
-    for (tier, tool, item_name, quantity, value_ped) in composition {
+    for (tier, item_name, quantity, value_ped) in composition {
         let tier = HarvestYieldTier::from_db(&tier);
-        items_by_tool
-            .entry((tier, tool))
+        items_by_tier
+            .entry(tier)
             .or_default()
             .push(HarvestLootItemRow {
-                item_name: item_name.clone(),
+                item_name,
                 quantity,
                 value_ped: eo_wire::normalizer::round_half_even(value_ped, 2),
             });
-        let total = tier_item_totals.entry((tier, item_name)).or_default();
-        total.0 += quantity;
-        total.1 += value_ped;
     }
-    for items in items_by_tool.values_mut() {
+    for items in items_by_tier.values_mut() {
         items.sort_by(|a, b| {
             b.value_ped
                 .partial_cmp(&a.value_ped)
@@ -1777,80 +1747,21 @@ async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, 
         });
     }
 
-    let mut tiers: std::collections::HashMap<HarvestYieldTier, HarvestTierBuilder> =
-        std::collections::HashMap::new();
-    for (tier, name, swings, cost, loot_tt) in raw {
-        let tier = HarvestYieldTier::from_db(&tier);
-        let row = HarvestToolRow {
-            name: name.clone(),
-            swings,
-            cycled: eo_wire::normalizer::round_half_even(cost, 2),
-            returns: eo_wire::normalizer::round_half_even(loot_tt, 2),
-            loot_rate: if cost > 0.0 {
-                eo_wire::normalizer::round_half_even(loot_tt / cost, 4)
-            } else {
-                0.0
-            },
-            loot_items: items_by_tool
-                .remove(&(tier, name.clone()))
-                .unwrap_or_default(),
-        };
-        let builder = tiers.entry(tier).or_insert_with(|| HarvestTierBuilder {
-            swings: 0,
-            cost: 0.0,
-            loot_tt: 0.0,
-            tools: Vec::new(),
-        });
-        builder.swings += swings;
-        builder.cost += cost;
-        builder.loot_tt += loot_tt;
-        builder
-            .tools
-            .push((swings, cost, name.unwrap_or_default(), row));
-    }
-
-    let mut tier_comparisons: Vec<HarvestTierRow> = tiers
+    let mut tier_comparisons: Vec<HarvestTierRow> = raw
         .into_iter()
-        .map(|(tier, mut builder)| {
-            builder.tools.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(b.0.cmp(&a.0))
-                    .then(a.2.cmp(&b.2))
-            });
-            let mut loot_items: Vec<HarvestLootItemRow> = tier_item_totals
-                .iter()
-                .filter(|((item_tier, _), _)| *item_tier == tier)
-                .map(
-                    |((_, item_name), (quantity, value_ped))| HarvestLootItemRow {
-                        item_name: item_name.clone(),
-                        quantity: *quantity,
-                        value_ped: eo_wire::normalizer::round_half_even(*value_ped, 2),
-                    },
-                )
-                .collect();
-            loot_items.sort_by(|a, b| {
-                b.value_ped
-                    .partial_cmp(&a.value_ped)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(a.item_name.cmp(&b.item_name))
-            });
+        .map(|(tier, swings, cost, loot_tt)| {
+            let tier = HarvestYieldTier::from_db(&tier);
             HarvestTierRow {
                 yield_tier: tier,
-                swings: builder.swings,
-                cycled: eo_wire::normalizer::round_half_even(builder.cost, 2),
-                returns: eo_wire::normalizer::round_half_even(builder.loot_tt, 2),
-                loot_rate: if builder.cost > 0.0 {
-                    eo_wire::normalizer::round_half_even(builder.loot_tt / builder.cost, 4)
+                swings,
+                cycled: eo_wire::normalizer::round_half_even(cost, 2),
+                returns: eo_wire::normalizer::round_half_even(loot_tt, 2),
+                loot_rate: if cost > 0.0 {
+                    eo_wire::normalizer::round_half_even(loot_tt / cost, 4)
                 } else {
                     0.0
                 },
-                loot_items,
-                tool_comparisons: builder
-                    .tools
-                    .into_iter()
-                    .map(|(_, _, _, row)| row)
-                    .collect(),
+                loot_items: items_by_tier.remove(&tier).unwrap_or_default(),
             }
         })
         .collect();
@@ -2901,15 +2812,16 @@ impl AnalyticsService {
         Ok(())
     }
 
-    /// Net realised markup per (yield tier, tool), from confirmed sales only.
+    /// Net realised markup per yield tier, from confirmed sales only.
     ///
     /// Each sold listing's activity-claimable markup is divided across the
     /// sources that supplied it, in proportion to the TT each contributed.
     /// Pending listings realise nothing, and expired ones never realise.
     ///
-    /// Rows are leaves: one per (tier, tool), with `tool_name` `None` only for
-    /// stock whose producing swings recorded no tool. A tier's own figure is
-    /// the sum of its rows.
+    /// The tool that produced the stock is recorded on the movement rows but
+    /// is deliberately not reported: it is an input to the activity, not an
+    /// outcome, so it is compared on cost with equipment rather than on
+    /// returns it does not cause.
     pub async fn realised_markup_by_tier(&self) -> Result<Vec<RealisedTierMarkup>, AnalyticsError> {
         Ok(self
             .db
@@ -2935,7 +2847,7 @@ impl AnalyticsService {
                     rows
                 };
 
-                let mut totals: std::collections::BTreeMap<(String, Option<String>), f64> =
+                let mut totals: std::collections::BTreeMap<String, f64> =
                     std::collections::BTreeMap::new();
                 for (id, tt_value, attributed_tt, final_price, listing_fee, sale_fee) in sold {
                     let outcome = stock_allocation::resolve_sale(
@@ -2948,49 +2860,36 @@ impl AnalyticsService {
                     if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
                         continue;
                     }
-                    let contributions: Vec<(String, Option<String>, f64)> = {
+                    let contributions: Vec<(String, f64)> = {
                         let mut stmt = conn.prepare(
-                            "SELECT yield_tier, tool_name, SUM(-tt_value) FROM stock_movements \
+                            "SELECT yield_tier, SUM(-tt_value) FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = 'listing' \
                                AND yield_tier IS NOT NULL \
-                             GROUP BY yield_tier, tool_name",
+                             GROUP BY yield_tier",
                         )?;
                         let rows = stmt
-                            .query_map(rusqlite::params![id], |row| {
-                                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                            })?
+                            .query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?)))?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
-                    let contributed_tt: f64 = contributions.iter().map(|(_, _, tt)| tt).sum();
+                    let contributed_tt: f64 = contributions.iter().map(|(_, tt)| tt).sum();
                     if contributed_tt <= STOCK_EPSILON {
                         continue;
                     }
-                    for (tier, tool, tt) in contributions {
+                    for (tier, tt) in contributions {
                         let share = tt / contributed_tt;
-                        // Leaf rows only. A tier total emitted alongside them
-                        // would be indistinguishable from the row for stock
-                        // whose tool was never recorded, which is also keyed
-                        // `None`; the reader sums per tier instead.
-                        *totals.entry((tier, tool)).or_insert(0.0) +=
-                            outcome.activity_net_markup * share;
+                        *totals.entry(tier).or_insert(0.0) += outcome.activity_net_markup * share;
                     }
                 }
 
                 let mut rows: Vec<RealisedTierMarkup> = totals
                     .into_iter()
-                    .map(|((tier, tool_name), net_markup)| RealisedTierMarkup {
+                    .map(|(tier, net_markup)| RealisedTierMarkup {
                         yield_tier: HarvestYieldTier::from_db(&tier),
-                        tool_name,
                         net_markup,
                     })
                     .collect();
-                rows.sort_by(|a, b| {
-                    a.yield_tier
-                        .sort_rank()
-                        .cmp(&b.yield_tier.sort_rank())
-                        .then_with(|| a.tool_name.cmp(&b.tool_name))
-                });
+                rows.sort_by_key(|row| row.yield_tier.sort_rank());
                 Ok(rows)
             })
             .await?)
@@ -3424,7 +3323,7 @@ mod tests {
     /// span tiers, several tools may share a tier, and tool gaps remain in
     /// the conserved totals.
     #[tokio::test]
-    async fn harvest_groups_by_tier_then_tool_without_dropping_toolless_swings() {
+    async fn harvest_groups_by_tier_without_dropping_toolless_swings() {
         let (_dir, db) = open_env().await;
         db.with_writer(|conn| {
             conn.execute(
@@ -3481,57 +3380,21 @@ mod tests {
                 .abs()
                 < 1e-9
         );
-        for tier in &result.tier_comparisons {
-            assert_eq!(
-                tier.tool_comparisons
-                    .iter()
-                    .map(|tool| tool.swings)
-                    .sum::<i64>(),
-                tier.swings
-            );
-            assert!(
-                (tier
-                    .tool_comparisons
-                    .iter()
-                    .map(|tool| tool.cycled)
-                    .sum::<f64>()
-                    - tier.cycled)
-                    .abs()
-                    < 1e-9
-            );
-            assert!(
-                (tier
-                    .tool_comparisons
-                    .iter()
-                    .map(|tool| tool.returns)
-                    .sum::<f64>()
-                    - tier.returns)
-                    .abs()
-                    < 1e-9
-            );
-        }
         let v = to_json(&result);
         let tiers = v["tierComparisons"].as_array().unwrap();
         assert_eq!(tiers.len(), 3);
         assert_eq!(tiers[0]["yieldTier"], json!("short"));
-        assert_eq!(
-            tiers[0]["toolComparisons"][0]["name"],
-            serde_json::Value::Null
-        );
         assert_eq!(tiers[1]["yieldTier"], json!("long"));
         assert_eq!(tiers[1]["swings"], json!(2));
         assert_eq!(tiers[1]["cycled"], json!(0.2));
         assert_eq!(tiers[1]["returns"], json!(0.3));
-        assert_eq!(tiers[1]["toolComparisons"][0]["name"], json!("PH-3"));
         assert_eq!(tiers[2]["yieldTier"], json!("huge"));
         assert_eq!(tiers[2]["swings"], json!(3));
         assert_eq!(tiers[2]["cycled"], json!(0.35));
         assert_eq!(tiers[2]["returns"], json!(0.2));
-        let huge_tools = tiers[2]["toolComparisons"].as_array().unwrap();
-        assert_eq!(huge_tools.len(), 3);
-        assert_eq!(huge_tools[0]["name"], json!("PH-4"));
-        assert_eq!(huge_tools[1]["name"], json!("PH-3"));
-        assert_eq!(huge_tools[2]["name"], serde_json::Value::Null);
+        // The tool is not a reported dimension: several tools feed the huge
+        // tier here, and the tier reports one set of figures for all of them.
+        assert!(tiers[2].get("toolComparisons").is_none());
     }
 
     #[tokio::test]
@@ -3572,15 +3435,13 @@ mod tests {
         assert_eq!(row.loot_items.len(), 1);
         assert_eq!(row.loot_items[0].item_name, "Recent Tool Loot");
         assert_eq!(row.loot_items[0].value_ped, 6.0);
-        assert_eq!(row.tool_comparisons.len(), 1);
-        assert_eq!(row.tool_comparisons[0].name.as_deref(), Some("Recent Tool"));
     }
 
     /// Per-tool loot composition: active items only, grouped by the
     /// recording tool and ordered TT-descending, with deactivated loot
     /// excluded.
     #[tokio::test]
-    async fn harvest_composition_groups_active_loot_by_tool() {
+    async fn harvest_composition_groups_active_loot_by_tier() {
         let (_dir, db) = open_env().await;
         db.with_writer(|conn| {
             conn.execute(
@@ -3621,46 +3482,26 @@ mod tests {
         .await
         .unwrap();
         let result = harvest_impl(&db, None).await.unwrap();
-        for tier in &result.tier_comparisons {
-            let mut tool_items = std::collections::BTreeMap::<String, (i64, f64)>::new();
-            for tool in &tier.tool_comparisons {
-                for item in &tool.loot_items {
-                    let total = tool_items.entry(item.item_name.clone()).or_default();
-                    total.0 += item.quantity;
-                    total.1 += item.value_ped;
-                }
-            }
-            let tier_items: std::collections::BTreeMap<_, _> = tier
-                .loot_items
-                .iter()
-                .map(|item| (item.item_name.clone(), (item.quantity, item.value_ped)))
-                .collect();
-            assert_eq!(tool_items, tier_items);
-        }
         let v = to_json(&result);
         let tiers = v["tierComparisons"].as_array().unwrap();
-        // Axe A: two active items, TT-desc (Long Moonleaf Board first);
-        // the deactivated Wood Shavings row is excluded from its total.
+        // The huge tier: two active items, TT-desc (Long Moonleaf Board
+        // first); the deactivated Wood Shavings row is excluded from its total.
         let short = &tiers[0];
         assert_eq!(short["yieldTier"], json!("short"));
         let huge = &tiers[1];
         assert_eq!(huge["yieldTier"], json!("huge"));
-        let a = &huge["toolComparisons"][0];
-        assert_eq!(a["name"], json!("Axe A"));
-        let a_items = a["lootItems"].as_array().unwrap();
-        assert_eq!(a_items.len(), 2);
-        assert_eq!(a_items[0]["itemName"], json!("Long Moonleaf Board"));
-        assert_eq!(a_items[0]["quantity"], json!(2));
-        assert_eq!(a_items[0]["valuePed"], json!(0.8));
-        assert_eq!(a_items[1]["itemName"], json!("Wood Shavings"));
-        assert_eq!(a_items[1]["quantity"], json!(5));
-        assert_eq!(a_items[1]["valuePed"], json!(0.2));
-        // Axe B: one item.
-        let b = &short["toolComparisons"][0];
-        assert_eq!(b["name"], json!("Axe B"));
-        let b_items = b["lootItems"].as_array().unwrap();
-        assert_eq!(b_items.len(), 1);
-        assert_eq!(b_items[0]["itemName"], json!("Short Moonleaf Board"));
+        let huge_items = huge["lootItems"].as_array().unwrap();
+        assert_eq!(huge_items.len(), 2);
+        assert_eq!(huge_items[0]["itemName"], json!("Long Moonleaf Board"));
+        assert_eq!(huge_items[0]["quantity"], json!(2));
+        assert_eq!(huge_items[0]["valuePed"], json!(0.8));
+        assert_eq!(huge_items[1]["itemName"], json!("Wood Shavings"));
+        assert_eq!(huge_items[1]["quantity"], json!(5));
+        assert_eq!(huge_items[1]["valuePed"], json!(0.2));
+        // The short tier, fed by the other tool, is its own row.
+        let short_items = short["lootItems"].as_array().unwrap();
+        assert_eq!(short_items.len(), 1);
+        assert_eq!(short_items[0]["itemName"], json!("Short Moonleaf Board"));
     }
 
     /// Seed the representative scenario the live probe grounded, with the
@@ -4334,8 +4175,7 @@ mod tests {
 
         // The activity's share divides 30/20 across the contributing tiers.
         let realised = service.realised_markup_by_tier().await.unwrap();
-        let mut by_tier: std::collections::BTreeMap<&str, f64> =
-            std::collections::BTreeMap::new();
+        let mut by_tier: std::collections::BTreeMap<&str, f64> = std::collections::BTreeMap::new();
         for row in &realised {
             *by_tier.entry(row.yield_tier.as_str()).or_insert(0.0) += row.net_markup;
         }
@@ -4348,19 +4188,17 @@ mod tests {
         );
     }
 
-    /// A confirmed sale credits the tool that produced the stock, not only the
-    /// tier containing it. Without this a tool strategy reads at its loot-only
-    /// rate while its parent tier reads higher, which is what the sub-activity
-    /// detail was showing.
+    /// Stock produced by several tools inside one tier credits that tier
+    /// once, in full. The tool is recorded on the movement rows but is not an
+    /// axis anything reports on, so it must not split or duplicate the figure.
     #[tokio::test]
-    async fn a_sale_credits_the_tool_strategy_that_produced_the_stock() {
+    async fn a_sale_credits_its_tier_once_across_every_tool_that_fed_it() {
         let (_dir, service) = write_service().await;
         service
             .db
             .with_writer(|conn| {
                 // One tier, two tools: 75 units from PH-3 and 25 from PH-4.
-                for (id, tool, quantity, tt) in
-                    [("t1", "PH-3", 75, 2.25), ("t2", "PH-4", 25, 0.75)]
+                for (id, tool, quantity, tt) in [("t1", "PH-3", 75, 2.25), ("t2", "PH-4", 25, 0.75)]
                 {
                     conn.execute(
                         "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,\
@@ -4392,21 +4230,10 @@ mod tests {
         assert!((sold.activity_net_markup.unwrap() - 2.0).abs() < 1e-9);
 
         let realised = service.realised_markup_by_tier().await.unwrap();
-        let by_tool: std::collections::BTreeMap<Option<String>, f64> = realised
-            .iter()
-            .map(|row| (row.tool_name.clone(), row.net_markup))
-            .collect();
-
-        // Both tools are credited, split 75/25 by what each contributed.
-        assert!((by_tool[&Some("PH-3".to_string())] - 1.5).abs() < 1e-9);
-        assert!((by_tool[&Some("PH-4".to_string())] - 0.5).abs() < 1e-9);
-        // Every row belongs to the tier that owns the tools.
-        assert!(realised
-            .iter()
-            .all(|row| row.yield_tier == HarvestYieldTier::Long));
-        // The leaf rows sum to the tier's own figure.
-        let total: f64 = realised.iter().map(|row| row.net_markup).sum();
-        assert!((total - 2.0).abs() < 1e-9);
+        // One row for the one tier, carrying the whole 2.00.
+        assert_eq!(realised.len(), 1);
+        assert_eq!(realised[0].yield_tier, HarvestYieldTier::Long);
+        assert!((realised[0].net_markup - 2.0).abs() < 1e-9);
     }
 
     /// An expired listing returns the stock intact, keeps the fee spent, and
