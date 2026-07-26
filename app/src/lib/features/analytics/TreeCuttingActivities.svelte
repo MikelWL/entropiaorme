@@ -318,14 +318,9 @@
 											hover:bg-surface-hover/30 hover:border-border/40
 											transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
 									>
-										<div class="flex-1 min-w-0 flex items-baseline gap-2">
-											<span class="text-sm font-medium truncate tracking-tight text-text">
-												{item.name}
-											</span>
-											<span class="text-xs text-text-tertiary tabular-nums shrink-0">
-												×{item.quantity}
-											</span>
-										</div>
+										<span class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text">
+											{item.name}
+										</span>
 
 										<span class="text-sm tabular-nums font-medium text-text shrink-0 w-20 text-right">
 											{formatPed(item.ttValue)}
