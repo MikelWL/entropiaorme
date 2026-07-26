@@ -229,22 +229,13 @@
 						</span>
 					</div>
 
-					<div class="grid grid-cols-3 gap-x-5 gap-y-4">
-						<StatDisplay label="Listing TT" value={formatPed(selected.ttValue)} unit="PED" />
-						<StatDisplay
-							label="Starting bid"
-							value={formatPed(selected.startingBid)}
-							unit="PED"
-							emphasis="secondary"
-						/>
-						<StatDisplay
-							label="Buyout"
-							value={selected.buyout !== null ? formatPed(selected.buyout) : NO_DATA}
-							unit={selected.buyout !== null ? 'PED' : ''}
-							emphasis="secondary"
-						/>
-
-						{#if selected.status === 'sold'}
+					<!-- A resolved sale reports what it got; an open one reports what
+						it asked. Carrying the asking prices into a sold listing pushes
+						the figures that matter onto a third row for context nobody
+						re-reads once the price is known. -->
+					{#if selected.status === 'sold'}
+						<div class="grid grid-cols-3 gap-x-5 gap-y-4">
+							<StatDisplay label="Listing TT" value={formatPed(selected.ttValue)} unit="PED" />
 							<StatDisplay label="Sold for" value={formatPed(selected.finalPrice ?? 0)} unit="PED" />
 							<StatDisplay
 								label="Fees"
@@ -252,6 +243,7 @@
 								unit="PED"
 								emphasis="secondary"
 							/>
+
 							<StatDisplay
 								label="Net markup"
 								value={signedPed(netMarkup)}
@@ -290,47 +282,63 @@
 											producing, split across the board activities that supplied it in proportion
 											to what each contributed.
 										</p>
-										<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-											It matches net markup when the whole listing came from tracked stock.
-											Anything sold beyond that is still yours and still in your ledger, but no
-											activity can be said to have produced it.
-										</p>
+										{#if selected.unattributedQty > 0}
+											<p class="mt-2 text-xs leading-relaxed text-text-secondary">
+												{formatPed(selected.unattributedQty)} of the {formatPed(selected.quantity)}
+												listed was beyond tracked stock, so {formatPed(
+													(1 - selected.attributedTt / selected.ttValue) * 100,
+												)}% of this sale, {signedPed(unattributedMarkup)} PED, cannot be credited
+												to a board activity. Its value is still yours and still in your ledger.
+											</p>
+										{:else}
+											<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+												It matches net markup when the whole listing came from tracked stock, as
+												this one did.
+											</p>
+										{/if}
 									</InfoTip>
 								{/snippet}
 							</StatDisplay>
-							{#if unattributedMarkup > 0.005}
-								<StatDisplay
-									label="Unattributed"
-									value={signedPed(unattributedMarkup)}
-									unit="PED"
-									emphasis="secondary"
-								/>
-							{/if}
-						{:else}
+						</div>
+					{:else}
+						<div class="grid grid-cols-3 gap-x-5 gap-y-4">
+							<StatDisplay label="Listing TT" value={formatPed(selected.ttValue)} unit="PED" />
+							<StatDisplay
+								label="Starting bid"
+								value={formatPed(selected.startingBid)}
+								unit="PED"
+								emphasis="secondary"
+							/>
+							<StatDisplay
+								label="Buyout"
+								value={selected.buyout !== null ? formatPed(selected.buyout) : NO_DATA}
+								unit={selected.buyout !== null ? 'PED' : ''}
+								emphasis="secondary"
+							/>
 							<StatDisplay
 								label="Fee paid"
 								value={formatPed(selected.listingFee)}
 								unit="PED"
 								emphasis="secondary"
-							/>
-						{/if}
-					</div>
-
-					{#if selected.unattributedQty > 0}
-						<p class="mt-4 text-xs leading-relaxed text-text-tertiary">
-							{formatPed(selected.unattributedQty)} of the {formatPed(selected.quantity)} listed was
-							beyond tracked stock, so {formatPed(
-								(1 - selected.attributedTt / selected.ttValue) * 100,
-							)}% of this sale cannot be credited to a board activity. Its value is still yours and
-							still in your ledger.
-						</p>
-					{/if}
-
-					{#if selected.status === 'expired'}
-						<p class="mt-4 text-xs leading-relaxed text-text-tertiary">
-							The stock returned to your holdings in full. The listing fee stays spent, and no board
-							activity is charged for it: not selling describes the market, not the harvesting.
-						</p>
+							>
+								{#snippet labelSuffix()}
+									{#if selected.status === 'expired'}
+										<InfoTip label="Why an expired listing still cost you" width="w-80">
+											<p class="text-xs font-semibold leading-relaxed text-text">
+												Expired, and what it cost
+											</p>
+											<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+												The stock returned to your holdings in full. The listing fee stays spent.
+											</p>
+											<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+												No board activity is charged for it: not selling describes the market and
+												the price you asked, not the harvesting that produced the stock.
+											</p>
+										</InfoTip>
+									{/if}
+								{/snippet}
+							</StatDisplay>
+						</div>
 					{/if}
 
 					{#if selected.status === 'pending'}
