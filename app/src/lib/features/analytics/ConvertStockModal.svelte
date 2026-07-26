@@ -42,6 +42,16 @@
 
 	const unitTt = $derived(item && item.heldQty > 0 ? item.heldTt / item.heldQty : 0);
 	const atMax = $derived(!!item && Math.abs(ped - item.heldTt) < 0.005);
+	const overStock = $derived(!!item && ped > item.heldTt);
+
+	// A sale may run past tracked stock, because the player can hold units the
+	// app never recorded. A conversion may not: what it produces is credited to
+	// the activities that grew the source, so converting more than is tracked
+	// would credit them with Nanocubes they did not produce. The cap is held
+	// here as the value is entered, and again on the action below.
+	$effect(() => {
+		if (item && ped > item.heldTt) ped = item.heldTt;
+	});
 
 	$effect(() => {
 		if (item && initialisedFor !== item.itemName) {
@@ -61,7 +71,7 @@
 	});
 
 	async function confirm() {
-		if (!item || converting || ped <= 0 || unitTt <= 0) return;
+		if (!item || converting || ped <= 0 || unitTt <= 0 || ped > item.heldTt) return;
 		converting = true;
 		error = null;
 		try {
@@ -85,6 +95,7 @@
 				<Input
 					type="number"
 					min="0"
+					max={item.heldTt}
 					step="0.01"
 					align="right"
 					aria-label="PED to convert"
@@ -118,7 +129,11 @@
 
 			<div class="flex items-center justify-end gap-2">
 				<Button variant="ghost" onclick={oncancel} disabled={converting}>Cancel</Button>
-				<Button onclick={confirm} loading={converting} disabled={ped <= 0 || unitTt <= 0}>
+				<Button
+					onclick={confirm}
+					loading={converting}
+					disabled={ped <= 0 || unitTt <= 0 || overStock}
+				>
 					Convert
 				</Button>
 			</div>
