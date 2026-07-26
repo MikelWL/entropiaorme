@@ -45,6 +45,9 @@
 		historyLoading = true;
 		try {
 			await model.loadHistory();
+		} catch {
+			// The model records the failure and the tab shows it; the view
+			// stays open on that notice rather than rejecting into nothing.
 		} finally {
 			historyLoading = false;
 		}

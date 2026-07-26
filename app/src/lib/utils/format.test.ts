@@ -18,7 +18,13 @@ describe('todayDate', () => {
 	const suiteTz = process.env.TZ;
 	afterEach(() => {
 		vi.useRealTimers();
-		process.env.TZ = suiteTz;
+		// Assigning an absent value would leave the string "undefined" behind
+		// and contaminate every later date test.
+		if (suiteTz === undefined) {
+			delete process.env.TZ;
+		} else {
+			process.env.TZ = suiteTz;
+		}
 	});
 
 	it('reports the local calendar day, zero-padded', () => {

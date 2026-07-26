@@ -3923,9 +3923,8 @@ mod tests {
         assert_eq!(row.loot_items[0].value_ped, 6.0);
     }
 
-    /// Per-tool loot composition: active items only, grouped by the
-    /// recording tool and ordered TT-descending, with deactivated loot
-    /// excluded.
+    /// Tier loot composition: active items only, grouped by yield tier and
+    /// ordered TT-descending, with deactivated loot excluded.
     #[tokio::test]
     async fn harvest_composition_groups_active_loot_by_tier() {
         let (_dir, db) = open_env().await;

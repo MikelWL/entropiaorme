@@ -66,9 +66,9 @@
 	function summary(entry: ActivityHistoryEntry): string {
 		const tt = `${formatPed(entry.ttValue)} PED TT`;
 		if (entry.kind === 'conversion') return `${tt} into ${entry.targetItem ?? 'another item'}`;
-		if (entry.status === 'sold') return `${formatPed(entry.quantity)} sold, ${tt}`;
-		if (entry.status === 'expired') return `${formatPed(entry.quantity)} returned, ${tt}`;
-		return `${formatPed(entry.quantity)} on auction, ${tt}`;
+		if (entry.status === 'sold') return `${entry.quantity} sold, ${tt}`;
+		if (entry.status === 'expired') return `${entry.quantity} returned, ${tt}`;
+		return `${entry.quantity} on auction, ${tt}`;
 	}
 
 	function startConfirm(entry: ActivityHistoryEntry) {

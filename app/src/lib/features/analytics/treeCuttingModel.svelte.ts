@@ -246,9 +246,9 @@ export type TreeCuttingOverall = {
 	lootRate: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
-	/** Confirmed-sale MU has not landed yet, so realised currently equals
-	 * TT. Keeping this field explicit makes the recognition boundary
-	 * visible and gives the sale-attribution work one honest seam. */
+	/** Loot TT plus the markup confirmed sales have realised. It equals TT
+	 * until something sells, which is the recognition boundary made
+	 * visible. */
 	realisedReturns: number;
 	realisedRate: number;
 };
@@ -534,17 +534,34 @@ export function createTreeCuttingModel() {
 	 * aggregates are untouched by a sale, so only the position, listing, and
 	 * realised reads are re-driven. */
 	async function refreshHoldings() {
+		// This runs after a write that has already succeeded, so a failed
+		// re-read leaves figures that are known to be out of date. Falling back
+		// to an empty list would say "you hold nothing", which is false; saying
+		// nothing at all would leave a stale number looking current, which is
+		// worse. So the last-good figures stay and the tab says they are stale.
+		let stale = false;
+		const failed = <T>(fallback: T) => {
+			stale = true;
+			return fallback;
+		};
 		const [stock, allListings, realised] = await Promise.all([
-			getHarvestStock().catch(() => []),
-			getAuctionListings().catch(() => []),
-			getHarvestRealisedMarkup().catch(() => []),
+			getHarvestStock().catch(() => failed(positions)),
+			getAuctionListings().catch(() => failed(listings)),
+			getHarvestRealisedMarkup().catch(() => failed(null)),
 		]);
 		positions = stock;
 		listings = allListings;
-		realisedByTier = new Map(realised.map((row) => [row.yieldTier, row.netMarkup]));
+		if (realised) {
+			realisedByTier = new Map(realised.map((row) => [row.yieldTier, row.netMarkup]));
+		}
 		// Only once it has been opened: an undo verdict depends on every other
 		// entry, so a stale list would offer undos that no longer apply.
-		if (history.length > 0) history = await getActivityHistory().catch(() => history);
+		if (history.length > 0) {
+			history = await getActivityHistory().catch(() => failed(history));
+		}
+		error = stale
+			? 'That went through, but the figures below could not be re-read and may be out of date.'
+			: null;
 	}
 
 	/** Everything this activity has done to its stock, newest first. */

@@ -783,3 +783,34 @@ describe('realised figures', () => {
 		expect(sectionOf(model, HUGE).items[0].opportunity.appliedMarkupPct).toBe(353.69);
 	});
 });
+
+describe('holdings refresh', () => {
+	it('keeps the last-good figures when a re-read fails, and says they are stale', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+		const held = stockOf(model, 'Long Moonleaf Board').heldQty;
+
+		// The write lands; the re-read behind it does not.
+		mocked.getHarvestStock.mockRejectedValue(new Error('offline'));
+		await model.listStock(listingInput('Long Moonleaf Board', 10));
+
+		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(held);
+		expect(model.error).toContain('may be out of date');
+	});
+
+	it('clears the staleness notice once a refresh succeeds', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		mocked.getHarvestStock.mockRejectedValue(new Error('offline'));
+		await model.listStock(listingInput('Long Moonleaf Board', 10));
+		expect(model.error).not.toBeNull();
+
+		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 500, 30.0)]);
+		await model.listStock(listingInput('Long Moonleaf Board', 10));
+		expect(model.error).toBeNull();
+		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(500);
+	});
+});

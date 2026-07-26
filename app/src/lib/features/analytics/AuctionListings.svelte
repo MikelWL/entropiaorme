@@ -21,7 +21,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { AuctionListing } from '$lib/types/analytics';
-	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
+	import { NO_DATA, formatLedgerDate, formatPed, formatPercent } from '$lib/utils/format';
 
 	let {
 		open,
@@ -164,7 +164,7 @@
 				{:else if listing.status === 'expired'}
 					<span class="text-text-tertiary">{NO_DATA}</span>
 				{:else}
-					<span class="text-text-tertiary">{listing.listedAt.slice(5)}</span>
+					<span class="text-text-tertiary">{formatLedgerDate(listing.listedAt)}</span>
 				{/if}
 			</span>
 		</button>
@@ -235,8 +235,8 @@
 								{selected.quantity} x {selected.itemName}
 							</p>
 							<p class="mt-0.5 text-xs text-text-tertiary">
-								Listed {selected.listedAt}{selected.resolvedAt
-									? `, ${selected.status === 'sold' ? 'sold' : 'returned'} ${selected.resolvedAt}`
+								Listed {formatLedgerDate(selected.listedAt)}{selected.resolvedAt
+									? `, ${selected.status === 'sold' ? 'sold' : 'returned'} ${formatLedgerDate(selected.resolvedAt)}`
 									: ''}
 							</p>
 						</div>
