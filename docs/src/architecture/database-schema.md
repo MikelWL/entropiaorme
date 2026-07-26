@@ -25,16 +25,26 @@ calibration, and cartography spatial indexes),
 `0010_navigation_runtime_fields.sql` (the last-position timestamp and
 flow-scoped route hotkey), `0011_pin_configs.sql` (the per-preset pin
 palette, with each placed pin referencing one configuration),
-`0012_harvest_stock_removed.sql` (the interim per-item current-stock
-overlay), and `0013_harvest_yield_tier.sql` (durable Tree Cutting yield
-activity plus its historical backfill). The
+`0012_harvest_stock_removed.sql` (an interim per-item current-stock overlay,
+since retired), `0013_harvest_yield_tier.sql` (durable Tree Cutting yield
+activity plus its historical backfill), `0014_auction_sales.sql` (the auction
+listing lifecycle, stock conversions, and the signed stock-movement ledger
+that replaced the overlay above, whose rows it carries across before dropping
+it), `0015_stock_movement_tool.sql` (the tool a movement's stock was produced
+with), `0016_stock_opening_balance.sql` (a movement kind for stock an outflow
+proves was held but that was never recorded, rebuilding the movement table
+because SQLite cannot widen a CHECK constraint in place), and
+`0017_undone_entries.sql` (the marker that keeps an undone listing or
+conversion on file with its effects reversed). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
 
-The column descriptions below reflect the schema after the full migration set.
-The canonical table set is the one the baseline defines; the later migrations add
-indexes and the `session_summaries` read columns noted in place.
+The column descriptions below reflect the schema after the full migration set,
+save for the stock and auction tables `0014` onward introduce, which are
+described by the migrations themselves. The canonical table set is otherwise
+the one the baseline defines; the later migrations add indexes and the
+`session_summaries` read columns noted in place.
 
 ## Overview
 
@@ -786,7 +796,9 @@ additions (`0002_analytical_indexes.sql`,
 `0005_market_observations.sql`, `0006_harvest_events.sql`,
 `0007_map_pins.sql`, `0008_map_views.sql`, `0009_map_navigation.sql`,
 `0010_navigation_runtime_fields.sql`, `0011_pin_configs.sql`,
-`0012_harvest_stock_removed.sql`, `0013_harvest_yield_tier.sql`); the runner
+`0012_harvest_stock_removed.sql`, `0013_harvest_yield_tier.sql`,
+`0014_auction_sales.sql`, `0015_stock_movement_tool.sql`,
+`0016_stock_opening_balance.sql`, `0017_undone_entries.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

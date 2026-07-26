@@ -1836,7 +1836,7 @@ impl AnalyticsService {
 
     /// The Tree Cutting aggregate for a named period (`30d` / `90d` /
     /// `1y`, or all-time for any other value): effective yield tiers,
-    /// each with its tool strategies and matching loot composition.
+    /// each with its loot composition.
     pub async fn harvest(&self, period: &str) -> Result<HarvestData, AnalyticsError> {
         let now = naive_to_epoch(self.clock.now());
         Ok(harvest_impl(&self.db, period_epoch(period, now)).await?)
@@ -2213,9 +2213,9 @@ fn reversal_blocker(
 /// otherwise from what a conversion produced, which is the only other place
 /// an item's value is known.
 ///
-/// The tool is part of the key so a sale credits the execution strategy that
-/// produced the stock, not merely the tier containing it. Keys come back owned
-/// because the caller borrows them to build the allocation plan.
+/// The tool is part of the key so the allocation records which one produced
+/// the stock, even though no surface reports on tools today. Keys come back
+/// owned because the caller borrows them to build the allocation plan.
 type PositionKey = (Option<HarvestYieldTier>, Option<String>);
 
 fn item_positions(
@@ -2972,9 +2972,10 @@ impl AnalyticsService {
                 // What the produced item is worth per unit, so the conversion
                 // records a count rather than a value wearing a count's label.
                 // Falling back to the target's own recorded loot covers a
-                // future target this table has not learned yet; falling back
-                // to 1.0 leaves the produced stock measured in PED, which is
-                // wrong but visibly so, rather than silently scaled.
+                // future target this table has not learned yet. No conversion
+                // the app offers reaches the last fallback; if one ever does,
+                // the count carries the source's PED magnitude rather than a
+                // scale nothing supports.
                 let (_, target_loot_unit_tt) = item_positions(&tx, &target_c)?;
                 let target_unit_tt = produced_unit_tt(&target_c)
                     .or_else(|| (target_loot_unit_tt > STOCK_EPSILON).then_some(target_loot_unit_tt))

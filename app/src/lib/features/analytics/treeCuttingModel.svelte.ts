@@ -1,6 +1,6 @@
 /**
  * Tree Cutting-tab view model. Durable effective yield tiers are the
- * source activities; harvesting tools are nested execution strategies.
+ * source activities.
  * Each tier carries its realised TT and holding-independent market
  * opportunity over the board composition actually extracted.
  *
@@ -237,7 +237,7 @@ export type TreeCuttingItem = {
 	weeklySalesPed: number | null;
 };
 
-/** The combined stat line across every tool (the "Overall" block). */
+/** The combined stat line across every sub-activity (the "Overall" block). */
 export type TreeCuttingOverall = {
 	/** Markup confirmed sales have realised, already inside `realisedReturns`. */
 	realisedMarkup: number;
@@ -471,7 +471,7 @@ export function createTreeCuttingModel() {
 		},
 	});
 
-	/** The sub-activity whose detail panel is open: the selected tool, or the
+	/** The sub-activity whose detail panel is open: the selected tier, or the
 	 * highest-volume section when nothing is selected or the selection no
 	 * longer resolves. */
 	const selectedSection = $derived.by<TreeCuttingSection | null>(() => {

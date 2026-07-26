@@ -12,11 +12,11 @@
 //! consumes every tier in proportion to what that tier still has open.
 //!
 //! Allocation is at (yield tier, tool) granularity, not per source event. The
-//! tier is the activity identity every reported figure is keyed on and the tool
-//! is the execution strategy compared inside it, while a sale of a few hundred
-//! boards would fan out into hundreds of per-event rows nothing reads. The
-//! movement schema carries a nullable `source_event_id` so finer provenance can
-//! land later without a migration.
+//! tier is the activity identity every reported figure is keyed on; the tool is
+//! recorded beside it so a finer reading stays available, though nothing
+//! reports on it today. Per-event granularity would fan a sale of a few hundred
+//! boards into hundreds of rows nothing reads, and the movement schema carries
+//! a nullable `source_event_id` for it if that ever changes.
 
 use crate::harvest_yield::HarvestYieldTier;
 

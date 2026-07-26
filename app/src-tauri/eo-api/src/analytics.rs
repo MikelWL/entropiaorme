@@ -174,7 +174,7 @@ pub struct AnalyticsHunting {
     pub tag_comparisons: Vec<TagComparison>,
 }
 
-/// One item in a tool's harvest loot composition: realised TT only.
+/// One item in an activity's harvest loot composition: realised TT only.
 /// The market markup column is merged in at the frontend from the
 /// market layer, never joined into this accounting DTO.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -206,7 +206,7 @@ impl From<eo_services::harvest_yield::HarvestYieldTier> for HarvestYieldTier {
     }
 }
 
-/// One effective yield activity and its nested tool strategies.
+/// One effective yield activity and the loot it produced.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestTierComparison {
@@ -519,7 +519,7 @@ impl Api {
     }
 
     /// The Tree Cutting aggregate for a named period: effective yield
-    /// tiers, each with its tool strategies and matching loot composition.
+    /// tiers, each with its loot composition.
     pub async fn analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
         let value = self
             .analytics

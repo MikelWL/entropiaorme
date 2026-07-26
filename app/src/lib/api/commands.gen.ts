@@ -662,7 +662,7 @@ export interface HarvestGuardrailSettings {
 }
 
 /**
- * One item in a tool's harvest loot composition: realised TT only.
+ * One item in an activity's harvest loot composition: realised TT only.
  * The market markup column is merged in at the frontend from the
  * market layer, never joined into this accounting DTO.
  */
@@ -685,7 +685,7 @@ export interface HarvestSummary {
 }
 
 /**
- * One effective yield activity and its nested tool strategies.
+ * One effective yield activity and the loot it produced.
  */
 export interface HarvestTierComparison {
 	yieldTier: HarvestYieldTier;
