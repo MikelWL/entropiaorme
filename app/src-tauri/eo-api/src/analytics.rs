@@ -174,7 +174,7 @@ pub struct AnalyticsHunting {
     pub tag_comparisons: Vec<TagComparison>,
 }
 
-/// One item in a tool's harvest loot composition: realised TT only.
+/// One item in an activity's harvest loot composition: realised TT only.
 /// The market markup column is merged in at the frontend from the
 /// market layer, never joined into this accounting DTO.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -206,19 +206,7 @@ impl From<eo_services::harvest_yield::HarvestYieldTier> for HarvestYieldTier {
     }
 }
 
-/// One tool strategy inside a yield tier.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct HarvestToolComparison {
-    pub tool_name: Option<String>,
-    pub swings: i64,
-    pub cycled: f64,
-    pub returns: f64,
-    pub loot_rate: f64,
-    pub loot_items: Vec<HarvestLootItem>,
-}
-
-/// One effective yield activity and its nested tool strategies.
+/// One effective yield activity and the loot it produced.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestTierComparison {
@@ -228,7 +216,6 @@ pub struct HarvestTierComparison {
     pub returns: f64,
     pub loot_rate: f64,
     pub loot_items: Vec<HarvestLootItem>,
-    pub tool_comparisons: Vec<HarvestToolComparison>,
 }
 
 /// The Tree Cutting aggregate: the tier-first comparison table.
@@ -309,26 +296,143 @@ pub struct InventorySellResult {
     pub sold_item: InventoryItem,
 }
 
-/// One item's harvest-stock removed overlay: how much of the recorded
-/// harvest loot has already left the player's holdings. Current position =
-/// recorded looted quantity minus this. Position context only: it never
-/// feeds market opportunity or its confidence levels, which stay
-/// holding-independent, and never the recorded activity stats or the ledger.
+/// One canonical item the player currently holds: recorded loot still in
+/// hand after everything that has left through a listing or a conversion,
+/// and back through an expiry. Position context only: it never feeds market
+/// opportunity or its confidence levels, which stay holding-independent.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct HarvestStockRemoval {
+pub struct StockPosition {
     pub item_name: String,
-    pub removed_qty: i64,
+    pub quantity: f64,
+    pub tt_value: f64,
+    /// Quantity sitting in an unresolved auction listing. Already out of
+    /// `quantity`, since listed stock has left the player's inventory in
+    /// game, but reported so it does not read as simply gone.
+    pub listed_quantity: f64,
+}
+
+/// One auction listing across its lifecycle. Realised figures are `null`
+/// until the listing is confirmed sold: an open auction has no price yet,
+/// and an expired one never realised anything.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionListing {
+    pub id: String,
+    pub item_name: String,
+    pub quantity: f64,
+    pub attributed_qty: f64,
+    pub unattributed_qty: f64,
+    pub tt_value: f64,
+    pub attributed_tt: f64,
+    pub starting_bid: f64,
+    pub buyout: Nullable<f64>,
+    pub listing_fee: f64,
+    pub listed_at: String,
+    pub status: String,
+    pub final_price: Nullable<f64>,
+    pub sale_fee: Nullable<f64>,
+    pub resolved_at: Nullable<String>,
+    /// Net markup the activity may claim, after both auction fees and after
+    /// removing the share covered by untracked stock.
+    pub activity_net_markup: Nullable<f64>,
+    /// Sale proceeds above the listing's TT, before fees.
+    pub gross_markup: Nullable<f64>,
+}
+
+/// One thing an activity did to its stock: a listing across its whole
+/// lifecycle, or a conversion into another item.
+///
+/// A listing appears once however far it has got. Creating and selling are the
+/// same listing at two moments, not two entries.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityHistoryEntry {
+    pub id: String,
+    /// `listing` or `conversion`.
+    pub kind: String,
+    /// `pending`, `sold` or `expired` for a listing; `converted` otherwise.
+    pub status: String,
+    pub item_name: String,
+    /// What a conversion produced; `null` for a listing.
+    pub target_item: Nullable<String>,
+    /// When a listing resolved, or when it was listed if it has not; when a
+    /// conversion happened.
+    pub occurred_at: String,
+    pub quantity: f64,
+    pub tt_value: f64,
+    /// Sold listings only: the gain after both fees, and the part of it an
+    /// activity may claim.
+    pub net_markup: Nullable<f64>,
+    pub activity_net_markup: Nullable<f64>,
+    /// Whether the sale can be taken back, leaving the listing open.
+    pub can_revert_sale: bool,
+    /// Whether the entry can be undone outright, returning any stock it took.
+    pub can_delete: bool,
+    /// Why not, when it cannot, in terms a reader can act on.
+    pub undo_blocked_reason: Nullable<String>,
+    /// Already undone. Every effect it had is reversed and the entry is kept
+    /// as the read-only record of a correction.
+    pub undone: bool,
+}
+
+/// An undo payload: the history entry to take back.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityUndoInput {
+    pub id: String,
+}
+
+/// One yield tier's net realised markup from confirmed sales.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RealisedTierMarkup {
+    pub yield_tier: HarvestYieldTier,
+    pub net_markup: f64,
 }
 
 // ── Request DTOs ────────────────────────────────────────────────────
 
-/// A harvest-stock removed-overlay write payload.
+/// An auction-listing creation payload. Dates are optional and default to
+/// today; the fee is what the game quoted at listing time.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct HarvestStockInput {
+pub struct AuctionListingInput {
     pub item_name: String,
-    pub removed_qty: i64,
+    pub quantity: f64,
+    pub starting_bid: f64,
+    pub buyout: Option<f64>,
+    pub listing_fee: f64,
+    pub listed_at: Option<String>,
+}
+
+/// A sale-confirmation payload: the price the auction actually fetched and
+/// the additional fee charged at the point of sale.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionConfirmInput {
+    pub listing_id: String,
+    pub final_price: f64,
+    pub sale_fee: f64,
+    pub resolved_at: Option<String>,
+}
+
+/// An expiry payload: the listing came back unsold.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionExpireInput {
+    pub listing_id: String,
+    pub resolved_at: Option<String>,
+}
+
+/// A stock-conversion payload (recycling into Nanocubes at 1:1 TT).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StockConversionInput {
+    pub source_item: String,
+    pub target_item: String,
+    pub quantity: f64,
+    pub converted_at: Option<String>,
 }
 
 /// A ledger-entry create payload.
@@ -415,7 +519,7 @@ impl Api {
     }
 
     /// The Tree Cutting aggregate for a named period: effective yield
-    /// tiers, each with its tool strategies and matching loot composition.
+    /// tiers, each with its loot composition.
     pub async fn analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
         let value = self
             .analytics
@@ -425,39 +529,194 @@ impl Api {
         Ok(harvest_dto(value))
     }
 
-    /// The harvest-stock removed overlay (per-item quantity already sold or
-    /// spent). Operational position context for sale and recycling actions;
-    /// it does not influence holding-independent market opportunity.
-    pub async fn harvest_stock(&self) -> Result<Vec<HarvestStockRemoval>, ApiError> {
+    /// Everything the player currently holds. Operational position context
+    /// for sale and recycling actions; it does not influence
+    /// holding-independent market opportunity.
+    pub async fn harvest_stock(&self) -> Result<Vec<StockPosition>, ApiError> {
         let rows = self
             .analytics
-            .harvest_stock_removed()
+            .stock_positions()
             .await
             .map_err(analytics_error("harvest stock"))?;
         Ok(rows
             .into_iter()
-            .map(|r| HarvestStockRemoval {
-                item_name: r.item_name,
-                removed_qty: r.removed_qty,
+            .map(|row| StockPosition {
+                item_name: row.item_name,
+                quantity: row.quantity,
+                tt_value: row.tt_value,
+                listed_quantity: row.listed_quantity,
             })
             .collect())
     }
 
-    /// Set an item's removed quantity (zero clears it). Writes the
-    /// market-position lever alone: no activity stats, no ledger.
-    pub async fn harvest_stock_set(&self, input: HarvestStockInput) -> Result<(), ApiError> {
-        // Zero clears the overlay row; a negative quantity is meaningless and
-        // would clear it just as silently, so it is a bad-request instead.
-        if input.removed_qty < 0 {
-            return Err(ApiError::bad_request(
-                "removed quantity must not be negative",
-            ));
-        }
-        self.analytics
-            .set_harvest_stock_removed(&input.item_name, input.removed_qty)
+    /// Every auction listing, unresolved first.
+    pub async fn auction_listings(&self) -> Result<Vec<AuctionListing>, ApiError> {
+        let rows = self
+            .analytics
+            .auction_listings()
             .await
-            .map_err(analytics_error("harvest stock set"))?;
+            .map_err(analytics_error("auction listings"))?;
+        Ok(rows.into_iter().map(auction_listing_dto).collect())
+    }
+
+    /// List stock on the auction: the quantity leaves holdings now and the
+    /// starting-bid fee is spent now; nothing is realised until it sells.
+    pub async fn auction_listing_create(
+        &self,
+        input: AuctionListingInput,
+    ) -> Result<AuctionListing, ApiError> {
+        let row = self
+            .analytics
+            .create_auction_listing(
+                &input.item_name,
+                input.quantity,
+                input.starting_bid,
+                input.buyout,
+                input.listing_fee,
+                input.listed_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("auction listing create"))?;
+        Ok(auction_listing_dto(row))
+    }
+
+    /// Confirm a listing sold at the price it fetched. The recognition
+    /// boundary for realised markup. A listing that is missing or already
+    /// resolved is a not-found.
+    pub async fn auction_listing_confirm(
+        &self,
+        input: AuctionConfirmInput,
+    ) -> Result<AuctionListing, ApiError> {
+        self.analytics
+            .confirm_auction_listing(
+                &input.listing_id,
+                input.final_price,
+                input.sale_fee,
+                input.resolved_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("auction listing confirm"))?
+            .map(auction_listing_dto)
+            .ok_or_else(|| ApiError::not_found("no unresolved listing with that id"))
+    }
+
+    /// Mark a listing expired: the stock returns, the fee stays spent, and
+    /// nothing reaches the activity.
+    pub async fn auction_listing_expire(
+        &self,
+        input: AuctionExpireInput,
+    ) -> Result<AuctionListing, ApiError> {
+        self.analytics
+            .expire_auction_listing(&input.listing_id, input.resolved_at.as_deref())
+            .await
+            .map_err(analytics_error("auction listing expire"))?
+            .map(auction_listing_dto)
+            .ok_or_else(|| ApiError::not_found("no unresolved listing with that id"))
+    }
+
+    /// Recycle stock into another item at 1:1 TT, carrying its activity
+    /// composition forward.
+    pub async fn stock_convert(&self, input: StockConversionInput) -> Result<(), ApiError> {
+        self.analytics
+            .convert_stock(
+                &input.source_item,
+                &input.target_item,
+                input.quantity,
+                input.converted_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("stock convert"))?;
         Ok(())
+    }
+
+    /// Everything the activity has done to its stock, newest first, each
+    /// entry carrying whether it can be taken back.
+    pub async fn activity_history(&self) -> Result<Vec<ActivityHistoryEntry>, ApiError> {
+        let rows = self
+            .analytics
+            .activity_history()
+            .await
+            .map_err(analytics_error("activity history"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ActivityHistoryEntry {
+                id: row.id,
+                kind: row.kind,
+                status: row.status,
+                item_name: row.item_name,
+                target_item: row.target_item.into(),
+                occurred_at: row.occurred_at,
+                quantity: row.quantity,
+                tt_value: row.tt_value,
+                net_markup: row.net_markup.into(),
+                activity_net_markup: row.activity_net_markup.into(),
+                can_revert_sale: row.can_revert_sale,
+                can_delete: row.can_delete,
+                undo_blocked_reason: row.undo_blocked_reason.into(),
+                undone: row.undone,
+            })
+            .collect())
+    }
+
+    /// Take back a confirmed sale, leaving the listing open. The stock does
+    /// not move: it is still out on the auction. A listing that is missing or
+    /// was never sold is a not-found.
+    pub async fn auction_sale_revert(
+        &self,
+        input: ActivityUndoInput,
+    ) -> Result<AuctionListing, ApiError> {
+        self.analytics
+            .revert_auction_sale(&input.id)
+            .await
+            .map_err(analytics_error("auction sale revert"))?
+            .map(auction_listing_dto)
+            .ok_or_else(|| ApiError::not_found("no sold listing with that id"))
+    }
+
+    /// Undo a listing: its stock comes back and every ledger row it wrote goes
+    /// with it. The entry stays on file, marked.
+    pub async fn auction_listing_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        let existed = self
+            .analytics
+            .undo_auction_listing(&input.id)
+            .await
+            .map_err(analytics_error("auction listing undo"))?;
+        if existed {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no listing with that id to undo"))
+        }
+    }
+
+    /// Undo a conversion: what it consumed comes back and what it produced is
+    /// unmade. Refused when those produced units have since left.
+    pub async fn stock_conversion_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        let existed = self
+            .analytics
+            .undo_stock_conversion(&input.id)
+            .await
+            .map_err(analytics_error("stock conversion undo"))?;
+        if existed {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no conversion with that id to undo"))
+        }
+    }
+
+    /// Net realised markup per yield tier, from confirmed sales only.
+    pub async fn harvest_realised_markup(&self) -> Result<Vec<RealisedTierMarkup>, ApiError> {
+        let rows = self
+            .analytics
+            .realised_markup_by_tier()
+            .await
+            .map_err(analytics_error("harvest realised markup"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RealisedTierMarkup {
+                yield_tier: row.yield_tier.into(),
+                net_markup: row.net_markup,
+            })
+            .collect())
     }
 
     /// One keyset page of ledger entries (newest first) plus the cursor for
@@ -749,6 +1008,30 @@ pub(crate) fn hunting_dto(data: eo_services::analytics::HuntingData) -> Analytic
     }
 }
 
+pub(crate) fn auction_listing_dto(
+    row: eo_services::analytics::AuctionListingRow,
+) -> AuctionListing {
+    AuctionListing {
+        id: row.id,
+        item_name: row.item_name,
+        quantity: row.quantity,
+        attributed_qty: row.attributed_qty,
+        unattributed_qty: row.unattributed_qty,
+        tt_value: row.tt_value,
+        attributed_tt: row.attributed_tt,
+        starting_bid: row.starting_bid,
+        buyout: row.buyout.into(),
+        listing_fee: row.listing_fee,
+        listed_at: row.listed_at,
+        status: row.status,
+        final_price: row.final_price.into(),
+        sale_fee: row.sale_fee.into(),
+        resolved_at: row.resolved_at.into(),
+        activity_net_markup: row.activity_net_markup.into(),
+        gross_markup: row.gross_markup.into(),
+    }
+}
+
 pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> AnalyticsHarvest {
     AnalyticsHarvest {
         tier_comparisons: data
@@ -767,26 +1050,6 @@ pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> Analytic
                         item_name: item.item_name,
                         quantity: item.quantity,
                         value_ped: item.value_ped,
-                    })
-                    .collect(),
-                tool_comparisons: row
-                    .tool_comparisons
-                    .into_iter()
-                    .map(|tool| HarvestToolComparison {
-                        tool_name: tool.name,
-                        swings: tool.swings,
-                        cycled: tool.cycled,
-                        returns: tool.returns,
-                        loot_rate: tool.loot_rate,
-                        loot_items: tool
-                            .loot_items
-                            .into_iter()
-                            .map(|item| HarvestLootItem {
-                                item_name: item.item_name,
-                                quantity: item.quantity,
-                                value_ped: item.value_ped,
-                            })
-                            .collect(),
                     })
                     .collect(),
             })
@@ -837,6 +1100,11 @@ pub(crate) fn analytics_error(context: &'static str) -> impl FnOnce(AnalyticsErr
         AnalyticsError::InvalidPresetType => {
             ApiError::bad_request("type must be 'expense' or 'markup'")
         }
+        AnalyticsError::InvalidInput(message) => ApiError::bad_request(message),
+        // The domain refused on the state it found, and said why in terms of
+        // that state. The reason is for the player, so it travels intact
+        // rather than being flattened into a generic failure.
+        AnalyticsError::Rejected(ref message) => ApiError::bad_request(message.clone()),
         source => ApiError::internal(context)(source),
     }
 }

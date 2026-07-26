@@ -3,6 +3,10 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import ActivityHistory from '$lib/features/analytics/ActivityHistory.svelte';
+	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
+	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
+	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
 	import TreeCuttingActivities from '$lib/features/analytics/TreeCuttingActivities.svelte';
 	import TreeCuttingStats from '$lib/features/analytics/TreeCuttingStats.svelte';
 	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
@@ -10,9 +14,44 @@
 	import {
 		createTreeCuttingModel,
 		type ConfidenceMode,
+		type TreeCuttingStock as StockRow,
 	} from '$lib/features/analytics/treeCuttingModel.svelte';
 
 	const model = createTreeCuttingModel();
+
+	// The lower box answers three questions about the same output: how each
+	// sub-activity performs, what is currently happening in the market with
+	// what they produced, and what has already been done with it. Overall
+	// stays put above all three, since the headline figures describe the
+	// activity whichever is open.
+	type ActivityView = 'activities' | 'market' | 'history';
+	let activityView = $state<ActivityView>('activities');
+	const ACTIVITY_VIEWS = [
+		{ id: 'activities', label: 'Sub-activities' },
+		{ id: 'market', label: 'Market' },
+		{ id: 'history', label: 'History' },
+	];
+
+	let sellItem = $state<StockRow | null>(null);
+	let convertItem = $state<StockRow | null>(null);
+
+	// History reads when it is opened rather than with the tab: an undo verdict
+	// depends on every other entry, so it is worth computing fresh at the
+	// moment it is offered.
+	let historyLoading = $state(false);
+	async function showView(id: ActivityView) {
+		activityView = id;
+		if (id !== 'history') return;
+		historyLoading = true;
+		try {
+			await model.loadHistory();
+		} catch {
+			// The model records the failure and the tab shows it; the view
+			// stays open on that notice rather than rejecting into nothing.
+		} finally {
+			historyLoading = false;
+		}
+	}
 
 	$effect(() => {
 		void model.loadData(model.period);
@@ -97,36 +136,54 @@
 					/>
 
 					{#if model.stock.length > 0}
-						<TreeCuttingStock stock={model.stock} />
+						<TreeCuttingStock
+							stock={model.stock}
+							onsell={(item) => (sellItem = item)}
+							onconvert={(item) => (convertItem = item)}
+						/>
 					{/if}
 				</div>
 			</div>
 		{/if}
 
-		<TreeCuttingActivities
-			sections={model.activityTable.filtered}
-			selected={model.selectedSection}
-			onselect={(yieldTier) => model.selectSection(yieldTier)}
-			sortKey={model.activityTable.sortKey}
-			sortDir={model.activityTable.sortDir}
-			onsort={(key) => model.activityTable.setSort(key)}
-		/>
+		<div class="space-y-3">
+			<SegmentedControl
+				options={ACTIVITY_VIEWS}
+				active={activityView}
+				onchange={(id) => showView(id as ActivityView)}
+			/>
 
-		<div class="space-y-1 text-xs text-text-tertiary">
-			<p>
-				<span class="text-text-secondary">TT Net / TT Rate:</span>
-				realised loot TT minus cycled PED, and loot-only TT return per cycled PED.
-			</p>
-			<p>
-				<span class="text-text-secondary">MU Net / MU figures:</span>
-				estimated from market data, never realised P&amp;L. Markup resolves from the weekly
-				horizon (falling back to monthly, then yearly). A
-				<span class="text-warning">⚠</span> flags a sparse but fee-viable market; a
-				<span class="text-error font-semibold">!</span> flags constrained capacity, shown struck
-				through with the nanocube rate when excluded by the confidence toggle.
-			</p>
+			{#if activityView === 'activities'}
+				<TreeCuttingActivities
+					sections={model.activityTable.filtered}
+					selected={model.selectedSection}
+					onselect={(yieldTier) => model.selectSection(yieldTier)}
+					sortKey={model.activityTable.sortKey}
+					sortDir={model.activityTable.sortDir}
+					onsort={(key) => model.activityTable.setSort(key)}
+				/>
+			{:else if activityView === 'market'}
+				<AuctionListings
+					open={model.openListings}
+					resolved={model.resolvedListings}
+					onresolve={model.resolveListing}
+				/>
+			{:else}
+				<ActivityHistory
+					entries={model.history}
+					loading={historyLoading}
+					onundo={model.undoHistoryEntry}
+				/>
+			{/if}
 		</div>
 	</div>
+
+	<SellStockModal item={sellItem} onlist={model.listStock} oncancel={() => (sellItem = null)} />
+	<ConvertStockModal
+		item={convertItem}
+		onconvert={model.recycleStock}
+		oncancel={() => (convertItem = null)}
+	/>
 {:else}
 	<Card class="p-6">
 		<p class="text-sm text-text-tertiary text-center" data-guide-anchor="analytics-treecutting-area">

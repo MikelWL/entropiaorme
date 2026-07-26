@@ -5,12 +5,16 @@
 	let {
 		value = $bindable<string | number | null>(''),
 		class: className = '',
+		align = 'left',
 		prefix,
 		suffix,
 		...rest
 	}: {
 		value?: string | number | null;
 		class?: string;
+		/** Right-align a field whose value is read against a figure above or
+		 * beside it; the digits line up where the eye already is. */
+		align?: 'left' | 'right';
 		prefix?: Snippet;
 		suffix?: Snippet;
 	} & Omit<HTMLInputAttributes, 'value' | 'class'> = $props();
@@ -32,7 +36,11 @@
 		</div>
 	{/if}
 
-	<input bind:value class="{baseClasses} {paddingClasses}" {...rest} />
+	<input
+		bind:value
+		class="{baseClasses} {paddingClasses} {align === 'right' ? 'text-right' : ''}"
+		{...rest}
+	/>
 
 	{#if suffix}
 		<div

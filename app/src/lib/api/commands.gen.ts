@@ -51,6 +51,39 @@ export interface AcceptResult {
 }
 
 /**
+ * One thing an activity did to its stock: a listing across its whole
+ * lifecycle, or a conversion into another item.
+ * 
+ * A listing appears once however far it has got. Creating and selling are the
+ * same listing at two moments, not two entries.
+ */
+export interface ActivityHistoryEntry {
+	id: string;
+	/** `listing` or `conversion`. */
+	kind: string;
+	/** `pending`, `sold` or `expired` for a listing; `converted` otherwise. */
+	status: string;
+	itemName: string;
+	/** What a conversion produced; `null` for a listing. */
+	targetItem: string | null;
+	/** When a listing resolved, or when it was listed if it has not; when a conversion happened. */
+	occurredAt: string;
+	quantity: number;
+	ttValue: number;
+	/** Sold listings only: the gain after both fees, and the part of it an activity may claim. */
+	netMarkup: number | null;
+	activityNetMarkup: number | null;
+	/** Whether the sale can be taken back, leaving the listing open. */
+	canRevertSale: boolean;
+	/** Whether the entry can be undone outright, returning any stock it took. */
+	canDelete: boolean;
+	/** Why not, when it cannot, in terms a reader can act on. */
+	undoBlockedReason: string | null;
+	/** Already undone. Every effect it had is reversed and the entry is kept as the read-only record of a correction. */
+	undone: boolean;
+}
+
+/**
  * The activity-recommender query. `professions` carries the target
  * profession name(s) for a `profession` target (one name, or several
  * for a family) and is ignored for `hp`.
@@ -72,6 +105,13 @@ export interface ActivityRecommenderResult {
 	sampleStep: number;
 	direct: RecommenderActivity | null;
 	candidates: RecommenderActivity[];
+}
+
+/**
+ * An undo payload: the history entry to take back.
+ */
+export interface ActivityUndoInput {
+	id: string;
 }
 
 /**
@@ -131,6 +171,65 @@ export interface AppSettings {
 export interface ArmourCostResult {
 	sessionId: string;
 	armourCost: number;
+}
+
+/**
+ * A sale-confirmation payload: the price the auction actually fetched and
+ * the additional fee charged at the point of sale.
+ */
+export interface AuctionConfirmInput {
+	listingId: string;
+	finalPrice: number;
+	saleFee: number;
+	resolvedAt?: string | null;
+}
+
+/**
+ * An expiry payload: the listing came back unsold.
+ */
+export interface AuctionExpireInput {
+	listingId: string;
+	resolvedAt?: string | null;
+}
+
+/**
+ * One auction listing across its lifecycle. Realised figures are `null`
+ * until the listing is confirmed sold: an open auction has no price yet,
+ * and an expired one never realised anything.
+ */
+export interface AuctionListing {
+	id: string;
+	itemName: string;
+	quantity: number;
+	attributedQty: number;
+	unattributedQty: number;
+	ttValue: number;
+	attributedTt: number;
+	startingBid: number;
+	buyout: number | null;
+	listingFee: number;
+	listedAt: string;
+	status: string;
+	finalPrice: number | null;
+	saleFee: number | null;
+	resolvedAt: string | null;
+	/** Net markup the activity may claim, after both auction fees and after removing the share covered by untracked stock. */
+	activityNetMarkup: number | null;
+	/** Sale proceeds above the listing's TT, before fees. */
+	grossMarkup: number | null;
+}
+
+/**
+ * An auction-listing creation payload. Dates are optional and default to
+ * today; the fee is what the game quoted at listing time.
+ */
+export interface AuctionListingInput {
+	itemName: string;
+	quantity: number;
+	startingBid: number;
+	buyout?: number | null;
+	listingFee: number;
+	listedAt?: string | null;
 }
 
 /**
@@ -563,7 +662,7 @@ export interface HarvestGuardrailSettings {
 }
 
 /**
- * One item in a tool's harvest loot composition: realised TT only.
+ * One item in an activity's harvest loot composition: realised TT only.
  * The market markup column is merged in at the frontend from the
  * market layer, never joined into this accounting DTO.
  */
@@ -571,26 +670,6 @@ export interface HarvestLootItem {
 	itemName: string;
 	quantity: number;
 	valuePed: number;
-}
-
-/**
- * A harvest-stock removed-overlay write payload.
- */
-export interface HarvestStockInput {
-	itemName: string;
-	removedQty: number;
-}
-
-/**
- * One item's harvest-stock removed overlay: how much of the recorded
- * harvest loot has already left the player's holdings. Current position =
- * recorded looted quantity minus this. Position context only: it never
- * feeds market opportunity or its confidence levels, which stay
- * holding-independent, and never the recorded activity stats or the ledger.
- */
-export interface HarvestStockRemoval {
-	itemName: string;
-	removedQty: number;
 }
 
 /**
@@ -606,23 +685,10 @@ export interface HarvestSummary {
 }
 
 /**
- * One effective yield activity and its nested tool strategies.
+ * One effective yield activity and the loot it produced.
  */
 export interface HarvestTierComparison {
 	yieldTier: HarvestYieldTier;
-	swings: number;
-	cycled: number;
-	returns: number;
-	lootRate: number;
-	lootItems: HarvestLootItem[];
-	toolComparisons: HarvestToolComparison[];
-}
-
-/**
- * One tool strategy inside a yield tier.
- */
-export interface HarvestToolComparison {
-	toolName?: string | null;
 	swings: number;
 	cycled: number;
 	returns: number;
@@ -1787,6 +1853,14 @@ export interface RadarGeometry {
 }
 
 /**
+ * One yield tier's net realised markup from confirmed sales.
+ */
+export interface RealisedTierMarkup {
+	yieldTier: HarvestYieldTier;
+	netMarkup: number;
+}
+
+/**
  * The rebuild-and-verify report: whether every projection rebuilt
  * byte-identically, and the per-table verdicts in their stable order.
  * `allMatched` keeps its camelCase HTTP key; the verdict fields keep
@@ -2052,6 +2126,30 @@ export interface StatProfession {
 	name: string;
 	level: number;
 	category: string;
+}
+
+/**
+ * A stock-conversion payload (recycling into Nanocubes at 1:1 TT).
+ */
+export interface StockConversionInput {
+	sourceItem: string;
+	targetItem: string;
+	quantity: number;
+	convertedAt?: string | null;
+}
+
+/**
+ * One canonical item the player currently holds: recorded loot still in
+ * hand after everything that has left through a listing or a conversion,
+ * and back through an expiry. Position context only: it never feeds market
+ * opportunity or its confidence levels, which stay holding-independent.
+ */
+export interface StockPosition {
+	itemName: string;
+	quantity: number;
+	ttValue: number;
+	/** Quantity sitting in an unresolved auction listing. Already out of `quantity`, since listed stock has left the player's inventory in game, but reported so it does not read as simply gone. */
+	listedQuantity: number;
 }
 
 /**
@@ -2497,12 +2595,48 @@ export async function analyticsHarvest(period: string): Promise<AnalyticsHarvest
 	return invokeCommand('analytics_harvest', { period });
 }
 
-export async function harvestStock(): Promise<HarvestStockRemoval[]> {
+export async function harvestStock(): Promise<StockPosition[]> {
 	return invokeCommand('harvest_stock', {});
 }
 
-export async function harvestStockSet(input: HarvestStockInput): Promise<void> {
-	return invokeCommand('harvest_stock_set', { input });
+export async function harvestRealisedMarkup(): Promise<RealisedTierMarkup[]> {
+	return invokeCommand('harvest_realised_markup', {});
+}
+
+export async function auctionListings(): Promise<AuctionListing[]> {
+	return invokeCommand('auction_listings', {});
+}
+
+export async function auctionListingCreate(input: AuctionListingInput): Promise<AuctionListing> {
+	return invokeCommand('auction_listing_create', { input });
+}
+
+export async function auctionListingConfirm(input: AuctionConfirmInput): Promise<AuctionListing> {
+	return invokeCommand('auction_listing_confirm', { input });
+}
+
+export async function auctionListingExpire(input: AuctionExpireInput): Promise<AuctionListing> {
+	return invokeCommand('auction_listing_expire', { input });
+}
+
+export async function stockConvert(input: StockConversionInput): Promise<void> {
+	return invokeCommand('stock_convert', { input });
+}
+
+export async function activityHistory(): Promise<ActivityHistoryEntry[]> {
+	return invokeCommand('activity_history', {});
+}
+
+export async function auctionSaleRevert(input: ActivityUndoInput): Promise<AuctionListing> {
+	return invokeCommand('auction_sale_revert', { input });
+}
+
+export async function auctionListingUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('auction_listing_undo', { input });
+}
+
+export async function stockConversionUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('stock_conversion_undo', { input });
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

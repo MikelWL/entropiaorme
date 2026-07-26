@@ -10,7 +10,7 @@ The authoritative schema is the migration set under
 `app/src-tauri/eo-services/src/db/`. The set holds a version-33 baseline
 migration, `0001_schema_baseline.sql`, which creates the complete base schema
 (tables, indexes, and the timestamp-back-fill triggers) and stamps the
-schema-version row, followed by forward-only additions:
+schema-version row, followed by forward-only migrations:
 `0002_analytical_indexes.sql` (analytical read-path indexes plus a one-time
 `ANALYZE`), `0003_session_summary_read_columns.sql` (extra
 `session_summaries` columns for the Activity and session-list reads),
@@ -25,16 +25,26 @@ calibration, and cartography spatial indexes),
 `0010_navigation_runtime_fields.sql` (the last-position timestamp and
 flow-scoped route hotkey), `0011_pin_configs.sql` (the per-preset pin
 palette, with each placed pin referencing one configuration),
-`0012_harvest_stock_removed.sql` (the interim per-item current-stock
-overlay), and `0013_harvest_yield_tier.sql` (durable Tree Cutting yield
-activity plus its historical backfill). The
+`0012_harvest_stock_removed.sql` (an interim per-item current-stock overlay,
+since retired), `0013_harvest_yield_tier.sql` (durable Tree Cutting yield
+activity plus its historical backfill), `0014_auction_sales.sql` (the auction
+listing lifecycle, stock conversions, and the signed stock-movement ledger
+that replaced the overlay above, whose rows it carries across before dropping
+it), `0015_stock_movement_tool.sql` (the tool a movement's stock was produced
+with, recorded but not currently reported on), `0016_stock_opening_balance.sql` (a movement kind for stock an outflow
+proves was held but that was never recorded, rebuilding the movement table
+because SQLite cannot widen a CHECK constraint in place), and
+`0017_undone_entries.sql` (the marker that keeps an undone listing or
+conversion on file with its effects reversed). The
 `Db::open` path opens the database, configures its session pragmas, adopts or
 refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
 `db.rs`).
 
-The column descriptions below reflect the schema after the full migration set.
-The canonical table set is the one the baseline defines; the later migrations add
-indexes and the `session_summaries` read columns noted in place.
+The column descriptions below reflect the schema after the full migration set,
+save for the stock and auction tables `0014` onward introduce, which are
+described by the migrations themselves. The canonical table set is otherwise
+the one the baseline defines; the later migrations add indexes and the
+`session_summaries` read columns noted in place.
 
 ## Overview
 
@@ -467,17 +477,14 @@ The individual wood items a successful swing dropped.
 | `value_ped` | REAL | Defaults to 0. |
 | `deactivated_at` | REAL | Null when active; mirrors `kill_loot_items` so the loot-edit flow can extend to harvest loot without a schema move. |
 
-#### `harvest_stock_removed`
+#### `harvest_stock_removed` (retired)
 
-Interim per-item quantity already removed from the lifetime recorded harvest
-position (migration `0012`). It affects the Current Stock projection only;
-recorded activity totals and market confidence remain independent.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `item_name` | TEXT | Primary key; canonical harvested item name. |
-| `removed_qty` | INTEGER | Not null; defaults to 0. |
-| `updated_at` | REAL | Not null; Unix-epoch update time. |
+An interim per-item overlay of quantity already removed from the recorded
+harvest position (migration `0012`). Migration `0014` retired it: its rows were
+carried into `stock_movements` as explicitly unattributed adjustments and the
+table was dropped, so current position derives from recorded loot plus that
+signed movement ledger rather than from two sources of the same quantity. No
+current database carries it.
 
 #### `notable_events`
 
@@ -781,12 +788,14 @@ in `eo-services/src/db/migrate.rs`) over the migration set in
 `eo-services/migrations/`, whose files are compiled into the binary (a unit
 test pins the embedded chain to the directory's contents). The set carries the
 version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
-additions (`0002_analytical_indexes.sql`,
+migrations (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
 `0005_market_observations.sql`, `0006_harvest_events.sql`,
 `0007_map_pins.sql`, `0008_map_views.sql`, `0009_map_navigation.sql`,
 `0010_navigation_runtime_fields.sql`, `0011_pin_configs.sql`,
-`0012_harvest_stock_removed.sql`, `0013_harvest_yield_tier.sql`); the runner
+`0012_harvest_stock_removed.sql`, `0013_harvest_yield_tier.sql`,
+`0014_auction_sales.sql`, `0015_stock_movement_tool.sql`,
+`0016_stock_opening_balance.sql`, `0017_undone_entries.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

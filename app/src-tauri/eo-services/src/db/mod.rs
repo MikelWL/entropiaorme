@@ -1276,15 +1276,17 @@ mod tests {
         // migration's three projection tables, the market migration's
         // two feed tables, the harvest migration's two activity
         // tables, the map-pins table, the named-map table, four navigation
-        // tables, the pin-configuration table, and the harvest-stock
-        // overlay table;
+        // tables, the pin-configuration table, and the auction-sales
+        // migration's three tables (listings, conversions, movements), which
+        // also retired the harvest-stock overlay table it replaced;
         // index migrations: 18 baseline
         // + 4 analytical + the ledger date index + 2 market + 2 harvest
         // + the pin planet index + 2 named-map indexes + 4 navigation indexes
-        // + 2 pin-configuration indexes + 2 harvest-yield indexes = 38 indexes,
-        // 8 triggers.
-        assert_eq!(count("table").await, 38);
-        assert_eq!(count("index").await, 38);
+        // + 2 pin-configuration indexes + 2 harvest-yield indexes
+        // + 5 auction-sales indexes + the live-listing index the undone-entry
+        // migration adds = 44 indexes, 8 triggers.
+        assert_eq!(count("table").await, 40);
+        assert_eq!(count("index").await, 44);
         assert_eq!(count("trigger").await, 8);
 
         let version = db
@@ -1668,17 +1670,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = fresh_db(dir.path()).await;
         let master = db.schema_master().await.unwrap();
-        // 38 declared tables (23 baseline + 3 daily-rollup projection +
+        // 40 declared tables (23 baseline + 3 daily-rollup projection +
         // 2 market feed + 2 harvest activity + map pins + map views + 4
-        // navigation tables + pin configs + harvest-stock overlay) + the
-        // migration ledger + 38 indexes
+        // navigation tables + pin configs + 3 auction-sales tables, the
+        // harvest-stock overlay having been retired into them) + the
+        // migration ledger + 44 indexes
         // (18 baseline + 4 analytical + the ledger date index + 2 market + 2
         // harvest + the pin planet index + 2 map-view indexes + 4 navigation
-        // indexes + 2 pin-configuration indexes + 2 harvest-yield indexes) +
+        // indexes + 2 pin-configuration indexes + 2 harvest-yield indexes +
+        // 5 auction-sales indexes + the undone-entry migration's
+        // live-listing index) +
         // 8 triggers (only SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), 39 + 38 + 8);
+        assert_eq!(master.len(), 41 + 44 + 8);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

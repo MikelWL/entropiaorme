@@ -38,9 +38,20 @@
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
-	const realisedMuTone = (value: number) =>
-		value > 0 ? 'text-positive' : 'text-text';
 	const rateTone = (value: number) => netTone(value - 1);
+
+	// The list's column widths, declared once because the header and the rows
+	// have to shrink identically or they stop lining up.
+	//
+	// Every column gives ground in proportion to its own width rather than the
+	// name column absorbing the whole squeeze: at basis 0 the name collapses
+	// first and its text spills over the neighbour, which is what a narrow
+	// pane used to look like. `min-w-0` is what lets a column go below the
+	// width of its own text instead of stopping there and pushing the row wide.
+	const COL_NAME = 'min-w-0 flex-[1_1_6rem]';
+	const COL_CYCLED = 'min-w-0 flex-[0_1_3.5rem]';
+	const COL_MU = 'min-w-0 flex-[0_1_4rem]';
+	const COL_REALISED = 'min-w-0 flex-[0_1_7.5rem]';
 	const sortArrow = (key: TreeCuttingActivitySortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '';
 	const sortDescription = (key: TreeCuttingActivitySortKey, label: string) => {
@@ -153,7 +164,7 @@
 					: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
 		>
 			<span
-				class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight
+				class="{COL_NAME} truncate text-sm font-medium tracking-tight
 					{isUnclassified ? 'text-text-tertiary' : 'text-text'}"
 				title={treeCuttingActivityName(section)}
 			>
@@ -161,18 +172,20 @@
 			</span>
 			{#if isUnclassified}
 				<span class="sr-only">Activity metrics not applicable</span>
-				<span class="w-14 shrink-0" aria-hidden="true"></span>
-				<span class="w-16 shrink-0" aria-hidden="true"></span>
-				<span class="w-[4.5rem] shrink-0" aria-hidden="true"></span>
+				<span class={COL_CYCLED} aria-hidden="true"></span>
+				<span class={COL_MU} aria-hidden="true"></span>
+				<span class={COL_REALISED} aria-hidden="true"></span>
 			{:else}
-				<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
+				<span class="{COL_CYCLED} truncate text-right text-xs tabular-nums text-text">
 					{formatPed(section.cycled)}
 				</span>
-				<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
+				<span class="{COL_MU} truncate text-right text-xs tabular-nums text-text">
 					{section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
 				</span>
 				<span
-					class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}"
+					class="{COL_REALISED} truncate text-right text-xs tabular-nums font-medium {rateTone(
+						section.realisedRate,
+					)}"
 				>
 					{formatPercent(section.realisedRate)}
 				</span>
@@ -182,7 +195,16 @@
 {/snippet}
 
 <Card class="hover:z-20">
-	<div class="grid sm:grid-cols-[minmax(21rem,40%)_minmax(0,1fr)]">
+	<!-- The list pane's width is shared with the market panel the toggle swaps
+		to: the two are the same frame with different contents, so the hairline
+		has to fall in the same place in both.
+
+		A proportion, not a floor. A minimum width on this track refuses to give
+		anything back as the card narrows, so the whole of an expanding
+		sidebar's cost lands on the detail pane and its rightmost column leaves
+		the screen. Both sides narrow together instead, and the column headers
+		below are free to wrap once they are genuinely short of room. -->
+	<div class="grid sm:grid-cols-[46%_minmax(0,1fr)]">
 		<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 			<div class="px-2 pt-4">
 				<div
@@ -190,7 +212,7 @@
 				>
 					<button
 						type="button"
-						class="eyebrow flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_NAME} flex cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('yieldTier', 'Activity')}
 						onclick={() => onsort('yieldTier')}
 					>
@@ -199,7 +221,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-14 shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_CYCLED} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('cycled', 'Cycled')}
 						onclick={() => onsort('cycled')}
 					>
@@ -208,7 +230,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-16 shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_MU} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('muRate', 'MU Rate')}
 						onclick={() => onsort('muRate')}
 					>
@@ -217,7 +239,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-[4.5rem] shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_REALISED} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('realisedRate', 'Realised Rate')}
 						onclick={() => onsort('realisedRate')}
 					>
@@ -276,81 +298,29 @@
 						unit={selected.muProjectedReturns !== null ? 'PED' : ''}
 					/>
 					<StatDisplay
-						label="Realised MU"
-						value={signedPed(selected.realisedReturns - selected.returns)}
-						valueClass={realisedMuTone(selected.realisedReturns - selected.returns)}
+						label="Realised Net"
+						value={signedPed(selected.realisedReturns - selected.cycled)}
+						valueClass={netTone(selected.realisedReturns - selected.cycled)}
 						unit="PED"
 					>
 						{#snippet labelSuffix()}
-							<InfoTip align="right" width="w-80" label="What Realised MU reports">
+							<InfoTip align="right" width="w-80" label="What Realised Net reports">
 								<p class="text-xs font-semibold leading-relaxed text-text">
-									Realised MU: markup confirmed by completed sales
+									Realised Net: what this activity actually achieved
 								</p>
 								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									No sale is linked to an activity yet, so this is zero for every activity. A
-									sale recorded directly in the Ledger is not linked, and will not appear here
-									until it is.
-								</p>
-								<p class="mt-2 text-xs leading-relaxed text-text-secondary">
-									Once sales are linked: loot TT is already counted when it is acquired, so a
-									sale will add only the amount received above TT, after auction fees.
+									Loot TT less cycled PED, plus the markup confirmed sales of this activity's
+									output have realised, after auction fees.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-									That net markup will be split between the activities that produced the sold
-									stock, based on each activity's share of it.
+									It reads the same as TT Net until stock this activity produced is sold and the
+									sale confirmed, because until then no markup has been realised. A sale recorded
+									directly in the Ledger carries no link to an activity and does not reach here.
 								</p>
 							</InfoTip>
 						{/snippet}
 					</StatDisplay>
 				</div>
-
-				{#if selected.tools.length > 0}
-					<div class="mt-5 border-t border-border/50 pt-4">
-						<div class="flex items-center gap-1.5 px-2.5 pb-2">
-							<span class="eyebrow">Tool strategy</span>
-							<InfoTip label="How board activities and tools are assigned" width="w-80">
-								<p class="text-xs font-semibold leading-relaxed text-text">
-									The activity is the board output
-								</p>
-								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									Short Boards, Boards, and Long Boards describe what the recorded swings
-									made available to the equipped tool. The app does not claim to detect the
-									physical tree.
-								</p>
-								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-									Tools remain separate here so their cost and resulting markup rate can be
-									compared within the same board activity.
-								</p>
-							</InfoTip>
-						</div>
-						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
-							<span class="eyebrow flex-1 min-w-0">Tool</span>
-							<span class="eyebrow w-20 text-right shrink-0">Cycled</span>
-							<span class="eyebrow w-20 text-right shrink-0">MU Rate</span>
-							<span class="eyebrow w-24 text-right shrink-0">Realised Rate</span>
-						</div>
-						<ul class="flex flex-col gap-1">
-							{#each selected.tools as tool (tool.key)}
-								<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
-									<span class="flex-1 min-w-0 truncate text-sm font-medium text-text">
-										{tool.toolName}
-									</span>
-									<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
-										{formatPed(tool.cycled)}
-									</span>
-									<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
-										{tool.muRate !== null ? formatPercent(tool.muRate) : NO_DATA}
-									</span>
-									<span
-										class="w-24 shrink-0 text-right text-sm tabular-nums font-medium {rateTone(tool.realisedRate)}"
-									>
-										{formatPercent(tool.realisedRate)}
-									</span>
-								</li>
-							{/each}
-						</ul>
-					</div>
-				{/if}
 
 				{#if selected.items.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">
@@ -369,14 +339,9 @@
 											hover:bg-surface-hover/30 hover:border-border/40
 											transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
 									>
-										<div class="flex-1 min-w-0 flex items-baseline gap-2">
-											<span class="text-sm font-medium truncate tracking-tight text-text">
-												{item.name}
-											</span>
-											<span class="text-xs text-text-tertiary tabular-nums shrink-0">
-												×{item.quantity}
-											</span>
-										</div>
+										<span class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text">
+											{item.name}
+										</span>
 
 										<span class="text-sm tabular-nums font-medium text-text shrink-0 w-20 text-right">
 											{formatPed(item.ttValue)}

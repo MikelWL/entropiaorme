@@ -15,7 +15,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use eo_api::analytics::{
-    HarvestStockInput, InventorySellInput, LedgerEntryInput, LedgerPresetInput,
+    AuctionConfirmInput, AuctionExpireInput, AuctionListingInput, InventorySellInput,
+    LedgerEntryInput, LedgerPresetInput,
 };
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
@@ -231,27 +232,51 @@ async fn a_malformed_cursor_is_a_bad_request() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_negative_removed_quantity_is_a_bad_request() {
+async fn a_non_positive_listing_quantity_is_a_bad_request() {
     let dir = tempfile::tempdir().unwrap();
     let api = analytics_api(dir.path()).await;
 
-    // Zero is a legitimate "nothing removed" and clears the overlay row;
-    // a negative quantity would clear it just as silently, so it is rejected.
-    api.harvest_stock_set(HarvestStockInput {
-        item_name: "Long Moonleaf Board".to_string(),
-        removed_qty: 0,
-    })
-    .await
-    .unwrap();
-
+    // Listing nothing is not a no-op that should quietly succeed: it would
+    // write a fee-bearing listing that can never resolve to anything.
     assert_eq!(
-        api.harvest_stock_set(HarvestStockInput {
+        api.auction_listing_create(AuctionListingInput {
             item_name: "Long Moonleaf Board".to_string(),
-            removed_qty: -1,
+            quantity: 0.0,
+            starting_bid: 1.0,
+            buyout: None,
+            listing_fee: 0.5,
+            listed_at: None,
         })
         .await
         .unwrap_err(),
-        ApiError::bad_request("removed quantity must not be negative")
+        ApiError::bad_request("a listing needs a positive quantity")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolving_an_unknown_listing_is_a_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = analytics_api(dir.path()).await;
+
+    assert_eq!(
+        api.auction_listing_confirm(AuctionConfirmInput {
+            listing_id: "no-such-listing".to_string(),
+            final_price: 5.0,
+            sale_fee: 0.0,
+            resolved_at: None,
+        })
+        .await
+        .unwrap_err(),
+        ApiError::not_found("no unresolved listing with that id")
+    );
+    assert_eq!(
+        api.auction_listing_expire(AuctionExpireInput {
+            listing_id: "no-such-listing".to_string(),
+            resolved_at: None,
+        })
+        .await
+        .unwrap_err(),
+        ApiError::not_found("no unresolved listing with that id")
     );
 }
 

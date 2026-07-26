@@ -37,12 +37,22 @@ export const addLedgerEntry = commands.ledgerCreate;
 export const deleteLedgerEntry = commands.ledgerDelete;
 export const addLedgerPreset = commands.ledgerPresetCreate;
 export const deleteLedgerPreset = commands.ledgerPresetDelete;
-// The harvest-stock removed overlay (per-item quantity already sold or
-// spent): operational position context for sale and recycling actions.
-// It does not influence holding-independent market opportunity. No demo
-// variant; the reader degrades to an empty overlay in guide mode.
+// Current holdings and the auction lifecycle over them: operational
+// position context for sale and recycling actions. It does not influence
+// holding-independent market opportunity. No demo variant; the reader
+// degrades to an empty position list in guide mode.
 export const getHarvestStock = commands.harvestStock;
-export const setHarvestStock = commands.harvestStockSet;
+export const getHarvestRealisedMarkup = commands.harvestRealisedMarkup;
+export const getAuctionListings = commands.auctionListings;
+export const createAuctionListing = commands.auctionListingCreate;
+export const confirmAuctionListing = commands.auctionListingConfirm;
+export const expireAuctionListing = commands.auctionListingExpire;
+export const convertStock = commands.stockConvert;
+// What the activity has done to its stock, and the three ways back out of it.
+export const getActivityHistory = commands.activityHistory;
+export const revertAuctionSale = commands.auctionSaleRevert;
+export const undoAuctionListing = commands.auctionListingUndo;
+export const undoStockConversion = commands.stockConversionUndo;
 
 export const addInventoryItem = commands.inventoryCreate;
 export const updateInventoryItem = commands.inventoryUpdate;

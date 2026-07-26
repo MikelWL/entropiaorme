@@ -9,7 +9,40 @@ import {
 	formatPed,
 	formatPedHalfEven,
 	formatPercent,
+	todayDate,
 } from '$lib/utils/format';
+
+describe('todayDate', () => {
+	// The suite pins TZ to UTC, so the divergence this function exists to
+	// avoid has to be created deliberately.
+	const suiteTz = process.env.TZ;
+	afterEach(() => {
+		vi.useRealTimers();
+		// Assigning an absent value would leave the string "undefined" behind
+		// and contaminate every later date test.
+		if (suiteTz === undefined) {
+			delete process.env.TZ;
+		} else {
+			process.env.TZ = suiteTz;
+		}
+	});
+
+	it('reports the local calendar day, zero-padded', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(2026, 6, 5, 14, 30));
+		expect(todayDate()).toBe('2026-07-05');
+	});
+
+	it('stays on the local day when UTC has already rolled over', () => {
+		// 05:00 UTC on the 27th is 22:00 on the 26th in Los Angeles. The
+		// player is having the 26th, and a listing they do not touch the date
+		// on must be dated the day they made it.
+		process.env.TZ = 'America/Los_Angeles';
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-07-27T05:00:00Z'));
+		expect(todayDate()).toBe('2026-07-26');
+	});
+});
 
 describe('formatPedHalfEven', () => {
 	it('rounds exact halves to the even cent, matching the game display', () => {
@@ -172,6 +205,16 @@ describe('formatLedgerDate', () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-06-03T12:00:00Z'));
 		expect(formatLedgerDate('2026-03-24T00:00:00Z')).toBe('Mar 24');
+	});
+
+	it('renders a date-only entry as its day, never as a time', () => {
+		// A bare date knows no time, so inventing one is wrong in both
+		// directions: read as UTC midnight it renders as "1:00 AM" today east
+		// of UTC, and as the day before west of it.
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-07-26T09:00:00Z'));
+		expect(formatLedgerDate('2026-07-26')).toBe('Jul 26');
+		expect(formatLedgerDate('2026-03-24')).toBe('Mar 24');
 	});
 
 	it('treats a cross-year same-M/D as NOT today (compares full year)', () => {

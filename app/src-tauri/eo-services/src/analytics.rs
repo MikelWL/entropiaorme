@@ -26,6 +26,7 @@ use crate::clock::Clock;
 use crate::daily_rollup;
 use crate::db::{Db, DbError};
 use crate::harvest_yield::HarvestYieldTier;
+use crate::stock_allocation;
 use crate::time::naive_to_epoch;
 
 /// The analytics domain service over the shared database and injected
@@ -82,17 +83,99 @@ pub struct InventoryRow {
     pub acquired_at: String,
 }
 
-/// One item's "already removed" harvest-stock overlay: how much of the
-/// item has left the player's holdings (sold or spent) relative to the
-/// lifetime recorded harvest quantity. Current position = recorded looted
-/// quantity minus this. Position context only: it never feeds market
-/// opportunity or its confidence levels, which stay holding-independent,
-/// and never the recorded activity stats or the ledger.
+/// One canonical item's current position: recorded loot still held, after
+/// everything that has left through a listing or a conversion and back
+/// through an expiry. Position context only: it never feeds market
+/// opportunity or its confidence levels, which stay holding-independent.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HarvestStockRemoval {
+pub struct StockPositionRow {
     pub item_name: String,
-    pub removed_qty: i64,
+    pub quantity: f64,
+    pub tt_value: f64,
+    /// Quantity currently sitting in an unresolved auction listing. Already
+    /// out of `quantity`: it has left the player's inventory and may still
+    /// come back, so it is reported rather than silently absent.
+    pub listed_quantity: f64,
+}
+
+/// One auction listing across its whole lifecycle.
+///
+/// Realised markup is derived on read from the listing's own numbers rather
+/// than stored, so it cannot drift from the fees and price it was resolved
+/// with. `None` until the listing is confirmed sold.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionListingRow {
+    pub id: String,
+    pub item_name: String,
+    pub quantity: f64,
+    pub attributed_qty: f64,
+    pub unattributed_qty: f64,
+    pub tt_value: f64,
+    pub attributed_tt: f64,
+    pub starting_bid: f64,
+    pub buyout: Option<f64>,
+    pub listing_fee: f64,
+    pub listed_at: String,
+    pub status: String,
+    pub final_price: Option<f64>,
+    pub sale_fee: Option<f64>,
+    pub resolved_at: Option<String>,
+    /// Net markup the activity may claim, after both auction fees and after
+    /// removing the share covered by untracked stock.
+    pub activity_net_markup: Option<f64>,
+    /// Gross sale proceeds above the listing's TT, before fees.
+    pub gross_markup: Option<f64>,
+}
+
+/// One thing this activity did to its stock: an auction listing across its
+/// whole lifecycle, or a conversion into another item.
+///
+/// A listing is one entry whatever state it reaches. Creating it and selling
+/// it are not two events to be listed separately; they are the same listing,
+/// later on.
+///
+/// Whether an entry can be undone is decided here rather than in the UI,
+/// because the answer depends on what the rest of the ledger has since done
+/// with the stock. `undo_blocked_reason` is written for the person reading it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityHistoryRow {
+    pub id: String,
+    /// `listing` or `conversion`.
+    pub kind: String,
+    /// `pending`, `sold`, `expired` for a listing; `converted` otherwise.
+    pub status: String,
+    pub item_name: String,
+    /// What a conversion produced. `None` for a listing.
+    pub target_item: Option<String>,
+    /// The date the entry currently stands at: when a listing resolved, or
+    /// when it was listed if it has not, and when a conversion happened.
+    pub occurred_at: String,
+    pub quantity: f64,
+    pub tt_value: f64,
+    /// Sold listings only: the whole gain, and the part an activity may claim.
+    pub net_markup: Option<f64>,
+    pub activity_net_markup: Option<f64>,
+    /// Sold listings only: whether the sale can be taken back, leaving the
+    /// listing open. Never blocked, since no stock moves.
+    pub can_revert_sale: bool,
+    /// Whether the entry can be undone outright, returning any stock it took.
+    pub can_delete: bool,
+    pub undo_blocked_reason: Option<String>,
+    /// Already undone: kept on the list as the record of a correction, with
+    /// every effect it had reversed and no action left on it.
+    pub undone: bool,
+}
+
+/// One yield tier's realised markup from confirmed sales, for the Tree
+/// Cutting Realised figures.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RealisedTierMarkup {
+    pub yield_tier: HarvestYieldTier,
+    pub net_markup: f64,
 }
 
 /// A realised inventory sale: the ledger entry it wrote (`None` for a
@@ -177,8 +260,8 @@ pub struct HuntingData {
     pub tag_comparisons: Vec<ActivityRow>,
 }
 
-/// The Tree Cutting aggregate: effective yield tiers with their tool
-/// strategies nested underneath.
+/// The Tree Cutting aggregate: effective yield tiers and their loot
+/// composition.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestData {
@@ -195,23 +278,9 @@ pub struct HarvestTierRow {
     pub returns: f64,
     pub loot_rate: f64,
     pub loot_items: Vec<HarvestLootItemRow>,
-    pub tool_comparisons: Vec<HarvestToolRow>,
 }
 
-/// One execution strategy within an effective yield tier. A missing
-/// name preserves tool-attribution gaps instead of dropping their cost.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HarvestToolRow {
-    pub name: Option<String>,
-    pub swings: i64,
-    pub cycled: f64,
-    pub returns: f64,
-    pub loot_rate: f64,
-    pub loot_items: Vec<HarvestLootItemRow>,
-}
-
-/// One item in a tool's harvest loot composition: realised TT figures
+/// One item in a yield tier's harvest loot composition: realised TT figures
 /// only (markup is the market layer's, merged in at the frontend).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -246,6 +315,14 @@ pub enum AnalyticsError {
     InvalidCursor,
     #[error("type must be 'expense' or 'markup'")]
     InvalidPresetType,
+    /// A caller-supplied value the domain rejects before it reaches storage.
+    #[error("{0}")]
+    InvalidInput(&'static str),
+    /// A request the domain refuses on the state it finds, carrying the reason
+    /// in terms of that state. Distinct from [`Self::InvalidInput`], which
+    /// rejects the argument itself and can say so in a fixed sentence.
+    #[error("{0}")]
+    Rejected(String),
     #[error(transparent)]
     Storage(#[from] DbError),
 }
@@ -1632,64 +1709,60 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
     })
 }
 
-/// One tier/tool group: tier, optional tool, swing count, cost, loot TT.
-type HarvestToolTotals = (String, Option<String>, i64, f64, f64);
+/// One tier group: tier, swing count, cost, loot TT.
+type HarvestTierTotals = (String, i64, f64, f64);
 
-/// One tier/tool item group: tier, optional tool, item, quantity, TT.
-type HarvestToolItemTotals = (String, Option<String>, String, i64, f64);
-
-struct HarvestTierBuilder {
-    swings: i64,
-    cost: f64,
-    loot_tt: f64,
-    tools: Vec<(i64, f64, String, HarvestToolRow)>,
-}
+/// One tier item group: tier, item, quantity, TT.
+type HarvestTierItemTotals = (String, String, i64, f64);
 
 /// The Tree Cutting tier-first aggregate, grouped straight off the
 /// durable event attribution. A tab-open read, not a hot path: the scan
 /// is O(total harvest events), acceptable at harvesting volumes.
+///
+/// The yield tier is the whole grouping. The tool is deliberately not a
+/// dimension here: it is an input to the activity, not an outcome of it, and
+/// its principal effect is which tier a swing reaches, which grouping inside
+/// a tier holds constant. Comparing tools belongs with equipment, on cost.
 async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, DbError> {
-    let (raw, composition): (Vec<HarvestToolTotals>, Vec<HarvestToolItemTotals>) = db
+    let (raw, composition): (Vec<HarvestTierTotals>, Vec<HarvestTierItemTotals>) = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT yield_tier, NULLIF(tool_name, ''), COUNT(*), \
+                "SELECT yield_tier, COUNT(*), \
                  COALESCE(SUM(cost_ped), 0), \
                  COALESCE(SUM(loot_total_ped), 0) FROM harvest_events h \
                  WHERE (?1 IS NULL OR h.timestamp >= ?1) \
-                 GROUP BY yield_tier, NULLIF(tool_name, '')",
+                 GROUP BY yield_tier",
             )?;
             let raw = stmt
                 .query_map([epoch_start], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(1)?,
+                        as_float(row, 2),
                         as_float(row, 3),
-                        as_float(row, 4),
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            // Active item composition follows the durable tier and tool.
-            // Deactivated rows stay evidence for migration but never enter
-            // the accounting totals served here.
+            // Active item composition follows the durable tier. Deactivated
+            // rows stay evidence for migration but never enter the accounting
+            // totals served here.
             let mut comp_stmt = conn.prepare(
-                "SELECT h.yield_tier, NULLIF(h.tool_name, ''), l.item_name, \
+                "SELECT h.yield_tier, l.item_name, \
                  SUM(l.quantity), \
                  COALESCE(SUM(l.value_ped), 0) \
                  FROM harvest_loot_items l JOIN harvest_events h ON h.id = l.harvest_id \
                  WHERE (?1 IS NULL OR h.timestamp >= ?1) \
                    AND l.deactivated_at IS NULL \
-                 GROUP BY h.yield_tier, NULLIF(h.tool_name, ''), l.item_name",
+                 GROUP BY h.yield_tier, l.item_name",
             )?;
             let composition = comp_stmt
                 .query_map([epoch_start], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3).unwrap_or(0),
-                        as_float(row, 4),
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2).unwrap_or(0),
+                        as_float(row, 3),
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1697,27 +1770,20 @@ async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, 
         })
         .await?;
 
-    let mut items_by_tool: std::collections::HashMap<
-        (HarvestYieldTier, Option<String>),
-        Vec<HarvestLootItemRow>,
-    > = std::collections::HashMap::new();
-    let mut tier_item_totals: std::collections::HashMap<(HarvestYieldTier, String), (i64, f64)> =
+    let mut items_by_tier: std::collections::HashMap<HarvestYieldTier, Vec<HarvestLootItemRow>> =
         std::collections::HashMap::new();
-    for (tier, tool, item_name, quantity, value_ped) in composition {
+    for (tier, item_name, quantity, value_ped) in composition {
         let tier = HarvestYieldTier::from_db(&tier);
-        items_by_tool
-            .entry((tier, tool))
+        items_by_tier
+            .entry(tier)
             .or_default()
             .push(HarvestLootItemRow {
-                item_name: item_name.clone(),
+                item_name,
                 quantity,
                 value_ped: eo_wire::normalizer::round_half_even(value_ped, 2),
             });
-        let total = tier_item_totals.entry((tier, item_name)).or_default();
-        total.0 += quantity;
-        total.1 += value_ped;
     }
-    for items in items_by_tool.values_mut() {
+    for items in items_by_tier.values_mut() {
         items.sort_by(|a, b| {
             b.value_ped
                 .partial_cmp(&a.value_ped)
@@ -1726,80 +1792,21 @@ async fn harvest_impl(db: &Db, epoch_start: Option<f64>) -> Result<HarvestData, 
         });
     }
 
-    let mut tiers: std::collections::HashMap<HarvestYieldTier, HarvestTierBuilder> =
-        std::collections::HashMap::new();
-    for (tier, name, swings, cost, loot_tt) in raw {
-        let tier = HarvestYieldTier::from_db(&tier);
-        let row = HarvestToolRow {
-            name: name.clone(),
-            swings,
-            cycled: eo_wire::normalizer::round_half_even(cost, 2),
-            returns: eo_wire::normalizer::round_half_even(loot_tt, 2),
-            loot_rate: if cost > 0.0 {
-                eo_wire::normalizer::round_half_even(loot_tt / cost, 4)
-            } else {
-                0.0
-            },
-            loot_items: items_by_tool
-                .remove(&(tier, name.clone()))
-                .unwrap_or_default(),
-        };
-        let builder = tiers.entry(tier).or_insert_with(|| HarvestTierBuilder {
-            swings: 0,
-            cost: 0.0,
-            loot_tt: 0.0,
-            tools: Vec::new(),
-        });
-        builder.swings += swings;
-        builder.cost += cost;
-        builder.loot_tt += loot_tt;
-        builder
-            .tools
-            .push((swings, cost, name.unwrap_or_default(), row));
-    }
-
-    let mut tier_comparisons: Vec<HarvestTierRow> = tiers
+    let mut tier_comparisons: Vec<HarvestTierRow> = raw
         .into_iter()
-        .map(|(tier, mut builder)| {
-            builder.tools.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(b.0.cmp(&a.0))
-                    .then(a.2.cmp(&b.2))
-            });
-            let mut loot_items: Vec<HarvestLootItemRow> = tier_item_totals
-                .iter()
-                .filter(|((item_tier, _), _)| *item_tier == tier)
-                .map(
-                    |((_, item_name), (quantity, value_ped))| HarvestLootItemRow {
-                        item_name: item_name.clone(),
-                        quantity: *quantity,
-                        value_ped: eo_wire::normalizer::round_half_even(*value_ped, 2),
-                    },
-                )
-                .collect();
-            loot_items.sort_by(|a, b| {
-                b.value_ped
-                    .partial_cmp(&a.value_ped)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(a.item_name.cmp(&b.item_name))
-            });
+        .map(|(tier, swings, cost, loot_tt)| {
+            let tier = HarvestYieldTier::from_db(&tier);
             HarvestTierRow {
                 yield_tier: tier,
-                swings: builder.swings,
-                cycled: eo_wire::normalizer::round_half_even(builder.cost, 2),
-                returns: eo_wire::normalizer::round_half_even(builder.loot_tt, 2),
-                loot_rate: if builder.cost > 0.0 {
-                    eo_wire::normalizer::round_half_even(builder.loot_tt / builder.cost, 4)
+                swings,
+                cycled: eo_wire::normalizer::round_half_even(cost, 2),
+                returns: eo_wire::normalizer::round_half_even(loot_tt, 2),
+                loot_rate: if cost > 0.0 {
+                    eo_wire::normalizer::round_half_even(loot_tt / cost, 4)
                 } else {
                     0.0
                 },
-                loot_items,
-                tool_comparisons: builder
-                    .tools
-                    .into_iter()
-                    .map(|(_, _, _, row)| row)
-                    .collect(),
+                loot_items: items_by_tier.remove(&tier).unwrap_or_default(),
             }
         })
         .collect();
@@ -1829,7 +1836,7 @@ impl AnalyticsService {
 
     /// The Tree Cutting aggregate for a named period (`30d` / `90d` /
     /// `1y`, or all-time for any other value): effective yield tiers,
-    /// each with its tool strategies and matching loot composition.
+    /// each with its loot composition.
     pub async fn harvest(&self, period: &str) -> Result<HarvestData, AnalyticsError> {
         let now = naive_to_epoch(self.clock.now());
         Ok(harvest_impl(&self.db, period_epoch(period, now)).await?)
@@ -1926,6 +1933,391 @@ fn inventory_item(row: &rusqlite::Row) -> InventoryRow {
         notes: row.get_unwrap::<_, Option<String>>(4),
         acquired_at: row.get_unwrap::<_, String>(5),
     }
+}
+
+/// Sub-hundredth tolerance for treating a stock or money residual as
+/// closed. Positions and PED both round to hundredths at the display edge.
+const STOCK_EPSILON: f64 = 1e-9;
+
+/// The auction-listing column list, in the order [`listing_from_row`] reads.
+const LISTING_COLUMNS: &str = "id, item_name, quantity, attributed_qty, unattributed_qty, \
+     tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, status, \
+     final_price, sale_fee, resolved_at";
+
+/// One auction listing from a row over [`LISTING_COLUMNS`], with its
+/// realised figures derived rather than read: a stored copy could drift from
+/// the price and fees it was resolved with.
+fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
+    let tt_value = row.get_unwrap::<_, f64>(5);
+    let attributed_tt = row.get_unwrap::<_, f64>(6);
+    let listing_fee = row.get_unwrap::<_, f64>(9);
+    let status = row.get_unwrap::<_, String>(11);
+    let final_price = row.get_unwrap::<_, Option<f64>>(12);
+    let sale_fee = row.get_unwrap::<_, Option<f64>>(13);
+
+    let outcome = (status == "sold").then(|| {
+        stock_allocation::resolve_sale(
+            tt_value,
+            attributed_tt,
+            final_price.unwrap_or(0.0),
+            listing_fee,
+            sale_fee.unwrap_or(0.0),
+        )
+    });
+
+    AuctionListingRow {
+        id: row.get_unwrap::<_, String>(0),
+        item_name: row.get_unwrap::<_, String>(1),
+        quantity: row.get_unwrap::<_, f64>(2),
+        attributed_qty: row.get_unwrap::<_, f64>(3),
+        unattributed_qty: row.get_unwrap::<_, f64>(4),
+        tt_value,
+        attributed_tt,
+        starting_bid: row.get_unwrap::<_, f64>(7),
+        buyout: row.get_unwrap::<_, Option<f64>>(8),
+        listing_fee,
+        listed_at: row.get_unwrap::<_, String>(10),
+        status,
+        final_price,
+        sale_fee,
+        resolved_at: row.get_unwrap::<_, Option<String>>(14),
+        activity_net_markup: outcome.map(|outcome| outcome.activity_net_markup),
+        gross_markup: outcome.map(|outcome| outcome.gross_markup),
+    }
+}
+
+/// Read one listing by id, or `None` when it does not exist.
+fn read_listing(
+    conn: &rusqlite::Connection,
+    listing_id: &str,
+) -> rusqlite::Result<Option<AuctionListingRow>> {
+    use rusqlite::OptionalExtension as _;
+    conn.query_row(
+        &format!(
+            "SELECT {LISTING_COLUMNS} FROM auction_listings \
+             WHERE id = ? AND undone_at IS NULL"
+        ),
+        rusqlite::params![listing_id],
+        |row| Ok(listing_from_row(row)),
+    )
+    .optional()
+}
+
+/// Append one signed stock movement. Rows are never updated or deleted: a
+/// correction is a new fact, so the original allocation stays auditable.
+#[allow(clippy::too_many_arguments)]
+fn insert_movement(
+    conn: &rusqlite::Connection,
+    item_name: &str,
+    movement_kind: &str,
+    ref_id: Option<&str>,
+    yield_tier: Option<HarvestYieldTier>,
+    tool_name: Option<&str>,
+    quantity: f64,
+    tt_value: f64,
+    occurred_at: &str,
+    created_at: f64,
+) -> rusqlite::Result<()> {
+    // A movement with no tier is stock whose provenance is genuinely
+    // unknown; it is consumed like any other but funds no activity.
+    let source_kind = match (movement_kind, yield_tier) {
+        (_, None) => "unattributed",
+        ("conversion_in", _) => "conversion",
+        _ => "harvest",
+    };
+    conn.execute(
+        "INSERT INTO stock_movements ( \
+             item_name, movement_kind, ref_id, source_kind, source_event_id, \
+             yield_tier, quantity, tt_value, occurred_at, created_at, \
+             tool_name) \
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            item_name,
+            movement_kind,
+            ref_id,
+            source_kind,
+            yield_tier.map(HarvestYieldTier::as_str),
+            quantity,
+            tt_value,
+            occurred_at,
+            created_at,
+            tool_name,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Book the stock an outflow proves was held but the app never recorded.
+///
+/// An outflow may exceed every open position: the player held stock from
+/// before tracking began, or from a source the app never saw. Writing only the
+/// outflow would make the derived position negative, which no inventory can
+/// be. The disposal is itself the evidence the units existed, so the
+/// acquisition it implies is recorded alongside it, with no tier and no tool
+/// because neither is known. It nets the position to zero rather than below,
+/// and being untiered it can never fund an activity.
+///
+/// A no-op when tracked stock covered the whole outflow, which is the ordinary
+/// case.
+///
+/// The row belongs to the outflow that revealed it, so it carries the same
+/// `ref_id`: undoing that listing or conversion has to take this row with it,
+/// or the stock it accounts for outlives the only evidence there ever was of
+/// it.
+fn record_opening_balance(
+    conn: &rusqlite::Connection,
+    item_name: &str,
+    ref_id: &str,
+    plan: &stock_allocation::AllocationPlan<'_>,
+    occurred_at: &str,
+    created_at: f64,
+) -> rusqlite::Result<()> {
+    if plan.excess_qty <= STOCK_EPSILON {
+        return Ok(());
+    }
+    insert_movement(
+        conn,
+        item_name,
+        "opening_balance",
+        Some(ref_id),
+        None,
+        None,
+        plan.excess_qty,
+        plan.excess_tt,
+        occurred_at,
+        created_at,
+    )
+}
+
+/// TT per unit for an item the app can produce but never sees drop, so it has
+/// no recorded loot to derive a unit value from.
+///
+/// Entropia fixes TT per item, so these are constants of the game rather than
+/// estimates. Without one, a conversion has nothing to divide its preserved TT
+/// by and can only count the produced stock in PED, which reads as a quantity
+/// while being a value.
+fn produced_unit_tt(item_name: &str) -> Option<f64> {
+    match item_name {
+        "Nanocube" => Some(0.01),
+        _ => None,
+    }
+}
+
+/// Why a reversal cannot go ahead, in terms of the stock rather than the
+/// tables. The reader owns an inventory, not a movement ledger.
+fn blocked_reason(item_name: &str, short: f64) -> String {
+    format!(
+        "{item_name} this produced has since been sold or converted. \
+         Undoing it would leave you holding {short:.2} less than nothing of it; \
+         undo whatever used it first."
+    )
+}
+
+/// Delete the ledger row a listing owns through `column`, if it is still
+/// there, and report its day so the rollup can reland.
+///
+/// The ledger stays the system of record for money and the player may have
+/// already removed the row by hand, so a missing entry is an ordinary outcome
+/// and not an error.
+fn delete_owned_ledger_entry(
+    conn: &rusqlite::Connection,
+    listing_id: &str,
+    column: &str,
+) -> rusqlite::Result<Option<String>> {
+    use rusqlite::OptionalExtension as _;
+    let entry_id: Option<String> = conn
+        .query_row(
+            &format!("SELECT {column} FROM auction_listings WHERE id = ?"),
+            rusqlite::params![listing_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(entry_id) = entry_id else {
+        return Ok(None);
+    };
+    let day: Option<String> = conn
+        .query_row(
+            "SELECT date FROM ledger_entries WHERE id = ?",
+            rusqlite::params![entry_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if day.is_some() {
+        conn.execute(
+            "DELETE FROM ledger_entries WHERE id = ?",
+            rusqlite::params![entry_id],
+        )?;
+    }
+    Ok(day)
+}
+
+/// An item's whole position as the ledger states it: recorded loot plus every
+/// signed movement, with nothing filtered.
+///
+/// [`item_positions`] drops closed buckets because allocation may only draw on
+/// what is open. A safety check has to see the raw arithmetic instead, or a
+/// reversal that would take a holding below zero looks fine right up until it
+/// is committed.
+fn raw_position(conn: &rusqlite::Connection, item_name: &str) -> rusqlite::Result<f64> {
+    conn.query_row(
+        "SELECT COALESCE(( \
+             SELECT SUM(l.quantity) FROM harvest_loot_items AS l \
+             WHERE l.item_name = ?1 AND l.deactivated_at IS NULL), 0) \
+         + COALESCE(( \
+             SELECT SUM(m.quantity) FROM stock_movements AS m \
+             WHERE m.item_name = ?1), 0)",
+        rusqlite::params![item_name],
+        |row| row.get(0),
+    )
+}
+
+/// Whether dropping every movement belonging to `ref_id` would leave some item
+/// holding less than nothing, and which one.
+///
+/// One check covers every kind of entry, because it asks the only question
+/// that matters: after these rows go, does the arithmetic still describe an
+/// inventory a player could have? An outflow being undone always returns
+/// stock, so it passes; a conversion being undone unmakes what it produced,
+/// and fails if those units have since been sold or converted onward.
+fn reversal_blocker(
+    conn: &rusqlite::Connection,
+    ref_id: &str,
+) -> rusqlite::Result<Option<(String, f64)>> {
+    let deltas: Vec<(String, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT item_name, SUM(quantity) FROM stock_movements \
+             WHERE ref_id = ? GROUP BY item_name",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![ref_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (item_name, delta) in deltas {
+        let remaining = raw_position(conn, &item_name)? - delta;
+        if remaining < -STOCK_EPSILON {
+            return Ok(Some((item_name, -remaining)));
+        }
+    }
+    Ok(None)
+}
+
+/// One item's open positions per (yield tier, tool), plus its TT per unit.
+///
+/// Recorded loot is the acquisition base, so nothing here duplicates it; the
+/// movement ledger only adds what has since left, returned, or been produced
+/// by a conversion. Unit TT comes from recorded loot where there is any, and
+/// otherwise from what a conversion produced, which is the only other place
+/// an item's value is known.
+///
+/// The tool is part of the key so the allocation records which one produced
+/// the stock, even though no surface reports on tools today. Keys come back
+/// owned because the caller borrows them to build the allocation plan.
+type PositionKey = (Option<HarvestYieldTier>, Option<String>);
+
+fn item_positions(
+    conn: &rusqlite::Connection,
+    item_name: &str,
+) -> rusqlite::Result<(Vec<(PositionKey, f64)>, f64)> {
+    // Keyed on the durable database spellings, with the empty string standing
+    // for "not known", so the merge is ordered and total.
+    let mut by_source: std::collections::BTreeMap<(String, String), f64> =
+        std::collections::BTreeMap::new();
+    let mut base_qty = 0.0_f64;
+    let mut base_tt = 0.0_f64;
+
+    {
+        let mut stmt = conn.prepare(
+            "SELECT e.yield_tier, e.tool_name, SUM(l.quantity), SUM(l.value_ped) \
+             FROM harvest_loot_items AS l \
+             JOIN harvest_events AS e ON e.id = l.harvest_id \
+             WHERE l.item_name = ? AND l.deactivated_at IS NULL \
+             GROUP BY e.yield_tier, e.tool_name",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![item_name], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (tier, tool, quantity, tt_value) in rows {
+            base_qty += quantity;
+            base_tt += tt_value;
+            *by_source
+                .entry((tier.unwrap_or_default(), tool.unwrap_or_default()))
+                .or_insert(0.0) += quantity;
+        }
+    }
+
+    let mut produced_qty = 0.0_f64;
+    let mut produced_tt = 0.0_f64;
+    {
+        let mut stmt = conn.prepare(
+            "SELECT yield_tier, tool_name, SUM(quantity), SUM(tt_value) \
+             FROM stock_movements WHERE item_name = ? GROUP BY yield_tier, tool_name",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![item_name], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (tier, tool, quantity, tt_value) in rows {
+            if quantity > 0.0 {
+                produced_qty += quantity;
+                produced_tt += tt_value;
+            }
+            *by_source
+                .entry((tier.unwrap_or_default(), tool.unwrap_or_default()))
+                .or_insert(0.0) += quantity;
+        }
+    }
+
+    let unit_tt = if base_qty > STOCK_EPSILON {
+        base_tt / base_qty
+    } else if produced_qty > STOCK_EPSILON {
+        produced_tt / produced_qty
+    } else {
+        0.0
+    };
+
+    let positions = by_source
+        .into_iter()
+        .filter(|(_, quantity)| *quantity > STOCK_EPSILON)
+        .map(|((tier, tool), quantity)| {
+            (
+                (
+                    (!tier.is_empty()).then(|| HarvestYieldTier::from_db(&tier)),
+                    (!tool.is_empty()).then_some(tool),
+                ),
+                quantity,
+            )
+        })
+        .collect();
+    Ok((positions, unit_tt))
+}
+
+/// Borrow a position list into the allocation module's shape.
+fn as_tier_positions(positions: &[(PositionKey, f64)]) -> Vec<stock_allocation::TierPosition<'_>> {
+    positions
+        .iter()
+        .map(|((tier, tool), quantity)| stock_allocation::TierPosition {
+            yield_tier: *tier,
+            tool_name: tool.as_deref(),
+            quantity: *quantity,
+        })
+        .collect()
 }
 
 impl AnalyticsService {
@@ -2185,61 +2577,808 @@ impl AnalyticsService {
             .await?)
     }
 
-    /// The harvest-stock removed overlay: the per-item quantity already
-    /// removed from holdings. Absent items are simply zero (still fully
-    /// held), so the map carries only the non-default rows.
-    pub async fn harvest_stock_removed(&self) -> Result<Vec<HarvestStockRemoval>, AnalyticsError> {
+    /// Every canonical item the player has held, most valuable first.
+    ///
+    /// Recorded loot is the acquisition base and the movement ledger says what
+    /// has since left or returned. An item whose position has closed stays on
+    /// the list at zero: it is stock the player produces and will hold again,
+    /// and a line that vanishes on the last sale reads as an item that was
+    /// never there rather than one that is currently empty.
+    ///
+    /// TT is the held quantity at the item's unit TT rather than a separate
+    /// sum over loot and movements. Entropia fixes TT per item, so the two
+    /// agree by definition, and deriving both figures from one place is what
+    /// stops the pair drifting apart.
+    pub async fn stock_positions(&self) -> Result<Vec<StockPositionRow>, AnalyticsError> {
         Ok(self
             .db
             .with_reader(|conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT item_name, removed_qty FROM harvest_stock_removed \
-                     ORDER BY item_name",
-                )?;
+                let mut items: Vec<String> = Vec::new();
+                {
+                    let mut stmt = conn.prepare(
+                        "SELECT item_name FROM harvest_loot_items WHERE deactivated_at IS NULL \
+                         UNION SELECT item_name FROM stock_movements",
+                    )?;
+                    let names = stmt
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    items.extend(names);
+                }
+
+                let mut rows = Vec::new();
+                for item_name in items {
+                    let (positions, unit_tt) = item_positions(conn, &item_name)?;
+                    // `item_positions` already drops closed positions, so a
+                    // residual float tail is the only way this goes untidy.
+                    let quantity: f64 = positions
+                        .iter()
+                        .map(|(_, quantity)| quantity)
+                        .sum::<f64>()
+                        .max(0.0);
+                    let tt_value = quantity * unit_tt;
+                    let listed_quantity: f64 = conn.query_row(
+                        "SELECT COALESCE(SUM(quantity), 0) FROM auction_listings \
+                         WHERE item_name = ? AND status = 'pending' AND undone_at IS NULL",
+                        rusqlite::params![item_name],
+                        |row| row.get(0),
+                    )?;
+                    rows.push(StockPositionRow {
+                        item_name,
+                        quantity,
+                        tt_value,
+                        listed_quantity,
+                    });
+                }
+                rows.sort_by(|a, b| {
+                    b.tt_value
+                        .partial_cmp(&a.tt_value)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.item_name.cmp(&b.item_name))
+                });
+                Ok(rows)
+            })
+            .await?)
+    }
+
+    /// Every auction listing, unresolved first and newest within each group.
+    pub async fn auction_listings(&self) -> Result<Vec<AuctionListingRow>, AnalyticsError> {
+        Ok(self
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {LISTING_COLUMNS} FROM auction_listings \
+                     WHERE undone_at IS NULL \
+                     ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, \
+                              listed_at DESC, id DESC"
+                ))?;
                 let rows = stmt
-                    .query_map([], |row| {
-                        Ok(HarvestStockRemoval {
-                            item_name: row.get(0)?,
-                            removed_qty: row.get(1)?,
-                        })
-                    })?
+                    .query_map([], |row| Ok(listing_from_row(row)))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
             .await?)
     }
 
-    /// Set an item's removed quantity. A non-positive quantity clears the
-    /// overlay row (the item is fully held again), keeping the table to
-    /// meaningful rows only. This writes the market-position lever alone;
-    /// it never touches recorded activity or the ledger.
-    pub async fn set_harvest_stock_removed(
+    /// List stock on the auction.
+    ///
+    /// The listed quantity leaves holdings immediately, because in game it
+    /// has left the player's inventory the moment the listing exists. The
+    /// starting-bid fee is spent immediately too, and is written to the
+    /// ledger dated to the listing: it is gone whether or not the item ever
+    /// sells. No markup is realised here. That waits for confirmation.
+    pub async fn create_auction_listing(
         &self,
         item_name: &str,
-        removed_qty: i64,
-    ) -> Result<(), AnalyticsError> {
-        let item_name = item_name.to_string();
+        quantity: f64,
+        starting_bid: f64,
+        buyout: Option<f64>,
+        listing_fee: f64,
+        listed_at: Option<&str>,
+    ) -> Result<AuctionListingRow, AnalyticsError> {
+        if quantity <= 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "a listing needs a positive quantity",
+            ));
+        }
+        if starting_bid < 0.0 || listing_fee < 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "auction prices and fees cannot be negative",
+            ));
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let listed_at = listed_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
         let now = naive_to_epoch(self.clock.now());
+        let (id_c, item_c, listed_c) = (id.clone(), item_name.to_string(), listed_at.clone());
+
         self.db
             .with_writer(move |conn| {
-                if removed_qty > 0 {
-                    conn.execute(
-                        "INSERT INTO harvest_stock_removed (item_name, removed_qty, updated_at) \
-                         VALUES (?, ?, ?) \
-                         ON CONFLICT(item_name) DO UPDATE SET \
-                             removed_qty = excluded.removed_qty, updated_at = excluded.updated_at",
-                        rusqlite::params![item_name, removed_qty, now],
-                    )?;
-                } else {
-                    conn.execute(
-                        "DELETE FROM harvest_stock_removed WHERE item_name = ?",
-                        rusqlite::params![item_name],
+                let tx = conn.transaction()?;
+                let (positions, unit_tt) = item_positions(&tx, &item_c)?;
+                let plan =
+                    stock_allocation::allocate(&as_tier_positions(&positions), quantity, unit_tt);
+
+                tx.execute(
+                    "INSERT INTO auction_listings ( \
+                         id, item_name, profession, quantity, attributed_qty, unattributed_qty, \
+                         tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, \
+                         status, created_at, updated_at) \
+                     VALUES (?, ?, 'harvesting', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                    rusqlite::params![
+                        id_c,
+                        item_c,
+                        quantity,
+                        plan.attributed_qty,
+                        plan.unattributed_qty,
+                        quantity * unit_tt,
+                        plan.attributed_tt,
+                        starting_bid,
+                        buyout,
+                        listing_fee,
+                        listed_c,
+                        now,
+                        now,
+                    ],
+                )?;
+
+                record_opening_balance(&tx, &item_c, &id_c, &plan, &listed_c, now)?;
+
+                for allocation in &plan.allocations {
+                    insert_movement(
+                        &tx,
+                        &item_c,
+                        "listing",
+                        Some(&id_c),
+                        allocation.yield_tier,
+                        allocation.tool_name,
+                        -allocation.quantity,
+                        -allocation.tt_value,
+                        &listed_c,
+                        now,
                     )?;
                 }
+
+                if listing_fee > 0.0 {
+                    let entry_id = Uuid::new_v4().to_string();
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, 'expense', ?, ?, 'market')",
+                        rusqlite::params![
+                            entry_id,
+                            listed_c,
+                            format!("Auction Fee: {item_c}"),
+                            listing_fee,
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE auction_listings SET fee_entry_id = ? WHERE id = ?",
+                        rusqlite::params![entry_id, id_c],
+                    )?;
+                    daily_rollup::refresh_days(&tx, [listed_c.as_str()])?;
+                }
+
+                let row = read_listing(&tx, &id_c)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+                tx.commit()?;
+                Ok(row)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Confirm a listing sold, at the price it actually fetched.
+    ///
+    /// This is the recognition boundary: markup becomes realised here and
+    /// nowhere earlier, because until the auction closes neither the sale
+    /// nor its price is a fact. The ledger gains the money that was not
+    /// already booked as loot TT, plus the point-of-sale fee.
+    pub async fn confirm_auction_listing(
+        &self,
+        listing_id: &str,
+        final_price: f64,
+        sale_fee: f64,
+        resolved_at: Option<&str>,
+    ) -> Result<Option<AuctionListingRow>, AnalyticsError> {
+        if final_price < 0.0 || sale_fee < 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "a sale price and fee cannot be negative",
+            ));
+        }
+        let listing_id = listing_id.to_string();
+        let resolved_at = resolved_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
+
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let Some(listing) = read_listing(&tx, &listing_id)? else {
+                    return Ok(None);
+                };
+                if listing.status != "pending" {
+                    return Ok(None);
+                }
+
+                let outcome = stock_allocation::resolve_sale(
+                    listing.tt_value,
+                    listing.attributed_tt,
+                    final_price,
+                    listing.listing_fee,
+                    sale_fee,
+                );
+
+                tx.execute(
+                    "UPDATE auction_listings SET status = 'sold', final_price = ?, \
+                         sale_fee = ?, resolved_at = ? WHERE id = ?",
+                    rusqlite::params![final_price, sale_fee, resolved_at, listing_id],
+                )?;
+
+                // Markup only. Selling at TT converts a position rather than
+                // creating income, for untracked stock as much as for tracked:
+                // the player held that value either way, and the app simply
+                // has no record of where the untracked part came from.
+                if outcome.gross_markup.abs() > STOCK_EPSILON {
+                    let entry_id = Uuid::new_v4().to_string();
+                    let kind = if outcome.gross_markup > 0.0 {
+                        "markup"
+                    } else {
+                        "expense"
+                    };
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, ?, ?, ?, 'market')",
+                        rusqlite::params![
+                            entry_id,
+                            resolved_at,
+                            kind,
+                            format!("Auction Sale: {}", listing.item_name),
+                            outcome.gross_markup.abs(),
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE auction_listings SET sale_entry_id = ? WHERE id = ?",
+                        rusqlite::params![entry_id, listing_id],
+                    )?;
+                }
+
+                if sale_fee > 0.0 {
+                    let entry_id = Uuid::new_v4().to_string();
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, 'expense', ?, ?, 'market')",
+                        rusqlite::params![
+                            entry_id,
+                            resolved_at,
+                            format!("Auction Fee: {}", listing.item_name),
+                            sale_fee,
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE auction_listings SET sale_fee_entry_id = ? WHERE id = ?",
+                        rusqlite::params![entry_id, listing_id],
+                    )?;
+                }
+
+                daily_rollup::refresh_days(&tx, [resolved_at.as_str()])?;
+                let row = read_listing(&tx, &listing_id)?;
+                tx.commit()?;
+                Ok(row)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Mark a listing expired: the stock comes back, the fee stays spent.
+    ///
+    /// The returning movements are written as new rows rather than by
+    /// deleting the original allocation, so what was attributed at listing
+    /// time stays auditable. Nothing reaches the activity: the loot returned
+    /// intact, and a fee lost to an auction that did not clear describes
+    /// market execution rather than the gameplay.
+    pub async fn expire_auction_listing(
+        &self,
+        listing_id: &str,
+        resolved_at: Option<&str>,
+    ) -> Result<Option<AuctionListingRow>, AnalyticsError> {
+        let listing_id = listing_id.to_string();
+        let resolved_at = resolved_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
+        let now = naive_to_epoch(self.clock.now());
+
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let Some(listing) = read_listing(&tx, &listing_id)? else {
+                    return Ok(None);
+                };
+                if listing.status != "pending" {
+                    return Ok(None);
+                }
+
+                let returning: Vec<(Option<String>, Option<String>, f64, f64)> = {
+                    let mut stmt = tx.prepare(
+                        "SELECT yield_tier, tool_name, quantity, tt_value FROM stock_movements \
+                         WHERE ref_id = ? AND movement_kind = 'listing'",
+                    )?;
+                    let rows = stmt
+                        .query_map(rusqlite::params![listing_id], |row| {
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    rows
+                };
+                for (tier, tool, quantity, tt_value) in returning {
+                    insert_movement(
+                        &tx,
+                        &listing.item_name,
+                        "listing_return",
+                        Some(&listing_id),
+                        tier.as_deref().map(HarvestYieldTier::from_db),
+                        tool.as_deref(),
+                        -quantity,
+                        -tt_value,
+                        &resolved_at,
+                        now,
+                    )?;
+                }
+
+                tx.execute(
+                    "UPDATE auction_listings SET status = 'expired', resolved_at = ? WHERE id = ?",
+                    rusqlite::params![resolved_at, listing_id],
+                )?;
+                let row = read_listing(&tx, &listing_id)?;
+                tx.commit()?;
+                Ok(row)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Recycle stock into another item at 1:1 TT.
+    ///
+    /// A transformation, not a sale: no markup is realised and the ledger is
+    /// untouched. The consumed stock's activity composition rides forward
+    /// into the produced item, so selling the result still attributes back to
+    /// the activities that grew it.
+    pub async fn convert_stock(
+        &self,
+        source_item: &str,
+        target_item: &str,
+        quantity: f64,
+        converted_at: Option<&str>,
+    ) -> Result<(), AnalyticsError> {
+        if quantity <= 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "a conversion needs a positive quantity",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let (source_c, target_c) = (source_item.to_string(), target_item.to_string());
+        let converted_at = converted_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
+        let now = naive_to_epoch(self.clock.now());
+
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let (positions, unit_tt) = item_positions(&tx, &source_c)?;
+                // What the produced item is worth per unit, so the conversion
+                // records a count rather than a value wearing a count's label.
+                // Falling back to the target's own recorded loot covers a
+                // future target this table has not learned yet. No conversion
+                // the app offers reaches the last fallback; if one ever does,
+                // the count carries the source's PED magnitude rather than a
+                // scale nothing supports.
+                let (_, target_loot_unit_tt) = item_positions(&tx, &target_c)?;
+                let target_unit_tt = produced_unit_tt(&target_c)
+                    .or_else(|| (target_loot_unit_tt > STOCK_EPSILON).then_some(target_loot_unit_tt))
+                    .unwrap_or(1.0);
+                // The service tolerates converting past tracked stock for the
+                // same reason it tolerates selling past it: the player may
+                // hold stock from before tracking began, and the excess rides
+                // forward explicitly unattributed rather than being invented.
+                // The product rule is narrower and is enforced at the modal,
+                // because what a conversion produces carries the source's
+                // activity composition forward and crediting activities with
+                // output they did not grow is the thing to avoid.
+                let plan =
+                    stock_allocation::allocate(&as_tier_positions(&positions), quantity, unit_tt);
+                let converted_tt = quantity * unit_tt;
+
+                tx.execute(
+                    "INSERT INTO stock_conversions \
+                         (id, source_item, target_item, quantity, tt_value, converted_at, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![id, source_c, target_c, quantity, converted_tt, converted_at, now],
+                )?;
+
+                record_opening_balance(&tx, &source_c, &id, &plan, &converted_at, now)?;
+
+                for allocation in &plan.allocations {
+                    insert_movement(
+                        &tx,
+                        &source_c,
+                        "conversion_out",
+                        Some(&id),
+                        allocation.yield_tier,
+                        allocation.tool_name,
+                        -allocation.quantity,
+                        -allocation.tt_value,
+                        &converted_at,
+                        now,
+                    )?;
+                    // TT is preserved exactly (the game's recycling ratio is
+                    // 1:1 in value), so the produced count is that value over
+                    // the produced item's own unit TT.
+                    insert_movement(
+                        &tx,
+                        &target_c,
+                        "conversion_in",
+                        Some(&id),
+                        allocation.yield_tier,
+                        allocation.tool_name,
+                        allocation.tt_value / target_unit_tt,
+                        allocation.tt_value,
+                        &converted_at,
+                        now,
+                    )?;
+                }
+
+                tx.commit()?;
                 Ok(())
             })
             .await?;
         Ok(())
+    }
+
+    /// Everything this activity has done to its stock, newest first.
+    ///
+    /// Listings and conversions in one list, each carrying whether it can be
+    /// taken back. The verdict is computed here because it depends on what the
+    /// rest of the ledger has since done with the stock, which the caller
+    /// cannot see.
+    pub async fn activity_history(&self) -> Result<Vec<ActivityHistoryRow>, AnalyticsError> {
+        Ok(self
+            .db
+            .with_reader(|conn| {
+                let mut rows: Vec<ActivityHistoryRow> = Vec::new();
+
+                {
+                    // History is the one read that sees undone entries: they
+                    // are the record of a correction, kept read-only.
+                    let mut stmt = conn.prepare(&format!(
+                        "SELECT {LISTING_COLUMNS}, undone_at FROM auction_listings"
+                    ))?;
+                    let listings = stmt
+                        .query_map([], |row| {
+                            Ok((listing_from_row(row), row.get::<_, Option<String>>(15)?))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    for (listing, undone_at) in listings {
+                        let net_markup = listing.gross_markup.map(|gross| {
+                            gross - listing.listing_fee - listing.sale_fee.unwrap_or(0.0)
+                        });
+                        let undone = undone_at.is_some();
+                        let blocker = if undone {
+                            None
+                        } else {
+                            reversal_blocker(conn, &listing.id)?
+                        };
+                        rows.push(ActivityHistoryRow {
+                            occurred_at: listing
+                                .resolved_at
+                                .clone()
+                                .unwrap_or_else(|| listing.listed_at.clone()),
+                            kind: "listing".to_string(),
+                            status: listing.status.clone(),
+                            item_name: listing.item_name.clone(),
+                            target_item: None,
+                            quantity: listing.quantity,
+                            tt_value: listing.tt_value,
+                            net_markup,
+                            activity_net_markup: listing.activity_net_markup,
+                            can_revert_sale: !undone && listing.status == "sold",
+                            can_delete: !undone && blocker.is_none(),
+                            undo_blocked_reason: blocker
+                                .map(|(item, short)| blocked_reason(&item, short)),
+                            undone,
+                            id: listing.id,
+                        });
+                    }
+                }
+
+                {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, source_item, target_item, quantity, tt_value, converted_at, \
+                                undone_at \
+                         FROM stock_conversions",
+                    )?;
+                    let conversions = stmt
+                        .query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, f64>(4)?,
+                                row.get::<_, String>(5)?,
+                                row.get::<_, Option<String>>(6)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    for (id, source, target, quantity, tt_value, converted_at, undone_at) in
+                        conversions
+                    {
+                        let undone = undone_at.is_some();
+                        let blocker = if undone {
+                            None
+                        } else {
+                            reversal_blocker(conn, &id)?
+                        };
+                        rows.push(ActivityHistoryRow {
+                            id,
+                            kind: "conversion".to_string(),
+                            status: "converted".to_string(),
+                            item_name: source,
+                            target_item: Some(target),
+                            occurred_at: converted_at,
+                            quantity,
+                            tt_value,
+                            net_markup: None,
+                            activity_net_markup: None,
+                            can_revert_sale: false,
+                            can_delete: !undone && blocker.is_none(),
+                            undo_blocked_reason: blocker
+                                .map(|(item, short)| blocked_reason(&item, short)),
+                            undone,
+                        });
+                    }
+                }
+
+                // Newest first, and stable on the id so a day with several
+                // entries does not reshuffle between reads.
+                rows.sort_by(|a, b| {
+                    b.occurred_at
+                        .cmp(&a.occurred_at)
+                        .then_with(|| a.id.cmp(&b.id))
+                });
+                Ok(rows)
+            })
+            .await?)
+    }
+
+    /// Take back a confirmed sale, leaving the listing open again.
+    ///
+    /// The stock does not move: it left at listing time and, with the listing
+    /// open once more, it is still out. Only the recognition is undone, so the
+    /// money the sale wrote goes with it and the markup stops being realised.
+    pub async fn revert_auction_sale(
+        &self,
+        listing_id: &str,
+    ) -> Result<Option<AuctionListingRow>, AnalyticsError> {
+        let listing_id = listing_id.to_string();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let Some(listing) = read_listing(&tx, &listing_id)? else {
+                    return Ok(None);
+                };
+                if listing.status != "sold" {
+                    return Ok(None);
+                }
+
+                let mut days: Vec<String> = Vec::new();
+                for column in ["sale_entry_id", "sale_fee_entry_id"] {
+                    if let Some(day) = delete_owned_ledger_entry(&tx, &listing_id, column)? {
+                        days.push(day);
+                    }
+                }
+
+                tx.execute(
+                    "UPDATE auction_listings \
+                     SET status = 'pending', final_price = NULL, sale_fee = NULL, \
+                         resolved_at = NULL, sale_entry_id = NULL, sale_fee_entry_id = NULL \
+                     WHERE id = ?",
+                    rusqlite::params![listing_id],
+                )?;
+                daily_rollup::refresh_days(&tx, days)?;
+                let row = read_listing(&tx, &listing_id)?;
+                tx.commit()?;
+                Ok(row)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Undo a listing: the stock it took comes back, and every ledger row it
+    /// wrote goes with it.
+    ///
+    /// The listing itself stays, marked. Its effects are what was wrong, not
+    /// the fact that it was recorded, and a correction that erases its own
+    /// evidence leaves the player unable to see what they changed.
+    ///
+    /// The movements and money go rather than being compensated: this is a
+    /// mis-entry, not a market event. An expiry is the other case and keeps
+    /// its returning rows, because the stock genuinely came back.
+    pub async fn undo_auction_listing(&self, listing_id: &str) -> Result<bool, AnalyticsError> {
+        let listing_id = listing_id.to_string();
+        let undone_at = self.default_date();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                // `read_listing` sees only live listings, so undoing one twice
+                // reports not-found rather than reversing it again.
+                let Some(listing) = read_listing(&tx, &listing_id)? else {
+                    return Ok(Ok(false));
+                };
+                if let Some((item, short)) = reversal_blocker(&tx, &listing_id)? {
+                    return Ok(Err(blocked_reason(&item, short)));
+                }
+
+                let mut days = vec![listing.listed_at.clone()];
+                if let Some(resolved) = listing.resolved_at.clone() {
+                    days.push(resolved);
+                }
+                for column in ["fee_entry_id", "sale_entry_id", "sale_fee_entry_id"] {
+                    if let Some(day) = delete_owned_ledger_entry(&tx, &listing_id, column)? {
+                        days.push(day);
+                    }
+                }
+
+                tx.execute(
+                    "DELETE FROM stock_movements WHERE ref_id = ?",
+                    rusqlite::params![listing_id],
+                )?;
+                // The entry stands as a record; its pointers do not, so a
+                // later read cannot follow them to a row somebody else owns.
+                tx.execute(
+                    "UPDATE auction_listings \
+                     SET undone_at = ?, fee_entry_id = NULL, sale_entry_id = NULL, \
+                         sale_fee_entry_id = NULL \
+                     WHERE id = ?",
+                    rusqlite::params![undone_at, listing_id],
+                )?;
+                daily_rollup::refresh_days(&tx, days)?;
+                tx.commit()?;
+                Ok(Ok(true))
+            })
+            .await?
+            .map_err(AnalyticsError::Rejected)
+    }
+
+    /// Undo a conversion: what it consumed comes back and what it produced is
+    /// unmade. Refused when those produced units have since left.
+    ///
+    /// Like a listing, the entry stays on file marked rather than removed.
+    pub async fn undo_stock_conversion(&self, conversion_id: &str) -> Result<bool, AnalyticsError> {
+        let conversion_id = conversion_id.to_string();
+        let undone_at = self.default_date();
+        self.db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let converted_at: Option<String> = tx
+                    .query_row(
+                        "SELECT converted_at FROM stock_conversions \
+                         WHERE id = ? AND undone_at IS NULL",
+                        rusqlite::params![conversion_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let Some(converted_at) = converted_at else {
+                    return Ok(Ok(false));
+                };
+                if let Some((item, short)) = reversal_blocker(&tx, &conversion_id)? {
+                    return Ok(Err(blocked_reason(&item, short)));
+                }
+
+                tx.execute(
+                    "DELETE FROM stock_movements WHERE ref_id = ?",
+                    rusqlite::params![conversion_id],
+                )?;
+                tx.execute(
+                    "UPDATE stock_conversions SET undone_at = ? WHERE id = ?",
+                    rusqlite::params![undone_at, conversion_id],
+                )?;
+                // A conversion writes no money, but its day is refreshed all
+                // the same: cheap, and it keeps every undo path the same shape.
+                daily_rollup::refresh_days(&tx, [converted_at])?;
+                tx.commit()?;
+                Ok(Ok(true))
+            })
+            .await?
+            .map_err(AnalyticsError::Rejected)
+    }
+
+    /// Net realised markup per yield tier, from confirmed sales only.
+    ///
+    /// Each sold listing's activity-claimable markup is divided across the
+    /// sources that supplied it, in proportion to the TT each contributed.
+    /// Pending listings realise nothing, and expired ones never realise.
+    ///
+    /// The tool that produced the stock is recorded on the movement rows but
+    /// is deliberately not reported: it is an input to the activity, not an
+    /// outcome, so it is compared on cost with equipment rather than on
+    /// returns it does not cause.
+    pub async fn realised_markup_by_tier(&self) -> Result<Vec<RealisedTierMarkup>, AnalyticsError> {
+        Ok(self
+            .db
+            .with_reader(|conn| {
+                let sold: Vec<(String, f64, f64, f64, f64, f64)> = {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, tt_value, attributed_tt, COALESCE(final_price, 0), \
+                                listing_fee, COALESCE(sale_fee, 0) \
+                         FROM auction_listings \
+                         WHERE status = 'sold' AND undone_at IS NULL",
+                    )?;
+                    let rows = stmt
+                        .query_map([], |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    rows
+                };
+
+                let mut totals: std::collections::BTreeMap<String, f64> =
+                    std::collections::BTreeMap::new();
+                for (id, tt_value, attributed_tt, final_price, listing_fee, sale_fee) in sold {
+                    let outcome = stock_allocation::resolve_sale(
+                        tt_value,
+                        attributed_tt,
+                        final_price,
+                        listing_fee,
+                        sale_fee,
+                    );
+                    if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
+                        continue;
+                    }
+                    let contributions: Vec<(String, f64)> = {
+                        let mut stmt = conn.prepare(
+                            "SELECT yield_tier, SUM(-tt_value) FROM stock_movements \
+                             WHERE ref_id = ? AND movement_kind = 'listing' \
+                               AND yield_tier IS NOT NULL \
+                             GROUP BY yield_tier",
+                        )?;
+                        let rows = stmt
+                            .query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        rows
+                    };
+                    let contributed_tt: f64 = contributions.iter().map(|(_, tt)| tt).sum();
+                    if contributed_tt <= STOCK_EPSILON {
+                        continue;
+                    }
+                    for (tier, tt) in contributions {
+                        let share = tt / contributed_tt;
+                        *totals.entry(tier).or_insert(0.0) += outcome.activity_net_markup * share;
+                    }
+                }
+
+                let mut rows: Vec<RealisedTierMarkup> = totals
+                    .into_iter()
+                    .map(|(tier, net_markup)| RealisedTierMarkup {
+                        yield_tier: HarvestYieldTier::from_db(&tier),
+                        net_markup,
+                    })
+                    .collect();
+                rows.sort_by_key(|row| row.yield_tier.sort_rank());
+                Ok(rows)
+            })
+            .await?)
     }
 
     /// The stored inventory row re-read and shaped (the create / patch
@@ -2670,7 +3809,7 @@ mod tests {
     /// span tiers, several tools may share a tier, and tool gaps remain in
     /// the conserved totals.
     #[tokio::test]
-    async fn harvest_groups_by_tier_then_tool_without_dropping_toolless_swings() {
+    async fn harvest_groups_by_tier_without_dropping_toolless_swings() {
         let (_dir, db) = open_env().await;
         db.with_writer(|conn| {
             conn.execute(
@@ -2727,57 +3866,21 @@ mod tests {
                 .abs()
                 < 1e-9
         );
-        for tier in &result.tier_comparisons {
-            assert_eq!(
-                tier.tool_comparisons
-                    .iter()
-                    .map(|tool| tool.swings)
-                    .sum::<i64>(),
-                tier.swings
-            );
-            assert!(
-                (tier
-                    .tool_comparisons
-                    .iter()
-                    .map(|tool| tool.cycled)
-                    .sum::<f64>()
-                    - tier.cycled)
-                    .abs()
-                    < 1e-9
-            );
-            assert!(
-                (tier
-                    .tool_comparisons
-                    .iter()
-                    .map(|tool| tool.returns)
-                    .sum::<f64>()
-                    - tier.returns)
-                    .abs()
-                    < 1e-9
-            );
-        }
         let v = to_json(&result);
         let tiers = v["tierComparisons"].as_array().unwrap();
         assert_eq!(tiers.len(), 3);
         assert_eq!(tiers[0]["yieldTier"], json!("short"));
-        assert_eq!(
-            tiers[0]["toolComparisons"][0]["name"],
-            serde_json::Value::Null
-        );
         assert_eq!(tiers[1]["yieldTier"], json!("long"));
         assert_eq!(tiers[1]["swings"], json!(2));
         assert_eq!(tiers[1]["cycled"], json!(0.2));
         assert_eq!(tiers[1]["returns"], json!(0.3));
-        assert_eq!(tiers[1]["toolComparisons"][0]["name"], json!("PH-3"));
         assert_eq!(tiers[2]["yieldTier"], json!("huge"));
         assert_eq!(tiers[2]["swings"], json!(3));
         assert_eq!(tiers[2]["cycled"], json!(0.35));
         assert_eq!(tiers[2]["returns"], json!(0.2));
-        let huge_tools = tiers[2]["toolComparisons"].as_array().unwrap();
-        assert_eq!(huge_tools.len(), 3);
-        assert_eq!(huge_tools[0]["name"], json!("PH-4"));
-        assert_eq!(huge_tools[1]["name"], json!("PH-3"));
-        assert_eq!(huge_tools[2]["name"], serde_json::Value::Null);
+        // The tool is not a reported dimension: several tools feed the huge
+        // tier here, and the tier reports one set of figures for all of them.
+        assert!(tiers[2].get("toolComparisons").is_none());
     }
 
     #[tokio::test]
@@ -2818,15 +3921,12 @@ mod tests {
         assert_eq!(row.loot_items.len(), 1);
         assert_eq!(row.loot_items[0].item_name, "Recent Tool Loot");
         assert_eq!(row.loot_items[0].value_ped, 6.0);
-        assert_eq!(row.tool_comparisons.len(), 1);
-        assert_eq!(row.tool_comparisons[0].name.as_deref(), Some("Recent Tool"));
     }
 
-    /// Per-tool loot composition: active items only, grouped by the
-    /// recording tool and ordered TT-descending, with deactivated loot
-    /// excluded.
+    /// Tier loot composition: active items only, grouped by yield tier and
+    /// ordered TT-descending, with deactivated loot excluded.
     #[tokio::test]
-    async fn harvest_composition_groups_active_loot_by_tool() {
+    async fn harvest_composition_groups_active_loot_by_tier() {
         let (_dir, db) = open_env().await;
         db.with_writer(|conn| {
             conn.execute(
@@ -2867,46 +3967,26 @@ mod tests {
         .await
         .unwrap();
         let result = harvest_impl(&db, None).await.unwrap();
-        for tier in &result.tier_comparisons {
-            let mut tool_items = std::collections::BTreeMap::<String, (i64, f64)>::new();
-            for tool in &tier.tool_comparisons {
-                for item in &tool.loot_items {
-                    let total = tool_items.entry(item.item_name.clone()).or_default();
-                    total.0 += item.quantity;
-                    total.1 += item.value_ped;
-                }
-            }
-            let tier_items: std::collections::BTreeMap<_, _> = tier
-                .loot_items
-                .iter()
-                .map(|item| (item.item_name.clone(), (item.quantity, item.value_ped)))
-                .collect();
-            assert_eq!(tool_items, tier_items);
-        }
         let v = to_json(&result);
         let tiers = v["tierComparisons"].as_array().unwrap();
-        // Axe A: two active items, TT-desc (Long Moonleaf Board first);
-        // the deactivated Wood Shavings row is excluded from its total.
+        // The huge tier: two active items, TT-desc (Long Moonleaf Board
+        // first); the deactivated Wood Shavings row is excluded from its total.
         let short = &tiers[0];
         assert_eq!(short["yieldTier"], json!("short"));
         let huge = &tiers[1];
         assert_eq!(huge["yieldTier"], json!("huge"));
-        let a = &huge["toolComparisons"][0];
-        assert_eq!(a["name"], json!("Axe A"));
-        let a_items = a["lootItems"].as_array().unwrap();
-        assert_eq!(a_items.len(), 2);
-        assert_eq!(a_items[0]["itemName"], json!("Long Moonleaf Board"));
-        assert_eq!(a_items[0]["quantity"], json!(2));
-        assert_eq!(a_items[0]["valuePed"], json!(0.8));
-        assert_eq!(a_items[1]["itemName"], json!("Wood Shavings"));
-        assert_eq!(a_items[1]["quantity"], json!(5));
-        assert_eq!(a_items[1]["valuePed"], json!(0.2));
-        // Axe B: one item.
-        let b = &short["toolComparisons"][0];
-        assert_eq!(b["name"], json!("Axe B"));
-        let b_items = b["lootItems"].as_array().unwrap();
-        assert_eq!(b_items.len(), 1);
-        assert_eq!(b_items[0]["itemName"], json!("Short Moonleaf Board"));
+        let huge_items = huge["lootItems"].as_array().unwrap();
+        assert_eq!(huge_items.len(), 2);
+        assert_eq!(huge_items[0]["itemName"], json!("Long Moonleaf Board"));
+        assert_eq!(huge_items[0]["quantity"], json!(2));
+        assert_eq!(huge_items[0]["valuePed"], json!(0.8));
+        assert_eq!(huge_items[1]["itemName"], json!("Wood Shavings"));
+        assert_eq!(huge_items[1]["quantity"], json!(5));
+        assert_eq!(huge_items[1]["valuePed"], json!(0.2));
+        // The short tier, fed by the other tool, is its own row.
+        let short_items = short["lootItems"].as_array().unwrap();
+        assert_eq!(short_items.len(), 1);
+        assert_eq!(short_items[0]["itemName"], json!("Short Moonleaf Board"));
     }
 
     /// Seed the representative scenario the live probe grounded, with the
@@ -3413,55 +4493,915 @@ mod tests {
         assert_eq!(service.list_ledger_presets().await.unwrap().len(), 2);
     }
 
-    /// The harvest-stock removed overlay round-trips, upserts on repeat,
-    /// and clears its row when set back to zero.
+    /// Seed one harvest session whose swings yield boards across two tiers,
+    /// giving `Moonleaf Board` a 60/40 open position to allocate against.
+    async fn seed_board_stock(service: &AnalyticsService) {
+        service
+            .db
+            .with_writer(|conn| {
+                for (id, tier, tool, quantity, tt) in [
+                    ("hs1", "long", "PH-3", 60, 1.80),
+                    ("hs2", "huge", "PH-3", 40, 1.20),
+                ] {
+                    conn.execute(
+                        "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,\
+                         yield_tier,cost_ped,loot_total_ped) \
+                         VALUES(?1,'sale-s',1000.0,1,?2,?3,0.1,?4)",
+                        rusqlite::params![id, tool, tier, tt],
+                    )?;
+                    conn.execute(
+                        "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped) \
+                         VALUES(?1,'Moonleaf Board',?2,?3)",
+                        rusqlite::params![id, quantity, tt],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Every ledger description currently on file, for asserting that an undo
+    /// took the money with it.
+    async fn ledger_descriptions(service: &AnalyticsService) -> Vec<String> {
+        service
+            .list_ledger(None, Some(100))
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.description)
+            .collect()
+    }
+
+    fn position(rows: &[StockPositionRow], item: &str) -> Option<StockPositionRow> {
+        rows.iter().find(|row| row.item_name == item).cloned()
+    }
+
+    /// Listing removes the stock immediately, because in game it has left the
+    /// player's inventory, and spends the starting-bid fee immediately too.
+    /// Nothing is realised: the auction has not closed.
     #[tokio::test]
-    async fn harvest_stock_removed_upserts_and_clears() {
+    async fn listing_removes_stock_and_spends_the_fee_without_realising_markup() {
         let (_dir, service) = write_service().await;
-        assert!(service.harvest_stock_removed().await.unwrap().is_empty());
+        seed_board_stock(&service).await;
 
-        service
-            .set_harvest_stock_removed("Long Moonleaf Board", 12)
+        let before = service.stock_positions().await.unwrap();
+        assert_eq!(position(&before, "Moonleaf Board").unwrap().quantity, 100.0);
+
+        let listing = service
+            .create_auction_listing(
+                "Moonleaf Board",
+                50.0,
+                2.0,
+                Some(4.0),
+                0.5,
+                Some("2026-07-20"),
+            )
             .await
             .unwrap();
-        service
-            .set_harvest_stock_removed("Wood Shavings", 5)
-            .await
-            .unwrap();
-        let rows = service.harvest_stock_removed().await.unwrap();
-        // Name-ordered.
+        assert_eq!(listing.status, "pending");
+        assert!((listing.attributed_qty - 50.0).abs() < 1e-9);
+        assert!(listing.unattributed_qty.abs() < 1e-9);
         assert_eq!(
-            rows,
-            vec![
-                HarvestStockRemoval {
-                    item_name: "Long Moonleaf Board".into(),
-                    removed_qty: 12,
-                },
-                HarvestStockRemoval {
-                    item_name: "Wood Shavings".into(),
-                    removed_qty: 5,
-                },
-            ],
+            listing.activity_net_markup, None,
+            "an open auction has no realised figure"
         );
 
-        // Upsert replaces the quantity for the same item.
+        let after = position(&service.stock_positions().await.unwrap(), "Moonleaf Board").unwrap();
+        assert!((after.quantity - 50.0).abs() < 1e-9);
+        assert!(
+            (after.listed_quantity - 50.0).abs() < 1e-9,
+            "listed stock is reported, not just absent"
+        );
+
+        // The fee is a real, dated ledger expense the moment it is charged.
+        let ledger = service.list_ledger(None, None).await.unwrap();
+        let fee = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.description == "Auction Fee: Moonleaf Board")
+            .expect("the listing fee reached the ledger");
+        assert_eq!(fee.kind, "expense");
+        assert!((fee.amount - 0.5).abs() < 1e-9);
+        assert_eq!(fee.date, "2026-07-20");
+
+        // Nothing is attributed to any activity yet.
+        assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
+    }
+
+    /// A listed quantity is drawn from every tier in proportion to what that
+    /// tier still holds, never by picking source units or by FIFO.
+    #[tokio::test]
+    async fn listing_allocates_across_tiers_by_open_composition() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 50.0, 2.0, None, 0.5, None)
+            .await
+            .unwrap();
+
+        let split: Vec<(String, f64)> = service
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT yield_tier, -quantity FROM stock_movements \
+                     WHERE ref_id = ? AND movement_kind = 'listing' ORDER BY yield_tier",
+                )?;
+                let rows = stmt
+                    .query_map(rusqlite::params![listing.id], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
+
+        // 60/40 open, so 50 listed splits 30/20.
+        assert_eq!(split.len(), 2);
+        let huge = split.iter().find(|(tier, _)| tier == "huge").unwrap().1;
+        let long = split.iter().find(|(tier, _)| tier == "long").unwrap().1;
+        assert!((long - 30.0).abs() < 1e-9, "long tier got {long}");
+        assert!((huge - 20.0).abs() < 1e-9, "huge tier got {huge}");
+    }
+
+    /// Confirming a sale realises markup, writes only the money that was not
+    /// already booked as loot TT, and divides the activity's share across the
+    /// tiers that supplied the listing.
+    #[tokio::test]
+    async fn confirming_a_sale_realises_markup_and_attributes_it_by_tier() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 50.0, 2.0, None, 0.5, Some("2026-07-20"))
+            .await
+            .unwrap();
+        // 50 boards at 0.03 TT each.
+        assert!((listing.tt_value - 1.5).abs() < 1e-9);
+
+        let sold = service
+            .confirm_auction_listing(&listing.id, 5.0, 0.2, Some("2026-07-22"))
+            .await
+            .unwrap()
+            .expect("the pending listing resolved");
+        assert_eq!(sold.status, "sold");
+        // Gross 5.00 less 1.50 TT is 3.50, then less 0.70 of fees.
+        assert!((sold.gross_markup.unwrap() - 3.5).abs() < 1e-9);
+        assert!((sold.activity_net_markup.unwrap() - 2.8).abs() < 1e-9);
+
+        // The ledger gains the uplift only: the TT counted as loot already.
+        let ledger = service.list_ledger(None, None).await.unwrap();
+        let sale = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.description == "Auction Sale: Moonleaf Board")
+            .expect("the sale reached the ledger");
+        assert_eq!(sale.kind, "markup");
+        assert!((sale.amount - 3.5).abs() < 1e-9);
+        assert_eq!(sale.date, "2026-07-22");
+
+        // Both fees are ledger expenses, dated when each was charged.
+        let fees = ledger
+            .entries
+            .iter()
+            .filter(|entry| entry.description == "Auction Fee: Moonleaf Board")
+            .count();
+        assert_eq!(fees, 2, "listing fee and point-of-sale fee");
+
+        // The activity's share divides 30/20 across the contributing tiers.
+        let realised = service.realised_markup_by_tier().await.unwrap();
+        let mut by_tier: std::collections::BTreeMap<&str, f64> = std::collections::BTreeMap::new();
+        for row in &realised {
+            *by_tier.entry(row.yield_tier.as_str()).or_insert(0.0) += row.net_markup;
+        }
+        assert!((by_tier["long"] - 2.8 * 0.6).abs() < 1e-9);
+        assert!((by_tier["huge"] - 2.8 * 0.4).abs() < 1e-9);
+        let total: f64 = realised.iter().map(|row| row.net_markup).sum();
+        assert!(
+            (total - 2.8).abs() < 1e-9,
+            "the tier split sums to the whole"
+        );
+    }
+
+    /// Stock produced by several tools inside one tier credits that tier
+    /// once, in full. The tool is recorded on the movement rows but is not an
+    /// axis anything reports on, so it must not split or duplicate the figure.
+    #[tokio::test]
+    async fn a_sale_credits_its_tier_once_across_every_tool_that_fed_it() {
+        let (_dir, service) = write_service().await;
         service
-            .set_harvest_stock_removed("Long Moonleaf Board", 20)
+            .db
+            .with_writer(|conn| {
+                // One tier, two tools: 75 units from PH-3 and 25 from PH-4.
+                for (id, tool, quantity, tt) in [("t1", "PH-3", 75, 2.25), ("t2", "PH-4", 25, 0.75)]
+                {
+                    conn.execute(
+                        "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,\
+                         yield_tier,cost_ped,loot_total_ped) \
+                         VALUES(?1,'tool-s',1000.0,1,?2,'long',0.1,?3)",
+                        rusqlite::params![id, tool, tt],
+                    )?;
+                    conn.execute(
+                        "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped) \
+                         VALUES(?1,'Moonleaf Board',?2,?3)",
+                        rusqlite::params![id, quantity, tt],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 3.0, None, 0.0, None)
+            .await
+            .unwrap();
+        let sold = service
+            .confirm_auction_listing(&listing.id, 5.0, 0.0, None)
+            .await
+            .unwrap()
+            .unwrap();
+        // 5.00 on 3.00 of TT with no fees.
+        assert!((sold.activity_net_markup.unwrap() - 2.0).abs() < 1e-9);
+
+        let realised = service.realised_markup_by_tier().await.unwrap();
+        // One row for the one tier, carrying the whole 2.00.
+        assert_eq!(realised.len(), 1);
+        assert_eq!(realised[0].yield_tier, HarvestYieldTier::Long);
+        assert!((realised[0].net_markup - 2.0).abs() < 1e-9);
+    }
+
+    /// An expired listing returns the stock intact, keeps the fee spent, and
+    /// attributes nothing: failing to sell describes market execution, not
+    /// the gameplay that produced the loot.
+    #[tokio::test]
+    async fn expiring_a_listing_returns_stock_and_attributes_nothing() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 50.0, 2.0, None, 0.5, Some("2026-07-20"))
+            .await
+            .unwrap();
+        let expired = service
+            .expire_auction_listing(&listing.id, Some("2026-07-25"))
+            .await
+            .unwrap()
+            .expect("the pending listing resolved");
+        assert_eq!(expired.status, "expired");
+        assert_eq!(expired.activity_net_markup, None);
+
+        let after = position(&service.stock_positions().await.unwrap(), "Moonleaf Board").unwrap();
+        assert!(
+            (after.quantity - 100.0).abs() < 1e-9,
+            "the stock came back whole"
+        );
+        assert!(after.listed_quantity.abs() < 1e-9);
+
+        // The fee stays spent, and no activity may claim the loss.
+        let ledger = service.list_ledger(None, None).await.unwrap();
+        assert!(ledger
+            .entries
+            .iter()
+            .any(|entry| entry.description == "Auction Fee: Moonleaf Board"));
+        assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
+
+        // The original allocation survives for audit rather than being erased.
+        let listing_rows: i64 = service
+            .db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM stock_movements WHERE movement_kind = 'listing'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
             .await
             .unwrap();
         assert_eq!(
-            service.harvest_stock_removed().await.unwrap()[0].removed_qty,
-            20,
+            listing_rows, 2,
+            "the listing's rows stay; the return is new rows"
         );
+    }
 
-        // Zero clears the row entirely (fully held again).
-        service
-            .set_harvest_stock_removed("Long Moonleaf Board", 0)
+    /// A resolved listing cannot resolve again, in either direction.
+    #[tokio::test]
+    async fn a_resolved_listing_cannot_be_resolved_twice() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 10.0, 1.0, None, 0.5, None)
             .await
             .unwrap();
-        let rows = service.harvest_stock_removed().await.unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].item_name, "Wood Shavings");
+        service
+            .confirm_auction_listing(&listing.id, 2.0, 0.0, None)
+            .await
+            .unwrap()
+            .expect("first confirmation lands");
+
+        assert!(service
+            .confirm_auction_listing(&listing.id, 9.0, 0.0, None)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(service
+            .expire_auction_listing(&listing.id, None)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    /// Selling more than is tracked keeps the tracked part attributed and
+    /// leaves the rest explicitly unattributed, so the activity is never
+    /// credited with output it did not produce.
+    #[tokio::test]
+    async fn selling_beyond_tracked_stock_attributes_only_the_tracked_part() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 150.0, 3.0, None, 0.5, None)
+            .await
+            .unwrap();
+        assert!((listing.attributed_qty - 100.0).abs() < 1e-9);
+        assert!((listing.unattributed_qty - 50.0).abs() < 1e-9);
+
+        let sold = service
+            .confirm_auction_listing(&listing.id, 9.0, 0.0, None)
+            .await
+            .unwrap()
+            .unwrap();
+        // Two thirds of the listing was tracked, so two thirds of the net
+        // markup may be claimed.
+        let expected = (9.0 - 4.5 - 0.5) * (3.0 / 4.5);
+        assert!((sold.activity_net_markup.unwrap() - expected).abs() < 1e-9);
+
+        // The ledger records markup over the WHOLE listing's TT. The untracked
+        // units' TT was value the player already held, so booking it as a gain
+        // would invent profit out of a position conversion.
+        let ledger = service.list_ledger(None, None).await.unwrap();
+        let sale = ledger
+            .entries
+            .iter()
+            .find(|entry| entry.description == "Auction Sale: Moonleaf Board")
+            .unwrap();
+        assert!((sale.amount - (9.0 - 4.5)).abs() < 1e-9);
+    }
+
+    /// Recycling preserves TT exactly and carries the source's activity
+    /// composition into the produced item, so selling the result still
+    /// attributes back to the tiers that grew it.
+    #[tokio::test]
+    async fn conversion_preserves_tt_and_carries_provenance_forward() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .convert_stock("Moonleaf Board", "Nanocube", 50.0, Some("2026-07-21"))
+            .await
+            .unwrap();
+
+        let rows = service.stock_positions().await.unwrap();
+        let source = position(&rows, "Moonleaf Board").unwrap();
+        let produced = position(&rows, "Nanocube").expect("the conversion created stock");
+        assert!((source.quantity - 50.0).abs() < 1e-9);
+        // 50 boards at 0.03 TT is 1.50 PED, preserved 1:1.
+        assert!((source.tt_value - 1.5).abs() < 1e-9);
+        assert!((produced.tt_value - 1.5).abs() < 1e-9);
+
+        // Selling the produced stock attributes back to the original tiers.
+        let listing = service
+            .create_auction_listing("Nanocube", produced.quantity, 2.0, None, 0.0, None)
+            .await
+            .unwrap();
+        service
+            .confirm_auction_listing(&listing.id, 2.5, 0.0, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let realised = service.realised_markup_by_tier().await.unwrap();
+        let total: f64 = realised.iter().map(|row| row.net_markup).sum();
+        assert_eq!(realised.len(), 2, "both source tiers still carry the sale");
+        assert!(
+            (total - 1.0).abs() < 1e-9,
+            "a 2.50 sale on 1.50 TT with no fees"
+        );
+    }
+
+    /// A position that has fully closed stays on the list at zero. The item
+    /// is still one the player produces; a line that vanished on the last
+    /// sale would read as an item that never existed.
+    #[tokio::test]
+    async fn a_fully_sold_position_stays_on_the_stock_list_at_zero() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .create_auction_listing("Moonleaf Board", 100.0, 3.0, None, 0.0, None)
+            .await
+            .unwrap();
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(board.quantity.abs() < 1e-9);
+        assert!(board.tt_value.abs() < 1e-9);
+    }
+
+    /// A listing is one history entry across its whole life. Selling it
+    /// changes that entry rather than adding a second one beside it.
+    #[tokio::test]
+    async fn a_sale_replaces_its_listing_in_history_rather_than_joining_it() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 4.0, None, 0.5, Some("2026-07-20"))
+            .await
+            .unwrap();
+
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].status, "pending");
+        assert_eq!(history[0].occurred_at, "2026-07-20");
+        assert!(!history[0].can_revert_sale, "nothing has been realised yet");
+        assert!(history[0].can_delete);
+
+        service
+            .confirm_auction_listing(&listing.id, 4.0, 0.0, Some("2026-07-22"))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1, "still one entry, now in its sold state");
+        assert_eq!(history[0].status, "sold");
+        assert_eq!(
+            history[0].occurred_at, "2026-07-22",
+            "dated by its resolution"
+        );
+        assert!(history[0].can_revert_sale);
+        // 4.00 fetched on 3.00 TT, less the 0.50 listing fee.
+        assert!((history[0].net_markup.unwrap() - 0.5).abs() < 1e-9);
+    }
+
+    /// Undoing a sale leaves the listing open: the stock stays out, because it
+    /// left at listing time and the listing is live again, and the money the
+    /// sale wrote goes away with the recognition.
+    #[tokio::test]
+    async fn reverting_a_sale_reopens_the_listing_and_unwrites_its_money() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 4.0, None, 0.5, None)
+            .await
+            .unwrap();
+        service
+            .confirm_auction_listing(&listing.id, 4.5, 0.2, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!service.realised_markup_by_tier().await.unwrap().is_empty());
+
+        let reverted = service
+            .revert_auction_sale(&listing.id)
+            .await
+            .unwrap()
+            .expect("the listing is still there");
+        assert_eq!(reverted.status, "pending");
+        assert_eq!(reverted.final_price, None);
+        assert_eq!(reverted.sale_fee, None);
+        assert_eq!(reverted.resolved_at, None);
+
+        // The sale and its point-of-sale fee are gone; the listing fee stays,
+        // because that was spent at listing time and the listing still stands.
+        let ledger = ledger_descriptions(&service).await;
+        assert!(!ledger.iter().any(|d| d == "Auction Sale: Moonleaf Board"));
+        assert_eq!(
+            ledger
+                .iter()
+                .filter(|d| *d == "Auction Fee: Moonleaf Board")
+                .count(),
+            1,
+        );
+
+        // Nothing is realised by an open listing.
+        assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
+        // The stock is still out on the auction.
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(board.quantity.abs() < 1e-9);
+        assert!((board.listed_quantity - 100.0).abs() < 1e-9);
+
+        // Re-confirming lands on the same figures it first did.
+        let resold = service
+            .confirm_auction_listing(&listing.id, 4.5, 0.2, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!((resold.gross_markup.unwrap() - 1.5).abs() < 1e-9);
+    }
+
+    /// A sale can only be taken back while it is a sale.
+    #[tokio::test]
+    async fn reverting_reports_not_found_unless_the_listing_is_sold() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 4.0, None, 0.5, None)
+            .await
+            .unwrap();
+        assert!(service
+            .revert_auction_sale(&listing.id)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(service
+            .revert_auction_sale("no-such-id")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    /// Deleting a listing returns the stock it took and removes every ledger
+    /// row it wrote, leaving no trace of an entry that should not have been.
+    #[tokio::test]
+    async fn deleting_a_sold_listing_returns_the_stock_and_its_money() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 60.0, 3.0, None, 0.5, None)
+            .await
+            .unwrap();
+        service
+            .confirm_auction_listing(&listing.id, 3.0, 0.1, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(service.undo_auction_listing(&listing.id).await.unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the stock is back");
+        assert!((board.quantity - 100.0).abs() < 1e-9, "all 100 held again");
+        assert!(board.listed_quantity.abs() < 1e-9);
+
+        let ledger = ledger_descriptions(&service).await;
+        assert!(!ledger.iter().any(|d| d.contains("Moonleaf Board")));
+        assert!(service.auction_listings().await.unwrap().is_empty());
+        assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
+
+        // The entry stays as the record of a correction, with nothing left to
+        // do to it. Only history sees it.
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].undone);
+        assert!(!history[0].can_delete);
+        assert!(!history[0].can_revert_sale);
+        assert_eq!(history[0].status, "sold", "it still says what it was");
+
+        // Undoing it again is a not-found, not a second reversal.
+        assert!(!service.undo_auction_listing(&listing.id).await.unwrap());
+    }
+
+    /// Deleting a listing that outran tracked stock takes the opening balance
+    /// with it. The units it accounted for were only ever evidenced by the
+    /// listing, so they cannot outlive it as stock the player never had.
+    #[tokio::test]
+    async fn deleting_a_listing_takes_its_opening_balance_with_it() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 150.0, 5.0, None, 0.5, None)
+            .await
+            .unwrap();
+        assert!(service.undo_auction_listing(&listing.id).await.unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the stock is back");
+        assert!(
+            (board.quantity - 100.0).abs() < 1e-9,
+            "back to the 100 that were ever recorded, not 150: {}",
+            board.quantity
+        );
+    }
+
+    /// Deleting an expired listing is a no-op on the stock: it went out and
+    /// came back, and both rows go together.
+    #[tokio::test]
+    async fn deleting_an_expired_listing_leaves_the_stock_where_it_was() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 40.0, 2.0, None, 0.5, None)
+            .await
+            .unwrap();
+        service
+            .expire_auction_listing(&listing.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(service.undo_auction_listing(&listing.id).await.unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the stock is there");
+        assert!((board.quantity - 100.0).abs() < 1e-9);
+        // The fee an expired listing kept spent goes with the listing.
+        assert!(!ledger_descriptions(&service)
+            .await
+            .iter()
+            .any(|d| d.contains("Moonleaf Board")));
+    }
+
+    /// Provenance survives the refiner. Shavings drawn 20/30/50 from the three
+    /// tiers become Nanocubes holding that same composition, and selling those
+    /// Nanocubes credits the tiers that grew the wood in those proportions.
+    ///
+    /// This is the two-hop case: the item sold is not the item any activity
+    /// produced, and nothing about the sale itself knows where it came from.
+    /// Only the composition carried through the conversion does.
+    #[tokio::test]
+    async fn a_conversion_carries_tier_provenance_into_what_it_produces() {
+        let (_dir, service) = write_service().await;
+        service
+            .db
+            .with_writer(|conn| {
+                // 100 PED of shavings at 1.00 TT each: 20 short, 30 long, 50 huge.
+                for (id, tier, quantity) in [
+                    ("ws1", "short", 20),
+                    ("ws2", "long", 30),
+                    ("ws3", "huge", 50),
+                ] {
+                    conn.execute(
+                        "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,\
+                         yield_tier,cost_ped,loot_total_ped) \
+                         VALUES(?1,'prov-s',1000.0,1,'PH-3',?2,0.1,?3)",
+                        rusqlite::params![id, tier, quantity as f64],
+                    )?;
+                    conn.execute(
+                        "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped) \
+                         VALUES(?1,'Wood Shavings',?2,?3)",
+                        rusqlite::params![id, quantity, quantity as f64],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        service
+            .convert_stock("Wood Shavings", "Nanocube", 100.0, None)
+            .await
+            .unwrap();
+
+        // The produced stock is not one anonymous pile: it holds the same
+        // 20/30/50 the shavings did.
+        let composition: Vec<(String, f64)> = service
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT yield_tier, SUM(quantity) FROM stock_movements \
+                     WHERE item_name = 'Nanocube' AND yield_tier IS NOT NULL \
+                     GROUP BY yield_tier ORDER BY yield_tier",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
+        assert_eq!(composition.len(), 3, "all three tiers ride forward");
+        // 100 PED of shavings is 10,000 Nanocubes at 0.01 TT each, split in
+        // the same 20/30/50 the shavings held.
+        for (tier, expected) in [("huge", 5000.0), ("long", 3000.0), ("short", 2000.0)] {
+            let (_, got) = composition
+                .iter()
+                .find(|(name, _)| name == tier)
+                .unwrap_or_else(|| panic!("{tier} carried forward"));
+            assert!((got - expected).abs() < 1e-9, "{tier}: {got} != {expected}");
+        }
+
+        // Sell the Nanocubes at 130 for 100 TT, no fees: 30 PED of markup.
+        let listing = service
+            .create_auction_listing("Nanocube", 10_000.0, 130.0, Some(130.0), 0.0, None)
+            .await
+            .unwrap();
+        assert!(
+            (listing.tt_value - 100.0).abs() < 1e-9,
+            "the count and the value agree: {} ",
+            listing.tt_value,
+        );
+        assert!(
+            listing.unattributed_qty.abs() < 1e-9,
+            "every Nanocube traces to a tier",
+        );
+        service
+            .confirm_auction_listing(&listing.id, 130.0, 0.0, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let realised = service.realised_markup_by_tier().await.unwrap();
+        let credited = |tier: HarvestYieldTier| {
+            realised
+                .iter()
+                .find(|row| row.yield_tier == tier)
+                .map(|row| row.net_markup)
+                .unwrap_or(0.0)
+        };
+        assert!((credited(HarvestYieldTier::Short) - 6.0).abs() < 1e-9);
+        assert!((credited(HarvestYieldTier::Long) - 9.0).abs() < 1e-9);
+        assert!((credited(HarvestYieldTier::Huge) - 15.0).abs() < 1e-9);
+        let total: f64 = realised.iter().map(|row| row.net_markup).sum();
+        assert!((total - 30.0).abs() < 1e-9, "and the whole gain is placed");
+    }
+
+    /// A conversion can be undone: the source comes back and what it produced
+    /// is unmade.
+    #[tokio::test]
+    async fn deleting_a_conversion_unmakes_what_it_produced() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .convert_stock("Moonleaf Board", "Nanocube", 50.0, None)
+            .await
+            .unwrap();
+        let history = service.activity_history().await.unwrap();
+        let conversion = history
+            .iter()
+            .find(|row| row.kind == "conversion")
+            .expect("the conversion is in history");
+        assert_eq!(conversion.target_item.as_deref(), Some("Nanocube"));
+        assert!(conversion.can_delete);
+
+        assert!(service.undo_stock_conversion(&conversion.id).await.unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the source is back");
+        assert!((board.quantity - 100.0).abs() < 1e-9);
+        assert!(
+            position(&rows, "Nanocube").is_none_or(|row| row.quantity.abs() < 1e-9),
+            "the produced stock is unmade"
+        );
+
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1, "the entry stays, marked");
+        assert!(history[0].undone);
+        assert!(!history[0].can_delete);
+        assert!(!service.undo_stock_conversion(&conversion.id).await.unwrap());
+    }
+
+    /// A conversion whose output has since been sold cannot be undone: doing
+    /// so would leave the player holding less than nothing of it. The refusal
+    /// names what is in the way.
+    #[tokio::test]
+    async fn a_conversion_whose_output_was_sold_refuses_to_be_undone() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .convert_stock("Moonleaf Board", "Nanocube", 100.0, None)
+            .await
+            .unwrap();
+        let conversion_id = service
+            .activity_history()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == "conversion" && !row.undone)
+            .expect("the conversion")
+            .id;
+
+        // The Nanocubes go out on the auction, so they are no longer held.
+        service
+            .create_auction_listing("Nanocube", 3.0, 4.0, None, 0.5, None)
+            .await
+            .unwrap();
+
+        let history = service.activity_history().await.unwrap();
+        let conversion = history
+            .iter()
+            .find(|row| row.id == conversion_id)
+            .expect("still in history");
+        assert!(!conversion.can_delete, "history reports it as blocked");
+        let reason = conversion
+            .undo_blocked_reason
+            .as_deref()
+            .expect("with a reason");
+        assert!(
+            reason.contains("Nanocube"),
+            "naming what is in the way: {reason}"
+        );
+
+        let refused = service.undo_stock_conversion(&conversion_id).await;
+        assert!(
+            matches!(refused, Err(AnalyticsError::Rejected(_))),
+            "the command refuses it too, not only the UI",
+        );
+
+        // Undoing the listing that consumed them clears the way.
+        let listing_id = service
+            .activity_history()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == "listing" && !row.undone)
+            .expect("the listing")
+            .id;
+        assert!(service.undo_auction_listing(&listing_id).await.unwrap());
+        assert!(service.undo_stock_conversion(&conversion_id).await.unwrap());
+    }
+
+    /// Undoing something that is not there is a not-found, not an error.
+    #[tokio::test]
+    async fn undoing_an_absent_entry_reports_not_found() {
+        let (_dir, service) = write_service().await;
+        assert!(!service.undo_auction_listing("no-such-id").await.unwrap());
+        assert!(!service.undo_stock_conversion("no-such-id").await.unwrap());
+    }
+
+    /// Selling past tracked stock cannot drive holdings below zero. The units
+    /// the app never recorded are booked as the opening balance the sale
+    /// proves they were, so the position bottoms out at nothing held.
+    #[tokio::test]
+    async fn selling_beyond_tracked_stock_bottoms_out_at_zero() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        // 100 boards are tracked; the player sells 150 of them.
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 150.0, 5.0, None, 0.0, None)
+            .await
+            .unwrap();
+        assert!((listing.unattributed_qty - 50.0).abs() < 1e-9);
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(
+            board.quantity >= 0.0 && board.quantity.abs() < 1e-9,
+            "holdings bottom out at zero, never negative: {}",
+            board.quantity
+        );
+        assert!(
+            board.tt_value >= 0.0 && board.tt_value.abs() < 1e-9,
+            "stock TT follows the quantity: {}",
+            board.tt_value
+        );
+
+        // Expiring returns every unit that left, including the ones the app
+        // only learned about by their disposal: the player has them in hand.
+        service
+            .expire_auction_listing(&listing.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!((board.quantity - 150.0).abs() < 1e-9);
+    }
+
+    /// Converting past tracked stock is the same story on the source side,
+    /// and the produced item still receives the whole conversion.
+    #[tokio::test]
+    async fn converting_beyond_tracked_stock_bottoms_out_at_zero() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .convert_stock("Moonleaf Board", "Nanocube", 150.0, None)
+            .await
+            .unwrap();
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(
+            board.quantity >= 0.0 && board.quantity.abs() < 1e-9,
+            "holdings bottom out at zero, never negative: {}",
+            board.quantity
+        );
+        // 150 boards at 0.03 TT is 4.50 PED, carried across 1:1 in value and
+        // counted at the Nanocube's own 0.01 TT: 450 of them.
+        let produced = position(&rows, "Nanocube").expect("the produced stock");
+        assert!(
+            (produced.quantity - 450.0).abs() < 1e-9,
+            "{}",
+            produced.quantity
+        );
+        assert!(
+            (produced.tt_value - 4.5).abs() < 1e-9,
+            "{}",
+            produced.tt_value
+        );
     }
 
     /// Create with the optional fields absent: notes is null and acquired_at

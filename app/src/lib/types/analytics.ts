@@ -6,7 +6,10 @@
  */
 
 export type {
+	ActivityHistoryEntry,
 	AnalyticsOverview as OverviewStats,
+	AuctionListing,
+	AuctionListingInput,
 	CalibrationStatus,
 	CharacterProspectOptions,
 	CodexClaimResult,
@@ -22,7 +25,6 @@ export type {
 	ExcludedSkill,
 	HarvestLootItem,
 	HarvestTierComparison,
-	HarvestToolComparison,
 	HarvestYieldTier,
 	HpOptimizerAttribute,
 	HpOptimizerResult,
@@ -46,9 +48,11 @@ export type {
 	ProspectRow,
 	ProspectSample,
 	ProspectSliceType,
+	RealisedTierMarkup,
 	ReturnsBreakdown,
 	SkillLevel,
 	StatProfession,
+	StockPosition,
 	TagComparison,
 	TimelineDay,
 } from '$lib/api/commands.gen';
