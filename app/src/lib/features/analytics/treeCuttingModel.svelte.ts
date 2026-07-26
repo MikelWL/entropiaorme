@@ -1,8 +1,8 @@
 /**
- * Tree Cutting-tab view model. Each harvesting tool the player has used
- * becomes its own section: a stat strip (swings, cycled, returns, rate,
- * current-market return) over a per-item loot breakdown carrying each
- * item's holding-independent market-opportunity profile.
+ * Tree Cutting-tab view model. Durable effective yield tiers are the
+ * source activities; harvesting tools are nested execution strategies.
+ * Each tier carries its realised TT and holding-independent market
+ * opportunity over the board composition actually extracted.
  *
  * Two feeds compose here: the realised harvest aggregate (accounting
  * side) and the per-item market signals (the informational market
@@ -26,7 +26,12 @@ import {
 	type MarketHarvestItem,
 	setHarvestStock,
 } from '$lib/api';
-import type { HarvestLootItem, HarvestToolComparison } from '$lib/types/analytics';
+import type {
+	HarvestLootItem,
+	HarvestTierComparison,
+	HarvestToolComparison,
+	HarvestYieldTier,
+} from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 import { createTableModel } from '$lib/view/tableModel.svelte';
 import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
@@ -194,10 +199,11 @@ export function effectiveMarkup(
 
 // ── Section derivation ─────────────────────────────────────────────────
 
-const BOARD_TO_TREE: Record<string, string> = {
-	'Short Moonleaf Board': 'Small',
-	'Moonleaf Board': 'Long',
-	'Long Moonleaf Board': 'Huge',
+const TIER_LABEL: Record<HarvestYieldTier, string> = {
+	short: 'Short Boards',
+	long: 'Boards',
+	huge: 'Long Boards',
+	unknown: 'Unclassified',
 };
 
 export type TreeCuttingItem = {
@@ -230,8 +236,7 @@ export type TreeCuttingOverall = {
 };
 
 export type TreeCuttingSection = {
-	toolName: string;
-	tree: string | null;
+	yieldTier: HarvestYieldTier;
 	swings: number;
 	cycled: number;
 	returns: number;
@@ -243,33 +248,40 @@ export type TreeCuttingSection = {
 	realisedReturns: number;
 	realisedRate: number;
 	items: TreeCuttingItem[];
+	tools: TreeCuttingToolStrategy[];
 };
 
-export type TreeCuttingActivitySortKey = 'toolName' | 'cycled' | 'realisedRate' | 'muRate';
+export type TreeCuttingToolStrategy = {
+	key: string;
+	toolName: string;
+	swings: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	muProjectedReturns: number | null;
+	muRate: number | null;
+	realisedReturns: number;
+	realisedRate: number;
+};
+
+export type TreeCuttingActivitySortKey = 'yieldTier' | 'cycled' | 'realisedRate' | 'muRate';
 
 export function treeCuttingActivityName(section: TreeCuttingSection): string {
-	return section.tree ? `${section.tree} Trees` : section.toolName;
+	return TIER_LABEL[section.yieldTier];
 }
 
-export function primaryTree(items: HarvestLootItem[]): string | null {
-	let best: { tree: string; tt: number } | null = null;
-	for (const item of items) {
-		const tree = BOARD_TO_TREE[item.itemName];
-		if (tree && (!best || item.valuePed > best.tt)) {
-			best = { tree, tt: item.valuePed };
-		}
-	}
-	return best?.tree ?? null;
+export function harvestTierLabel(tier: HarvestYieldTier): string {
+	return TIER_LABEL[tier];
 }
 
 /** Lifetime recorded harvest per item across every tool: the quantity
  * and TT value looted. This is the ground-truth base the stock overlay
  * sits on. */
 type LootedItem = { quantity: number; valuePed: number };
-function lootedByItem(tools: HarvestToolComparison[]): Map<string, LootedItem> {
+function lootedByItem(tiers: HarvestTierComparison[]): Map<string, LootedItem> {
 	const looted = new Map<string, LootedItem>();
-	for (const tool of tools) {
-		for (const item of tool.lootItems) {
+	for (const tier of tiers) {
+		for (const item of tier.lootItems) {
 			const prev = looted.get(item.itemName) ?? { quantity: 0, valuePed: 0 };
 			looted.set(item.itemName, {
 				quantity: prev.quantity + item.quantity,
@@ -310,17 +322,22 @@ export type TreeCuttingStock = {
 	weeklySalesPed: number | null;
 };
 
-function toSection(
-	tool: HarvestToolComparison,
+function projectLoot(
+	lootItems: HarvestLootItem[],
+	cycled: number,
 	market: MarketHarvestData | null,
 	marketByItem: Map<string, MarketHarvestItem>,
 	confidenceMode: ConfidenceMode,
-): TreeCuttingSection {
+): {
+	items: TreeCuttingItem[];
+	muProjectedReturns: number | null;
+	muRate: number | null;
+} {
 	const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
-	const totalTt = tool.lootItems.reduce((sum, item) => sum + item.valuePed, 0);
+	const totalTt = lootItems.reduce((sum, item) => sum + item.valuePed, 0);
 
 	let marketProjected = 0;
-	const items: TreeCuttingItem[] = tool.lootItems.map((item) => {
+	const items: TreeCuttingItem[] = lootItems.map((item) => {
 		const m = marketByItem.get(item.itemName);
 		const opportunity = marketOpportunity(m, nanocube);
 		const tier = opportunityTier(opportunity);
@@ -343,21 +360,55 @@ function toSection(
 	});
 
 	const muProjectedReturns = market ? marketProjected : null;
-	const muRate =
-		muProjectedReturns !== null && tool.cycled > 0 ? muProjectedReturns / tool.cycled : null;
+	const muRate = muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
+	return { items, muProjectedReturns, muRate };
+}
 
+function toToolStrategy(
+	tool: HarvestToolComparison,
+	index: number,
+	market: MarketHarvestData | null,
+	marketByItem: Map<string, MarketHarvestItem>,
+	confidenceMode: ConfidenceMode,
+): TreeCuttingToolStrategy {
+	const projection = projectLoot(tool.lootItems, tool.cycled, market, marketByItem, confidenceMode);
+	const toolName = tool.toolName?.trim() || 'Unknown tool';
 	return {
-		toolName: tool.toolName,
-		tree: primaryTree(tool.lootItems),
+		key: `${toolName}:${index}`,
+		toolName,
 		swings: tool.swings,
 		cycled: tool.cycled,
 		returns: tool.returns,
 		lootRate: tool.lootRate,
-		muProjectedReturns,
-		muRate,
+		muProjectedReturns: projection.muProjectedReturns,
+		muRate: projection.muRate,
 		realisedReturns: tool.returns,
 		realisedRate: tool.lootRate,
-		items,
+	};
+}
+
+function toSection(
+	tier: HarvestTierComparison,
+	market: MarketHarvestData | null,
+	marketByItem: Map<string, MarketHarvestItem>,
+	confidenceMode: ConfidenceMode,
+): TreeCuttingSection {
+	const projection = projectLoot(tier.lootItems, tier.cycled, market, marketByItem, confidenceMode);
+
+	return {
+		yieldTier: tier.yieldTier,
+		swings: tier.swings,
+		cycled: tier.cycled,
+		returns: tier.returns,
+		lootRate: tier.lootRate,
+		muProjectedReturns: projection.muProjectedReturns,
+		muRate: projection.muRate,
+		realisedReturns: tier.returns,
+		realisedRate: tier.lootRate,
+		items: projection.items,
+		tools: tier.toolComparisons.map((tool, index) =>
+			toToolStrategy(tool, index, market, marketByItem, confidenceMode),
+		),
 	};
 }
 
@@ -375,11 +426,11 @@ export function createTreeCuttingModel() {
 	let error = $state<string | null>(null);
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
 	let activeRange = $state<AnalyticsRange>('All Time');
-	// Which sub-activity's detail is open. Keyed by tool name; null falls
+	// Which yield activity's detail is open. Keyed by durable tier; null falls
 	// back to the highest-volume section, so the busiest activity opens by
-	// default and a stale key (a tool that dropped out of the data) degrades
+	// default and a stale key (a tier outside the current range) degrades
 	// to that same fallback rather than an empty panel.
-	let selectedTool = $state<string | null>(null);
+	let selectedTier = $state<HarvestYieldTier | null>(null);
 
 	let loadEpoch = 0;
 
@@ -416,12 +467,17 @@ export function createTreeCuttingModel() {
 	const sections = $derived.by<TreeCuttingSection[]>(() => {
 		if (!data) return [];
 		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
-		// Ordered by cycled volume (busiest first): this is the sub-activity
-		// list order and the fallback selection, and it scales cleanly to an
-		// activity with dozens of sub-activities.
-		return data.toolComparisons
-			.map((tool) => toSection(tool, market, marketByItem, confidenceMode))
-			.sort((a, b) => b.cycled - a.cycled || a.toolName.localeCompare(b.toolName));
+		// Ordered by cycled volume (busiest first), with the diagnostic
+		// Unclassified bucket kept after the three attributable activities.
+		// This is also the fallback selection order.
+		return data.tierComparisons
+			.map((tier) => toSection(tier, market, marketByItem, confidenceMode))
+			.sort(
+				(a, b) =>
+					Number(a.yieldTier === 'unknown') - Number(b.yieldTier === 'unknown') ||
+					b.cycled - a.cycled ||
+					treeCuttingActivityName(a).localeCompare(treeCuttingActivityName(b)),
+			);
 	});
 
 	const activityTable = createTableModel<TreeCuttingSection>({
@@ -429,13 +485,13 @@ export function createTreeCuttingModel() {
 		pageSize: Number.MAX_SAFE_INTEGER,
 		initialSort: { key: 'cycled', dir: 'desc' },
 		defaultSortDirs: {
-			toolName: 'asc',
+			yieldTier: 'asc',
 			cycled: 'desc',
 			realisedRate: 'desc',
 			muRate: 'desc',
 		},
 		comparators: {
-			toolName: (a, b) => treeCuttingActivityName(a).localeCompare(treeCuttingActivityName(b)),
+			yieldTier: (a, b) => treeCuttingActivityName(a).localeCompare(treeCuttingActivityName(b)),
 		},
 	});
 
@@ -444,7 +500,7 @@ export function createTreeCuttingModel() {
 	 * longer resolves. */
 	const selectedSection = $derived.by<TreeCuttingSection | null>(() => {
 		if (sections.length === 0) return null;
-		return sections.find((s) => s.toolName === selectedTool) ?? sections[0];
+		return sections.find((s) => s.yieldTier === selectedTier) ?? sections[0];
 	});
 
 	/** The current stock line for the Overall block: per-item held quantity
@@ -452,7 +508,7 @@ export function createTreeCuttingModel() {
 	 * opportunity is intrinsic and therefore does not consume held TT. */
 	const stock = $derived.by<TreeCuttingStock[]>(() => {
 		if (!stockData) return [];
-		const looted = lootedByItem(stockData.toolComparisons);
+		const looted = lootedByItem(stockData.tierComparisons);
 		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
 		const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
 		const rows = [...looted.entries()].map(([itemName, item]) => {
@@ -493,7 +549,7 @@ export function createTreeCuttingModel() {
 	 * updates immediately, then the write lands. */
 	async function setHeld(itemName: string, heldQty: number) {
 		if (!stockData) return;
-		const looted = lootedByItem(stockData.toolComparisons).get(itemName);
+		const looted = lootedByItem(stockData.tierComparisons).get(itemName);
 		if (!looted) return;
 		const held = Math.min(Math.max(Math.floor(heldQty), 0), looted.quantity);
 		const removedQty = looted.quantity - held;
@@ -568,8 +624,8 @@ export function createTreeCuttingModel() {
 		get selectedSection() {
 			return selectedSection;
 		},
-		selectSection(toolName: string) {
-			selectedTool = toolName;
+		selectSection(yieldTier: HarvestYieldTier) {
+			selectedTier = yieldTier;
 		},
 		get stock() {
 			return stock;

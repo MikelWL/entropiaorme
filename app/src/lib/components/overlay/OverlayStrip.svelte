@@ -268,7 +268,7 @@
 					 hotbar press or agreeing loot resolves it. -->
 				<div
 					class="flex flex-col min-w-0"
-					title={`Tree loot says ${data.harvestGuardrail.expectedTool}; hotbar shows ${data.harvestGuardrail.observedTool ?? 'no tool'}`}
+					title={`Board output says ${data.harvestGuardrail.expectedTool}; hotbar shows ${data.harvestGuardrail.observedTool ?? 'no tool'}`}
 					data-testid="guardrail-alert"
 				>
 					<div class="text-xs text-red-400 animate-pulse truncate max-w-[120px]">

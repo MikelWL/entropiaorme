@@ -98,6 +98,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "harvest stock removed",
         sql: include_str!("../../migrations/0012_harvest_stock_removed.sql"),
     },
+    Migration {
+        version: 13,
+        description: "harvest yield tier",
+        sql: include_str!("../../migrations/0013_harvest_yield_tier.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -118,6 +123,7 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "14807806F2AEEA83A890C0114AABEAA2B1DAF3749D335CCFB0EADD3945CEB115C7788FA0FD1D340741FDC951986D677A",
     "D4CA3183B196882C7684EE6819E1761F35F33807EA01D8A63EB16E0E26FDFCEE3D74860C42CFF525D6F9E923B9AF0F0E",
     "E55EA0D16225309C60A08E5EC3B56D25AEA330B05A66C9D7EC97842F3985DCDB93AE74B66A27A5608F95EB891186FA56",
+    "810DB5755C5307D254A7A39FEDE6629A930F6855593D9D081FDBCF346814E8AF0EDC020671F62D96B49BCB92F8E4BEED",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as
@@ -298,6 +304,205 @@ mod tests {
                 &actual, expected,
                 "migration {} is immutable; add a new migration instead",
                 migration.version
+            );
+        }
+    }
+
+    #[test]
+    fn harvest_yield_migration_backfills_direct_inferred_conflict_and_unknown_rows() {
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(LEDGER_DDL).expect("ledger");
+        for migration in &MIGRATIONS[..12] {
+            let tx = connection.transaction().expect("migration transaction");
+            tx.execute_batch(migration.sql).expect("migration SQL");
+            tx.execute(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?1, ?2, TRUE, ?3, 0)",
+                rusqlite::params![
+                    migration.version,
+                    migration.description,
+                    migration.checksum()
+                ],
+            )
+            .expect("ledger row");
+            tx.commit().expect("migration commit");
+        }
+        connection
+            .execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at) \
+                 VALUES('session',0,300)",
+                [],
+            )
+            .expect("session");
+        connection
+            .execute(
+                "INSERT INTO tracking_sessions(id,started_at,ended_at) \
+                 VALUES('other-session',0,300)",
+                [],
+            )
+            .expect("other session");
+        for (id, timestamp, tool) in [
+            ("short", 0.0, Some("PH-3")),
+            ("conflict", 10.0, Some("PH-3")),
+            ("huge", 20.0, Some("PH-3")),
+            ("long", 50.0, Some("PH-3")),
+            ("after", 60.0, Some("PH-3")),
+            ("other-tool", 55.0, Some("PH-4")),
+            ("isolated", 200.0, Some("PH-3")),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO harvest_events \
+                     (id,session_id,timestamp,success,tool_name,cost_ped,loot_total_ped) \
+                     VALUES(?1,'session',?2,1,?3,0.1,0)",
+                    rusqlite::params![id, timestamp, tool],
+                )
+                .expect("harvest");
+        }
+        connection
+            .execute(
+                "INSERT INTO harvest_events \
+                 (id,session_id,timestamp,success,tool_name,cost_ped,loot_total_ped) \
+                 VALUES('other-session-row','other-session',55,1,'PH-3',0.1,0)",
+                [],
+            )
+            .expect("other-session harvest");
+        for (harvest, item, deactivated_at) in [
+            ("short", "Short Moonleaf Board", Some(1.0)),
+            ("huge", "Long Moonleaf Board", None),
+            ("long", "Moonleaf Board", None),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO harvest_loot_items \
+                     (harvest_id,item_name,quantity,value_ped,deactivated_at) \
+                     VALUES(?1,?2,1,0.1,?3)",
+                    rusqlite::params![harvest, item, deactivated_at],
+                )
+                .expect("loot");
+        }
+
+        run(&mut connection).expect("yield migration");
+
+        let mut stmt = connection
+            .prepare(
+                "SELECT id,yield_tier,yield_tier_source \
+                 FROM harvest_events ORDER BY timestamp,id",
+            )
+            .expect("query");
+        let rows: Vec<(String, String, Option<String>)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("rows")
+            .collect::<rusqlite::Result<_>>()
+            .expect("collect");
+        assert_eq!(
+            rows,
+            vec![
+                ("short".into(), "short".into(), Some("board".into())),
+                ("conflict".into(), "unknown".into(), None),
+                ("huge".into(), "huge".into(), Some("board".into())),
+                ("long".into(), "long".into(), Some("board".into())),
+                ("other-session-row".into(), "unknown".into(), None),
+                ("other-tool".into(), "unknown".into(), None),
+                ("after".into(), "long".into(), Some("inferred".into())),
+                ("isolated".into(), "unknown".into(), None),
+            ]
+        );
+    }
+
+    /// The board-to-tier rule exists twice: as Rust in `yield_tier_for_board`
+    /// for live attribution, and as SQL inside migration 0013 for the
+    /// historical backfill. The migration's bytes are frozen, so only the Rust
+    /// side can drift, and a divergence would classify history differently
+    /// from live tracking without failing anything.
+    ///
+    /// This applies the real migration rather than a transcription of its
+    /// CASE, so the two implementations are compared as shipped. Each name
+    /// gets its own session so no row can inherit a tier from a neighbour and
+    /// mask a classification difference.
+    #[test]
+    fn the_backfill_sql_classifies_boards_exactly_as_the_rust_classifier_does() {
+        use crate::harvest_yield::yield_tier_for_board;
+
+        const NAMES: &[&str] = &[
+            "Short Moonleaf Board",
+            "Moonleaf Board",
+            "Long Moonleaf Board",
+            "Long Kaisenbrandt Board",
+            // A species whose name merely begins with "Long": the space in the
+            // "Long " prefix is the whole distinction.
+            "Longleaf Board",
+            " Board",
+            // Non-board loot yields no tier evidence at all.
+            "Wood Shavings",
+            "Animal Muscle Oil",
+        ];
+
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(LEDGER_DDL).expect("ledger");
+        for migration in &MIGRATIONS[..12] {
+            let tx = connection.transaction().expect("migration transaction");
+            tx.execute_batch(migration.sql).expect("migration SQL");
+            tx.execute(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?1, ?2, TRUE, ?3, 0)",
+                rusqlite::params![
+                    migration.version,
+                    migration.description,
+                    migration.checksum()
+                ],
+            )
+            .expect("ledger row");
+            tx.commit().expect("migration commit");
+        }
+
+        for (index, name) in NAMES.iter().enumerate() {
+            let session = format!("s{index}");
+            let harvest = format!("h{index}");
+            connection
+                .execute(
+                    "INSERT INTO tracking_sessions(id,started_at,ended_at) VALUES(?1,0,300)",
+                    rusqlite::params![session],
+                )
+                .expect("session");
+            connection
+                .execute(
+                    "INSERT INTO harvest_events \
+                     (id,session_id,timestamp,success,tool_name,cost_ped,loot_total_ped) \
+                     VALUES(?1,?2,10.0,1,'PH-3',0.1,0.1)",
+                    rusqlite::params![harvest, session],
+                )
+                .expect("harvest");
+            connection
+                .execute(
+                    "INSERT INTO harvest_loot_items \
+                     (harvest_id,item_name,quantity,value_ped,deactivated_at) \
+                     VALUES(?1,?2,1,0.1,NULL)",
+                    rusqlite::params![harvest, name],
+                )
+                .expect("loot");
+        }
+
+        run(&mut connection).expect("yield migration");
+
+        for (index, name) in NAMES.iter().enumerate() {
+            let (tier, source): (String, Option<String>) = connection
+                .query_row(
+                    "SELECT yield_tier, yield_tier_source FROM harvest_events WHERE id = ?1",
+                    rusqlite::params![format!("h{index}")],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("classified row");
+
+            let rust = yield_tier_for_board(name);
+            let expected_tier = rust.map_or("unknown", |t| t.as_str());
+            let expected_source = rust.map(|_| "board".to_string());
+            assert_eq!(
+                (tier.as_str(), source.clone()),
+                (expected_tier, expected_source),
+                "{name:?} classifies differently in the migration SQL and in Rust"
             );
         }
     }

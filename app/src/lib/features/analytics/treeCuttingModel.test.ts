@@ -8,10 +8,11 @@ import type {
 import {
 	createTreeCuttingModel,
 	effectiveMarkup,
+	harvestTierLabel,
 	marketOpportunity,
 	NANOCUBE_FALLBACK_MARKUP,
 	opportunityTier,
-	primaryTree,
+	treeCuttingActivityName,
 	weeklyEquivalentVolume,
 } from './treeCuttingModel.svelte';
 
@@ -27,19 +28,19 @@ import * as api from '$lib/api';
 const mocked = vi.mocked(api);
 
 // Sections are ordered by cycled volume, not data order, so tests select a
-// section by its tool rather than a positional index.
-const PH1 = 'Terratech PH-1 (L)'; // Long Moonleaf Board
-const PH4 = 'Terratech PH-4 (L)'; // Wood Shavings
+// section by its durable yield tier rather than a positional index.
+const HUGE = 'huge';
+const LONG = 'long';
 
 function required<T>(value: T | null | undefined, label: string): T {
 	if (value == null) throw new Error(`Expected ${label}`);
 	return value;
 }
 
-const sectionOf = (model: ReturnType<typeof createTreeCuttingModel>, tool: string) =>
+const sectionOf = (model: ReturnType<typeof createTreeCuttingModel>, tier: string) =>
 	required(
-		model.sections.find((section) => section.toolName === tool),
-		`section ${tool}`,
+		model.sections.find((section) => section.yieldTier === tier),
+		`section ${tier}`,
 	);
 const stockOf = (model: ReturnType<typeof createTreeCuttingModel>, itemName: string) =>
 	required(
@@ -70,26 +71,55 @@ function obs(
 	return { itemName: name, markupPct, horizon, salesPed, readings };
 }
 
-// Mirrors the maintainer's real tree-cutting data closely enough to
-// exercise broad and thin market opportunities.
+// Exercises broad and thin market opportunities together. Tier order here is
+// immaterial because the model sorts sections itself; the end-to-end fixture,
+// which the UI renders in payload order, mirrors the emitted rank order instead.
 function harvest(): AnalyticsHarvest {
 	return {
-		toolComparisons: [
+		tierComparisons: [
 			{
-				toolName: 'Terratech PH-1 (L)',
+				yieldTier: 'huge',
 				swings: 4562,
 				cycled: 91.24,
 				returns: 34.26,
-				lootRate: 1.0015,
+				lootRate: 0.3755,
 				lootItems: [loot('Long Moonleaf Board', 571, 34.26)],
+				toolComparisons: [
+					{
+						toolName: 'Terratech PH-3',
+						swings: 4,
+						cycled: 0.4,
+						returns: 0.3,
+						lootRate: 0.75,
+						lootItems: [loot('Long Moonleaf Board', 5, 0.3)],
+					},
+					{
+						toolName: 'Terratech PH-4 (L)',
+						swings: 4558,
+						cycled: 90.84,
+						returns: 33.96,
+						lootRate: 0.3738,
+						lootItems: [loot('Long Moonleaf Board', 566, 33.96)],
+					},
+				],
 			},
 			{
-				toolName: 'Terratech PH-4 (L)',
+				yieldTier: 'long',
 				swings: 127,
 				cycled: 111.13,
 				returns: 87.38,
-				lootRate: 0.6133,
+				lootRate: 0.7863,
 				lootItems: [loot('Wood Shavings', 87431, 87.38)],
+				toolComparisons: [
+					{
+						toolName: 'Terratech PH-4 (L)',
+						swings: 127,
+						cycled: 111.13,
+						returns: 87.38,
+						lootRate: 0.7863,
+						lootItems: [loot('Wood Shavings', 87431, 87.38)],
+					},
+				],
 			},
 		],
 	};
@@ -114,12 +144,12 @@ beforeEach(() => {
 	mocked.setHarvestStock.mockResolvedValue(undefined);
 });
 
-describe('primaryTree', () => {
-	it('maps the dominant board type to its tree size', () => {
-		expect(primaryTree([loot('Long Moonleaf Board', 1, 5)])).toBe('Huge');
-		expect(primaryTree([loot('Short Moonleaf Board', 1, 5)])).toBe('Small');
-		expect(primaryTree([loot('Moonleaf Board', 1, 5)])).toBe('Long');
-		expect(primaryTree([loot('Wood Shavings', 1, 5)])).toBeNull();
+describe('harvestTierLabel', () => {
+	it('maps the durable vocabulary to its UI labels', () => {
+		expect(harvestTierLabel('short')).toBe('Short Boards');
+		expect(harvestTierLabel('long')).toBe('Boards');
+		expect(harvestTierLabel('huge')).toBe('Long Boards');
+		expect(harvestTierLabel('unknown')).toBe('Unclassified');
 	});
 });
 
@@ -217,7 +247,7 @@ describe('loadData', () => {
 
 	it('scopes activity evidence while keeping current stock all-time', async () => {
 		const allTime = harvest();
-		const recent: AnalyticsHarvest = { toolComparisons: [allTime.toolComparisons[0]] };
+		const recent: AnalyticsHarvest = { tierComparisons: [allTime.tierComparisons[0]] };
 		mocked.getAnalyticsHarvest.mockImplementation(async (period = 'all') =>
 			period === '30d' ? recent : allTime,
 		);
@@ -229,7 +259,7 @@ describe('loadData', () => {
 
 		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledWith('30d');
 		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledWith('all');
-		expect(model.sections.map((section) => section.toolName)).toEqual([PH1]);
+		expect(model.sections.map((section) => section.yieldTier)).toEqual([HUGE]);
 		expect(model.stock.map((item) => item.itemName)).toEqual([
 			'Wood Shavings',
 			'Long Moonleaf Board',
@@ -245,14 +275,14 @@ describe('sections', () => {
 
 		await model.loadData();
 
-		const long = sectionOf(model, PH1).items[0];
+		const long = sectionOf(model, HUGE).items[0];
 		expect(long.opportunity.kind).toBe('broad');
 		expect(long.opportunity.usesNanocube).toBe(false);
 		expect(long.opportunity.appliedMarkupPct).toBe(353.69);
 		expect(long.opportunity.salesPed).toBe(320.34);
 		expect(long.opportunity.weeklySalesPed).toBe(320.34);
 
-		const wood = sectionOf(model, PH4).items[0];
+		const wood = sectionOf(model, LONG).items[0];
 		expect(wood.opportunity.kind).toBe('thin');
 		expect(wood.opportunity.usesNanocube).toBe(false);
 		expect(wood.opportunity.appliedMarkupPct).toBe(110.01);
@@ -262,14 +292,80 @@ describe('sections', () => {
 		expect(wood.opportunity.weeklySalesPed).toBe(0);
 	});
 
-	it('combines every tool into the overall aggregate', async () => {
+	it('keeps PH-3 and PH-4 as separate strategies inside the Long Boards activity', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		const huge = sectionOf(model, HUGE);
+		expect(huge.tools.map((tool) => tool.toolName)).toEqual([
+			'Terratech PH-3',
+			'Terratech PH-4 (L)',
+		]);
+		expect(huge.tools[0].cycled).toBe(0.4);
+		expect(huge.tools[0].muRate).not.toBeNull();
+		expect(huge.tools[1].cycled).toBe(90.84);
+	});
+
+	it('surfaces genuine tier and tool attribution gaps explicitly', async () => {
+		const data = harvest();
+		data.tierComparisons.push({
+			yieldTier: 'unknown',
+			swings: 1,
+			cycled: 0.1,
+			returns: 0,
+			lootRate: 0,
+			lootItems: [],
+			toolComparisons: [
+				{
+					toolName: null,
+					swings: 1,
+					cycled: 0.1,
+					returns: 0,
+					lootRate: 0,
+					lootItems: [],
+				},
+			],
+		});
+		mocked.getAnalyticsHarvest.mockResolvedValue(data);
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		const unknown = sectionOf(model, 'unknown');
+		expect(harvestTierLabel(unknown.yieldTier)).toBe('Unclassified');
+		expect(treeCuttingActivityName(unknown)).toBe('Unclassified');
+		expect(treeCuttingActivityName(sectionOf(model, HUGE))).toBe('Long Boards');
+		expect(unknown.tools[0].toolName).toBe('Unknown tool');
+	});
+
+	it('keeps Unclassified last and out of the default selection', async () => {
+		const data = harvest();
+		data.tierComparisons.push({
+			yieldTier: 'unknown',
+			swings: 400,
+			cycled: 400,
+			returns: 0,
+			lootRate: 0,
+			lootItems: [],
+			toolComparisons: [],
+		});
+		mocked.getAnalyticsHarvest.mockResolvedValue(data);
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		expect(model.sections.map((section) => section.yieldTier)).toEqual([LONG, HUGE, 'unknown']);
+		expect(model.selectedSection?.yieldTier).toBe(LONG);
+	});
+
+	it('combines every yield tier into the overall aggregate', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
 		const overall = required(model.overall, 'overall stats');
-		// Cycled and returns sum across both tools; rate is volume-weighted.
+		// Cycled and returns sum across both tiers; rate is volume-weighted.
 		expect(overall.cycled).toBeCloseTo(91.24 + 111.13, 4);
 		expect(overall.returns).toBeCloseTo(34.26 + 87.38, 4);
 		expect(overall.lootRate).toBeCloseTo((34.26 + 87.38) / (91.24 + 111.13), 4);
@@ -298,10 +394,10 @@ describe('sections', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		const before = sectionOf(model, PH1).muProjectedReturns;
+		const before = sectionOf(model, HUGE).muProjectedReturns;
 		await model.setHeld('Long Moonleaf Board', 3);
-		expect(sectionOf(model, PH1).muProjectedReturns).toBe(before);
-		expect(sectionOf(model, PH1).items[0].opportunity.kind).toBe('broad');
+		expect(sectionOf(model, HUGE).muProjectedReturns).toBe(before);
+		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
 	});
 
 	it('lets the confidence toggle choose which supported MU tiers feed the aggregate', async () => {
@@ -310,7 +406,7 @@ describe('sections', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		const woodAtDefault = sectionOf(model, PH4);
+		const woodAtDefault = sectionOf(model, LONG);
 		const woodStockAtDefault = stockOf(model, 'Wood Shavings');
 		expect(model.confidenceMode).toBe('liquidMiddling');
 		expect(woodAtDefault.items[0].tier).toBe('illiquid');
@@ -320,7 +416,7 @@ describe('sections', () => {
 		expect(woodStockAtDefault.effectiveMarkupPct).toBe(100.84);
 
 		model.confidenceMode = 'all';
-		const woodAtAll = sectionOf(model, PH4);
+		const woodAtAll = sectionOf(model, LONG);
 		const woodStockAtAll = stockOf(model, 'Wood Shavings');
 		expect(woodAtAll.items[0].floored).toBe(false);
 		expect(woodAtAll.items[0].effectiveMarkupPct).toBe(110.01);
@@ -351,7 +447,7 @@ describe('sections', () => {
 
 		expect(model.error).toBeNull();
 		expect(model.sections).toHaveLength(2);
-		const long = sectionOf(model, PH1);
+		const long = sectionOf(model, HUGE);
 		expect(long.muProjectedReturns).toBeNull();
 		expect(long.muRate).toBeNull();
 		expect(long.returns).toBe(34.26);
@@ -362,14 +458,14 @@ describe('sections', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		// PH-4 cycled 111.13 outranks PH-1's 91.24, so it leads the list and
+		// Long cycled 111.13 outranks Huge's 91.24, so it leads the list and
 		// opens as the default selection.
-		expect(model.sections.map((s) => s.toolName)).toEqual([PH4, PH1]);
-		expect(model.selectedSection?.toolName).toBe(PH4);
+		expect(model.sections.map((s) => s.yieldTier)).toEqual([LONG, HUGE]);
+		expect(model.selectedSection?.yieldTier).toBe(LONG);
 
 		// Selecting another sub-activity swaps the open detail.
-		model.selectSection(PH1);
-		expect(model.selectedSection?.toolName).toBe(PH1);
+		model.selectSection('huge');
+		expect(model.selectedSection?.yieldTier).toBe(HUGE);
 	});
 
 	it('sorts the activity comparison by either economic rate without changing selection', async () => {
@@ -380,18 +476,24 @@ describe('sections', () => {
 
 		expect(model.activityTable.sortKey).toBe('cycled');
 		expect(model.activityTable.sortDir).toBe('desc');
-		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH4, PH1]);
+		expect(model.activityTable.filtered.map((s) => s.yieldTier)).toEqual([LONG, HUGE]);
 
-		model.selectSection(PH4);
+		model.selectSection('long');
 		model.activityTable.setSort('realisedRate');
 		expect(model.activityTable.sortDir).toBe('desc');
-		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH1, PH4]);
-		expect(model.selectedSection?.toolName).toBe(PH4);
+		// Realised is the TT loot rate today, and Long Boards both cycles more and
+		// returns a better rate here, so this order matches the cycled order. The
+		// MU Rate case below is the one proving a rate sort can reorder the table,
+		// because market evidence is independent of the TT rate. Making realised
+		// reorder instead would mean new totals, not new rates: these totals
+		// cannot produce it while each rate stays derived from its own.
+		expect(model.activityTable.filtered.map((s) => s.yieldTier)).toEqual([LONG, HUGE]);
+		expect(model.selectedSection?.yieldTier).toBe(LONG);
 
 		model.activityTable.setSort('muRate');
 		expect(model.activityTable.sortDir).toBe('desc');
-		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH1, PH4]);
-		expect(model.selectedSection?.toolName).toBe(PH4);
+		expect(model.activityTable.filtered.map((s) => s.yieldTier)).toEqual([HUGE, LONG]);
+		expect(model.selectedSection?.yieldTier).toBe(LONG);
 	});
 
 	it('reactively reorders an active MU Rate sort when confidence changes', async () => {
@@ -406,10 +508,10 @@ describe('sections', () => {
 		await model.loadData();
 
 		model.activityTable.setSort('muRate');
-		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH1, PH4]);
+		expect(model.activityTable.filtered.map((s) => s.yieldTier)).toEqual([HUGE, LONG]);
 
 		model.confidenceMode = 'all';
-		expect(model.activityTable.filtered.map((s) => s.toolName)).toEqual([PH4, PH1]);
+		expect(model.activityTable.filtered.map((s) => s.yieldTier)).toEqual([LONG, HUGE]);
 	});
 });
 
@@ -461,14 +563,14 @@ describe('stock', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		expect(sectionOf(model, PH1).items[0].opportunity.kind).toBe('broad');
+		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
 
 		// Selling changes current stock, not what the observed market says
 		// about repeating the source activity.
 		await model.setHeld('Long Moonleaf Board', 3);
 		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(3);
-		expect(sectionOf(model, PH1).items[0].opportunity.kind).toBe('broad');
-		expect(sectionOf(model, PH1).items[0].opportunity.appliedMarkupPct).toBe(353.69);
+		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
+		expect(sectionOf(model, HUGE).items[0].opportunity.appliedMarkupPct).toBe(353.69);
 	});
 
 	it('joins each stock row to its resolved markup and horizon breakdown', async () => {

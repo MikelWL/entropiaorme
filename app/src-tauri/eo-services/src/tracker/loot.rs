@@ -4,6 +4,7 @@
 use eo_wire::normalizer::round_half_even;
 
 use crate::bus_events::{BusEvent, GlobalPayload};
+use crate::harvest_yield::HarvestYieldSource;
 use crate::loot_filter::is_tracked_loot;
 use crate::ped::Ped;
 use crate::tracking_models::{HarvestEvent, Kill};
@@ -29,7 +30,7 @@ impl TrackerActor {
         let BusEvent::LootGroup(group) = event else {
             return;
         };
-        let (routed, restamps) = {
+        let (routed, restamps, yield_restamps) = {
             let Self {
                 session,
                 loot_blacklist,
@@ -111,7 +112,7 @@ impl TrackerActor {
                             && guardrail_intent(harvest_guardrail.as_ref(), &group.items)
                                 .is_some() =>
                     {
-                        let floor = active.guardrail_retro_floor;
+                        let floor = active.harvest_press_floor;
                         Self::restamp_preceding_no_evidence_swings(
                             &mut active.session.harvests,
                             floor,
@@ -122,18 +123,40 @@ impl TrackerActor {
                     }
                     _ => Vec::new(),
                 };
+                let direct_tier = super::harvest::tree_size_for_group(&group.items);
+                let (yield_tier, yield_tier_source, yield_restamps) =
+                    if let Some(tier) = direct_tier {
+                        let restamps = Self::restamp_preceding_yield_tiers(
+                            &mut active.session.harvests,
+                            active.harvest_press_floor,
+                            tool_name.as_deref(),
+                            tier,
+                            now_epoch,
+                        );
+                        (tier, Some(HarvestYieldSource::Board), restamps)
+                    } else {
+                        let (tier, source) = Self::yield_for_no_evidence(
+                            &active.session.harvests,
+                            active.harvest_press_floor,
+                            tool_name.as_deref(),
+                            now_epoch,
+                        );
+                        (tier, source, Vec::new())
+                    };
                 let harvest = HarvestEvent {
                     id: uuid::Uuid::new_v4().to_string(),
                     session_id: active.session.id.clone(),
                     timestamp: now_epoch,
                     success: true,
                     tool_name,
+                    yield_tier,
+                    yield_tier_source,
                     cost_ped: cost,
                     loot_total_ped: filtered_total_ped,
                     loot_items: items,
                 };
                 active.session.harvests.push(harvest.clone());
-                (RoutedLoot::Harvest(harvest), restamps)
+                (RoutedLoot::Harvest(harvest), restamps, yield_restamps)
             } else {
                 // Snapshot the mob/tag stamp from the selection (the
                 // variant carries the source, so the stamp cannot drift
@@ -173,7 +196,7 @@ impl TrackerActor {
                 // Append the finalised kill to the session; the list tail
                 // doubles as the original's `_last_kill` alias.
                 active.session.kills.push(kill.clone());
-                (RoutedLoot::Kill(kill), Vec::new())
+                (RoutedLoot::Kill(kill), Vec::new(), Vec::new())
             }
         };
 
@@ -185,6 +208,9 @@ impl TrackerActor {
                 self.persist_harvest(&harvest).await;
                 if !restamps.is_empty() {
                     self.persist_harvest_restamps(&restamps).await;
+                }
+                if !yield_restamps.is_empty() {
+                    self.persist_harvest_yield_restamps(&yield_restamps).await;
                 }
             }
         }

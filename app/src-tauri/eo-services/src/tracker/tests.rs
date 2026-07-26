@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::bus_events::BusEvent;
 use crate::event_bus::Topic;
+use crate::harvest_yield::{HarvestYieldSource, HarvestYieldTier};
 
 use super::actor::TrackerActor;
 use super::mob::MobSource;
@@ -2937,21 +2938,22 @@ fn wood_group(ts: &str, board: Option<&str>) -> BusEvent {
 
 #[test]
 fn tree_size_classification_reads_the_board_prefix() {
-    use super::harvest::{tree_size_for_board, tree_size_for_group};
+    use super::harvest::tree_size_for_group;
+    use crate::harvest_yield::yield_tier_for_board;
 
     assert_eq!(
-        tree_size_for_board("Short Moonleaf Board"),
+        yield_tier_for_board("Short Moonleaf Board"),
         Some(TreeSize::Short)
     );
-    assert_eq!(tree_size_for_board("Moonleaf Board"), Some(TreeSize::Long));
+    assert_eq!(yield_tier_for_board("Moonleaf Board"), Some(TreeSize::Long));
     assert_eq!(
-        tree_size_for_board("Long Kaisenbrandt Board"),
+        yield_tier_for_board("Long Kaisenbrandt Board"),
         Some(TreeSize::Huge)
     );
     // No space after the prefix word: a species name, not a size.
-    assert_eq!(tree_size_for_board("Longleaf Board"), Some(TreeSize::Long));
-    assert_eq!(tree_size_for_board("Wood Shavings"), None);
-    assert_eq!(tree_size_for_board("Shrapnel"), None);
+    assert_eq!(yield_tier_for_board("Longleaf Board"), Some(TreeSize::Long));
+    assert_eq!(yield_tier_for_board("Wood Shavings"), None);
+    assert_eq!(yield_tier_for_board("Shrapnel"), None);
 
     let group = [
         LootItem {
@@ -2969,6 +2971,192 @@ fn tree_size_classification_reads_the_board_prefix() {
     ];
     assert_eq!(tree_size_for_group(&group), Some(TreeSize::Huge));
     assert_eq!(tree_size_for_group(&group[..1]), None);
+}
+
+#[test]
+fn guardrail_off_ph3_huge_run_attributes_all_four_swings_to_huge() {
+    use crate::bus_events::{HarvestFailPayload, HarvestFailTag};
+
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+
+    for timestamp in [
+        "2026-01-01T00:00:02",
+        "2026-01-01T00:00:04",
+        "2026-01-01T00:00:06",
+    ] {
+        rig.bus.publish(&BusEvent::HarvestFail(HarvestFailPayload {
+            kind: HarvestFailTag,
+            timestamp: timestamp.into(),
+        }));
+    }
+    rig.bus.publish(&wood_group(
+        "2026-01-01T00:00:08",
+        Some("Long Moonleaf Board"),
+    ));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        assert_eq!(active.session.harvests.len(), 4);
+        for (index, harvest) in active.session.harvests.iter().enumerate() {
+            assert_eq!(harvest.tool_name.as_deref(), Some("Terratech PH-3"));
+            assert_eq!(harvest.cost_ped, Ped(0.1));
+            assert_eq!(harvest.yield_tier, HarvestYieldTier::Huge);
+            assert_eq!(
+                harvest.yield_tier_source,
+                Some(if index == 3 {
+                    HarvestYieldSource::Board
+                } else {
+                    HarvestYieldSource::Inferred
+                })
+            );
+        }
+    });
+
+    let rows: Vec<(String, Option<String>, f64)> = rig
+        .wait(rig.db.with_reader(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT yield_tier, yield_tier_source, cost_ped \
+                 FROM harvest_events ORDER BY timestamp",
+            )?;
+            let mapped = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+        }))
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("huge".into(), Some("inferred".into()), 0.1),
+            ("huge".into(), Some("inferred".into()), 0.1),
+            ("huge".into(), Some("inferred".into()), 0.1),
+            ("huge".into(), Some("board".into()), 0.1),
+        ]
+    );
+}
+
+#[test]
+fn conflicting_direct_evidence_leaves_the_between_swing_unclassified() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+
+    rig.bus
+        .publish(&wood_group("2026-01-01T00:00:02", Some("Moonleaf Board")));
+    rig.bus.publish(&wood_group("2026-01-01T00:00:04", None));
+    rig.bus.publish(&wood_group(
+        "2026-01-01T00:00:06",
+        Some("Long Moonleaf Board"),
+    ));
+    rig.bus.publish(&wood_group("2026-01-01T00:00:08", None));
+
+    rig.probe(&tracker, |actor| {
+        let harvests = &actor
+            .session
+            .active()
+            .expect("session is active")
+            .session
+            .harvests;
+        assert_eq!(harvests[0].yield_tier, HarvestYieldTier::Long);
+        assert_eq!(
+            harvests[0].yield_tier_source,
+            Some(HarvestYieldSource::Board)
+        );
+        assert_eq!(harvests[1].yield_tier, HarvestYieldTier::Unknown);
+        assert_eq!(harvests[1].yield_tier_source, None);
+        assert_eq!(harvests[2].yield_tier, HarvestYieldTier::Huge);
+        assert_eq!(
+            harvests[2].yield_tier_source,
+            Some(HarvestYieldSource::Board)
+        );
+        assert_eq!(harvests[3].yield_tier, HarvestYieldTier::Huge);
+        assert_eq!(
+            harvests[3].yield_tier_source,
+            Some(HarvestYieldSource::Inferred)
+        );
+    });
+}
+
+#[test]
+fn yield_inference_stops_at_hotkey_and_time_boundaries() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+    rig.bus.publish(&wood_group(
+        "2026-01-01T00:00:02",
+        Some("Long Moonleaf Board"),
+    ));
+
+    // Re-pressing the same harvesting tool starts a new action regime.
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+    rig.bus.publish(&wood_group("2026-01-01T00:00:04", None));
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        assert_eq!(
+            active.session.harvests[1].yield_tier,
+            HarvestYieldTier::Unknown
+        );
+    });
+    // Direct evidence inside that regime may classify it retroactively.
+    rig.bus.publish(&wood_group(
+        "2026-01-01T00:00:06",
+        Some("Long Moonleaf Board"),
+    ));
+
+    // A weapon press also closes the harvesting evidence regime, before
+    // the next harvesting-tool press restores the harvesting hand.
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "Sollomate Opalo".into(),
+            source: Some("hotbar:1".into()),
+        }));
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        assert_eq!(active.harvest_press_floor, 3);
+        assert!(!actor.hand_is_harvest);
+    });
+    equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
+    rig.bus.publish(&wood_group("2026-01-01T00:00:08", None));
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().expect("session is active");
+        assert_eq!(
+            active.session.harvests[3].yield_tier,
+            HarvestYieldTier::Unknown
+        );
+    });
+    rig.bus.publish(&wood_group(
+        "2026-01-01T00:00:10",
+        Some("Long Moonleaf Board"),
+    ));
+    // A later boardless swing outside 30 seconds stays unknown.
+    rig.bus.publish(&wood_group("2026-01-01T00:00:42", None));
+
+    rig.probe(&tracker, |actor| {
+        let harvests = &actor
+            .session
+            .active()
+            .expect("session is active")
+            .session
+            .harvests;
+        assert_eq!(harvests[0].yield_tier, HarvestYieldTier::Huge);
+        assert_eq!(harvests[1].yield_tier, HarvestYieldTier::Huge);
+        assert_eq!(
+            harvests[1].yield_tier_source,
+            Some(HarvestYieldSource::Inferred)
+        );
+        assert_eq!(harvests[2].yield_tier, HarvestYieldTier::Huge);
+        assert_eq!(harvests[3].yield_tier, HarvestYieldTier::Huge);
+        assert_eq!(
+            harvests[3].yield_tier_source,
+            Some(HarvestYieldSource::Inferred)
+        );
+        assert_eq!(harvests[4].yield_tier, HarvestYieldTier::Huge);
+        assert_eq!(harvests[5].yield_tier, HarvestYieldTier::Unknown);
+        assert_eq!(harvests[5].yield_tier_source, None);
+    });
 }
 
 #[test]
@@ -3488,6 +3676,14 @@ fn a_blacklisted_wood_group_still_routes_to_harvest_not_a_kill() {
         assert_eq!(active.session.harvests.len(), 1);
         assert!(active.session.harvests[0].loot_items.is_empty());
         assert_eq!(active.session.harvests[0].loot_total_ped, Ped::ZERO);
+        assert_eq!(
+            active.session.harvests[0].yield_tier,
+            crate::harvest_yield::HarvestYieldTier::Short
+        );
+        assert_eq!(
+            active.session.harvests[0].yield_tier_source,
+            Some(crate::harvest_yield::HarvestYieldSource::Board)
+        );
     });
 }
 

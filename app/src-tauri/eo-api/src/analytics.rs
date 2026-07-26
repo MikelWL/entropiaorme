@@ -185,12 +185,32 @@ pub struct HarvestLootItem {
     pub value_ped: f64,
 }
 
-/// One row of the Tree Cutting per-tool comparison. `returns` is the
-/// realised loot TT; `loot_items` its per-item composition.
+/// Tree Cutting's durable source-activity vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HarvestYieldTier {
+    Short,
+    Long,
+    Huge,
+    Unknown,
+}
+
+impl From<eo_services::harvest_yield::HarvestYieldTier> for HarvestYieldTier {
+    fn from(value: eo_services::harvest_yield::HarvestYieldTier) -> Self {
+        match value {
+            eo_services::harvest_yield::HarvestYieldTier::Short => Self::Short,
+            eo_services::harvest_yield::HarvestYieldTier::Long => Self::Long,
+            eo_services::harvest_yield::HarvestYieldTier::Huge => Self::Huge,
+            eo_services::harvest_yield::HarvestYieldTier::Unknown => Self::Unknown,
+        }
+    }
+}
+
+/// One tool strategy inside a yield tier.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestToolComparison {
-    pub tool_name: String,
+    pub tool_name: Option<String>,
     pub swings: i64,
     pub cycled: f64,
     pub returns: f64,
@@ -198,11 +218,24 @@ pub struct HarvestToolComparison {
     pub loot_items: Vec<HarvestLootItem>,
 }
 
-/// The Tree Cutting aggregate: the per-tool comparison table.
+/// One effective yield activity and its nested tool strategies.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HarvestTierComparison {
+    pub yield_tier: HarvestYieldTier,
+    pub swings: i64,
+    pub cycled: f64,
+    pub returns: f64,
+    pub loot_rate: f64,
+    pub loot_items: Vec<HarvestLootItem>,
+    pub tool_comparisons: Vec<HarvestToolComparison>,
+}
+
+/// The Tree Cutting aggregate: the tier-first comparison table.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyticsHarvest {
-    pub tool_comparisons: Vec<HarvestToolComparison>,
+    pub tier_comparisons: Vec<HarvestTierComparison>,
 }
 
 // ── Ledger / preset / inventory DTOs ────────────────────────────────
@@ -381,8 +414,8 @@ impl Api {
         Ok(hunting_dto(value))
     }
 
-    /// The Tree Cutting aggregate for a named period: the per-tool table
-    /// and its matching loot composition.
+    /// The Tree Cutting aggregate for a named period: effective yield
+    /// tiers, each with its tool strategies and matching loot composition.
     pub async fn analytics_harvest(&self, period: &str) -> Result<AnalyticsHarvest, ApiError> {
         let value = self
             .analytics
@@ -718,11 +751,11 @@ pub(crate) fn hunting_dto(data: eo_services::analytics::HuntingData) -> Analytic
 
 pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> AnalyticsHarvest {
     AnalyticsHarvest {
-        tool_comparisons: data
-            .tool_comparisons
+        tier_comparisons: data
+            .tier_comparisons
             .into_iter()
-            .map(|row| HarvestToolComparison {
-                tool_name: row.name,
+            .map(|row| HarvestTierComparison {
+                yield_tier: row.yield_tier.into(),
                 swings: row.swings,
                 cycled: row.cycled,
                 returns: row.returns,
@@ -734,6 +767,26 @@ pub(crate) fn harvest_dto(data: eo_services::analytics::HarvestData) -> Analytic
                         item_name: item.item_name,
                         quantity: item.quantity,
                         value_ped: item.value_ped,
+                    })
+                    .collect(),
+                tool_comparisons: row
+                    .tool_comparisons
+                    .into_iter()
+                    .map(|tool| HarvestToolComparison {
+                        tool_name: tool.name,
+                        swings: tool.swings,
+                        cycled: tool.cycled,
+                        returns: tool.returns,
+                        loot_rate: tool.loot_rate,
+                        loot_items: tool
+                            .loot_items
+                            .into_iter()
+                            .map(|item| HarvestLootItem {
+                                item_name: item.item_name,
+                                quantity: item.quantity,
+                                value_ped: item.value_ped,
+                            })
+                            .collect(),
                     })
                     .collect(),
             })

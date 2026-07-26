@@ -75,10 +75,10 @@ export interface ActivityRecommenderResult {
 }
 
 /**
- * The Tree Cutting aggregate: the per-tool comparison table.
+ * The Tree Cutting aggregate: the tier-first comparison table.
  */
 export interface AnalyticsHarvest {
-	toolComparisons: HarvestToolComparison[];
+	tierComparisons: HarvestTierComparison[];
 }
 
 /**
@@ -530,7 +530,7 @@ export interface GameConnection {
 
 /**
  * A harvest-guardrail disagreement on the snapshot: the tool the loot
- * evidence expects for the tree size, the tool the hotbar believed
+ * evidence expects for the board-output class, the tool the hotbar believed
  * (null when none was equipped), and when the evidence arrived.
  */
 export interface HarvestGuardrailAlert {
@@ -553,7 +553,7 @@ export interface HarvestGuardrailInput {
 
 /**
  * The harvest-guardrail block: the enabled flag and the intended tool
- * id per tree size (null while a size has no intended tool).
+ * id per board-output class (null while a class has no intended tool).
  */
 export interface HarvestGuardrailSettings {
 	enabled: boolean;
@@ -606,17 +606,34 @@ export interface HarvestSummary {
 }
 
 /**
- * One row of the Tree Cutting per-tool comparison. `returns` is the
- * realised loot TT; `loot_items` its per-item composition.
+ * One effective yield activity and its nested tool strategies.
+ */
+export interface HarvestTierComparison {
+	yieldTier: HarvestYieldTier;
+	swings: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	lootItems: HarvestLootItem[];
+	toolComparisons: HarvestToolComparison[];
+}
+
+/**
+ * One tool strategy inside a yield tier.
  */
 export interface HarvestToolComparison {
-	toolName: string;
+	toolName?: string | null;
 	swings: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
 	lootItems: HarvestLootItem[];
 }
+
+/**
+ * Tree Cutting's durable source-activity vocabulary.
+ */
+export type HarvestYieldTier = 'short' | 'long' | 'huge' | 'unknown';
 
 /**
  * One latency-histogram bucket: the inclusive upper bound in
@@ -2178,7 +2195,9 @@ export interface TrackingSnapshot {
 export type TrackingState = 'idle' | 'active';
 
 /**
- * The closed tree-size vocabulary the guardrail names.
+ * The guardrail's closed board-yield vocabulary: the yield tier evidenced by
+ * a swing's board output. The type name is the guardrail alias described on
+ * `TreeSize` in the services layer.
  */
 export type TreeSizeName = 'short' | 'long' | 'huge';
 

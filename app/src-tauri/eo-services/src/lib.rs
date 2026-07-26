@@ -28,6 +28,7 @@ pub mod event_bus;
 pub mod fingerprint_recorder;
 pub mod fuzzy_match;
 pub mod game_data_store;
+pub mod harvest_yield;
 pub mod hotbar_listener;
 pub mod keyset;
 pub mod keystroke_source;

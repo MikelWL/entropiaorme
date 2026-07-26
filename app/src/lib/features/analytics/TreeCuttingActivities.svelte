@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { SortDir, SortKey } from '$lib/view/tableModel.svelte';
 	import {
@@ -21,16 +22,23 @@
 	}: {
 		sections: TreeCuttingSection[];
 		selected: TreeCuttingSection | null;
-		onselect: (toolName: string) => void;
+		onselect: (yieldTier: TreeCuttingSection['yieldTier']) => void;
 		sortKey: SortKey<TreeCuttingSection> | undefined;
 		sortDir: SortDir;
 		onsort: (key: TreeCuttingActivitySortKey) => void;
 	} = $props();
 
+	// Unclassified is pinned after the classified activities whatever the sort.
+	// This re-partitions downstream of the sort the parent applied, deliberately:
+	// it is a diagnostic bucket with its economic columns suppressed, so it has
+	// no rank to take part in.
+	let displaySections = $derived([
+		...sections.filter((section) => section.yieldTier !== 'unknown'),
+		...sections.filter((section) => section.yieldTier === 'unknown'),
+	]);
+
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
-	const realisedMuTone = (value: number) =>
-		value > 0 ? 'text-positive' : value < 0 ? 'text-negative' : 'text-text-secondary';
 	const rateTone = (value: number) => netTone(value - 1);
 	const sortArrow = (key: TreeCuttingActivitySortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '';
@@ -131,11 +139,12 @@
 {/snippet}
 
 {#snippet subActivityRow(section: TreeCuttingSection, isSelected: boolean)}
+	{@const isUnclassified = section.yieldTier === 'unknown'}
 	<li>
 		<button
 			type="button"
 			aria-pressed={isSelected}
-			onclick={() => onselect(section.toolName)}
+			onclick={() => onselect(section.yieldTier)}
 			class="w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left
 				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
 				{isSelected
@@ -143,22 +152,30 @@
 					: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
 		>
 			<span
-				class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text"
+				class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight
+					{isUnclassified ? 'text-text-tertiary' : 'text-text'}"
 				title={treeCuttingActivityName(section)}
 			>
 				{treeCuttingActivityName(section)}
 			</span>
-			<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
-				{formatPed(section.cycled)}
-			</span>
-			<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
-				{section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
-			</span>
-			<span
-				class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}"
-			>
-				{formatPercent(section.realisedRate)}
-			</span>
+			{#if isUnclassified}
+				<span class="sr-only">Activity metrics not applicable</span>
+				<span class="w-14 shrink-0" aria-hidden="true"></span>
+				<span class="w-16 shrink-0" aria-hidden="true"></span>
+				<span class="w-[4.5rem] shrink-0" aria-hidden="true"></span>
+			{:else}
+				<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
+					{formatPed(section.cycled)}
+				</span>
+				<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
+					{section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
+				</span>
+				<span
+					class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}"
+				>
+					{formatPercent(section.realisedRate)}
+				</span>
+			{/if}
 		</button>
 	</li>
 {/snippet}
@@ -173,11 +190,11 @@
 					<button
 						type="button"
 						class="eyebrow flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
-						aria-label={sortDescription('toolName', 'Activity')}
-						onclick={() => onsort('toolName')}
+						aria-label={sortDescription('yieldTier', 'Activity')}
+						onclick={() => onsort('yieldTier')}
 					>
 						Activity
-						{#if sortKey === 'toolName'}<span class="text-accent">{sortArrow('toolName')}</span>{/if}
+						{#if sortKey === 'yieldTier'}<span class="text-accent">{sortArrow('yieldTier')}</span>{/if}
 					</button>
 					<button
 						type="button"
@@ -209,14 +226,41 @@
 				</div>
 			</div>
 			<ul class="flex max-h-[32rem] flex-col gap-1 overflow-y-auto px-2 pb-3">
-				{#each sections as section (section.toolName)}
-					{@render subActivityRow(section, section.toolName === selected?.toolName)}
+				{#each displaySections as section (section.yieldTier)}
+					{@render subActivityRow(section, section.yieldTier === selected?.yieldTier)}
 				{/each}
 			</ul>
 		</div>
 
 		{#if selected}
 			<div class="min-w-0 p-5">
+				{#if selected.yieldTier === 'unknown'}
+					<div class="flex min-h-28 items-center justify-center">
+						<div class="flex items-center gap-1.5 text-sm text-text-secondary">
+							<span>
+								{selected.swings}
+								{selected.swings === 1 ? 'swing is' : 'swings are'} unclassified and cannot be
+								assigned to a board activity.
+							</span>
+							<InfoTip label="Why swings can be unclassified" width="w-80">
+								<p class="text-xs font-semibold leading-relaxed text-text">
+									Why swings can be unclassified
+								</p>
+								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+									A swing is unclassified when no board output identifies its activity. This can
+									happen on a failed or shavings-only swing without nearby board evidence from the
+									same tool and hotkey run, when neighbouring evidence conflicts, or when a board
+									name is not recognised.
+								</p>
+								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+									Its recorded cost and loot still count in Overall. They cannot be assigned to
+									Short Boards, Boards, or Long Boards, so a large unclassified count makes the
+									activity comparison less complete.
+								</p>
+							</InfoTip>
+						</div>
+					</div>
+				{:else}
 				<div class="grid grid-cols-3 gap-x-5">
 					<StatDisplay
 						label="TT Net"
@@ -232,31 +276,82 @@
 					/>
 					<StatDisplay
 						label="Realised MU"
-						value={signedPed(selected.realisedReturns - selected.returns)}
-						valueClass={realisedMuTone(selected.realisedReturns - selected.returns)}
-						unit="PED"
+						value={NO_DATA}
+						unit=""
 					>
 						{#snippet labelSuffix()}
-							<InfoTip align="right" width="w-80" label="How Realised MU is calculated">
+							{#if inDevelopment.visible}
+								<InDevelopmentMark id="harvest-realised-mu" />
+							{/if}
+							<InfoTip align="right" width="w-80" label="What Realised MU will report">
 								<p class="text-xs font-semibold leading-relaxed text-text">
-									Realised MU: Markup confirmed by completed sales
+									Realised MU: markup confirmed by completed sales
 								</p>
 								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									Loot TT is already counted when it is acquired. A sale adds only the amount
-									received above TT, after auction fees.
+									Not available yet: a sale cannot be traced back to the activity that produced
+									the stock, so this reads as no data. A sale you have already recorded will not
+									appear here.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-secondary">
-									That net markup is split between the activities that produced the sold stock,
-									based on each activity's share of that stock.
+									Once it can: loot TT is already counted when it is acquired, so a sale will add
+									only the amount received above TT, after auction fees.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-									This activity currently has
-									{signedPed(selected.realisedReturns - selected.returns)} PED of Realised MU.
+									That net markup will be split between the activities that produced the sold
+									stock, based on each activity's share of it.
 								</p>
 							</InfoTip>
 						{/snippet}
 					</StatDisplay>
 				</div>
+
+				{#if selected.tools.length > 0}
+					<div class="mt-5 border-t border-border/50 pt-4">
+						<div class="flex items-center gap-1.5 px-2.5 pb-2">
+							<span class="eyebrow">Tool strategy</span>
+							<InfoTip label="How board activities and tools are assigned" width="w-80">
+								<p class="text-xs font-semibold leading-relaxed text-text">
+									The activity is the board output
+								</p>
+								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+									Short Boards, Boards, and Long Boards describe what the recorded swings
+									made available to the equipped tool. The app does not claim to detect the
+									physical tree.
+								</p>
+								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+									Tools remain separate here so their cost and resulting markup rate can be
+									compared within the same board activity.
+								</p>
+							</InfoTip>
+						</div>
+						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+							<span class="eyebrow flex-1 min-w-0">Tool</span>
+							<span class="eyebrow w-20 text-right shrink-0">Cycled</span>
+							<span class="eyebrow w-20 text-right shrink-0">MU Rate</span>
+							<span class="eyebrow w-24 text-right shrink-0">Realised Rate</span>
+						</div>
+						<ul class="flex flex-col gap-1">
+							{#each selected.tools as tool (tool.key)}
+								<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
+									<span class="flex-1 min-w-0 truncate text-sm font-medium text-text">
+										{tool.toolName}
+									</span>
+									<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
+										{formatPed(tool.cycled)}
+									</span>
+									<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
+										{tool.muRate !== null ? formatPercent(tool.muRate) : NO_DATA}
+									</span>
+									<span
+										class="w-24 shrink-0 text-right text-sm tabular-nums font-medium {rateTone(tool.realisedRate)}"
+									>
+										{formatPercent(tool.realisedRate)}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
 
 				{#if selected.items.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">
@@ -347,8 +442,9 @@
 					</div>
 				{:else}
 					<p class="mt-4 text-xs text-text-tertiary px-2.5">
-						No loot recorded on this tool yet.
+						No loot recorded for this board activity yet.
 					</p>
+				{/if}
 				{/if}
 			</div>
 		{/if}

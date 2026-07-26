@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::harvest_yield::{HarvestYieldSource, HarvestYieldTier};
 use crate::ped::Ped;
 
 /// A single item received from a loot drop. Serialises to its wire
@@ -94,6 +95,10 @@ pub struct HarvestEvent {
     pub timestamp: f64,
     pub success: bool,
     pub tool_name: Option<String>,
+    /// Effective board-yield activity, independent of the tool.
+    pub yield_tier: HarvestYieldTier,
+    /// None only when the tier remains genuinely unknown.
+    pub yield_tier_source: Option<HarvestYieldSource>,
     pub cost_ped: Ped,
     pub loot_total_ped: Ped,
     pub loot_items: Vec<LootItem>,
@@ -159,8 +164,9 @@ pub struct ActiveSessionView {
 
 /// A harvest-guardrail disagreement as the read surfaces consume it:
 /// the tool the loot evidence expects, the tool the hotbar believed
-/// (None when none was equipped), the closed tree-size vocabulary
-/// ("short" | "long" | "huge"), and when the evidence arrived.
+/// (None when none was equipped), the closed board-yield vocabulary
+/// ("short" | "long" | "huge"), and when the evidence arrived. The field
+/// name is the guardrail alias described on `TreeSize`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarvestGuardrailMismatchView {
     pub expected_tool: String,

@@ -75,7 +75,7 @@ pub struct TrifectaSettings {
 }
 
 /// The harvest-guardrail block: the enabled flag and the intended tool
-/// id per tree size (null while a size has no intended tool).
+/// id per board-output class (null while a class has no intended tool).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestGuardrailSettings {
