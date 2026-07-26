@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { SortDir, SortKey } from '$lib/view/tableModel.svelte';
 	import {
@@ -27,6 +28,10 @@
 		onsort: (key: TreeCuttingActivitySortKey) => void;
 	} = $props();
 
+	// Unclassified is pinned after the classified activities whatever the sort.
+	// This re-partitions downstream of the sort the parent applied, deliberately:
+	// it is a diagnostic bucket with its economic columns suppressed, so it has
+	// no rank to take part in.
 	let displaySections = $derived([
 		...sections.filter((section) => section.yieldTier !== 'unknown'),
 		...sections.filter((section) => section.yieldTier === 'unknown'),
@@ -34,8 +39,6 @@
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
-	const realisedMuTone = (value: number) =>
-		value > 0 ? 'text-positive' : value < 0 ? 'text-negative' : 'text-text-secondary';
 	const rateTone = (value: number) => netTone(value - 1);
 	const sortArrow = (key: TreeCuttingActivitySortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '';
@@ -273,26 +276,29 @@
 					/>
 					<StatDisplay
 						label="Realised MU"
-						value={signedPed(selected.realisedReturns - selected.returns)}
-						valueClass={realisedMuTone(selected.realisedReturns - selected.returns)}
-						unit="PED"
+						value={NO_DATA}
+						unit=""
 					>
 						{#snippet labelSuffix()}
-							<InfoTip align="right" width="w-80" label="How Realised MU is calculated">
+							{#if inDevelopment.visible}
+								<InDevelopmentMark id="harvest-realised-mu" />
+							{/if}
+							<InfoTip align="right" width="w-80" label="What Realised MU will report">
 								<p class="text-xs font-semibold leading-relaxed text-text">
-									Realised MU: Markup confirmed by completed sales
+									Realised MU: markup confirmed by completed sales
 								</p>
 								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									Loot TT is already counted when it is acquired. A sale adds only the amount
-									received above TT, after auction fees.
+									Not available yet: a sale cannot be traced back to the activity that produced
+									the stock, so this reads as no data. A sale you have already recorded will not
+									appear here.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-secondary">
-									That net markup is split between the activities that produced the sold stock,
-									based on each activity's share of that stock.
+									Once it can: loot TT is already counted when it is acquired, so a sale will add
+									only the amount received above TT, after auction fees.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-									This activity currently has
-									{signedPed(selected.realisedReturns - selected.returns)} PED of Realised MU.
+									That net markup will be split between the activities that produced the sold
+									stock, based on each activity's share of it.
 								</p>
 							</InfoTip>
 						{/snippet}

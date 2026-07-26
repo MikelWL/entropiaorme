@@ -2893,7 +2893,7 @@ mod tests {
         assert_eq!(huge["yieldTier"], json!("huge"));
         let a = &huge["toolComparisons"][0];
         assert_eq!(a["name"], json!("Axe A"));
-        let a_items = huge["lootItems"].as_array().unwrap();
+        let a_items = a["lootItems"].as_array().unwrap();
         assert_eq!(a_items.len(), 2);
         assert_eq!(a_items[0]["itemName"], json!("Long Moonleaf Board"));
         assert_eq!(a_items[0]["quantity"], json!(2));

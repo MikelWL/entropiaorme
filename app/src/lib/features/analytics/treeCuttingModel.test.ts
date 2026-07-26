@@ -71,8 +71,9 @@ function obs(
 	return { itemName: name, markupPct, horizon, salesPed, readings };
 }
 
-// Mirrors the maintainer's real tree-cutting data closely enough to
-// exercise broad and thin market opportunities.
+// Exercises broad and thin market opportunities together. Tier order here is
+// immaterial because the model sorts sections itself; the end-to-end fixture,
+// which the UI renders in payload order, mirrors the emitted rank order instead.
 function harvest(): AnalyticsHarvest {
 	return {
 		tierComparisons: [
@@ -81,7 +82,7 @@ function harvest(): AnalyticsHarvest {
 				swings: 4562,
 				cycled: 91.24,
 				returns: 34.26,
-				lootRate: 1.0015,
+				lootRate: 0.3755,
 				lootItems: [loot('Long Moonleaf Board', 571, 34.26)],
 				toolComparisons: [
 					{
@@ -107,7 +108,7 @@ function harvest(): AnalyticsHarvest {
 				swings: 127,
 				cycled: 111.13,
 				returns: 87.38,
-				lootRate: 0.6133,
+				lootRate: 0.7863,
 				lootItems: [loot('Wood Shavings', 87431, 87.38)],
 				toolComparisons: [
 					{
@@ -115,7 +116,7 @@ function harvest(): AnalyticsHarvest {
 						swings: 127,
 						cycled: 111.13,
 						returns: 87.38,
-						lootRate: 0.6133,
+						lootRate: 0.7863,
 						lootItems: [loot('Wood Shavings', 87431, 87.38)],
 					},
 				],
@@ -480,7 +481,13 @@ describe('sections', () => {
 		model.selectSection('long');
 		model.activityTable.setSort('realisedRate');
 		expect(model.activityTable.sortDir).toBe('desc');
-		expect(model.activityTable.filtered.map((s) => s.yieldTier)).toEqual([HUGE, LONG]);
+		// Realised is the TT loot rate today, and Long Boards both cycles more and
+		// returns a better rate here, so this order matches the cycled order. The
+		// MU Rate case below is the one proving a rate sort can reorder the table,
+		// because market evidence is independent of the TT rate. Making realised
+		// reorder instead would mean new totals, not new rates: these totals
+		// cannot produce it while each rate stays derived from its own.
+		expect(model.activityTable.filtered.map((s) => s.yieldTier)).toEqual([LONG, HUGE]);
 		expect(model.selectedSection?.yieldTier).toBe(LONG);
 
 		model.activityTable.setSort('muRate');
