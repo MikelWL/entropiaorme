@@ -21,17 +21,22 @@ import {
 	confirmAuctionListing,
 	convertStock,
 	createAuctionListing,
+	deleteAuctionListing,
+	deleteStockConversion,
 	expireAuctionListing,
+	getActivityHistory,
 	getAnalyticsHarvest,
 	getAuctionListings,
 	getHarvestRealisedMarkup,
 	getHarvestStock,
 	getMarketHarvestMarkups,
+	revertAuctionSale,
 	type HarvestData,
 	type MarketHarvestData,
 	type MarketHarvestItem,
 } from '$lib/api';
 import type {
+	ActivityHistoryEntry,
 	AuctionListing,
 	AuctionListingInput,
 	HarvestLootItem,
@@ -381,6 +386,9 @@ export function createTreeCuttingModel() {
 	// realised figures only, never the holding-independent opportunity.
 	let positions = $state<StockPosition[]>([]);
 	let listings = $state<AuctionListing[]>([]);
+	// Read on demand rather than with the tab: History is a surface the player
+	// opens deliberately, and the verdicts on it are computed per entry.
+	let history = $state<ActivityHistoryEntry[]>([]);
 	let realisedByTier = $state<Map<HarvestYieldTier, number>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -534,6 +542,38 @@ export function createTreeCuttingModel() {
 		positions = stock;
 		listings = allListings;
 		realisedByTier = new Map(realised.map((row) => [row.yieldTier, row.netMarkup]));
+		// Only once it has been opened: an undo verdict depends on every other
+		// entry, so a stale list would offer undos that no longer apply.
+		if (history.length > 0) history = await getActivityHistory().catch(() => history);
+	}
+
+	/** Everything this activity has done to its stock, newest first. */
+	async function loadHistory() {
+		try {
+			history = await getActivityHistory();
+		} catch (e) {
+			error = describeError(e, 'Failed to load the activity history');
+			throw e;
+		}
+	}
+
+	/** Take back one history entry. `revertSale` leaves the listing open
+	 * instead of removing it, which only a sold listing can do. */
+	async function undoHistoryEntry(entry: ActivityHistoryEntry, revertSale = false) {
+		try {
+			if (entry.kind === 'conversion') {
+				await deleteStockConversion({ id: entry.id });
+			} else if (revertSale) {
+				await revertAuctionSale({ id: entry.id });
+			} else {
+				await deleteAuctionListing({ id: entry.id });
+			}
+			await refreshHoldings();
+			history = await getActivityHistory();
+		} catch (e) {
+			error = describeError(e, 'Failed to undo that entry');
+			throw e;
+		}
 	}
 
 	/** List stock on the auction. The quantity leaves holdings now and the
@@ -666,6 +706,11 @@ export function createTreeCuttingModel() {
 		get resolvedListings() {
 			return resolvedListings;
 		},
+		get history() {
+			return history;
+		},
+		loadHistory,
+		undoHistoryEntry,
 		loadData,
 		listStock,
 		resolveListing,

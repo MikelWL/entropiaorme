@@ -3,6 +3,7 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import ActivityHistoryModal from '$lib/features/analytics/ActivityHistoryModal.svelte';
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
@@ -30,6 +31,21 @@
 
 	let sellItem = $state<StockRow | null>(null);
 	let convertItem = $state<StockRow | null>(null);
+
+	// History reads on open rather than with the tab: it is a surface the
+	// player goes to deliberately, and its undo verdicts are worth computing
+	// fresh at the moment they are offered.
+	let historyOpen = $state(false);
+	let historyLoading = $state(false);
+	async function openHistory() {
+		historyOpen = true;
+		historyLoading = true;
+		try {
+			await model.loadHistory();
+		} finally {
+			historyLoading = false;
+		}
+	}
 
 	$effect(() => {
 		void model.loadData(model.period);
@@ -118,6 +134,7 @@
 							stock={model.stock}
 							onsell={(item) => (sellItem = item)}
 							onconvert={(item) => (convertItem = item)}
+							onhistory={openHistory}
 						/>
 					{/if}
 				</div>
@@ -170,6 +187,12 @@
 		item={convertItem}
 		onconvert={model.recycleStock}
 		oncancel={() => (convertItem = null)}
+	/>
+	<ActivityHistoryModal
+		bind:open={historyOpen}
+		entries={model.history}
+		loading={historyLoading}
+		onundo={model.undoHistoryEntry}
 	/>
 {:else}
 	<Card class="p-6">

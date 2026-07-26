@@ -6,6 +6,7 @@
  */
 
 export type {
+	ActivityHistoryEntry,
 	AnalyticsOverview as OverviewStats,
 	AuctionListing,
 	AuctionListingInput,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
+	ActivityHistoryEntry,
 	AnalyticsHarvest,
 	HarvestLootItem,
 	MarketHarvestData,
@@ -26,6 +27,10 @@ vi.mock('$lib/api', () => ({
 	confirmAuctionListing: vi.fn(),
 	expireAuctionListing: vi.fn(),
 	convertStock: vi.fn(),
+	getActivityHistory: vi.fn(),
+	revertAuctionSale: vi.fn(),
+	deleteAuctionListing: vi.fn(),
+	deleteStockConversion: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -160,6 +165,94 @@ beforeEach(() => {
 	mocked.confirmAuctionListing.mockResolvedValue(listing({ status: 'sold' }));
 	mocked.expireAuctionListing.mockResolvedValue(listing({ status: 'expired' }));
 	mocked.convertStock.mockResolvedValue(undefined);
+	mocked.getActivityHistory.mockResolvedValue([]);
+	mocked.revertAuctionSale.mockResolvedValue(listing({ status: 'pending' }));
+	mocked.deleteAuctionListing.mockResolvedValue(undefined);
+	mocked.deleteStockConversion.mockResolvedValue(undefined);
+});
+
+function historyEntry(over: Partial<ActivityHistoryEntry> = {}): ActivityHistoryEntry {
+	return {
+		id: 'entry-1',
+		kind: 'listing',
+		status: 'sold',
+		itemName: 'Long Moonleaf Board',
+		targetItem: null,
+		occurredAt: '2026-07-26',
+		quantity: 71,
+		ttValue: 4.26,
+		netMarkup: 1.2,
+		activityNetMarkup: 1.2,
+		canRevertSale: true,
+		canDelete: true,
+		undoBlockedReason: null,
+		...over,
+	};
+}
+
+describe('activity history', () => {
+	it('reads only when opened, so an undo verdict is never offered stale', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+
+		expect(mocked.getActivityHistory).not.toHaveBeenCalled();
+		expect(model.history).toEqual([]);
+
+		mocked.getActivityHistory.mockResolvedValue([historyEntry()]);
+		await model.loadHistory();
+		expect(model.history).toHaveLength(1);
+	});
+
+	it('routes each undo to the command that matches the entry and the choice', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+		mocked.getActivityHistory.mockResolvedValue([historyEntry()]);
+		await model.loadHistory();
+
+		await model.undoHistoryEntry(historyEntry(), true);
+		expect(mocked.revertAuctionSale).toHaveBeenCalledWith({ id: 'entry-1' });
+		expect(mocked.deleteAuctionListing).not.toHaveBeenCalled();
+
+		await model.undoHistoryEntry(historyEntry(), false);
+		expect(mocked.deleteAuctionListing).toHaveBeenCalledWith({ id: 'entry-1' });
+
+		// A conversion has one way back, whatever the caller asks for: there is
+		// no sale on it to revert.
+		await model.undoHistoryEntry(historyEntry({ id: 'conv-1', kind: 'conversion' }), true);
+		expect(mocked.deleteStockConversion).toHaveBeenCalledWith({ id: 'conv-1' });
+		expect(mocked.revertAuctionSale).toHaveBeenCalledTimes(1);
+	});
+
+	it('re-reads holdings and history after an undo, since both have moved', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+		mocked.getActivityHistory.mockResolvedValue([historyEntry()]);
+		await model.loadHistory();
+
+		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 642, 38.52)]);
+		mocked.getActivityHistory.mockResolvedValue([]);
+		await model.undoHistoryEntry(historyEntry(), false);
+
+		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(642);
+		expect(model.history).toEqual([]);
+		// Undoing a sale is not new gameplay evidence either.
+		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces a refused undo and rethrows so the row can stay open', async () => {
+		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
+		const model = createTreeCuttingModel();
+		await model.loadData();
+		mocked.deleteStockConversion.mockRejectedValue(new Error('Nanocube this produced has since been sold'));
+
+		await expect(
+			model.undoHistoryEntry(historyEntry({ kind: 'conversion' }), false),
+		).rejects.toThrow();
+		expect(model.error).toContain('Nanocube');
+	});
 });
 
 describe('harvestTierLabel', () => {
