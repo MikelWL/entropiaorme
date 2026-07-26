@@ -14,7 +14,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
-	import { formatPed } from '$lib/utils/format';
+	import { formatPed, todayDate } from '$lib/utils/format';
 	import type { AuctionListingInput } from '$lib/types/analytics';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 
@@ -45,7 +45,11 @@
 	// claim on it, so the split is stated up front rather than discovered
 	// afterwards in the figures.
 	const excess = $derived(item ? Math.max(quantity - item.heldQty, 0) : 0);
-	const grossMarkup = $derived((buyout ?? startingBid) - listedTt);
+	// Net of the listing fee, because the fee is spent the moment this listing
+	// is created: a preview that quoted the gross would promise more than the
+	// player can ever end up holding, and by a margin that matters on a
+	// low-markup clear.
+	const netMarkup = $derived((buyout ?? startingBid) - listedTt - (listingFee || 0));
 
 	$effect(() => {
 		if (item && initialisedFor !== item.itemName) {
@@ -53,7 +57,9 @@
 			startingBid = 0;
 			buyout = null;
 			listingFee = 0.5;
-			listedAt = '';
+			// Prefilled rather than left blank: listing today is the case, and
+			// an empty field reads as unset when the effect is today's date.
+			listedAt = todayDate();
 			error = null;
 			initialisedFor = item.itemName;
 			modalOpen = true;
@@ -104,11 +110,9 @@
 				</div>
 				{#if (buyout ?? startingBid) > 0}
 					<div class="flex items-center justify-between pt-1.5 border-t border-border/50">
-						<span class="text-text font-medium">Markup if it clears</span>
-						<span
-							class="tabular-nums font-medium {grossMarkup >= 0 ? 'text-success' : 'text-error'}"
-						>
-							{formatPed(grossMarkup)} PED
+						<span class="text-text font-medium">Net markup if it clears</span>
+						<span class="tabular-nums font-medium {netMarkup >= 0 ? 'text-success' : 'text-error'}">
+							{formatPed(netMarkup)} PED
 						</span>
 					</div>
 				{/if}
@@ -143,7 +147,7 @@
 					<Input type="number" min="0" step="0.01" bind:value={listingFee} />
 				</label>
 				<label class="block space-y-1">
-					<span class="eyebrow text-text-tertiary">Listed on (optional)</span>
+					<span class="eyebrow text-text-tertiary">Listed on</span>
 					<Input type="date" bind:value={listedAt} />
 				</label>
 			</div>

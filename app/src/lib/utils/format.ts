@@ -63,6 +63,19 @@ export function formatDateFull(iso: string): string {
 	});
 }
 
+/** Today as `YYYY-MM-DD` in the player's own calendar, for prefilling a date
+ * input.
+ *
+ * Built from the local parts rather than via `toISOString`, which converts to
+ * UTC first: west of UTC that hands back tomorrow's date through the evening,
+ * which is not the day the player is having. */
+export function todayDate(): string {
+	const now = new Date();
+	const month = `${now.getMonth() + 1}`.padStart(2, '0');
+	const day = `${now.getDate()}`.padStart(2, '0');
+	return `${now.getFullYear()}-${month}-${day}`;
+}
+
 /** Format ledger date (today: "HH:MM AM/PM", older: "Mar 24")
  *
  * Ledger dates come in two shapes: a full timestamp, and a bare `YYYY-MM-DD`
