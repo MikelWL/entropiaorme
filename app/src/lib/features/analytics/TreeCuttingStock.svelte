@@ -94,21 +94,25 @@
 {#snippet actionButton(
 	letter: string,
 	label: string,
-	expandedWidth: string,
 	onclick: () => void,
 	disabled = false,
 	title = '',
 )}
+	<!-- The expanded width comes from the label rather than a number chosen to
+		suit it: `ch` is the font's own digit advance, so this tracks the type it
+		is measuring and cannot be left behind by a rename. Lowercase letters run
+		narrower than a digit, so it errs on the side of fitting. -->
 	<button
 		type="button"
 		{onclick}
 		{disabled}
 		{title}
 		aria-label={label}
+		style="--expanded: calc({label.length}ch + 1.25rem)"
 		class="group/act relative inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden
 			rounded-md border border-border/40 bg-transparent text-xs font-semibold text-text-secondary
 			transition-[width,color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
-			{expandedWidth} hover:text-text hover:border-border
+			hover:w-[var(--expanded)] hover:text-text hover:border-border
 			disabled:cursor-not-allowed disabled:text-text-tertiary disabled:border-dashed
 			disabled:hover:text-text-tertiary disabled:hover:border-border/40"
 	>
@@ -286,7 +290,6 @@
 					{@render actionButton(
 						'N',
 						'Nanocube',
-						'hover:w-44',
 						() => onconvert(item),
 						item.heldQty <= 0,
 						item.heldQty <= 0 ? 'Nothing held to convert' : '',
@@ -294,7 +297,6 @@
 					{@render actionButton(
 						'S',
 						'Sell',
-						'hover:w-16',
 						() => onsell(item),
 						item.heldQty <= 0,
 						item.heldQty <= 0 ? 'Nothing held to sell' : '',
