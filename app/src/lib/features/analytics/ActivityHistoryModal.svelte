@@ -14,6 +14,11 @@
 	 * Undo confirms in place rather than in a second modal. A sold listing has
 	 * two ways back and they differ in a way worth reading, which a stacked
 	 * dialog would ask you to hold in your head with the row out of sight.
+	 *
+	 * An undone entry stays on the list, struck through and inert. Its effects
+	 * are all reversed, so it is a record rather than a state: it says what was
+	 * taken back, and offers nothing to do about it. Putting something back is
+	 * recording it again, not reviving this.
 	 */
 	import Button from '$lib/components/Button.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
@@ -127,12 +132,15 @@
 				<li
 					class="border-b border-border/30 py-3 last:border-b-0
 						transition-colors duration-[var(--duration-base)]
-						{isConfirming ? 'bg-surface-hover/30' : ''}"
+						{isConfirming ? 'bg-surface-hover/30' : ''}
+						{entry.undone ? 'line-through decoration-border-bright opacity-45' : ''}"
 				>
 					<div class="flex items-center gap-3">
 						<span
 							class="w-20 shrink-0 text-[0.625rem] font-medium uppercase tracking-wide
-								{STATUS_TONE[entry.status] ?? 'text-text-tertiary'}"
+								{entry.undone
+								? 'text-text-tertiary'
+								: (STATUS_TONE[entry.status] ?? 'text-text-tertiary')}"
 						>
 							{STATUS_LABEL[entry.status] ?? entry.status}
 						</span>
@@ -167,7 +175,9 @@
 						</span>
 
 						<div class="flex w-20 shrink-0 items-center justify-end">
-							{#if !entry.canDelete && !entry.canRevertSale}
+							{#if entry.undone}
+								<!-- Nothing to offer: every effect is already reversed. -->
+							{:else if !entry.canDelete && !entry.canRevertSale}
 								<span class="flex items-center gap-1 text-xs text-text-tertiary">
 									Held
 									<InfoTip align="right" label="Why this cannot be undone" width="w-80">

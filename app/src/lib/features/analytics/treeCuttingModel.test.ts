@@ -29,8 +29,8 @@ vi.mock('$lib/api', () => ({
 	convertStock: vi.fn(),
 	getActivityHistory: vi.fn(),
 	revertAuctionSale: vi.fn(),
-	deleteAuctionListing: vi.fn(),
-	deleteStockConversion: vi.fn(),
+	undoAuctionListing: vi.fn(),
+	undoStockConversion: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -167,8 +167,8 @@ beforeEach(() => {
 	mocked.convertStock.mockResolvedValue(undefined);
 	mocked.getActivityHistory.mockResolvedValue([]);
 	mocked.revertAuctionSale.mockResolvedValue(listing({ status: 'pending' }));
-	mocked.deleteAuctionListing.mockResolvedValue(undefined);
-	mocked.deleteStockConversion.mockResolvedValue(undefined);
+	mocked.undoAuctionListing.mockResolvedValue(undefined);
+	mocked.undoStockConversion.mockResolvedValue(undefined);
 });
 
 function historyEntry(over: Partial<ActivityHistoryEntry> = {}): ActivityHistoryEntry {
@@ -186,6 +186,7 @@ function historyEntry(over: Partial<ActivityHistoryEntry> = {}): ActivityHistory
 		canRevertSale: true,
 		canDelete: true,
 		undoBlockedReason: null,
+		undone: false,
 		...over,
 	};
 }
@@ -213,15 +214,15 @@ describe('activity history', () => {
 
 		await model.undoHistoryEntry(historyEntry(), true);
 		expect(mocked.revertAuctionSale).toHaveBeenCalledWith({ id: 'entry-1' });
-		expect(mocked.deleteAuctionListing).not.toHaveBeenCalled();
+		expect(mocked.undoAuctionListing).not.toHaveBeenCalled();
 
 		await model.undoHistoryEntry(historyEntry(), false);
-		expect(mocked.deleteAuctionListing).toHaveBeenCalledWith({ id: 'entry-1' });
+		expect(mocked.undoAuctionListing).toHaveBeenCalledWith({ id: 'entry-1' });
 
 		// A conversion has one way back, whatever the caller asks for: there is
 		// no sale on it to revert.
 		await model.undoHistoryEntry(historyEntry({ id: 'conv-1', kind: 'conversion' }), true);
-		expect(mocked.deleteStockConversion).toHaveBeenCalledWith({ id: 'conv-1' });
+		expect(mocked.undoStockConversion).toHaveBeenCalledWith({ id: 'conv-1' });
 		expect(mocked.revertAuctionSale).toHaveBeenCalledTimes(1);
 	});
 
@@ -233,11 +234,15 @@ describe('activity history', () => {
 		await model.loadHistory();
 
 		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 642, 38.52)]);
-		mocked.getActivityHistory.mockResolvedValue([]);
+		mocked.getActivityHistory.mockResolvedValue([
+			historyEntry({ undone: true, canRevertSale: false, canDelete: false }),
+		]);
 		await model.undoHistoryEntry(historyEntry(), false);
 
 		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(642);
-		expect(model.history).toEqual([]);
+		// The entry stays on the list as the record of the correction.
+		expect(model.history).toHaveLength(1);
+		expect(model.history[0].undone).toBe(true);
 		// Undoing a sale is not new gameplay evidence either.
 		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledTimes(1);
 	});
@@ -246,7 +251,7 @@ describe('activity history', () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		const model = createTreeCuttingModel();
 		await model.loadData();
-		mocked.deleteStockConversion.mockRejectedValue(new Error('Nanocube this produced has since been sold'));
+		mocked.undoStockConversion.mockRejectedValue(new Error('Nanocube this produced has since been sold'));
 
 		await expect(
 			model.undoHistoryEntry(historyEntry({ kind: 'conversion' }), false),

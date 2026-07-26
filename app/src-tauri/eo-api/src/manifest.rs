@@ -566,7 +566,7 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(AuctionListing))),
         },
         CommandSpec {
-            name: "auction_listing_delete",
+            name: "auction_listing_undo",
             args: vec![ArgSpec {
                 name: "input",
                 schema: schema(schema_for!(ActivityUndoInput)),
@@ -574,7 +574,7 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: None,
         },
         CommandSpec {
-            name: "stock_conversion_delete",
+            name: "stock_conversion_undo",
             args: vec![ArgSpec {
                 name: "input",
                 schema: schema(schema_for!(ActivityUndoInput)),

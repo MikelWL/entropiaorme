@@ -75,10 +75,12 @@ export interface ActivityHistoryEntry {
 	activityNetMarkup: number | null;
 	/** Whether the sale can be taken back, leaving the listing open. */
 	canRevertSale: boolean;
-	/** Whether the entry can be removed outright, returning any stock it took. */
+	/** Whether the entry can be undone outright, returning any stock it took. */
 	canDelete: boolean;
 	/** Why not, when it cannot, in terms a reader can act on. */
 	undoBlockedReason: string | null;
+	/** Already undone. Every effect it had is reversed and the entry is kept as the read-only record of a correction. */
+	undone: boolean;
 }
 
 /**
@@ -2629,12 +2631,12 @@ export async function auctionSaleRevert(input: ActivityUndoInput): Promise<Aucti
 	return invokeCommand('auction_sale_revert', { input });
 }
 
-export async function auctionListingDelete(input: ActivityUndoInput): Promise<void> {
-	return invokeCommand('auction_listing_delete', { input });
+export async function auctionListingUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('auction_listing_undo', { input });
 }
 
-export async function stockConversionDelete(input: ActivityUndoInput): Promise<void> {
-	return invokeCommand('stock_conversion_delete', { input });
+export async function stockConversionUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('stock_conversion_undo', { input });
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

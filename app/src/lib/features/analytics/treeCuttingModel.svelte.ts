@@ -21,8 +21,6 @@ import {
 	confirmAuctionListing,
 	convertStock,
 	createAuctionListing,
-	deleteAuctionListing,
-	deleteStockConversion,
 	expireAuctionListing,
 	getActivityHistory,
 	getAnalyticsHarvest,
@@ -31,6 +29,8 @@ import {
 	getHarvestStock,
 	getMarketHarvestMarkups,
 	revertAuctionSale,
+	undoAuctionListing,
+	undoStockConversion,
 	type HarvestData,
 	type MarketHarvestData,
 	type MarketHarvestItem,
@@ -562,11 +562,11 @@ export function createTreeCuttingModel() {
 	async function undoHistoryEntry(entry: ActivityHistoryEntry, revertSale = false) {
 		try {
 			if (entry.kind === 'conversion') {
-				await deleteStockConversion({ id: entry.id });
+				await undoStockConversion({ id: entry.id });
 			} else if (revertSale) {
 				await revertAuctionSale({ id: entry.id });
 			} else {
-				await deleteAuctionListing({ id: entry.id });
+				await undoAuctionListing({ id: entry.id });
 			}
 			await refreshHoldings();
 			history = await getActivityHistory();

@@ -535,19 +535,19 @@ pub async fn auction_sale_revert(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn auction_listing_delete(
+pub async fn auction_listing_undo(
     app: tauri::AppHandle,
     input: ActivityUndoInput,
 ) -> Result<(), ApiError> {
-    facade(&app)?.auction_listing_delete(input).await
+    facade(&app)?.auction_listing_undo(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn stock_conversion_delete(
+pub async fn stock_conversion_undo(
     app: tauri::AppHandle,
     input: ActivityUndoInput,
 ) -> Result<(), ApiError> {
-    facade(&app)?.stock_conversion_delete(input).await
+    facade(&app)?.stock_conversion_undo(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1437,8 +1437,8 @@ mod tests {
         "stock_convert",
         "activity_history",
         "auction_sale_revert",
-        "auction_listing_delete",
-        "stock_conversion_delete",
+        "auction_listing_undo",
+        "stock_conversion_undo",
         "ledger_list",
         "ledger_summary",
         "ledger_create",

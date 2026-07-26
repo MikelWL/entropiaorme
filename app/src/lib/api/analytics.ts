@@ -51,8 +51,8 @@ export const convertStock = commands.stockConvert;
 // What the activity has done to its stock, and the three ways back out of it.
 export const getActivityHistory = commands.activityHistory;
 export const revertAuctionSale = commands.auctionSaleRevert;
-export const deleteAuctionListing = commands.auctionListingDelete;
-export const deleteStockConversion = commands.stockConversionDelete;
+export const undoAuctionListing = commands.auctionListingUndo;
+export const undoStockConversion = commands.stockConversionUndo;
 
 export const addInventoryItem = commands.inventoryCreate;
 export const updateInventoryItem = commands.inventoryUpdate;

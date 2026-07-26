@@ -161,9 +161,12 @@ pub struct ActivityHistoryRow {
     /// Sold listings only: whether the sale can be taken back, leaving the
     /// listing open. Never blocked, since no stock moves.
     pub can_revert_sale: bool,
-    /// Whether the entry can be removed outright, returning any stock it took.
+    /// Whether the entry can be undone outright, returning any stock it took.
     pub can_delete: bool,
     pub undo_blocked_reason: Option<String>,
+    /// Already undone: kept on the list as the record of a correction, with
+    /// every effect it had reversed and no action left on it.
+    pub undone: bool,
 }
 
 /// One yield tier's realised markup from confirmed sales, for the Tree
@@ -1990,7 +1993,10 @@ fn read_listing(
 ) -> rusqlite::Result<Option<AuctionListingRow>> {
     use rusqlite::OptionalExtension as _;
     conn.query_row(
-        &format!("SELECT {LISTING_COLUMNS} FROM auction_listings WHERE id = ?"),
+        &format!(
+            "SELECT {LISTING_COLUMNS} FROM auction_listings \
+             WHERE id = ? AND undone_at IS NULL"
+        ),
         rusqlite::params![listing_id],
         |row| Ok(listing_from_row(row)),
     )
@@ -2598,7 +2604,7 @@ impl AnalyticsService {
                     let tt_value = quantity * unit_tt;
                     let listed_quantity: f64 = conn.query_row(
                         "SELECT COALESCE(SUM(quantity), 0) FROM auction_listings \
-                         WHERE item_name = ? AND status = 'pending'",
+                         WHERE item_name = ? AND status = 'pending' AND undone_at IS NULL",
                         rusqlite::params![item_name],
                         |row| row.get(0),
                     )?;
@@ -2627,6 +2633,7 @@ impl AnalyticsService {
             .with_reader(|conn| {
                 let mut stmt = conn.prepare(&format!(
                     "SELECT {LISTING_COLUMNS} FROM auction_listings \
+                     WHERE undone_at IS NULL \
                      ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, \
                               listed_at DESC, id DESC"
                 ))?;
@@ -3016,16 +3023,26 @@ impl AnalyticsService {
                 let mut rows: Vec<ActivityHistoryRow> = Vec::new();
 
                 {
-                    let mut stmt =
-                        conn.prepare(&format!("SELECT {LISTING_COLUMNS} FROM auction_listings"))?;
+                    // History is the one read that sees undone entries: they
+                    // are the record of a correction, kept read-only.
+                    let mut stmt = conn.prepare(&format!(
+                        "SELECT {LISTING_COLUMNS}, undone_at FROM auction_listings"
+                    ))?;
                     let listings = stmt
-                        .query_map([], |row| Ok(listing_from_row(row)))?
+                        .query_map([], |row| {
+                            Ok((listing_from_row(row), row.get::<_, Option<String>>(15)?))
+                        })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
-                    for listing in listings {
+                    for (listing, undone_at) in listings {
                         let net_markup = listing.gross_markup.map(|gross| {
                             gross - listing.listing_fee - listing.sale_fee.unwrap_or(0.0)
                         });
-                        let blocker = reversal_blocker(conn, &listing.id)?;
+                        let undone = undone_at.is_some();
+                        let blocker = if undone {
+                            None
+                        } else {
+                            reversal_blocker(conn, &listing.id)?
+                        };
                         rows.push(ActivityHistoryRow {
                             occurred_at: listing
                                 .resolved_at
@@ -3039,10 +3056,11 @@ impl AnalyticsService {
                             tt_value: listing.tt_value,
                             net_markup,
                             activity_net_markup: listing.activity_net_markup,
-                            can_revert_sale: listing.status == "sold",
-                            can_delete: blocker.is_none(),
+                            can_revert_sale: !undone && listing.status == "sold",
+                            can_delete: !undone && blocker.is_none(),
                             undo_blocked_reason: blocker
                                 .map(|(item, short)| blocked_reason(&item, short)),
+                            undone,
                             id: listing.id,
                         });
                     }
@@ -3050,7 +3068,8 @@ impl AnalyticsService {
 
                 {
                     let mut stmt = conn.prepare(
-                        "SELECT id, source_item, target_item, quantity, tt_value, converted_at \
+                        "SELECT id, source_item, target_item, quantity, tt_value, converted_at, \
+                                undone_at \
                          FROM stock_conversions",
                     )?;
                     let conversions = stmt
@@ -3062,11 +3081,19 @@ impl AnalyticsService {
                                 row.get::<_, f64>(3)?,
                                 row.get::<_, f64>(4)?,
                                 row.get::<_, String>(5)?,
+                                row.get::<_, Option<String>>(6)?,
                             ))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
-                    for (id, source, target, quantity, tt_value, converted_at) in conversions {
-                        let blocker = reversal_blocker(conn, &id)?;
+                    for (id, source, target, quantity, tt_value, converted_at, undone_at) in
+                        conversions
+                    {
+                        let undone = undone_at.is_some();
+                        let blocker = if undone {
+                            None
+                        } else {
+                            reversal_blocker(conn, &id)?
+                        };
                         rows.push(ActivityHistoryRow {
                             id,
                             kind: "conversion".to_string(),
@@ -3079,9 +3106,10 @@ impl AnalyticsService {
                             net_markup: None,
                             activity_net_markup: None,
                             can_revert_sale: false,
-                            can_delete: blocker.is_none(),
+                            can_delete: !undone && blocker.is_none(),
                             undo_blocked_reason: blocker
                                 .map(|(item, short)| blocked_reason(&item, short)),
+                            undone,
                         });
                     }
                 }
@@ -3141,17 +3169,24 @@ impl AnalyticsService {
             .map_err(AnalyticsError::from)
     }
 
-    /// Remove a listing outright: the stock it took comes back, and every
-    /// ledger row it wrote goes with it.
+    /// Undo a listing: the stock it took comes back, and every ledger row it
+    /// wrote goes with it.
     ///
-    /// This is the undo of a mis-entry, not a market event, so the rows are
-    /// deleted rather than compensated. An expiry is the other case and keeps
-    /// its returning rows: the stock genuinely came back.
-    pub async fn delete_auction_listing(&self, listing_id: &str) -> Result<bool, AnalyticsError> {
+    /// The listing itself stays, marked. Its effects are what was wrong, not
+    /// the fact that it was recorded, and a correction that erases its own
+    /// evidence leaves the player unable to see what they changed.
+    ///
+    /// The movements and money go rather than being compensated: this is a
+    /// mis-entry, not a market event. An expiry is the other case and keeps
+    /// its returning rows, because the stock genuinely came back.
+    pub async fn undo_auction_listing(&self, listing_id: &str) -> Result<bool, AnalyticsError> {
         let listing_id = listing_id.to_string();
+        let undone_at = self.default_date();
         self.db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
+                // `read_listing` sees only live listings, so undoing one twice
+                // reports not-found rather than reversing it again.
                 let Some(listing) = read_listing(&tx, &listing_id)? else {
                     return Ok(Ok(false));
                 };
@@ -3173,9 +3208,14 @@ impl AnalyticsService {
                     "DELETE FROM stock_movements WHERE ref_id = ?",
                     rusqlite::params![listing_id],
                 )?;
+                // The entry stands as a record; its pointers do not, so a
+                // later read cannot follow them to a row somebody else owns.
                 tx.execute(
-                    "DELETE FROM auction_listings WHERE id = ?",
-                    rusqlite::params![listing_id],
+                    "UPDATE auction_listings \
+                     SET undone_at = ?, fee_entry_id = NULL, sale_entry_id = NULL, \
+                         sale_fee_entry_id = NULL \
+                     WHERE id = ?",
+                    rusqlite::params![undone_at, listing_id],
                 )?;
                 daily_rollup::refresh_days(&tx, days)?;
                 tx.commit()?;
@@ -3185,20 +3225,21 @@ impl AnalyticsService {
             .map_err(AnalyticsError::Rejected)
     }
 
-    /// Remove a conversion: what it consumed comes back and what it produced
-    /// is unmade. Refused when those produced units have since left.
-    pub async fn delete_stock_conversion(
-        &self,
-        conversion_id: &str,
-    ) -> Result<bool, AnalyticsError> {
+    /// Undo a conversion: what it consumed comes back and what it produced is
+    /// unmade. Refused when those produced units have since left.
+    ///
+    /// Like a listing, the entry stays on file marked rather than removed.
+    pub async fn undo_stock_conversion(&self, conversion_id: &str) -> Result<bool, AnalyticsError> {
         let conversion_id = conversion_id.to_string();
+        let undone_at = self.default_date();
         self.db
             .with_writer(move |conn| {
                 use rusqlite::OptionalExtension as _;
                 let tx = conn.transaction()?;
                 let converted_at: Option<String> = tx
                     .query_row(
-                        "SELECT converted_at FROM stock_conversions WHERE id = ?",
+                        "SELECT converted_at FROM stock_conversions \
+                         WHERE id = ? AND undone_at IS NULL",
                         rusqlite::params![conversion_id],
                         |row| row.get(0),
                     )
@@ -3215,8 +3256,8 @@ impl AnalyticsService {
                     rusqlite::params![conversion_id],
                 )?;
                 tx.execute(
-                    "DELETE FROM stock_conversions WHERE id = ?",
-                    rusqlite::params![conversion_id],
+                    "UPDATE stock_conversions SET undone_at = ? WHERE id = ?",
+                    rusqlite::params![undone_at, conversion_id],
                 )?;
                 // A conversion writes no money, but its day is refreshed all
                 // the same: cheap, and it keeps every undo path the same shape.
@@ -3246,7 +3287,8 @@ impl AnalyticsService {
                     let mut stmt = conn.prepare(
                         "SELECT id, tt_value, attributed_tt, COALESCE(final_price, 0), \
                                 listing_fee, COALESCE(sale_fee, 0) \
-                         FROM auction_listings WHERE status = 'sold'",
+                         FROM auction_listings \
+                         WHERE status = 'sold' AND undone_at IS NULL",
                     )?;
                     let rows = stmt
                         .query_map([], |row| {
@@ -4976,7 +5018,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert!(service.delete_auction_listing(&listing.id).await.unwrap());
+        assert!(service.undo_auction_listing(&listing.id).await.unwrap());
 
         let rows = service.stock_positions().await.unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the stock is back");
@@ -4986,8 +5028,19 @@ mod tests {
         let ledger = ledger_descriptions(&service).await;
         assert!(!ledger.iter().any(|d| d.contains("Moonleaf Board")));
         assert!(service.auction_listings().await.unwrap().is_empty());
-        assert!(service.activity_history().await.unwrap().is_empty());
         assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
+
+        // The entry stays as the record of a correction, with nothing left to
+        // do to it. Only history sees it.
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].undone);
+        assert!(!history[0].can_delete);
+        assert!(!history[0].can_revert_sale);
+        assert_eq!(history[0].status, "sold", "it still says what it was");
+
+        // Undoing it again is a not-found, not a second reversal.
+        assert!(!service.undo_auction_listing(&listing.id).await.unwrap());
     }
 
     /// Deleting a listing that outran tracked stock takes the opening balance
@@ -5002,7 +5055,7 @@ mod tests {
             .create_auction_listing("Moonleaf Board", 150.0, 5.0, None, 0.5, None)
             .await
             .unwrap();
-        assert!(service.delete_auction_listing(&listing.id).await.unwrap());
+        assert!(service.undo_auction_listing(&listing.id).await.unwrap());
 
         let rows = service.stock_positions().await.unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the stock is back");
@@ -5029,7 +5082,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(service.delete_auction_listing(&listing.id).await.unwrap());
+        assert!(service.undo_auction_listing(&listing.id).await.unwrap());
 
         let rows = service.stock_positions().await.unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the stock is there");
@@ -5060,10 +5113,7 @@ mod tests {
         assert_eq!(conversion.target_item.as_deref(), Some("Nanocube"));
         assert!(conversion.can_delete);
 
-        assert!(service
-            .delete_stock_conversion(&conversion.id)
-            .await
-            .unwrap());
+        assert!(service.undo_stock_conversion(&conversion.id).await.unwrap());
 
         let rows = service.stock_positions().await.unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the source is back");
@@ -5072,7 +5122,12 @@ mod tests {
             position(&rows, "Nanocube").is_none_or(|row| row.quantity.abs() < 1e-9),
             "the produced stock is unmade"
         );
-        assert!(service.activity_history().await.unwrap().is_empty());
+
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1, "the entry stays, marked");
+        assert!(history[0].undone);
+        assert!(!history[0].can_delete);
+        assert!(!service.undo_stock_conversion(&conversion.id).await.unwrap());
     }
 
     /// A conversion whose output has since been sold cannot be undone: doing
@@ -5092,7 +5147,7 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .find(|row| row.kind == "conversion")
+            .find(|row| row.kind == "conversion" && !row.undone)
             .expect("the conversion")
             .id;
 
@@ -5117,7 +5172,7 @@ mod tests {
             "naming what is in the way: {reason}"
         );
 
-        let refused = service.delete_stock_conversion(&conversion_id).await;
+        let refused = service.undo_stock_conversion(&conversion_id).await;
         assert!(
             matches!(refused, Err(AnalyticsError::Rejected(_))),
             "the command refuses it too, not only the UI",
@@ -5129,22 +5184,19 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .find(|row| row.kind == "listing")
+            .find(|row| row.kind == "listing" && !row.undone)
             .expect("the listing")
             .id;
-        assert!(service.delete_auction_listing(&listing_id).await.unwrap());
-        assert!(service
-            .delete_stock_conversion(&conversion_id)
-            .await
-            .unwrap());
+        assert!(service.undo_auction_listing(&listing_id).await.unwrap());
+        assert!(service.undo_stock_conversion(&conversion_id).await.unwrap());
     }
 
     /// Undoing something that is not there is a not-found, not an error.
     #[tokio::test]
     async fn undoing_an_absent_entry_reports_not_found() {
         let (_dir, service) = write_service().await;
-        assert!(!service.delete_auction_listing("no-such-id").await.unwrap());
-        assert!(!service.delete_stock_conversion("no-such-id").await.unwrap());
+        assert!(!service.undo_auction_listing("no-such-id").await.unwrap());
+        assert!(!service.undo_stock_conversion("no-such-id").await.unwrap());
     }
 
     /// Selling past tracked stock cannot drive holdings below zero. The units

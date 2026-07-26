@@ -367,10 +367,13 @@ pub struct ActivityHistoryEntry {
     pub activity_net_markup: Nullable<f64>,
     /// Whether the sale can be taken back, leaving the listing open.
     pub can_revert_sale: bool,
-    /// Whether the entry can be removed outright, returning any stock it took.
+    /// Whether the entry can be undone outright, returning any stock it took.
     pub can_delete: bool,
     /// Why not, when it cannot, in terms a reader can act on.
     pub undo_blocked_reason: Nullable<String>,
+    /// Already undone. Every effect it had is reversed and the entry is kept
+    /// as the read-only record of a correction.
+    pub undone: bool,
 }
 
 /// An undo payload: the history entry to take back.
@@ -650,6 +653,7 @@ impl Api {
                 can_revert_sale: row.can_revert_sale,
                 can_delete: row.can_delete,
                 undo_blocked_reason: row.undo_blocked_reason.into(),
+                undone: row.undone,
             })
             .collect())
     }
@@ -669,33 +673,33 @@ impl Api {
             .ok_or_else(|| ApiError::not_found("no sold listing with that id"))
     }
 
-    /// Remove a listing outright: its stock comes back and every ledger row it
-    /// wrote goes with it.
-    pub async fn auction_listing_delete(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+    /// Undo a listing: its stock comes back and every ledger row it wrote goes
+    /// with it. The entry stays on file, marked.
+    pub async fn auction_listing_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
         let existed = self
             .analytics
-            .delete_auction_listing(&input.id)
+            .undo_auction_listing(&input.id)
             .await
-            .map_err(analytics_error("auction listing delete"))?;
+            .map_err(analytics_error("auction listing undo"))?;
         if existed {
             Ok(())
         } else {
-            Err(ApiError::not_found("no listing with that id"))
+            Err(ApiError::not_found("no listing with that id to undo"))
         }
     }
 
-    /// Remove a conversion: what it consumed comes back and what it produced
-    /// is unmade. Refused when those produced units have since left.
-    pub async fn stock_conversion_delete(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+    /// Undo a conversion: what it consumed comes back and what it produced is
+    /// unmade. Refused when those produced units have since left.
+    pub async fn stock_conversion_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
         let existed = self
             .analytics
-            .delete_stock_conversion(&input.id)
+            .undo_stock_conversion(&input.id)
             .await
-            .map_err(analytics_error("stock conversion delete"))?;
+            .map_err(analytics_error("stock conversion undo"))?;
         if existed {
             Ok(())
         } else {
-            Err(ApiError::not_found("no conversion with that id"))
+            Err(ApiError::not_found("no conversion with that id to undo"))
         }
     }
 

@@ -1283,9 +1283,10 @@ mod tests {
         // + 4 analytical + the ledger date index + 2 market + 2 harvest
         // + the pin planet index + 2 named-map indexes + 4 navigation indexes
         // + 2 pin-configuration indexes + 2 harvest-yield indexes
-        // + 5 auction-sales indexes = 43 indexes, 8 triggers.
+        // + 5 auction-sales indexes + the live-listing index the undone-entry
+        // migration adds = 44 indexes, 8 triggers.
         assert_eq!(count("table").await, 40);
-        assert_eq!(count("index").await, 43);
+        assert_eq!(count("index").await, 44);
         assert_eq!(count("trigger").await, 8);
 
         let version = db
@@ -1673,15 +1674,16 @@ mod tests {
         // 2 market feed + 2 harvest activity + map pins + map views + 4
         // navigation tables + pin configs + 3 auction-sales tables, the
         // harvest-stock overlay having been retired into them) + the
-        // migration ledger + 43 indexes
+        // migration ledger + 44 indexes
         // (18 baseline + 4 analytical + the ledger date index + 2 market + 2
         // harvest + the pin planet index + 2 map-view indexes + 4 navigation
         // indexes + 2 pin-configuration indexes + 2 harvest-yield indexes +
-        // 5 auction-sales indexes) +
+        // 5 auction-sales indexes + the undone-entry migration's
+        // live-listing index) +
         // 8 triggers (only SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), 41 + 43 + 8);
+        assert_eq!(master.len(), 41 + 44 + 8);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");
