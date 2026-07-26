@@ -411,6 +411,102 @@ mod tests {
         );
     }
 
+    /// The board-to-tier rule exists twice: as Rust in `yield_tier_for_board`
+    /// for live attribution, and as SQL inside migration 0013 for the
+    /// historical backfill. The migration's bytes are frozen, so only the Rust
+    /// side can drift, and a divergence would classify history differently
+    /// from live tracking without failing anything.
+    ///
+    /// This applies the real migration rather than a transcription of its
+    /// CASE, so the two implementations are compared as shipped. Each name
+    /// gets its own session so no row can inherit a tier from a neighbour and
+    /// mask a classification difference.
+    #[test]
+    fn the_backfill_sql_classifies_boards_exactly_as_the_rust_classifier_does() {
+        use crate::harvest_yield::yield_tier_for_board;
+
+        const NAMES: &[&str] = &[
+            "Short Moonleaf Board",
+            "Moonleaf Board",
+            "Long Moonleaf Board",
+            "Long Kaisenbrandt Board",
+            // A species whose name merely begins with "Long": the space in the
+            // "Long " prefix is the whole distinction.
+            "Longleaf Board",
+            " Board",
+            // Non-board loot yields no tier evidence at all.
+            "Wood Shavings",
+            "Animal Muscle Oil",
+        ];
+
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(LEDGER_DDL).expect("ledger");
+        for migration in &MIGRATIONS[..12] {
+            let tx = connection.transaction().expect("migration transaction");
+            tx.execute_batch(migration.sql).expect("migration SQL");
+            tx.execute(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?1, ?2, TRUE, ?3, 0)",
+                rusqlite::params![
+                    migration.version,
+                    migration.description,
+                    migration.checksum()
+                ],
+            )
+            .expect("ledger row");
+            tx.commit().expect("migration commit");
+        }
+
+        for (index, name) in NAMES.iter().enumerate() {
+            let session = format!("s{index}");
+            let harvest = format!("h{index}");
+            connection
+                .execute(
+                    "INSERT INTO tracking_sessions(id,started_at,ended_at) VALUES(?1,0,300)",
+                    rusqlite::params![session],
+                )
+                .expect("session");
+            connection
+                .execute(
+                    "INSERT INTO harvest_events \
+                     (id,session_id,timestamp,success,tool_name,cost_ped,loot_total_ped) \
+                     VALUES(?1,?2,10.0,1,'PH-3',0.1,0.1)",
+                    rusqlite::params![harvest, session],
+                )
+                .expect("harvest");
+            connection
+                .execute(
+                    "INSERT INTO harvest_loot_items \
+                     (harvest_id,item_name,quantity,value_ped,deactivated_at) \
+                     VALUES(?1,?2,1,0.1,NULL)",
+                    rusqlite::params![harvest, name],
+                )
+                .expect("loot");
+        }
+
+        run(&mut connection).expect("yield migration");
+
+        for (index, name) in NAMES.iter().enumerate() {
+            let (tier, source): (String, Option<String>) = connection
+                .query_row(
+                    "SELECT yield_tier, yield_tier_source FROM harvest_events WHERE id = ?1",
+                    rusqlite::params![format!("h{index}")],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("classified row");
+
+            let rust = yield_tier_for_board(name);
+            let expected_tier = rust.map_or("unknown", |t| t.as_str());
+            let expected_source = rust.map(|_| "board".to_string());
+            assert_eq!(
+                (tier.as_str(), source.clone()),
+                (expected_tier, expected_source),
+                "{name:?} classifies differently in the migration SQL and in Rust"
+            );
+        }
+    }
+
     /// A database that applied the original navigation migration upgrades
     /// forward without ledger surgery, preserving existing rows and filling
     /// the new route hotkey from its declared default.
