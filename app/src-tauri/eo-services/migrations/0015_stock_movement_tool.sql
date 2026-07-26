@@ -1,10 +1,10 @@
 -- Record which tool produced the stock an outflow consumed, beside the yield
 -- tier already recorded.
 --
--- The tier is the source activity, but a tier is worked by several tools and
--- the Tree Cutting detail compares them as execution strategies. Without this
--- column a confirmed sale credits its tier and no tool inside it, so every
--- tool strategy reads at its loot-only rate while its parent reads higher.
+-- The tier is the source activity, but a tier is worked by several tools, and
+-- which one produced a given unit is knowable only while that unit is still
+-- held. Recording it here keeps a finer reading available; nothing reports on
+-- it today.
 --
 -- Deriving the tool share from lifetime loot composition would model what this
 -- records: allocations are captured at the moment stock leaves, so a change in

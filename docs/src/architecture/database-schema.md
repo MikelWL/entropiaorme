@@ -10,7 +10,7 @@ The authoritative schema is the migration set under
 `app/src-tauri/eo-services/src/db/`. The set holds a version-33 baseline
 migration, `0001_schema_baseline.sql`, which creates the complete base schema
 (tables, indexes, and the timestamp-back-fill triggers) and stamps the
-schema-version row, followed by forward-only additions:
+schema-version row, followed by forward-only migrations:
 `0002_analytical_indexes.sql` (analytical read-path indexes plus a one-time
 `ANALYZE`), `0003_session_summary_read_columns.sql` (extra
 `session_summaries` columns for the Activity and session-list reads),
@@ -788,7 +788,7 @@ in `eo-services/src/db/migrate.rs`) over the migration set in
 `eo-services/migrations/`, whose files are compiled into the binary (a unit
 test pins the embedded chain to the directory's contents). The set carries the
 version-33 baseline (`0001_schema_baseline.sql`) followed by forward-only
-additions (`0002_analytical_indexes.sql`,
+migrations (`0002_analytical_indexes.sql`,
 `0003_session_summary_read_columns.sql`, `0004_daily_rollups.sql`,
 `0005_market_observations.sql`, `0006_harvest_events.sql`,
 `0007_map_pins.sql`, `0008_map_views.sql`, `0009_map_navigation.sql`,
