@@ -173,21 +173,6 @@
 				/>
 			{/if}
 		</div>
-
-		<div class="space-y-1 text-xs text-text-tertiary">
-			<p>
-				<span class="text-text-secondary">TT Net / TT Rate:</span>
-				realised loot TT minus cycled PED, and loot-only TT return per cycled PED.
-			</p>
-			<p>
-				<span class="text-text-secondary">MU Net / MU figures:</span>
-				estimated from market data, never realised P&amp;L. Markup resolves from the weekly
-				horizon (falling back to monthly, then yearly). A
-				<span class="text-warning">⚠</span> flags a sparse but fee-viable market; a
-				<span class="text-error font-semibold">!</span> flags constrained capacity, shown struck
-				through with the nanocube rate when excluded by the confidence toggle.
-			</p>
-		</div>
 	</div>
 
 	<SellStockModal item={sellItem} onlist={model.listStock} oncancel={() => (sellItem = null)} />
