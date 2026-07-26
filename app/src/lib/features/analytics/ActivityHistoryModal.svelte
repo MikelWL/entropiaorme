@@ -154,7 +154,11 @@
 
 						<div class="flex w-20 shrink-0 items-center justify-end">
 							{#if entry.undone}
-								<!-- Nothing to offer: every effect is already reversed. -->
+								<!-- Where the action was, since there is none left to take.
+									`inline-block` keeps the row's strike off it: the label
+									says what the row is, it is not part of the record being
+									struck. -->
+								<span class="inline-block text-xs text-text-tertiary">Undone</span>
 							{:else if !entry.canDelete && !entry.canRevertSale}
 								<span class="flex items-center gap-1 text-xs text-text-tertiary">
 									Held
