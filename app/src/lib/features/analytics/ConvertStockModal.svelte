@@ -7,6 +7,11 @@
 	 * realised, and the ledger is untouched. The consumed stock's activity
 	 * composition rides forward into the Nanocubes, so selling them later
 	 * still attributes back to the tiers that grew the wood.
+	 *
+	 * Because the conversion is 1:1 there is only ever one decision here: how
+	 * much. The modal is built around that single field, with the position it
+	 * is drawn from sitting under it as both the context for the number and the
+	 * way back to all of it.
 	 */
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -36,6 +41,7 @@
 	let initialisedFor = $state<string | null>(null);
 
 	const unitTt = $derived(item && item.heldQty > 0 ? item.heldTt / item.heldQty : 0);
+	const atMax = $derived(!!item && Math.abs(ped - item.heldTt) < 0.005);
 
 	$effect(() => {
 		if (item && initialisedFor !== item.itemName) {
@@ -70,28 +76,47 @@
 </script>
 
 {#if item}
-	<!-- Two figures and a button want none of the default panel's width. -->
 	<Modal bind:open={modalOpen} class="max-w-xs" title={`Convert ${item.itemName}`}>
-		<div class="space-y-4">
-			<div class="bg-surface/50 rounded-md border border-border/50 px-3 py-2 text-sm">
-				<div class="flex items-center justify-between">
-					<span class="text-text-secondary">Held</span>
-					<span class="tabular-nums text-text">{formatPed(item.heldTt)} PED</span>
+		<div class="space-y-5">
+			<!-- The amount carries no label of its own. The title says what is
+				being converted, the field says PED, and the line beneath says how
+				much there is; a caption above it would only say it a fourth time. -->
+			<div class="space-y-1.5">
+				<Input
+					type="number"
+					min="0"
+					step="0.01"
+					align="right"
+					aria-label="PED to convert"
+					bind:value={ped}
+				>
+					{#snippet suffix()}
+						<span class="text-xs font-medium uppercase tracking-wider">PED</span>
+					{/snippet}
+				</Input>
+
+				<div class="flex items-baseline justify-between gap-2 text-xs">
+					<span class="text-text-tertiary tabular-nums">
+						{formatPed(item.heldTt)} PED in stock
+					</span>
+					<button
+						type="button"
+						disabled={atMax}
+						onclick={() => (ped = item.heldTt)}
+						class="font-medium text-accent cursor-pointer
+							transition-colors duration-[var(--duration-fast)] hover:text-text
+							disabled:cursor-default disabled:text-text-tertiary/50 disabled:hover:text-text-tertiary/50"
+					>
+						All of it
+					</button>
 				</div>
 			</div>
-
-			<!-- Label left, field right, on the same insets as the row above: the
-				amount being entered reads against the amount available. -->
-			<label class="flex items-center justify-between gap-3 px-3">
-				<span class="eyebrow text-text-tertiary">PED to convert</span>
-				<Input class="w-28 shrink-0" type="number" min="0" step="0.01" bind:value={ped} />
-			</label>
 
 			{#if error}
 				<p class="text-xs text-error">{error}</p>
 			{/if}
 
-			<div class="flex items-center justify-end gap-2 pt-2">
+			<div class="flex items-center justify-end gap-2">
 				<Button variant="ghost" onclick={oncancel} disabled={converting}>Cancel</Button>
 				<Button onclick={confirm} loading={converting} disabled={ped <= 0 || unitTt <= 0}>
 					Convert
