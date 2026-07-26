@@ -180,7 +180,10 @@
 {/snippet}
 
 <Card class="hover:z-20">
-	<div class="grid sm:grid-cols-[minmax(21rem,40%)_minmax(0,1fr)]">
+	<!-- The list pane's width is shared with the market panel the toggle swaps
+		to: the two are the same frame with different contents, so the hairline
+		has to fall in the same place in both. -->
+	<div class="grid sm:grid-cols-[minmax(22.25rem,42%)_minmax(0,1fr)]">
 		<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 			<div class="px-2 pt-4">
 				<div

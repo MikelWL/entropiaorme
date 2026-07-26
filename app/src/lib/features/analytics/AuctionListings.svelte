@@ -146,7 +146,7 @@
 			<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
 				{formatPed(listing.ttValue)}
 			</span>
-			<span class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium">
+			<span class="w-[5.75rem] shrink-0 text-right text-xs tabular-nums font-medium">
 				{#if listing.status === 'sold'}
 					<span class={netTone(listing.activityNetMarkup ?? 0)}>
 						{signedPed(listing.activityNetMarkup ?? 0)}
@@ -181,7 +181,9 @@
 			</div>
 		</div>
 	{:else}
-		<div class="grid sm:grid-cols-[minmax(21rem,40%)_minmax(0,1fr)]">
+		<!-- Kept in step with the sub-activity box the toggle swaps from: same
+			frame, so the hairline must not move when the contents do. -->
+		<div class="grid sm:grid-cols-[minmax(22.25rem,42%)_minmax(0,1fr)]">
 			<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 				<div class="px-2 pt-4">
 					<div
@@ -190,7 +192,9 @@
 						<span class="eyebrow min-w-0 flex-1">Item</span>
 						<span class="eyebrow w-12 shrink-0 text-right">Qty</span>
 						<span class="eyebrow w-14 shrink-0 text-right">TT</span>
-						<span class="eyebrow w-[4.5rem] shrink-0 text-right">Listed / MU</span>
+						<span class="eyebrow w-[5.75rem] shrink-0 whitespace-nowrap text-right">
+							Listed / MU
+						</span>
 					</div>
 				</div>
 
