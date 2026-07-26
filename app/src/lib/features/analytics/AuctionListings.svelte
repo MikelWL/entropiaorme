@@ -254,10 +254,13 @@
 								emphasis="secondary"
 							/>
 
+							<!-- Only net markup is toned. The rate and the credited share
+								describe how the sale divides, not whether it went well, and
+								colouring all three makes the one figure that carries a
+								verdict indistinguishable from its neighbours. -->
 							<StatDisplay
 								label="MU rate"
 								value={saleMarkupRate !== null ? formatPercent(saleMarkupRate) : NO_DATA}
-								valueClass={saleMarkupRate !== null ? netTone(saleMarkupRate - 1) : ''}
 							/>
 							<StatDisplay
 								label="Net markup"
@@ -269,7 +272,6 @@
 								label="Credited"
 								value={signedPed(selected.activityNetMarkup ?? 0)}
 								unit="PED"
-								valueClass={netTone(selected.activityNetMarkup ?? 0)}
 							>
 								{#snippet labelSuffix()}
 									<InfoTip label="How the credited amount is worked out" width="w-80">
