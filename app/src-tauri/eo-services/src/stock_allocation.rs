@@ -133,7 +133,14 @@ pub fn allocate(positions: &[TierPosition], quantity: f64, unit_tt: f64) -> Allo
 /// what the activity may claim.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SaleOutcome {
-    /// Sale proceeds above the whole listing's TT.
+    /// Sale proceeds above the whole listing's TT, and exactly what the
+    /// ledger records as the gain.
+    ///
+    /// The TT itself is never income at sale time. For tracked stock it was
+    /// already booked as loot when it dropped; for untracked stock the player
+    /// still demonstrably held the value, so selling it converts a position
+    /// rather than creating one. Netting off only the *tracked* TT would book
+    /// the untracked units' principal as profit.
     pub gross_markup: f64,
     pub total_fees: f64,
     /// Gross markup after both auction fees.
@@ -141,13 +148,9 @@ pub struct SaleOutcome {
     /// The fraction of the listing that tracked stock covered.
     pub attributed_share: f64,
     /// Net realised markup the activity may claim, to be divided across its
-    /// contributing tiers.
+    /// contributing tiers. The remainder of `net_markup` is the untracked
+    /// share: real money, but with no activity able to claim it.
     pub activity_net_markup: f64,
-    /// New money for the ledger's gain row. Only the TT of *attributed*
-    /// stock was already booked as loot when it dropped, so only that is
-    /// subtracted; unattributed units were never counted, and their full
-    /// proceeds are new.
-    pub ledger_income: f64,
 }
 
 /// Resolve a confirmed sale.
@@ -183,7 +186,6 @@ pub fn resolve_sale(
         net_markup,
         attributed_share,
         activity_net_markup: net_markup * attributed_share,
-        ledger_income: final_price - attributed_tt,
     }
 }
 
@@ -322,7 +324,7 @@ mod tests {
         assert!((outcome.attributed_share - 1.0).abs() < 1e-9);
         assert!((outcome.activity_net_markup - 1.30).abs() < 1e-9);
         // The 3.00 TT counted as loot when it dropped; only the uplift is new.
-        assert!((outcome.ledger_income - 2.00).abs() < 1e-9);
+        assert!((outcome.gross_markup - 2.00).abs() < 1e-9);
     }
 
     /// A partly tracked sale gives the activity only its share, and the
@@ -334,14 +336,15 @@ mod tests {
         assert!((outcome.attributed_share - 2.0 / 3.0).abs() < 1e-9);
         assert!((outcome.net_markup - 2.30).abs() < 1e-9);
         assert!((outcome.activity_net_markup - 2.30 * 2.0 / 3.0).abs() < 1e-9);
-        assert!((outcome.ledger_income - 4.50).abs() < 1e-9);
+        // The ledger records markup only. The untracked units' 1.50 of TT was
+        // value the player already held; selling it converts a position and
+        // must not read as profit.
+        assert!((outcome.gross_markup - 3.00).abs() < 1e-9);
 
-        // Global net, and the part of it the activity may not claim.
-        let global_net = outcome.ledger_income - outcome.total_fees;
-        let global_only = global_net - outcome.activity_net_markup;
-        assert!((global_net - 3.80).abs() < 1e-9);
-        // Unattributed TT (1.50), plus its markup share, less its fee share.
-        assert!((global_only - (1.50 + 1.00 - 0.70 / 3.0)).abs() < 1e-9);
+        // The activity claims its share; the remainder is untracked markup,
+        // real money that no activity may claim.
+        let global_only = outcome.net_markup - outcome.activity_net_markup;
+        assert!((global_only - 2.30 / 3.0).abs() < 1e-9);
     }
 
     /// Selling below TT is a real loss and must stay negative, not clamp.
@@ -360,7 +363,9 @@ mod tests {
         let outcome = resolve_sale(4.00, 0.0, 9.00, 0.50, 0.30);
         assert!((outcome.attributed_share).abs() < 1e-9);
         assert!((outcome.activity_net_markup).abs() < 1e-9);
-        assert!((outcome.ledger_income - 9.00).abs() < 1e-9);
+        // Markup only, even with nothing tracked: the 4.00 of TT sold was
+        // still value the player held.
+        assert!((outcome.gross_markup - 5.00).abs() < 1e-9);
     }
 
     /// A zero-TT listing cannot divide by its TT; it attributes nothing

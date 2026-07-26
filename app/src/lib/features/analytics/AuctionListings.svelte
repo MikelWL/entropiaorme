@@ -51,6 +51,17 @@
 		allListings.find((listing) => listing.id === selectedId) ?? allListings[0] ?? null,
 	);
 
+	// The whole gain the sale produced, and the part of it an activity may
+	// claim. They differ only when the listing ran past tracked stock, and the
+	// difference is worth naming rather than leaving as an unexplained gap
+	// between the ledger and the activity's Realised figures.
+	const netMarkup = $derived(
+		selected && selected.status === 'sold'
+			? (selected.grossMarkup ?? 0) - selected.listingFee - (selected.saleFee ?? 0)
+			: 0,
+	);
+	const unattributedMarkup = $derived(netMarkup - (selected?.activityNetMarkup ?? 0));
+
 	let confirming = $state(false);
 	let finalPrice = $state(0);
 	let saleFee = $state(0);
@@ -242,28 +253,59 @@
 								emphasis="secondary"
 							/>
 							<StatDisplay
-								label="Realised MU"
+								label="Net markup"
+								value={signedPed(netMarkup)}
+								unit="PED"
+								valueClass={netTone(netMarkup)}
+							>
+								{#snippet labelSuffix()}
+									<InfoTip label="How net markup is calculated" width="w-80">
+										<p class="text-xs font-semibold leading-relaxed text-text">
+											Net markup on this sale
+										</p>
+										<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+											What it sold for, less its TT (which was already yours, whether it was
+											tracked loot or not) and both auction fees. Fees come off because they are
+											the direct cost of capturing the markup.
+										</p>
+										<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+											This is the whole gain, and it is what reached your ledger.
+										</p>
+									</InfoTip>
+								{/snippet}
+							</StatDisplay>
+							<StatDisplay
+								label="Credited to activities"
 								value={signedPed(selected.activityNetMarkup ?? 0)}
 								unit="PED"
 								valueClass={netTone(selected.activityNetMarkup ?? 0)}
 							>
 								{#snippet labelSuffix()}
-									<InfoTip label="How Realised MU is calculated" width="w-80">
+									<InfoTip label="How the credited amount is worked out" width="w-80">
 										<p class="text-xs font-semibold leading-relaxed text-text">
-											Realised MU on this sale
+											The part tree cutting can claim
 										</p>
 										<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-											What it sold for, less its TT (already counted as loot when it dropped) and
-											both auction fees. Fees come off because they are the direct cost of
-											capturing the markup.
+											The share of net markup covered by stock this activity is recorded as
+											producing, split across the board activities that supplied it in proportion
+											to what each contributed.
 										</p>
 										<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-											It is split across the board activities that supplied the stock, in
-											proportion to what each contributed.
+											It matches net markup when the whole listing came from tracked stock.
+											Anything sold beyond that is still yours and still in your ledger, but no
+											activity can be said to have produced it.
 										</p>
 									</InfoTip>
 								{/snippet}
 							</StatDisplay>
+							{#if unattributedMarkup > 0.005}
+								<StatDisplay
+									label="Unattributed"
+									value={signedPed(unattributedMarkup)}
+									unit="PED"
+									emphasis="secondary"
+								/>
+							{/if}
 						{:else}
 							<StatDisplay
 								label="Fee paid"
@@ -276,8 +318,11 @@
 
 					{#if selected.unattributedQty > 0}
 						<p class="mt-4 text-xs leading-relaxed text-text-tertiary">
-							{formatPed(selected.unattributedQty)} of this listing was beyond tracked stock. Its value
-							counts in your ledger, but it cannot be credited to a board activity.
+							{formatPed(selected.unattributedQty)} of the {formatPed(selected.quantity)} listed was
+							beyond tracked stock, so {formatPed(
+								(1 - selected.attributedTt / selected.ttValue) * 100,
+							)}% of this sale cannot be credited to a board activity. Its value is still yours and
+							still in your ledger.
 						</p>
 					{/if}
 

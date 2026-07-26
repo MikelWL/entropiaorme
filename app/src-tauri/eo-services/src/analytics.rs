@@ -2655,12 +2655,13 @@ impl AnalyticsService {
                     rusqlite::params![final_price, sale_fee, resolved_at, listing_id],
                 )?;
 
-                // Only the TT of tracked stock was booked as loot when it
-                // dropped, so only that is netted off here; untracked units
-                // were never counted and their full proceeds are new money.
-                if outcome.ledger_income.abs() > STOCK_EPSILON {
+                // Markup only. Selling at TT converts a position rather than
+                // creating income, for untracked stock as much as for tracked:
+                // the player held that value either way, and the app simply
+                // has no record of where the untracked part came from.
+                if outcome.gross_markup.abs() > STOCK_EPSILON {
                     let entry_id = Uuid::new_v4().to_string();
-                    let kind = if outcome.ledger_income > 0.0 {
+                    let kind = if outcome.gross_markup > 0.0 {
                         "markup"
                     } else {
                         "expense"
@@ -2673,7 +2674,7 @@ impl AnalyticsService {
                             resolved_at,
                             kind,
                             format!("Auction Sale: {}", listing.item_name),
-                            outcome.ledger_income.abs(),
+                            outcome.gross_markup.abs(),
                         ],
                     )?;
                     tx.execute(
@@ -4392,15 +4393,16 @@ mod tests {
         let expected = (9.0 - 4.5 - 0.5) * (3.0 / 4.5);
         assert!((sold.activity_net_markup.unwrap() - expected).abs() < 1e-9);
 
-        // The ledger records the full proceeds less only the TT that had
-        // already been booked as loot.
+        // The ledger records markup over the WHOLE listing's TT. The untracked
+        // units' TT was value the player already held, so booking it as a gain
+        // would invent profit out of a position conversion.
         let ledger = service.list_ledger(None, None).await.unwrap();
         let sale = ledger
             .entries
             .iter()
             .find(|entry| entry.description == "Auction Sale: Moonleaf Board")
             .unwrap();
-        assert!((sale.amount - (9.0 - 3.0)).abs() < 1e-9);
+        assert!((sale.amount - (9.0 - 4.5)).abs() < 1e-9);
     }
 
     /// Recycling preserves TT exactly and carries the source's activity

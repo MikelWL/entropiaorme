@@ -174,6 +174,16 @@ describe('formatLedgerDate', () => {
 		expect(formatLedgerDate('2026-03-24T00:00:00Z')).toBe('Mar 24');
 	});
 
+	it('renders a date-only entry as its day, never as a time', () => {
+		// A bare date knows no time, so inventing one is wrong in both
+		// directions: read as UTC midnight it renders as "1:00 AM" today east
+		// of UTC, and as the day before west of it.
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-07-26T09:00:00Z'));
+		expect(formatLedgerDate('2026-07-26')).toBe('Jul 26');
+		expect(formatLedgerDate('2026-03-24')).toBe('Mar 24');
+	});
+
 	it('treats a cross-year same-M/D as NOT today (compares full year)', () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-06-03T12:00:00Z'));
