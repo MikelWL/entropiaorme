@@ -436,7 +436,7 @@
 					</div>
 				{:else}
 					<p class="mt-4 text-xs text-text-tertiary px-2.5">
-						No loot recorded on this tool yet.
+						No loot recorded for this board activity yet.
 					</p>
 				{/if}
 				{/if}

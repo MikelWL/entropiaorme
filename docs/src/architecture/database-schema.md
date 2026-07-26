@@ -439,7 +439,7 @@ identity and per-swing cost are captured at swing time, so later equipment
 edits cannot rewrite history; `tool_name` is null when no harvesting tool was
 known and the swing recorded at zero cost. The effective yield tier is stored
 independently: board evidence classifies the swing as short, long, or huge,
-while bounded neighbouring evidence may classify boardless swings. Unsupported
+while a boardless swing may inherit a tier from direct board evidence on the same session and tool within 30 seconds. Live attribution takes the nearest preceding evidence in the same keypress; the historical backfill, and any later restamp when fresh direct evidence arrives, compare both temporal sides and infer only when one side carries evidence or the two agree. Direct evidence is never overwritten. Unsupported
 evidence remains explicitly unknown.
 
 | Column | Type | Notes |
@@ -450,7 +450,7 @@ evidence remains explicitly unknown.
 | `success` | INTEGER | Not null; defaults to 1 (boolean flag). |
 | `tool_name` | TEXT | Optional; the harvesting tool equipped via the hotbar at swing time. |
 | `yield_tier` | TEXT | Not null; `short`, `long`, `huge`, or `unknown` (migration `0013`). This is the effective board yield, not a physical-tree observation. |
-| `yield_tier_source` | TEXT | Optional; `board` for direct evidence or `inferred` for bounded neighbouring evidence. Null when the tier remains unknown. |
+| `yield_tier_source` | TEXT | Optional; `board` when the swing's own loot named the class, or `inferred` when it was taken from adjacent direct evidence under the bound above. Null when the tier remains unknown. |
 | `cost_ped` | REAL | Defaults to 0; the tool's per-use decay (markup-weighted) at swing time. |
 | `loot_total_ped` | REAL | Defaults to 0; denormalised per-swing loot total beside the per-item rows. |
 

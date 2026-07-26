@@ -510,8 +510,9 @@ pub struct HarvestGuardrailAlert {
     pub at_epoch: f64,
 }
 
-/// The guardrail's closed board-yield vocabulary. The compatibility
-/// type and field names do not claim a physical tree size.
+/// The guardrail's closed board-yield vocabulary: the yield tier evidenced by
+/// a swing's board output. The type name is the guardrail alias described on
+/// `TreeSize` in the services layer.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TreeSizeName {

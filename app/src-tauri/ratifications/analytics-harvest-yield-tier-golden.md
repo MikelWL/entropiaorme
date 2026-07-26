@@ -8,9 +8,10 @@ tiers with nested tool strategies.
 
 `demo_goldens/analytics_harvest.txt` changes from
 `{"toolComparisons":[]}` to `{"tierComparisons":[]}`. This is the empty
-database shape of the same typed command, now exposing Small, Long, Huge, and
-Unclassified yield activities at the top level. Tool comparisons remain
-available inside each populated tier.
+database shape of the same typed command: the top-level collection is now the
+yield-tier table (Short Boards, Boards, Long Boards, and Unclassified) rather
+than the tool table, and it is empty because the bundled demo history records
+no harvesting. Tool comparisons remain available inside each populated tier.
 
 ## Evidence reviewed
 

@@ -2195,8 +2195,9 @@ export interface TrackingSnapshot {
 export type TrackingState = 'idle' | 'active';
 
 /**
- * The guardrail's closed board-yield vocabulary. The compatibility
- * type and field names do not claim a physical tree size.
+ * The guardrail's closed board-yield vocabulary: the yield tier evidenced by
+ * a swing's board output. The type name is the guardrail alias described on
+ * `TreeSize` in the services layer.
  */
 export type TreeSizeName = 'short' | 'long' | 'huge';
 

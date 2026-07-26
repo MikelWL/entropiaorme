@@ -13,8 +13,13 @@ use crate::harvest_yield::HarvestYieldTier;
 /// known.
 pub type EquipmentProfile = Option<Map<String, Value>>;
 
-/// Guardrail compatibility name for the shared board-yield vocabulary.
-/// Despite the legacy type name, this does not claim a physical tree size.
+/// The guardrail's alias for the shared board-yield vocabulary.
+///
+/// The name dates from when the guardrail was configured per physical tree
+/// size. It now carries the yield tier evidenced by a swing's board output,
+/// which is what the guardrail actually matches on. Renaming it reaches the
+/// wire contract (`TreeSizeName`) and its generated bindings, so it is a
+/// deliberate change rather than a drive-by.
 pub type TreeSize = HarvestYieldTier;
 
 /// One intended harvesting tool, resolved from the equipment library.

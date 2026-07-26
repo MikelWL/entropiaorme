@@ -29,6 +29,22 @@ impl HarvestYieldTier {
         }
     }
 
+    /// The user-facing label, for text the player reads.
+    ///
+    /// Deliberately not `as_str`: the stored spelling predates the board
+    /// framing and does not read across one-for-one (see the mapping table on
+    /// `yield_tier_for_board`). The frontend keeps its own copy of this
+    /// mapping for rendering; the two must agree, and this side is pinned by
+    /// `labels_match_the_board_vocabulary`.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Short => "Short Boards",
+            Self::Long => "Boards",
+            Self::Huge => "Long Boards",
+            Self::Unknown => "Unclassified",
+        }
+    }
+
     /// Parse a database value. Schema constraints keep production rows
     /// inside this vocabulary; unknown input degrades conservatively.
     pub fn from_db(value: &str) -> Self {
@@ -71,6 +87,19 @@ impl HarvestYieldSource {
 /// Classify the board name carried by a harvesting loot group.
 ///
 /// Wood Shavings and non-board items provide no tier evidence.
+///
+/// The stored tier vocabulary predates the board framing and does not read
+/// across to the labels one-for-one, so the mapping is spelled out here and
+/// nowhere else has to infer it:
+///
+/// | board name           | stored tier | label       |
+/// |----------------------|-------------|-------------|
+/// | `Short ... Board`    | `short`     | Short Boards|
+/// | `... Board`          | `long`      | Boards      |
+/// | `Long ... Board`     | `huge`      | Long Boards |
+///
+/// The stored names are retained because migration 0013 has been applied to
+/// live databases; renaming them is a later forward migration, not an edit.
 pub fn yield_tier_for_board(name: &str) -> Option<HarvestYieldTier> {
     if !name.ends_with(" Board") {
         return None;
@@ -140,6 +169,31 @@ mod tests {
         assert_eq!(
             yield_tier_for_names(["Moonleaf Board", "Long Moonleaf Board"]),
             None
+        );
+    }
+
+    #[test]
+    fn labels_match_the_board_vocabulary() {
+        // The stored spelling crosses over the labels, so this pins the
+        // mapping rather than leaving it to be re-derived at each call site.
+        assert_eq!(HarvestYieldTier::Short.label(), "Short Boards");
+        assert_eq!(HarvestYieldTier::Long.label(), "Boards");
+        assert_eq!(HarvestYieldTier::Huge.label(), "Long Boards");
+        assert_eq!(HarvestYieldTier::Unknown.label(), "Unclassified");
+        // And the board name that produces each tier round-trips to its label.
+        assert_eq!(
+            yield_tier_for_board("Short Moonleaf Board")
+                .unwrap()
+                .label(),
+            "Short Boards"
+        );
+        assert_eq!(
+            yield_tier_for_board("Moonleaf Board").unwrap().label(),
+            "Boards"
+        );
+        assert_eq!(
+            yield_tier_for_board("Long Moonleaf Board").unwrap().label(),
+            "Long Boards"
         );
     }
 }

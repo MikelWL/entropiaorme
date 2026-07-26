@@ -206,8 +206,9 @@ impl TrackerActor {
         } else {
             if !active.guardrail_warning_emitted {
                 active.warnings.push(format!(
-                    "Harvest guardrail: board output arrived while {} was equipped; \
+                    "Harvest guardrail: {} output arrived while {} was equipped; \
                      costs are attributed to {}",
+                    size.label(),
                     observed.as_deref().unwrap_or("no tool"),
                     tool.name
                 ));
