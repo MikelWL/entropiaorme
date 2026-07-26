@@ -70,7 +70,8 @@
 </script>
 
 {#if item}
-	<Modal bind:open={modalOpen} title={`Convert ${item.itemName}`}>
+	<!-- Two figures and a button want none of the default panel's width. -->
+	<Modal bind:open={modalOpen} class="max-w-xs" title={`Convert ${item.itemName}`}>
 		<div class="space-y-4">
 			<div class="bg-surface/50 rounded-md border border-border/50 px-3 py-2 text-sm">
 				<div class="flex items-center justify-between">
@@ -79,9 +80,11 @@
 				</div>
 			</div>
 
-			<label class="block space-y-1">
+			<!-- Label left, field right, on the same insets as the row above: the
+				amount being entered reads against the amount available. -->
+			<label class="flex items-center justify-between gap-3 px-3">
 				<span class="eyebrow text-text-tertiary">PED to convert</span>
-				<Input type="number" min="0" step="0.01" bind:value={ped} />
+				<Input class="w-28 shrink-0" type="number" min="0" step="0.01" bind:value={ped} />
 			</label>
 
 			{#if error}
