@@ -3,20 +3,25 @@
 	 * The auction worklist and its history.
 	 *
 	 * Open listings are goods in transit: the stock has left the player's
-	 * inventory at a price nobody knows yet. This panel is the only place
-	 * that position is visible, and the only place a sale becomes real, so it
-	 * leads with what still needs resolving and keeps history beneath it.
+	 * inventory at a price nobody knows yet. This panel is the only place that
+	 * position is visible, and the only place a sale becomes real.
+	 *
+	 * It takes the sub-activity box's own two-pane shape (selectable list on
+	 * the left, detail on the right) because the toggle swaps between them:
+	 * the same frame with different contents reads as one surface, where a
+	 * second layout would read as a different page.
 	 *
 	 * Confirming asks for the price the auction actually fetched and the
-	 * additional fee the game charged at the point of sale, because neither
-	 * is knowable at listing time.
+	 * additional fee charged at the point of sale, because neither is knowable
+	 * at listing time.
 	 */
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import Input from '$lib/components/Input.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import { NO_DATA, formatPed } from '$lib/utils/format';
+	import Input from '$lib/components/Input.svelte';
+	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { AuctionListing } from '$lib/types/analytics';
+	import { NO_DATA, formatPed } from '$lib/utils/format';
 
 	let {
 		open,
@@ -33,94 +38,260 @@
 		) => Promise<void>;
 	} = $props();
 
-	let confirmingId = $state<string | null>(null);
+	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
+	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
+
+	// Open auctions lead: they are the only rows that still need a decision.
+	const allListings = $derived([...open, ...resolved]);
+
+	let selectedId = $state<string | null>(null);
+	// A stale id (a listing resolved out of the open group, or a reload)
+	// degrades to the first row rather than an empty pane.
+	const selected = $derived(
+		allListings.find((listing) => listing.id === selectedId) ?? allListings[0] ?? null,
+	);
+
+	let confirming = $state(false);
 	let finalPrice = $state(0);
 	let saleFee = $state(0);
 	let resolvedAt = $state('');
 	let busy = $state(false);
+	let error = $state<string | null>(null);
 
-	function startConfirm(listing: AuctionListing) {
-		confirmingId = listing.id;
-		finalPrice = listing.buyout ?? listing.startingBid;
+	function select(listing: AuctionListing) {
+		selectedId = listing.id;
+		confirming = false;
+		error = null;
+	}
+
+	function startConfirm() {
+		if (!selected) return;
+		// Pre-filled with the buyout when there was one, since an auction that
+		// clears instantly is the common case. Still editable.
+		finalPrice = selected.buyout ?? selected.startingBid;
 		saleFee = 0;
 		resolvedAt = '';
+		error = null;
+		confirming = true;
 	}
 
-	async function submitSale(listingId: string) {
-		if (busy) return;
+	async function resolve(
+		outcome:
+			| { sold: true; finalPrice: number; saleFee: number; resolvedAt?: string }
+			| { sold: false; resolvedAt?: string },
+	) {
+		if (!selected || busy) return;
 		busy = true;
+		error = null;
 		try {
-			await onresolve(listingId, {
-				sold: true,
-				finalPrice,
-				saleFee,
-				resolvedAt: resolvedAt || undefined,
-			});
-			confirmingId = null;
+			await onresolve(selected.id, outcome);
+			confirming = false;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to resolve the listing';
 		} finally {
 			busy = false;
 		}
 	}
 
-	async function expire(listingId: string) {
-		if (busy) return;
-		busy = true;
-		try {
-			await onresolve(listingId, { sold: false });
-		} finally {
-			busy = false;
-		}
-	}
+	const STATUS_LABEL: Record<string, string> = {
+		pending: 'On auction',
+		sold: 'Sold',
+		expired: 'Expired',
+	};
 </script>
 
+{#snippet listingRow(listing: AuctionListing, isSelected: boolean)}
+	<li>
+		<button
+			type="button"
+			aria-pressed={isSelected}
+			onclick={() => select(listing)}
+			class="w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left
+				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
+				{isSelected
+				? 'border-accent/40 bg-accent/[0.08]'
+				: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
+		>
+			<span
+				class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight
+					{listing.status === 'pending' ? 'text-text' : 'text-text-tertiary'}"
+				title={listing.itemName}
+			>
+				{listing.itemName}
+			</span>
+			<span class="w-12 shrink-0 text-right text-xs tabular-nums text-text-secondary">
+				{listing.quantity}
+			</span>
+			<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
+				{formatPed(listing.ttValue)}
+			</span>
+			<span class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium">
+				{#if listing.status === 'sold'}
+					<span class={netTone(listing.activityNetMarkup ?? 0)}>
+						{signedPed(listing.activityNetMarkup ?? 0)}
+					</span>
+				{:else if listing.status === 'expired'}
+					<span class="text-text-tertiary">{NO_DATA}</span>
+				{:else}
+					<span class="text-text-tertiary">{listing.listedAt.slice(5)}</span>
+				{/if}
+			</span>
+		</button>
+	</li>
+{/snippet}
+
 <Card class="hover:z-20">
-	<div class="flex flex-col gap-4">
-		<section class="flex flex-col gap-2">
-			<div class="flex items-baseline gap-2">
-				<h3 class="text-sm font-semibold tracking-tight text-text">On auction</h3>
-				<InfoTip align="left" width="w-96" label="About open listings">
-					<p class="text-sm text-text-secondary">
-						Listed stock has already left your inventory, and its fee is already spent. Nothing here
-						counts as a gain yet: an open auction has no price, so there is nothing to realise. Confirm
-						it when it sells, or mark it expired when it comes back.
+	{#if allListings.length === 0}
+		<div class="flex min-h-40 items-center justify-center p-6">
+			<div class="flex items-center gap-1.5 text-sm text-text-tertiary">
+				<span>Nothing has been listed on the auction yet.</span>
+				<InfoTip label="How listings work" width="w-80">
+					<p class="text-xs font-semibold leading-relaxed text-text">Selling harvested stock</p>
+					<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+						Sell an item from Your Current Stock to list it here. The quantity leaves your stock
+						straight away, because in game it has left your inventory, and the starting-bid fee is
+						spent whether or not it sells.
+					</p>
+					<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+						Nothing is realised while a listing is open: an auction has no price until it closes.
+						Confirm it when it sells, or mark it expired when it comes back.
 					</p>
 				</InfoTip>
 			</div>
+		</div>
+	{:else}
+		<div class="grid sm:grid-cols-[minmax(21rem,40%)_minmax(0,1fr)]">
+			<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
+				<div class="px-2 pt-4">
+					<div
+						class="flex items-center gap-2 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
+					>
+						<span class="eyebrow min-w-0 flex-1">Item</span>
+						<span class="eyebrow w-12 shrink-0 text-right">Qty</span>
+						<span class="eyebrow w-14 shrink-0 text-right">TT</span>
+						<span class="eyebrow w-[4.5rem] shrink-0 text-right">Listed / MU</span>
+					</div>
+				</div>
 
-			{#if open.length === 0}
-				<p class="text-sm text-text-tertiary">Nothing on auction.</p>
-			{:else}
-				<ul class="flex flex-col gap-1">
-					{#each open as listing (listing.id)}
-						<li class="rounded-md border border-border/50 px-2.5 py-2">
-							<div class="flex items-center gap-3">
-								<span class="flex-1 min-w-0 text-sm font-medium truncate text-text">
-									{listing.itemName}
-								</span>
-								<span class="w-16 text-right shrink-0 text-sm tabular-nums text-text-secondary">
-									{listing.quantity}
-								</span>
-								<span class="w-24 text-right shrink-0 text-sm tabular-nums text-text-secondary">
-									{formatPed(listing.ttValue)} TT
-								</span>
-								<span class="w-28 text-right shrink-0 text-sm tabular-nums text-text-secondary">
-									{formatPed(listing.startingBid)}{listing.buyout !== null
-										? ` / ${formatPed(listing.buyout)}`
-										: ''}
-								</span>
-								<span class="w-24 text-right shrink-0 text-xs tabular-nums text-text-tertiary">
-									{listing.listedAt}
-								</span>
-								<div class="shrink-0 flex items-center gap-1.5">
-									<Button size="sm" onclick={() => startConfirm(listing)}>Sold</Button>
-									<Button size="sm" variant="ghost" onclick={() => expire(listing.id)} disabled={busy}>
-										Expired
-									</Button>
-								</div>
-							</div>
+				<div class="flex max-h-[32rem] flex-col overflow-y-auto px-2 pb-3">
+					{#if open.length > 0}
+						<span class="eyebrow px-3 pb-1 text-text-tertiary">On auction</span>
+						<ul class="flex flex-col gap-1">
+							{#each open as listing (listing.id)}
+								{@render listingRow(listing, listing.id === selected?.id)}
+							{/each}
+						</ul>
+					{/if}
+					{#if resolved.length > 0}
+						<span class="eyebrow px-3 pb-1 pt-3 text-text-tertiary">Resolved</span>
+						<ul class="flex flex-col gap-1">
+							{#each resolved as listing (listing.id)}
+								{@render listingRow(listing, listing.id === selected?.id)}
+							{/each}
+						</ul>
+					{/if}
+				</div>
+			</div>
 
-							{#if confirmingId === listing.id}
-								<div class="mt-2 pt-2 border-t border-border/50 space-y-3">
+			{#if selected}
+				<div class="min-w-0 p-5">
+					<div class="mb-4 flex items-baseline justify-between gap-3">
+						<div class="min-w-0">
+							<p class="truncate text-sm font-medium tracking-tight text-text">
+								{selected.quantity} x {selected.itemName}
+							</p>
+							<p class="mt-0.5 text-xs text-text-tertiary">
+								Listed {selected.listedAt}{selected.resolvedAt
+									? `, ${selected.status === 'sold' ? 'sold' : 'returned'} ${selected.resolvedAt}`
+									: ''}
+							</p>
+						</div>
+						<span
+							class="shrink-0 text-xs font-medium uppercase tracking-wide
+								{selected.status === 'sold'
+								? 'text-positive'
+								: selected.status === 'pending'
+									? 'text-accent'
+									: 'text-text-tertiary'}"
+						>
+							{STATUS_LABEL[selected.status] ?? selected.status}
+						</span>
+					</div>
+
+					<div class="grid grid-cols-3 gap-x-5 gap-y-4">
+						<StatDisplay label="Listing TT" value={formatPed(selected.ttValue)} unit="PED" />
+						<StatDisplay
+							label="Starting bid"
+							value={formatPed(selected.startingBid)}
+							unit="PED"
+							emphasis="secondary"
+						/>
+						<StatDisplay
+							label="Buyout"
+							value={selected.buyout !== null ? formatPed(selected.buyout) : NO_DATA}
+							unit={selected.buyout !== null ? 'PED' : ''}
+							emphasis="secondary"
+						/>
+
+						{#if selected.status === 'sold'}
+							<StatDisplay label="Sold for" value={formatPed(selected.finalPrice ?? 0)} unit="PED" />
+							<StatDisplay
+								label="Fees"
+								value={formatPed(selected.listingFee + (selected.saleFee ?? 0))}
+								unit="PED"
+								emphasis="secondary"
+							/>
+							<StatDisplay
+								label="Realised MU"
+								value={signedPed(selected.activityNetMarkup ?? 0)}
+								unit="PED"
+								valueClass={netTone(selected.activityNetMarkup ?? 0)}
+							>
+								{#snippet labelSuffix()}
+									<InfoTip label="How Realised MU is calculated" width="w-80">
+										<p class="text-xs font-semibold leading-relaxed text-text">
+											Realised MU on this sale
+										</p>
+										<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+											What it sold for, less its TT (already counted as loot when it dropped) and
+											both auction fees. Fees come off because they are the direct cost of
+											capturing the markup.
+										</p>
+										<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+											It is split across the board activities that supplied the stock, in
+											proportion to what each contributed.
+										</p>
+									</InfoTip>
+								{/snippet}
+							</StatDisplay>
+						{:else}
+							<StatDisplay
+								label="Fee paid"
+								value={formatPed(selected.listingFee)}
+								unit="PED"
+								emphasis="secondary"
+							/>
+						{/if}
+					</div>
+
+					{#if selected.unattributedQty > 0}
+						<p class="mt-4 text-xs leading-relaxed text-text-tertiary">
+							{formatPed(selected.unattributedQty)} of this listing was beyond tracked stock. Its value
+							counts in your ledger, but it cannot be credited to a board activity.
+						</p>
+					{/if}
+
+					{#if selected.status === 'expired'}
+						<p class="mt-4 text-xs leading-relaxed text-text-tertiary">
+							The stock returned to your holdings in full. The listing fee stays spent, and no board
+							activity is charged for it: not selling describes the market, not the harvesting.
+						</p>
+					{/if}
+
+					{#if selected.status === 'pending'}
+						<div class="mt-5 border-t border-border/40 pt-4">
+							{#if confirming}
+								<div class="space-y-3">
 									<div class="grid grid-cols-3 gap-3">
 										<label class="block space-y-1">
 											<span class="eyebrow text-text-tertiary">Sold for (PED)</span>
@@ -135,65 +306,56 @@
 											<Input type="date" bind:value={resolvedAt} />
 										</label>
 									</div>
-									<p class="text-xs text-text-tertiary">
+									<p class="text-xs leading-relaxed text-text-tertiary">
 										The extra fee is the one charged at the point of sale when an item clears above
 										its starting bid; the game sends it to you by in-game mail. Leave it at zero if
 										there was none.
 									</p>
 									<div class="flex items-center justify-end gap-2">
-										<Button variant="ghost" size="sm" onclick={() => (confirmingId = null)}>
+										<Button variant="ghost" size="sm" onclick={() => (confirming = false)}>
 											Cancel
 										</Button>
-										<Button size="sm" onclick={() => submitSale(listing.id)} loading={busy}>
+										<Button
+											size="sm"
+											loading={busy}
+											onclick={() =>
+												resolve({
+													sold: true,
+													finalPrice,
+													saleFee,
+													resolvedAt: resolvedAt || undefined,
+												})}
+										>
 											Confirm sale
 										</Button>
 									</div>
 								</div>
+							{:else}
+								<div class="flex items-center justify-between gap-3">
+									<p class="min-w-0 text-xs leading-relaxed text-text-tertiary">
+										Waiting on the auction. Nothing is realised until it closes.
+									</p>
+									<div class="flex shrink-0 items-center gap-2">
+										<Button size="sm" onclick={startConfirm}>It sold</Button>
+										<Button
+											size="sm"
+											variant="ghost"
+											loading={busy}
+											onclick={() => resolve({ sold: false })}
+										>
+											It expired
+										</Button>
+									</div>
+								</div>
 							{/if}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
+						</div>
+					{/if}
 
-		<section class="flex flex-col gap-2">
-			<h3 class="text-sm font-semibold tracking-tight text-text">Resolved</h3>
-			{#if resolved.length === 0}
-				<p class="text-sm text-text-tertiary">No resolved listings yet.</p>
-			{:else}
-				<ul class="flex flex-col gap-1">
-					{#each resolved as listing (listing.id)}
-						<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
-							<span class="flex-1 min-w-0 text-sm truncate text-text-secondary">
-								{listing.itemName}
-							</span>
-							<span class="w-16 text-right shrink-0 text-sm tabular-nums text-text-tertiary">
-								{listing.quantity}
-							</span>
-							<span
-								class="w-20 text-right shrink-0 text-xs uppercase tracking-wide
-									{listing.status === 'sold' ? 'text-success' : 'text-text-tertiary'}"
-							>
-								{listing.status}
-							</span>
-							<span class="w-28 text-right shrink-0 text-sm tabular-nums text-text-secondary">
-								{listing.finalPrice !== null ? `${formatPed(listing.finalPrice)} PED` : NO_DATA}
-							</span>
-							<span
-								class="w-28 text-right shrink-0 text-sm tabular-nums font-medium
-									{(listing.activityNetMarkup ?? 0) >= 0 ? 'text-success' : 'text-error'}"
-							>
-								{listing.activityNetMarkup !== null
-									? `${formatPed(listing.activityNetMarkup)} MU`
-									: NO_DATA}
-							</span>
-							<span class="w-24 text-right shrink-0 text-xs tabular-nums text-text-tertiary">
-								{listing.resolvedAt ?? NO_DATA}
-							</span>
-						</li>
-					{/each}
-				</ul>
+					{#if error}
+						<p class="mt-3 text-xs text-error">{error}</p>
+					{/if}
+				</div>
 			{/if}
-		</section>
-	</div>
+		</div>
+	{/if}
 </Card>
