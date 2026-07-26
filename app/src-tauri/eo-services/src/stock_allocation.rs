@@ -57,6 +57,16 @@ pub struct AllocationPlan<'a> {
     /// unattributed positions. Real value with no activity claim on it.
     pub unattributed_qty: f64,
     pub unattributed_tt: f64,
+    /// The part of `unattributed_qty` that no open position covered at all,
+    /// as opposed to the part drawn from positions of unknown provenance.
+    ///
+    /// The two are the same to the activity (neither may be claimed), but not
+    /// to the stock ledger: an untiered draw leaves a position that was there,
+    /// while this leaves a position the app never recorded. Booking it as an
+    /// outflow alone would drive the item's holdings negative, so the caller
+    /// records the acquisition it implies before recording the outflow.
+    pub excess_qty: f64,
+    pub excess_tt: f64,
 }
 
 /// Split `quantity` of an item across its open tier positions, weighted by
@@ -137,6 +147,8 @@ pub fn allocate<'a>(
         attributed_tt: attributed_qty * unit_tt,
         unattributed_qty,
         unattributed_tt: unattributed_qty * unit_tt,
+        excess_qty: excess,
+        excess_tt: excess * unit_tt,
     }
 }
 
@@ -293,6 +305,33 @@ mod tests {
             1,
             "the excess is one explicit unattributed row"
         );
+    }
+
+    /// Stock drawn from an untiered position is unattributed but not excess:
+    /// the position existed. Only quantity no position covered is excess, and
+    /// the caller needs the two apart to keep holdings off negative.
+    #[test]
+    fn excess_is_only_the_part_no_position_covered() {
+        let positions = [
+            tier(HarvestYieldTier::Short, 10.0),
+            TierPosition {
+                yield_tier: None,
+                tool_name: None,
+                quantity: 5.0,
+            },
+        ];
+        let plan = allocate(&positions, 20.0, 0.03);
+
+        assert!((plan.attributed_qty - 10.0).abs() < 1e-9);
+        // 5 drawn from the untiered position, 5 covered by nothing at all.
+        assert!((plan.unattributed_qty - 10.0).abs() < 1e-9);
+        assert!((plan.excess_qty - 5.0).abs() < 1e-9);
+        assert!((plan.excess_tt - 0.15).abs() < 1e-9);
+
+        // A sale within tracked stock has no excess to make good.
+        let within = allocate(&positions, 12.0, 0.03);
+        assert!(within.excess_qty.abs() < 1e-9);
+        assert!(within.unattributed_qty > 0.0, "still draws on the untiered position");
     }
 
     /// With nothing tracked at all, the whole sale is unattributed rather

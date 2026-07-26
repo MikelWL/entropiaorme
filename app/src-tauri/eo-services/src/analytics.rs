@@ -1999,6 +1999,42 @@ fn insert_movement(
     Ok(())
 }
 
+/// Book the stock an outflow proves was held but the app never recorded.
+///
+/// An outflow may exceed every open position: the player held stock from
+/// before tracking began, or from a source the app never saw. Writing only the
+/// outflow would make the derived position negative, which no inventory can
+/// be. The disposal is itself the evidence the units existed, so the
+/// acquisition it implies is recorded alongside it, with no tier and no tool
+/// because neither is known. It nets the position to zero rather than below,
+/// and being untiered it can never fund an activity.
+///
+/// A no-op when tracked stock covered the whole outflow, which is the ordinary
+/// case.
+fn record_opening_balance(
+    conn: &rusqlite::Connection,
+    item_name: &str,
+    plan: &stock_allocation::AllocationPlan<'_>,
+    occurred_at: &str,
+    created_at: f64,
+) -> rusqlite::Result<()> {
+    if plan.excess_qty <= STOCK_EPSILON {
+        return Ok(());
+    }
+    insert_movement(
+        conn,
+        item_name,
+        "opening_balance",
+        None,
+        None,
+        None,
+        plan.excess_qty,
+        plan.excess_tt,
+        occurred_at,
+        created_at,
+    )
+}
+
 /// One item's open positions per (yield tier, tool), plus its TT per unit.
 ///
 /// Recorded loot is the acquisition base, so nothing here duplicates it; the
@@ -2371,11 +2407,18 @@ impl AnalyticsService {
             .await?)
     }
 
-    /// Every canonical item the player currently holds, most valuable first.
+    /// Every canonical item the player has held, most valuable first.
     ///
-    /// Recorded loot is the acquisition base and the movement ledger says
-    /// what has since left or returned; an item whose position has closed is
-    /// dropped rather than reported as a zero row.
+    /// Recorded loot is the acquisition base and the movement ledger says what
+    /// has since left or returned. An item whose position has closed stays on
+    /// the list at zero: it is stock the player produces and will hold again,
+    /// and a line that vanishes on the last sale reads as an item that was
+    /// never there rather than one that is currently empty.
+    ///
+    /// TT is the held quantity at the item's unit TT rather than a separate
+    /// sum over loot and movements. Entropia fixes TT per item, so the two
+    /// agree by definition, and deriving both figures from one place is what
+    /// stops the pair drifting apart.
     pub async fn stock_positions(&self) -> Result<Vec<StockPositionRow>, AnalyticsError> {
         Ok(self
             .db
@@ -2394,21 +2437,15 @@ impl AnalyticsService {
 
                 let mut rows = Vec::new();
                 for item_name in items {
-                    let (positions, _unit_tt) = item_positions(conn, &item_name)?;
-                    let quantity: f64 = positions.iter().map(|(_, quantity)| quantity).sum();
-                    if quantity <= STOCK_EPSILON {
-                        continue;
-                    }
-                    let tt_value: f64 = conn.query_row(
-                        "SELECT COALESCE(( \
-                             SELECT SUM(l.value_ped) FROM harvest_loot_items AS l \
-                             WHERE l.item_name = ?1 AND l.deactivated_at IS NULL), 0) \
-                         + COALESCE(( \
-                             SELECT SUM(m.tt_value) FROM stock_movements AS m \
-                             WHERE m.item_name = ?1), 0)",
-                        rusqlite::params![item_name],
-                        |row| row.get(0),
-                    )?;
+                    let (positions, unit_tt) = item_positions(conn, &item_name)?;
+                    // `item_positions` already drops closed positions, so a
+                    // residual float tail is the only way this goes untidy.
+                    let quantity: f64 = positions
+                        .iter()
+                        .map(|(_, quantity)| quantity)
+                        .sum::<f64>()
+                        .max(0.0);
+                    let tt_value = quantity * unit_tt;
                     let listed_quantity: f64 = conn.query_row(
                         "SELECT COALESCE(SUM(quantity), 0) FROM auction_listings \
                          WHERE item_name = ? AND status = 'pending'",
@@ -2515,6 +2552,8 @@ impl AnalyticsService {
                         now,
                     ],
                 )?;
+
+                record_opening_balance(&tx, &item_c, &plan, &listed_c, now)?;
 
                 for allocation in &plan.allocations {
                     insert_movement(
@@ -2773,6 +2812,8 @@ impl AnalyticsService {
                      VALUES (?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![id, source_c, target_c, quantity, converted_tt, converted_at, now],
                 )?;
+
+                record_opening_balance(&tx, &source_c, &plan, &converted_at, now)?;
 
                 for allocation in &plan.allocations {
                     insert_movement(
@@ -4395,10 +4436,11 @@ mod tests {
         );
     }
 
-    /// A position that has fully closed disappears rather than lingering as
-    /// a zero row.
+    /// A position that has fully closed stays on the list at zero. The item
+    /// is still one the player produces; a line that vanished on the last
+    /// sale would read as an item that never existed.
     #[tokio::test]
-    async fn a_fully_sold_position_leaves_the_stock_list() {
+    async fn a_fully_sold_position_stays_on_the_stock_list_at_zero() {
         let (_dir, service) = write_service().await;
         seed_board_stock(&service).await;
 
@@ -4407,7 +4449,73 @@ mod tests {
             .await
             .unwrap();
         let rows = service.stock_positions().await.unwrap();
-        assert!(position(&rows, "Moonleaf Board").is_none());
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(board.quantity.abs() < 1e-9);
+        assert!(board.tt_value.abs() < 1e-9);
+    }
+
+    /// Selling past tracked stock cannot drive holdings below zero. The units
+    /// the app never recorded are booked as the opening balance the sale
+    /// proves they were, so the position bottoms out at nothing held.
+    #[tokio::test]
+    async fn selling_beyond_tracked_stock_bottoms_out_at_zero() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        // 100 boards are tracked; the player sells 150 of them.
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 150.0, 5.0, None, 0.0, None)
+            .await
+            .unwrap();
+        assert!((listing.unattributed_qty - 50.0).abs() < 1e-9);
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(
+            board.quantity >= 0.0 && board.quantity.abs() < 1e-9,
+            "holdings bottom out at zero, never negative: {}",
+            board.quantity
+        );
+        assert!(
+            board.tt_value >= 0.0 && board.tt_value.abs() < 1e-9,
+            "stock TT follows the quantity: {}",
+            board.tt_value
+        );
+
+        // Expiring returns every unit that left, including the ones the app
+        // only learned about by their disposal: the player has them in hand.
+        service
+            .expire_auction_listing(&listing.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!((board.quantity - 150.0).abs() < 1e-9);
+    }
+
+    /// Converting past tracked stock is the same story on the source side,
+    /// and the produced item still receives the whole conversion.
+    #[tokio::test]
+    async fn converting_beyond_tracked_stock_bottoms_out_at_zero() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .convert_stock("Moonleaf Board", "Nanocube", 150.0, None)
+            .await
+            .unwrap();
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(
+            board.quantity >= 0.0 && board.quantity.abs() < 1e-9,
+            "holdings bottom out at zero, never negative: {}",
+            board.quantity
+        );
+        // 150 boards at 0.03 TT is 4.50 PED, carried across 1:1.
+        let produced = position(&rows, "Nanocube").expect("the produced stock");
+        assert!((produced.quantity - 4.5).abs() < 1e-9);
     }
 
     /// Create with the optional fields absent: notes is null and acquired_at

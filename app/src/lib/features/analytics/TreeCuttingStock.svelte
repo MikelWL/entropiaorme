@@ -193,12 +193,22 @@
 
 	<ul class="flex flex-col gap-1">
 		{#each stock as item (item.itemName)}
+			<!-- An emptied line stays, dimmed: the item is still one this
+				activity produces, and its market reading is worth keeping
+				legible for the next time there is stock to sell. -->
+			{@const empty = item.heldQty <= 0}
 			<li class="flex items-center gap-3 rounded-md px-2.5 py-2">
-				<span class="flex-1 min-w-0 text-sm font-medium truncate tracking-tight text-text">
+				<span
+					class="flex-1 min-w-0 text-sm font-medium truncate tracking-tight
+						{empty ? 'text-text-tertiary' : 'text-text'}"
+				>
 					{item.itemName}
 				</span>
 
-				<span class="w-24 text-right shrink-0 text-sm tabular-nums font-medium text-text">
+				<span
+					class="w-24 text-right shrink-0 text-sm tabular-nums font-medium
+						{empty ? 'text-text-tertiary' : 'text-text'}"
+				>
 					{formatPed(item.heldTt)}
 					{#if item.listedQty > 0}
 						<span
