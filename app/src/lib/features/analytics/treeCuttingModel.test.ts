@@ -251,7 +251,9 @@ describe('activity history', () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		const model = createTreeCuttingModel();
 		await model.loadData();
-		mocked.undoStockConversion.mockRejectedValue(new Error('Nanocube this produced has since been sold'));
+		mocked.undoStockConversion.mockRejectedValue(
+			new Error('Nanocube this produced has since been sold'),
+		);
 
 		await expect(
 			model.undoHistoryEntry(historyEntry({ kind: 'conversion' }), false),

@@ -93,5 +93,4 @@ describe('TreeCuttingActivities', () => {
 			'Its recorded cost and loot still count in Overall',
 		);
 	});
-
 });
