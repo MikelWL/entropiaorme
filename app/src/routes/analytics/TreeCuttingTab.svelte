@@ -3,6 +3,9 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
+	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
+	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
 	import TreeCuttingActivities from '$lib/features/analytics/TreeCuttingActivities.svelte';
 	import TreeCuttingStats from '$lib/features/analytics/TreeCuttingStats.svelte';
 	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
@@ -10,9 +13,23 @@
 	import {
 		createTreeCuttingModel,
 		type ConfidenceMode,
+		type TreeCuttingStock as StockRow,
 	} from '$lib/features/analytics/treeCuttingModel.svelte';
 
 	const model = createTreeCuttingModel();
+
+	// The Overall block answers two different questions: how the activity is
+	// performing, and what is currently happening in the market with its
+	// output. They share the block rather than the page so the range and
+	// confidence controls above keep applying to both.
+	let overallView = $state<'stats' | 'market'>('stats');
+	const OVERALL_VIEWS = [
+		{ id: 'stats', label: 'Stats' },
+		{ id: 'market', label: 'Market' },
+	];
+
+	let sellItem = $state<StockRow | null>(null);
+	let convertItem = $state<StockRow | null>(null);
 
 	$effect(() => {
 		void model.loadData(model.period);
@@ -84,22 +101,42 @@
 				class="relative hover:z-20 rounded-xl border border-accent/30 p-6 shadow-lg
 					backdrop-blur-[2px] bg-gradient-to-br from-accent/[0.12] via-surface/70 to-surface/70"
 			>
-				<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_minmax(0,1fr)]">
-					<TreeCuttingStats
-						heading="Overall"
-						cycled={model.overall.cycled}
-						returns={model.overall.returns}
-						lootRate={model.overall.lootRate}
-						muProjectedReturns={model.overall.muProjectedReturns}
-						muRate={model.overall.muRate}
-						realisedReturns={model.overall.realisedReturns}
-						realisedRate={model.overall.realisedRate}
+				<div class="mb-4 flex items-center justify-between gap-3">
+					<h2 class="text-sm font-semibold tracking-tight text-text">Overall</h2>
+					<SegmentedControl
+						options={OVERALL_VIEWS}
+						active={overallView}
+						onchange={(id) => (overallView = id as 'stats' | 'market')}
 					/>
-
-					{#if model.stock.length > 0}
-						<TreeCuttingStock stock={model.stock} />
-					{/if}
 				</div>
+
+				{#if overallView === 'stats'}
+					<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_minmax(0,1fr)]">
+						<TreeCuttingStats
+							cycled={model.overall.cycled}
+							returns={model.overall.returns}
+							lootRate={model.overall.lootRate}
+							muProjectedReturns={model.overall.muProjectedReturns}
+							muRate={model.overall.muRate}
+							realisedReturns={model.overall.realisedReturns}
+							realisedRate={model.overall.realisedRate}
+						/>
+
+						{#if model.stock.length > 0}
+							<TreeCuttingStock
+								stock={model.stock}
+								onsell={(item) => (sellItem = item)}
+								onconvert={(item) => (convertItem = item)}
+							/>
+						{/if}
+					</div>
+				{:else}
+					<AuctionListings
+						open={model.openListings}
+						resolved={model.resolvedListings}
+						onresolve={model.resolveListing}
+					/>
+				{/if}
 			</div>
 		{/if}
 
@@ -127,6 +164,13 @@
 			</p>
 		</div>
 	</div>
+
+	<SellStockModal item={sellItem} onlist={model.listStock} oncancel={() => (sellItem = null)} />
+	<ConvertStockModal
+		item={convertItem}
+		onconvert={model.recycleStock}
+		oncancel={() => (convertItem = null)}
+	/>
 {:else}
 	<Card class="p-6">
 		<p class="text-sm text-text-tertiary text-center" data-guide-anchor="analytics-treecutting-area">

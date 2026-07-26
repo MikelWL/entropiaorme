@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { IN_DEVELOPMENT_SURFACES, inDevelopmentSurface } from './registry';
 
 describe('in-development registry', () => {
-	it('resolves a registered surface', () => {
-		const surface = inDevelopmentSurface('harvest-stock-actions');
-		expect(surface.summary).toMatch(/not available yet/i);
-		expect(surface.graduates).not.toHaveLength(0);
+	// An empty register is the healthy resting state: it means no surface is
+	// currently shipping ahead of its capability. So this asserts the shape of
+	// whatever is registered rather than naming an entry, which would have to
+	// be rewritten every time one graduates.
+	it('resolves every registered surface to complete copy', () => {
+		for (const registered of IN_DEVELOPMENT_SURFACES) {
+			const surface = inDevelopmentSurface(registered.id);
+			expect(surface.summary).not.toHaveLength(0);
+			expect(surface.graduates).not.toHaveLength(0);
+		}
 	});
 
 	it('throws on an unregistered id so a stray marker fails loudly', () => {

@@ -14,9 +14,11 @@ use schemars::schema_for;
 use serde_json::Value;
 
 use crate::analytics::{
-    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, HarvestStockInput, HarvestStockRemoval,
-    InventoryItem, InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult,
-    LedgerEntryInput, LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary,
+    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
+    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
+    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
+    LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup, StockConversionInput,
+    StockPosition,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -506,13 +508,47 @@ pub fn manifest() -> Vec<CommandSpec> {
         CommandSpec {
             name: "harvest_stock",
             args: Vec::new(),
-            returns: Some(schema(schema_for!(Vec<HarvestStockRemoval>))),
+            returns: Some(schema(schema_for!(Vec<StockPosition>))),
         },
         CommandSpec {
-            name: "harvest_stock_set",
+            name: "harvest_realised_markup",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<RealisedTierMarkup>))),
+        },
+        CommandSpec {
+            name: "auction_listings",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<AuctionListing>))),
+        },
+        CommandSpec {
+            name: "auction_listing_create",
             args: vec![ArgSpec {
                 name: "input",
-                schema: schema(schema_for!(HarvestStockInput)),
+                schema: schema(schema_for!(AuctionListingInput)),
+            }],
+            returns: Some(schema(schema_for!(AuctionListing))),
+        },
+        CommandSpec {
+            name: "auction_listing_confirm",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(AuctionConfirmInput)),
+            }],
+            returns: Some(schema(schema_for!(AuctionListing))),
+        },
+        CommandSpec {
+            name: "auction_listing_expire",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(AuctionExpireInput)),
+            }],
+            returns: Some(schema(schema_for!(AuctionListing))),
+        },
+        CommandSpec {
+            name: "stock_convert",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(StockConversionInput)),
             }],
             returns: None,
         },

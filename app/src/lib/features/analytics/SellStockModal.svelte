@@ -1,0 +1,167 @@
+<script lang="ts">
+	/**
+	 * List held stock on the auction.
+	 *
+	 * A listing is not a sale. The quantity leaves holdings now, because in
+	 * game it has left the player's inventory, and the starting-bid fee is
+	 * spent now whether or not the item ever sells; but no markup is realised
+	 * until the auction closes at a price. The modal therefore asks only for
+	 * what is known at listing time.
+	 *
+	 * The fee is entered rather than modelled: the game quotes it live, so a
+	 * recorded figure is exact where a predicted one would not be.
+	 */
+	import Modal from '$lib/components/Modal.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import Input from '$lib/components/Input.svelte';
+	import { formatPed } from '$lib/utils/format';
+	import type { AuctionListingInput } from '$lib/types/analytics';
+	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
+
+	let {
+		item,
+		onlist,
+		oncancel,
+	}: {
+		item: TreeCuttingStock | null;
+		onlist: (input: AuctionListingInput) => Promise<void>;
+		oncancel: () => void;
+	} = $props();
+
+	let quantity = $state(0);
+	let startingBid = $state(0);
+	let buyout = $state<number | null>(null);
+	let listingFee = $state(0.5);
+	let listedAt = $state('');
+	let listing = $state(false);
+	let error = $state<string | null>(null);
+
+	let modalOpen = $state(false);
+	let initialisedFor = $state<string | null>(null);
+
+	const unitTt = $derived(item && item.heldQty > 0 ? item.heldTt / item.heldQty : 0);
+	const listedTt = $derived(quantity * unitTt);
+	// Anything beyond the tracked position is real value with no activity
+	// claim on it, so the split is stated up front rather than discovered
+	// afterwards in the figures.
+	const excess = $derived(item ? Math.max(quantity - item.heldQty, 0) : 0);
+	const grossMarkup = $derived((buyout ?? startingBid) - listedTt);
+
+	$effect(() => {
+		if (item && initialisedFor !== item.itemName) {
+			quantity = item.heldQty;
+			startingBid = 0;
+			buyout = null;
+			listingFee = 0.5;
+			listedAt = '';
+			error = null;
+			initialisedFor = item.itemName;
+			modalOpen = true;
+		}
+		if (!item) {
+			initialisedFor = null;
+			modalOpen = false;
+		}
+	});
+
+	$effect(() => {
+		if (item && !modalOpen) oncancel();
+	});
+
+	async function confirm() {
+		if (!item || listing || quantity <= 0) return;
+		listing = true;
+		error = null;
+		try {
+			await onlist({
+				itemName: item.itemName,
+				quantity,
+				startingBid,
+				buyout,
+				listingFee,
+				listedAt: listedAt || null,
+			});
+			modalOpen = false;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to create the listing';
+		} finally {
+			listing = false;
+		}
+	}
+</script>
+
+{#if item}
+	<Modal bind:open={modalOpen} title={`Sell ${item.itemName}`}>
+		<div class="space-y-4">
+			<div class="bg-surface/50 rounded-md border border-border/50 px-3 py-2 space-y-1.5 text-sm">
+				<div class="flex items-center justify-between">
+					<span class="text-text-secondary">Held</span>
+					<span class="tabular-nums text-text">{item.heldQty} ({formatPed(item.heldTt)} PED)</span>
+				</div>
+				<div class="flex items-center justify-between">
+					<span class="text-text-secondary">Listing TT</span>
+					<span class="tabular-nums text-text">{formatPed(listedTt)} PED</span>
+				</div>
+				{#if (buyout ?? startingBid) > 0}
+					<div class="flex items-center justify-between pt-1.5 border-t border-border/50">
+						<span class="text-text font-medium">Markup if it clears</span>
+						<span
+							class="tabular-nums font-medium {grossMarkup >= 0 ? 'text-success' : 'text-error'}"
+						>
+							{formatPed(grossMarkup)} PED
+						</span>
+					</div>
+				{/if}
+			</div>
+
+			<label class="block space-y-1">
+				<span class="eyebrow text-text-tertiary">Quantity</span>
+				<Input type="number" min="0" step="1" bind:value={quantity} />
+			</label>
+
+			{#if excess > 0}
+				<p class="text-xs text-warning">
+					{excess} beyond tracked stock. Its value counts in your ledger, but it cannot be
+					attributed to a tree cutting activity, so it will not reach the Realised figures.
+				</p>
+			{/if}
+
+			<div class="grid grid-cols-2 gap-3">
+				<label class="block space-y-1">
+					<span class="eyebrow text-text-tertiary">Starting bid (PED)</span>
+					<Input type="number" min="0" step="0.01" bind:value={startingBid} />
+				</label>
+				<label class="block space-y-1">
+					<span class="eyebrow text-text-tertiary">Buyout (PED, optional)</span>
+					<Input type="number" min="0" step="0.01" bind:value={buyout} />
+				</label>
+			</div>
+
+			<div class="grid grid-cols-2 gap-3">
+				<label class="block space-y-1">
+					<span class="eyebrow text-text-tertiary">Listing fee (PED)</span>
+					<Input type="number" min="0" step="0.01" bind:value={listingFee} />
+				</label>
+				<label class="block space-y-1">
+					<span class="eyebrow text-text-tertiary">Listed on (optional)</span>
+					<Input type="date" bind:value={listedAt} />
+				</label>
+			</div>
+			<p class="text-xs text-text-tertiary">
+				The fee is charged now and stays spent even if the listing expires unsold. Any further fee
+				charged when it sells is entered at confirmation.
+			</p>
+
+			{#if error}
+				<p class="text-xs text-error">{error}</p>
+			{/if}
+
+			<div class="flex items-center justify-end gap-2 pt-2">
+				<Button variant="ghost" onclick={oncancel} disabled={listing}>Cancel</Button>
+				<Button onclick={confirm} loading={listing} disabled={quantity <= 0}>
+					List on auction
+				</Button>
+			</div>
+		</div>
+	</Modal>
+{/if}

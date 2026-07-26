@@ -12,9 +12,11 @@
 use std::sync::Arc;
 
 use eo_api::analytics::{
-    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, HarvestStockInput, HarvestStockRemoval,
-    InventoryItem, InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult,
-    LedgerEntryInput, LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary,
+    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
+    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
+    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
+    LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup, StockConversionInput,
+    StockPosition,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -469,16 +471,52 @@ pub async fn analytics_harvest(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn harvest_stock(app: tauri::AppHandle) -> Result<Vec<HarvestStockRemoval>, ApiError> {
+pub async fn harvest_stock(app: tauri::AppHandle) -> Result<Vec<StockPosition>, ApiError> {
     facade(&app)?.harvest_stock().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn harvest_stock_set(
+pub async fn harvest_realised_markup(
     app: tauri::AppHandle,
-    input: HarvestStockInput,
+) -> Result<Vec<RealisedTierMarkup>, ApiError> {
+    facade(&app)?.harvest_realised_markup().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_listings(app: tauri::AppHandle) -> Result<Vec<AuctionListing>, ApiError> {
+    facade(&app)?.auction_listings().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_listing_create(
+    app: tauri::AppHandle,
+    input: AuctionListingInput,
+) -> Result<AuctionListing, ApiError> {
+    facade(&app)?.auction_listing_create(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_listing_confirm(
+    app: tauri::AppHandle,
+    input: AuctionConfirmInput,
+) -> Result<AuctionListing, ApiError> {
+    facade(&app)?.auction_listing_confirm(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_listing_expire(
+    app: tauri::AppHandle,
+    input: AuctionExpireInput,
+) -> Result<AuctionListing, ApiError> {
+    facade(&app)?.auction_listing_expire(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_convert(
+    app: tauri::AppHandle,
+    input: StockConversionInput,
 ) -> Result<(), ApiError> {
-    facade(&app)?.harvest_stock_set(input).await
+    facade(&app)?.stock_convert(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1360,7 +1398,12 @@ mod tests {
         "analytics_hunting",
         "analytics_harvest",
         "harvest_stock",
-        "harvest_stock_set",
+        "harvest_realised_markup",
+        "auction_listings",
+        "auction_listing_create",
+        "auction_listing_confirm",
+        "auction_listing_expire",
+        "stock_convert",
         "ledger_list",
         "ledger_summary",
         "ledger_create",

@@ -18,19 +18,27 @@
  */
 
 import {
+	confirmAuctionListing,
+	convertStock,
+	createAuctionListing,
+	expireAuctionListing,
 	getAnalyticsHarvest,
+	getAuctionListings,
+	getHarvestRealisedMarkup,
 	getHarvestStock,
 	getMarketHarvestMarkups,
 	type HarvestData,
 	type MarketHarvestData,
 	type MarketHarvestItem,
-	setHarvestStock,
 } from '$lib/api';
 import type {
+	AuctionListing,
+	AuctionListingInput,
 	HarvestLootItem,
 	HarvestTierComparison,
 	HarvestToolComparison,
 	HarvestYieldTier,
+	StockPosition,
 } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 import { createTableModel } from '$lib/view/tableModel.svelte';
@@ -71,6 +79,9 @@ const NICHE_MIN_PREMIUM = 1;
 /** Nanocube markup fallback (percent) when the market feed carries no
  * nanocube observation. */
 export const NANOCUBE_FALLBACK_MARKUP = 100.6;
+
+/** The canonical item stock recycles into, at 1:1 TT. */
+export const NANOCUBE_ITEM = 'Nanocube';
 
 /** The resolved horizon's TT turnover normalised to a weekly rate, so
  * horizons compare without involving the player's position. */
@@ -223,6 +234,8 @@ export type TreeCuttingItem = {
 
 /** The combined stat line across every tool (the "Overall" block). */
 export type TreeCuttingOverall = {
+	/** Markup confirmed sales have realised, already inside `realisedReturns`. */
+	realisedMarkup: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
@@ -236,6 +249,9 @@ export type TreeCuttingOverall = {
 };
 
 export type TreeCuttingSection = {
+	/** Markup confirmed sales of this tier's output have realised, already
+	 * inside `realisedReturns`. Zero until a sale is confirmed. */
+	realisedMarkup: number;
 	yieldTier: HarvestYieldTier;
 	swings: number;
 	cycled: number;
@@ -274,24 +290,6 @@ export function harvestTierLabel(tier: HarvestYieldTier): string {
 	return TIER_LABEL[tier];
 }
 
-/** Lifetime recorded harvest per item across every tool: the quantity
- * and TT value looted. This is the ground-truth base the stock overlay
- * sits on. */
-type LootedItem = { quantity: number; valuePed: number };
-function lootedByItem(tiers: HarvestTierComparison[]): Map<string, LootedItem> {
-	const looted = new Map<string, LootedItem>();
-	for (const tier of tiers) {
-		for (const item of tier.lootItems) {
-			const prev = looted.get(item.itemName) ?? { quantity: 0, valuePed: 0 };
-			looted.set(item.itemName, {
-				quantity: prev.quantity + item.quantity,
-				valuePed: prev.valuePed + item.valuePed,
-			});
-		}
-	}
-	return looted;
-}
-
 /** One horizon's market reading (day/week/month/year) for the stock row's
  * markup detail view. */
 export type StockHorizonReading = {
@@ -300,16 +298,17 @@ export type StockHorizonReading = {
 	salesPed: number;
 };
 
-/** One item's current stock: the recorded looted quantity, how much has
- * been removed (sold or spent), and the resulting held quantity and TT.
- * Holdings are operational context only. The opportunity is the same
- * holding-independent profile used by every source activity. */
+/** One item's current stock: what the player holds now, after everything
+ * that has left through a listing or a conversion and back through an
+ * expiry. Holdings are operational context only. The opportunity is the
+ * same holding-independent profile used by every source activity. */
 export type TreeCuttingStock = {
 	itemName: string;
-	lootedQty: number;
-	removedQty: number;
 	heldQty: number;
 	heldTt: number;
+	/** Out on an unresolved auction: gone from `heldQty`, but coming back
+	 * if the listing expires, so it is shown rather than silently absent. */
+	listedQty: number;
 	/** The day/week/month/year breakdown for the detail view. */
 	readings: StockHorizonReading[];
 	opportunity: MarketOpportunity | null;
@@ -392,6 +391,7 @@ function toSection(
 	market: MarketHarvestData | null,
 	marketByItem: Map<string, MarketHarvestItem>,
 	confidenceMode: ConfidenceMode,
+	realisedMarkup: number,
 ): TreeCuttingSection {
 	const projection = projectLoot(tier.lootItems, tier.cycled, market, marketByItem, confidenceMode);
 
@@ -403,8 +403,9 @@ function toSection(
 		lootRate: tier.lootRate,
 		muProjectedReturns: projection.muProjectedReturns,
 		muRate: projection.muRate,
-		realisedReturns: tier.returns,
-		realisedRate: tier.lootRate,
+		realisedReturns: tier.returns + realisedMarkup,
+		realisedRate: tier.cycled > 0 ? (tier.returns + realisedMarkup) / tier.cycled : 0,
+		realisedMarkup,
 		items: projection.items,
 		tools: tier.toolComparisons.map((tool, index) =>
 			toToolStrategy(tool, index, market, marketByItem, confidenceMode),
@@ -414,14 +415,13 @@ function toSection(
 
 export function createTreeCuttingModel() {
 	let data = $state<HarvestData | null>(null);
-	// Current stock is a lifetime position even when the analytics evidence
-	// is scoped to a shorter period.
-	let stockData = $state<HarvestData | null>(null);
 	let market = $state<MarketHarvestData | null>(null);
-	// The removed overlay (item -> quantity sold/spent) drives current stock
-	// only. Reassigned wholesale so derivations re-run without changing the
-	// holding-independent activity opportunity.
-	let removed = $state<Map<string, number>>(new Map());
+	// Current positions, the auction lifecycle over them, and the markup
+	// confirmed sales have realised per tier. All three drive holdings and
+	// realised figures only, never the holding-independent opportunity.
+	let positions = $state<StockPosition[]>([]);
+	let listings = $state<AuctionListing[]>([]);
+	let realisedByTier = $state<Map<HarvestYieldTier, number>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
@@ -443,19 +443,19 @@ export function createTreeCuttingModel() {
 			// stock overlay are best-effort context, so either failing
 			// degrades gracefully (MU figures blank / no removals) rather
 			// than blanking the tab.
-			const harvestRequest = getAnalyticsHarvest(period);
-			const lifetimeHarvestRequest = period === 'all' ? harvestRequest : getAnalyticsHarvest('all');
-			const [harvest, lifetimeHarvest, markets, stock] = await Promise.all([
-				harvestRequest,
-				lifetimeHarvestRequest,
+			const [harvest, markets, stock, openListings, realised] = await Promise.all([
+				getAnalyticsHarvest(period),
 				getMarketHarvestMarkups().catch(() => null),
 				getHarvestStock().catch(() => []),
+				getAuctionListings().catch(() => []),
+				getHarvestRealisedMarkup().catch(() => []),
 			]);
 			if (epoch !== loadEpoch) return;
 			data = harvest;
-			stockData = lifetimeHarvest;
 			market = markets;
-			removed = new Map(stock.map((r) => [r.itemName, r.removedQty]));
+			positions = stock;
+			listings = openListings;
+			realisedByTier = new Map(realised.map((row) => [row.yieldTier, row.netMarkup]));
 		} catch (e) {
 			if (epoch !== loadEpoch) return;
 			error = describeError(e, 'Failed to load tree cutting data');
@@ -471,7 +471,15 @@ export function createTreeCuttingModel() {
 		// Unclassified bucket kept after the three attributable activities.
 		// This is also the fallback selection order.
 		return data.tierComparisons
-			.map((tier) => toSection(tier, market, marketByItem, confidenceMode))
+			.map((tier) =>
+				toSection(
+					tier,
+					market,
+					marketByItem,
+					confidenceMode,
+					realisedByTier.get(tier.yieldTier) ?? 0,
+				),
+			)
 			.sort(
 				(a, b) =>
 					Number(a.yieldTier === 'unknown') - Number(b.yieldTier === 'unknown') ||
@@ -507,24 +515,17 @@ export function createTreeCuttingModel() {
 	 * and TT, ordered by stock TT (most-held first). The item's market
 	 * opportunity is intrinsic and therefore does not consume held TT. */
 	const stock = $derived.by<TreeCuttingStock[]>(() => {
-		if (!stockData) return [];
-		const looted = lootedByItem(stockData.tierComparisons);
 		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
 		const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
-		const rows = [...looted.entries()].map(([itemName, item]) => {
-			const gone = Math.min(Math.max(removed.get(itemName) ?? 0, 0), item.quantity);
-			const heldQty = item.quantity - gone;
-			const unitTt = item.quantity > 0 ? item.valuePed / item.quantity : 0;
-			const m = marketByItem.get(itemName);
-			const heldTt = heldQty * unitTt;
+		const rows = positions.map((position) => {
+			const m = marketByItem.get(position.itemName);
 			const opportunity = market ? marketOpportunity(m, nanocube) : null;
 			const applied = opportunity ? effectiveMarkup(opportunity, nanocube, confidenceMode) : null;
 			return {
-				itemName,
-				lootedQty: item.quantity,
-				removedQty: gone,
-				heldQty,
-				heldTt,
+				itemName: position.itemName,
+				heldQty: position.quantity,
+				heldTt: position.ttValue,
+				listedQty: position.listedQuantity,
 				readings: (m?.readings ?? []).map((r) => ({
 					horizon: r.horizon,
 					markupPct: r.markupPct,
@@ -544,23 +545,89 @@ export function createTreeCuttingModel() {
 		return rows;
 	});
 
-	/** Set an item's currently-held quantity (clamped to [0, looted]); we
-	 * persist the derived removed quantity. Optimistic: the local overlay
-	 * updates immediately, then the write lands. */
-	async function setHeld(itemName: string, heldQty: number) {
-		if (!stockData) return;
-		const looted = lootedByItem(stockData.tierComparisons).get(itemName);
-		if (!looted) return;
-		const held = Math.min(Math.max(Math.floor(heldQty), 0), looted.quantity);
-		const removedQty = looted.quantity - held;
-		const next = new Map(removed);
-		if (removedQty > 0) next.set(itemName, removedQty);
-		else next.delete(itemName);
-		removed = next;
+	/** Unresolved auctions, oldest first: the panel is a worklist, so what
+	 * has been waiting longest is what most likely needs resolving. */
+	const openListings = $derived.by<AuctionListing[]>(() =>
+		listings
+			.filter((listing) => listing.status === 'pending')
+			.slice()
+			.sort((a, b) => a.listedAt.localeCompare(b.listedAt)),
+	);
+
+	/** Resolved auctions, newest first. */
+	const resolvedListings = $derived.by<AuctionListing[]>(() =>
+		listings
+			.filter((listing) => listing.status !== 'pending')
+			.slice()
+			.sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? '')),
+	);
+
+	/** Re-read everything holdings-related after a write. The activity
+	 * aggregates are untouched by a sale, so only the position, listing, and
+	 * realised reads are re-driven. */
+	async function refreshHoldings() {
+		const [stock, allListings, realised] = await Promise.all([
+			getHarvestStock().catch(() => []),
+			getAuctionListings().catch(() => []),
+			getHarvestRealisedMarkup().catch(() => []),
+		]);
+		positions = stock;
+		listings = allListings;
+		realisedByTier = new Map(realised.map((row) => [row.yieldTier, row.netMarkup]));
+	}
+
+	/** List stock on the auction. The quantity leaves holdings now and the
+	 * starting-bid fee is spent now; nothing is realised until it sells. */
+	async function listStock(input: AuctionListingInput) {
 		try {
-			await setHarvestStock({ itemName, removedQty });
+			await createAuctionListing(input);
+			await refreshHoldings();
 		} catch (e) {
-			error = describeError(e, 'Failed to update stock');
+			error = describeError(e, 'Failed to create the listing');
+			throw e;
+		}
+	}
+
+	/** Confirm a listing sold at the price it fetched, or mark it expired
+	 * and returned. Either way the listing leaves the open worklist. */
+	async function resolveListing(
+		listingId: string,
+		outcome:
+			| { sold: true; finalPrice: number; saleFee: number; resolvedAt?: string }
+			| { sold: false; resolvedAt?: string },
+	) {
+		try {
+			if (outcome.sold) {
+				await confirmAuctionListing({
+					listingId,
+					finalPrice: outcome.finalPrice,
+					saleFee: outcome.saleFee,
+					resolvedAt: outcome.resolvedAt ?? null,
+				});
+			} else {
+				await expireAuctionListing({ listingId, resolvedAt: outcome.resolvedAt ?? null });
+			}
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to resolve the listing');
+			throw e;
+		}
+	}
+
+	/** Recycle stock into Nanocubes at 1:1 TT, carrying its activity
+	 * composition forward so a later Nanocube sale still attributes back. */
+	async function recycleStock(sourceItem: string, quantity: number) {
+		try {
+			await convertStock({
+				sourceItem,
+				targetItem: NANOCUBE_ITEM,
+				quantity,
+				convertedAt: null,
+			});
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to convert the stock');
+			throw e;
 		}
 	}
 
@@ -576,14 +643,17 @@ export function createTreeCuttingModel() {
 			? sections.reduce((sum, s) => sum + (s.muProjectedReturns ?? 0), 0)
 			: null;
 		const muRate = muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
+		const realisedMarkup = sections.reduce((sum, s) => sum + s.realisedMarkup, 0);
+		const realisedReturns = returns + realisedMarkup;
 		return {
 			cycled,
 			returns,
 			lootRate,
 			muProjectedReturns,
 			muRate,
-			realisedReturns: returns,
-			realisedRate: lootRate,
+			realisedReturns,
+			realisedRate: cycled > 0 ? realisedReturns / cycled : 0,
+			realisedMarkup,
 		};
 	});
 
@@ -630,8 +700,16 @@ export function createTreeCuttingModel() {
 		get stock() {
 			return stock;
 		},
+		get openListings() {
+			return openListings;
+		},
+		get resolvedListings() {
+			return resolvedListings;
+		},
 		loadData,
-		setHeld,
+		listStock,
+		resolveListing,
+		recycleStock,
 	};
 }
 

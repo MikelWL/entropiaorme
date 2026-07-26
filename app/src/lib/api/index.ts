@@ -22,8 +22,10 @@ export type {
 	AnalyticsHarvest as HarvestData,
 	AnalyticsHunting as HuntingData,
 	ApiErrorKind,
-	HarvestStockInput,
-	HarvestStockRemoval,
+	AuctionConfirmInput,
+	AuctionExpireInput,
+	AuctionListing,
+	AuctionListingInput,
 	ManualMobSuggestion,
 	MarketBreakEven,
 	MarketBreakEvenCell,
@@ -41,7 +43,10 @@ export type {
 	MarketReading,
 	MarketSkippedLine,
 	MarketWeaponBreakEven,
+	RealisedTierMarkup,
 	SessionQuestLinkSuggestion,
+	StockConversionInput,
+	StockPosition,
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';

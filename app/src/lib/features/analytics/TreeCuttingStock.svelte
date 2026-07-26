@@ -1,10 +1,17 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
-	let { stock }: { stock: TreeCuttingStock[] } = $props();
+	let {
+		stock,
+		onsell,
+		onconvert,
+	}: {
+		stock: TreeCuttingStock[];
+		onsell: (item: TreeCuttingStock) => void;
+		onconvert: (item: TreeCuttingStock) => void;
+	} = $props();
 
 	function formatVolume(value: number): string {
 		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -84,20 +91,26 @@
 	}
 </script>
 
-{#snippet actionButton(letter: string, label: string, expandedWidth: string)}
-	<!-- Disabled on purpose: these actions have no capability behind them yet,
-		so the control reads as unavailable rather than merely doing nothing when
-		pressed. The column is registered as in-development and its header
-		carries the marker explaining what will make them work. -->
+{#snippet actionButton(
+	letter: string,
+	label: string,
+	expandedWidth: string,
+	onclick: () => void,
+	disabled = false,
+	title = '',
+)}
 	<button
 		type="button"
-		disabled
-		aria-label="{label} (in development)"
+		{onclick}
+		{disabled}
+		{title}
+		aria-label={label}
 		class="group/act relative inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden
-			rounded-md border border-dashed border-border/40 bg-transparent text-xs font-semibold text-text-tertiary
-			cursor-not-allowed
+			rounded-md border border-border/40 bg-transparent text-xs font-semibold text-text-secondary
 			transition-[width,color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
-			{expandedWidth} hover:text-text-secondary hover:border-border/70"
+			{expandedWidth} hover:text-text hover:border-border
+			disabled:cursor-not-allowed disabled:text-text-tertiary disabled:border-dashed
+			disabled:hover:text-text-tertiary disabled:hover:border-border/40"
 	>
 		<span
 			class="absolute inset-0 flex items-center justify-center
@@ -175,11 +188,7 @@
 		<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
 		<span class="eyebrow w-20 text-right shrink-0">Markup</span>
 		<span class="eyebrow w-12 text-center shrink-0">Conf</span>
-		{#if inDevelopment.visible}
-			<span class="w-[3.375rem] shrink-0 flex items-center justify-end">
-				<InDevelopmentMark id="harvest-stock-actions" />
-			</span>
-		{/if}
+		<span class="eyebrow w-[3.375rem] shrink-0 text-right">Actions</span>
 	</div>
 
 	<ul class="flex flex-col gap-1">
@@ -191,6 +200,14 @@
 
 				<span class="w-24 text-right shrink-0 text-sm tabular-nums font-medium text-text">
 					{formatPed(item.heldTt)}
+					{#if item.listedQty > 0}
+						<span
+							class="block text-[0.625rem] font-normal text-text-tertiary tabular-nums"
+							title="Out on an open auction; returns to stock if the listing expires"
+						>
+							{item.listedQty} listed
+						</span>
+					{/if}
 				</span>
 
 				<div class="w-20 shrink-0 flex items-center justify-end">
@@ -255,12 +272,24 @@
 					{/if}
 				</div>
 
-				{#if inDevelopment.visible}
-					<div class="shrink-0 flex items-center justify-end gap-1.5">
-						{@render actionButton('N', 'Nanocube', 'hover:w-44')}
-						{@render actionButton('S', 'Sell', 'hover:w-16')}
-					</div>
-				{/if}
+				<div class="shrink-0 flex items-center justify-end gap-1.5">
+					{@render actionButton(
+						'N',
+						'Nanocube',
+						'hover:w-44',
+						() => onconvert(item),
+						item.heldQty <= 0,
+						item.heldQty <= 0 ? 'Nothing held to convert' : '',
+					)}
+					{@render actionButton(
+						'S',
+						'Sell',
+						'hover:w-16',
+						() => onsell(item),
+						item.heldQty <= 0,
+						item.heldQty <= 0 ? 'Nothing held to sell' : '',
+					)}
+				</div>
 			</li>
 		{/each}
 	</ul>

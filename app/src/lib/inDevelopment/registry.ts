@@ -21,15 +21,7 @@ export interface InDevelopmentSurface {
 	readonly graduates: string;
 }
 
-export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
-	{
-		id: 'harvest-stock-actions',
-		summary: 'Converting or selling held loot from this list is not available yet.',
-		graduates:
-			'These actions start working once conversions and sales are recorded as transactions ' +
-			'that move stock and keep their own history.',
-	},
-] as const;
+export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [] as const;
 
 /** The registered surface for `id`. Throws on an unregistered id, matching
  * the guard's build-time check so both enforcement points agree. */
