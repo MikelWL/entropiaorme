@@ -2089,6 +2089,20 @@ fn record_opening_balance(
     )
 }
 
+/// TT per unit for an item the app can produce but never sees drop, so it has
+/// no recorded loot to derive a unit value from.
+///
+/// Entropia fixes TT per item, so these are constants of the game rather than
+/// estimates. Without one, a conversion has nothing to divide its preserved TT
+/// by and can only count the produced stock in PED, which reads as a quantity
+/// while being a value.
+fn produced_unit_tt(item_name: &str) -> Option<f64> {
+    match item_name {
+        "Nanocube" => Some(0.01),
+        _ => None,
+    }
+}
+
 /// Why a reversal cannot go ahead, in terms of the stock rather than the
 /// tables. The reader owns an inventory, not a movement ledger.
 fn blocked_reason(item_name: &str, short: f64) -> String {
@@ -2955,6 +2969,16 @@ impl AnalyticsService {
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
                 let (positions, unit_tt) = item_positions(&tx, &source_c)?;
+                // What the produced item is worth per unit, so the conversion
+                // records a count rather than a value wearing a count's label.
+                // Falling back to the target's own recorded loot covers a
+                // future target this table has not learned yet; falling back
+                // to 1.0 leaves the produced stock measured in PED, which is
+                // wrong but visibly so, rather than silently scaled.
+                let (_, target_loot_unit_tt) = item_positions(&tx, &target_c)?;
+                let target_unit_tt = produced_unit_tt(&target_c)
+                    .or_else(|| (target_loot_unit_tt > STOCK_EPSILON).then_some(target_loot_unit_tt))
+                    .unwrap_or(1.0);
                 // Converting more than is tracked is allowed for the same
                 // reason selling more is: the player may hold stock from
                 // before tracking began. The excess rides forward explicitly
@@ -2985,10 +3009,9 @@ impl AnalyticsService {
                         &converted_at,
                         now,
                     )?;
-                    // TT is preserved exactly, and the produced units are
-                    // measured in PED of TT: the game's recycling ratio is
-                    // 1:1 in value, and no per-unit TT for the produced item
-                    // is recorded anywhere to divide by.
+                    // TT is preserved exactly (the game's recycling ratio is
+                    // 1:1 in value), so the produced count is that value over
+                    // the produced item's own unit TT.
                     insert_movement(
                         &tx,
                         &target_c,
@@ -2996,7 +3019,7 @@ impl AnalyticsService {
                         Some(&id),
                         allocation.yield_tier,
                         allocation.tool_name,
-                        allocation.tt_value,
+                        allocation.tt_value / target_unit_tt,
                         allocation.tt_value,
                         &converted_at,
                         now,
@@ -5153,7 +5176,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(composition.len(), 3, "all three tiers ride forward");
-        for (tier, expected) in [("huge", 50.0), ("long", 30.0), ("short", 20.0)] {
+        // 100 PED of shavings is 10,000 Nanocubes at 0.01 TT each, split in
+        // the same 20/30/50 the shavings held.
+        for (tier, expected) in [("huge", 5000.0), ("long", 3000.0), ("short", 2000.0)] {
             let (_, got) = composition
                 .iter()
                 .find(|(name, _)| name == tier)
@@ -5163,9 +5188,14 @@ mod tests {
 
         // Sell the Nanocubes at 130 for 100 TT, no fees: 30 PED of markup.
         let listing = service
-            .create_auction_listing("Nanocube", 100.0, 130.0, Some(130.0), 0.0, None)
+            .create_auction_listing("Nanocube", 10_000.0, 130.0, Some(130.0), 0.0, None)
             .await
             .unwrap();
+        assert!(
+            (listing.tt_value - 100.0).abs() < 1e-9,
+            "the count and the value agree: {} ",
+            listing.tt_value,
+        );
         assert!(
             listing.unattributed_qty.abs() < 1e-9,
             "every Nanocube traces to a tier",
@@ -5355,9 +5385,19 @@ mod tests {
             "holdings bottom out at zero, never negative: {}",
             board.quantity
         );
-        // 150 boards at 0.03 TT is 4.50 PED, carried across 1:1.
+        // 150 boards at 0.03 TT is 4.50 PED, carried across 1:1 in value and
+        // counted at the Nanocube's own 0.01 TT: 450 of them.
         let produced = position(&rows, "Nanocube").expect("the produced stock");
-        assert!((produced.quantity - 4.5).abs() < 1e-9);
+        assert!(
+            (produced.quantity - 450.0).abs() < 1e-9,
+            "{}",
+            produced.quantity
+        );
+        assert!(
+            (produced.tt_value - 4.5).abs() < 1e-9,
+            "{}",
+            produced.tt_value
+        );
     }
 
     /// Create with the optional fields absent: notes is null and acquired_at
