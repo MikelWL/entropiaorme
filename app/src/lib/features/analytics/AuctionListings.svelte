@@ -41,6 +41,16 @@
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
 
+	// The list's column widths, declared once so the header and the rows cannot
+	// drift apart. Each gives ground in proportion to its own width as the pane
+	// narrows, rather than the item name collapsing to nothing and spilling
+	// over its neighbour. Kept in step with the sub-activity list the toggle
+	// swaps from.
+	const COL_NAME = 'min-w-0 flex-[1_1_6rem]';
+	const COL_QTY = 'min-w-0 flex-[0_1_3rem]';
+	const COL_TT = 'min-w-0 flex-[0_1_3.5rem]';
+	const COL_LISTED = 'min-w-0 flex-[0_1_5.75rem]';
+
 	// Open auctions lead: they are the only rows that still need a decision.
 	const allListings = $derived([...open, ...resolved]);
 
@@ -134,19 +144,19 @@
 				: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
 		>
 			<span
-				class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight
+				class="{COL_NAME} truncate text-sm font-medium tracking-tight
 					{listing.status === 'pending' ? 'text-text' : 'text-text-tertiary'}"
 				title={listing.itemName}
 			>
 				{listing.itemName}
 			</span>
-			<span class="w-12 shrink-0 text-right text-xs tabular-nums text-text-secondary">
+			<span class="{COL_QTY} truncate text-right text-xs tabular-nums text-text-secondary">
 				{listing.quantity}
 			</span>
-			<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
+			<span class="{COL_TT} truncate text-right text-xs tabular-nums text-text">
 				{formatPed(listing.ttValue)}
 			</span>
-			<span class="w-[5.75rem] shrink-0 text-right text-xs tabular-nums font-medium">
+			<span class="{COL_LISTED} truncate text-right text-xs tabular-nums font-medium">
 				{#if listing.status === 'sold'}
 					<span class={netTone(listing.activityNetMarkup ?? 0)}>
 						{signedPed(listing.activityNetMarkup ?? 0)}
@@ -190,10 +200,10 @@
 					<div
 						class="flex items-center gap-2 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
 					>
-						<span class="eyebrow min-w-0 flex-1">Item</span>
-						<span class="eyebrow w-12 shrink-0 text-right">Qty</span>
-						<span class="eyebrow w-14 shrink-0 text-right">TT</span>
-						<span class="eyebrow w-[5.75rem] shrink-0 text-right">Listed / MU</span>
+						<span class="eyebrow {COL_NAME}">Item</span>
+						<span class="eyebrow {COL_QTY} text-right">Qty</span>
+						<span class="eyebrow {COL_TT} text-right">TT</span>
+						<span class="eyebrow {COL_LISTED} text-right">Listed / MU</span>
 					</div>
 				</div>
 

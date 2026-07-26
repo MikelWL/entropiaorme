@@ -39,6 +39,19 @@
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
 	const rateTone = (value: number) => netTone(value - 1);
+
+	// The list's column widths, declared once because the header and the rows
+	// have to shrink identically or they stop lining up.
+	//
+	// Every column gives ground in proportion to its own width rather than the
+	// name column absorbing the whole squeeze: at basis 0 the name collapses
+	// first and its text spills over the neighbour, which is what a narrow
+	// pane used to look like. `min-w-0` is what lets a column go below the
+	// width of its own text instead of stopping there and pushing the row wide.
+	const COL_NAME = 'min-w-0 flex-[1_1_6rem]';
+	const COL_CYCLED = 'min-w-0 flex-[0_1_3.5rem]';
+	const COL_MU = 'min-w-0 flex-[0_1_4rem]';
+	const COL_REALISED = 'min-w-0 flex-[0_1_7.5rem]';
 	const sortArrow = (key: TreeCuttingActivitySortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '';
 	const sortDescription = (key: TreeCuttingActivitySortKey, label: string) => {
@@ -151,7 +164,7 @@
 					: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
 		>
 			<span
-				class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight
+				class="{COL_NAME} truncate text-sm font-medium tracking-tight
 					{isUnclassified ? 'text-text-tertiary' : 'text-text'}"
 				title={treeCuttingActivityName(section)}
 			>
@@ -159,18 +172,20 @@
 			</span>
 			{#if isUnclassified}
 				<span class="sr-only">Activity metrics not applicable</span>
-				<span class="w-14 shrink-0" aria-hidden="true"></span>
-				<span class="w-16 shrink-0" aria-hidden="true"></span>
-				<span class="w-[7.5rem] shrink-0" aria-hidden="true"></span>
+				<span class={COL_CYCLED} aria-hidden="true"></span>
+				<span class={COL_MU} aria-hidden="true"></span>
+				<span class={COL_REALISED} aria-hidden="true"></span>
 			{:else}
-				<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
+				<span class="{COL_CYCLED} truncate text-right text-xs tabular-nums text-text">
 					{formatPed(section.cycled)}
 				</span>
-				<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
+				<span class="{COL_MU} truncate text-right text-xs tabular-nums text-text">
 					{section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
 				</span>
 				<span
-					class="w-[7.5rem] shrink-0 text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}"
+					class="{COL_REALISED} truncate text-right text-xs tabular-nums font-medium {rateTone(
+						section.realisedRate,
+					)}"
 				>
 					{formatPercent(section.realisedRate)}
 				</span>
@@ -197,7 +212,7 @@
 				>
 					<button
 						type="button"
-						class="eyebrow flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_NAME} flex cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('yieldTier', 'Activity')}
 						onclick={() => onsort('yieldTier')}
 					>
@@ -206,7 +221,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-14 shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_CYCLED} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('cycled', 'Cycled')}
 						onclick={() => onsort('cycled')}
 					>
@@ -215,7 +230,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-16 shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_MU} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('muRate', 'MU Rate')}
 						onclick={() => onsort('muRate')}
 					>
@@ -224,7 +239,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-[7.5rem] shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow {COL_REALISED} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('realisedRate', 'Realised Rate')}
 						onclick={() => onsort('realisedRate')}
 					>
