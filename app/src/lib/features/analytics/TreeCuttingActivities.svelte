@@ -1,7 +1,6 @@
 <script lang="ts">
 	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { SortDir, SortKey } from '$lib/view/tableModel.svelte';
 	import {
@@ -39,6 +38,8 @@
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
+	const realisedMuTone = (value: number) =>
+		value > 0 ? 'text-positive' : 'text-text';
 	const rateTone = (value: number) => netTone(value - 1);
 	const sortArrow = (key: TreeCuttingActivitySortKey) =>
 		sortKey === key ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '';
@@ -276,25 +277,23 @@
 					/>
 					<StatDisplay
 						label="Realised MU"
-						value={NO_DATA}
-						unit=""
+						value={signedPed(selected.realisedReturns - selected.returns)}
+						valueClass={realisedMuTone(selected.realisedReturns - selected.returns)}
+						unit="PED"
 					>
 						{#snippet labelSuffix()}
-							{#if inDevelopment.visible}
-								<InDevelopmentMark id="harvest-realised-mu" />
-							{/if}
-							<InfoTip align="right" width="w-80" label="What Realised MU will report">
+							<InfoTip align="right" width="w-80" label="What Realised MU reports">
 								<p class="text-xs font-semibold leading-relaxed text-text">
 									Realised MU: markup confirmed by completed sales
 								</p>
 								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									Not available yet: a sale cannot be traced back to the activity that produced
-									the stock, so this reads as no data. A sale you have already recorded will not
-									appear here.
+									No sale is linked to an activity yet, so this is zero for every activity. A
+									sale recorded directly in the Ledger is not linked, and will not appear here
+									until it is.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-secondary">
-									Once it can: loot TT is already counted when it is acquired, so a sale will add
-									only the amount received above TT, after auction fees.
+									Once sales are linked: loot TT is already counted when it is acquired, so a
+									sale will add only the amount received above TT, after auction fees.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
 									That net markup will be split between the activities that produced the sold
