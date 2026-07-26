@@ -183,7 +183,7 @@
 	{:else}
 		<!-- Kept in step with the sub-activity box the toggle swaps from: same
 			frame, so the hairline must not move when the contents do. -->
-		<div class="grid sm:grid-cols-[minmax(22.25rem,42%)_minmax(0,1fr)]">
+		<div class="grid sm:grid-cols-[minmax(25.25rem,46%)_minmax(0,1fr)]">
 			<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 				<div class="px-2 pt-4">
 					<div

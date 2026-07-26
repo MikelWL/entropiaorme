@@ -161,7 +161,7 @@
 				<span class="sr-only">Activity metrics not applicable</span>
 				<span class="w-14 shrink-0" aria-hidden="true"></span>
 				<span class="w-16 shrink-0" aria-hidden="true"></span>
-				<span class="w-[4.5rem] shrink-0" aria-hidden="true"></span>
+				<span class="w-[7.5rem] shrink-0" aria-hidden="true"></span>
 			{:else}
 				<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text">
 					{formatPed(section.cycled)}
@@ -170,7 +170,7 @@
 					{section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}
 				</span>
 				<span
-					class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}"
+					class="w-[7.5rem] shrink-0 text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}"
 				>
 					{formatPercent(section.realisedRate)}
 				</span>
@@ -183,7 +183,7 @@
 	<!-- The list pane's width is shared with the market panel the toggle swaps
 		to: the two are the same frame with different contents, so the hairline
 		has to fall in the same place in both. -->
-	<div class="grid sm:grid-cols-[minmax(22.25rem,42%)_minmax(0,1fr)]">
+	<div class="grid sm:grid-cols-[minmax(25.25rem,46%)_minmax(0,1fr)]">
 		<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 			<div class="px-2 pt-4">
 				<div
@@ -218,7 +218,7 @@
 					</button>
 					<button
 						type="button"
-						class="eyebrow flex w-[4.5rem] shrink-0 cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
+						class="eyebrow flex w-[7.5rem] shrink-0 cursor-pointer items-center justify-end gap-1 whitespace-nowrap text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('realisedRate', 'Realised Rate')}
 						onclick={() => onsort('realisedRate')}
 					>
