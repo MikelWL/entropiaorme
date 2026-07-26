@@ -12,11 +12,11 @@
 use std::sync::Arc;
 
 use eo_api::analytics::{
-    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
-    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup, StockConversionInput,
-    StockPosition,
+    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
+    AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
+    InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput,
+    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup,
+    StockConversionInput, StockPosition,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -517,6 +517,37 @@ pub async fn stock_convert(
     input: StockConversionInput,
 ) -> Result<(), ApiError> {
     facade(&app)?.stock_convert(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn activity_history(
+    app: tauri::AppHandle,
+) -> Result<Vec<ActivityHistoryEntry>, ApiError> {
+    facade(&app)?.activity_history().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_sale_revert(
+    app: tauri::AppHandle,
+    input: ActivityUndoInput,
+) -> Result<AuctionListing, ApiError> {
+    facade(&app)?.auction_sale_revert(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_listing_delete(
+    app: tauri::AppHandle,
+    input: ActivityUndoInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.auction_listing_delete(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_conversion_delete(
+    app: tauri::AppHandle,
+    input: ActivityUndoInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.stock_conversion_delete(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1404,6 +1435,10 @@ mod tests {
         "auction_listing_confirm",
         "auction_listing_expire",
         "stock_convert",
+        "activity_history",
+        "auction_sale_revert",
+        "auction_listing_delete",
+        "stock_conversion_delete",
         "ledger_list",
         "ledger_summary",
         "ledger_create",

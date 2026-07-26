@@ -129,6 +129,43 @@ pub struct AuctionListingRow {
     pub gross_markup: Option<f64>,
 }
 
+/// One thing this activity did to its stock: an auction listing across its
+/// whole lifecycle, or a conversion into another item.
+///
+/// A listing is one entry whatever state it reaches. Creating it and selling
+/// it are not two events to be listed separately; they are the same listing,
+/// later on.
+///
+/// Whether an entry can be undone is decided here rather than in the UI,
+/// because the answer depends on what the rest of the ledger has since done
+/// with the stock. `undo_blocked_reason` is written for the person reading it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityHistoryRow {
+    pub id: String,
+    /// `listing` or `conversion`.
+    pub kind: String,
+    /// `pending`, `sold`, `expired` for a listing; `converted` otherwise.
+    pub status: String,
+    pub item_name: String,
+    /// What a conversion produced. `None` for a listing.
+    pub target_item: Option<String>,
+    /// The date the entry currently stands at: when a listing resolved, or
+    /// when it was listed if it has not, and when a conversion happened.
+    pub occurred_at: String,
+    pub quantity: f64,
+    pub tt_value: f64,
+    /// Sold listings only: the whole gain, and the part an activity may claim.
+    pub net_markup: Option<f64>,
+    pub activity_net_markup: Option<f64>,
+    /// Sold listings only: whether the sale can be taken back, leaving the
+    /// listing open. Never blocked, since no stock moves.
+    pub can_revert_sale: bool,
+    /// Whether the entry can be removed outright, returning any stock it took.
+    pub can_delete: bool,
+    pub undo_blocked_reason: Option<String>,
+}
+
 /// One yield tier's realised markup from confirmed sales, for the Tree
 /// Cutting Realised figures.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -278,6 +315,11 @@ pub enum AnalyticsError {
     /// A caller-supplied value the domain rejects before it reaches storage.
     #[error("{0}")]
     InvalidInput(&'static str),
+    /// A request the domain refuses on the state it finds, carrying the reason
+    /// in terms of that state. Distinct from [`Self::InvalidInput`], which
+    /// rejects the argument itself and can say so in a fixed sentence.
+    #[error("{0}")]
+    Rejected(String),
     #[error(transparent)]
     Storage(#[from] DbError),
 }
@@ -2011,9 +2053,15 @@ fn insert_movement(
 ///
 /// A no-op when tracked stock covered the whole outflow, which is the ordinary
 /// case.
+///
+/// The row belongs to the outflow that revealed it, so it carries the same
+/// `ref_id`: undoing that listing or conversion has to take this row with it,
+/// or the stock it accounts for outlives the only evidence there ever was of
+/// it.
 fn record_opening_balance(
     conn: &rusqlite::Connection,
     item_name: &str,
+    ref_id: &str,
     plan: &stock_allocation::AllocationPlan<'_>,
     occurred_at: &str,
     created_at: f64,
@@ -2025,7 +2073,7 @@ fn record_opening_balance(
         conn,
         item_name,
         "opening_balance",
-        None,
+        Some(ref_id),
         None,
         None,
         plan.excess_qty,
@@ -2033,6 +2081,108 @@ fn record_opening_balance(
         occurred_at,
         created_at,
     )
+}
+
+/// Why a reversal cannot go ahead, in terms of the stock rather than the
+/// tables. The reader owns an inventory, not a movement ledger.
+fn blocked_reason(item_name: &str, short: f64) -> String {
+    format!(
+        "{item_name} this produced has since been sold or converted. \
+         Undoing it would leave you holding {short:.2} less than nothing of it; \
+         undo whatever used it first."
+    )
+}
+
+/// Delete the ledger row a listing owns through `column`, if it is still
+/// there, and report its day so the rollup can reland.
+///
+/// The ledger stays the system of record for money and the player may have
+/// already removed the row by hand, so a missing entry is an ordinary outcome
+/// and not an error.
+fn delete_owned_ledger_entry(
+    conn: &rusqlite::Connection,
+    listing_id: &str,
+    column: &str,
+) -> rusqlite::Result<Option<String>> {
+    use rusqlite::OptionalExtension as _;
+    let entry_id: Option<String> = conn
+        .query_row(
+            &format!("SELECT {column} FROM auction_listings WHERE id = ?"),
+            rusqlite::params![listing_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(entry_id) = entry_id else {
+        return Ok(None);
+    };
+    let day: Option<String> = conn
+        .query_row(
+            "SELECT date FROM ledger_entries WHERE id = ?",
+            rusqlite::params![entry_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if day.is_some() {
+        conn.execute(
+            "DELETE FROM ledger_entries WHERE id = ?",
+            rusqlite::params![entry_id],
+        )?;
+    }
+    Ok(day)
+}
+
+/// An item's whole position as the ledger states it: recorded loot plus every
+/// signed movement, with nothing filtered.
+///
+/// [`item_positions`] drops closed buckets because allocation may only draw on
+/// what is open. A safety check has to see the raw arithmetic instead, or a
+/// reversal that would take a holding below zero looks fine right up until it
+/// is committed.
+fn raw_position(conn: &rusqlite::Connection, item_name: &str) -> rusqlite::Result<f64> {
+    conn.query_row(
+        "SELECT COALESCE(( \
+             SELECT SUM(l.quantity) FROM harvest_loot_items AS l \
+             WHERE l.item_name = ?1 AND l.deactivated_at IS NULL), 0) \
+         + COALESCE(( \
+             SELECT SUM(m.quantity) FROM stock_movements AS m \
+             WHERE m.item_name = ?1), 0)",
+        rusqlite::params![item_name],
+        |row| row.get(0),
+    )
+}
+
+/// Whether dropping every movement belonging to `ref_id` would leave some item
+/// holding less than nothing, and which one.
+///
+/// One check covers every kind of entry, because it asks the only question
+/// that matters: after these rows go, does the arithmetic still describe an
+/// inventory a player could have? An outflow being undone always returns
+/// stock, so it passes; a conversion being undone unmakes what it produced,
+/// and fails if those units have since been sold or converted onward.
+fn reversal_blocker(
+    conn: &rusqlite::Connection,
+    ref_id: &str,
+) -> rusqlite::Result<Option<(String, f64)>> {
+    let deltas: Vec<(String, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT item_name, SUM(quantity) FROM stock_movements \
+             WHERE ref_id = ? GROUP BY item_name",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![ref_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (item_name, delta) in deltas {
+        let remaining = raw_position(conn, &item_name)? - delta;
+        if remaining < -STOCK_EPSILON {
+            return Ok(Some((item_name, -remaining)));
+        }
+    }
+    Ok(None)
 }
 
 /// One item's open positions per (yield tier, tool), plus its TT per unit.
@@ -2553,7 +2703,7 @@ impl AnalyticsService {
                     ],
                 )?;
 
-                record_opening_balance(&tx, &item_c, &plan, &listed_c, now)?;
+                record_opening_balance(&tx, &item_c, &id_c, &plan, &listed_c, now)?;
 
                 for allocation in &plan.allocations {
                     insert_movement(
@@ -2813,7 +2963,7 @@ impl AnalyticsService {
                     rusqlite::params![id, source_c, target_c, quantity, converted_tt, converted_at, now],
                 )?;
 
-                record_opening_balance(&tx, &source_c, &plan, &converted_at, now)?;
+                record_opening_balance(&tx, &source_c, &id, &plan, &converted_at, now)?;
 
                 for allocation in &plan.allocations {
                     insert_movement(
@@ -2851,6 +3001,231 @@ impl AnalyticsService {
             })
             .await?;
         Ok(())
+    }
+
+    /// Everything this activity has done to its stock, newest first.
+    ///
+    /// Listings and conversions in one list, each carrying whether it can be
+    /// taken back. The verdict is computed here because it depends on what the
+    /// rest of the ledger has since done with the stock, which the caller
+    /// cannot see.
+    pub async fn activity_history(&self) -> Result<Vec<ActivityHistoryRow>, AnalyticsError> {
+        Ok(self
+            .db
+            .with_reader(|conn| {
+                let mut rows: Vec<ActivityHistoryRow> = Vec::new();
+
+                {
+                    let mut stmt =
+                        conn.prepare(&format!("SELECT {LISTING_COLUMNS} FROM auction_listings"))?;
+                    let listings = stmt
+                        .query_map([], |row| Ok(listing_from_row(row)))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    for listing in listings {
+                        let net_markup = listing.gross_markup.map(|gross| {
+                            gross - listing.listing_fee - listing.sale_fee.unwrap_or(0.0)
+                        });
+                        let blocker = reversal_blocker(conn, &listing.id)?;
+                        rows.push(ActivityHistoryRow {
+                            occurred_at: listing
+                                .resolved_at
+                                .clone()
+                                .unwrap_or_else(|| listing.listed_at.clone()),
+                            kind: "listing".to_string(),
+                            status: listing.status.clone(),
+                            item_name: listing.item_name.clone(),
+                            target_item: None,
+                            quantity: listing.quantity,
+                            tt_value: listing.tt_value,
+                            net_markup,
+                            activity_net_markup: listing.activity_net_markup,
+                            can_revert_sale: listing.status == "sold",
+                            can_delete: blocker.is_none(),
+                            undo_blocked_reason: blocker
+                                .map(|(item, short)| blocked_reason(&item, short)),
+                            id: listing.id,
+                        });
+                    }
+                }
+
+                {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, source_item, target_item, quantity, tt_value, converted_at \
+                         FROM stock_conversions",
+                    )?;
+                    let conversions = stmt
+                        .query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, f64>(4)?,
+                                row.get::<_, String>(5)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    for (id, source, target, quantity, tt_value, converted_at) in conversions {
+                        let blocker = reversal_blocker(conn, &id)?;
+                        rows.push(ActivityHistoryRow {
+                            id,
+                            kind: "conversion".to_string(),
+                            status: "converted".to_string(),
+                            item_name: source,
+                            target_item: Some(target),
+                            occurred_at: converted_at,
+                            quantity,
+                            tt_value,
+                            net_markup: None,
+                            activity_net_markup: None,
+                            can_revert_sale: false,
+                            can_delete: blocker.is_none(),
+                            undo_blocked_reason: blocker
+                                .map(|(item, short)| blocked_reason(&item, short)),
+                        });
+                    }
+                }
+
+                // Newest first, and stable on the id so a day with several
+                // entries does not reshuffle between reads.
+                rows.sort_by(|a, b| {
+                    b.occurred_at
+                        .cmp(&a.occurred_at)
+                        .then_with(|| a.id.cmp(&b.id))
+                });
+                Ok(rows)
+            })
+            .await?)
+    }
+
+    /// Take back a confirmed sale, leaving the listing open again.
+    ///
+    /// The stock does not move: it left at listing time and, with the listing
+    /// open once more, it is still out. Only the recognition is undone, so the
+    /// money the sale wrote goes with it and the markup stops being realised.
+    pub async fn revert_auction_sale(
+        &self,
+        listing_id: &str,
+    ) -> Result<Option<AuctionListingRow>, AnalyticsError> {
+        let listing_id = listing_id.to_string();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let Some(listing) = read_listing(&tx, &listing_id)? else {
+                    return Ok(None);
+                };
+                if listing.status != "sold" {
+                    return Ok(None);
+                }
+
+                let mut days: Vec<String> = Vec::new();
+                for column in ["sale_entry_id", "sale_fee_entry_id"] {
+                    if let Some(day) = delete_owned_ledger_entry(&tx, &listing_id, column)? {
+                        days.push(day);
+                    }
+                }
+
+                tx.execute(
+                    "UPDATE auction_listings \
+                     SET status = 'pending', final_price = NULL, sale_fee = NULL, \
+                         resolved_at = NULL, sale_entry_id = NULL, sale_fee_entry_id = NULL \
+                     WHERE id = ?",
+                    rusqlite::params![listing_id],
+                )?;
+                daily_rollup::refresh_days(&tx, days)?;
+                let row = read_listing(&tx, &listing_id)?;
+                tx.commit()?;
+                Ok(row)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Remove a listing outright: the stock it took comes back, and every
+    /// ledger row it wrote goes with it.
+    ///
+    /// This is the undo of a mis-entry, not a market event, so the rows are
+    /// deleted rather than compensated. An expiry is the other case and keeps
+    /// its returning rows: the stock genuinely came back.
+    pub async fn delete_auction_listing(&self, listing_id: &str) -> Result<bool, AnalyticsError> {
+        let listing_id = listing_id.to_string();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let Some(listing) = read_listing(&tx, &listing_id)? else {
+                    return Ok(Ok(false));
+                };
+                if let Some((item, short)) = reversal_blocker(&tx, &listing_id)? {
+                    return Ok(Err(blocked_reason(&item, short)));
+                }
+
+                let mut days = vec![listing.listed_at.clone()];
+                if let Some(resolved) = listing.resolved_at.clone() {
+                    days.push(resolved);
+                }
+                for column in ["fee_entry_id", "sale_entry_id", "sale_fee_entry_id"] {
+                    if let Some(day) = delete_owned_ledger_entry(&tx, &listing_id, column)? {
+                        days.push(day);
+                    }
+                }
+
+                tx.execute(
+                    "DELETE FROM stock_movements WHERE ref_id = ?",
+                    rusqlite::params![listing_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM auction_listings WHERE id = ?",
+                    rusqlite::params![listing_id],
+                )?;
+                daily_rollup::refresh_days(&tx, days)?;
+                tx.commit()?;
+                Ok(Ok(true))
+            })
+            .await?
+            .map_err(AnalyticsError::Rejected)
+    }
+
+    /// Remove a conversion: what it consumed comes back and what it produced
+    /// is unmade. Refused when those produced units have since left.
+    pub async fn delete_stock_conversion(
+        &self,
+        conversion_id: &str,
+    ) -> Result<bool, AnalyticsError> {
+        let conversion_id = conversion_id.to_string();
+        self.db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let converted_at: Option<String> = tx
+                    .query_row(
+                        "SELECT converted_at FROM stock_conversions WHERE id = ?",
+                        rusqlite::params![conversion_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let Some(converted_at) = converted_at else {
+                    return Ok(Ok(false));
+                };
+                if let Some((item, short)) = reversal_blocker(&tx, &conversion_id)? {
+                    return Ok(Err(blocked_reason(&item, short)));
+                }
+
+                tx.execute(
+                    "DELETE FROM stock_movements WHERE ref_id = ?",
+                    rusqlite::params![conversion_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM stock_conversions WHERE id = ?",
+                    rusqlite::params![conversion_id],
+                )?;
+                // A conversion writes no money, but its day is refreshed all
+                // the same: cheap, and it keeps every undo path the same shape.
+                daily_rollup::refresh_days(&tx, [converted_at])?;
+                tx.commit()?;
+                Ok(Ok(true))
+            })
+            .await?
+            .map_err(AnalyticsError::Rejected)
     }
 
     /// Net realised markup per yield tier, from confirmed sales only.
@@ -4077,6 +4452,19 @@ mod tests {
             .unwrap();
     }
 
+    /// Every ledger description currently on file, for asserting that an undo
+    /// took the money with it.
+    async fn ledger_descriptions(service: &AnalyticsService) -> Vec<String> {
+        service
+            .list_ledger(None, Some(100))
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.description)
+            .collect()
+    }
+
     fn position(rows: &[StockPositionRow], item: &str) -> Option<StockPositionRow> {
         rows.iter().find(|row| row.item_name == item).cloned()
     }
@@ -4452,6 +4840,311 @@ mod tests {
         let board = position(&rows, "Moonleaf Board").expect("the line stays");
         assert!(board.quantity.abs() < 1e-9);
         assert!(board.tt_value.abs() < 1e-9);
+    }
+
+    /// A listing is one history entry across its whole life. Selling it
+    /// changes that entry rather than adding a second one beside it.
+    #[tokio::test]
+    async fn a_sale_replaces_its_listing_in_history_rather_than_joining_it() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 4.0, None, 0.5, Some("2026-07-20"))
+            .await
+            .unwrap();
+
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].status, "pending");
+        assert_eq!(history[0].occurred_at, "2026-07-20");
+        assert!(!history[0].can_revert_sale, "nothing has been realised yet");
+        assert!(history[0].can_delete);
+
+        service
+            .confirm_auction_listing(&listing.id, 4.0, 0.0, Some("2026-07-22"))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let history = service.activity_history().await.unwrap();
+        assert_eq!(history.len(), 1, "still one entry, now in its sold state");
+        assert_eq!(history[0].status, "sold");
+        assert_eq!(
+            history[0].occurred_at, "2026-07-22",
+            "dated by its resolution"
+        );
+        assert!(history[0].can_revert_sale);
+        // 4.00 fetched on 3.00 TT, less the 0.50 listing fee.
+        assert!((history[0].net_markup.unwrap() - 0.5).abs() < 1e-9);
+    }
+
+    /// Undoing a sale leaves the listing open: the stock stays out, because it
+    /// left at listing time and the listing is live again, and the money the
+    /// sale wrote goes away with the recognition.
+    #[tokio::test]
+    async fn reverting_a_sale_reopens_the_listing_and_unwrites_its_money() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 4.0, None, 0.5, None)
+            .await
+            .unwrap();
+        service
+            .confirm_auction_listing(&listing.id, 4.5, 0.2, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!service.realised_markup_by_tier().await.unwrap().is_empty());
+
+        let reverted = service
+            .revert_auction_sale(&listing.id)
+            .await
+            .unwrap()
+            .expect("the listing is still there");
+        assert_eq!(reverted.status, "pending");
+        assert_eq!(reverted.final_price, None);
+        assert_eq!(reverted.sale_fee, None);
+        assert_eq!(reverted.resolved_at, None);
+
+        // The sale and its point-of-sale fee are gone; the listing fee stays,
+        // because that was spent at listing time and the listing still stands.
+        let ledger = ledger_descriptions(&service).await;
+        assert!(!ledger.iter().any(|d| d == "Auction Sale: Moonleaf Board"));
+        assert_eq!(
+            ledger
+                .iter()
+                .filter(|d| *d == "Auction Fee: Moonleaf Board")
+                .count(),
+            1,
+        );
+
+        // Nothing is realised by an open listing.
+        assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
+        // The stock is still out on the auction.
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the line stays");
+        assert!(board.quantity.abs() < 1e-9);
+        assert!((board.listed_quantity - 100.0).abs() < 1e-9);
+
+        // Re-confirming lands on the same figures it first did.
+        let resold = service
+            .confirm_auction_listing(&listing.id, 4.5, 0.2, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!((resold.gross_markup.unwrap() - 1.5).abs() < 1e-9);
+    }
+
+    /// A sale can only be taken back while it is a sale.
+    #[tokio::test]
+    async fn reverting_reports_not_found_unless_the_listing_is_sold() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 4.0, None, 0.5, None)
+            .await
+            .unwrap();
+        assert!(service
+            .revert_auction_sale(&listing.id)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(service
+            .revert_auction_sale("no-such-id")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    /// Deleting a listing returns the stock it took and removes every ledger
+    /// row it wrote, leaving no trace of an entry that should not have been.
+    #[tokio::test]
+    async fn deleting_a_sold_listing_returns_the_stock_and_its_money() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 60.0, 3.0, None, 0.5, None)
+            .await
+            .unwrap();
+        service
+            .confirm_auction_listing(&listing.id, 3.0, 0.1, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(service.delete_auction_listing(&listing.id).await.unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the stock is back");
+        assert!((board.quantity - 100.0).abs() < 1e-9, "all 100 held again");
+        assert!(board.listed_quantity.abs() < 1e-9);
+
+        let ledger = ledger_descriptions(&service).await;
+        assert!(!ledger.iter().any(|d| d.contains("Moonleaf Board")));
+        assert!(service.auction_listings().await.unwrap().is_empty());
+        assert!(service.activity_history().await.unwrap().is_empty());
+        assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
+    }
+
+    /// Deleting a listing that outran tracked stock takes the opening balance
+    /// with it. The units it accounted for were only ever evidenced by the
+    /// listing, so they cannot outlive it as stock the player never had.
+    #[tokio::test]
+    async fn deleting_a_listing_takes_its_opening_balance_with_it() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 150.0, 5.0, None, 0.5, None)
+            .await
+            .unwrap();
+        assert!(service.delete_auction_listing(&listing.id).await.unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the stock is back");
+        assert!(
+            (board.quantity - 100.0).abs() < 1e-9,
+            "back to the 100 that were ever recorded, not 150: {}",
+            board.quantity
+        );
+    }
+
+    /// Deleting an expired listing is a no-op on the stock: it went out and
+    /// came back, and both rows go together.
+    #[tokio::test]
+    async fn deleting_an_expired_listing_leaves_the_stock_where_it_was() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 40.0, 2.0, None, 0.5, None)
+            .await
+            .unwrap();
+        service
+            .expire_auction_listing(&listing.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(service.delete_auction_listing(&listing.id).await.unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the stock is there");
+        assert!((board.quantity - 100.0).abs() < 1e-9);
+        // The fee an expired listing kept spent goes with the listing.
+        assert!(!ledger_descriptions(&service)
+            .await
+            .iter()
+            .any(|d| d.contains("Moonleaf Board")));
+    }
+
+    /// A conversion can be undone: the source comes back and what it produced
+    /// is unmade.
+    #[tokio::test]
+    async fn deleting_a_conversion_unmakes_what_it_produced() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .convert_stock("Moonleaf Board", "Nanocube", 50.0, None)
+            .await
+            .unwrap();
+        let history = service.activity_history().await.unwrap();
+        let conversion = history
+            .iter()
+            .find(|row| row.kind == "conversion")
+            .expect("the conversion is in history");
+        assert_eq!(conversion.target_item.as_deref(), Some("Nanocube"));
+        assert!(conversion.can_delete);
+
+        assert!(service
+            .delete_stock_conversion(&conversion.id)
+            .await
+            .unwrap());
+
+        let rows = service.stock_positions().await.unwrap();
+        let board = position(&rows, "Moonleaf Board").expect("the source is back");
+        assert!((board.quantity - 100.0).abs() < 1e-9);
+        assert!(
+            position(&rows, "Nanocube").is_none_or(|row| row.quantity.abs() < 1e-9),
+            "the produced stock is unmade"
+        );
+        assert!(service.activity_history().await.unwrap().is_empty());
+    }
+
+    /// A conversion whose output has since been sold cannot be undone: doing
+    /// so would leave the player holding less than nothing of it. The refusal
+    /// names what is in the way.
+    #[tokio::test]
+    async fn a_conversion_whose_output_was_sold_refuses_to_be_undone() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        service
+            .convert_stock("Moonleaf Board", "Nanocube", 100.0, None)
+            .await
+            .unwrap();
+        let conversion_id = service
+            .activity_history()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == "conversion")
+            .expect("the conversion")
+            .id;
+
+        // The Nanocubes go out on the auction, so they are no longer held.
+        service
+            .create_auction_listing("Nanocube", 3.0, 4.0, None, 0.5, None)
+            .await
+            .unwrap();
+
+        let history = service.activity_history().await.unwrap();
+        let conversion = history
+            .iter()
+            .find(|row| row.id == conversion_id)
+            .expect("still in history");
+        assert!(!conversion.can_delete, "history reports it as blocked");
+        let reason = conversion
+            .undo_blocked_reason
+            .as_deref()
+            .expect("with a reason");
+        assert!(
+            reason.contains("Nanocube"),
+            "naming what is in the way: {reason}"
+        );
+
+        let refused = service.delete_stock_conversion(&conversion_id).await;
+        assert!(
+            matches!(refused, Err(AnalyticsError::Rejected(_))),
+            "the command refuses it too, not only the UI",
+        );
+
+        // Undoing the listing that consumed them clears the way.
+        let listing_id = service
+            .activity_history()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == "listing")
+            .expect("the listing")
+            .id;
+        assert!(service.delete_auction_listing(&listing_id).await.unwrap());
+        assert!(service
+            .delete_stock_conversion(&conversion_id)
+            .await
+            .unwrap());
+    }
+
+    /// Undoing something that is not there is a not-found, not an error.
+    #[tokio::test]
+    async fn undoing_an_absent_entry_reports_not_found() {
+        let (_dir, service) = write_service().await;
+        assert!(!service.delete_auction_listing("no-such-id").await.unwrap());
+        assert!(!service.delete_stock_conversion("no-such-id").await.unwrap());
     }
 
     /// Selling past tracked stock cannot drive holdings below zero. The units

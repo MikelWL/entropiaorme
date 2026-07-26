@@ -331,7 +331,10 @@ mod tests {
         // A sale within tracked stock has no excess to make good.
         let within = allocate(&positions, 12.0, 0.03);
         assert!(within.excess_qty.abs() < 1e-9);
-        assert!(within.unattributed_qty > 0.0, "still draws on the untiered position");
+        assert!(
+            within.unattributed_qty > 0.0,
+            "still draws on the untiered position"
+        );
     }
 
     /// With nothing tracked at all, the whole sale is unattributed rather

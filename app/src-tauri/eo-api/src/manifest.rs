@@ -14,11 +14,11 @@ use schemars::schema_for;
 use serde_json::Value;
 
 use crate::analytics::{
-    AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
-    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup, StockConversionInput,
-    StockPosition,
+    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
+    AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
+    InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput,
+    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup,
+    StockConversionInput, StockPosition,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -549,6 +549,35 @@ pub fn manifest() -> Vec<CommandSpec> {
             args: vec![ArgSpec {
                 name: "input",
                 schema: schema(schema_for!(StockConversionInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "activity_history",
+            args: vec![],
+            returns: Some(schema(schema_for!(Vec<ActivityHistoryEntry>))),
+        },
+        CommandSpec {
+            name: "auction_sale_revert",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ActivityUndoInput)),
+            }],
+            returns: Some(schema(schema_for!(AuctionListing))),
+        },
+        CommandSpec {
+            name: "auction_listing_delete",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ActivityUndoInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "stock_conversion_delete",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ActivityUndoInput)),
             }],
             returns: None,
         },

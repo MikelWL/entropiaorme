@@ -51,6 +51,37 @@ export interface AcceptResult {
 }
 
 /**
+ * One thing an activity did to its stock: a listing across its whole
+ * lifecycle, or a conversion into another item.
+ * 
+ * A listing appears once however far it has got. Creating and selling are the
+ * same listing at two moments, not two entries.
+ */
+export interface ActivityHistoryEntry {
+	id: string;
+	/** `listing` or `conversion`. */
+	kind: string;
+	/** `pending`, `sold` or `expired` for a listing; `converted` otherwise. */
+	status: string;
+	itemName: string;
+	/** What a conversion produced; `null` for a listing. */
+	targetItem: string | null;
+	/** When a listing resolved, or when it was listed if it has not; when a conversion happened. */
+	occurredAt: string;
+	quantity: number;
+	ttValue: number;
+	/** Sold listings only: the gain after both fees, and the part of it an activity may claim. */
+	netMarkup: number | null;
+	activityNetMarkup: number | null;
+	/** Whether the sale can be taken back, leaving the listing open. */
+	canRevertSale: boolean;
+	/** Whether the entry can be removed outright, returning any stock it took. */
+	canDelete: boolean;
+	/** Why not, when it cannot, in terms a reader can act on. */
+	undoBlockedReason: string | null;
+}
+
+/**
  * The activity-recommender query. `professions` carries the target
  * profession name(s) for a `profession` target (one name, or several
  * for a family) and is ignored for `hp`.
@@ -72,6 +103,13 @@ export interface ActivityRecommenderResult {
 	sampleStep: number;
 	direct: RecommenderActivity | null;
 	candidates: RecommenderActivity[];
+}
+
+/**
+ * An undo payload: the history entry to take back.
+ */
+export interface ActivityUndoInput {
+	id: string;
 }
 
 /**
@@ -2581,6 +2619,22 @@ export async function auctionListingExpire(input: AuctionExpireInput): Promise<A
 
 export async function stockConvert(input: StockConversionInput): Promise<void> {
 	return invokeCommand('stock_convert', { input });
+}
+
+export async function activityHistory(): Promise<ActivityHistoryEntry[]> {
+	return invokeCommand('activity_history', {});
+}
+
+export async function auctionSaleRevert(input: ActivityUndoInput): Promise<AuctionListing> {
+	return invokeCommand('auction_sale_revert', { input });
+}
+
+export async function auctionListingDelete(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('auction_listing_delete', { input });
+}
+
+export async function stockConversionDelete(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('stock_conversion_delete', { input });
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

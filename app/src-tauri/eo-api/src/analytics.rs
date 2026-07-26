@@ -340,6 +340,46 @@ pub struct AuctionListing {
     pub gross_markup: Nullable<f64>,
 }
 
+/// One thing an activity did to its stock: a listing across its whole
+/// lifecycle, or a conversion into another item.
+///
+/// A listing appears once however far it has got. Creating and selling are the
+/// same listing at two moments, not two entries.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityHistoryEntry {
+    pub id: String,
+    /// `listing` or `conversion`.
+    pub kind: String,
+    /// `pending`, `sold` or `expired` for a listing; `converted` otherwise.
+    pub status: String,
+    pub item_name: String,
+    /// What a conversion produced; `null` for a listing.
+    pub target_item: Nullable<String>,
+    /// When a listing resolved, or when it was listed if it has not; when a
+    /// conversion happened.
+    pub occurred_at: String,
+    pub quantity: f64,
+    pub tt_value: f64,
+    /// Sold listings only: the gain after both fees, and the part of it an
+    /// activity may claim.
+    pub net_markup: Nullable<f64>,
+    pub activity_net_markup: Nullable<f64>,
+    /// Whether the sale can be taken back, leaving the listing open.
+    pub can_revert_sale: bool,
+    /// Whether the entry can be removed outright, returning any stock it took.
+    pub can_delete: bool,
+    /// Why not, when it cannot, in terms a reader can act on.
+    pub undo_blocked_reason: Nullable<String>,
+}
+
+/// An undo payload: the history entry to take back.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityUndoInput {
+    pub id: String,
+}
+
 /// One yield tier's net realised markup from confirmed sales.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -584,6 +624,79 @@ impl Api {
             .await
             .map_err(analytics_error("stock convert"))?;
         Ok(())
+    }
+
+    /// Everything the activity has done to its stock, newest first, each
+    /// entry carrying whether it can be taken back.
+    pub async fn activity_history(&self) -> Result<Vec<ActivityHistoryEntry>, ApiError> {
+        let rows = self
+            .analytics
+            .activity_history()
+            .await
+            .map_err(analytics_error("activity history"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ActivityHistoryEntry {
+                id: row.id,
+                kind: row.kind,
+                status: row.status,
+                item_name: row.item_name,
+                target_item: row.target_item.into(),
+                occurred_at: row.occurred_at,
+                quantity: row.quantity,
+                tt_value: row.tt_value,
+                net_markup: row.net_markup.into(),
+                activity_net_markup: row.activity_net_markup.into(),
+                can_revert_sale: row.can_revert_sale,
+                can_delete: row.can_delete,
+                undo_blocked_reason: row.undo_blocked_reason.into(),
+            })
+            .collect())
+    }
+
+    /// Take back a confirmed sale, leaving the listing open. The stock does
+    /// not move: it is still out on the auction. A listing that is missing or
+    /// was never sold is a not-found.
+    pub async fn auction_sale_revert(
+        &self,
+        input: ActivityUndoInput,
+    ) -> Result<AuctionListing, ApiError> {
+        self.analytics
+            .revert_auction_sale(&input.id)
+            .await
+            .map_err(analytics_error("auction sale revert"))?
+            .map(auction_listing_dto)
+            .ok_or_else(|| ApiError::not_found("no sold listing with that id"))
+    }
+
+    /// Remove a listing outright: its stock comes back and every ledger row it
+    /// wrote goes with it.
+    pub async fn auction_listing_delete(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        let existed = self
+            .analytics
+            .delete_auction_listing(&input.id)
+            .await
+            .map_err(analytics_error("auction listing delete"))?;
+        if existed {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no listing with that id"))
+        }
+    }
+
+    /// Remove a conversion: what it consumed comes back and what it produced
+    /// is unmade. Refused when those produced units have since left.
+    pub async fn stock_conversion_delete(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        let existed = self
+            .analytics
+            .delete_stock_conversion(&input.id)
+            .await
+            .map_err(analytics_error("stock conversion delete"))?;
+        if existed {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no conversion with that id"))
+        }
     }
 
     /// Net realised markup per yield tier, from confirmed sales only.
@@ -984,6 +1097,10 @@ pub(crate) fn analytics_error(context: &'static str) -> impl FnOnce(AnalyticsErr
             ApiError::bad_request("type must be 'expense' or 'markup'")
         }
         AnalyticsError::InvalidInput(message) => ApiError::bad_request(message),
+        // The domain refused on the state it found, and said why in terms of
+        // that state. The reason is for the player, so it travels intact
+        // rather than being flattened into a generic failure.
+        AnalyticsError::Rejected(ref message) => ApiError::bad_request(message.clone()),
         source => ApiError::internal(context)(source),
     }
 }
