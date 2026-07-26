@@ -1758,6 +1758,41 @@ mod tests {
         Ok(())
     }
 
+    fn seed_harvest(
+        conn: &Connection,
+        id: &str,
+        session: &str,
+        success: bool,
+        cost: f64,
+        loot: f64,
+        ts: f64,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO harvest_events \
+             (id, session_id, timestamp, success, cost_ped, loot_total_ped) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![id, session, ts, success as i64, cost, loot],
+        )?;
+        Ok(())
+    }
+
+    fn seed_harvest_loot(
+        conn: &Connection,
+        harvest: &str,
+        name: &str,
+        qty: i64,
+        value: f64,
+        deactivated: Option<f64>,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO harvest_loot_items \
+             (harvest_id, item_name, quantity, value_ped, deactivated_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            params![harvest, name, qty, value, deactivated],
+        )?;
+        Ok(())
+    }
+
     // ── Engine-typed numeric primitives ─────────────────────────────
 
     #[test]
@@ -2038,6 +2073,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_row_from_raw_folds_in_harvesting() {
+        // The list read folds harvest loot and swing decay independently of the
+        // detail read; this covers the mixed hunting-and-harvesting case
+        // in-crate.
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(4600.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 20.0, 0.0, 1000.0)?;
+            seed_tool(conn, "k1", "Gun", 10, 100.0, 0, 0.5)?;
+            // Two swings: one successful (8.0 wood TT), one failed; 3.0 decay.
+            seed_harvest(conn, "h1", "s1", true, 2.0, 8.0, 1100.0)?;
+            seed_harvest(conn, "h2", "s1", false, 1.0, 0.0, 1200.0)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let row = db
+            .with_reader(|conn| {
+                list_row_from_raw(conn, "s1", Some(1000.0), Some(4600.0), false, 0.0)
+            })
+            .await
+            .unwrap();
+        // Cost is weapon 5 + harvest decay 3 = 8; returns are kill 20 +
+        // harvest 8 = 28; net 20; rate 28/8 = 3.5. The same cost and returns figures
+        // as `get_session_read_folds_in_harvesting`, which seeds the same
+        // swings, kill, and tool: both reads take money from
+        // `kills.loot_total_ped` and `harvest_events`, never from the item
+        // tables. The single assertion that ties the two surfaces together is
+        // the facade test `a_harvest_session_nets_the_same_on_the_list_and_the_detail`;
+        // it cannot kill a mutant here, because the mutation campaign runs only
+        // the `eo-wire` and `eo-services` tests.
+        assert_eq!(
+            row,
+            json!({
+                "id": "s1",
+                "startTime": "1970-01-01T00:16:40+00:00",
+                "endTime": "1970-01-01T01:16:40+00:00",
+                "duration": 3600,
+                "primaryMobs": ["Argonaut"],
+                "primaryWeapons": ["Gun"],
+                "cost": 8.0,
+                "returns": 28.0,
+                "net": 20.0,
+                "returnRate": 3.5,
+                "globals": 0,
+                "hofs": 0,
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn list_sessions_read_picks_summary_only_for_ended_rows() {
         let (_dir, db) = open_db().await;
         db.with_writer(|conn| {
@@ -2185,6 +2282,115 @@ mod tests {
                 "effectiveLoot": 30.0,
                 "toolStats": [{"weaponName": "Gun", "shotsFired": 20, "damageDealt": 200.0, "crits": 1, "costAttributed": 10.0}],
                 "skillGains": [{"skillName": "Laser Weaponry Technology", "level": 42.5, "ttValueGained": 0.5}],
+            })
+        );
+    }
+
+    #[test]
+    fn merge_loot_aggs_sums_shared_names_and_appends_new() {
+        // "Wood Shavings" is in both halves: its quantity and TT sum
+        // (3 + 2, 1.5 + 2.5). "Oil" is base-only and keeps its place;
+        // "Short Moonleaf Board" is extra-only and appends after the base
+        // order. The function is generic over the triples, but the wood names
+        // are ones the harvest routing actually accepts; `Oil` is mob loot,
+        // which only the base side can carry.
+        let base = vec![
+            ("Wood Shavings".to_string(), 3, 1.5),
+            ("Oil".to_string(), 1, 10.0),
+        ];
+        let extra = vec![
+            ("Wood Shavings".to_string(), 2, 2.5),
+            ("Short Moonleaf Board".to_string(), 4, 8.0),
+        ];
+        assert_eq!(
+            merge_loot_aggs(base, extra),
+            vec![
+                ("Wood Shavings".to_string(), 5, 4.0),
+                ("Oil".to_string(), 1, 10.0),
+                ("Short Moonleaf Board".to_string(), 4, 8.0),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_session_read_folds_in_harvesting() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(
+                conn,
+                "s1",
+                1000.0,
+                Some(4600.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_kill(conn, "k1", "s1", Some("Argonaut"), None, 20.0, 0.0, 1000.0)?;
+            seed_tool(conn, "k1", "Gun", 10, 100.0, 0, 0.5)?;
+            seed_loot(conn, "k1", "Oil", 2, 20.0, false, None)?;
+            // Two swings: one successful (8.0 wood TT), one failed; 3.0 decay.
+            seed_harvest(conn, "h1", "s1", true, 2.0, 8.0, 1100.0)?;
+            seed_harvest(conn, "h2", "s1", false, 1.0, 0.0, 1200.0)?;
+            seed_harvest_loot(conn, "h1", "Short Moonleaf Board", 5, 8.0, None)?;
+            // A deactivated harvest item: it leaves the active breakdown and
+            // appears in the deactivated one, while the money figures (which
+            // come from harvest_events, not the item rows) stay put.
+            seed_harvest_loot(conn, "h1", "Wood Shavings", 2, 1.0, Some(1300.0))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let value = db
+            .with_reader(|conn| get_session_read(conn, "s1", 0.0))
+            .await
+            .unwrap()
+            .expect("the session exists");
+
+        // Harvest wood joins returns (20 kill + 8 harvest), swing decay joins
+        // cost (5 weapon + 3 harvest), harvest loot merges into the loot
+        // breakdown, and the harvest block reports the swing tallies.
+        assert_eq!(
+            value,
+            json!({
+                "sessionId": "s1",
+                "summary": {
+                    "cost": 8.0,
+                    "returns": 28.0,
+                    "pes": 0.0,
+                    "net": 20.0,
+                    "returnRate": 3.5,
+                    "kills": 1,
+                    "duration": 3600,
+                    "costBreakdown": {
+                        "weaponCost": 5.0,
+                        "healCost": 0.0,
+                        "enhancerCost": 0.0,
+                        "armourCost": 0.0,
+                        "harvestCost": 3.0,
+                    },
+                },
+                "harvest": {
+                    "swings": 2,
+                    "successes": 1,
+                    "lootTt": 8.0,
+                    "cost": 3.0,
+                },
+                "mobEntryMode": "mob",
+                "notableEvents": [],
+                "lootBreakdown": [
+                    {"name": "Oil", "quantity": 2, "ttValue": 20.0},
+                    {"name": "Short Moonleaf Board", "quantity": 5, "ttValue": 8.0},
+                ],
+                "deactivatedLootBreakdown": [
+                    {"name": "Wood Shavings", "quantity": 2, "ttValue": 1.0},
+                ],
+                "mobBreakdown": [{"currentName": "Argonaut", "originalName": null, "killCount": 1}],
+                "effectiveLoot": 28.0,
+                "toolStats": [{"weaponName": "Gun", "shotsFired": 10, "damageDealt": 100.0, "crits": 0, "costAttributed": 5.0}],
+                "skillGains": [],
             })
         );
     }
