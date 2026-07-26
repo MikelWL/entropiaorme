@@ -5094,6 +5094,103 @@ mod tests {
             .any(|d| d.contains("Moonleaf Board")));
     }
 
+    /// Provenance survives the refiner. Shavings drawn 20/30/50 from the three
+    /// tiers become Nanocubes holding that same composition, and selling those
+    /// Nanocubes credits the tiers that grew the wood in those proportions.
+    ///
+    /// This is the two-hop case: the item sold is not the item any activity
+    /// produced, and nothing about the sale itself knows where it came from.
+    /// Only the composition carried through the conversion does.
+    #[tokio::test]
+    async fn a_conversion_carries_tier_provenance_into_what_it_produces() {
+        let (_dir, service) = write_service().await;
+        service
+            .db
+            .with_writer(|conn| {
+                // 100 PED of shavings at 1.00 TT each: 20 short, 30 long, 50 huge.
+                for (id, tier, quantity) in [
+                    ("ws1", "short", 20),
+                    ("ws2", "long", 30),
+                    ("ws3", "huge", 50),
+                ] {
+                    conn.execute(
+                        "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,\
+                         yield_tier,cost_ped,loot_total_ped) \
+                         VALUES(?1,'prov-s',1000.0,1,'PH-3',?2,0.1,?3)",
+                        rusqlite::params![id, tier, quantity as f64],
+                    )?;
+                    conn.execute(
+                        "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped) \
+                         VALUES(?1,'Wood Shavings',?2,?3)",
+                        rusqlite::params![id, quantity, quantity as f64],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        service
+            .convert_stock("Wood Shavings", "Nanocube", 100.0, None)
+            .await
+            .unwrap();
+
+        // The produced stock is not one anonymous pile: it holds the same
+        // 20/30/50 the shavings did.
+        let composition: Vec<(String, f64)> = service
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT yield_tier, SUM(quantity) FROM stock_movements \
+                     WHERE item_name = 'Nanocube' AND yield_tier IS NOT NULL \
+                     GROUP BY yield_tier ORDER BY yield_tier",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
+        assert_eq!(composition.len(), 3, "all three tiers ride forward");
+        for (tier, expected) in [("huge", 50.0), ("long", 30.0), ("short", 20.0)] {
+            let (_, got) = composition
+                .iter()
+                .find(|(name, _)| name == tier)
+                .unwrap_or_else(|| panic!("{tier} carried forward"));
+            assert!((got - expected).abs() < 1e-9, "{tier}: {got} != {expected}");
+        }
+
+        // Sell the Nanocubes at 130 for 100 TT, no fees: 30 PED of markup.
+        let listing = service
+            .create_auction_listing("Nanocube", 100.0, 130.0, Some(130.0), 0.0, None)
+            .await
+            .unwrap();
+        assert!(
+            listing.unattributed_qty.abs() < 1e-9,
+            "every Nanocube traces to a tier",
+        );
+        service
+            .confirm_auction_listing(&listing.id, 130.0, 0.0, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let realised = service.realised_markup_by_tier().await.unwrap();
+        let credited = |tier: HarvestYieldTier| {
+            realised
+                .iter()
+                .find(|row| row.yield_tier == tier)
+                .map(|row| row.net_markup)
+                .unwrap_or(0.0)
+        };
+        assert!((credited(HarvestYieldTier::Short) - 6.0).abs() < 1e-9);
+        assert!((credited(HarvestYieldTier::Long) - 9.0).abs() < 1e-9);
+        assert!((credited(HarvestYieldTier::Huge) - 15.0).abs() < 1e-9);
+        let total: f64 = realised.iter().map(|row| row.net_markup).sum();
+        assert!((total - 30.0).abs() < 1e-9, "and the whole gain is placed");
+    }
+
     /// A conversion can be undone: the source comes back and what it produced
     /// is unmade.
     #[tokio::test]
