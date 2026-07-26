@@ -11,9 +11,9 @@
 	 * the same listing at two moments, so confirming a sale changes the entry
 	 * rather than adding another beneath it.
 	 *
-	 * Undo confirms in place rather than in a second modal. A sold listing has
-	 * two ways back and they differ in a way worth reading, which a stacked
-	 * dialog would ask you to hold in your head with the row out of sight.
+	 * Undo confirms in place rather than in a second modal, so the row being
+	 * acted on stays in front of the reader. A sold listing offers its two ways
+	 * back side by side.
 	 *
 	 * An undone entry stays on the list, struck through and inert. Its effects
 	 * are all reversed, so it is a record rather than a state: it says what was
@@ -92,28 +92,6 @@
 		if (!open) confirming = null;
 	});
 </script>
-
-{#snippet undoChoice(
-	label: string,
-	description: string,
-	entry: ActivityHistoryEntry,
-	revertSale: boolean,
-)}
-	<button
-		type="button"
-		disabled={busy !== null}
-		onclick={() => undo(entry, revertSale)}
-		class="flex-1 rounded-md border border-border/50 bg-surface/40 px-3 py-2 text-left
-			transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
-			hover:border-border-bright hover:bg-surface-hover/50
-			disabled:cursor-not-allowed disabled:opacity-50"
-	>
-		<span class="block text-xs font-medium text-text">{label}</span>
-		<span class="mt-0.5 block text-[0.6875rem] leading-snug text-text-tertiary">
-			{description}
-		</span>
-	</button>
-{/snippet}
 
 <Modal bind:open class="max-w-2xl" title="History">
 	{#if loading}
@@ -196,38 +174,40 @@
 									loading={busy === entry.id}
 									onclick={() => startConfirm(entry)}
 								>
-									{isConfirming ? 'Keep' : 'Undo'}
+									Undo
 								</Button>
 							{/if}
 						</div>
 					</div>
 
 					{#if isConfirming}
-						<!-- The choice sits under the row it belongs to, so what is
-							about to be undone stays in front of the reader. -->
-						<div class="mt-3 flex gap-2 pl-[5.75rem]">
+						<!-- Under the row it belongs to, right-aligned on the action
+							column: the only place with room, and what is about to be
+							undone stays in front of the reader. -->
+						<div class="mt-2 flex items-center justify-end gap-2">
 							{#if entry.canRevertSale}
-								{@render undoChoice(
-									'Undo the sale',
-									'The listing goes back on auction. Its stock stays out and the markup stops being realised.',
-									entry,
-									true,
-								)}
+								<Button
+									variant="danger"
+									size="sm"
+									loading={busy === entry.id}
+									onclick={() => undo(entry, true)}
+								>
+									Undo sale
+								</Button>
 							{/if}
 							{#if entry.canDelete}
-								{@render undoChoice(
-									entry.kind === 'conversion'
-										? 'Undo the conversion'
-										: entry.canRevertSale
-											? 'Undo the whole listing'
-											: 'Undo the listing',
-									entry.kind === 'conversion'
-										? 'What it consumed comes back and what it produced is unmade.'
-										: 'The listing goes entirely. Its stock returns and every fee it charged is unwritten.',
-									entry,
-									false,
-								)}
+								<Button
+									variant="danger"
+									size="sm"
+									loading={busy === entry.id}
+									onclick={() => undo(entry, false)}
+								>
+									{entry.canRevertSale ? 'Undo listing' : 'Confirm undo'}
+								</Button>
 							{/if}
+							<Button variant="ghost" size="sm" onclick={() => (confirming = null)}>
+								Cancel
+							</Button>
 						</div>
 					{/if}
 				</li>
