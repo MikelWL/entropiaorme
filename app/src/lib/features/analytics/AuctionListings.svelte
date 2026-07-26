@@ -300,26 +300,12 @@
 							</StatDisplay>
 						</div>
 					{:else}
-						<div class="grid grid-cols-3 gap-x-5 gap-y-4">
+						<!-- What the listing cost above what it asks: the two spent
+							figures lead, the two asked ones follow, and all four carry
+							the same weight because none of them is yet an outcome. -->
+						<div class="grid grid-cols-2 gap-x-5 gap-y-4">
 							<StatDisplay label="Listing TT" value={formatPed(selected.ttValue)} unit="PED" />
-							<StatDisplay
-								label="Starting bid"
-								value={formatPed(selected.startingBid)}
-								unit="PED"
-								emphasis="secondary"
-							/>
-							<StatDisplay
-								label="Buyout"
-								value={selected.buyout !== null ? formatPed(selected.buyout) : NO_DATA}
-								unit={selected.buyout !== null ? 'PED' : ''}
-								emphasis="secondary"
-							/>
-							<StatDisplay
-								label="Fee paid"
-								value={formatPed(selected.listingFee)}
-								unit="PED"
-								emphasis="secondary"
-							>
+							<StatDisplay label="Fee paid" value={formatPed(selected.listingFee)} unit="PED">
 								{#snippet labelSuffix()}
 									{#if selected.status === 'expired'}
 										<InfoTip label="Why an expired listing still cost you" width="w-80">
@@ -337,6 +323,17 @@
 									{/if}
 								{/snippet}
 							</StatDisplay>
+
+							<StatDisplay
+								label="Starting bid"
+								value={formatPed(selected.startingBid)}
+								unit="PED"
+							/>
+							<StatDisplay
+								label="Buyout"
+								value={selected.buyout !== null ? formatPed(selected.buyout) : NO_DATA}
+								unit={selected.buyout !== null ? 'PED' : ''}
+							/>
 						</div>
 					{/if}
 
@@ -383,10 +380,7 @@
 									</div>
 								</div>
 							{:else}
-								<div class="flex items-center justify-between gap-3">
-									<p class="min-w-0 text-xs leading-relaxed text-text-tertiary">
-										Waiting on the auction. Nothing is realised until it closes.
-									</p>
+								<div class="flex items-center justify-end gap-3">
 									<div class="flex shrink-0 items-center gap-2">
 										<Button size="sm" onclick={startConfirm}>It sold</Button>
 										<Button
