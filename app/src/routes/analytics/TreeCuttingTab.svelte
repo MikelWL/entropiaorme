@@ -3,7 +3,7 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
-	import ActivityHistoryModal from '$lib/features/analytics/ActivityHistoryModal.svelte';
+	import ActivityHistory from '$lib/features/analytics/ActivityHistory.svelte';
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
@@ -19,26 +19,29 @@
 
 	const model = createTreeCuttingModel();
 
-	// The lower box answers two questions about the same output: how each
-	// sub-activity performs, and what is currently happening in the market
-	// with what they produced. Overall stays put above both, since the
-	// headline figures describe the activity either way.
-	let activityView = $state<'activities' | 'market'>('activities');
+	// The lower box answers three questions about the same output: how each
+	// sub-activity performs, what is currently happening in the market with
+	// what they produced, and what has already been done with it. Overall
+	// stays put above all three, since the headline figures describe the
+	// activity whichever is open.
+	type ActivityView = 'activities' | 'market' | 'history';
+	let activityView = $state<ActivityView>('activities');
 	const ACTIVITY_VIEWS = [
 		{ id: 'activities', label: 'Sub-activities' },
 		{ id: 'market', label: 'Market' },
+		{ id: 'history', label: 'History' },
 	];
 
 	let sellItem = $state<StockRow | null>(null);
 	let convertItem = $state<StockRow | null>(null);
 
-	// History reads on open rather than with the tab: it is a surface the
-	// player goes to deliberately, and its undo verdicts are worth computing
-	// fresh at the moment they are offered.
-	let historyOpen = $state(false);
+	// History reads when it is opened rather than with the tab: an undo verdict
+	// depends on every other entry, so it is worth computing fresh at the
+	// moment it is offered.
 	let historyLoading = $state(false);
-	async function openHistory() {
-		historyOpen = true;
+	async function showView(id: ActivityView) {
+		activityView = id;
+		if (id !== 'history') return;
 		historyLoading = true;
 		try {
 			await model.loadHistory();
@@ -134,7 +137,6 @@
 							stock={model.stock}
 							onsell={(item) => (sellItem = item)}
 							onconvert={(item) => (convertItem = item)}
-							onhistory={openHistory}
 						/>
 					{/if}
 				</div>
@@ -145,7 +147,7 @@
 			<SegmentedControl
 				options={ACTIVITY_VIEWS}
 				active={activityView}
-				onchange={(id) => (activityView = id as 'activities' | 'market')}
+				onchange={(id) => showView(id as ActivityView)}
 			/>
 
 			{#if activityView === 'activities'}
@@ -157,11 +159,17 @@
 					sortDir={model.activityTable.sortDir}
 					onsort={(key) => model.activityTable.setSort(key)}
 				/>
-			{:else}
+			{:else if activityView === 'market'}
 				<AuctionListings
 					open={model.openListings}
 					resolved={model.resolvedListings}
 					onresolve={model.resolveListing}
+				/>
+			{:else}
+				<ActivityHistory
+					entries={model.history}
+					loading={historyLoading}
+					onundo={model.undoHistoryEntry}
 				/>
 			{/if}
 		</div>
@@ -187,12 +195,6 @@
 		item={convertItem}
 		onconvert={model.recycleStock}
 		oncancel={() => (convertItem = null)}
-	/>
-	<ActivityHistoryModal
-		bind:open={historyOpen}
-		entries={model.history}
-		loading={historyLoading}
-		onundo={model.undoHistoryEntry}
 	/>
 {:else}
 	<Card class="p-6">

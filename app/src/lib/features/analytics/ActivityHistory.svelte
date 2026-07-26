@@ -2,10 +2,14 @@
 	/**
 	 * What this activity has done to its stock, and the way back out of it.
 	 *
-	 * A review surface: you open it because something is wrong, so it is built
-	 * for finding the entry you mean and understanding it at a glance. Each row
-	 * says what happened in a line, carries the one figure that matters on the
-	 * right, and keeps its undo quiet until asked.
+	 * A review surface: you come here because something is wrong, so it is
+	 * built for finding the entry you mean and understanding it at a glance.
+	 * Each row says what happened in a line, carries the one figure that matters
+	 * on the right, and keeps its undo quiet until asked.
+	 *
+	 * One list, so no two-pane frame. The sibling views split because a row
+	 * there selects something with more to say about it; a history entry says
+	 * all it has in its own row, and a detail pane would sit empty beside it.
 	 *
 	 * A listing appears once however far it got. Creating it and selling it are
 	 * the same listing at two moments, so confirming a sale changes the entry
@@ -21,18 +25,16 @@
 	 * recording it again, not reviving this.
 	 */
 	import Button from '$lib/components/Button.svelte';
+	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import Modal from '$lib/components/Modal.svelte';
 	import type { ActivityHistoryEntry } from '$lib/types/analytics';
 	import { formatLedgerDate, formatPed } from '$lib/utils/format';
 
 	let {
-		open = $bindable(false),
 		entries,
 		loading,
 		onundo,
 	}: {
-		open?: boolean;
 		entries: ActivityHistoryEntry[];
 		loading: boolean;
 		onundo: (entry: ActivityHistoryEntry, revertSale: boolean) => Promise<void>;
@@ -86,25 +88,20 @@
 			busy = null;
 		}
 	}
-
-	// Closing puts away any half-asked question with it.
-	$effect(() => {
-		if (!open) confirming = null;
-	});
 </script>
 
-<Modal bind:open class="max-w-2xl" title="History">
+<Card class="hover:z-20">
 	{#if loading}
-		<p class="py-6 text-center text-sm text-text-tertiary">Reading what has been recorded...</p>
+		<p class="py-10 text-center text-sm text-text-tertiary">Reading what has been recorded...</p>
 	{:else if entries.length === 0}
-		<div class="flex min-h-32 items-center justify-center">
+		<div class="flex min-h-40 items-center justify-center p-6">
 			<p class="max-w-sm text-center text-sm leading-relaxed text-text-tertiary">
 				Nothing recorded yet. Auction listings and Nanocube conversions appear here, and can be
 				taken back from here if you record one by mistake.
 			</p>
 		</div>
 	{:else}
-		<ul class="-mx-2 flex max-h-[26rem] flex-col overflow-y-auto px-2">
+		<ul class="flex max-h-[32rem] flex-col overflow-y-auto px-5 py-2">
 			{#each entries as entry (entry.id)}
 				{@const isConfirming = confirming === entry.id}
 				<li
@@ -218,4 +215,4 @@
 			{/each}
 		</ul>
 	{/if}
-</Modal>
+</Card>

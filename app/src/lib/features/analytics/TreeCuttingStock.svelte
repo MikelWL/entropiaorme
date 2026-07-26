@@ -7,12 +7,10 @@
 		stock,
 		onsell,
 		onconvert,
-		onhistory,
 	}: {
 		stock: TreeCuttingStock[];
 		onsell: (item: TreeCuttingStock) => void;
 		onconvert: (item: TreeCuttingStock) => void;
-		onhistory: () => void;
 	} = $props();
 
 	function formatVolume(value: number): string {
@@ -171,9 +169,6 @@
 {/snippet}
 
 <div class="sm:border-l sm:border-border/40 sm:pl-8">
-	<!-- History sits at the far end of the heading strip: the same subject as
-		the stock beside it, one step back in time, and reached deliberately
-		rather than competing with the actions on the rows. -->
 	<div class="flex items-center gap-2 pb-2">
 		<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
 		<InfoTip align="right" label="What current stock means">
@@ -190,15 +185,6 @@
 				</p>
 			</div>
 		</InfoTip>
-
-		<button
-			type="button"
-			onclick={onhistory}
-			class="ml-auto cursor-pointer text-xs font-medium text-text-tertiary
-				transition-colors duration-[var(--duration-fast)] hover:text-text"
-		>
-			History
-		</button>
 	</div>
 
 	<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
