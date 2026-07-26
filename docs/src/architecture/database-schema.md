@@ -31,7 +31,7 @@ activity plus its historical backfill), `0014_auction_sales.sql` (the auction
 listing lifecycle, stock conversions, and the signed stock-movement ledger
 that replaced the overlay above, whose rows it carries across before dropping
 it), `0015_stock_movement_tool.sql` (the tool a movement's stock was produced
-with), `0016_stock_opening_balance.sql` (a movement kind for stock an outflow
+with, recorded but not currently reported on), `0016_stock_opening_balance.sql` (a movement kind for stock an outflow
 proves was held but that was never recorded, rebuilding the movement table
 because SQLite cannot widen a CHECK constraint in place), and
 `0017_undone_entries.sql` (the marker that keeps an undone listing or
@@ -477,17 +477,14 @@ The individual wood items a successful swing dropped.
 | `value_ped` | REAL | Defaults to 0. |
 | `deactivated_at` | REAL | Null when active; mirrors `kill_loot_items` so the loot-edit flow can extend to harvest loot without a schema move. |
 
-#### `harvest_stock_removed`
+#### `harvest_stock_removed` (retired)
 
-Interim per-item quantity already removed from the lifetime recorded harvest
-position (migration `0012`). It affects the Current Stock projection only;
-recorded activity totals and market confidence remain independent.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `item_name` | TEXT | Primary key; canonical harvested item name. |
-| `removed_qty` | INTEGER | Not null; defaults to 0. |
-| `updated_at` | REAL | Not null; Unix-epoch update time. |
+An interim per-item overlay of quantity already removed from the recorded
+harvest position (migration `0012`). Migration `0014` retired it: its rows were
+carried into `stock_movements` as explicitly unattributed adjustments and the
+table was dropped, so current position derives from recorded loot plus that
+signed movement ledger rather than from two sources of the same quantity. No
+current database carries it.
 
 #### `notable_events`
 

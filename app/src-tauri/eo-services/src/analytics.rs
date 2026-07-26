@@ -260,8 +260,8 @@ pub struct HuntingData {
     pub tag_comparisons: Vec<ActivityRow>,
 }
 
-/// The Tree Cutting aggregate: effective yield tiers with their tool
-/// strategies nested underneath.
+/// The Tree Cutting aggregate: effective yield tiers and their loot
+/// composition.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestData {
@@ -2980,10 +2980,14 @@ impl AnalyticsService {
                 let target_unit_tt = produced_unit_tt(&target_c)
                     .or_else(|| (target_loot_unit_tt > STOCK_EPSILON).then_some(target_loot_unit_tt))
                     .unwrap_or(1.0);
-                // Converting more than is tracked is allowed for the same
-                // reason selling more is: the player may hold stock from
-                // before tracking began. The excess rides forward explicitly
-                // unattributed rather than being refused or invented.
+                // The service tolerates converting past tracked stock for the
+                // same reason it tolerates selling past it: the player may
+                // hold stock from before tracking began, and the excess rides
+                // forward explicitly unattributed rather than being invented.
+                // The product rule is narrower and is enforced at the modal,
+                // because what a conversion produces carries the source's
+                // activity composition forward and crediting activities with
+                // output they did not grow is the thing to avoid.
                 let plan =
                     stock_allocation::allocate(&as_tier_positions(&positions), quantity, unit_tt);
                 let converted_tt = quantity * unit_tt;
