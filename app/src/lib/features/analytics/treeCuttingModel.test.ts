@@ -709,7 +709,7 @@ describe('realised figures', () => {
 
 	it('folds confirmed markup into the tier and the overall aggregate', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, netMarkup: 4.5 }]);
+		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, toolName: null, netMarkup: 4.5 }]);
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
@@ -730,7 +730,7 @@ describe('realised figures', () => {
 	it('leaves the market projection untouched when markup is realised', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
-		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, netMarkup: 4.5 }]);
+		mocked.getHarvestRealisedMarkup.mockResolvedValue([{ yieldTier: HUGE, toolName: null, netMarkup: 4.5 }]);
 		const model = createTreeCuttingModel();
 		await model.loadData();
 

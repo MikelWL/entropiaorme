@@ -113,6 +113,7 @@ describe('TreeCuttingActivities', () => {
 					muRate: null,
 					realisedReturns: 33.96,
 					realisedRate: 0.3738,
+					realisedMarkup: 0,
 				},
 				{
 					key: 'ph-3',
@@ -125,6 +126,7 @@ describe('TreeCuttingActivities', () => {
 					muRate: 1.125,
 					realisedReturns: 0.3,
 					realisedRate: 0.75,
+					realisedMarkup: 0,
 				},
 			],
 		});

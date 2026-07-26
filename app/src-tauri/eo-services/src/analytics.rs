@@ -129,12 +129,17 @@ pub struct AuctionListingRow {
     pub gross_markup: Option<f64>,
 }
 
-/// One tier's realised markup from confirmed sales, for the Tree Cutting
-/// per-activity Realised figures.
+/// One source's realised markup from confirmed sales, for the Tree Cutting
+/// Realised figures.
+///
+/// A row per (tier, tool): the tier row is the activity's own figure and the
+/// tool rows are the strategies inside it. `tool_name` is `None` when the
+/// producing swings recorded no tool.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RealisedTierMarkup {
     pub yield_tier: HarvestYieldTier,
+    pub tool_name: Option<String>,
     pub net_markup: f64,
 }
 
@@ -2048,6 +2053,7 @@ fn insert_movement(
     movement_kind: &str,
     ref_id: Option<&str>,
     yield_tier: Option<HarvestYieldTier>,
+    tool_name: Option<&str>,
     quantity: f64,
     tt_value: f64,
     occurred_at: &str,
@@ -2063,8 +2069,9 @@ fn insert_movement(
     conn.execute(
         "INSERT INTO stock_movements ( \
              item_name, movement_kind, ref_id, source_kind, source_event_id, \
-             yield_tier, quantity, tt_value, occurred_at, created_at) \
-         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+             yield_tier, quantity, tt_value, occurred_at, created_at, \
+             tool_name) \
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
         rusqlite::params![
             item_name,
             movement_kind,
@@ -2075,49 +2082,60 @@ fn insert_movement(
             tt_value,
             occurred_at,
             created_at,
+            tool_name,
         ],
     )?;
     Ok(())
 }
 
-/// One item's open positions per yield tier, plus its TT per unit.
+/// One item's open positions per (yield tier, tool), plus its TT per unit.
 ///
 /// Recorded loot is the acquisition base, so nothing here duplicates it; the
 /// movement ledger only adds what has since left, returned, or been produced
 /// by a conversion. Unit TT comes from recorded loot where there is any, and
 /// otherwise from what a conversion produced, which is the only other place
 /// an item's value is known.
+///
+/// The tool is part of the key so a sale credits the execution strategy that
+/// produced the stock, not merely the tier containing it. Keys come back owned
+/// because the caller borrows them to build the allocation plan.
+type PositionKey = (Option<HarvestYieldTier>, Option<String>);
+
 fn item_positions(
     conn: &rusqlite::Connection,
     item_name: &str,
-) -> rusqlite::Result<(Vec<stock_allocation::TierPosition>, f64)> {
-    // Keyed on the durable database spelling, with the empty string standing
-    // for "no tier", so the merge is ordered and total.
-    let mut by_tier: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+) -> rusqlite::Result<(Vec<(PositionKey, f64)>, f64)> {
+    // Keyed on the durable database spellings, with the empty string standing
+    // for "not known", so the merge is ordered and total.
+    let mut by_source: std::collections::BTreeMap<(String, String), f64> =
+        std::collections::BTreeMap::new();
     let mut base_qty = 0.0_f64;
     let mut base_tt = 0.0_f64;
 
     {
         let mut stmt = conn.prepare(
-            "SELECT e.yield_tier, SUM(l.quantity), SUM(l.value_ped) \
+            "SELECT e.yield_tier, e.tool_name, SUM(l.quantity), SUM(l.value_ped) \
              FROM harvest_loot_items AS l \
              JOIN harvest_events AS e ON e.id = l.harvest_id \
              WHERE l.item_name = ? AND l.deactivated_at IS NULL \
-             GROUP BY e.yield_tier",
+             GROUP BY e.yield_tier, e.tool_name",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![item_name], |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
-                    row.get::<_, f64>(1)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (tier, quantity, tt_value) in rows {
+        for (tier, tool, quantity, tt_value) in rows {
             base_qty += quantity;
             base_tt += tt_value;
-            *by_tier.entry(tier.unwrap_or_default()).or_insert(0.0) += quantity;
+            *by_source
+                .entry((tier.unwrap_or_default(), tool.unwrap_or_default()))
+                .or_insert(0.0) += quantity;
         }
     }
 
@@ -2125,24 +2143,27 @@ fn item_positions(
     let mut produced_tt = 0.0_f64;
     {
         let mut stmt = conn.prepare(
-            "SELECT yield_tier, SUM(quantity), SUM(tt_value) FROM stock_movements \
-             WHERE item_name = ? GROUP BY yield_tier",
+            "SELECT yield_tier, tool_name, SUM(quantity), SUM(tt_value) \
+             FROM stock_movements WHERE item_name = ? GROUP BY yield_tier, tool_name",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![item_name], |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
-                    row.get::<_, f64>(1)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (tier, quantity, tt_value) in rows {
+        for (tier, tool, quantity, tt_value) in rows {
             if quantity > 0.0 {
                 produced_qty += quantity;
                 produced_tt += tt_value;
             }
-            *by_tier.entry(tier.unwrap_or_default()).or_insert(0.0) += quantity;
+            *by_source
+                .entry((tier.unwrap_or_default(), tool.unwrap_or_default()))
+                .or_insert(0.0) += quantity;
         }
     }
 
@@ -2154,15 +2175,32 @@ fn item_positions(
         0.0
     };
 
-    let positions = by_tier
+    let positions = by_source
         .into_iter()
         .filter(|(_, quantity)| *quantity > STOCK_EPSILON)
-        .map(|(tier, quantity)| stock_allocation::TierPosition {
-            yield_tier: (!tier.is_empty()).then(|| HarvestYieldTier::from_db(&tier)),
-            quantity,
+        .map(|((tier, tool), quantity)| {
+            (
+                (
+                    (!tier.is_empty()).then(|| HarvestYieldTier::from_db(&tier)),
+                    (!tool.is_empty()).then_some(tool),
+                ),
+                quantity,
+            )
         })
         .collect();
     Ok((positions, unit_tt))
+}
+
+/// Borrow a position list into the allocation module's shape.
+fn as_tier_positions(positions: &[(PositionKey, f64)]) -> Vec<stock_allocation::TierPosition<'_>> {
+    positions
+        .iter()
+        .map(|((tier, tool), quantity)| stock_allocation::TierPosition {
+            yield_tier: *tier,
+            tool_name: tool.as_deref(),
+            quantity: *quantity,
+        })
+        .collect()
 }
 
 impl AnalyticsService {
@@ -2446,7 +2484,7 @@ impl AnalyticsService {
                 let mut rows = Vec::new();
                 for item_name in items {
                     let (positions, _unit_tt) = item_positions(conn, &item_name)?;
-                    let quantity: f64 = positions.iter().map(|p| p.quantity).sum();
+                    let quantity: f64 = positions.iter().map(|(_, quantity)| quantity).sum();
                     if quantity <= STOCK_EPSILON {
                         continue;
                     }
@@ -2541,7 +2579,8 @@ impl AnalyticsService {
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
                 let (positions, unit_tt) = item_positions(&tx, &item_c)?;
-                let plan = stock_allocation::allocate(&positions, quantity, unit_tt);
+                let plan =
+                    stock_allocation::allocate(&as_tier_positions(&positions), quantity, unit_tt);
 
                 tx.execute(
                     "INSERT INTO auction_listings ( \
@@ -2573,6 +2612,7 @@ impl AnalyticsService {
                         "listing",
                         Some(&id_c),
                         allocation.yield_tier,
+                        allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
                         &listed_c,
@@ -2739,25 +2779,26 @@ impl AnalyticsService {
                     return Ok(None);
                 }
 
-                let returning: Vec<(Option<String>, f64, f64)> = {
+                let returning: Vec<(Option<String>, Option<String>, f64, f64)> = {
                     let mut stmt = tx.prepare(
-                        "SELECT yield_tier, quantity, tt_value FROM stock_movements \
+                        "SELECT yield_tier, tool_name, quantity, tt_value FROM stock_movements \
                          WHERE ref_id = ? AND movement_kind = 'listing'",
                     )?;
                     let rows = stmt
                         .query_map(rusqlite::params![listing_id], |row| {
-                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     rows
                 };
-                for (tier, quantity, tt_value) in returning {
+                for (tier, tool, quantity, tt_value) in returning {
                     insert_movement(
                         &tx,
                         &listing.item_name,
                         "listing_return",
                         Some(&listing_id),
                         tier.as_deref().map(HarvestYieldTier::from_db),
+                        tool.as_deref(),
                         -quantity,
                         -tt_value,
                         &resolved_at,
@@ -2811,7 +2852,8 @@ impl AnalyticsService {
                 // reason selling more is: the player may hold stock from
                 // before tracking began. The excess rides forward explicitly
                 // unattributed rather than being refused or invented.
-                let plan = stock_allocation::allocate(&positions, quantity, unit_tt);
+                let plan =
+                    stock_allocation::allocate(&as_tier_positions(&positions), quantity, unit_tt);
                 let converted_tt = quantity * unit_tt;
 
                 tx.execute(
@@ -2828,6 +2870,7 @@ impl AnalyticsService {
                         "conversion_out",
                         Some(&id),
                         allocation.yield_tier,
+                        allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
                         &converted_at,
@@ -2843,6 +2886,7 @@ impl AnalyticsService {
                         "conversion_in",
                         Some(&id),
                         allocation.yield_tier,
+                        allocation.tool_name,
                         allocation.tt_value,
                         allocation.tt_value,
                         &converted_at,
@@ -2857,11 +2901,15 @@ impl AnalyticsService {
         Ok(())
     }
 
-    /// Net realised markup per yield tier, from confirmed sales only.
+    /// Net realised markup per (yield tier, tool), from confirmed sales only.
     ///
     /// Each sold listing's activity-claimable markup is divided across the
-    /// tiers that supplied it, in proportion to the TT each contributed.
+    /// sources that supplied it, in proportion to the TT each contributed.
     /// Pending listings realise nothing, and expired ones never realise.
+    ///
+    /// Rows are leaves: one per (tier, tool), with `tool_name` `None` only for
+    /// stock whose producing swings recorded no tool. A tier's own figure is
+    /// the sum of its rows.
     pub async fn realised_markup_by_tier(&self) -> Result<Vec<RealisedTierMarkup>, AnalyticsError> {
         Ok(self
             .db
@@ -2887,7 +2935,7 @@ impl AnalyticsService {
                     rows
                 };
 
-                let mut totals: std::collections::BTreeMap<&'static str, f64> =
+                let mut totals: std::collections::BTreeMap<(String, Option<String>), f64> =
                     std::collections::BTreeMap::new();
                 for (id, tt_value, attributed_tt, final_price, listing_fee, sale_fee) in sold {
                     let outcome = stock_allocation::resolve_sale(
@@ -2900,38 +2948,49 @@ impl AnalyticsService {
                     if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
                         continue;
                     }
-                    let contributions: Vec<(String, f64)> = {
+                    let contributions: Vec<(String, Option<String>, f64)> = {
                         let mut stmt = conn.prepare(
-                            "SELECT yield_tier, SUM(-tt_value) FROM stock_movements \
+                            "SELECT yield_tier, tool_name, SUM(-tt_value) FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = 'listing' \
                                AND yield_tier IS NOT NULL \
-                             GROUP BY yield_tier",
+                             GROUP BY yield_tier, tool_name",
                         )?;
                         let rows = stmt
-                            .query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                            .query_map(rusqlite::params![id], |row| {
+                                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                            })?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
-                    let contributed_tt: f64 = contributions.iter().map(|(_, tt)| tt).sum();
+                    let contributed_tt: f64 = contributions.iter().map(|(_, _, tt)| tt).sum();
                     if contributed_tt <= STOCK_EPSILON {
                         continue;
                     }
-                    for (tier, tt) in contributions {
+                    for (tier, tool, tt) in contributions {
                         let share = tt / contributed_tt;
-                        *totals
-                            .entry(HarvestYieldTier::from_db(&tier).as_str())
-                            .or_insert(0.0) += outcome.activity_net_markup * share;
+                        // Leaf rows only. A tier total emitted alongside them
+                        // would be indistinguishable from the row for stock
+                        // whose tool was never recorded, which is also keyed
+                        // `None`; the reader sums per tier instead.
+                        *totals.entry((tier, tool)).or_insert(0.0) +=
+                            outcome.activity_net_markup * share;
                     }
                 }
 
                 let mut rows: Vec<RealisedTierMarkup> = totals
                     .into_iter()
-                    .map(|(tier, net_markup)| RealisedTierMarkup {
-                        yield_tier: HarvestYieldTier::from_db(tier),
+                    .map(|((tier, tool_name), net_markup)| RealisedTierMarkup {
+                        yield_tier: HarvestYieldTier::from_db(&tier),
+                        tool_name,
                         net_markup,
                     })
                     .collect();
-                rows.sort_by_key(|row| row.yield_tier.sort_rank());
+                rows.sort_by(|a, b| {
+                    a.yield_tier
+                        .sort_rank()
+                        .cmp(&b.yield_tier.sort_rank())
+                        .then_with(|| a.tool_name.cmp(&b.tool_name))
+                });
                 Ok(rows)
             })
             .await?)
@@ -4114,14 +4173,15 @@ mod tests {
         service
             .db
             .with_writer(|conn| {
-                for (id, tier, quantity, tt) in
-                    [("hs1", "long", 60, 1.80), ("hs2", "huge", 40, 1.20)]
-                {
+                for (id, tier, tool, quantity, tt) in [
+                    ("hs1", "long", "PH-3", 60, 1.80),
+                    ("hs2", "huge", "PH-3", 40, 1.20),
+                ] {
                     conn.execute(
                         "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,\
                          yield_tier,cost_ped,loot_total_ped) \
-                         VALUES(?1,'sale-s',1000.0,1,'PH-3',?2,0.1,?3)",
-                        rusqlite::params![id, tier, tt],
+                         VALUES(?1,'sale-s',1000.0,1,?2,?3,0.1,?4)",
+                        rusqlite::params![id, tool, tier, tt],
                     )?;
                     conn.execute(
                         "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped) \
@@ -4274,10 +4334,11 @@ mod tests {
 
         // The activity's share divides 30/20 across the contributing tiers.
         let realised = service.realised_markup_by_tier().await.unwrap();
-        let by_tier: std::collections::BTreeMap<&str, f64> = realised
-            .iter()
-            .map(|row| (row.yield_tier.as_str(), row.net_markup))
-            .collect();
+        let mut by_tier: std::collections::BTreeMap<&str, f64> =
+            std::collections::BTreeMap::new();
+        for row in &realised {
+            *by_tier.entry(row.yield_tier.as_str()).or_insert(0.0) += row.net_markup;
+        }
         assert!((by_tier["long"] - 2.8 * 0.6).abs() < 1e-9);
         assert!((by_tier["huge"] - 2.8 * 0.4).abs() < 1e-9);
         let total: f64 = realised.iter().map(|row| row.net_markup).sum();
@@ -4285,6 +4346,67 @@ mod tests {
             (total - 2.8).abs() < 1e-9,
             "the tier split sums to the whole"
         );
+    }
+
+    /// A confirmed sale credits the tool that produced the stock, not only the
+    /// tier containing it. Without this a tool strategy reads at its loot-only
+    /// rate while its parent tier reads higher, which is what the sub-activity
+    /// detail was showing.
+    #[tokio::test]
+    async fn a_sale_credits_the_tool_strategy_that_produced_the_stock() {
+        let (_dir, service) = write_service().await;
+        service
+            .db
+            .with_writer(|conn| {
+                // One tier, two tools: 75 units from PH-3 and 25 from PH-4.
+                for (id, tool, quantity, tt) in
+                    [("t1", "PH-3", 75, 2.25), ("t2", "PH-4", 25, 0.75)]
+                {
+                    conn.execute(
+                        "INSERT INTO harvest_events(id,session_id,timestamp,success,tool_name,\
+                         yield_tier,cost_ped,loot_total_ped) \
+                         VALUES(?1,'tool-s',1000.0,1,?2,'long',0.1,?3)",
+                        rusqlite::params![id, tool, tt],
+                    )?;
+                    conn.execute(
+                        "INSERT INTO harvest_loot_items(harvest_id,item_name,quantity,value_ped) \
+                         VALUES(?1,'Moonleaf Board',?2,?3)",
+                        rusqlite::params![id, quantity, tt],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let listing = service
+            .create_auction_listing("Moonleaf Board", 100.0, 3.0, None, 0.0, None)
+            .await
+            .unwrap();
+        let sold = service
+            .confirm_auction_listing(&listing.id, 5.0, 0.0, None)
+            .await
+            .unwrap()
+            .unwrap();
+        // 5.00 on 3.00 of TT with no fees.
+        assert!((sold.activity_net_markup.unwrap() - 2.0).abs() < 1e-9);
+
+        let realised = service.realised_markup_by_tier().await.unwrap();
+        let by_tool: std::collections::BTreeMap<Option<String>, f64> = realised
+            .iter()
+            .map(|row| (row.tool_name.clone(), row.net_markup))
+            .collect();
+
+        // Both tools are credited, split 75/25 by what each contributed.
+        assert!((by_tool[&Some("PH-3".to_string())] - 1.5).abs() < 1e-9);
+        assert!((by_tool[&Some("PH-4".to_string())] - 0.5).abs() < 1e-9);
+        // Every row belongs to the tier that owns the tools.
+        assert!(realised
+            .iter()
+            .all(|row| row.yield_tier == HarvestYieldTier::Long));
+        // The leaf rows sum to the tier's own figure.
+        let total: f64 = realised.iter().map(|row| row.net_markup).sum();
+        assert!((total - 2.0).abs() < 1e-9);
     }
 
     /// An expired listing returns the stock intact, keeps the fee spent, and

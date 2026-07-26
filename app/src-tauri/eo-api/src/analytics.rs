@@ -353,11 +353,14 @@ pub struct AuctionListing {
     pub gross_markup: Nullable<f64>,
 }
 
-/// One yield tier's net realised markup from confirmed sales.
+/// One source's net realised markup from confirmed sales, as a leaf row per
+/// (yield tier, tool). `toolName` is null only when the producing swings
+/// recorded no tool; a tier's own figure is the sum of its rows.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RealisedTierMarkup {
     pub yield_tier: HarvestYieldTier,
+    pub tool_name: Nullable<String>,
     pub net_markup: f64,
 }
 
@@ -610,6 +613,7 @@ impl Api {
             .into_iter()
             .map(|row| RealisedTierMarkup {
                 yield_tier: row.yield_tier.into(),
+                tool_name: row.tool_name.into(),
                 net_markup: row.net_markup,
             })
             .collect())

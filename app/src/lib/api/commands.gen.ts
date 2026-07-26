@@ -1826,10 +1826,13 @@ export interface RadarGeometry {
 }
 
 /**
- * One yield tier's net realised markup from confirmed sales.
+ * One source's net realised markup from confirmed sales, as a leaf row per
+ * (yield tier, tool). `toolName` is null only when the producing swings
+ * recorded no tool; a tier's own figure is the sum of its rows.
  */
 export interface RealisedTierMarkup {
 	yieldTier: HarvestYieldTier;
+	toolName: string | null;
 	netMarkup: number;
 }
 

@@ -11,11 +11,12 @@
 //! record. The composition of what is held is the honest answer, so a sale
 //! consumes every tier in proportion to what that tier still has open.
 //!
-//! Allocation is at yield-tier granularity, not per source event. The tier is
-//! the activity identity every reported figure is keyed on, and a sale of a
-//! few hundred boards would otherwise fan out into hundreds of rows nothing
-//! reads. The movement schema carries a nullable `source_event_id` so finer
-//! provenance can land later without a migration.
+//! Allocation is at (yield tier, tool) granularity, not per source event. The
+//! tier is the activity identity every reported figure is keyed on and the tool
+//! is the execution strategy compared inside it, while a sale of a few hundred
+//! boards would fan out into hundreds of per-event rows nothing reads. The
+//! movement schema carries a nullable `source_event_id` so finer provenance can
+//! land later without a migration.
 
 use crate::harvest_yield::HarvestYieldTier;
 
@@ -24,27 +25,31 @@ use crate::harvest_yield::HarvestYieldTier;
 /// float noise, not a real position.
 const EPSILON: f64 = 1e-9;
 
-/// One tier's still-open position for a canonical item.
+/// One source's still-open position for a canonical item.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TierPosition {
+pub struct TierPosition<'a> {
     /// `None` for stock whose provenance is genuinely unknown (migrated
     /// overlay rows, opening balances). Never a guess.
     pub yield_tier: Option<HarvestYieldTier>,
+    /// The tool that produced it. `None` when the swing recorded no tool, or
+    /// when the movement predates tool capture.
+    pub tool_name: Option<&'a str>,
     pub quantity: f64,
 }
 
-/// One tier's share of an outflow.
+/// One source's share of an outflow.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TierAllocation {
+pub struct TierAllocation<'a> {
     pub yield_tier: Option<HarvestYieldTier>,
+    pub tool_name: Option<&'a str>,
     pub quantity: f64,
     pub tt_value: f64,
 }
 
 /// How a requested outflow divides across open positions.
 #[derive(Debug, Clone, PartialEq)]
-pub struct AllocationPlan {
-    pub allocations: Vec<TierAllocation>,
+pub struct AllocationPlan<'a> {
+    pub allocations: Vec<TierAllocation<'a>>,
     /// Quantity covered by open positions carrying a known tier.
     pub attributed_qty: f64,
     pub attributed_tt: f64,
@@ -65,8 +70,12 @@ pub struct AllocationPlan {
 ///
 /// `unit_tt` is the item's TT per unit, which Entropia fixes per item, so
 /// quantity share and TT share are the same ratio.
-pub fn allocate(positions: &[TierPosition], quantity: f64, unit_tt: f64) -> AllocationPlan {
-    let open: Vec<TierPosition> = positions
+pub fn allocate<'a>(
+    positions: &[TierPosition<'a>],
+    quantity: f64,
+    unit_tt: f64,
+) -> AllocationPlan<'a> {
+    let open: Vec<TierPosition<'a>> = positions
         .iter()
         .copied()
         .filter(|position| position.quantity > EPSILON)
@@ -92,6 +101,7 @@ pub fn allocate(positions: &[TierPosition], quantity: f64, unit_tt: f64) -> Allo
         assigned += share;
         allocations.push(TierAllocation {
             yield_tier: position.yield_tier,
+            tool_name: position.tool_name,
             quantity: share,
             tt_value: share * unit_tt,
         });
@@ -114,6 +124,7 @@ pub fn allocate(positions: &[TierPosition], quantity: f64, unit_tt: f64) -> Allo
     if excess > EPSILON {
         allocations.push(TierAllocation {
             yield_tier: None,
+            tool_name: None,
             quantity: excess,
             tt_value: excess * unit_tt,
         });
@@ -193,9 +204,22 @@ pub fn resolve_sale(
 mod tests {
     use super::*;
 
-    fn tier(tier: HarvestYieldTier, quantity: f64) -> TierPosition {
+    fn tier(tier: HarvestYieldTier, quantity: f64) -> TierPosition<'static> {
         TierPosition {
             yield_tier: Some(tier),
+            tool_name: None,
+            quantity,
+        }
+    }
+
+    fn tier_with_tool(
+        tier: HarvestYieldTier,
+        tool: &str,
+        quantity: f64,
+    ) -> TierPosition<'_> {
+        TierPosition {
+            yield_tier: Some(tier),
+            tool_name: Some(tool),
             quantity,
         }
     }
@@ -291,6 +315,7 @@ mod tests {
             tier(HarvestYieldTier::Short, 50.0),
             TierPosition {
                 yield_tier: None,
+                tool_name: None,
                 quantity: 50.0,
             },
         ];
@@ -299,6 +324,36 @@ mod tests {
         assert!((plan.attributed_qty - 50.0).abs() < 1e-9);
         assert!((plan.unattributed_qty - 50.0).abs() < 1e-9);
         assert!((total_quantity(&plan) - 100.0).abs() < 1e-9);
+    }
+
+    /// Two tools working the same tier are separate positions, so a sale
+    /// draws on each in proportion to what it still holds rather than
+    /// crediting the tier and leaving the tools uncredited.
+    #[test]
+    fn tools_inside_one_tier_are_allocated_separately() {
+        let positions = [
+            tier_with_tool(HarvestYieldTier::Long, "PH-3", 30.0),
+            tier_with_tool(HarvestYieldTier::Long, "PH-4", 10.0),
+        ];
+        let plan = allocate(&positions, 20.0, 0.03);
+
+        assert_eq!(plan.allocations.len(), 2);
+        let ph3 = plan
+            .allocations
+            .iter()
+            .find(|a| a.tool_name == Some("PH-3"))
+            .expect("PH-3 allocated");
+        let ph4 = plan
+            .allocations
+            .iter()
+            .find(|a| a.tool_name == Some("PH-4"))
+            .expect("PH-4 allocated");
+        assert!((ph3.quantity - 15.0).abs() < 1e-9);
+        assert!((ph4.quantity - 5.0).abs() < 1e-9);
+        // Both still belong to the tier that owns them.
+        assert_eq!(ph3.yield_tier, Some(HarvestYieldTier::Long));
+        assert_eq!(ph4.yield_tier, Some(HarvestYieldTier::Long));
+        assert!((plan.attributed_qty - 20.0).abs() < 1e-9);
     }
 
     /// Exhausted tiers do not produce zero-quantity allocation rows.
