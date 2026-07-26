@@ -21,7 +21,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { AuctionListing } from '$lib/types/analytics';
-	import { NO_DATA, formatPed } from '$lib/utils/format';
+	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
 	let {
 		open,
@@ -61,6 +61,16 @@
 			: 0,
 	);
 	const unattributedMarkup = $derived(netMarkup - (selected?.activityNetMarkup ?? 0));
+
+	// What the auction actually fetched, as a rate on the listing's TT: the
+	// same 100%-is-TT reading the rest of Analytics uses for markup, so a sale
+	// can be held against the market figure that motivated it. Gross of fees,
+	// because it describes the price, not what was kept from it.
+	const saleMarkupRate = $derived(
+		selected && selected.status === 'sold' && selected.ttValue > 0
+			? (selected.finalPrice ?? 0) / selected.ttValue
+			: null,
+	);
 
 	let confirming = $state(false);
 	let finalPrice = $state(0);
@@ -245,13 +255,18 @@
 							/>
 
 							<StatDisplay
+								label="MU rate"
+								value={saleMarkupRate !== null ? formatPercent(saleMarkupRate) : NO_DATA}
+								valueClass={saleMarkupRate !== null ? netTone(saleMarkupRate - 1) : ''}
+							/>
+							<StatDisplay
 								label="Net markup"
 								value={signedPed(netMarkup)}
 								unit="PED"
 								valueClass={netTone(netMarkup)}
 							/>
 							<StatDisplay
-								label="Credited to activities"
+								label="Credited"
 								value={signedPed(selected.activityNetMarkup ?? 0)}
 								unit="PED"
 								valueClass={netTone(selected.activityNetMarkup ?? 0)}
