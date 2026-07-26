@@ -68,7 +68,7 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 |---|---|
 | Quests | quest list and create; `mobs`; `analytics`; playlists list/create, playlist analytics, playlist update/delete; quest read/update/delete; quest `start`, `complete`, `cancel` |
 | Codex | `species`; species `ranks`; `recommend`; `calibrate`; `claim`; meta `claim`; meta `attributes` |
-| Analytics | period-scoped `overview`; `hunting`; period-scoped tier-first `harvest`; harvest stock read/update; the ledger (paged list, whole-ledger `summary`, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
+| Analytics | period-scoped `overview`; `hunting`; period-scoped tier-first `harvest`; harvest stock positions and realised markup; the auction lifecycle (listings list, create, confirm, expire) and stock `convert`; activity `history` with its undos (sale revert, listing, conversion); the ledger (paged list, whole-ledger `summary`, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
 | Market | paste `preview` and `commit`; `overview`; item `history`; `break-even`; mob `ranking` |
 | Tracking (reads) | `sessions` (paged); session read; `tag-suggestions`; `snapshot` |
 | Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `tag-lock` |
