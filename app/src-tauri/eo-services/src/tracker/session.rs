@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 use eo_wire::normalizer::round_half_even;
 
+use super::intervals::{IntervalKind, IntervalSpec, SegmentState};
 use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::DbError;
 use crate::mob_lookup_service::python_whitespace;
@@ -65,6 +66,10 @@ pub(super) struct ActiveSession {
     pub(super) declared_mob: Option<DeclaredMob>,
     /// The session-scoped facets snapshotted at session start.
     pub(super) facets: SessionFacets,
+    /// The live segment state: which intervals are open and the context
+    /// every event written right now stamps. Session-scoped by
+    /// construction, so no segment can outlive its session.
+    pub(super) segments: SegmentState,
     pub(super) last_heal_time: Option<DateTime<Utc>>,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
@@ -93,6 +98,7 @@ impl ActiveSession {
             warnings: Vec::new(),
             declared_mob: None,
             facets,
+            segments: SegmentState::default(),
             last_heal_time: None,
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
@@ -331,34 +337,78 @@ impl TrackerActor {
     /// the world that expires: a pill running out is a real change the
     /// session must be able to record.
     ///
-    /// The session row carries the latest declaration, re-landed here
-    /// on every change so the record never claims a boost the player
-    /// withdrew. Persistence failures are contained like the stop
-    /// path's: the in-memory facet still moves and the row heals at the
-    /// next declaration.
+    /// `percent` is three-state, and the distinction is the whole point:
+    /// `None` withdraws the declaration entirely (nothing is claimed
+    /// about the boost from here on), while `Some(0)` declares
+    /// deliberately-unboosted play. Only the second can serve as the
+    /// baseline an effect is measured against, so they must not collapse
+    /// into one value.
+    ///
+    /// Two records move together: the interval carries the full
+    /// three-state declaration (the attribution truth), and the session
+    /// row mirrors the latest declaration where its column can express
+    /// it (a positive magnitude or NULL; the schema cannot hold the
+    /// declared zero, which lives on the interval alone). Persistence
+    /// failures are contained: the in-memory facet still moves and the
+    /// row re-lands at the next declaration or the stop.
     pub(super) async fn set_skill_boost(
         &mut self,
         percent: Option<i64>,
     ) -> Result<(), TrackerCommandError> {
-        let percent = percent.filter(|value| *value > 0);
+        let percent = percent.filter(|value| *value >= 0);
         let session_id = {
             let Some(active) = self.session.active_mut() else {
                 return Err(TrackerCommandError::NoActiveSession);
             };
-            active.facets.skill_boost_percent = percent;
+            active.facets.skill_boost_percent = percent.filter(|value| *value > 0);
             active.dirty = true;
             active.session.id.clone()
         };
-        let _ = self
-            .db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "UPDATE tracking_sessions SET skill_boost_percent = ? WHERE id = ?",
-                    rusqlite::params![percent, session_id],
-                )?;
-                Ok(())
-            })
-            .await;
+        let row_mirror = percent.filter(|value| *value > 0);
+        {
+            let session_id = session_id.clone();
+            let _ = self
+                .db
+                .with_writer(move |conn| {
+                    conn.execute(
+                        "UPDATE tracking_sessions SET skill_boost_percent = ? WHERE id = ?",
+                        rusqlite::params![row_mirror, session_id],
+                    )?;
+                    Ok(())
+                })
+                .await;
+        }
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+
+        // Contained like the other persistence failures: a segment write
+        // that cannot land leaves the declaration unrecorded rather than
+        // stamping events with a context that does not describe them.
+        {
+            let db = self.db.clone();
+            let Some(active) = self.session.active_mut() else {
+                return Err(TrackerCommandError::NoActiveSession);
+            };
+            let outcome = match percent {
+                Some(value) => active
+                    .segments
+                    .open_interval(
+                        &db,
+                        &session_id,
+                        now,
+                        IntervalSpec::new(IntervalKind::Modifier).magnitude(Some(value as f64)),
+                    )
+                    .await
+                    .map(|_| ()),
+                None => active
+                    .segments
+                    .close_kind(&db, &session_id, now, IntervalKind::Modifier)
+                    .await
+                    .map(|_| ()),
+            };
+            if outcome.is_err() {
+                return Ok(());
+            }
+        }
         Ok(())
     }
 
@@ -457,6 +507,7 @@ impl TrackerActor {
         let insert_id = session_id.clone();
         let insert_name = facets.name.clone();
         let insert_boost = facets.skill_boost_percent;
+        let opening_boost = facets.skill_boost_percent;
         self.db
             .with_writer(move |conn| {
                 conn.execute(
@@ -497,6 +548,38 @@ impl TrackerActor {
             .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
                 session_id: session_id.clone(),
             }));
+        // The session's opening context: the empty set, minted even when
+        // nothing is declared, because an event stamped with it was
+        // recorded under the segment model with nothing in force, and
+        // that is a different fact from an event predating the model.
+        // Deliberately NOT a bus event: the only cross-service consumer
+        // reads the session's current context from the database at
+        // insert, which is exact, and keeps the recorded event stream
+        // free of internal plumbing.
+        {
+            let db = self.db.clone();
+            if let Some(active) = self.session.active_mut() {
+                if active
+                    .segments
+                    .open_session(&db, &session_id, start_ts)
+                    .await
+                    .is_ok()
+                {
+                    if let Some(percent) = opening_boost {
+                        let _ = active
+                            .segments
+                            .open_interval(
+                                &db,
+                                &session_id,
+                                start_ts,
+                                IntervalSpec::new(IntervalKind::Modifier)
+                                    .magnitude(Some(percent as f64)),
+                            )
+                            .await;
+                    }
+                }
+            }
+        }
         self.emit_session_event(
             TrackingReason::Started,
             TrackingStatus::Active,
@@ -534,6 +617,16 @@ impl TrackerActor {
                 session_boost,
             )
         };
+        // Close every still-open interval before the session record is
+        // sealed, so no segment outlives the session that owns it and a
+        // duration read never has to guess at a missing end.
+        {
+            let db = self.db.clone();
+            let end_ts = instant_to_epoch(end_time);
+            if let Some(active) = self.session.active_mut() {
+                let _ = active.segments.close_session(&db, end_ts).await;
+            }
+        }
         // One transaction over the whole stop sequence, matching the
         // original's single commit: a failure (or crash) mid-way leaves
         // no half-stopped session, no orphaned ledger gains, and no

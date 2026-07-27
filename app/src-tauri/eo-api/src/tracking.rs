@@ -948,10 +948,14 @@ impl Api {
     ///
     /// The two facets differ in how they may move, not by taste. The
     /// boost may be re-declared mid-session (a pill expiring is a real
-    /// change worth recording), and the session keeps the latest
-    /// declaration. The name names the whole session, so a live edit
-    /// could only rewrite its history: it is fixed once a session runs
-    /// (409), and correcting it is a post-hoc move through
+    /// change worth recording), and it is three-state: null withdraws
+    /// the declaration, 0 records deliberately-unboosted play (the
+    /// baseline a boost's effect is measured against), and a positive
+    /// value records a magnitude. The session row mirrors only the
+    /// positive case; the declared zero lives on the interval record.
+    /// The name names the whole session, so a live edit could only
+    /// rewrite its history: it is fixed once a session runs (409), and
+    /// correcting it is a post-hoc move through
     /// `tracking_rename_session`.
     pub async fn tracking_session_config(
         &self,

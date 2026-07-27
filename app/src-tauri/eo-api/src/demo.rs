@@ -524,6 +524,10 @@ impl DemoState {
                     .collect(),
                 is_global: kill.is_global != 0,
                 is_hof: kill.is_hof != 0,
+                // The demo replays a committed fixture rather than
+                // running the segment engine, so its kills carry no
+                // context: "not captured", exactly as a pre-segment row.
+                context_id: None,
             })
             .collect();
 

@@ -89,8 +89,8 @@ impl TrackerActor {
                      (id, session_id, mob_name, mob_species, mob_maturity, \
                       mob_stamp_source, timestamp, shots_fired, damage_dealt, damage_taken, \
                       critical_hits, cost_ped, enhancer_cost, \
-                      loot_total_ped, is_global, is_hof) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      loot_total_ped, is_global, is_hof, context_id) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         kill.id,
                         kill.session_id,
@@ -108,6 +108,7 @@ impl TrackerActor {
                         kill.loot_total_ped.value(),
                         i64::from(kill.is_global),
                         i64::from(kill.is_hof),
+                        kill.context_id,
                     ],
                 )?;
 
@@ -164,8 +165,8 @@ impl TrackerActor {
                 tx.execute(
                     "INSERT OR REPLACE INTO harvest_events \
                      (id, session_id, timestamp, success, tool_name, \
-                      yield_tier, yield_tier_source, cost_ped, loot_total_ped) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      yield_tier, yield_tier_source, cost_ped, loot_total_ped, context_id) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         harvest.id,
                         harvest.session_id,
@@ -176,6 +177,7 @@ impl TrackerActor {
                         harvest.yield_tier_source.map(|source| source.as_str()),
                         harvest.cost_ped.value(),
                         harvest.loot_total_ped.value(),
+                        harvest.context_id,
                     ],
                 )?;
                 for item in &harvest.loot_items {

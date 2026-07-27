@@ -1574,6 +1574,81 @@ fn trifecta_attribution_and_heal_filtering() {
     });
 }
 
+/// A session opens its segment context before anything can be recorded
+/// into it, and the opening boost becomes a modifier interval inside
+/// that context. The context is minted even with nothing declared: an
+/// event stamped with the empty context is a different, useful fact
+/// from an event that predates the segment model.
+#[test]
+fn a_session_opens_a_context_and_its_declared_modifier() {
+    let rig = rig();
+    let boosted = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            skill_boost_percent: Some(50),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    let session = rig.wait(boosted.start_session()).unwrap();
+
+    rig.probe(&boosted, |actor| {
+        let active = actor.session.active().unwrap();
+        assert!(
+            active.segments.context_id().is_some(),
+            "opening context minted"
+        );
+        assert_eq!(active.segments.modifier_magnitude(), Some(50.0));
+    });
+
+    // The interval is a real row, open, owned by this session.
+    let row: (String, Option<f64>, Option<f64>) = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT kind, magnitude, ended_at FROM session_intervals WHERE session_id = ?",
+                rusqlite::params![session.id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<f64>>(1)?,
+                        row.get::<_, Option<f64>>(2)?,
+                    ))
+                },
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(row, ("modifier".to_string(), Some(50.0), None));
+}
+
+/// The three states the modifier declaration must keep apart. Only a
+/// declared zero can serve as the unboosted baseline an effect is
+/// measured against, so it must not collapse into "not declared".
+#[test]
+fn a_declared_zero_boost_is_distinct_from_no_declaration() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    // Nothing declared: no modifier interval at all.
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.segments.modifier_magnitude(), None);
+    });
+
+    // Declared unboosted: a real interval carrying zero.
+    rig.wait(tracker.set_skill_boost(Some(0))).unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.segments.modifier_magnitude(), Some(0.0));
+    });
+
+    // Withdrawn: back to claiming nothing.
+    rig.wait(tracker.set_skill_boost(None)).unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.segments.modifier_magnitude(), None);
+    });
+}
+
 #[test]
 fn session_facet_and_declared_mob_rules() {
     let rig = rig();

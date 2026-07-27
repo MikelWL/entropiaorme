@@ -24,6 +24,7 @@
 mod actor;
 mod combat;
 mod harvest;
+mod intervals;
 mod loot;
 mod mob;
 mod persistence;
@@ -34,6 +35,7 @@ mod tests;
 mod time;
 mod weapons;
 
+pub use intervals::{IntervalKind, IntervalSpec, OpenInterval};
 pub use mob::{DeclaredMob, MobStampSource};
 pub use providers::{
     DefaultTrackingConfig, EquipmentLibrary, EquipmentProfile, GuardrailTool,
