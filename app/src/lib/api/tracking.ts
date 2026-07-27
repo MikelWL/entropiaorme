@@ -8,10 +8,10 @@
 
 import type {
 	HarvestGuardrailAlert,
-	ToolActivity,
 	NotableEventCategory,
 	NotableEventType,
 	RecentEvent,
+	ToolActivity,
 	TrackingSnapshot,
 	TrackingState,
 	TrifectaAttribution,

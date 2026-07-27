@@ -1471,7 +1471,7 @@ fn activity_sessions_read(conn: &mut rusqlite::Connection) -> Result<Vec<Session
     // scales with the divergence, not the whole history. The divergent ids are
     // collected first, so the streaming read is done before the per-id raw
     // aggregates prepare their own statements on the same connection.
-    let divergent: Vec<(String, f64, f64, f64, f64, f64, Option<String>)> = {
+    let divergent: Vec<DivergentSession> = {
         let mut stmt = conn.prepare(
             "SELECT s.id, s.started_at, s.ended_at, COALESCE(s.armour_cost, 0), \
              COALESCE(s.heal_cost, 0), COALESCE(s.dangling_cost, 0), s.session_name \
@@ -1541,6 +1541,11 @@ fn read_summary_activity_aggs(
     }
     Ok(out)
 }
+
+/// One ended session with no summary row, as the reconciliation read
+/// returns it: id, start, end, armour, heal, dangling, and the session
+/// name facet.
+type DivergentSession = (String, f64, f64, f64, f64, f64, Option<String>);
 
 /// Compute one session's Activity aggregate directly from the raw tables, for
 /// the reconciliation path (an ended session with no summary row). Mirrors the
@@ -6014,7 +6019,18 @@ mod tests {
         .await
         .unwrap();
         let agg = db
-            .with_reader(|conn| raw_session_agg(conn, "tg", 1000.0, 4600.0, 0.0, 0.0, 0.0, Some("Thing".to_string())))
+            .with_reader(|conn| {
+                raw_session_agg(
+                    conn,
+                    "tg",
+                    1000.0,
+                    4600.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    Some("Thing".to_string()),
+                )
+            })
             .await
             .unwrap();
         assert_eq!(agg.dominant_mob, None);

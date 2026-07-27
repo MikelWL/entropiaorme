@@ -24,7 +24,6 @@ use std::sync::Mutex as StdMutex;
 type CostScript = Arc<dyn Fn(&str) -> f64 + Send + Sync>;
 type ProfileScript = Arc<dyn Fn(&str) -> EquipmentProfile + Send + Sync>;
 type TrifectaScript = Arc<dyn Fn() -> Option<serde_json::Map<String, Value>> + Send + Sync>;
-type BoolScript = Arc<dyn Fn() -> bool + Send + Sync>;
 type ManualMobScript = Arc<dyn Fn() -> Option<(String, String)> + Send + Sync>;
 
 /// Closure-scripted equipment library for tests.
@@ -1619,7 +1618,12 @@ fn session_facet_and_declared_mob_rules() {
             Ok(conn.query_row(
                 "SELECT session_name, skill_boost_percent FROM tracking_sessions WHERE id = ?",
                 rusqlite::params![session_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i64>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                    ))
+                },
             )?)
         }))
         .unwrap()
@@ -1743,7 +1747,12 @@ fn session_facet_and_declared_mob_rules() {
             Ok(conn.query_row(
                 "SELECT session_name, skill_boost_percent FROM tracking_sessions WHERE id = ?",
                 rusqlite::params![session_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i64>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                    ))
+                },
             )?)
         }))
         .unwrap()
@@ -1812,7 +1821,10 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     *scripted_mob.lock().unwrap() = Some(("Feffoid".to_string(), String::new()));
     rig.wait(tracker.reload_config());
     rig.probe(&tracker, |actor| {
-        assert_eq!(actor.session.active().unwrap().stamped_mob_name(), Some("Feffoid"));
+        assert_eq!(
+            actor.session.active().unwrap().stamped_mob_name(),
+            Some("Feffoid")
+        );
         assert_eq!(actor.heal_tool.cost_per_use, Ped::ZERO);
         assert_eq!(actor.heal_tool.reload_seconds, 2.5);
     });

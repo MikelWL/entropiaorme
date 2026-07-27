@@ -265,3 +265,32 @@ describe('isArchived', () => {
 		expect(mod.isArchived(state, 'name', 'atrox')).toBe(false);
 	});
 });
+
+describe('legacy bucket carry-forward', () => {
+	it('adopts a stored `tags` bucket as the designated-axis names', async () => {
+		const mod = await freshModule();
+		// The designated axis was the free-text tag before the session-facet
+		// model; migration 0018 lifted those tags onto the session row as
+		// names, so an archived tag is an archived name and must survive.
+		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: ['event:beacon'] });
+		await mod.initActivityArchive();
+
+		expect(mod.activityArchive.current).toEqual({
+			mobs: ['atrox'],
+			names: ['event:beacon'],
+		});
+		expect(mod.isArchived(mod.activityArchive.current, 'name', 'event:beacon')).toBe(true);
+	});
+
+	it('merges a legacy bucket into an already-migrated one without duplicates', async () => {
+		const mod = await freshModule();
+		getPreference.mockResolvedValue({
+			mobs: [],
+			names: ['shared', 'new'],
+			tags: ['shared', 'old'],
+		});
+		await mod.initActivityArchive();
+
+		expect(mod.activityArchive.current.names).toEqual(['shared', 'new', 'old']);
+	});
+});

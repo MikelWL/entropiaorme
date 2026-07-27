@@ -219,10 +219,7 @@ impl HuntTracker {
 
     /// Set or clear the active session's name facet (in memory and on
     /// the session row).
-    pub async fn set_session_name(
-        &self,
-        name: Option<String>,
-    ) -> Result<(), TrackerCommandError> {
+    pub async fn set_session_name(&self, name: Option<String>) -> Result<(), TrackerCommandError> {
         self.call(|reply| TrackerMsg::SetSessionName(name, reply))
             .await
     }

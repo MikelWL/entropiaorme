@@ -1172,19 +1172,13 @@ impl Api {
     }
 
     /// A quest/playlist display name by id (None when absent).
-    async fn entity_name(
-        &self,
-        table: &'static str,
-        id: i64,
-    ) -> Result<Option<String>, ApiError> {
+    async fn entity_name(&self, table: &'static str, id: i64) -> Result<Option<String>, ApiError> {
         use rusqlite::OptionalExtension as _;
         let sql = format!("SELECT name FROM {table} WHERE id = ?");
         self.db
             .with_reader(move |conn| {
                 Ok(conn
-                    .query_row(&sql, rusqlite::params![id], |row| {
-                        row.get::<_, String>(0)
-                    })
+                    .query_row(&sql, rusqlite::params![id], |row| row.get::<_, String>(0))
                     .optional()?)
             })
             .await

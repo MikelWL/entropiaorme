@@ -26,6 +26,7 @@
 	import { useVisiblePoll, windowGeometryPoll } from '$lib/realtime/useVisiblePoll';
 	import { createSnapshotStore } from '$lib/realtime/snapshotStore.svelte';
 	import { createPostSessionFlow } from '$lib/features/tracking/postSession.svelte';
+	import { createSessionFacets } from '$lib/features/tracking/sessionFacets.svelte';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { PhysicalPosition } from '@tauri-apps/api/dpi';
@@ -107,22 +108,6 @@
 	let selectingMob = $state(false);
 	let mobCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
-	// The session facets: the designated name, the skill boost, and the
-	// declared quest. Each is independent and optional; none blocks another.
-	let nameQuery = $state('');
-	let nameInput: HTMLInputElement | null = $state(null);
-	let nameInputFocused = $state(false);
-	let nameCloseTimer: ReturnType<typeof setTimeout> | undefined;
-	let savingName = $state(false);
-	// The boost's edit buffer, only meaningful while idle (the backend
-	// refuses a change mid-session, so the strip renders it read-only there).
-	let boostDraft = $state('');
-	let savingBoost = $state(false);
-	let questSaving = $state(false);
-	let questOptions = $state<{ id: number; name: string; isPlaylist: boolean }[]>([]);
-	// One channel for every facet write failure; the strip renders it beside
-	// the controls rather than swallowing a refusal silently.
-	let facetError = $state<string | null>(null);
 
 	// The two satellite popovers this window drives. The failure messages keep
 	// the overlay's established wording (they render in the strip).
@@ -186,6 +171,22 @@
 	});
 	const toggling = $derived(starting || flow.stopping);
 
+	// The session facets (name, boost, quest): state, lookups, and writes
+	// live in the feature model; this route owns only the popup plumbing
+	// the model calls back into.
+	const facets = createSessionFacets({
+		readFacets: () => ({ name: data.sessionName ?? null, boost: data.skillBoostPercent ?? null }),
+		isSessionActive: () => data.status === 'active',
+		refresh: () => snapshot.hydrate(),
+		searchNames: getSessionNameSuggestions,
+		setSessionConfig,
+		declareQuest: declareSessionQuest,
+		listQuests: getQuests,
+		listPlaylists: getPlaylists,
+		openNameMenu: () => openNameMenu(),
+		closeNameMenu: () => closeNameMenu()
+	});
+
 	async function handleDrag(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		if (target.closest('button, [role="button"], input, select, textarea')) return;
@@ -204,11 +205,6 @@
 		mobCloseTimer = undefined;
 	}
 
-	function clearNameCloseTimer() {
-		if (!nameCloseTimer) return;
-		clearTimeout(nameCloseTimer);
-		nameCloseTimer = undefined;
-	}
 
 	function describeOverlayMenuError(error: unknown) {
 		if (error instanceof ApiError || error instanceof Error) return error.message;
@@ -276,38 +272,39 @@
 	}
 
 	function buildNameMenuState(anchorWidth: number): OverlayMenuState | null {
-		const trimmedQuery = nameQuery.trim();
-		const shouldShow = nameLoading || !!nameError || nameSuggestions.length > 0 || !!trimmedQuery;
+		const trimmedQuery = facets.nameQuery.trim();
+		const shouldShow =
+			facets.nameLoading || !!facets.nameError || facets.nameSuggestions.length > 0 || !!trimmedQuery;
 		if (!shouldShow) return null;
 
-		const labels = nameLoading
+		const labels = facets.nameLoading
 			? ['Searching...']
-			: nameError
-				? [nameError]
-				: (nameSuggestions.length > 0
-					? nameSuggestions
+			: facets.nameError
+				? [facets.nameError]
+				: (facets.nameSuggestions.length > 0
+					? facets.nameSuggestions
 					: [`Press Enter to name it "${trimmedQuery}"`]);
 
 		return {
 			kind: 'name',
 			width: computeMenuWidth(anchorWidth, labels, 28),
 			query: trimmedQuery,
-			loading: nameLoading,
-			error: nameError,
-			suggestions: nameSuggestions
+			loading: facets.nameLoading,
+			error: facets.nameError,
+			suggestions: facets.nameSuggestions
 		};
 	}
 
 	function buildQuestMenuState(anchorWidth: number): OverlayMenuState | null {
-		const labels = questOptions.length > 0
-			? questOptions.map((option) => option.name)
+		const labels = facets.questOptions.length > 0
+			? facets.questOptions.map((option) => option.name)
 			: ['No active quests'];
 		return {
 			kind: 'quest',
 			width: computeMenuWidth(anchorWidth, labels, 88),
 			loading: false,
 			error: null,
-			options: questOptions
+			options: facets.questOptions
 		};
 	}
 
@@ -383,7 +380,7 @@
 			clearMobCloseTimer();
 		}
 		if (overlayMenuKind === 'name') {
-			clearNameCloseTimer();
+			facets.clearNameCloseTimer();
 		}
 		overlayMenuKind = null;
 		await menuWindow.hide();
@@ -404,32 +401,17 @@
 	}
 
 	async function openNameMenu() {
-		if (!nameInput) return;
-		const state = buildNameMenuState(nameInput.getBoundingClientRect().width);
+		if (!facets.nameInput) return;
+		const state = buildNameMenuState(facets.nameInput.getBoundingClientRect().width);
 		if (!state) return;
 		overlayMenuLaunchError = null;
-		await showOverlayMenu('name', nameInput, state);
+		await showOverlayMenu('name', facets.nameInput, state);
 	}
 
 	async function closeNameMenu() {
-		clearNameCloseTimer();
+		facets.clearNameCloseTimer();
 		if (overlayMenuKind !== 'name') return;
 		await hideOverlayMenu();
-	}
-
-	/** The quest picker's options: active playlists first (a playlist is
-	 * the coarser declaration), then active quests. Both are read fresh at
-	 * open so a quest created since the overlay appeared is offered. */
-	async function loadQuestOptions() {
-		const [playlists, quests] = await Promise.all([getPlaylists(), getQuests()]);
-		questOptions = [
-			...playlists.map((playlist) => ({
-				id: Number(playlist.id),
-				name: playlist.name,
-				isPlaylist: true
-			})),
-			...quests.map((quest) => ({ id: Number(quest.id), name: quest.name, isPlaylist: false }))
-		];
 	}
 
 	async function toggleQuestMenu(anchor: HTMLButtonElement) {
@@ -437,15 +419,7 @@
 			await hideOverlayMenu();
 			return;
 		}
-		facetError = null;
-		try {
-			await loadQuestOptions();
-		} catch (error) {
-			facetError = error instanceof ApiError || error instanceof Error
-				? error.message
-				: 'Failed to read quests';
-			return;
-		}
+		if (!(await facets.loadQuestOptions())) return;
 		const state = buildQuestMenuState(anchor.getBoundingClientRect().width);
 		if (!state) return;
 		await showOverlayMenu('quest', anchor, state, { focusPopup: true });
@@ -714,13 +688,13 @@
 
 				if (event.payload.kind === 'name') {
 					overlayMenuKind = null;
-					await handleApplyName(event.payload.name);
+					await facets.applyName(event.payload.name);
 					return;
 				}
 
 				if (event.payload.kind === 'quest') {
 					overlayMenuKind = null;
-					await handleDeclareQuest(event.payload.id, event.payload.isPlaylist);
+					await facets.declareQuest(event.payload.id, event.payload.isPlaylist);
 					return;
 				}
 
@@ -738,13 +712,13 @@
 				if (disposed) return;
 				overlayMenuKind = null;
 				clearMobCloseTimer();
-				clearNameCloseTimer();
+				facets.clearNameCloseTimer();
 			});
 
 			unlistenInteract = await listen(OVERLAY_MENU_INTERACT_EVENT, async () => {
 				if (disposed) return;
 				if (overlayMenuKind === 'mob') clearMobCloseTimer();
-				if (overlayMenuKind === 'name') clearNameCloseTimer();
+				if (overlayMenuKind === 'name') facets.clearNameCloseTimer();
 			});
 		})();
 
@@ -843,23 +817,8 @@
 		debounceMs: 120,
 		minLength: 1
 	});
-	const nameTypeahead = createTypeahead<string>({
-		search: async (query) => {
-			try {
-				return await getSessionNameSuggestions(query);
-			} catch (error) {
-				throw new Error(error instanceof ApiError ? error.message : 'Name lookup failed');
-			}
-		},
-		debounceMs: 120,
-		minLength: 1
-	});
-
 	const mobSuggestions = $derived(mobTypeahead.results);
 	const mobLoading = $derived(mobTypeahead.loading);
-	const nameSuggestions = $derived(nameTypeahead.results);
-	const nameLoading = $derived(nameTypeahead.loading);
-	let nameError = $state<string | null>(null);
 
 	// Drive each typeahead from its input state. Hiding the input or
 	// emptying the query suspends the search and closes that menu, keeping
@@ -884,20 +843,8 @@
 	});
 
 	$effect(() => {
-		if (!showNameInput) {
-			nameTypeahead.cancel();
-			void closeNameMenu();
-			return;
-		}
-
-		nameTypeahead.query = nameQuery;
-		if (!nameQuery.trim()) {
-			nameTypeahead.cancel();
-			void closeNameMenu();
-			return;
-		}
-
-		nameTypeahead.refresh();
+		void facets.nameQuery;
+		facets.syncNameQuery(showNameInput);
 	});
 
 	// Present the search lifecycle in the menu window: mirror the typeahead's
@@ -919,157 +866,26 @@
 	});
 
 	$effect(() => {
-		void nameTypeahead.loading;
-		void nameTypeahead.results;
-		nameError = nameTypeahead.error;
-		untrack(() => {
-			if (!showNameInput || !nameQuery.trim()) return;
-			if (nameInputFocused || overlayMenuKind === 'name') {
-				void openNameMenu();
-			}
-		});
+		void facets.nameLoading;
+		void facets.nameSuggestions;
+		untrack(() => facets.presentNameMenu(showNameInput, overlayMenuKind === 'name'));
 	});
 
 	$effect(() => {
 		return () => {
 			mobTypeahead.destroy();
-			nameTypeahead.destroy();
+			facets.destroy();
 		};
 	});
 
 	// Keep the boost buffer in step with the persisted facet while the user
 	// is not editing it (an idle overlay re-read, or the value the last
-	// session left behind). Writing the buffer here cannot loop: the commit
-	// handler is the only other writer and it runs on blur/Enter.
+	// session left behind).
 	$effect(() => {
-		const persisted = data.skillBoostPercent;
-		untrack(() => {
-			if (savingBoost) return;
-			boostDraft = persisted && persisted > 0 ? String(persisted) : '';
-		});
+		void data.skillBoostPercent;
+		untrack(() => facets.syncBoostDraft());
 	});
 
-	/** Write the facet pair as full state (the command takes both, so a
-	 * null clears its facet). The name applies to the live session; the
-	 * boost only moves while idle, and the backend refuses otherwise. */
-	async function writeFacets(name: string | null, boost: number | null) {
-		const result = await setSessionConfig(name, boost);
-		await snapshot.hydrate();
-		return result;
-	}
-
-	function describeFacetError(error: unknown, fallback: string) {
-		return error instanceof ApiError || error instanceof Error ? error.message : fallback;
-	}
-
-	function handleNameFocus() {
-		clearNameCloseTimer();
-		nameInputFocused = true;
-		if (nameQuery.trim() && (nameSuggestions.length > 0 || nameLoading || !!nameError)) {
-			void openNameMenu();
-		}
-	}
-
-	function handleNameBlur() {
-		nameInputFocused = false;
-		clearNameCloseTimer();
-		nameCloseTimer = setTimeout(() => {
-			void closeNameMenu();
-		}, 120);
-	}
-
-	async function handleNameKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') {
-			await closeNameMenu();
-			return;
-		}
-		if (event.key !== 'Enter') return;
-		event.preventDefault();
-		await handleApplyName(nameQuery.trim());
-	}
-
-	async function handleApplyName(name: string) {
-		if (!name) return;
-		clearNameCloseTimer();
-		savingName = true;
-		facetError = null;
-		try {
-			await writeFacets(name, currentBoost());
-			nameQuery = '';
-			nameTypeahead.cancel();
-			await closeNameMenu();
-		} catch (error) {
-			facetError = describeFacetError(error, 'Failed to set session name');
-		}
-		savingName = false;
-	}
-
-	async function handleClearName() {
-		savingName = true;
-		facetError = null;
-		try {
-			await writeFacets(null, currentBoost());
-			nameQuery = '';
-			nameTypeahead.cancel();
-			await closeNameMenu();
-		} catch (error) {
-			facetError = describeFacetError(error, 'Failed to clear session name');
-		}
-		savingName = false;
-	}
-
-	/** The boost currently in force, as the facet write wants it. Reading
-	 * the snapshot (not the draft) keeps a name write from moving the boost
-	 * as a side effect. */
-	function currentBoost(): number | null {
-		const value = data.skillBoostPercent;
-		return value && value > 0 ? value : null;
-	}
-
-	async function handleBoostCommit() {
-		const trimmed = boostDraft.trim();
-		const parsed = trimmed ? Number.parseInt(trimmed, 10) : 0;
-		const next = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-		if (next === currentBoost()) {
-			// Normalise the buffer even when nothing moved, so a stray
-			// "abc" or " 50 " does not linger as if it were persisted.
-			boostDraft = next ? String(next) : '';
-			return;
-		}
-		savingBoost = true;
-		facetError = null;
-		try {
-			await writeFacets(data.sessionName ?? null, next);
-		} catch (error) {
-			facetError = describeFacetError(error, 'Failed to set skill boost');
-		}
-		savingBoost = false;
-		boostDraft = next ? String(next) : '';
-	}
-
-	async function handleDeclareQuest(id: number, isPlaylist: boolean) {
-		questSaving = true;
-		facetError = null;
-		try {
-			await declareSessionQuest(isPlaylist ? null : id, isPlaylist ? id : null);
-			await snapshot.hydrate();
-		} catch (error) {
-			facetError = describeFacetError(error, 'Failed to declare quest');
-		}
-		questSaving = false;
-	}
-
-	async function handleClearQuest() {
-		questSaving = true;
-		facetError = null;
-		try {
-			await declareSessionQuest(null, null);
-			await snapshot.hydrate();
-		} catch (error) {
-			facetError = describeFacetError(error, 'Failed to clear quest');
-		}
-		questSaving = false;
-	}
 
 	async function handleStart() {
 		starting = true;
@@ -1170,10 +986,10 @@
 		questMenuOpen={overlayMenuKind === 'quest'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
-		{savingName}
-		{savingBoost}
-		{questSaving}
-		{facetError}
+		savingName={facets.savingName}
+		savingBoost={facets.savingBoost}
+		questSaving={facets.questSaving}
+		facetError={facets.facetError}
 		questLabel={data.questName ?? null}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}
@@ -1182,9 +998,9 @@
 		questLinkSaving={flow.questLinkSaving}
 		bind:mobQuery
 		bind:mobInput
-		bind:nameQuery
-		bind:nameInput
-		bind:boostDraft
+		bind:nameQuery={facets.nameQuery}
+		bind:nameInput={facets.nameInput}
+		bind:boostDraft={facets.boostDraft}
 		bind:postSessionArmourButton
 		onStart={handleStart}
 		onStop={flow.requestStop}
@@ -1196,13 +1012,13 @@
 		onMobFocus={handleMobFocus}
 		onMobBlur={handleMobBlur}
 		onMobKeydown={handleMobKeydown}
-		onNameFocus={handleNameFocus}
-		onNameBlur={handleNameBlur}
-		onNameKeydown={handleNameKeydown}
-		onClearName={handleClearName}
-		onBoostCommit={handleBoostCommit}
+		onNameFocus={facets.handleNameFocus}
+		onNameBlur={facets.handleNameBlur}
+		onNameKeydown={facets.handleNameKeydown}
+		onClearName={facets.clearName}
+		onBoostCommit={facets.commitBoost}
 		onQuestTrigger={toggleQuestMenu}
-		onClearQuest={handleClearQuest}
+		onClearQuest={facets.clearQuest}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
 		onQuestLinkDecision={flow.decideQuestLink}

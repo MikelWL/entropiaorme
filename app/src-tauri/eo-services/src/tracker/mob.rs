@@ -84,12 +84,11 @@ impl TrackerActor {
     /// no-op (idle carries no declaration to release).
     pub(super) fn release_declared_mob(&mut self) -> Option<String> {
         let active = self.session.active_mut()?;
-        let released = active
+        active
             .declared_mob
             .take()
             .map(|declared| declared.name)
-            .filter(|name| !name.is_empty());
-        released
+            .filter(|name| !name.is_empty())
     }
 }
 

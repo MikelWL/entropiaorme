@@ -52,8 +52,9 @@ use crate::scan::{
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
-    SessionQuestLinkSuggestion, SessionConfigResult, StartResult, StopResult, TrackingSnapshot,
+    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionConfigResult,
+    SessionDetail, SessionPage, SessionQuestLinkSuggestion, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;

@@ -172,8 +172,7 @@ describe('session facets and declared mob', () => {
 	});
 
 	it('offers the quest picker only while a session is active', () => {
-		const questTrigger = () =>
-			screen.getByText('Pick').closest('button') as HTMLButtonElement;
+		const questTrigger = () => screen.getByText('Pick').closest('button') as HTMLButtonElement;
 
 		const { unmount } = render(OverlayStrip, { props: { data: liveData({ status: 'idle' }) } });
 		expect(questTrigger().disabled).toBe(true);

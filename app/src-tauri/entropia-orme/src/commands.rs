@@ -50,8 +50,9 @@ use eo_api::scan::{
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
-    SessionQuestLinkSuggestion, SessionConfigResult, StartResult, StopResult, TrackingSnapshot,
+    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionConfigResult,
+    SessionDetail, SessionPage, SessionQuestLinkSuggestion, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
