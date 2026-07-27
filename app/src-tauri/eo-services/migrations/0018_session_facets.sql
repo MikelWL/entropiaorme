@@ -15,6 +15,12 @@ ALTER TABLE tracking_sessions ADD COLUMN skill_boost_percent INTEGER
 ALTER TABLE kills ADD COLUMN mob_stamp_source TEXT
     CHECK (mob_stamp_source IN ('declared', 'detected') OR mob_stamp_source IS NULL);
 
+-- The summary cache carries the facets beside its aggregates (populated
+-- by the SUMMARY_VERSION 4 heal; the columns land here so the healed
+-- write has somewhere to put them).
+ALTER TABLE session_summaries ADD COLUMN session_name TEXT;
+ALTER TABLE session_summaries ADD COLUMN skill_boost_percent INTEGER;
+
 -- Backfill: a legacy tag-mode session's stamped tag was its de facto
 -- session name (kills stamped with an empty species carry the tag in
 -- mob_name). Lift the session's dominant tag so the designated axis

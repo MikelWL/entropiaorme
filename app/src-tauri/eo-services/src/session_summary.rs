@@ -27,8 +27,11 @@ fn is_missing_table(error: &rusqlite::Error) -> bool {
 // counts, raw session skill-TT, primary mob/weapon lists, global/HOF counts)
 // were added; to 3 when harvesting (tree cutting) joined the session economy
 // (harvest loot inside lootTt, swing decay inside cycledPed, plus the four
-// harvest columns). A below-version row heals on the next read.
-pub const SUMMARY_VERSION: i64 = 3;
+// harvest columns); to 4 when the session facets replaced the exclusive
+// tag-or-mob capture (session name and skill boost carried onto the summary,
+// mob dominance computed over species-bearing kills only, the dominant-tag
+// pair retired to NULL/0). A below-version row heals on the next read.
+pub const SUMMARY_VERSION: i64 = 4;
 pub const DOMINANCE_THRESHOLD: f64 = 0.6;
 
 /// The computed summary for one completed session, or None when the
@@ -42,7 +45,8 @@ pub fn compute_session_summary(
     let session = conn
         .query_row(
             "SELECT started_at, ended_at, \
-             COALESCE(armour_cost, 0), COALESCE(heal_cost, 0), COALESCE(dangling_cost, 0) \
+             COALESCE(armour_cost, 0), COALESCE(heal_cost, 0), COALESCE(dangling_cost, 0), \
+             session_name, skill_boost_percent \
              FROM tracking_sessions WHERE id = ? AND ended_at IS NOT NULL",
             rusqlite::params![session_id],
             |row| {
@@ -52,11 +56,22 @@ pub fn compute_session_summary(
                     row.get::<_, f64>(2)?,
                     row.get::<_, f64>(3)?,
                     row.get::<_, f64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
                 ))
             },
         )
         .optional()?;
-    let Some((started_at, ended_at, armour_cost, heal_cost, dangling_cost)) = session else {
+    let Some((
+        started_at,
+        ended_at,
+        armour_cost,
+        heal_cost,
+        dangling_cost,
+        session_name,
+        skill_boost_percent,
+    )) = session
+    else {
         return Ok(None);
     };
 
@@ -120,42 +135,35 @@ pub fn compute_session_summary(
         |row| row.get::<_, f64>(0),
     )?;
 
-    let mob_rows: Vec<(String, String, String, i64)> = {
+    // Mob dominance is computed over species-bearing stamps only: a legacy
+    // tag-mode kill carries the tag in mob_name with an empty species, and
+    // that is a session name, not a mob (migration 0018 lifted it onto the
+    // session row). The dominant-tag pair retired with the exclusive capture
+    // model and stays NULL/0 for the columns' sake.
+    let mob_rows: Vec<(String, i64)> = {
         let mut stmt = conn.prepare(
-            "SELECT mob_name, COALESCE(mob_species, ''), COALESCE(mob_maturity, ''), COUNT(*) \
+            "SELECT mob_name, COUNT(*) \
              FROM kills \
              WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
-             GROUP BY mob_name, mob_species, mob_maturity \
+               AND COALESCE(mob_species, '') != '' \
+             GROUP BY mob_name \
              ORDER BY COUNT(*) DESC, mob_name ASC",
         )?;
         let rows = stmt.query_map(rusqlite::params![session_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
     let mut dominant_mob: Option<String> = None;
-    let mut dominant_tag: Option<String> = None;
-    // The dominant's own kill count (Activity sums these across sessions),
-    // carried on whichever of mob/tag the dominant classified as.
+    // The dominant's own kill count (Activity sums these across sessions).
     let mut dominant_mob_kills: i64 = 0;
-    let mut dominant_tag_kills: i64 = 0;
     if !mob_rows.is_empty() {
-        let total_known: i64 = mob_rows.iter().map(|row| row.3).sum();
+        let total_known: i64 = mob_rows.iter().map(|row| row.1).sum();
         if total_known > 0 {
-            let (top_name, top_species, top_maturity, top_count) = mob_rows[0].clone();
+            let (top_name, top_count) = mob_rows[0].clone();
             if top_count as f64 / total_known as f64 >= DOMINANCE_THRESHOLD {
-                if !top_species.is_empty() || !top_maturity.is_empty() {
-                    dominant_mob = Some(top_name);
-                    dominant_mob_kills = top_count;
-                } else {
-                    dominant_tag = Some(top_name);
-                    dominant_tag_kills = top_count;
-                }
+                dominant_mob = Some(top_name);
+                dominant_mob_kills = top_count;
             }
         }
     }
@@ -190,6 +198,7 @@ pub fn compute_session_summary(
         let mut stmt = conn.prepare(
             "SELECT mob_name FROM kills \
              WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
+               AND COALESCE(mob_species, '') != '' \
              GROUP BY mob_name ORDER BY COUNT(*) DESC LIMIT 3",
         )?;
         let rows = stmt.query_map(rusqlite::params![session_id], |row| row.get::<_, String>(0))?;
@@ -300,10 +309,9 @@ pub fn compute_session_summary(
         "dominantMob".into(),
         dominant_mob.map(Value::from).unwrap_or(Value::Null),
     );
-    summary.insert(
-        "dominantTag".into(),
-        dominant_tag.map(Value::from).unwrap_or(Value::Null),
-    );
+    // Retired with the exclusive capture model (SUMMARY_VERSION 4): the
+    // designated axis is the session name below.
+    summary.insert("dominantTag".into(), Value::Null);
     summary.insert(
         "dominantWeapon".into(),
         dominant_weapon.map(Value::from).unwrap_or(Value::Null),
@@ -322,7 +330,7 @@ pub fn compute_session_summary(
     );
     // Activity/session-list read columns (SUMMARY_VERSION 2).
     summary.insert("dominantMobKills".into(), Value::from(dominant_mob_kills));
-    summary.insert("dominantTagKills".into(), Value::from(dominant_tag_kills));
+    summary.insert("dominantTagKills".into(), Value::from(0));
     summary.insert("activitySkillTt".into(), Value::from(activity_skill_tt));
     summary.insert(
         "primaryMobs".into(),
@@ -344,6 +352,21 @@ pub fn compute_session_summary(
     summary.insert(
         "harvestCost".into(),
         Value::from(round_half_even(harvest_cost, 4)),
+    );
+    // Session facets (SUMMARY_VERSION 4), copied from the session row.
+    summary.insert(
+        "sessionName".into(),
+        session_name
+            .filter(|name| !name.is_empty())
+            .map(Value::from)
+            .unwrap_or(Value::Null),
+    );
+    summary.insert(
+        "skillBoostPercent".into(),
+        skill_boost_percent
+            .filter(|percent| *percent > 0)
+            .map(Value::from)
+            .unwrap_or(Value::Null),
     );
     Ok(Some(summary))
 }
@@ -375,9 +398,10 @@ pub fn write_session_summary(conn: &rusqlite::Connection, session_id: &str) -> R
          regular_skill_tt, attribute_levels_total, dominant_mob, dominant_tag, \
          dominant_weapon, dominant_mob_kills, dominant_tag_kills, activity_skill_tt, \
          primary_mobs_json, primary_weapons_json, globals, hofs, \
-         harvest_swings, harvest_successes, harvest_loot_tt, harvest_cost, computed_at) \
+         harvest_swings, harvest_successes, harvest_loot_tt, harvest_cost, \
+         session_name, skill_boost_percent, computed_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
         rusqlite::params![
             summary["id"].as_str(),
             SUMMARY_VERSION,
@@ -410,6 +434,8 @@ pub fn write_session_summary(conn: &rusqlite::Connection, session_id: &str) -> R
             summary["harvestSuccesses"].as_i64(),
             summary["harvestLootTt"].as_f64(),
             summary["harvestCost"].as_f64(),
+            summary["sessionName"].as_str(),
+            summary["skillBoostPercent"].as_i64(),
         ],
     )?;
     Ok(())

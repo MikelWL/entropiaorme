@@ -252,12 +252,13 @@ pub struct TimelinePoint {
     pub ledger_losses: std::collections::BTreeMap<String, f64>,
 }
 
-/// The Hunting aggregate: the per-mob and per-tag comparison tables.
+/// The Hunting aggregate: the per-mob and per-session-name comparison
+/// tables (the observed and designated axes).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HuntingData {
     pub mob_comparisons: Vec<ActivityRow>,
-    pub tag_comparisons: Vec<ActivityRow>,
+    pub name_comparisons: Vec<ActivityRow>,
 }
 
 /// The Tree Cutting aggregate: effective yield tiers and their loot
@@ -1440,8 +1441,9 @@ struct SessionAgg {
     skill_tt: f64,
     dominant_mob: Option<String>,
     dominant_mob_kills: i64,
-    dominant_tag: Option<String>,
-    dominant_tag_kills: i64,
+    /// The session-name facet (the designated axis; a legacy tag-mode
+    /// session reads its migrated name here).
+    session_name: Option<String>,
     cycled_ped: f64,
 }
 
@@ -1514,7 +1516,7 @@ fn read_summary_activity_aggs(
 ) -> Result<std::collections::HashMap<String, SessionAgg>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT session_id, duration_hours, kills, loot_tt, cycled_ped, activity_skill_tt, \
-         dominant_mob, dominant_tag, dominant_mob_kills, dominant_tag_kills \
+         dominant_mob, dominant_mob_kills, session_name \
          FROM session_summaries",
     )?;
     let mut rows = stmt.query([])?;
@@ -1530,9 +1532,8 @@ fn read_summary_activity_aggs(
                 cycled_ped: as_float(row, 4),
                 skill_tt: as_float(row, 5),
                 dominant_mob: row.get::<_, Option<String>>(6)?,
-                dominant_tag: row.get::<_, Option<String>>(7)?,
-                dominant_mob_kills: row.get::<_, i64>(8).unwrap_or(0),
-                dominant_tag_kills: row.get::<_, i64>(9).unwrap_or(0),
+                dominant_mob_kills: row.get::<_, i64>(7).unwrap_or(0),
+                session_name: row.get::<_, Option<String>>(8)?,
                 ..SessionAgg::default()
             },
         );
@@ -1588,37 +1589,36 @@ fn raw_session_agg(
         |row| Ok(as_float(row, 0)),
     )?;
 
-    let mob_rows: Vec<(String, String, String, i64)> = {
+    // Mob dominance over species-bearing stamps only, mirroring the summary
+    // writer (a species-less stamp is a legacy tag, i.e. a session name).
+    let mob_rows: Vec<(String, i64)> = {
         let mut stmt = conn.prepare(
-            "SELECT mob_name, COALESCE(mob_species, ''), COALESCE(mob_maturity, ''), COUNT(*) \
+            "SELECT mob_name, COUNT(*) \
              FROM kills WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
-             GROUP BY mob_name, mob_species, mob_maturity ORDER BY COUNT(*) DESC, mob_name ASC",
+               AND COALESCE(mob_species, '') != '' \
+             GROUP BY mob_name ORDER BY COUNT(*) DESC, mob_name ASC",
         )?;
         let mapped = stmt.query_map(rusqlite::params![session_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
         mapped.collect::<rusqlite::Result<Vec<_>>>()?
     };
     if !mob_rows.is_empty() {
-        let total_known: i64 = mob_rows.iter().map(|r| r.3).sum();
+        let total_known: i64 = mob_rows.iter().map(|r| r.1).sum();
         if total_known > 0 {
-            let (top_name, top_species, top_maturity, top_count) = mob_rows[0].clone();
+            let (top_name, top_count) = mob_rows[0].clone();
             if top_count as f64 / total_known as f64 >= ACTIVITY_DOMINANCE_THRESHOLD {
-                if !top_species.is_empty() || !top_maturity.is_empty() {
-                    agg.dominant_mob = Some(top_name);
-                    agg.dominant_mob_kills = top_count;
-                } else {
-                    agg.dominant_tag = Some(top_name);
-                    agg.dominant_tag_kills = top_count;
-                }
+                agg.dominant_mob = Some(top_name);
+                agg.dominant_mob_kills = top_count;
             }
         }
     }
+
+    agg.session_name = conn.query_row(
+        "SELECT session_name FROM tracking_sessions WHERE id = ?",
+        rusqlite::params![session_id],
+        |row| row.get::<_, Option<String>>(0),
+    )?;
 
     agg.cycled_ped = eo_wire::normalizer::round_half_even(
         agg.weapon_cost + agg.enhancer_cost + agg.armour_cost + agg.heal_cost + agg.dangling_cost,
@@ -1698,14 +1698,14 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
         |s| s.dominant_mob.clone(),
         |s| s.dominant_mob_kills,
     );
-    let tag = build_activity_slice_rows(
-        &sessions,
-        |s| s.dominant_tag.clone(),
-        |s| s.dominant_tag_kills,
-    );
+    // The designated axis groups on the session-name facet: exact
+    // session-scoped grouping, no dominance gate, and a session appears
+    // in BOTH tables when it carries both a name and a dominant mob
+    // (the co-recording model that replaced the tag-or-mob collapse).
+    let name = build_activity_slice_rows(&sessions, |s| s.session_name.clone(), |s| s.kills);
     Ok(HuntingData {
         mob_comparisons: mob,
-        tag_comparisons: tag,
+        name_comparisons: name,
     })
 }
 

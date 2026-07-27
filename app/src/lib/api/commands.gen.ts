@@ -122,11 +122,12 @@ export interface AnalyticsHarvest {
 }
 
 /**
- * The Hunting aggregate: the per-mob and per-tag comparison tables.
+ * The Hunting aggregate: the per-mob and per-session-name comparison
+ * tables (the observed and designated axes).
  */
 export interface AnalyticsHunting {
 	mobComparisons: MobComparison[];
-	tagComparisons: TagComparison[];
+	nameComparisons: NameComparison[];
 }
 
 /**
@@ -1292,6 +1293,20 @@ export interface MonthlyEntry {
 	ledgerLosses: Record<string, number>;
 }
 
+/**
+ * One row of the per-session-name activity comparison (the designated
+ * axis; legacy tag-mode sessions appear under their migrated names).
+ */
+export interface NameComparison {
+	sessionName: string;
+	sessions: number;
+	kills: number;
+	hours: number;
+	cycled: number;
+	pesPer100Ped: number;
+	lootRate: number;
+}
+
 export interface NavigationPositionResult {
 	status: NavigationPositionStatus;
 	run: NavigationRun | null;
@@ -2178,19 +2193,6 @@ export interface TableVerdict {
 	table: string;
 	matched: boolean;
 	row_count: number;
-}
-
-/**
- * One row of the per-tag activity comparison.
- */
-export interface TagComparison {
-	tagName: string;
-	sessions: number;
-	kills: number;
-	hours: number;
-	cycled: number;
-	pesPer100Ped: number;
-	lootRate: number;
 }
 
 /**
