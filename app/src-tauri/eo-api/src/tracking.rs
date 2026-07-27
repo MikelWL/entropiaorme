@@ -609,6 +609,34 @@ pub struct QuestLinkDecision {
     pub playlist_name: Option<String>,
 }
 
+/// The quest-declaration outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestDeclareStatus {
+    Declared,
+    Cleared,
+}
+
+/// The quest-declaration acknowledgement: the curated link now in force
+/// on the active session (or its removal). The link fields ride only on
+/// a declare, resolved for display.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestDeclareResult {
+    pub session_id: String,
+    pub status: QuestDeclareStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_type: Option<QuestLinkType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quest_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quest_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playlist_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playlist_name: Option<String>,
+}
+
 /// The one-shot repair-cost read (`exclude_unset`): the cost / raw text /
 /// confidence on success, plus `error` on a logical refusal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1049,6 +1077,98 @@ impl Api {
         Err(ApiError::bad_request(
             "Action must be 'accept' or 'decline'",
         ))
+    }
+
+    /// Declare (or clear) the active session's quest facet: bind the
+    /// curated analytics link to a quest or playlist up front instead of
+    /// waiting for the post-stop suggestion. Both ids null clears the
+    /// link. 409 when no session is active; 400 for a bad id pair.
+    pub async fn tracking_quest_declare(
+        &self,
+        quest_id: Option<i64>,
+        playlist_id: Option<i64>,
+    ) -> Result<QuestDeclareResult, ApiError> {
+        let readout = self
+            .tracker
+            .snapshot()
+            .await
+            .map_err(ApiError::internal("quest declare readout"))?;
+        let Some(active) = readout.active else {
+            return Err(ApiError::conflict("No active session"));
+        };
+        let session_id = active.session_id;
+
+        if quest_id.is_none() && playlist_id.is_none() {
+            self.quests
+                .clear_session_link(&session_id)
+                .await
+                .map_err(ApiError::internal("quest declare clear"))?;
+            return Ok(QuestDeclareResult {
+                session_id,
+                status: QuestDeclareStatus::Cleared,
+                link_type: None,
+                quest_id: None,
+                quest_name: None,
+                playlist_id: None,
+                playlist_name: None,
+            });
+        }
+
+        match self
+            .quests
+            .declare_session_link(&session_id, quest_id, playlist_id)
+            .await
+        {
+            Ok(()) => {}
+            Err(QuestError::Invalid(message)) => return Err(ApiError::bad_request(message)),
+            Err(_) => return Err(ApiError::invalid_state("quest declare")),
+        }
+
+        // Resolve the display name for the acknowledgement.
+        let (link_type, name) = if let Some(id) = quest_id {
+            (QuestLinkType::Quest, self.entity_name("quests", id).await?)
+        } else {
+            let id = playlist_id.expect("one id present");
+            (
+                QuestLinkType::Playlist,
+                self.entity_name("quest_playlists", id).await?,
+            )
+        };
+        Ok(QuestDeclareResult {
+            session_id,
+            status: QuestDeclareStatus::Declared,
+            link_type: Some(link_type),
+            quest_id,
+            quest_name: match link_type {
+                QuestLinkType::Quest => name.clone(),
+                QuestLinkType::Playlist => None,
+            },
+            playlist_id,
+            playlist_name: match link_type {
+                QuestLinkType::Playlist => name,
+                QuestLinkType::Quest => None,
+            },
+        })
+    }
+
+    /// A quest/playlist display name by id (None when absent).
+    async fn entity_name(
+        &self,
+        table: &'static str,
+        id: i64,
+    ) -> Result<Option<String>, ApiError> {
+        use rusqlite::OptionalExtension as _;
+        let sql = format!("SELECT name FROM {table} WHERE id = ?");
+        self.db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(&sql, rusqlite::params![id], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .optional()?)
+            })
+            .await
+            .map_err(ApiError::internal("quest declare name"))
     }
 
     /// The one-shot repair-cost OCR read, gated on `repair_ocr_enabled`

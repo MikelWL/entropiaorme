@@ -210,6 +210,65 @@ impl QuestService {
             .await
     }
 
+    /// Declare the curated analytics link up front (the ask-at-start
+    /// path): bind the session to a quest or a playlist directly,
+    /// pre-empting the post-stop suggestion (which reads
+    /// `already_linked` thereafter). Exactly one of the two ids must be
+    /// given, and it must name an active row.
+    pub async fn declare_session_link(
+        &self,
+        session_id: &str,
+        quest_id: Option<i64>,
+        playlist_id: Option<i64>,
+    ) -> Result<(), QuestError> {
+        let (link_type, id, table) = match (quest_id, playlist_id) {
+            (Some(id), None) => (LinkType::Quest, id, "quests"),
+            (None, Some(id)) => (LinkType::Playlist, id, "quest_playlists"),
+            _ => {
+                return Err(QuestError::Invalid(
+                    "Declare exactly one of quest_id or playlist_id".to_string(),
+                ))
+            }
+        };
+        let sql = format!("SELECT 1 FROM {table} WHERE id = ? AND is_active = 1");
+        let exists = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(&sql, rusqlite::params![id], |_| Ok(()))
+                    .optional()?)
+            })
+            .await?;
+        if exists.is_none() {
+            return Err(QuestError::Invalid(format!(
+                "No active {} with id {id}",
+                match link_type {
+                    LinkType::Quest => "quest",
+                    _ => "playlist",
+                }
+            )));
+        }
+        self.set_session_analytics_link(session_id, link_type, quest_id, playlist_id)
+            .await
+    }
+
+    /// Remove the curated analytics link entirely (an undeclare):
+    /// distinct from a decline, which persists a "declined" row. The
+    /// post-stop suggestion becomes available again.
+    pub async fn clear_session_link(&self, session_id: &str) -> Result<(), QuestError> {
+        let session_id = session_id.to_string();
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "DELETE FROM session_quest_analytics_links WHERE session_id = ?",
+                    rusqlite::params![session_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
     async fn session_completed_quest_ids(&self, session_id: &str) -> Result<Vec<i64>, QuestError> {
         let session_id = session_id.to_string();
         Ok(self

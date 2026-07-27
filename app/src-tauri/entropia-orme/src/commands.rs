@@ -50,7 +50,7 @@ use eo_api::scan::{
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
+    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
     SessionQuestLinkSuggestion, SessionConfigResult, StartResult, StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
@@ -986,6 +986,17 @@ pub async fn tracking_quest_link(
     facade(&app)?.tracking_quest_link(session_id, action).await
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_quest_declare(
+    app: tauri::AppHandle,
+    quest_id: Option<i64>,
+    playlist_id: Option<i64>,
+) -> Result<QuestDeclareResult, ApiError> {
+    facade(&app)?
+        .tracking_quest_declare(quest_id, playlist_id)
+        .await
+}
+
 // The repair scan runs a synchronous screen grab + one-shot OCR read;
 // offload it so a slow grab never ties up an async runtime worker.
 #[tauri::command(rename_all = "snake_case")]
@@ -1489,6 +1500,7 @@ mod tests {
         "tracking_loot_item_deactivate",
         "tracking_armour_cost",
         "tracking_quest_link",
+        "tracking_quest_declare",
         "tracking_repair_scan",
         "tracking_session_delete",
         "demo_analytics_overview",

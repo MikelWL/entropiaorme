@@ -421,6 +421,7 @@ pub fn run() {
             commands::tracking_loot_item_deactivate,
             commands::tracking_armour_cost,
             commands::tracking_quest_link,
+            commands::tracking_quest_declare,
             commands::tracking_repair_scan,
             commands::tracking_session_delete,
             commands::demo_analytics_overview,

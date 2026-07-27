@@ -1777,6 +1777,26 @@ export interface QuestAnalyticsRow {
 }
 
 /**
+ * The quest-declaration acknowledgement: the curated link now in force
+ * on the active session (or its removal). The link fields ride only on
+ * a declare, resolved for display.
+ */
+export interface QuestDeclareResult {
+	sessionId: string;
+	status: QuestDeclareStatus;
+	linkType?: QuestLinkType | null;
+	questId?: number | null;
+	questName?: string | null;
+	playlistId?: number | null;
+	playlistName?: string | null;
+}
+
+/**
+ * The quest-declaration outcome.
+ */
+export type QuestDeclareStatus = 'declared' | 'cleared';
+
+/**
  * A quest create or update payload. One DTO serves both operations, in
  * the frontend's snake_case field casing: the sole client sends the
  * full field set for both create and update (nulls explicit), so every
@@ -2829,6 +2849,10 @@ export async function trackingArmourCost(sessionId: string, cost: number): Promi
 
 export async function trackingQuestLink(sessionId: string, action: string): Promise<QuestLinkDecision> {
 	return invokeCommand('tracking_quest_link', { session_id: sessionId, action });
+}
+
+export async function trackingQuestDeclare(questId: number | null, playlistId: number | null): Promise<QuestDeclareResult> {
+	return invokeCommand('tracking_quest_declare', { quest_id: questId, playlist_id: playlistId });
 }
 
 export async function trackingRepairScan(sessionId: string): Promise<RepairScanResult> {

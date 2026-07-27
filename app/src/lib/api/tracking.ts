@@ -72,6 +72,9 @@ export const setSessionConfig = commands.trackingSessionConfig;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
 export const getSessionQuestLinkSuggestion = commands.trackingQuestLinkSuggestion;
+/** Declare the active session's quest facet up front (or clear it with
+ * both ids null), pre-empting the post-stop link suggestion. */
+export const declareSessionQuest = commands.trackingQuestDeclare;
 
 const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
 
