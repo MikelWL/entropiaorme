@@ -83,8 +83,13 @@ pub struct AppConfig {
     pub manual_mob_maturity: String,
     /// The designated session-name facet the next session snapshots.
     pub session_name: String,
-    /// The skill-boost facet (labelled percent; 0 is "no boost").
-    pub skill_boost_percent: i64,
+    /// The skill-boost facet the next session opens under, three-state:
+    /// `None` claims nothing, `Some(0)` declares deliberately-unboosted
+    /// play (the baseline an effect is measured against), and `Some(n)`
+    /// declares a magnitude. The retired `skill_boost_percent` key could
+    /// not hold the middle state (its 0 meant "not declared"), so it is
+    /// left to the carry-forward map rather than reinterpreted.
+    pub declared_skill_boost_percent: Option<i64>,
     pub hotbar: Map<String, Value>,
     pub trifecta_presets: Vec<TrifectaPresetConfig>,
     pub active_trifecta_preset_id: Option<String>,
@@ -120,7 +125,7 @@ impl Default for AppConfig {
             manual_mob_species: String::new(),
             manual_mob_maturity: String::new(),
             session_name: String::new(),
-            skill_boost_percent: 0,
+            declared_skill_boost_percent: None,
             hotbar,
             trifecta_presets: vec![TrifectaPresetConfig::default_preset()],
             active_trifecta_preset_id: Some(DEFAULT_TRIFECTA_PRESET_ID.to_string()),
@@ -395,13 +400,14 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
         } else {
             String::new()
         },
-        // A hand-edited negative reads as no boost rather than failing the
-        // whole config load (the same tolerance the other fields carry).
-        skill_boost_percent: data
-            .get("skill_boost_percent")
+        // A missing key, an explicit null, and a hand-edited negative all
+        // read as "not declared" rather than failing the whole config load
+        // (the same tolerance the other fields carry). A stored 0 is a
+        // real declaration here, which is why this key had to be new.
+        declared_skill_boost_percent: data
+            .get("declared_skill_boost_percent")
             .and_then(Value::as_i64)
-            .filter(|percent| *percent > 0)
-            .unwrap_or(0),
+            .filter(|percent| *percent >= 0),
         hotbar: normalize_hotbar(data.get("hotbar")),
         trifecta_presets,
         active_trifecta_preset_id: Some(active_id),
@@ -434,6 +440,12 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
 // into the config, and leaving them unknown preserves them verbatim in
 // `extra` so the one-time legacy session-name inheritance above still
 // has them to read on a store written before the facet model.
+//
+// `skill_boost_percent` is absent for the same reason and a stronger
+// one: its stored 0 meant "no boost declared", which the three-state
+// facet splits into "not declared" and "declared zero". Reading it
+// forward would turn every existing store's default into a claim the
+// user never made, so it stays unknown and carries through untouched.
 const KNOWN_KEYS: [&str; 18] = [
     "chatlog_path",
     "player_name",
@@ -444,7 +456,7 @@ const KNOWN_KEYS: [&str; 18] = [
     "manual_mob_species",
     "manual_mob_maturity",
     "session_name",
-    "skill_boost_percent",
+    "declared_skill_boost_percent",
     "hotbar",
     "trifecta_presets",
     "active_trifecta_preset_id",
@@ -597,9 +609,13 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
             "session_name" => assign_string(&mut config.session_name, value),
             // Stored as given: the settings boundary refuses a negative
             // outright rather than silently coercing it to "no boost".
-            "skill_boost_percent" => {
-                if let Some(percent) = value.as_i64() {
-                    config.skill_boost_percent = percent;
+            // An explicit null withdraws the declaration, which is a
+            // distinct write from declaring zero.
+            "declared_skill_boost_percent" => {
+                if value.is_null() {
+                    config.declared_skill_boost_percent = None;
+                } else if let Some(percent) = value.as_i64() {
+                    config.declared_skill_boost_percent = Some(percent);
                 }
             }
             "hotbar" => config.hotbar = normalize_hotbar(Some(value)),
@@ -738,6 +754,65 @@ mod tests {
         assert_eq!(config.session_name, "85-B, P20", "one-time tag inheritance");
         assert_eq!(config.extra["mob_tracking_tag"], Value::from("85-B, P20"));
         assert_eq!(config.extra["mob_tracking_mode"], Value::from("tag"));
+    }
+
+    /// The three states must survive a round trip through the store,
+    /// because the declaration outlives the session that set it. A
+    /// declared zero is the one that pays: it is the baseline a boost's
+    /// effect is measured against, and it reads back as `Some(0)` rather
+    /// than collapsing into "nothing declared".
+    #[test]
+    fn the_declared_boost_round_trips_all_three_states() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = service(dir.path());
+        assert_eq!(
+            svc.get().declared_skill_boost_percent,
+            None,
+            "a fresh store declares nothing"
+        );
+
+        for declared in [Some(0), Some(50), None] {
+            let mut updates = Map::new();
+            updates.insert(
+                "declared_skill_boost_percent".into(),
+                serde_json::json!(declared),
+            );
+            svc.update(&updates).unwrap();
+            assert_eq!(svc.get().declared_skill_boost_percent, declared);
+            assert_eq!(
+                service(dir.path()).get().declared_skill_boost_percent,
+                declared,
+                "the state survives a reload from disk"
+            );
+        }
+    }
+
+    /// The retired key's stored 0 meant "no boost declared", which the
+    /// three-state facet splits in two. Reading it forward would turn
+    /// every existing store's default into a claim the user never made,
+    /// so it must stay unread and carry through untouched.
+    #[test]
+    fn the_retired_boost_key_is_carried_not_reinterpreted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            "{\n  \"skill_boost_percent\": 0,\n  \"player_name\": \"Kept\"\n}",
+        )
+        .unwrap();
+        let mut svc = service(dir.path());
+
+        assert_eq!(
+            svc.get().declared_skill_boost_percent,
+            None,
+            "a legacy 0 is not a declaration of deliberately-unboosted play"
+        );
+        assert_eq!(svc.get().extra["skill_boost_percent"], Value::from(0));
+
+        // And it is still there after a save, like the other retired keys.
+        let mut updates = Map::new();
+        updates.insert("player_name".into(), Value::from("Renamed"));
+        svc.update(&updates).unwrap();
+        assert!(read_settings(dir.path()).contains("skill_boost_percent"));
     }
 
     #[test]

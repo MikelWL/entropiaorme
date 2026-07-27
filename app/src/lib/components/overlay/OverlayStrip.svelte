@@ -133,9 +133,10 @@
 	const showManualInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	// The name names the whole session, so once one runs the backend
-	// refuses a change (correction is the post-hoc rename on the record);
-	// the boost stays editable throughout.
+	// The name is session-grain, so it is declared before a session and
+	// corrected afterwards on the session record; the input shows only
+	// while none is set. (The boost is the other way round: it stamps each
+	// skill gain, so it stays editable throughout.)
 	const showNameInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.sessionName
 	);
@@ -283,9 +284,13 @@
 			</div>
 
 			<!-- Skill boost: the labelled percentage of the pill in force,
-				 because it changes how PES reads. Any percentage is accepted;
-				 blank is no boost. Editable at any time; the session records
-				 the latest declaration. -->
+				 because it changes how PES reads. Three declarations, not
+				 two: blank claims nothing, a typed 0 declares deliberately
+				 unboosted play (the baseline a boost's effect is measured
+				 against), and a number declares its magnitude. Editable at
+				 any time: re-declaring when a pill runs out marks every gain
+				 from that moment onward, and never touches the ones already
+				 stamped. -->
 			<div class="flex flex-col shrink-0">
 				<span class="facet-label">Boost</span>
 				<div class="flex items-baseline">
@@ -295,6 +300,7 @@
 						placeholder={NO_DATA}
 						inputmode="numeric"
 						aria-label="Skill boost percent"
+						title="Boost percent in force. Leave blank to claim nothing; enter 0 to record deliberately unboosted play."
 						disabled={savingBoost}
 						onblur={onBoostCommit}
 						onkeydown={(event) => {

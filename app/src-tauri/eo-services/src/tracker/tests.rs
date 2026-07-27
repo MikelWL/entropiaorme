@@ -72,8 +72,8 @@ impl TrackingConfig for ScriptedConfig {
         self.session_name.clone().unwrap_or_default()
     }
 
-    fn skill_boost_percent(&self) -> i64 {
-        self.skill_boost_percent.unwrap_or(0)
+    fn declared_skill_boost_percent(&self) -> Option<i64> {
+        self.skill_boost_percent
     }
 
     fn manual_mob(&self) -> Option<(String, String)> {
@@ -1619,6 +1619,49 @@ fn a_session_opens_a_context_and_its_declared_modifier() {
     assert_eq!(row, ("modifier".to_string(), Some(50.0), None));
 }
 
+/// A session STARTED under a declared zero opens the same real modifier
+/// interval a mid-session declaration would, so the baseline holds from
+/// the first event rather than only from the first re-declaration. The
+/// session row's own scalar stays null (0019 constrains it to `> 0 OR
+/// NULL`), which is precisely why the segment layer is the source of
+/// truth and the readout reads from there.
+#[test]
+fn a_session_started_under_a_declared_zero_opens_its_baseline() {
+    let rig = rig();
+    let unboosted = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            skill_boost_percent: Some(0),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    let session = rig.wait(unboosted.start_session()).unwrap();
+
+    rig.probe(&unboosted, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(
+            active.segments.modifier_magnitude(),
+            Some(0.0),
+            "the declared baseline is in force from the session's first moment"
+        );
+        assert_eq!(
+            active.facets.skill_boost_percent, None,
+            "the row mirror cannot hold a zero, and does not pretend to"
+        );
+    });
+
+    let row: (String, Option<f64>) = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT kind, magnitude FROM session_intervals WHERE session_id = ?",
+                rusqlite::params![session.id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(row, ("modifier".to_string(), Some(0.0)));
+}
+
 /// The three states the modifier declaration must keep apart. Only a
 /// declared zero can serve as the unboosted baseline an effect is
 /// measured against, so it must not collapse into "not declared".
@@ -2533,7 +2576,9 @@ fn reload_config_resyncs_the_declared_mob_from_the_live_config() {
 fn a_blank_configured_name_records_as_no_declaration() {
     // "Not declared" must stay distinguishable from "declared as empty":
     // a whitespace-only configured name is no name at all, and no
-    // configured mob is no declaration, never a guessed default.
+    // configured mob is no declaration, never a guessed default. The
+    // boost's declared zero is a real declaration that the row mirror
+    // simply cannot hold; the segment layer carries it (covered above).
     let rig = rig();
     let blank = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {

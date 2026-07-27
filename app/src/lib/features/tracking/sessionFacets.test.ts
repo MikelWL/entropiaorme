@@ -77,7 +77,7 @@ describe('boost facet', () => {
 		expect(facets.boostDraft).toBe('50');
 	});
 
-	it('treats an empty draft as no boost', async () => {
+	it('treats an empty draft as withdrawing the declaration', async () => {
 		const { facets, facetState, setSessionConfig } = harness();
 		facetState.boost = 50;
 		facets.boostDraft = '';
@@ -85,6 +85,62 @@ describe('boost facet', () => {
 		await facets.commitBoost();
 
 		expect(setSessionConfig).toHaveBeenCalledWith(null, null);
+	});
+
+	// The three-state distinction the segment model rests on: a typed 0 is
+	// a real declaration ("deliberately unboosted"), which is the baseline
+	// a boost's effect is measured against. An empty field claims nothing.
+	// Collapsing the two would erase the only baseline the app can record.
+	it('writes a typed zero as a declaration, not as a withdrawal', async () => {
+		const { facets, setSessionConfig } = harness();
+		facets.boostDraft = '0';
+
+		await facets.commitBoost();
+
+		expect(setSessionConfig).toHaveBeenCalledWith(null, 0);
+		expect(facets.boostDraft).toBe('0');
+	});
+
+	it('distinguishes clearing the field from declaring zero', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.boost = 0;
+		facets.boostDraft = '';
+
+		await facets.commitBoost();
+
+		// Declared-zero -> withdrawn is a real move, so it must write.
+		expect(setSessionConfig).toHaveBeenCalledWith(null, null);
+	});
+
+	it('does not rewrite a declared zero that has not moved', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.boost = 0;
+		facets.boostDraft = '0';
+
+		await facets.commitBoost();
+
+		expect(setSessionConfig).not.toHaveBeenCalled();
+		expect(facets.boostDraft).toBe('0');
+	});
+
+	it('withdraws rather than inventing a magnitude for a negative draft', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.boost = 50;
+		facets.boostDraft = '-10';
+
+		await facets.commitBoost();
+
+		expect(setSessionConfig).toHaveBeenCalledWith(null, null);
+		expect(facets.boostDraft).toBe('');
+	});
+
+	it('renders a persisted zero as "0" rather than an empty field', () => {
+		const { facets, facetState } = harness();
+		facetState.boost = 0;
+
+		facets.syncBoostDraft();
+
+		expect(facets.boostDraft).toBe('0');
 	});
 
 	it('normalises an unparseable draft without writing', async () => {

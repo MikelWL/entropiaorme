@@ -95,9 +95,10 @@ pub struct AppSettings {
     pub end_of_session_armour_reminder_enabled: bool,
     pub developer_mode_enabled: bool,
     /// The session facets the next session snapshots: the designated
-    /// name (empty: not declared) and the skill boost (0: no boost).
+    /// name (empty: not declared) and the skill boost (null: not
+    /// declared; 0: declared deliberately unboosted).
     pub session_name: String,
-    pub skill_boost_percent: i64,
+    pub declared_skill_boost_percent: Option<i64>,
     /// The slot-to-equipment map, carried through in its stored insertion
     /// order (`serde_json`'s `preserve_order`), so slot "0" stays last.
     pub hotbar: Map<String, Value>,
@@ -169,8 +170,11 @@ pub struct SettingsPatch {
     pub developer_mode_enabled: Option<bool>,
     #[serde(default)]
     pub session_name: Option<String>,
-    #[serde(default)]
-    pub skill_boost_percent: Option<i64>,
+    /// Double-optioned so the patch can express all three states: absent
+    /// leaves the declaration alone, an explicit null withdraws it, and a
+    /// number (including 0) declares it.
+    #[serde(default, deserialize_with = "double_option")]
+    pub declared_skill_boost_percent: Option<Option<i64>>,
     #[serde(default)]
     pub hotbar: Option<Map<String, Value>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -225,8 +229,14 @@ impl SettingsPatch {
         if let Some(value) = self.session_name {
             updates.insert("session_name".into(), Value::String(value));
         }
-        if let Some(value) = self.skill_boost_percent {
-            updates.insert("skill_boost_percent".into(), Value::from(value));
+        if let Some(value) = self.declared_skill_boost_percent {
+            updates.insert(
+                "declared_skill_boost_percent".into(),
+                match value {
+                    Some(percent) => Value::from(percent),
+                    None => Value::Null,
+                },
+            );
         }
         if let Some(value) = self.hotbar {
             updates.insert("hotbar".into(), Value::Object(value));
@@ -272,7 +282,9 @@ impl Api {
             end_of_session_armour_reminder_enabled: config.end_of_session_armour_reminder_enabled,
             developer_mode_enabled: config.developer_mode_enabled,
             session_name: config.session_name.clone(),
-            skill_boost_percent: config.skill_boost_percent.max(0),
+            declared_skill_boost_percent: config
+                .declared_skill_boost_percent
+                .filter(|percent| *percent >= 0),
             hotbar: config.hotbar.clone(),
             trifecta,
             harvest_guardrail: HarvestGuardrailSettings {
@@ -364,7 +376,10 @@ impl Api {
             } else {
                 None
             };
-            if candidate.skill_boost_percent < 0 {
+            if candidate
+                .declared_skill_boost_percent
+                .is_some_and(|percent| percent < 0)
+            {
                 return Err(ApiError::bad_request("Skill boost cannot be negative"));
             }
             let hooks_present = updates.contains_key("hotbar_hooks_enabled");

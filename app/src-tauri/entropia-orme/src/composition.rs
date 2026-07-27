@@ -1456,8 +1456,8 @@ impl TrackingConfig for LiveTrackingConfig {
         self.reader.current().session_name.clone()
     }
 
-    fn skill_boost_percent(&self) -> i64 {
-        self.reader.current().skill_boost_percent
+    fn declared_skill_boost_percent(&self) -> Option<i64> {
+        self.reader.current().declared_skill_boost_percent
     }
 
     fn manual_mob(&self) -> Option<(String, String)> {
@@ -2208,7 +2208,7 @@ mod tests {
     ///   both `250 % 100` (50.0) and `250 * 100` (25000.0): kills the `/`->`%`
     ///   and `/`->`*` mutants.
     /// - the facet reads carry the stored values through unchanged
-    ///   (session_name verbatim, skill_boost_percent as stored).
+    ///   (session_name verbatim, declared_skill_boost_percent as stored).
     /// - weapon_attribution_trifecta is `!hotbar_hooks_enabled`: false when
     ///   hooks are on, true when off (kills the deleted `!`, which flips both).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2241,7 +2241,7 @@ mod tests {
             &data_dir,
             &serde_json::json!({
                 "session_name": "ARIS Dailies",
-                "skill_boost_percent": 50,
+                "declared_skill_boost_percent": 50,
                 "hotbar_hooks_enabled": true,
             }),
         );
@@ -2280,7 +2280,7 @@ mod tests {
         // The config seam reads the live snapshot: the facets come
         // through verbatim, and hooks-on means no trifecta attribution.
         assert_eq!(providers.config.session_name(), "ARIS Dailies");
-        assert_eq!(providers.config.skill_boost_percent(), 50);
+        assert_eq!(providers.config.declared_skill_boost_percent(), Some(50));
         assert!(
             !providers.config.weapon_attribution_trifecta(),
             "trifecta attribution is off when hotbar hooks are enabled"
@@ -2291,11 +2291,14 @@ mod tests {
         // attribution on.
         let mut updates = serde_json::Map::new();
         updates.insert("session_name".into(), serde_json::json!("Solo Run"));
-        updates.insert("skill_boost_percent".into(), serde_json::json!(100));
+        updates.insert(
+            "declared_skill_boost_percent".into(),
+            serde_json::json!(100),
+        );
         updates.insert("hotbar_hooks_enabled".into(), serde_json::json!(false));
         config_service.update(&updates).expect("settings write");
         assert_eq!(providers.config.session_name(), "Solo Run");
-        assert_eq!(providers.config.skill_boost_percent(), 100);
+        assert_eq!(providers.config.declared_skill_boost_percent(), Some(100));
         assert!(
             providers.config.weapon_attribution_trifecta(),
             "trifecta attribution is on when hotbar hooks are disabled"

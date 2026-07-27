@@ -4,12 +4,13 @@
  * quest) and the writes that move them.
  *
  * The facets are independent by construction, so each control writes only
- * its own value and carries the others through unchanged. Two rules the
- * backend enforces and this model respects rather than duplicates: the
- * name is fixed while a session runs (a change is refused; correction is
- * a post-hoc rename on the session record) while the boost stays
- * editable throughout, and a quest can only be declared against an
- * active session.
+ * its own value and carries the others through unchanged. Each facet may
+ * be edited live only where its stamp grain is finer than the session:
+ * the boost stamps each skill gain, so it floats; the name is
+ * session-grain, so the backend fixes it once a session runs (409) and
+ * correction is a post-hoc rename. A quest can only be declared against
+ * an active session. The model respects these rather than duplicating
+ * them.
  *
  * The satellite-window plumbing (anchors, popup lifecycle) stays with the
  * overlay route; this model owns the state, the lookups, and the writes,
@@ -92,10 +93,12 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 
 	/** The boost currently in force, as a write wants it. Reading the
 	 * snapshot (not the draft) keeps a name write from moving the boost as
-	 * a side effect. */
+	 * a side effect. Three-state: null withdraws the declaration, 0
+	 * declares deliberately-unboosted play, a positive number declares a
+	 * magnitude. */
 	function currentBoost(): number | null {
 		const value = deps.readFacets().boost;
-		return value && value > 0 ? value : null;
+		return value !== null && value !== undefined && value >= 0 ? value : null;
 	}
 
 	async function write(name: string | null, boost: number | null) {
@@ -134,13 +137,18 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 	}
 
 	async function commitBoost() {
+		// The empty field and a typed 0 are DIFFERENT declarations: empty
+		// withdraws (claims nothing), 0 declares deliberately-unboosted
+		// play, which is the baseline a boost's effect is measured
+		// against. Anything unparseable or negative falls back to a
+		// withdrawal rather than inventing a magnitude.
 		const trimmed = boostDraft.trim();
-		const parsed = trimmed ? Number.parseInt(trimmed, 10) : 0;
-		const next = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+		const parsed = trimmed ? Number.parseInt(trimmed, 10) : Number.NaN;
+		const next = Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 		if (next === currentBoost()) {
 			// Normalise the buffer even when nothing moved, so a stray
 			// "abc" or " 50 " does not linger as if it were persisted.
-			boostDraft = next ? String(next) : '';
+			boostDraft = next === null ? '' : String(next);
 			return;
 		}
 		savingBoost = true;
@@ -151,7 +159,7 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 			facetError = describe(error, 'Failed to set skill boost');
 		}
 		savingBoost = false;
-		boostDraft = next ? String(next) : '';
+		boostDraft = next === null ? '' : String(next);
 	}
 
 	/** Read the pickable quests fresh: playlists first (a playlist is the
@@ -285,11 +293,13 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		},
 
 		/** Keep the boost buffer in step with the persisted value while the
-		 * user is not editing it. */
+		 * user is not editing it. A persisted 0 renders as "0", not as the
+		 * empty field: it is a declaration, not the absence of one. */
 		syncBoostDraft() {
 			if (savingBoost) return;
 			const persisted = deps.readFacets().boost;
-			boostDraft = persisted && persisted > 0 ? String(persisted) : '';
+			boostDraft =
+				persisted !== null && persisted !== undefined && persisted >= 0 ? String(persisted) : '';
 		},
 
 		handleNameFocus() {

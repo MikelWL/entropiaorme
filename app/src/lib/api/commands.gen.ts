@@ -155,9 +155,9 @@ export interface AppSettings {
 	repairOcrEnabled: boolean;
 	endOfSessionArmourReminderEnabled: boolean;
 	developerModeEnabled: boolean;
-	/** The session facets the next session snapshots: the designated name (empty: not declared) and the skill boost (0: no boost). */
+	/** The session facets the next session snapshots: the designated name (empty: not declared) and the skill boost (null: not declared; 0: declared deliberately unboosted). */
 	sessionName: string;
-	skillBoostPercent: number;
+	declaredSkillBoostPercent?: number | null;
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
 	hotbar: Record<string, unknown>;
 	trifecta: TrifectaSettings;
@@ -2114,7 +2114,8 @@ export interface SettingsPatch {
 	end_of_session_armour_reminder_enabled?: boolean | null;
 	developer_mode_enabled?: boolean | null;
 	session_name?: string | null;
-	skill_boost_percent?: number | null;
+	/** Double-optioned so the patch can express all three states: absent leaves the declaration alone, an explicit null withdraws it, and a number (including 0) declares it. */
+	declared_skill_boost_percent?: number | null;
 	hotbar?: Record<string, unknown> | null;
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;

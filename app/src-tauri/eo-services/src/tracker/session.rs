@@ -304,7 +304,13 @@ impl TrackerActor {
             cumulative_net,
             mob_name: active.stamped_mob_name().map(str::to_string),
             session_name: active.facets.name.clone(),
-            skill_boost_percent: active.facets.skill_boost_percent,
+            // Read from the segment state, not the row mirror: the row's
+            // scalar cannot hold a declared zero (0019's `> 0 OR NULL`),
+            // and the readout is what the overlay renders the facet from.
+            skill_boost_percent: active
+                .segments
+                .modifier_magnitude()
+                .map(|magnitude| magnitude as i64),
             harvest_swings: harvests.len() as i64,
             harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
             harvest_loot,
@@ -462,6 +468,17 @@ impl TrackerActor {
         // (trimmed; empty is "not declared") and the skill boost (zero
         // or negative is "no boost", stored as NULL). Both are captured
         // here and never re-read from the config mid-session.
+        // The declaration is three-state; the session ROW's scalar is not
+        // (migration 0019 constrains it to `> 0 OR NULL`, which is why
+        // the segment model superseded it as the source of truth). The
+        // row therefore keeps the magnitude only, while the declaration
+        // itself rides the opening interval below, where `Some(0)`
+        // survives as the baseline it is.
+        let declared_boost = self
+            .providers
+            .config
+            .declared_skill_boost_percent()
+            .filter(|percent| *percent >= 0);
         let facets = SessionFacets {
             name: Some(
                 self.providers
@@ -471,8 +488,7 @@ impl TrackerActor {
                     .to_string(),
             )
             .filter(|name| !name.is_empty()),
-            skill_boost_percent: Some(self.providers.config.skill_boost_percent())
-                .filter(|percent| *percent > 0),
+            skill_boost_percent: declared_boost.filter(|percent| *percent > 0),
         };
         let session_id = uuid::Uuid::new_v4().to_string();
         let trifecta_mode = self.providers.config.weapon_attribution_trifecta();
@@ -507,7 +523,7 @@ impl TrackerActor {
         let insert_id = session_id.clone();
         let insert_name = facets.name.clone();
         let insert_boost = facets.skill_boost_percent;
-        let opening_boost = facets.skill_boost_percent;
+        let opening_boost = declared_boost;
         self.db
             .with_writer(move |conn| {
                 conn.execute(
