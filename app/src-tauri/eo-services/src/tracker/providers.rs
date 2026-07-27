@@ -74,17 +74,15 @@ pub trait EquipmentLibrary: Send + Sync {
 /// The session-capture configuration seam: the live settings the
 /// tracker consults at session start, on reload, and per event.
 pub trait TrackingConfig: Send + Sync {
-    /// The configured input mode string (parsed to a mode at the
-    /// session-capture boundary).
-    fn mob_tracking_mode(&self) -> String;
+    /// The configured session name (the designated facet a session
+    /// snapshots at start; empty is "not declared").
+    fn session_name(&self) -> String;
 
-    /// The configured tag-mode free-text tag.
-    fn mob_tracking_tag(&self) -> String;
+    /// The configured skill-boost percentage (zero or negative is "no
+    /// boost").
+    fn skill_boost_percent(&self) -> i64;
 
-    /// Whether manual mob selection is enabled (mob mode).
-    fn manual_mob_entry_enabled(&self) -> bool;
-
-    /// The manually configured (species, maturity), when set.
+    /// The declared (species, maturity), when one is configured.
     fn manual_mob(&self) -> Option<(String, String)>;
 
     /// Whether weapon attribution runs in trifecta mode (vs hotbar).
@@ -135,21 +133,17 @@ impl EquipmentLibrary for InertEquipment {
     }
 }
 
-/// The original's inert configuration fallbacks: mob mode, no tag,
-/// manual entry enabled, hotbar attribution, empty blacklist.
+/// The inert configuration fallbacks: no declared facets, manual mob
+/// declaration enabled, hotbar attribution, empty blacklist.
 pub struct DefaultTrackingConfig;
 
 impl TrackingConfig for DefaultTrackingConfig {
-    fn mob_tracking_mode(&self) -> String {
-        "mob".to_string()
-    }
-
-    fn mob_tracking_tag(&self) -> String {
+    fn session_name(&self) -> String {
         String::new()
     }
 
-    fn manual_mob_entry_enabled(&self) -> bool {
-        true
+    fn skill_boost_percent(&self) -> i64 {
+        0
     }
 
     fn manual_mob(&self) -> Option<(String, String)> {
@@ -181,9 +175,8 @@ mod tests {
     #[test]
     fn default_tracking_config_is_the_inert_fallback() {
         let config = DefaultTrackingConfig;
-        assert_eq!(config.mob_tracking_mode(), "mob");
-        assert_eq!(config.mob_tracking_tag(), "");
-        assert!(config.manual_mob_entry_enabled());
+        assert_eq!(config.session_name(), "");
+        assert_eq!(config.skill_boost_percent(), 0);
         assert_eq!(config.manual_mob(), None);
         assert!(!config.weapon_attribution_trifecta());
         assert!(config.loot_filter_blacklist().is_empty());

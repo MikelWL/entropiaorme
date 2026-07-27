@@ -26,18 +26,17 @@ use crate::event_bus::{EventBus, Registration, Topic};
 use crate::loot_filter::normalize_blacklist;
 use crate::tracking_models::TrackingSession;
 
-use super::mob::MobSelection;
+use super::mob::DeclaredMob;
 use super::providers::Providers;
-use super::session::SessionAggregate;
-use super::{HarvestTool, HealTool, SessionState, TrackerCommandError, TrackingMode};
+use super::session::{SessionAggregate, SessionFacets};
+use super::{HarvestTool, HealTool, SessionState, TrackerCommandError};
 
 /// The cheap, always-current readout of the actor's session phase,
-/// published on every transition so callers answer `is_tracking` /
-/// `is_session_tag_mode` without a message round-trip.
+/// published on every transition so callers answer `is_tracking`
+/// without a message round-trip.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct TrackerStatus {
     pub(super) tracking: bool,
-    pub(super) tag_mode: bool,
 }
 
 /// One message into the actor. Every variant carries its reply; the
@@ -53,8 +52,11 @@ pub(super) enum TrackerMsg {
     /// reads run on the caller's side, off the actor.
     Aggregate(Box<AggregateReply>),
     ReloadConfig(oneshot::Sender<()>),
-    SetManualTag(String, oneshot::Sender<Result<(), TrackerCommandError>>),
-    SetManualMob {
+    SetSessionName(
+        Option<String>,
+        oneshot::Sender<Result<(), TrackerCommandError>>,
+    ),
+    SetDeclaredMob {
         name: String,
         species: String,
         maturity: String,
@@ -63,8 +65,8 @@ pub(super) enum TrackerMsg {
     ReleaseMob(oneshot::Sender<Option<String>>),
     PrimeDemo {
         session: TrackingSession,
-        mob: MobSelection,
-        mode: TrackingMode,
+        declared_mob: Option<DeclaredMob>,
+        facets: SessionFacets,
         reply: oneshot::Sender<()>,
     },
     /// Test-only structural inspection: run a closure against the
@@ -187,27 +189,27 @@ impl TrackerActor {
                 self.reload_config();
                 let _ = reply.send(());
             }
-            TrackerMsg::SetManualTag(tag, reply) => {
-                let _ = reply.send(self.set_manual_tag(&tag));
+            TrackerMsg::SetSessionName(name, reply) => {
+                let _ = reply.send(self.set_session_name(name).await);
             }
-            TrackerMsg::SetManualMob {
+            TrackerMsg::SetDeclaredMob {
                 name,
                 species,
                 maturity,
                 reply,
             } => {
-                let _ = reply.send(self.set_manual_mob(&name, &species, &maturity));
+                let _ = reply.send(self.set_declared_mob(&name, &species, &maturity));
             }
             TrackerMsg::ReleaseMob(reply) => {
-                let _ = reply.send(self.release_current_mob());
+                let _ = reply.send(self.release_declared_mob());
             }
             TrackerMsg::PrimeDemo {
                 session,
-                mob,
-                mode,
+                declared_mob,
+                facets,
                 reply,
             } => {
-                self.prime_demo(session, mob, mode);
+                self.prime_demo(session, declared_mob, facets);
                 let _ = reply.send(());
             }
             #[cfg(test)]
@@ -235,12 +237,8 @@ impl TrackerActor {
 
     /// Publish the current session phase for the handle's cheap reads.
     pub(super) fn publish_status(&self) {
-        let status = match self.session.active() {
-            None => TrackerStatus::default(),
-            Some(active) => TrackerStatus {
-                tracking: true,
-                tag_mode: active.mode == TrackingMode::Tag,
-            },
+        let status = TrackerStatus {
+            tracking: self.session.active().is_some(),
         };
         let _ = self.status.send(status);
     }

@@ -414,7 +414,7 @@ pub fn run() {
             commands::tracking_stop,
             commands::tracking_release_mob,
             commands::tracking_manual_mob_lock,
-            commands::tracking_tag_lock,
+            commands::tracking_session_config,
             commands::tracking_rename_mob,
             commands::tracking_restore_mob,
             commands::tracking_loot_item_activate,

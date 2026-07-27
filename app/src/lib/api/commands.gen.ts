@@ -154,8 +154,9 @@ export interface AppSettings {
 	repairOcrEnabled: boolean;
 	endOfSessionArmourReminderEnabled: boolean;
 	developerModeEnabled: boolean;
-	mobTrackingMode: MobEntryMode;
-	mobTrackingTag: string;
+	/** The session facets the next session snapshots: the designated name (empty: not declared) and the skill boost (0: no boost). */
+	sessionName: string;
+	skillBoostPercent: number;
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
 	hotbar: Record<string, unknown>;
 	trifecta: TrifectaSettings;
@@ -1271,14 +1272,11 @@ export interface MobEditResult {
 }
 
 /**
- * Mob-attribution input mode a session is captured under.
+ * The legacy exclusive-capture input mode recorded on pre-facet
+ * session rows; read-only vocabulary for labelling those sessions
+ * (facet-era rows all read as `mob`, the column default).
  */
 export type MobEntryMode = 'mob' | 'tag';
-
-/**
- * How the current mob label was locked.
- */
-export type MobSource = 'manual' | 'tag';
 
 /**
  * One month of the Overview monthly breakdown.
@@ -1992,6 +1990,15 @@ export interface ScanStatus {
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable' | 'tool' | 'implant';
 
 /**
+ * The session-config acknowledgement: the facet values now in force
+ * (null: not declared).
+ */
+export interface SessionConfigResult {
+	sessionName: string | null;
+	skillBoostPercent: number | null;
+}
+
+/**
  * The full session detail.
  */
 export interface SessionDetail {
@@ -2061,8 +2068,8 @@ export interface SettingsPatch {
 	repair_ocr_enabled?: boolean | null;
 	end_of_session_armour_reminder_enabled?: boolean | null;
 	developer_mode_enabled?: boolean | null;
-	mob_tracking_mode?: string | null;
-	mob_tracking_tag?: string | null;
+	session_name?: string | null;
+	skill_boost_percent?: number | null;
 	hotbar?: Record<string, unknown> | null;
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;
@@ -2187,13 +2194,6 @@ export interface TagComparison {
 }
 
 /**
- * The tag-lock acknowledgement.
- */
-export interface TagLockResult {
-	tag: string;
-}
-
-/**
  * One day of the Overview timeline.
  */
 export interface TimelineDay {
@@ -2248,9 +2248,11 @@ export interface TrackingSnapshot {
 	weaponAttribution?: WeaponAttribution | null;
 	repairOcrEnabled?: boolean | null;
 	endOfSessionArmourReminderEnabled?: boolean | null;
-	mobEntryMode?: MobEntryMode | null;
+	/** The session-name facet: the active session's when tracking, the configured next-session value when idle. */
+	sessionName?: string | null;
+	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
+	skillBoostPercent?: number | null;
 	currentMob?: string | null;
-	mobSource?: MobSource | null;
 	currentTool?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
@@ -2799,8 +2801,8 @@ export async function trackingManualMobLock(species: string, maturity: string | 
 	return invokeCommand('tracking_manual_mob_lock', { species, maturity });
 }
 
-export async function trackingTagLock(tag: string): Promise<TagLockResult> {
-	return invokeCommand('tracking_tag_lock', { tag });
+export async function trackingSessionConfig(sessionName: string | null, skillBoostPercent: number | null): Promise<SessionConfigResult> {
+	return invokeCommand('tracking_session_config', { session_name: sessionName, skill_boost_percent: skillBoostPercent });
 }
 
 export async function trackingRenameMob(sessionId: string, fromMobName: string, toMobName: string): Promise<MobEditResult> {

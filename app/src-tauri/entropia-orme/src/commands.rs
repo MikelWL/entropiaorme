@@ -51,7 +51,7 @@ use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
     QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
-    SessionQuestLinkSuggestion, StartResult, StopResult, TagLockResult, TrackingSnapshot,
+    SessionQuestLinkSuggestion, SessionConfigResult, StartResult, StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -913,11 +913,14 @@ pub async fn tracking_manual_mob_lock(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_tag_lock(
+pub async fn tracking_session_config(
     app: tauri::AppHandle,
-    tag: String,
-) -> Result<TagLockResult, ApiError> {
-    facade(&app)?.tracking_tag_lock(tag).await
+    session_name: Option<String>,
+    skill_boost_percent: Option<i64>,
+) -> Result<SessionConfigResult, ApiError> {
+    facade(&app)?
+        .tracking_session_config(session_name, skill_boost_percent)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1479,7 +1482,7 @@ mod tests {
         "tracking_stop",
         "tracking_release_mob",
         "tracking_manual_mob_lock",
-        "tracking_tag_lock",
+        "tracking_session_config",
         "tracking_rename_mob",
         "tracking_restore_mob",
         "tracking_loot_item_activate",

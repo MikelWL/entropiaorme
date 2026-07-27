@@ -171,7 +171,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_snapshot",
     "tracking_start",
     "tracking_stop",
-    "tracking_tag_lock",
+    "tracking_session_config",
     "tracking_tag_suggestions",
 ];
 

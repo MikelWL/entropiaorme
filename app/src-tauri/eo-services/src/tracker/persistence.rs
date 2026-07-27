@@ -87,16 +87,17 @@ impl TrackerActor {
                 tx.execute(
                     "INSERT OR REPLACE INTO kills \
                      (id, session_id, mob_name, mob_species, mob_maturity, \
-                      timestamp, shots_fired, damage_dealt, damage_taken, \
+                      mob_stamp_source, timestamp, shots_fired, damage_dealt, damage_taken, \
                       critical_hits, cost_ped, enhancer_cost, \
                       loot_total_ped, is_global, is_hof) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         kill.id,
                         kill.session_id,
                         kill.mob_name,
                         kill.mob_species,
                         kill.mob_maturity,
+                        kill.mob_stamp_source.map(|source| source.as_str()),
                         kill.timestamp,
                         kill.shots_fired,
                         kill.damage_dealt,

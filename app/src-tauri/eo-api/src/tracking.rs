@@ -57,9 +57,9 @@ const SNAPSHOT_FIELDS: [&str; 40] = [
     "weaponAttribution",
     "repairOcrEnabled",
     "endOfSessionArmourReminderEnabled",
-    "mobEntryMode",
+    "sessionName",
+    "skillBoostPercent",
     "currentMob",
-    "mobSource",
     "currentTool",
     "trifectaAttribution",
     "recentEvents",
@@ -129,19 +129,13 @@ pub enum WeaponAttribution {
     Trifecta,
 }
 
-/// Mob-attribution input mode a session is captured under.
+/// The legacy exclusive-capture input mode recorded on pre-facet
+/// session rows; read-only vocabulary for labelling those sessions
+/// (facet-era rows all read as `mob`, the column default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MobEntryMode {
     Mob,
-    Tag,
-}
-
-/// How the current mob label was locked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum MobSource {
-    Manual,
     Tag,
 }
 
@@ -423,12 +417,16 @@ pub struct TrackingSnapshot {
     pub repair_ocr_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_of_session_armour_reminder_enabled: Option<bool>,
+    /// The session-name facet: the active session's when tracking, the
+    /// configured next-session value when idle.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mob_entry_mode: Option<MobEntryMode>,
+    pub session_name: Option<String>,
+    /// The skill-boost facet (labelled percent), same idle/active
+    /// sourcing as the session name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_boost_percent: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_mob: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mob_source: Option<MobSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -553,10 +551,13 @@ pub struct ManualMobLockResult {
     pub maturity: String,
 }
 
-/// The tag-lock acknowledgement.
+/// The session-config acknowledgement: the facet values now in force
+/// (null: not declared).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TagLockResult {
-    pub tag: String,
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigResult {
+    pub session_name: Nullable<String>,
+    pub skill_boost_percent: Nullable<i64>,
 }
 
 /// The mob rename / restore result.
@@ -681,26 +682,12 @@ impl Api {
             .map_err(ApiError::internal("tracking tag suggestions"))
     }
 
-    /// Catalogue mob-name autocomplete. The tag-mode 409 fires first (before
-    /// the empty-query short-circuit), consulting the per-session captured
-    /// mode when tracking, else the live config.
+    /// Catalogue mob-name autocomplete for the declared-mob typeahead.
     pub async fn tracking_manual_mob_suggestions(
         &self,
         q: String,
         limit: Option<i64>,
     ) -> Result<Vec<ManualMobSuggestion>, ApiError> {
-        let tag_mode = if self.tracker.is_tracking() {
-            self.tracker.is_session_tag_mode()
-        } else {
-            load_config_readonly(&self.data_dir)
-                .map_err(ApiError::internal("manual mob suggestions config"))?
-                .mob_tracking_mode
-                == "tag"
-        };
-        if tag_mode {
-            return Err(ApiError::conflict("Tag mode disables manual mob selection"));
-        }
-
         let query = q.trim_matches(python_whitespace);
         if query.is_empty() {
             return Ok(Vec::new());
@@ -815,7 +802,7 @@ impl Api {
         }
     }
 
-    /// Clear the locked mob or tag, echoing what was released.
+    /// Clear the declared mob, echoing what was released.
     pub async fn tracking_release_mob(&self) -> Result<ReleaseResult, ApiError> {
         // The (non-`Send`) config guard is scoped around each read/write
         // so it is never held across the tracker's await points; the
@@ -825,48 +812,30 @@ impl Api {
                 .lock()
                 .map_err(|_| ApiError::invalid_state("release mob: poisoned config lock"))
         };
-        let released = if self.tracker.is_tracking() && self.tracker.is_session_tag_mode() {
-            let released = self.tracker.release_current_mob().await;
-            lock_config()?
-                .update(&clear_tag())
-                .map_err(ApiError::internal("release mob"))?;
-            released.map(Value::from).unwrap_or(Value::Null)
-        } else if !self.tracker.is_tracking() {
-            let mut guard = lock_config()?;
-            if guard.get().mob_tracking_mode == "tag" {
-                let trimmed = guard.get().mob_tracking_tag.trim().to_string();
-                let released = if trimmed.is_empty() {
-                    Value::Null
-                } else {
-                    Value::String(trimmed)
-                };
-                guard
-                    .update(&clear_tag())
-                    .map_err(ApiError::internal("release mob"))?;
-                released
-            } else {
-                let species = guard.get().manual_mob_species.trim().to_string();
-                let maturity = guard.get().manual_mob_maturity.trim().to_string();
-                let released = mob_display(&species, &maturity);
-                guard
-                    .update(&clear_manual_mob())
-                    .map_err(ApiError::internal("release mob"))?;
-                released
-            }
-        } else {
-            let released = self.tracker.release_current_mob().await;
+        let released = if self.tracker.is_tracking() {
+            let released = self.tracker.release_declared_mob().await;
             lock_config()?
                 .update(&clear_manual_mob())
                 .map_err(ApiError::internal("release mob"))?;
             released.map(Value::from).unwrap_or(Value::Null)
+        } else {
+            let mut guard = lock_config()?;
+            let species = guard.get().manual_mob_species.trim().to_string();
+            let maturity = guard.get().manual_mob_maturity.trim().to_string();
+            let released = mob_display(&species, &maturity);
+            guard
+                .update(&clear_manual_mob())
+                .map_err(ApiError::internal("release mob"))?;
+            released
         };
         Ok(ReleaseResult {
             released: opt_str(&released).into(),
         })
     }
 
-    /// Lock a catalogue mob for manual kill stamping. 409 in tag mode, 400
-    /// when the mob is absent from the catalogue.
+    /// Declare a catalogue mob for kill stamping. 400 when the mob is
+    /// absent from the catalogue; mid-session declaration changes are
+    /// allowed by design.
     pub async fn tracking_manual_mob_lock(
         &self,
         species: String,
@@ -888,11 +857,6 @@ impl Api {
                     "manual mob lock: poisoned config lock",
                 ));
             };
-            let idle_tag_mode =
-                !self.tracker.is_tracking() && guard.get().mob_tracking_mode == "tag";
-            if (self.tracker.is_tracking() && self.tracker.is_session_tag_mode()) || idle_tag_mode {
-                return Err(ApiError::conflict("Tag mode disables manual mob selection"));
-            }
             if !MobLookupService::new(&self.game_data).has_mob_name(species, maturity) {
                 return Err(ApiError::bad_request("Mob is not present in the catalogue"));
             }
@@ -903,19 +867,14 @@ impl Api {
                 .update(&updates)
                 .map_err(ApiError::internal("manual mob lock"))?;
         }
-        if self.tracker.is_tracking()
-            && self
+        if self.tracker.is_tracking() {
+            // The only reachable error is the session stopping between
+            // the check and the call; the config write above already
+            // carries the declaration into the next session either way.
+            let _ = self
                 .tracker
-                .set_manual_mob(&display, species, maturity)
-                .await
-                .is_err()
-        {
-            // The gate cleared an active non-tag session; the only reachable
-            // error is the live config having flipped to tag mode since the
-            // session started. Mirror the reference's post-write 500.
-            return Err(ApiError::invalid_state(
-                "manual mob lock: session flipped to tag mode",
-            ));
+                .set_declared_mob(&display, species, maturity)
+                .await;
         }
         Ok(ManualMobLockResult {
             mob_name: display,
@@ -924,37 +883,49 @@ impl Api {
         })
     }
 
-    /// Set the active free-text tag. 409 when not in tag mode, 400 on an
-    /// empty tag.
-    pub async fn tracking_tag_lock(&self, tag: String) -> Result<TagLockResult, ApiError> {
-        let tag = tag.trim();
+    /// Set the session facets: the designated name and the skill boost.
+    /// Full-state apply (a null clears its facet). The name applies to
+    /// the active session live; the boost is immutable while a session
+    /// runs (409 on an attempted change: stop and start a new session).
+    pub async fn tracking_session_config(
+        &self,
+        session_name: Option<String>,
+        skill_boost_percent: Option<i64>,
+    ) -> Result<SessionConfigResult, ApiError> {
+        let name = session_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        let boost = skill_boost_percent.filter(|percent| *percent > 0);
         // Validate and write inside a block so the (non-`Send`) config
         // guard is gone before the tracker await below.
         {
             let Ok(mut guard) = self.config_service.lock() else {
-                return Err(ApiError::invalid_state("tag lock: poisoned config lock"));
+                return Err(ApiError::invalid_state(
+                    "session config: poisoned config lock",
+                ));
             };
-            if self.tracker.is_tracking() {
-                if !self.tracker.is_session_tag_mode() {
-                    return Err(ApiError::conflict("Active session is not in tag mode"));
-                }
-            } else if guard.get().mob_tracking_mode != "tag" {
-                return Err(ApiError::conflict("Tag mode is not enabled"));
-            }
-            if tag.is_empty() {
-                return Err(ApiError::bad_request("Tag cannot be empty"));
+            if self.tracker.is_tracking()
+                && boost.unwrap_or(0) != guard.get().skill_boost_percent.max(0)
+            {
+                return Err(ApiError::conflict(
+                    "Skill boost is fixed for the active session; stop and start a new one",
+                ));
             }
             let mut updates = Map::new();
-            updates.insert("mob_tracking_tag".into(), json!(tag));
+            updates.insert("session_name".into(), json!(name.as_deref().unwrap_or("")));
+            updates.insert("skill_boost_percent".into(), json!(boost.unwrap_or(0)));
             guard
                 .update(&updates)
-                .map_err(ApiError::internal("tag lock"))?;
+                .map_err(ApiError::internal("session config"))?;
         }
         if self.tracker.is_tracking() {
-            let _ = self.tracker.set_manual_tag(tag).await;
+            let _ = self.tracker.set_session_name(name.clone()).await;
         }
-        Ok(TagLockResult {
-            tag: tag.to_string(),
+        Ok(SessionConfigResult {
+            session_name: name.into(),
+            skill_boost_percent: boost.into(),
         })
     }
 
@@ -1146,15 +1117,21 @@ pub(crate) async fn build_snapshot_value(
         Some(tool) => Value::String(tool.clone()),
         None => Value::Null,
     };
-    // The stored mode is free text (config / session row); recover
-    // anything outside the two modes to the "mob" default, exactly as
-    // the settings read does, so the snapshot's closed vocabulary holds
-    // for a hand-edited store rather than failing the whole hydration.
-    let mob_entry_mode = |stored: &str| if stored == "tag" { "tag" } else { "mob" };
+    // The facet pair serialises null for "not declared" (the projection
+    // drops the key): idle reads the configured next-session values,
+    // active reads the session's snapshot.
+    let name_value = |name: Option<&str>| match name.filter(|value| !value.is_empty()) {
+        Some(name) => Value::String(name.to_string()),
+        None => Value::Null,
+    };
+    let boost_value = |percent: Option<i64>| match percent.filter(|value| *value > 0) {
+        Some(percent) => json!(percent),
+        None => Value::Null,
+    };
 
     let value = match &readout.active {
         None => {
-            let (current_mob, mob_source) = configured_manual_label(config);
+            let (current_mob, _) = configured_manual_label(config);
             json!({
                 "status": "idle",
                 "hotbarListenerActive": hotbar_active,
@@ -1163,9 +1140,9 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": mob_entry_mode(&config.mob_tracking_mode),
+                "sessionName": name_value(Some(config.session_name.trim())),
+                "skillBoostPercent": boost_value(Some(config.skill_boost_percent)),
                 "currentMob": current_mob,
-                "mobSource": mob_source,
                 "recentEvents": [],
             })
         }
@@ -1235,9 +1212,9 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": mob_entry_mode(&active.mob_entry_mode),
+                "sessionName": name_value(active.session_name.as_deref()),
+                "skillBoostPercent": boost_value(active.skill_boost_percent),
                 "currentMob": active.current_mob.clone(),
-                "mobSource": active.mob_source.clone(),
                 "recentEvents": recent_events,
                 "warnings": warnings,
             });

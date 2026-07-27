@@ -123,6 +123,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "undone entries",
         sql: include_str!("../../migrations/0017_undone_entries.sql"),
     },
+    Migration {
+        version: 18,
+        description: "session facets",
+        sql: include_str!("../../migrations/0018_session_facets.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -148,6 +153,7 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "EAC4ADF328EE46DB3F3A16D4DFB5629A004027A24C7F63AD86CE97D3F28535FAE8AFB2E45E166DC8B79708A118526796",
     "DF66ED36758ED3D19D74D142C3CA02712B3435685037C57D15B6790FC226FA71EEE2ACDADEF13C42F59977C14FF23C29",
     "6F4D4FCDB6F696BD1FBAEBFAEFF1A794D09D5FE26F0BB55BA51817B057B29DCAC8E83534881B42FE5FB6671288B1A4E9",
+    "76BE1D16B7F69479E38D70B594F38B7348132898E2D45CAFC2469914E69DD5A82C8887D1576032A723586C24F55112E7",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

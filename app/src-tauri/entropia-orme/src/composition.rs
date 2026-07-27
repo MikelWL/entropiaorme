@@ -1452,16 +1452,12 @@ struct LiveTrackingConfig {
 }
 
 impl TrackingConfig for LiveTrackingConfig {
-    fn mob_tracking_mode(&self) -> String {
-        self.reader.current().mob_tracking_mode.clone()
+    fn session_name(&self) -> String {
+        self.reader.current().session_name.clone()
     }
 
-    fn mob_tracking_tag(&self) -> String {
-        self.reader.current().mob_tracking_tag.clone()
-    }
-
-    fn manual_mob_entry_enabled(&self) -> bool {
-        self.reader.current().mob_tracking_mode != "tag"
+    fn skill_boost_percent(&self) -> i64 {
+        self.reader.current().skill_boost_percent
     }
 
     fn manual_mob(&self) -> Option<(String, String)> {

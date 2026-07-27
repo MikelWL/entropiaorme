@@ -8,8 +8,6 @@
 
 import type {
 	HarvestGuardrailAlert,
-	MobEntryMode,
-	MobSource,
 	NotableEventCategory,
 	NotableEventType,
 	RecentEvent,
@@ -42,9 +40,9 @@ export interface TrackingLive {
 	weaponAttribution?: WeaponAttribution | null;
 	repairOcrEnabled?: boolean | null;
 	endOfSessionArmourReminderEnabled?: boolean | null;
-	mobEntryMode?: MobEntryMode | null;
+	sessionName?: string | null;
+	skillBoostPercent?: number | null;
 	currentMob?: string | null;
-	mobSource?: MobSource | null;
 	currentTool?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
@@ -67,7 +65,10 @@ export const deactivateLootItem = commands.trackingLootItemDeactivate;
 export const activateLootItem = commands.trackingLootItemActivate;
 export const renameSessionMob = commands.trackingRenameMob;
 export const restoreSessionMob = commands.trackingRestoreMob;
-export const lockTrackingTag = commands.trackingTagLock;
+/** Set the session facets (full-state apply: null clears a facet). The
+ * name applies to the active session live; the boost is fixed while a
+ * session runs (the backend answers 409 on an attempted change). */
+export const setSessionConfig = commands.trackingSessionConfig;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
 export const getSessionQuestLinkSuggestion = commands.trackingQuestLinkSuggestion;

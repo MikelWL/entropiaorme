@@ -53,7 +53,7 @@ use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
     QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
-    SessionQuestLinkSuggestion, StartResult, StopResult, TagLockResult, TrackingSnapshot,
+    SessionQuestLinkSuggestion, SessionConfigResult, StartResult, StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -896,12 +896,18 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(ManualMobLockResult))),
         },
         CommandSpec {
-            name: "tracking_tag_lock",
-            args: vec![ArgSpec {
-                name: "tag",
-                schema: schema(schema_for!(String)),
-            }],
-            returns: Some(schema(schema_for!(TagLockResult))),
+            name: "tracking_session_config",
+            args: vec![
+                ArgSpec {
+                    name: "session_name",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "skill_boost_percent",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionConfigResult))),
         },
         CommandSpec {
             name: "tracking_rename_mob",

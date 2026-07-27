@@ -77,10 +77,17 @@ pub struct AppConfig {
     pub repair_ocr_enabled: bool,
     pub end_of_session_armour_reminder_enabled: bool,
     pub developer_mode_enabled: bool,
+    /// Legacy exclusive-capture keys, carried for stores written before
+    /// the session-facet model; `session_name` inherits a legacy tag
+    /// once (see `from_stored`) and the mode is otherwise inert.
     pub mob_tracking_mode: String,
     pub mob_tracking_tag: String,
     pub manual_mob_species: String,
     pub manual_mob_maturity: String,
+    /// The designated session-name facet the next session snapshots.
+    pub session_name: String,
+    /// The skill-boost facet (labelled percent; 0 is "no boost").
+    pub skill_boost_percent: i64,
     pub hotbar: Map<String, Value>,
     pub trifecta_presets: Vec<TrifectaPresetConfig>,
     pub active_trifecta_preset_id: Option<String>,
@@ -117,6 +124,8 @@ impl Default for AppConfig {
             mob_tracking_tag: String::new(),
             manual_mob_species: String::new(),
             manual_mob_maturity: String::new(),
+            session_name: String::new(),
+            skill_boost_percent: 0,
             hotbar,
             trifecta_presets: vec![TrifectaPresetConfig::default_preset()],
             active_trifecta_preset_id: Some(DEFAULT_TRIFECTA_PRESET_ID.to_string()),
@@ -382,6 +391,21 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
         mob_tracking_tag: string_or("mob_tracking_tag", ""),
         manual_mob_species: string_or("manual_mob_species", ""),
         manual_mob_maturity: string_or("manual_mob_maturity", ""),
+        // One-time legacy inheritance: a store written before the facet
+        // model has no session_name key at all, and its tag-mode tag was
+        // the de facto session name. Only key absence inherits; a stored
+        // empty string is an explicit clear and stays empty.
+        session_name: if data.contains_key("session_name") {
+            string_or("session_name", "")
+        } else if string_or("mob_tracking_mode", "mob") == "tag" {
+            string_or("mob_tracking_tag", "")
+        } else {
+            String::new()
+        },
+        skill_boost_percent: data
+            .get("skill_boost_percent")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
         hotbar: normalize_hotbar(data.get("hotbar")),
         trifecta_presets,
         active_trifecta_preset_id: Some(active_id),
@@ -409,7 +433,7 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
     }
 }
 
-const KNOWN_KEYS: [&str; 18] = [
+const KNOWN_KEYS: [&str; 20] = [
     "chatlog_path",
     "player_name",
     "hotbar_hooks_enabled",
@@ -420,6 +444,8 @@ const KNOWN_KEYS: [&str; 18] = [
     "mob_tracking_tag",
     "manual_mob_species",
     "manual_mob_maturity",
+    "session_name",
+    "skill_boost_percent",
     "hotbar",
     "trifecta_presets",
     "active_trifecta_preset_id",
@@ -571,6 +597,12 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
             "mob_tracking_tag" => assign_string(&mut config.mob_tracking_tag, value),
             "manual_mob_species" => assign_string(&mut config.manual_mob_species, value),
             "manual_mob_maturity" => assign_string(&mut config.manual_mob_maturity, value),
+            "session_name" => assign_string(&mut config.session_name, value),
+            "skill_boost_percent" => {
+                if let Some(percent) = value.as_i64() {
+                    config.skill_boost_percent = percent.max(0);
+                }
+            }
             "hotbar" => config.hotbar = normalize_hotbar(Some(value)),
             "trifecta_presets" => {
                 let (presets, active) = normalize_trifecta_presets(
