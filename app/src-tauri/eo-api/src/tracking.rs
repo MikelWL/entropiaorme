@@ -1301,7 +1301,6 @@ pub(crate) async fn build_snapshot_value(
 
     let value = match &readout.active {
         None => {
-            let (current_mob, _) = configured_manual_label(config);
             json!({
                 "status": "idle",
                 "hotbarListenerActive": hotbar_active,
@@ -1313,7 +1312,7 @@ pub(crate) async fn build_snapshot_value(
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(Some(config.session_name.trim())),
                 "skillBoostPercent": boost_value(Some(config.skill_boost_percent)),
-                "currentMob": current_mob,
+                "currentMob": declared_mob_label(config),
                 "recentEvents": [],
             })
         }

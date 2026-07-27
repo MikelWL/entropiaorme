@@ -1415,29 +1415,22 @@ pub fn validate_hotbar(config: &AppConfig) -> (bool, Option<String>) {
     }
 }
 
-/// `_configured_manual_label`: the idle-state mob label and its source.
-pub fn configured_manual_label(config: &AppConfig) -> (Value, Value) {
-    if config.mob_tracking_mode == "tag" {
-        let tag = config.mob_tracking_tag.trim();
-        if tag.is_empty() {
-            return (Value::Null, Value::Null);
-        }
-        return (
-            Value::String(tag.to_string()),
-            Value::String("tag".to_string()),
-        );
-    }
+/// The idle-state mob label: the standing declaration, exactly as the
+/// active-session label derives it. A declaration outlives the session
+/// that set it, so idle reads the same facet rather than any retired
+/// exclusive-capture value.
+pub fn declared_mob_label(config: &AppConfig) -> Value {
     let species = config.manual_mob_species.trim();
     let maturity = config.manual_mob_maturity.trim();
     if species.is_empty() {
-        return (Value::Null, Value::Null);
+        return Value::Null;
     }
     let display = if maturity.is_empty() {
         species.to_string()
     } else {
         format!("{maturity} {species}")
     };
-    (Value::String(display), Value::String("manual".to_string()))
+    Value::String(display)
 }
 
 /// `_notable_event_label`: the curated label for known event types, else
@@ -1479,13 +1472,6 @@ pub fn capitalize(text: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
-}
-
-/// The config update that clears the free-text session tag.
-pub fn clear_tag() -> Map<String, Value> {
-    let mut updates = Map::new();
-    updates.insert("mob_tracking_tag".into(), json!(""));
-    updates
 }
 
 /// The config update that clears the stored manual-mob selection.
@@ -3103,34 +3089,20 @@ mod tests {
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
-    fn configured_manual_label_covers_tag_and_manual() {
+    fn declared_mob_label_reads_the_standing_declaration() {
         let mut config = AppConfig::default();
 
-        // Tag mode with a tag, and with a blank tag.
-        config.mob_tracking_mode = "tag".to_string();
-        config.mob_tracking_tag = "My Tag".to_string();
-        assert_eq!(
-            configured_manual_label(&config),
-            (json!("My Tag"), json!("tag"))
-        );
-        config.mob_tracking_tag = "  ".to_string();
-        assert_eq!(configured_manual_label(&config), (Value::Null, Value::Null));
+        // No declaration at all.
+        assert_eq!(declared_mob_label(&config), Value::Null);
 
-        // Manual mode: species with and without maturity, and blank species.
-        config.mob_tracking_mode = "mob".to_string();
+        // Species with and without maturity, and a whitespace-only species.
         config.manual_mob_species = "Argonaut".to_string();
         config.manual_mob_maturity = "Young".to_string();
-        assert_eq!(
-            configured_manual_label(&config),
-            (json!("Young Argonaut"), json!("manual"))
-        );
+        assert_eq!(declared_mob_label(&config), json!("Young Argonaut"));
         config.manual_mob_maturity = String::new();
-        assert_eq!(
-            configured_manual_label(&config),
-            (json!("Argonaut"), json!("manual"))
-        );
-        config.manual_mob_species = String::new();
-        assert_eq!(configured_manual_label(&config), (Value::Null, Value::Null));
+        assert_eq!(declared_mob_label(&config), json!("Argonaut"));
+        config.manual_mob_species = "  ".to_string();
+        assert_eq!(declared_mob_label(&config), Value::Null);
     }
 
     #[test]
@@ -3164,13 +3136,6 @@ mod tests {
         assert_eq!(capitalize("global"), "Global");
         assert_eq!(capitalize("a"), "A");
         assert_eq!(capitalize(""), "");
-    }
-
-    #[test]
-    fn clear_tag_clears_the_free_text_tag() {
-        let updates = clear_tag();
-        assert_eq!(updates.get("mob_tracking_tag"), Some(&json!("")));
-        assert_eq!(updates.len(), 1);
     }
 
     #[test]
