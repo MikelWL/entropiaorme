@@ -338,6 +338,10 @@ pub struct SessionDetail {
     pub session_id: String,
     pub summary: SessionSummary,
     pub harvest: HarvestSummary,
+    /// The session-name facet as recorded. Present here because the
+    /// record is where the name is corrected: the overlay fixes it once
+    /// a session starts.
+    pub session_name: Nullable<String>,
     pub mob_entry_mode: MobEntryMode,
     pub notable_events: Vec<NotableEvent>,
     pub loot_breakdown: Vec<LootEntry>,
@@ -578,6 +582,14 @@ pub struct ManualMobLockResult {
 pub struct SessionConfigResult {
     pub session_name: Nullable<String>,
     pub skill_boost_percent: Nullable<i64>,
+}
+
+/// The post-hoc session-rename result.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRenameResult {
+    pub session_id: String,
+    pub session_name: Nullable<String>,
 }
 
 /// The mob rename / restore result.
@@ -932,9 +944,15 @@ impl Api {
     }
 
     /// Set the session facets: the designated name and the skill boost.
-    /// Full-state apply (a null clears its facet). The name applies to
-    /// the active session live; the boost is immutable while a session
-    /// runs (409 on an attempted change: stop and start a new session).
+    /// Full-state apply (a null clears its facet).
+    ///
+    /// The two facets differ in how they may move, not by taste. The
+    /// boost may be re-declared mid-session (a pill expiring is a real
+    /// change worth recording), and the session keeps the latest
+    /// declaration. The name names the whole session, so a live edit
+    /// could only rewrite its history: it is fixed once a session runs
+    /// (409), and correcting it is a post-hoc move through
+    /// `tracking_rename_session`.
     pub async fn tracking_session_config(
         &self,
         session_name: Option<String>,
@@ -955,10 +973,10 @@ impl Api {
                 ));
             };
             if self.tracker.is_tracking()
-                && boost.unwrap_or(0) != guard.get().skill_boost_percent.max(0)
+                && name.as_deref().unwrap_or("") != guard.get().session_name.trim()
             {
                 return Err(ApiError::conflict(
-                    "Skill boost is fixed for the active session; stop and start a new one",
+                    "Session name is fixed for the active session; rename it from the session record once it ends",
                 ));
             }
             let mut updates = Map::new();
@@ -969,12 +987,25 @@ impl Api {
                 .map_err(ApiError::internal("session config"))?;
         }
         if self.tracker.is_tracking() {
-            let _ = self.tracker.set_session_name(name.clone()).await;
+            let _ = self.tracker.set_skill_boost(boost).await;
         }
         Ok(SessionConfigResult {
             session_name: name.into(),
             skill_boost_percent: boost.into(),
         })
+    }
+
+    /// Rename an ended session: the post-hoc correction path for the
+    /// name facet, which the overlay fixes once a session starts.
+    pub async fn tracking_rename_session(
+        &self,
+        session_id: String,
+        session_name: Option<String>,
+    ) -> Result<SessionRenameResult, ApiError> {
+        let value = rename_session_impl(&self.db, &session_id, session_name.as_deref())
+            .await
+            .map_err(edit_error("tracking rename session"))?;
+        serde_json::from_value(value).map_err(ApiError::internal("tracking rename session shaping"))
     }
 
     /// Rename a mob across an ended session.

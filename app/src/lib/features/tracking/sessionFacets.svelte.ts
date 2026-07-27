@@ -57,8 +57,9 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 	let nameError = $state<string | null>(null);
 	let savingName = $state(false);
 
-	// The boost's edit buffer, only meaningful while idle: the strip
-	// renders the persisted value read-only during a session.
+	// The boost's edit buffer. The boost edits live: a pill expiring is a
+	// genuine change worth recording, and the session keeps the latest
+	// declaration.
 	let boostDraft = $state('');
 	let savingBoost = $state(false);
 
@@ -233,6 +234,14 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		},
 		get savingBoost() {
 			return savingBoost;
+		},
+		/** Whether the name may still be set. The name is session-grain, so
+		 * a live edit could only rewrite the whole session's history: it is
+		 * fixed once a session runs, and correcting it is a post-hoc move on
+		 * the session record. The boost has no such flag because its grain
+		 * is finer than the session, so it always edits. */
+		get nameEditable() {
+			return !deps.isSessionActive();
 		},
 		get questSaving() {
 			return questSaving;

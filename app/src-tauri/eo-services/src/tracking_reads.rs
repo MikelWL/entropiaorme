@@ -469,7 +469,7 @@ pub fn get_session_read(
 
     let session_meta = conn
         .query_row(
-            "SELECT id, started_at, ended_at, is_active, mob_tracking_mode \
+            "SELECT id, started_at, ended_at, is_active, mob_tracking_mode, session_name \
              FROM tracking_sessions WHERE id = ?",
             rusqlite::params![session_id],
             |row| {
@@ -478,11 +478,12 @@ pub fn get_session_read(
                     row.get::<_, Option<f64>>(2)?,
                     row.get::<_, i64>(3)? != 0,
                     row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()?;
-    let Some((started_at, ended_at, is_active, mob_mode)) = session_meta else {
+    let Some((started_at, ended_at, is_active, mob_mode, session_name)) = session_meta else {
         return Ok(None);
     };
 
@@ -676,6 +677,7 @@ pub fn get_session_read(
             "lootTt": round(harvest_loot, 2),
             "cost": round(harvest_cost, 2),
         },
+        "sessionName": session_name,
         "mobEntryMode": mob_entry_mode,
         "notableEvents": notable_events,
         "lootBreakdown": loot_breakdown,
@@ -931,7 +933,7 @@ pub async fn validate_session_exists(db: &Db, session_id: &str) -> Result<(), Ed
     };
     if is_active != 0 {
         return Err(EditError::Conflict(
-            "Session mob edits are only available after the session has ended".to_string(),
+            "Session record edits are only available after the session has ended".to_string(),
         ));
     }
     Ok(())
@@ -984,6 +986,45 @@ pub async fn build_loot_item_edit_response(
         "totalValueDelta": round(total_value_delta, 4),
         "sessionTotalReturns": round(session_returns, 2),
     }))
+}
+
+/// Rename an ended session's name facet: the post-hoc correction the
+/// overlay deliberately does not offer, because a live rename could
+/// only rewrite the whole session's history. Session-grain, so this
+/// simply restates the one value, and the summary cache is restated
+/// with it so the analytics axis and the record never disagree.
+pub async fn rename_session_impl(
+    db: &Db,
+    session_id: &str,
+    session_name: Option<&str>,
+) -> Result<Value, EditError> {
+    validate_session_exists(db, session_id).await?;
+    let name = session_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string);
+
+    let sid = session_id.to_string();
+    let write_name = name.clone();
+    db.with_writer(move |conn| {
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE tracking_sessions SET session_name = ? WHERE id = ?",
+            rusqlite::params![write_name, sid],
+        )?;
+        // The summary cache carries the facet beside its aggregates; a
+        // rename that healed only on the next summary rebuild would
+        // leave the comparison axis reading the old bucket meanwhile.
+        tx.execute(
+            "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
+            rusqlite::params![write_name, sid],
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+    .await?;
+
+    Ok(json!({ "sessionId": session_id, "sessionName": name }))
 }
 
 pub async fn rename_session_mob_impl(
@@ -2263,6 +2304,7 @@ mod tests {
                     "lootTt": 0.0,
                     "cost": 0.0,
                 },
+                "sessionName": null,
                 "mobEntryMode": "mob",
                 "notableEvents": [
                     {"type": "global", "eventType": "global_kill", "target": "Argonaut", "item": "Argonaut", "value": 50.0},
@@ -2370,6 +2412,7 @@ mod tests {
                     "lootTt": 8.0,
                     "cost": 3.0,
                 },
+                "sessionName": null,
                 "mobEntryMode": "mob",
                 "notableEvents": [],
                 "lootBreakdown": [

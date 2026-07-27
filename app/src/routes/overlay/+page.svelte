@@ -797,9 +797,10 @@
 	const showManualInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	const showNameInput = $derived(
-		(data.status === 'active' || data.status === 'idle') && !data.sessionName
-	);
+	// The name is session-grain, so it takes input only while idle: once a
+	// session runs, changing it could only rewrite the whole session's
+	// history, and the correction path is the session record.
+	const showNameInput = $derived(data.status === 'idle' && !data.sessionName);
 
 	// Two independent debounced typeaheads, one per free-text facet: the
 	// declared mob over the catalogue, the session name over the names

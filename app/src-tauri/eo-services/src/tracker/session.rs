@@ -28,9 +28,12 @@ pub(super) type LootFingerprint = (f64, usize, String);
 /// The session-scoped facets, snapshotted from the live config at
 /// session start. Independent and optional by design (the co-recording
 /// model that replaced the mutually exclusive tag-or-mob capture):
-/// None means "not declared", never a guessed default. The skill boost
-/// is immutable for the session's life (stop and restart to change
-/// it); the name may be set or cleared while the session runs.
+/// None means "not declared", never a guessed default. The name is
+/// immutable for the session's life (it names the whole session, so a
+/// live edit could only rewrite history; correcting it is a post-hoc
+/// move in session review). The boost may be re-declared while the
+/// session runs, because a pill expiring is a genuine change worth
+/// recording; the record keeps the latest declaration.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionFacets {
     /// The user-designated session name (the designated analytics
@@ -323,35 +326,39 @@ impl TrackerActor {
         self.publish_status();
     }
 
-    /// Set or clear the active session's name facet in memory and on
-    /// its row. The name is the one facet that may move while the
-    /// session runs: it renames the session's bucket wholesale, so a
-    /// late set loses nothing (one value per session either way).
-    pub(super) async fn set_session_name(
+    /// Declare the skill boost now in force. The boost is the facet
+    /// that may move while the session runs, because it is a fact about
+    /// the world that expires: a pill running out is a real change the
+    /// session must be able to record.
+    ///
+    /// The session row carries the latest declaration, re-landed here
+    /// on every change so the record never claims a boost the player
+    /// withdrew. Persistence failures are contained like the stop
+    /// path's: the in-memory facet still moves and the row heals at the
+    /// next declaration.
+    pub(super) async fn set_skill_boost(
         &mut self,
-        name: Option<String>,
+        percent: Option<i64>,
     ) -> Result<(), TrackerCommandError> {
+        let percent = percent.filter(|value| *value > 0);
         let session_id = {
             let Some(active) = self.session.active_mut() else {
                 return Err(TrackerCommandError::NoActiveSession);
             };
-            active.facets.name = name.clone();
+            active.facets.skill_boost_percent = percent;
             active.dirty = true;
             active.session.id.clone()
         };
-        let result = self
+        let _ = self
             .db
             .with_writer(move |conn| {
                 conn.execute(
-                    "UPDATE tracking_sessions SET session_name = ? WHERE id = ?",
-                    rusqlite::params![name, session_id],
+                    "UPDATE tracking_sessions SET skill_boost_percent = ? WHERE id = ?",
+                    rusqlite::params![percent, session_id],
                 )?;
                 Ok(())
             })
             .await;
-        // Contained like the other persistence failures: the in-memory
-        // facet stands and the summary write at stop re-lands it.
-        let _ = result;
         Ok(())
     }
 
@@ -442,8 +449,9 @@ impl TrackerActor {
         // Persist session start BEFORE activating in memory: a failed
         // insert leaves the tracker idle rather than a phantom session
         // with no row for its kills. The facets snapshot onto the row
-        // at start; the boost never mutates after this write, the name
-        // may be re-written by `set_session_name`. (`mob_tracking_mode`
+        // at start; the name then never moves for the session's life,
+        // while a boost re-declaration re-lands on the row so it always
+        // reads as the latest declaration. (`mob_tracking_mode`
         // keeps its column default: the mode vocabulary is legacy and
         // records nothing about a facet-era session.)
         let insert_id = session_id.clone();

@@ -52,8 +52,8 @@ pub(super) enum TrackerMsg {
     /// reads run on the caller's side, off the actor.
     Aggregate(Box<AggregateReply>),
     ReloadConfig(oneshot::Sender<()>),
-    SetSessionName(
-        Option<String>,
+    SetSkillBoost(
+        Option<i64>,
         oneshot::Sender<Result<(), TrackerCommandError>>,
     ),
     SetDeclaredMob {
@@ -189,8 +189,8 @@ impl TrackerActor {
                 self.reload_config();
                 let _ = reply.send(());
             }
-            TrackerMsg::SetSessionName(name, reply) => {
-                let _ = reply.send(self.set_session_name(name).await);
+            TrackerMsg::SetSkillBoost(percent, reply) => {
+                let _ = reply.send(self.set_skill_boost(percent).await);
             }
             TrackerMsg::SetDeclaredMob {
                 name,

@@ -136,9 +136,6 @@
 	const showNameInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.sessionName
 	);
-	const boostLabel = $derived(
-		data.skillBoostPercent && data.skillBoostPercent > 0 ? `${data.skillBoostPercent}%` : null
-	);
 	// What the held tool implies the next action records as. Derived from
 	// evidence, never declared, so it is shown as feedback and never asked.
 	const activityLabel = $derived(
@@ -228,10 +225,12 @@
 		</div>
 
 		<!-- Session facets: the independent, co-recorded attributions a
-			 session carries. Name and quest edit live; the boost is fixed once
-			 a session runs (stop and start a new one to change it), so it
-			 renders read-only there rather than offering a control that would
-			 be refused. -->
+			 session carries. Each control here declares gameplay from now on,
+			 so a facet is editable while a session runs only if its stamp is
+			 finer-grained than the session. The boost is (it stamps each skill
+			 gain, so a pill expiring is recordable); the name is not (it names
+			 the whole session, so a live edit could only rewrite history) and
+			 is corrected on the session record instead. -->
 		<div
 			class="flex items-center gap-2 shrink-0 border-r border-white/10 pr-3"
 			data-guide-anchor="overlay-session-section"
@@ -251,19 +250,26 @@
 							onkeydown={onNameKeydown}
 						/>
 					{:else if data.sessionName}
-						<div class="text-sm font-medium text-white/90 truncate px-1 min-w-0 flex-1" title={data.sessionName}>
+						<div
+							class="text-sm font-medium text-white/90 truncate px-1 min-w-0 flex-1"
+							title={isActive
+								? `${data.sessionName} (fixed for this session; rename it from the session record once it ends)`
+								: data.sessionName}
+						>
 							{data.sessionName}
 						</div>
-						<button
-							type="button"
-							class="release-btn shrink-0"
-							aria-label="Clear session name"
-							disabled={savingName}
-							onclick={onClearName}
-							title="Clear session name"
-						>
-							{savingName ? '...' : 'x'}
-						</button>
+						{#if !isActive}
+							<button
+								type="button"
+								class="release-btn shrink-0"
+								aria-label="Clear session name"
+								disabled={savingName}
+								onclick={onClearName}
+								title="Clear session name"
+							>
+								{savingName ? '...' : 'x'}
+							</button>
+						{/if}
 					{:else}
 						<div class="text-sm font-medium text-white/20 px-1">—</div>
 					{/if}
@@ -272,36 +278,28 @@
 
 			<!-- Skill boost: the labelled percentage of the pill in force,
 				 because it changes how PES reads. Any percentage is accepted;
-				 blank is no boost. -->
+				 blank is no boost. Editable at any time; the session records
+				 the latest declaration. -->
 			<div class="flex flex-col shrink-0">
 				<span class="facet-label">Boost</span>
-				{#if isActive}
-					<div
-						class="text-sm font-medium px-1 tabular-nums {boostLabel ? 'text-white/90' : 'text-white/20'}"
-						title="Skill boost is fixed for this session; stop and start a new one to change it"
-					>
-						{boostLabel ?? '—'}
-					</div>
-				{:else}
-					<div class="flex items-baseline">
-						<input
-							class="w-9 bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 tabular-nums transition-colors"
-							bind:value={boostDraft}
-							placeholder="—"
-							inputmode="numeric"
-							aria-label="Skill boost percent"
-							disabled={savingBoost}
-							onblur={onBoostCommit}
-							onkeydown={(event) => {
-								if (event.key === 'Enter') {
-									event.preventDefault();
-									void onBoostCommit();
-								}
-							}}
-						/>
-						<span class="text-[10px] text-white/30 leading-none">%</span>
-					</div>
-				{/if}
+				<div class="flex items-baseline">
+					<input
+						class="w-9 bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 tabular-nums transition-colors"
+						bind:value={boostDraft}
+						placeholder="—"
+						inputmode="numeric"
+						aria-label="Skill boost percent"
+						disabled={savingBoost}
+						onblur={onBoostCommit}
+						onkeydown={(event) => {
+							if (event.key === 'Enter') {
+								event.preventDefault();
+								void onBoostCommit();
+							}
+						}}
+					/>
+					<span class="text-[10px] text-white/30 leading-none">%</span>
+				</div>
 			</div>
 
 			<!-- Quest: the curated analytics link, declared up front rather

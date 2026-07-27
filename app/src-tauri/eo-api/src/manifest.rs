@@ -53,8 +53,8 @@ use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
     QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionPage, SessionQuestLinkSuggestion, StartResult, StopResult,
-    TrackingSnapshot,
+    SessionDetail, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
+    StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -909,6 +909,20 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(SessionConfigResult))),
+        },
+        CommandSpec {
+            name: "tracking_rename_session",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "session_name",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionRenameResult))),
         },
         CommandSpec {
             name: "tracking_rename_mob",

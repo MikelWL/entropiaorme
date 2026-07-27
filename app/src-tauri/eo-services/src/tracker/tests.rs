@@ -1585,7 +1585,7 @@ fn session_facet_and_declared_mob_rules() {
         Err(TrackerCommandError::NoActiveSession)
     );
     assert_eq!(
-        rig.wait(tracker.set_session_name(Some("Solo Run".to_string()))),
+        rig.wait(tracker.set_skill_boost(Some(25))),
         Err(TrackerCommandError::NoActiveSession)
     );
 
@@ -1667,18 +1667,25 @@ fn session_facet_and_declared_mob_rules() {
         )
     );
 
-    // The declaration moves mid-session (no mode locks it), and the name
-    // moves with it: neither facet excludes the other.
+    // The two live facets move mid-session independently: the mob
+    // declaration (kill-grain) and the boost (skill-gain-grain). The
+    // name is session-grain and no command moves it, so it stands.
     rig.wait(facets.set_declared_mob("Old Atrox", "Atrox", "Old"))
         .unwrap();
-    rig.wait(facets.set_session_name(Some("Solo Run".to_string())))
-        .unwrap();
+    rig.wait(facets.set_skill_boost(Some(25))).unwrap();
     rig.probe(&facets, |actor| {
         let active = actor.session.active().unwrap();
         assert_eq!(active.stamped_mob_name(), Some("Old Atrox"));
-        assert_eq!(active.facets.name.as_deref(), Some("Solo Run"));
-        // The boost is snapshotted at start and no command moves it.
-        assert_eq!(active.facets.skill_boost_percent, Some(50));
+        assert_eq!(active.facets.skill_boost_percent, Some(25));
+        // The name snapshotted at start and no command moves it.
+        assert_eq!(active.facets.name.as_deref(), Some("Team Hunt"));
+    });
+
+    // A boost that runs out clears to "no boost" rather than zero.
+    rig.wait(facets.set_skill_boost(None)).unwrap();
+    rig.probe(&facets, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.facets.skill_boost_percent, None);
     });
 
     // Releasing clears only the mob; the other facets stand.
@@ -1690,7 +1697,7 @@ fn session_facet_and_declared_mob_rules() {
     rig.probe(&facets, |actor| {
         let active = actor.session.active().unwrap();
         assert_eq!(active.stamped_mob_name(), None);
-        assert_eq!(active.facets.name.as_deref(), Some("Solo Run"));
+        assert_eq!(active.facets.name.as_deref(), Some("Team Hunt"));
     });
 
     // With no declaration in force a kill stamps "Unknown" and carries no
@@ -1715,20 +1722,26 @@ fn session_facet_and_declared_mob_rules() {
     };
     assert_eq!(undeclared, ("Unknown".to_string(), None));
 
-    // The name write also lands on the row, so the summary at stop reads
-    // the current value rather than the one captured at start.
-    let renamed: Option<String> = {
+    // The name never moves for the session's life; the boost column
+    // follows the latest declaration (a withdrawal above cleared it),
+    // so the record never claims a boost the player withdrew.
+    let opened: (Option<String>, Option<i64>) = {
         let session_id = session.id.clone();
         rig.wait(rig.db.with_reader(move |conn| {
             Ok(conn.query_row(
-                "SELECT session_name FROM tracking_sessions WHERE id = ?",
+                "SELECT session_name, skill_boost_percent FROM tracking_sessions WHERE id = ?",
                 rusqlite::params![session_id],
-                |row| row.get::<_, Option<String>>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                    ))
+                },
             )?)
         }))
         .unwrap()
     };
-    assert_eq!(renamed.as_deref(), Some("Solo Run"));
+    assert_eq!(opened, (Some("Team Hunt".to_string()), None));
     rig.wait(facets.stop_session()).unwrap();
 
     // An undeclared session carries neither facet: absent is recorded as
@@ -1776,6 +1789,34 @@ fn session_facet_and_declared_mob_rules() {
         );
     });
     rig.wait(bare_mob.stop_session()).unwrap();
+}
+
+/// A mid-session boost re-declaration re-lands on the session row, so
+/// the record keeps the latest declaration (including a withdrawal)
+/// rather than whatever the session opened under.
+#[test]
+fn a_boost_redeclaration_lands_on_the_session_row() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+
+    let row_boost = |rig: &Rig, id: String| -> Option<i64> {
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT skill_boost_percent FROM tracking_sessions WHERE id = ?",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap()
+    };
+
+    rig.wait(tracker.set_skill_boost(Some(50))).unwrap();
+    assert_eq!(row_boost(&rig, session.id.clone()), Some(50));
+
+    // Withdrawn mid-session: the row must stop claiming it.
+    rig.wait(tracker.set_skill_boost(None)).unwrap();
+    assert_eq!(row_boost(&rig, session.id.clone()), None);
 }
 
 #[test]

@@ -135,9 +135,21 @@ describe('attribution warning', () => {
 });
 
 describe('session facets and declared mob', () => {
-	it('takes the session name while idle and while tracking', () => {
+	it('takes the session name while idle', () => {
 		render(OverlayStrip, { props: { data: liveData({ status: 'idle', sessionName: null }) } });
 		expect(screen.getByPlaceholderText('Name...')).toBeTruthy();
+	});
+
+	// The name is session-grain: editing it live could only rewrite the
+	// whole session's history, so a running session offers no control at
+	// all (not even a clear), and the record is where it gets corrected.
+	it('offers no name control at all during an active session', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active', sessionName: 'ARIS Dailies' }) },
+		});
+		expect(screen.getByText('ARIS Dailies')).toBeTruthy();
+		expect(screen.queryByPlaceholderText('Name...')).toBeNull();
+		expect(screen.queryByLabelText('Clear session name')).toBeNull();
 	});
 
 	it('shows the set session name with a clear control instead of the input', () => {
@@ -162,13 +174,21 @@ describe('session facets and declared mob', () => {
 		expect(input.value).toBe('50');
 	});
 
-	it('renders the boost read-only during an active session', () => {
+	// The boost's grain is finer than the session (it stamps each skill
+	// gain), so a pill expiring mid-session is a recordable change and the
+	// control stays live throughout.
+	it('keeps the boost editable during an active session', () => {
+		const onBoostCommit = vi.fn();
 		render(OverlayStrip, {
-			props: { data: liveData({ status: 'active', skillBoostPercent: 50 }) },
+			props: {
+				data: liveData({ status: 'active', skillBoostPercent: 50 }),
+				boostDraft: '50',
+				onBoostCommit,
+			},
 		});
-		// The boost is fixed for a running session, so no control is offered.
-		expect(screen.queryByLabelText('Skill boost percent')).toBeNull();
-		expect(screen.getByText('50%')).toBeTruthy();
+		const input = screen.getByLabelText('Skill boost percent') as HTMLInputElement;
+		expect(input.value).toBe('50');
+		expect(input.disabled).toBe(false);
 	});
 
 	it('offers the quest picker only while a session is active', () => {

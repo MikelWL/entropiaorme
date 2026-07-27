@@ -68,6 +68,7 @@ export const releaseMob = commands.trackingReleaseMob;
 export const deleteSession = commands.trackingSessionDelete;
 export const deactivateLootItem = commands.trackingLootItemDeactivate;
 export const activateLootItem = commands.trackingLootItemActivate;
+export const renameSession = commands.trackingRenameSession;
 export const renameSessionMob = commands.trackingRenameMob;
 export const restoreSessionMob = commands.trackingRestoreMob;
 /** Set the session facets (full-state apply: null clears a facet). The

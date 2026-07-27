@@ -217,10 +217,10 @@ impl HuntTracker {
         self.call(TrackerMsg::ReloadConfig).await
     }
 
-    /// Set or clear the active session's name facet (in memory and on
-    /// the session row).
-    pub async fn set_session_name(&self, name: Option<String>) -> Result<(), TrackerCommandError> {
-        self.call(|reply| TrackerMsg::SetSessionName(name, reply))
+    /// Declare the skill boost now in force; the session row keeps
+    /// the latest declaration.
+    pub async fn set_skill_boost(&self, percent: Option<i64>) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::SetSkillBoost(percent, reply))
             .await
     }
 

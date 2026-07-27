@@ -9,9 +9,10 @@ use super::actor::TrackerActor;
 use super::TrackerCommandError;
 
 /// Where a kill's mob stamp came from. `Declared` is the player's
-/// declaration feeding the stamp; `Detected` is reserved for automatic
-/// detection driving the same fields. A kill recorded with no
-/// declaration in force carries no source (its stamp is "Unknown").
+/// declaration feeding the stamp; `Detected` exists so the persisted
+/// discriminant stays forward-compatible with a source that fills the
+/// same fields from evidence. A kill recorded with no declaration in
+/// force carries no source (its stamp is "Unknown").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MobStampSource {
     Declared,

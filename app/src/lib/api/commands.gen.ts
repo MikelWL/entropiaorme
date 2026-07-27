@@ -2040,6 +2040,8 @@ export interface SessionDetail {
 	sessionId: string;
 	summary: SessionSummary;
 	harvest: HarvestSummary;
+	/** The session-name facet as recorded. Present here because the record is where the name is corrected: the overlay fixes it once a session starts. */
+	sessionName: string | null;
 	mobEntryMode: MobEntryMode;
 	notableEvents: NotableEvent[];
 	lootBreakdown: LootEntry[];
@@ -2072,6 +2074,14 @@ export interface SessionQuestLinkSuggestion {
 	questName: string | null;
 	playlistId: string | null;
 	playlistName: string | null;
+}
+
+/**
+ * The post-hoc session-rename result.
+ */
+export interface SessionRenameResult {
+	sessionId: string;
+	sessionName: string | null;
 }
 
 /**
@@ -2836,6 +2846,10 @@ export async function trackingManualMobLock(species: string, maturity: string | 
 
 export async function trackingSessionConfig(sessionName: string | null, skillBoostPercent: number | null): Promise<SessionConfigResult> {
 	return invokeCommand('tracking_session_config', { session_name: sessionName, skill_boost_percent: skillBoostPercent });
+}
+
+export async function trackingRenameSession(sessionId: string, sessionName: string | null): Promise<SessionRenameResult> {
+	return invokeCommand('tracking_rename_session', { session_id: sessionId, session_name: sessionName });
 }
 
 export async function trackingRenameMob(sessionId: string, fromMobName: string, toMobName: string): Promise<MobEditResult> {
