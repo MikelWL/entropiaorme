@@ -187,5 +187,10 @@ pub struct HarvestGuardrailMismatchView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackingReadout {
     pub current_tool: Option<String>,
+    /// Whether the hand item is currently a harvesting tool: the signal
+    /// the overlay's derived-activity feedback reads ("this is Tree
+    /// Cutting" versus "this is Hunting"). Meaningless when
+    /// `current_tool` is None.
+    pub current_tool_is_harvest: bool,
     pub active: Option<ActiveSessionView>,
 }

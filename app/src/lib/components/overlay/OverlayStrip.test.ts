@@ -134,48 +134,85 @@ describe('attribution warning', () => {
 	});
 });
 
-describe('mob and tag section', () => {
-	it('locks the mode toggle during an active session', () => {
-		render(OverlayStrip, { props: { data: liveData({ status: 'active' }) } });
-		expect((screen.getByText('MOB') as HTMLButtonElement).disabled).toBe(true);
-		expect((screen.getByText('TAG') as HTMLButtonElement).disabled).toBe(true);
+describe('session facets and declared mob', () => {
+	it('takes the session name while idle and while tracking', () => {
+		render(OverlayStrip, { props: { data: liveData({ status: 'idle', sessionName: null }) } });
+		expect(screen.getByPlaceholderText('Name...')).toBeTruthy();
 	});
 
-	it('forwards a mode change while idle', () => {
-		const onMobModeChange = vi.fn();
-		render(OverlayStrip, { props: { data: liveData(), onMobModeChange } });
-
-		screen.getByText('TAG').click();
-		expect(onMobModeChange).toHaveBeenCalledWith('tag');
-		screen.getByText('MOB').click();
-		expect(onMobModeChange).toHaveBeenCalledWith('mob');
-	});
-
-	it('shows the tag input when tag mode has no locked tag', () => {
+	it('shows the set session name with a clear control instead of the input', () => {
+		const onClearName = vi.fn();
 		render(OverlayStrip, {
-			props: { data: liveData({ mobEntryMode: 'tag', currentMob: null }) },
+			props: { data: liveData({ sessionName: 'ARIS Dailies' }), onClearName },
 		});
-		expect(screen.getByPlaceholderText('Tag...')).toBeTruthy();
+
+		expect(screen.getByText('ARIS Dailies')).toBeTruthy();
+		expect(screen.queryByPlaceholderText('Name...')).toBeNull();
+
+		screen.getByLabelText('Clear session name').click();
+		expect(onClearName).toHaveBeenCalledTimes(1);
 	});
 
-	it('shows the mob input when mob mode has no locked mob', () => {
+	it('edits the skill boost while idle', () => {
+		const onBoostCommit = vi.fn();
 		render(OverlayStrip, {
-			props: { data: liveData({ mobEntryMode: 'mob', currentMob: null }) },
+			props: { data: liveData({ status: 'idle' }), boostDraft: '50', onBoostCommit },
 		});
+		const input = screen.getByLabelText('Skill boost percent') as HTMLInputElement;
+		expect(input.value).toBe('50');
+	});
+
+	it('renders the boost read-only during an active session', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active', skillBoostPercent: 50 }) },
+		});
+		// The boost is fixed for a running session, so no control is offered.
+		expect(screen.queryByLabelText('Skill boost percent')).toBeNull();
+		expect(screen.getByText('50%')).toBeTruthy();
+	});
+
+	it('offers the quest picker only while a session is active', () => {
+		const questTrigger = () =>
+			screen.getByText('Pick').closest('button') as HTMLButtonElement;
+
+		const { unmount } = render(OverlayStrip, { props: { data: liveData({ status: 'idle' }) } });
+		expect(questTrigger().disabled).toBe(true);
+		unmount();
+
+		const onQuestTrigger = vi.fn();
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active' }), onQuestTrigger },
+		});
+		expect(questTrigger().disabled).toBe(false);
+		questTrigger().click();
+		expect(onQuestTrigger).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows the declared quest with a clear control', () => {
+		const onClearQuest = vi.fn();
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active' }), questLabel: 'ARIS Daily I', onClearQuest },
+		});
+
+		expect(screen.getByText('ARIS Daily I')).toBeTruthy();
+		screen.getByLabelText('Clear declared quest').click();
+		expect(onClearQuest).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows the mob input when no mob is declared', () => {
+		render(OverlayStrip, { props: { data: liveData({ currentMob: null }) } });
 		expect(screen.getByPlaceholderText('Mob...')).toBeTruthy();
 	});
 
-	it('hides the release control when no mob is locked', () => {
-		render(OverlayStrip, {
-			props: { data: liveData({ mobEntryMode: 'mob', currentMob: null }) },
-		});
+	it('hides the release control when no mob is declared', () => {
+		render(OverlayStrip, { props: { data: liveData({ currentMob: null }) } });
 		expect(screen.queryByLabelText('Release mob')).toBeNull();
 	});
 
-	it('shows the locked mob with a release control instead of the input', () => {
+	it('shows the declared mob with a release control instead of the input', () => {
 		const onReleaseMob = vi.fn();
 		render(OverlayStrip, {
-			props: { data: liveData({ mobEntryMode: 'mob', currentMob: 'Atrox Young' }), onReleaseMob },
+			props: { data: liveData({ currentMob: 'Atrox Young' }), onReleaseMob },
 		});
 
 		expect(screen.getByText('Atrox Young')).toBeTruthy();
@@ -185,15 +222,45 @@ describe('mob and tag section', () => {
 		expect(onReleaseMob).toHaveBeenCalledTimes(1);
 	});
 
+	it('offers the mob control during an active session (declarations move mid-session)', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active', currentMob: null }) },
+		});
+		expect(screen.getByPlaceholderText('Mob...')).toBeTruthy();
+	});
+
+	it('surfaces a facet write failure beside the controls', () => {
+		render(OverlayStrip, {
+			props: { data: liveData(), facetError: 'Skill boost is fixed for the active session' },
+		});
+		expect(screen.getByText('Skill boost is fixed for the active session')).toBeTruthy();
+	});
+
 	it('surfaces the popup launch error under the input when the menu is closed', () => {
 		render(OverlayStrip, {
 			props: {
-				data: liveData({ mobEntryMode: 'tag' }),
+				data: liveData({ currentMob: null }),
 				overlayMenuLaunchError: 'Popup route did not become ready',
 				mobMenuOpen: false,
 			},
 		});
 		expect(screen.getByText('Popup route did not become ready')).toBeTruthy();
+	});
+});
+
+describe('derived activity feedback', () => {
+	it('names the activity the held tool implies', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ currentTool: 'ChopChop Jr', currentActivity: 'treecutting' }) },
+		});
+		expect(screen.getByTestId('activity-feedback').textContent?.trim()).toBe('Tree Cutting');
+	});
+
+	it('says nothing when no tool is known', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ currentTool: null, currentActivity: null }) },
+		});
+		expect(screen.queryByTestId('activity-feedback')).toBeNull();
 	});
 });
 

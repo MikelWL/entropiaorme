@@ -19,16 +19,20 @@
 	let menuState = $state<OverlayMenuState | null>(null);
 	let suppressBlurCloseUntil = 0;
 
-	function getMobRowCount(state: Extract<OverlayMenuState, { kind: 'mob' }>): number {
+	/** Rows the panel will render, which drives the window height. Every
+	 * kind falls back to one row: the loading, error, and empty states each
+	 * occupy exactly one line. */
+	function getRowCount(state: OverlayMenuState): number {
+		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
 		if (state.loading || state.error) return 1;
-		if (state.mode === 'tag') return state.tagSuggestions.length > 0 ? state.tagSuggestions.length : 1;
-		return state.mobSuggestions.length > 0 ? state.mobSuggestions.length : 1;
+		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
+		if (state.kind === 'mob') return Math.max(1, state.mobSuggestions.length);
+		return Math.max(1, state.options.length);
 	}
 
 	const popupHeight = $derived.by(() => {
 		if (!menuState) return 1;
-		const rows = menuState.kind === 'trifecta' ? menuState.options.length : getMobRowCount(menuState);
-		return Math.min(MENU_MAX_HEIGHT, Math.max(44, rows * 34 + 12));
+		return Math.min(MENU_MAX_HEIGHT, Math.max(44, getRowCount(menuState) * 34 + 12));
 	});
 
 	const popupWidth = $derived(menuState?.width ?? 1);
@@ -107,8 +111,8 @@
 		onpointerdown={signalInteraction}
 		onwheel={signalInteraction}
 	>
-		{#if menuState.kind === 'trifecta'}
-			<div class="menu-panel">
+		<div class="menu-panel">
+			{#if menuState.kind === 'trifecta'}
 				{#each menuState.options as option}
 					<button
 						type="button"
@@ -121,37 +125,34 @@
 						{/if}
 					</button>
 				{/each}
-			</div>
-		{:else}
-			<div class="menu-panel">
-				{#if menuState.loading}
-					<div class="menu-empty">Searching...</div>
-				{:else if menuState.error}
-					<div class="menu-empty">{menuState.error}</div>
-				{:else if menuState.mode === 'tag' && menuState.tagSuggestions.length === 0}
+			{:else if menuState.loading}
+				<div class="menu-empty">Searching...</div>
+			{:else if menuState.error}
+				<div class="menu-empty">{menuState.error}</div>
+			{:else if menuState.kind === 'name'}
+				{#if menuState.suggestions.length === 0}
+					{@const typed = menuState.query.trim()}
 					<button
 						type="button"
 						class="menu-option"
-						onclick={() => {
-							if (menuState?.kind === 'mob') {
-								handleSelection({ kind: 'tag', tag: menuState.query.trim() });
-							}
-						}}
+						onclick={() => handleSelection({ kind: 'name', name: typed })}
 					>
-						<span class="menu-option-name">Press Enter to set "{menuState.query.trim()}"</span>
+						<span class="menu-option-name">Press Enter to name it "{typed}"</span>
 					</button>
-				{:else if menuState.mode === 'manual' && menuState.mobSuggestions.length === 0}
-					<div class="menu-empty">No matches</div>
-				{:else if menuState.mode === 'tag'}
-					{#each menuState.tagSuggestions as option}
+				{:else}
+					{#each menuState.suggestions as option}
 						<button
 							type="button"
 							class="menu-option"
-							onclick={() => handleSelection({ kind: 'tag', tag: option })}
+							onclick={() => handleSelection({ kind: 'name', name: option })}
 						>
 							<span class="menu-option-name">{option}</span>
 						</button>
 					{/each}
+				{/if}
+			{:else if menuState.kind === 'mob'}
+				{#if menuState.mobSuggestions.length === 0}
+					<div class="menu-empty">No matches</div>
 				{:else}
 					{#each menuState.mobSuggestions as option}
 						<button
@@ -163,8 +164,28 @@
 						</button>
 					{/each}
 				{/if}
-			</div>
-		{/if}
+			{:else if menuState.options.length === 0}
+				<div class="menu-empty">No active quests</div>
+			{:else}
+				{#each menuState.options as option}
+					<button
+						type="button"
+						class="menu-option"
+						onclick={() => handleSelection({
+							kind: 'quest',
+							id: option.id,
+							isPlaylist: option.isPlaylist,
+							name: option.name
+						})}
+					>
+						<span class="menu-option-name">{option.name}</span>
+						{#if option.isPlaylist}
+							<span class="menu-option-badge">Playlist</span>
+						{/if}
+					</button>
+				{/each}
+			{/if}
+		</div>
 	</div>
 {/if}
 

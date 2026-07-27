@@ -7,7 +7,6 @@
 	import { overlayStats } from '$lib/statsCustomisation.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
 	import Button from '$lib/components/Button.svelte';
-	import type { MobTrackingMode } from '$lib/types/settings';
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 
@@ -21,12 +20,19 @@
 		toggling = false,
 		releasing = false,
 		selectingMob = false,
+		savingName = false,
+		savingBoost = false,
+		questSaving = false,
+		facetError = null,
+		questLabel = null,
 		trifectaSaving = false,
 		trifectaError = null,
 		armourCostOpen = false,
 		armourCostError = null,
 		armourSessionId = null,
 		mobMenuOpen = false,
+		nameMenuOpen = false,
+		questMenuOpen = false,
 		trifectaMenuOpen = false,
 		overlayMenuLaunchError = null,
 		lastSessionId = null,
@@ -36,6 +42,9 @@
 		questLinkSaving = false,
 		mobQuery = $bindable(''),
 		mobInput = $bindable(null),
+		nameQuery = $bindable(''),
+		nameInput = $bindable(null),
+		boostDraft = $bindable(''),
 		postSessionArmourButton = $bindable(null),
 		awaitingArmourTrackDecision = false,
 		attributionWarning = null,
@@ -43,11 +52,17 @@
 		onStop = noop,
 		onArmourTrackDecision = noop,
 		onDismissAttributionWarning = noop,
-		onMobModeChange = noop,
 		onReleaseMob = noop,
 		onMobFocus = noop,
 		onMobBlur = noop,
 		onMobKeydown = noop,
+		onNameFocus = noop,
+		onNameBlur = noop,
+		onNameKeydown = noop,
+		onClearName = noop,
+		onBoostCommit = noop,
+		onQuestTrigger = noop,
+		onClearQuest = noop,
 		onTrifectaTrigger = noop,
 		onArmourCostToggle = noop,
 		onQuestLinkDecision = noop,
@@ -58,12 +73,19 @@
 		toggling?: boolean;
 		releasing?: boolean;
 		selectingMob?: boolean;
+		savingName?: boolean;
+		savingBoost?: boolean;
+		questSaving?: boolean;
+		facetError?: string | null;
+		questLabel?: string | null;
 		trifectaSaving?: boolean;
 		trifectaError?: string | null;
 		armourCostOpen?: boolean;
 		armourCostError?: string | null;
 		armourSessionId?: string | null;
 		mobMenuOpen?: boolean;
+		nameMenuOpen?: boolean;
+		questMenuOpen?: boolean;
 		trifectaMenuOpen?: boolean;
 		overlayMenuLaunchError?: string | null;
 		lastSessionId?: string | null;
@@ -73,6 +95,9 @@
 		questLinkSaving?: boolean;
 		mobQuery?: string;
 		mobInput?: HTMLInputElement | null;
+		nameQuery?: string;
+		nameInput?: HTMLInputElement | null;
+		boostDraft?: string;
 		postSessionArmourButton?: HTMLButtonElement | null;
 		awaitingArmourTrackDecision?: boolean;
 		attributionWarning?: string | null;
@@ -80,30 +105,49 @@
 		onStop?: () => void | Promise<void>;
 		onArmourTrackDecision?: (action: 'yes' | 'no') => void | Promise<void>;
 		onDismissAttributionWarning?: () => void;
-		onMobModeChange?: (mode: MobTrackingMode) => void | Promise<void>;
 		onReleaseMob?: () => void | Promise<void>;
 		onMobFocus?: () => void;
 		onMobBlur?: () => void;
 		onMobKeydown?: (event: KeyboardEvent) => void | Promise<void>;
+		onNameFocus?: () => void;
+		onNameBlur?: () => void;
+		onNameKeydown?: (event: KeyboardEvent) => void | Promise<void>;
+		onClearName?: () => void | Promise<void>;
+		onBoostCommit?: () => void | Promise<void>;
+		onQuestTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
+		onClearQuest?: () => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onArmourCostToggle?: (event: MouseEvent) => void | Promise<void>;
 		onQuestLinkDecision?: (action: 'accept' | 'decline') => void | Promise<void>;
 		onDismissQuestLinkMessage?: () => void;
 	} = $props();
 
-	const isTagEntryMode = $derived(data.mobEntryMode === 'tag');
 	const isTrifectaAttribution = $derived(data.weaponAttribution === 'trifecta');
-	const showTagInput = $derived(
-		(data.status === 'active' || data.status === 'idle')
-			&& isTagEntryMode
-			&& !data.currentMob
+	const isActive = $derived(data.status === 'active');
+	// The declared mob is the kill-stamp source and may change mid-session,
+	// so its input is available in both states; a standing declaration
+	// shows as a label with a release control beside it.
+	const showManualInput = $derived(
+		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	const showManualMobInput = $derived(
-		(data.status === 'active' || data.status === 'idle')
-			&& !isTagEntryMode
-			&& !data.currentMob
+	// The name facet edits live: it renames the whole session's bucket, so
+	// a late set loses nothing. The boost is fixed once a session runs
+	// (the backend refuses a change), so it renders read-only there.
+	const showNameInput = $derived(
+		(data.status === 'active' || data.status === 'idle') && !data.sessionName
 	);
-	const showManualInput = $derived(showTagInput || showManualMobInput);
+	const boostLabel = $derived(
+		data.skillBoostPercent && data.skillBoostPercent > 0 ? `${data.skillBoostPercent}%` : null
+	);
+	// What the held tool implies the next action records as. Derived from
+	// evidence, never declared, so it is shown as feedback and never asked.
+	const activityLabel = $derived(
+		data.currentActivity === 'treecutting'
+			? 'Tree Cutting'
+			: data.currentActivity === 'hunting'
+				? 'Hunting'
+				: null
+	);
 
 	function formatElapsed(seconds: number): string {
 		const h = Math.floor(seconds / 3600);
@@ -183,38 +227,131 @@
 			{/if}
 		</div>
 
-		<!-- Mob/Tag Section. The segmented control always renders; during an
-			 active session the buttons disable (mode is locked once a session
-			 starts) but the highlighted segment still communicates which mode
-			 is in effect. This is clearer than the prior label-only treatment
-			 mid-hunt, and gives the guide's demo overlay a visible toggle. -->
+		<!-- Session facets: the independent, co-recorded attributions a
+			 session carries. Name and quest edit live; the boost is fixed once
+			 a session runs (stop and start a new one to change it), so it
+			 renders read-only there rather than offering a control that would
+			 be refused. -->
+		<div
+			class="flex items-center gap-2 shrink-0 border-r border-white/10 pr-3"
+			data-guide-anchor="overlay-session-section"
+		>
+			<div class="w-32 flex flex-col shrink-0">
+				<span class="facet-label">Session</span>
+				<div class="flex items-center gap-1">
+					{#if showNameInput}
+						<input
+							bind:this={nameInput}
+							class="w-full bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 transition-colors"
+							bind:value={nameQuery}
+							placeholder="Name..."
+							disabled={savingName}
+							onfocus={onNameFocus}
+							onblur={onNameBlur}
+							onkeydown={onNameKeydown}
+						/>
+					{:else if data.sessionName}
+						<div class="text-sm font-medium text-white/90 truncate px-1 min-w-0 flex-1" title={data.sessionName}>
+							{data.sessionName}
+						</div>
+						<button
+							type="button"
+							class="release-btn shrink-0"
+							aria-label="Clear session name"
+							disabled={savingName}
+							onclick={onClearName}
+							title="Clear session name"
+						>
+							{savingName ? '...' : 'x'}
+						</button>
+					{:else}
+						<div class="text-sm font-medium text-white/20 px-1">—</div>
+					{/if}
+				</div>
+			</div>
+
+			<!-- Skill boost: the labelled percentage of the pill in force,
+				 because it changes how PES reads. Any percentage is accepted;
+				 blank is no boost. -->
+			<div class="flex flex-col shrink-0">
+				<span class="facet-label">Boost</span>
+				{#if isActive}
+					<div
+						class="text-sm font-medium px-1 tabular-nums {boostLabel ? 'text-white/90' : 'text-white/20'}"
+						title="Skill boost is fixed for this session; stop and start a new one to change it"
+					>
+						{boostLabel ?? '—'}
+					</div>
+				{:else}
+					<div class="flex items-baseline">
+						<input
+							class="w-9 bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 tabular-nums transition-colors"
+							bind:value={boostDraft}
+							placeholder="—"
+							inputmode="numeric"
+							aria-label="Skill boost percent"
+							disabled={savingBoost}
+							onblur={onBoostCommit}
+							onkeydown={(event) => {
+								if (event.key === 'Enter') {
+									event.preventDefault();
+									void onBoostCommit();
+								}
+							}}
+						/>
+						<span class="text-[10px] text-white/30 leading-none">%</span>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Quest: the curated analytics link, declared up front rather
+				 than only offered after the session ends. -->
+			<div class="flex flex-col shrink-0">
+				<span class="facet-label">Quest</span>
+				<div class="flex items-center gap-1">
+					<button
+						type="button"
+						class="facet-chip {questMenuOpen ? 'facet-chip-open' : ''} max-w-[110px]"
+						disabled={!isActive || questSaving}
+						aria-haspopup="menu"
+						aria-expanded={questMenuOpen}
+						onclick={(event) => onQuestTrigger(event.currentTarget as HTMLButtonElement)}
+						title={isActive
+							? 'Declare the quest or playlist this session is for'
+							: 'Start a session to declare its quest'}
+					>
+						<span class="truncate">{questSaving ? '...' : (questLabel ?? 'Pick')}</span>
+					</button>
+					{#if questLabel && isActive}
+						<button
+							type="button"
+							class="release-btn shrink-0"
+							aria-label="Clear declared quest"
+							disabled={questSaving}
+							onclick={onClearQuest}
+							title="Clear declared quest"
+						>x</button>
+					{/if}
+				</div>
+			</div>
+		</div>
+
+		<!-- Declared mob: the source of each kill's mob stamp, changeable
+			 mid-session (an off-declaration kill still stamps the declared
+			 mob until detection can read the target directly). -->
 		<div
 			class="flex items-center gap-2 shrink-0 border-r border-white/10 pr-3"
 			data-guide-anchor="overlay-mob-section"
 		>
-			<div class="flex items-center gap-0.5 rounded bg-white/5 p-0.5 shrink-0">
-				<button
-					type="button"
-					class="px-2 py-0.5 rounded-[2px] text-[10px] font-bold transition-colors cursor-pointer {data.mobEntryMode !== 'tag' ? 'bg-accent/20 text-accent' : 'text-white/50 hover:text-white'} disabled:cursor-default"
-					disabled={toggling || data.status === 'active'}
-					onclick={() => onMobModeChange('mob')}
-				>MOB</button>
-				<button
-					type="button"
-					class="px-2 py-0.5 rounded-[2px] text-[10px] font-bold transition-colors cursor-pointer {data.mobEntryMode === 'tag' ? 'bg-accent/20 text-accent' : 'text-white/50 hover:text-white'} disabled:cursor-default"
-					disabled={toggling || data.status === 'active'}
-					onclick={() => onMobModeChange('tag')}
-				>TAG</button>
-			</div>
-
 			<div class="w-32 flex flex-col shrink-0">
+				<span class="facet-label">Mob</span>
 				<div class="flex items-center">
 					{#if showManualInput}
 						<input
 							bind:this={mobInput}
 							class="w-full bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 transition-colors"
 							bind:value={mobQuery}
-							placeholder={showTagInput ? 'Tag...' : 'Mob...'}
+							placeholder="Mob..."
 							disabled={selectingMob}
 							onfocus={onMobFocus}
 							onblur={onMobBlur}
@@ -238,12 +375,18 @@
 					class="release-btn shrink-0"
 					aria-label="Release mob"
 					onclick={onReleaseMob}
-					title={isTagEntryMode ? 'Clear tag' : 'Release mob'}
+					title="Release mob"
 				>
 					{releasing ? '...' : 'x'}
 				</button>
 			{/if}
 		</div>
+
+		{#if facetError}
+			<div class="shrink-0 max-w-[180px] text-[10px] leading-tight text-orange-300/90 border-r border-white/10 pr-3">
+				{facetError}
+			</div>
+		{/if}
 
 		<!-- Trifecta/Weapon Section. No own separator; the adjacent armour section
 			 owns the boundary via its left border. -->
@@ -281,8 +424,23 @@
 					</div>
 				</div>
 			{:else}
-				<div class="text-xs {data.currentTool ? 'text-white/70' : 'text-white/20'} truncate max-w-[120px]">
-					{data.currentTool || '—'}
+				<div class="flex flex-col min-w-0">
+					<div class="text-xs {data.currentTool ? 'text-white/70' : 'text-white/20'} truncate max-w-[120px]">
+						{data.currentTool || '—'}
+					</div>
+					{#if activityLabel}
+						<!-- Derived, never declared: the held tool implies which
+							 activity the next action records as. What actually gets
+							 recorded still follows the loot evidence, so this reads
+							 as feedback the user can catch disagreeing. -->
+						<div
+							class="text-[9px] leading-tight uppercase tracking-wider text-white/35 whitespace-nowrap"
+							title="Held tool: recording as {activityLabel}"
+							data-testid="activity-feedback"
+						>
+							{activityLabel}
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -416,6 +574,45 @@
 		background: rgba(10, 14, 23, 0.85);
 		backdrop-filter: blur(16px) saturate(150%);
 		border: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.facet-label {
+		font-size: 9px;
+		font-weight: 700;
+		line-height: 1;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: rgba(255, 255, 255, 0.3);
+		padding-left: 4px;
+		margin-bottom: 2px;
+	}
+
+	.facet-chip {
+		display: flex;
+		align-items: center;
+		padding: 2px 8px;
+		border-radius: 4px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.05);
+		color: rgba(255, 255, 255, 0.7);
+		font-size: 11px;
+		line-height: 1.35;
+		cursor: pointer;
+		transition: all 150ms ease-out;
+	}
+	.facet-chip:hover:not(:disabled) {
+		background: rgba(255, 255, 255, 0.1);
+		color: rgba(255, 255, 255, 0.9);
+		border-color: rgba(255, 255, 255, 0.25);
+	}
+	.facet-chip-open {
+		background: rgba(56, 189, 248, 0.2);
+		border-color: rgba(56, 189, 248, 0.4);
+		color: rgb(125, 211, 252);
+	}
+	.facet-chip:disabled {
+		opacity: 0.35;
+		cursor: default;
 	}
 
 	.release-btn {

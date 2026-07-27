@@ -53,6 +53,6 @@ export type {
 	SkillLevel,
 	StatProfession,
 	StockPosition,
-	TagComparison,
+	NameComparison,
 	TimelineDay,
 } from '$lib/api/commands.gen';

@@ -1,15 +1,15 @@
 import { getPreference, setPreference } from './preferences';
 
-export type ArchiveKind = 'mob' | 'tag';
+export type ArchiveKind = 'mob' | 'name';
 
 export type ActivityArchiveState = {
 	mobs: string[];
-	tags: string[];
+	names: string[];
 };
 
 const KEY = 'activityArchive';
 
-const EMPTY: ActivityArchiveState = { mobs: [], tags: [] };
+const EMPTY: ActivityArchiveState = { mobs: [], names: [] };
 
 let archiveState = $state<ActivityArchiveState>(EMPTY);
 
@@ -31,10 +31,14 @@ function sanitise(value: unknown): ActivityArchiveState {
 			? Array.from(new Set(x.filter((s): s is string => typeof s === 'string')))
 			: [];
 	// A stored `weapons` bucket from the retired per-weapon comparison is
-	// dropped here on read and gone on the next persisted write.
+	// dropped here on read and gone on the next persisted write. A stored
+	// `tags` bucket is the designated axis under its former name, so its
+	// entries carry forward: a legacy tag IS the session name migration
+	// 0018 lifted onto the session row.
+	const legacyTags = arr((v as { tags?: unknown }).tags);
 	return {
 		mobs: arr(v.mobs),
-		tags: arr(v.tags),
+		names: Array.from(new Set([...arr(v.names), ...legacyTags])),
 	};
 }
 
@@ -44,7 +48,7 @@ export async function initActivityArchive(): Promise<void> {
 }
 
 function bucketKey(kind: ArchiveKind): keyof ActivityArchiveState {
-	return kind === 'mob' ? 'mobs' : 'tags';
+	return kind === 'mob' ? 'mobs' : 'names';
 }
 
 export async function archive(kind: ArchiveKind, name: string): Promise<void> {

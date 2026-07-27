@@ -8,6 +8,7 @@
 
 import type {
 	HarvestGuardrailAlert,
+	ToolActivity,
 	NotableEventCategory,
 	NotableEventType,
 	RecentEvent,
@@ -44,6 +45,10 @@ export interface TrackingLive {
 	skillBoostPercent?: number | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
+	/** What the held tool implies the next action records as. */
+	currentActivity?: ToolActivity | null;
+	/** The quest or playlist the active session declares. */
+	questName?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
 	recentEvents?: {
@@ -92,9 +97,11 @@ export const getTrackingSnapshot = guideSwapped(
 	commands.demoTrackingSnapshot,
 );
 
-export async function getTrackingTagSuggestions(query: string): Promise<string[]> {
+/** Prior session names matching the query, most-used first: reusing a
+ * name is what keeps the designated analytics axis grouping cleanly. */
+export async function getSessionNameSuggestions(query: string): Promise<string[]> {
 	if (!query.trim()) return [];
-	return commands.trackingTagSuggestions(query.trim(), null);
+	return commands.trackingSessionNameSuggestions(query.trim(), null);
 }
 
 export async function getManualMobSuggestions(query: string) {

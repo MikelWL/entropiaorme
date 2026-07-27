@@ -51,7 +51,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 40] = [
+const SNAPSHOT_FIELDS: [&str; 42] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -61,6 +61,8 @@ const SNAPSHOT_FIELDS: [&str; 40] = [
     "skillBoostPercent",
     "currentMob",
     "currentTool",
+    "currentActivity",
+    "questName",
     "trifectaAttribution",
     "recentEvents",
     "session_id",
@@ -112,6 +114,16 @@ fn edit_error(context: &'static str) -> impl Fn(EditError) -> ApiError {
 // enums so the generated TypeScript carries the literal unions and the
 // compiler owns the vocabulary on both sides of the boundary. Each
 // variant's serialised form is byte-identical to the string it replaces.
+
+/// The activity family the held tool implies the next action belongs
+/// to: the overlay's derived-activity feedback ("this is Tree Cutting"
+/// versus "this is Hunting"). Absent when no tool is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolActivity {
+    Hunting,
+    Treecutting,
+}
 
 /// The session state a tracking readout reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -429,6 +441,14 @@ pub struct TrackingSnapshot {
     pub current_mob: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_tool: Option<String>,
+    /// What the held tool implies the next action is recorded as.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_activity: Option<ToolActivity>,
+    /// The quest or playlist the active session declares, resolved for
+    /// display. Absent when nothing is declared (or the link was
+    /// declined), so the control never claims a binding it lacks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quest_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trifecta_attribution: Option<TrifectaAttribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -699,15 +719,15 @@ impl Api {
         }
     }
 
-    /// Free-text tag autocomplete over species-less kills.
-    pub async fn tracking_tag_suggestions(
+    /// Session-name autocomplete over the names already in the history.
+    pub async fn tracking_session_name_suggestions(
         &self,
         q: String,
         limit: Option<i64>,
     ) -> Result<Vec<String>, ApiError> {
-        tag_suggestions_impl(&self.db, &q, limit.unwrap_or(10))
+        session_name_suggestions_impl(&self.db, &q, limit.unwrap_or(10))
             .await
-            .map_err(ApiError::internal("tracking tag suggestions"))
+            .map_err(ApiError::internal("tracking session name suggestions"))
     }
 
     /// Catalogue mob-name autocomplete for the declared-mob typeahead.
@@ -1237,6 +1257,13 @@ pub(crate) async fn build_snapshot_value(
         Some(tool) => Value::String(tool.clone()),
         None => Value::Null,
     };
+    // The derived-activity feedback: what the held tool implies the
+    // next action is recorded as (absent when no tool is known).
+    let current_activity = match &readout.current_tool {
+        Some(_) if readout.current_tool_is_harvest => Value::String("treecutting".into()),
+        Some(_) => Value::String("hunting".into()),
+        None => Value::Null,
+    };
     // The facet pair serialises null for "not declared" (the projection
     // drops the key): idle reads the configured next-session values,
     // active reads the session's snapshot.
@@ -1249,6 +1276,35 @@ pub(crate) async fn build_snapshot_value(
         None => Value::Null,
     };
 
+    // The declared quest facet, read from the persisted curated link so a
+    // reopened overlay (or a restarted app) shows the binding that
+    // actually stands rather than a locally-remembered one.
+    let quest_name = match &readout.active {
+        None => Value::Null,
+        Some(active) => {
+            let session_id = active.session_id.clone();
+            let resolved: Option<String> = db
+                .with_reader(move |conn| {
+                    use rusqlite::OptionalExtension as _;
+                    Ok(conn
+                        .query_row(
+                            "SELECT COALESCE(q.name, p.name) \
+                             FROM session_quest_analytics_links l \
+                             LEFT JOIN quests q ON q.id = l.quest_id \
+                             LEFT JOIN quest_playlists p ON p.id = l.playlist_id \
+                             WHERE l.session_id = ? AND l.link_type IN ('quest', 'playlist')",
+                            rusqlite::params![session_id],
+                            |row| row.get::<_, Option<String>>(0),
+                        )
+                        .optional()?
+                        .flatten())
+                })
+                .await
+                .map_err(ApiError::internal("snapshot quest link"))?;
+            resolved.map(Value::String).unwrap_or(Value::Null)
+        }
+    };
+
     let value = match &readout.active {
         None => {
             let (current_mob, _) = configured_manual_label(config);
@@ -1259,6 +1315,7 @@ pub(crate) async fn build_snapshot_value(
                 "repairOcrEnabled": config.repair_ocr_enabled,
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
+                "currentActivity": current_activity,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(Some(config.session_name.trim())),
                 "skillBoostPercent": boost_value(Some(config.skill_boost_percent)),
@@ -1331,6 +1388,8 @@ pub(crate) async fn build_snapshot_value(
                 "repairOcrEnabled": config.repair_ocr_enabled,
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
+                "currentActivity": current_activity,
+                "questName": quest_name,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "skillBoostPercent": boost_value(active.skill_boost_percent),

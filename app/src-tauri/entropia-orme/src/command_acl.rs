@@ -173,7 +173,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_start",
     "tracking_stop",
     "tracking_session_config",
-    "tracking_tag_suggestions",
+    "tracking_session_name_suggestions",
 ];
 
 pub const CARTOGRAPHY_COMMANDS: &[&str] = &[

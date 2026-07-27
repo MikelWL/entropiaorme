@@ -40,9 +40,9 @@ function hunting(): AnalyticsHunting {
 				lootRate: 0.8,
 			},
 		],
-		tagComparisons: [
+		nameComparisons: [
 			{
-				tagName: 'team-hunt',
+				sessionName: 'ARIS Dailies',
 				sessions: 2,
 				kills: 60,
 				hours: 1.5,
@@ -57,7 +57,7 @@ function hunting(): AnalyticsHunting {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockedPrefs.setPreference.mockResolvedValue(undefined);
-	activityArchive.current = { mobs: [], tags: [] };
+	activityArchive.current = { mobs: [], names: [] };
 });
 
 describe('loadData', () => {
@@ -117,11 +117,11 @@ describe('archive split', () => {
 		expect(model.confirmKey).toBeNull();
 		expect(model.sortedMobs.map((m) => m.mobName)).toEqual(['Snablesnot']);
 		// The other kind is untouched.
-		expect(model.sortedTags).toHaveLength(1);
+		expect(model.sortedNames).toHaveLength(1);
 
 		model.viewMode = 'archive';
 		expect(model.sortedMobs.map((m) => m.mobName)).toEqual(['Atrox Young']);
-		expect(model.sortedTags).toHaveLength(0);
+		expect(model.sortedNames).toHaveLength(0);
 
 		await model.onUnarchiveConfirm('mob', 'Atrox Young');
 		expect(model.sortedMobs).toHaveLength(0);

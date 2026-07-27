@@ -76,7 +76,7 @@ pub(super) enum TrackerMsg {
     Inspect(Box<dyn FnOnce(&mut TrackerActor) + Send>),
 }
 
-type AggregateReply = oneshot::Sender<(Option<String>, Option<SessionAggregate>)>;
+type AggregateReply = oneshot::Sender<(Option<String>, bool, Option<SessionAggregate>)>;
 
 tokio::task_local! {
     /// Set while the actor dispatches, so a bus subscriber reacting to

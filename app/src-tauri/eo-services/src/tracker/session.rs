@@ -149,10 +149,11 @@ pub(super) struct SessionAggregate {
 
 impl TrackerActor {
     /// The in-memory aggregation over the live session: the detected
-    /// tool plus the aggregate (None when idle).
-    pub(super) fn aggregate(&self) -> (Option<String>, Option<SessionAggregate>) {
+    /// tool, whether the hand item is a harvesting tool, plus the
+    /// aggregate (None when idle).
+    pub(super) fn aggregate(&self) -> (Option<String>, bool, Option<SessionAggregate>) {
         let Some(active) = self.session.active() else {
-            return (None, None);
+            return (None, self.hand_is_harvest, None);
         };
         // The displayed hand item: the harvesting tool when it was the
         // last hand equip, otherwise the hotbar weapon.
@@ -302,7 +303,7 @@ impl TrackerActor {
             guardrail_mismatch: active.guardrail_mismatch.clone(),
             warnings: active.warnings.clone(),
         };
-        (current_tool, Some(aggregate))
+        (current_tool, self.hand_is_harvest, Some(aggregate))
     }
 
     /// Prime the tracker with a fully-formed demo session, bypassing
@@ -644,10 +645,11 @@ impl HuntTracker {
     /// the actor; the two session-scoped reads (skill-gain total,
     /// notable-event feed) run here, keyed on the captured session id.
     pub async fn snapshot(&self) -> Result<TrackingReadout, DbError> {
-        let (current_tool, aggregate) = self.aggregate().await;
+        let (current_tool, current_tool_is_harvest, aggregate) = self.aggregate().await;
         let Some(aggregated) = aggregate else {
             return Ok(TrackingReadout {
                 current_tool,
+                current_tool_is_harvest,
                 active: None,
             });
         };
@@ -745,6 +747,7 @@ impl HuntTracker {
         };
         Ok(TrackingReadout {
             current_tool,
+            current_tool_is_harvest,
             active: Some(active),
         })
     }

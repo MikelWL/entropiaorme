@@ -37,41 +37,41 @@ describe('sanitise (via initActivityArchive)', () => {
 		getPreference.mockResolvedValue(null);
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(mod.activityArchive.current).toEqual({ mobs: [], tags: [] });
+		expect(mod.activityArchive.current).toEqual({ mobs: [], names: [] });
 	});
 
 	it('coerces undefined from the store into the empty shape', async () => {
 		getPreference.mockResolvedValue(undefined);
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(mod.activityArchive.current).toEqual({ mobs: [], tags: [] });
+		expect(mod.activityArchive.current).toEqual({ mobs: [], names: [] });
 	});
 
 	it('drops a stored weapons bucket from the retired per-weapon comparison', async () => {
 		getPreference.mockResolvedValue({
 			mobs: ['atrox'],
-			tags: [],
+			names: [],
 			weapons: ['ArMatrix LR-69'],
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(mod.activityArchive.current).toEqual({ mobs: ['atrox'], tags: [] });
+		expect(mod.activityArchive.current).toEqual({ mobs: ['atrox'], names: [] });
 	});
 
 	it('replaces a non-array bucket with an empty array', async () => {
 		getPreference.mockResolvedValue({
 			mobs: 'not-an-array',
-			tags: 42,
+			names: 42,
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
-		expect(mod.activityArchive.current).toEqual({ mobs: [], tags: [] });
+		expect(mod.activityArchive.current).toEqual({ mobs: [], names: [] });
 	});
 
 	it('filters out non-string members from a bucket', async () => {
 		getPreference.mockResolvedValue({
 			mobs: ['atrox', 1, null, undefined, { x: 1 }, 'molisk', true],
-			tags: [],
+			names: [],
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
@@ -81,7 +81,7 @@ describe('sanitise (via initActivityArchive)', () => {
 	it('dedupes members via Set, preserving first-occurrence order', async () => {
 		getPreference.mockResolvedValue({
 			mobs: ['atrox', 'molisk', 'atrox', 'daikiba', 'molisk'],
-			tags: [],
+			names: [],
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
@@ -95,7 +95,7 @@ describe('sanitise (via initActivityArchive)', () => {
 		expect(getPreference).toHaveBeenCalledTimes(1);
 		expect(getPreference).toHaveBeenCalledWith('activityArchive', {
 			mobs: [],
-			tags: [],
+			names: [],
 		});
 	});
 });
@@ -107,11 +107,11 @@ describe('archive', () => {
 		await mod.initActivityArchive();
 
 		await mod.archive('mob', 'atrox');
-		await mod.archive('tag', 'event:beacon');
+		await mod.archive('name', 'event:beacon');
 
 		expect(mod.activityArchive.current).toEqual({
 			mobs: ['atrox'],
-			tags: ['event:beacon'],
+			names: ['event:beacon'],
 		});
 		expect(setPreference).toHaveBeenCalledTimes(2);
 	});
@@ -126,12 +126,12 @@ describe('archive', () => {
 		expect(setPreference).toHaveBeenCalledTimes(1);
 		expect(setPreference).toHaveBeenCalledWith('activityArchive', {
 			mobs: ['atrox'],
-			tags: [],
+			names: [],
 		});
 	});
 
 	it('appends to the end of an existing bucket', async () => {
-		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [] });
+		getPreference.mockResolvedValue({ mobs: ['atrox'], names: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
 
@@ -141,7 +141,7 @@ describe('archive', () => {
 	});
 
 	it('short-circuits on an already-present name: no state change, no persist', async () => {
-		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [] });
+		getPreference.mockResolvedValue({ mobs: ['atrox'], names: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
 		const before = mod.activityArchive.current;
@@ -158,7 +158,7 @@ describe('unarchive', () => {
 	it('removes a present name, persists once, and keeps siblings', async () => {
 		getPreference.mockResolvedValue({
 			mobs: ['atrox', 'molisk', 'daikiba'],
-			tags: [],
+			names: [],
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
@@ -169,12 +169,12 @@ describe('unarchive', () => {
 		expect(setPreference).toHaveBeenCalledTimes(1);
 		expect(setPreference).toHaveBeenCalledWith('activityArchive', {
 			mobs: ['atrox', 'daikiba'],
-			tags: [],
+			names: [],
 		});
 	});
 
 	it('short-circuits on an absent name: no state change, no persist', async () => {
-		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [] });
+		getPreference.mockResolvedValue({ mobs: ['atrox'], names: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
 		const before = mod.activityArchive.current;
@@ -188,16 +188,16 @@ describe('unarchive', () => {
 	it('routes removal to the kind-specific bucket', async () => {
 		getPreference.mockResolvedValue({
 			mobs: ['shared'],
-			tags: ['shared'],
+			names: ['shared'],
 		});
 		const mod = await freshModule();
 		await mod.initActivityArchive();
 
-		await mod.unarchive('tag', 'shared');
+		await mod.unarchive('name', 'shared');
 
 		expect(mod.activityArchive.current).toEqual({
 			mobs: ['shared'],
-			tags: [],
+			names: [],
 		});
 	});
 });
@@ -218,7 +218,7 @@ describe('immutability', () => {
 	});
 
 	it('archive produces a new bucket array reference (no in-place push)', async () => {
-		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [] });
+		getPreference.mockResolvedValue({ mobs: ['atrox'], names: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
 		const before = mod.activityArchive.current;
@@ -231,7 +231,7 @@ describe('immutability', () => {
 	});
 
 	it('unarchive produces a new state object reference', async () => {
-		getPreference.mockResolvedValue({ mobs: ['atrox'], tags: [] });
+		getPreference.mockResolvedValue({ mobs: ['atrox'], names: [] });
 		const mod = await freshModule();
 		await mod.initActivityArchive();
 		const before = mod.activityArchive.current;
@@ -247,21 +247,21 @@ describe('immutability', () => {
 describe('isArchived', () => {
 	it('reports membership for the matching bucket', async () => {
 		const mod = await freshModule();
-		const state = { mobs: ['atrox'], tags: ['event:beacon'] };
+		const state = { mobs: ['atrox'], names: ['event:beacon'] };
 		expect(mod.isArchived(state, 'mob', 'atrox')).toBe(true);
-		expect(mod.isArchived(state, 'tag', 'event:beacon')).toBe(true);
+		expect(mod.isArchived(state, 'name', 'event:beacon')).toBe(true);
 	});
 
 	it('returns false for a name absent from the queried bucket', async () => {
 		const mod = await freshModule();
-		const state = { mobs: ['atrox'], tags: [] };
+		const state = { mobs: ['atrox'], names: [] };
 		expect(mod.isArchived(state, 'mob', 'molisk')).toBe(false);
 	});
 
-	it('isolates buckets: a mob name is not archived under tag', async () => {
+	it('isolates buckets: a mob name is not archived under the designated axis', async () => {
 		const mod = await freshModule();
-		const state = { mobs: ['atrox'], tags: [] };
+		const state = { mobs: ['atrox'], names: [] };
 		expect(mod.isArchived(state, 'mob', 'atrox')).toBe(true);
-		expect(mod.isArchived(state, 'tag', 'atrox')).toBe(false);
+		expect(mod.isArchived(state, 'name', 'atrox')).toBe(false);
 	});
 });

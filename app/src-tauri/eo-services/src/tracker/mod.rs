@@ -267,7 +267,7 @@ impl HuntTracker {
 
     /// The in-memory aggregate half of the snapshot (see
     /// `session::SessionAggregate`).
-    async fn aggregate(&self) -> (Option<String>, Option<session::SessionAggregate>) {
+    async fn aggregate(&self) -> (Option<String>, bool, Option<session::SessionAggregate>) {
         self.call(|reply| TrackerMsg::Aggregate(Box::new(reply)))
             .await
     }

@@ -826,7 +826,7 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(SessionDetail))),
         },
         CommandSpec {
-            name: "tracking_tag_suggestions",
+            name: "tracking_session_name_suggestions",
             args: vec![
                 ArgSpec {
                     name: "q",

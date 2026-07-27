@@ -70,9 +70,8 @@
 							weaponAttribution: demoTrackingLive.weaponAttribution,
 							trifectaAttribution: demoTrackingLive.trifectaAttribution,
 							repairOcrEnabled: demoTrackingLive.repairOcrEnabled,
-							mobEntryMode: 'mob',
+							sessionName: 'Guide Demo',
 							currentMob: null,
-							mobSource: null,
 							currentTool: null
 						}}
 						status={null}

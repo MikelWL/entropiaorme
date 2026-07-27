@@ -1,5 +1,5 @@
 /**
- * Hunting-tab view model: the per-mob and per-tag comparison data, the
+ * Hunting-tab view model: the per-mob and per-session-name comparison data, the
  * archive/main view split with its confirm flow, and the sorted
  * projections. Presentation lives in the tab component; it composes over
  * this state.
@@ -13,7 +13,7 @@ import {
 	unarchive as unarchiveItem,
 } from '$lib/activityArchive.svelte';
 import { getAnalyticsHunting, type HuntingData } from '$lib/api';
-import type { MobComparison, TagComparison } from '$lib/types/analytics';
+import type { MobComparison, NameComparison } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 
 export type SortDir = 'asc' | 'desc';
@@ -55,8 +55,8 @@ export const mobColumns = [
 	{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
 ];
 
-export const tagColumns = [
-	{ key: 'tagName', label: 'Tag', sortable: true, widthClass: 'w-[26%]' },
+export const nameColumns = [
+	{ key: 'sessionName', label: 'Session', sortable: true, widthClass: 'w-[26%]' },
 	{
 		key: 'sessions',
 		label: 'Sessions',
@@ -160,18 +160,18 @@ export function createHuntingModel() {
 		return sortComparisons(filtered, mobSortKey, mobSortDir);
 	});
 
-	let tagSortKey = $state<(keyof TagComparison & string) | undefined>('cycled');
-	let tagSortDir = $state<SortDir>('desc');
+	let nameSortKey = $state<(keyof NameComparison & string) | undefined>('cycled');
+	let nameSortDir = $state<SortDir>('desc');
 
-	const sortedTags = $derived.by(() => {
+	const sortedNames = $derived.by(() => {
 		if (!data) return [];
-		const filtered = data.tagComparisons.filter((t) =>
+		const filtered = data.nameComparisons.filter((row) =>
 			viewMode === 'archive'
-				? isArchived(activityArchive.current, 'tag', t.tagName)
-				: !isArchived(activityArchive.current, 'tag', t.tagName),
+				? isArchived(activityArchive.current, 'name', row.sessionName)
+				: !isArchived(activityArchive.current, 'name', row.sessionName),
 		);
-		if (!tagSortKey) return filtered;
-		return sortComparisons(filtered, tagSortKey, tagSortDir);
+		if (!nameSortKey) return filtered;
+		return sortComparisons(filtered, nameSortKey, nameSortDir);
 	});
 
 	return {
@@ -213,20 +213,20 @@ export function createHuntingModel() {
 			return sortedMobs;
 		},
 
-		get tagSortKey() {
-			return tagSortKey;
+		get nameSortKey() {
+			return nameSortKey;
 		},
-		set tagSortKey(value: (keyof TagComparison & string) | undefined) {
-			tagSortKey = value;
+		set nameSortKey(value: (keyof NameComparison & string) | undefined) {
+			nameSortKey = value;
 		},
-		get tagSortDir() {
-			return tagSortDir;
+		get nameSortDir() {
+			return nameSortDir;
 		},
-		set tagSortDir(value: SortDir) {
-			tagSortDir = value;
+		set nameSortDir(value: SortDir) {
+			nameSortDir = value;
 		},
-		get sortedTags() {
-			return sortedTags;
+		get sortedNames() {
+			return sortedNames;
 		},
 
 		loadData,

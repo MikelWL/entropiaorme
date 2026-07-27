@@ -7,12 +7,15 @@
 		releaseMob,
 		getOverlayPosition,
 		saveOverlayPosition,
-		getTrackingTagSuggestions,
-		lockTrackingTag,
+		getSessionNameSuggestions,
+		setSessionConfig,
 		getManualMobSuggestions,
 		lockManualMob,
 		getSessionQuestLinkSuggestion,
 		decideSessionQuestLink,
+		declareSessionQuest,
+		getQuests,
+		getPlaylists,
 		updateSettings,
 		type TrackingLive,
 		type TrackingStatus,
@@ -24,7 +27,6 @@
 	import { createSnapshotStore } from '$lib/realtime/snapshotStore.svelte';
 	import { createPostSessionFlow } from '$lib/features/tracking/postSession.svelte';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
-	import type { MobTrackingMode } from '$lib/types/settings';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { PhysicalPosition } from '@tauri-apps/api/dpi';
 	import { listen } from '@tauri-apps/api/event';
@@ -98,12 +100,29 @@
 	let starting = $state(false);
 
 	let mobQuery = $state('');
-	// The mob/tag lookup's error channel, shared between the typeahead (search
-	// failures, mirrored in by the presenter effect below) and the lock/apply
-	// actions.
+	// The mob lookup's error channel, shared between the typeahead (search
+	// failures, mirrored in by the presenter effect below) and the declare
+	// action.
 	let mobError = $state<string | null>(null);
 	let selectingMob = $state(false);
 	let mobCloseTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// The session facets: the designated name, the skill boost, and the
+	// declared quest. Each is independent and optional; none blocks another.
+	let nameQuery = $state('');
+	let nameInput: HTMLInputElement | null = $state(null);
+	let nameInputFocused = $state(false);
+	let nameCloseTimer: ReturnType<typeof setTimeout> | undefined;
+	let savingName = $state(false);
+	// The boost's edit buffer, only meaningful while idle (the backend
+	// refuses a change mid-session, so the strip renders it read-only there).
+	let boostDraft = $state('');
+	let savingBoost = $state(false);
+	let questSaving = $state(false);
+	let questOptions = $state<{ id: number; name: string; isPlaylist: boolean }[]>([]);
+	// One channel for every facet write failure; the strip renders it beside
+	// the controls rather than swallowing a refusal silently.
+	let facetError = $state<string | null>(null);
 
 	// The two satellite popovers this window drives. The failure messages keep
 	// the overlay's established wording (they render in the strip).
@@ -185,6 +204,12 @@
 		mobCloseTimer = undefined;
 	}
 
+	function clearNameCloseTimer() {
+		if (!nameCloseTimer) return;
+		clearTimeout(nameCloseTimer);
+		nameCloseTimer = undefined;
+	}
+
 	function describeOverlayMenuError(error: unknown) {
 		if (error instanceof ApiError || error instanceof Error) return error.message;
 		if (typeof error === 'string' && error.trim()) return error;
@@ -231,30 +256,58 @@
 
 	function buildMobMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trimmedQuery = mobQuery.trim();
-		const shouldShow = mobLoading
-			|| !!mobError
-			|| mobSuggestions.length > 0
-			|| tagSuggestions.length > 0
-			|| !!trimmedQuery;
+		const shouldShow = mobLoading || !!mobError || mobSuggestions.length > 0 || !!trimmedQuery;
 		if (!shouldShow) return null;
 
 		const labels = mobLoading
 			? ['Searching...']
 			: mobError
 				? [mobError]
-				: showTagInput
-					? (tagSuggestions.length > 0 ? tagSuggestions : [`Press Enter to set "${trimmedQuery}"`])
-					: (mobSuggestions.length > 0 ? mobSuggestions.map((option) => option.display) : ['No matches']);
+				: (mobSuggestions.length > 0 ? mobSuggestions.map((option) => option.display) : ['No matches']);
 
 		return {
 			kind: 'mob',
 			width: computeMenuWidth(anchorWidth, labels, 28),
-			mode: showTagInput ? 'tag' : 'manual',
 			query: trimmedQuery,
 			loading: mobLoading,
 			error: mobError,
-			tagSuggestions,
 			mobSuggestions
+		};
+	}
+
+	function buildNameMenuState(anchorWidth: number): OverlayMenuState | null {
+		const trimmedQuery = nameQuery.trim();
+		const shouldShow = nameLoading || !!nameError || nameSuggestions.length > 0 || !!trimmedQuery;
+		if (!shouldShow) return null;
+
+		const labels = nameLoading
+			? ['Searching...']
+			: nameError
+				? [nameError]
+				: (nameSuggestions.length > 0
+					? nameSuggestions
+					: [`Press Enter to name it "${trimmedQuery}"`]);
+
+		return {
+			kind: 'name',
+			width: computeMenuWidth(anchorWidth, labels, 28),
+			query: trimmedQuery,
+			loading: nameLoading,
+			error: nameError,
+			suggestions: nameSuggestions
+		};
+	}
+
+	function buildQuestMenuState(anchorWidth: number): OverlayMenuState | null {
+		const labels = questOptions.length > 0
+			? questOptions.map((option) => option.name)
+			: ['No active quests'];
+		return {
+			kind: 'quest',
+			width: computeMenuWidth(anchorWidth, labels, 88),
+			loading: false,
+			error: null,
+			options: questOptions
 		};
 	}
 
@@ -284,6 +337,17 @@
 		};
 	}
 
+	/** Rows the popup will render, which sets its window height. Every
+	 * kind falls back to one row: loading, error, and empty states each
+	 * occupy exactly one line (the popup route agrees). */
+	function menuRowCount(state: OverlayMenuState): number {
+		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
+		if (state.loading || state.error) return 1;
+		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
+		if (state.kind === 'mob') return Math.max(1, state.mobSuggestions.length);
+		return Math.max(1, state.options.length);
+	}
+
 	async function showOverlayMenu(
 		kind: OverlayMenuKind,
 		anchor: HTMLElement,
@@ -297,15 +361,7 @@
 				menuWindow.ensure(),
 				anchorBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 			]);
-			const height = state.kind === 'trifecta'
-				? computeMenuHeight(state.options.length)
-				: computeMenuHeight(
-					state.loading || state.error
-						? 1
-						: state.mode === 'tag'
-							? Math.max(1, state.tagSuggestions.length)
-							: Math.max(1, state.mobSuggestions.length)
-				);
+			const height = computeMenuHeight(menuRowCount(state));
 
 			await menuWindow.show(
 				state,
@@ -326,6 +382,9 @@
 		if (overlayMenuKind === 'mob') {
 			clearMobCloseTimer();
 		}
+		if (overlayMenuKind === 'name') {
+			clearNameCloseTimer();
+		}
 		overlayMenuKind = null;
 		await menuWindow.hide();
 	}
@@ -342,6 +401,54 @@
 		clearMobCloseTimer();
 		if (overlayMenuKind !== 'mob') return;
 		await hideOverlayMenu();
+	}
+
+	async function openNameMenu() {
+		if (!nameInput) return;
+		const state = buildNameMenuState(nameInput.getBoundingClientRect().width);
+		if (!state) return;
+		overlayMenuLaunchError = null;
+		await showOverlayMenu('name', nameInput, state);
+	}
+
+	async function closeNameMenu() {
+		clearNameCloseTimer();
+		if (overlayMenuKind !== 'name') return;
+		await hideOverlayMenu();
+	}
+
+	/** The quest picker's options: active playlists first (a playlist is
+	 * the coarser declaration), then active quests. Both are read fresh at
+	 * open so a quest created since the overlay appeared is offered. */
+	async function loadQuestOptions() {
+		const [playlists, quests] = await Promise.all([getPlaylists(), getQuests()]);
+		questOptions = [
+			...playlists.map((playlist) => ({
+				id: Number(playlist.id),
+				name: playlist.name,
+				isPlaylist: true
+			})),
+			...quests.map((quest) => ({ id: Number(quest.id), name: quest.name, isPlaylist: false }))
+		];
+	}
+
+	async function toggleQuestMenu(anchor: HTMLButtonElement) {
+		if (overlayMenuKind === 'quest') {
+			await hideOverlayMenu();
+			return;
+		}
+		facetError = null;
+		try {
+			await loadQuestOptions();
+		} catch (error) {
+			facetError = error instanceof ApiError || error instanceof Error
+				? error.message
+				: 'Failed to read quests';
+			return;
+		}
+		const state = buildQuestMenuState(anchor.getBoundingClientRect().width);
+		if (!state) return;
+		await showOverlayMenu('quest', anchor, state, { focusPopup: true });
 	}
 
 	async function toggleTrifectaMenu(anchor: HTMLButtonElement) {
@@ -605,9 +712,15 @@
 					return;
 				}
 
-				if (event.payload.kind === 'tag') {
+				if (event.payload.kind === 'name') {
 					overlayMenuKind = null;
-					await handleApplyTag(event.payload.tag);
+					await handleApplyName(event.payload.name);
+					return;
+				}
+
+				if (event.payload.kind === 'quest') {
+					overlayMenuKind = null;
+					await handleDeclareQuest(event.payload.id, event.payload.isPlaylist);
 					return;
 				}
 
@@ -625,11 +738,13 @@
 				if (disposed) return;
 				overlayMenuKind = null;
 				clearMobCloseTimer();
+				clearNameCloseTimer();
 			});
 
 			unlistenInteract = await listen(OVERLAY_MENU_INTERACT_EVENT, async () => {
-				if (disposed || overlayMenuKind !== 'mob') return;
-				clearMobCloseTimer();
+				if (disposed) return;
+				if (overlayMenuKind === 'mob') clearMobCloseTimer();
+				if (overlayMenuKind === 'name') clearNameCloseTimer();
 			});
 		})();
 
@@ -683,10 +798,12 @@
 			weaponAttribution: snap.weaponAttribution,
 			repairOcrEnabled: snap.repairOcrEnabled,
 			endOfSessionArmourReminderEnabled: snap.endOfSessionArmourReminderEnabled,
-			mobEntryMode: snap.mobEntryMode,
+			sessionName: snap.sessionName,
+			skillBoostPercent: snap.skillBoostPercent,
 			currentMob: snap.currentMob,
-			mobSource: snap.mobSource,
 			currentTool: snap.currentTool,
+			currentActivity: snap.currentActivity,
+			questName: snap.questName,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
 		};
@@ -703,33 +820,20 @@
 	const isTrifectaAttribution = $derived(data.weaponAttribution === 'trifecta');
 
 	const armourSessionId = $derived(data.sessionId ?? flow.lastSessionId);
-	const isTagEntryMode = $derived(data.mobEntryMode === 'tag');
-	const mobLabel = $derived(isTagEntryMode ? 'Tag' : 'Mob');
-	const showTagInput = $derived(
-		(data.status === 'active' || data.status === 'idle')
-			&& isTagEntryMode
-			&& !data.currentMob
+	const showManualInput = $derived(
+		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	const showManualMobInput = $derived(
-		(data.status === 'active' || data.status === 'idle')
-			&& !isTagEntryMode
-			&& !data.currentMob
+	const showNameInput = $derived(
+		(data.status === 'active' || data.status === 'idle') && !data.sessionName
 	);
-	const showManualInput = $derived(showTagInput || showManualMobInput);
 
-	// The mob/tag lookup: a debounced typeahead over whichever endpoint the
-	// entry mode selects, its results split back into the two suggestion lists
-	// by shape (tag suggestions are bare strings). Search failures are mapped
-	// to the overlay's established wording before the typeahead records them.
-	const mobTypeahead = createTypeahead<string | ManualMobSuggestion>({
+	// Two independent debounced typeaheads, one per free-text facet: the
+	// declared mob over the catalogue, the session name over the names
+	// already in the history. They no longer share an endpoint because the
+	// facets no longer exclude one another. Search failures are mapped to
+	// the overlay's established wording before the typeahead records them.
+	const mobTypeahead = createTypeahead<ManualMobSuggestion>({
 		search: async (query) => {
-			if (showTagInput) {
-				try {
-					return await getTrackingTagSuggestions(query);
-				} catch (error) {
-					throw new Error(error instanceof ApiError ? error.message : 'Tag lookup failed');
-				}
-			}
 			try {
 				return await getManualMobSuggestions(query);
 			} catch (error) {
@@ -739,19 +843,27 @@
 		debounceMs: 120,
 		minLength: 1
 	});
+	const nameTypeahead = createTypeahead<string>({
+		search: async (query) => {
+			try {
+				return await getSessionNameSuggestions(query);
+			} catch (error) {
+				throw new Error(error instanceof ApiError ? error.message : 'Name lookup failed');
+			}
+		},
+		debounceMs: 120,
+		minLength: 1
+	});
 
-	const tagSuggestions = $derived(
-		mobTypeahead.results.filter((item): item is string => typeof item === 'string')
-	);
-	const mobSuggestions = $derived(
-		mobTypeahead.results.filter((item): item is ManualMobSuggestion => typeof item !== 'string')
-	);
+	const mobSuggestions = $derived(mobTypeahead.results);
 	const mobLoading = $derived(mobTypeahead.loading);
+	const nameSuggestions = $derived(nameTypeahead.results);
+	const nameLoading = $derived(nameTypeahead.loading);
+	let nameError = $state<string | null>(null);
 
-	// Drive the typeahead from the input state. Hiding the input or emptying
-	// the query suspends the search and closes the menu, keeping the typed
-	// text; a tag/manual mode flip re-queries the unchanged text against the
-	// new endpoint (dropping any in-flight response from the old one).
+	// Drive each typeahead from its input state. Hiding the input or
+	// emptying the query suspends the search and closes that menu, keeping
+	// the typed text.
 	$effect(() => {
 		if (!showManualInput) {
 			mobTypeahead.cancel();
@@ -768,8 +880,24 @@
 			return;
 		}
 
-		void showTagInput;
 		mobTypeahead.refresh();
+	});
+
+	$effect(() => {
+		if (!showNameInput) {
+			nameTypeahead.cancel();
+			void closeNameMenu();
+			return;
+		}
+
+		nameTypeahead.query = nameQuery;
+		if (!nameQuery.trim()) {
+			nameTypeahead.cancel();
+			void closeNameMenu();
+			return;
+		}
+
+		nameTypeahead.refresh();
 	});
 
 	// Present the search lifecycle in the menu window: mirror the typeahead's
@@ -791,15 +919,156 @@
 	});
 
 	$effect(() => {
-		return () => mobTypeahead.destroy();
+		void nameTypeahead.loading;
+		void nameTypeahead.results;
+		nameError = nameTypeahead.error;
+		untrack(() => {
+			if (!showNameInput || !nameQuery.trim()) return;
+			if (nameInputFocused || overlayMenuKind === 'name') {
+				void openNameMenu();
+			}
+		});
 	});
 
-	async function handleMobTrackingModeChange(mode: MobTrackingMode) {
-		if (data.status === 'active' || data.mobEntryMode === mode) return;
+	$effect(() => {
+		return () => {
+			mobTypeahead.destroy();
+			nameTypeahead.destroy();
+		};
+	});
+
+	// Keep the boost buffer in step with the persisted facet while the user
+	// is not editing it (an idle overlay re-read, or the value the last
+	// session left behind). Writing the buffer here cannot loop: the commit
+	// handler is the only other writer and it runs on blur/Enter.
+	$effect(() => {
+		const persisted = data.skillBoostPercent;
+		untrack(() => {
+			if (savingBoost) return;
+			boostDraft = persisted && persisted > 0 ? String(persisted) : '';
+		});
+	});
+
+	/** Write the facet pair as full state (the command takes both, so a
+	 * null clears its facet). The name applies to the live session; the
+	 * boost only moves while idle, and the backend refuses otherwise. */
+	async function writeFacets(name: string | null, boost: number | null) {
+		const result = await setSessionConfig(name, boost);
+		await snapshot.hydrate();
+		return result;
+	}
+
+	function describeFacetError(error: unknown, fallback: string) {
+		return error instanceof ApiError || error instanceof Error ? error.message : fallback;
+	}
+
+	function handleNameFocus() {
+		clearNameCloseTimer();
+		nameInputFocused = true;
+		if (nameQuery.trim() && (nameSuggestions.length > 0 || nameLoading || !!nameError)) {
+			void openNameMenu();
+		}
+	}
+
+	function handleNameBlur() {
+		nameInputFocused = false;
+		clearNameCloseTimer();
+		nameCloseTimer = setTimeout(() => {
+			void closeNameMenu();
+		}, 120);
+	}
+
+	async function handleNameKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			await closeNameMenu();
+			return;
+		}
+		if (event.key !== 'Enter') return;
+		event.preventDefault();
+		await handleApplyName(nameQuery.trim());
+	}
+
+	async function handleApplyName(name: string) {
+		if (!name) return;
+		clearNameCloseTimer();
+		savingName = true;
+		facetError = null;
 		try {
-			await updateSettings({ mob_tracking_mode: mode });
-			data.mobEntryMode = mode;
-		} catch { /* ignore */ }
+			await writeFacets(name, currentBoost());
+			nameQuery = '';
+			nameTypeahead.cancel();
+			await closeNameMenu();
+		} catch (error) {
+			facetError = describeFacetError(error, 'Failed to set session name');
+		}
+		savingName = false;
+	}
+
+	async function handleClearName() {
+		savingName = true;
+		facetError = null;
+		try {
+			await writeFacets(null, currentBoost());
+			nameQuery = '';
+			nameTypeahead.cancel();
+			await closeNameMenu();
+		} catch (error) {
+			facetError = describeFacetError(error, 'Failed to clear session name');
+		}
+		savingName = false;
+	}
+
+	/** The boost currently in force, as the facet write wants it. Reading
+	 * the snapshot (not the draft) keeps a name write from moving the boost
+	 * as a side effect. */
+	function currentBoost(): number | null {
+		const value = data.skillBoostPercent;
+		return value && value > 0 ? value : null;
+	}
+
+	async function handleBoostCommit() {
+		const trimmed = boostDraft.trim();
+		const parsed = trimmed ? Number.parseInt(trimmed, 10) : 0;
+		const next = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+		if (next === currentBoost()) {
+			// Normalise the buffer even when nothing moved, so a stray
+			// "abc" or " 50 " does not linger as if it were persisted.
+			boostDraft = next ? String(next) : '';
+			return;
+		}
+		savingBoost = true;
+		facetError = null;
+		try {
+			await writeFacets(data.sessionName ?? null, next);
+		} catch (error) {
+			facetError = describeFacetError(error, 'Failed to set skill boost');
+		}
+		savingBoost = false;
+		boostDraft = next ? String(next) : '';
+	}
+
+	async function handleDeclareQuest(id: number, isPlaylist: boolean) {
+		questSaving = true;
+		facetError = null;
+		try {
+			await declareSessionQuest(isPlaylist ? null : id, isPlaylist ? id : null);
+			await snapshot.hydrate();
+		} catch (error) {
+			facetError = describeFacetError(error, 'Failed to declare quest');
+		}
+		questSaving = false;
+	}
+
+	async function handleClearQuest() {
+		questSaving = true;
+		facetError = null;
+		try {
+			await declareSessionQuest(null, null);
+			await snapshot.hydrate();
+		} catch (error) {
+			facetError = describeFacetError(error, 'Failed to clear quest');
+		}
+		questSaving = false;
 	}
 
 	async function handleStart() {
@@ -836,7 +1105,7 @@
 	function handleMobFocus() {
 		clearMobCloseTimer();
 		mobInputFocused = true;
-		if (mobQuery.trim() && (mobSuggestions.length > 0 || tagSuggestions.length > 0 || mobLoading || !!mobError)) {
+		if (mobQuery.trim() && (mobSuggestions.length > 0 || mobLoading || !!mobError)) {
 			void openMobMenu();
 		}
 	}
@@ -856,34 +1125,12 @@
 		}
 		if (event.key !== 'Enter') return;
 
-		if (showTagInput) {
-			event.preventDefault();
-			await handleApplyTag(mobQuery.trim());
-			return;
-		}
-
+		// Only a catalogue mob can be declared, so Enter takes the top
+		// match rather than inventing a name the catalogue cannot resolve.
 		if (mobSuggestions.length > 0) {
 			event.preventDefault();
 			await handleSelectMob(mobSuggestions[0]);
 		}
-	}
-
-	async function handleApplyTag(tag: string) {
-		if (!tag) return;
-		clearMobCloseTimer();
-		selectingMob = true;
-		mobError = null;
-		try {
-			await lockTrackingTag(tag);
-			mobQuery = '';
-			mobTypeahead.cancel();
-			overlayMenuLaunchError = null;
-			await closeMobMenu();
-			await snapshot.hydrate();
-		} catch (error) {
-			mobError = error instanceof ApiError ? error.message : 'Failed to set tag';
-		}
-		selectingMob = false;
 	}
 
 	async function handleSelectMob(option: ManualMobSuggestion) {
@@ -898,7 +1145,7 @@
 			await closeMobMenu();
 			await snapshot.hydrate();
 		} catch (error) {
-			mobError = error instanceof ApiError ? error.message : 'Failed to lock mob';
+			mobError = error instanceof ApiError ? error.message : 'Failed to declare mob';
 		}
 		selectingMob = false;
 	}
@@ -919,8 +1166,15 @@
 		{armourCostError}
 		{armourSessionId}
 		mobMenuOpen={overlayMenuKind === 'mob'}
+		nameMenuOpen={overlayMenuKind === 'name'}
+		questMenuOpen={overlayMenuKind === 'quest'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
+		{savingName}
+		{savingBoost}
+		{questSaving}
+		{facetError}
+		questLabel={data.questName ?? null}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}
 		questLinkSuggestion={flow.questLinkSuggestion}
@@ -928,6 +1182,9 @@
 		questLinkSaving={flow.questLinkSaving}
 		bind:mobQuery
 		bind:mobInput
+		bind:nameQuery
+		bind:nameInput
+		bind:boostDraft
 		bind:postSessionArmourButton
 		onStart={handleStart}
 		onStop={flow.requestStop}
@@ -935,11 +1192,17 @@
 		onArmourTrackDecision={flow.decideArmourTrack}
 		attributionWarning={attributionWarning}
 		onDismissAttributionWarning={dismissAttributionWarning}
-		onMobModeChange={handleMobTrackingModeChange}
 		onReleaseMob={handleReleaseMob}
 		onMobFocus={handleMobFocus}
 		onMobBlur={handleMobBlur}
 		onMobKeydown={handleMobKeydown}
+		onNameFocus={handleNameFocus}
+		onNameBlur={handleNameBlur}
+		onNameKeydown={handleNameKeydown}
+		onClearName={handleClearName}
+		onBoostCommit={handleBoostCommit}
+		onQuestTrigger={toggleQuestMenu}
+		onClearQuest={handleClearQuest}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
 		onQuestLinkDecision={flow.decideQuestLink}

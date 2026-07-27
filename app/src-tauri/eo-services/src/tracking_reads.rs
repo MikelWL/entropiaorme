@@ -861,20 +861,26 @@ pub async fn session_exists(db: &Db, session_id: &str) -> Result<bool, DbError> 
 
 // ── Tag suggestions ─────────────────────────────────────────────────
 
-pub async fn tag_suggestions_impl(db: &Db, q: &str, limit: i64) -> Result<Vec<String>, DbError> {
+pub async fn session_name_suggestions_impl(
+    db: &Db,
+    q: &str,
+    limit: i64,
+) -> Result<Vec<String>, DbError> {
     let query = q.trim();
     if query.is_empty() {
         return Ok(Vec::new());
     }
     let bounded = limit.clamp(1, 20);
     let like = format!("%{}%", query.to_lowercase());
+    // Prior session names, most-used first. Reusing a name is what keeps
+    // the designated axis grouping cleanly, so the typeahead offers the
+    // names already in the history rather than inventing near-duplicates.
     db.with_reader(move |conn| {
         let mut stmt = conn.prepare(
-            "SELECT mob_name, COUNT(*) as uses FROM kills \
-             WHERE mob_name IS NOT NULL AND mob_name != 'Unknown' \
-             AND COALESCE(mob_species, '') = '' AND COALESCE(mob_maturity, '') = '' \
-             AND lower(mob_name) LIKE ? \
-             GROUP BY mob_name ORDER BY uses DESC, mob_name ASC LIMIT ?",
+            "SELECT session_name, COUNT(*) as uses FROM tracking_sessions \
+             WHERE session_name IS NOT NULL AND session_name != '' \
+             AND lower(session_name) LIKE ? \
+             GROUP BY session_name ORDER BY uses DESC, session_name ASC LIMIT ?",
         )?;
         let rows = stmt.query_map(rusqlite::params![like, bounded], |row| {
             row.get::<_, String>(0)
@@ -2585,7 +2591,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tag_suggestions_match_free_text_mobs() {
+    async fn session_name_suggestions_match_prior_names() {
         let (_dir, db) = open_db().await;
         db.with_writer(|conn| {
             seed_session(
@@ -2599,12 +2605,37 @@ mod tests {
                 0.0,
                 0.0,
             )?;
-            // Two tag-style kills (no species/maturity) and one classified kill.
-            seed_kill(conn, "k1", "s1", Some("My Tag"), None, 0.0, 0.0, 1000.0)?;
-            seed_kill(conn, "k2", "s1", Some("My Tag"), None, 0.0, 0.0, 1100.0)?;
+            seed_session(
+                conn,
+                "s2",
+                3000.0,
+                Some(4000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_session(
+                conn,
+                "s3",
+                5000.0,
+                Some(6000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            // Two sessions share a name; one carries a different name, and
+            // an unnamed session must never be offered.
             conn.execute(
-                "INSERT INTO kills (id, session_id, mob_name, mob_species, timestamp) \
-                 VALUES ('k3', 's1', 'Argonaut', 'Argonaut', 1200.0)",
+                "UPDATE tracking_sessions SET session_name = 'ARIS Dailies' \
+                 WHERE id IN ('s1', 's2')",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE tracking_sessions SET session_name = 'Atrox Grind' WHERE id = 's3'",
                 [],
             )?;
             Ok(())
@@ -2614,15 +2645,20 @@ mod tests {
 
         // An empty query short-circuits.
         assert_eq!(
-            tag_suggestions_impl(&db, "  ", 5).await.unwrap(),
+            session_name_suggestions_impl(&db, "  ", 5).await.unwrap(),
             Vec::<String>::new()
         );
-        // A match returns the free-text tag; the classified mob is excluded.
+        // A substring match returns the name; matching is case-insensitive.
         assert_eq!(
-            tag_suggestions_impl(&db, "tag", 5).await.unwrap(),
-            vec!["My Tag".to_string()]
+            session_name_suggestions_impl(&db, "aris", 5).await.unwrap(),
+            vec!["ARIS Dailies".to_string()]
         );
-        assert!(tag_suggestions_impl(&db, "argonaut", 5)
+        // Most-used first when several names match.
+        assert_eq!(
+            session_name_suggestions_impl(&db, "i", 5).await.unwrap(),
+            vec!["ARIS Dailies".to_string(), "Atrox Grind".to_string()]
+        );
+        assert!(session_name_suggestions_impl(&db, "nothing", 5)
             .await
             .unwrap()
             .is_empty());

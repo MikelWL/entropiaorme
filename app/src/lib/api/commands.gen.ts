@@ -2230,6 +2230,13 @@ export interface TimelineDay {
 }
 
 /**
+ * The activity family the held tool implies the next action belongs
+ * to: the overlay's derived-activity feedback ("this is Tree Cutting"
+ * versus "this is Hunting"). Absent when no tool is known.
+ */
+export type ToolActivity = 'hunting' | 'treecutting';
+
+/**
  * One per-tool aggregate.
  */
 export interface ToolStat {
@@ -2276,6 +2283,10 @@ export interface TrackingSnapshot {
 	skillBoostPercent?: number | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
+	/** What the held tool implies the next action is recorded as. */
+	currentActivity?: ToolActivity | null;
+	/** The quest or playlist the active session declares, resolved for display. Absent when nothing is declared (or the link was declined), so the control never claims a binding it lacks. */
+	questName?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
 	session_id?: string | null;
@@ -2791,8 +2802,8 @@ export async function trackingSessionDetail(sessionId: string): Promise<SessionD
 	return invokeCommand('tracking_session_detail', { session_id: sessionId });
 }
 
-export async function trackingTagSuggestions(q: string, limit: number | null): Promise<string[]> {
-	return invokeCommand('tracking_tag_suggestions', { q, limit });
+export async function trackingSessionNameSuggestions(q: string, limit: number | null): Promise<string[]> {
+	return invokeCommand('tracking_session_name_suggestions', { q, limit });
 }
 
 export async function trackingManualMobSuggestions(q: string, limit: number | null): Promise<ManualMobSuggestion[]> {
