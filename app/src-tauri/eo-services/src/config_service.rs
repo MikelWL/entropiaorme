@@ -402,9 +402,12 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
         } else {
             String::new()
         },
+        // A hand-edited negative reads as no boost rather than failing the
+        // whole config load (the same tolerance the other fields carry).
         skill_boost_percent: data
             .get("skill_boost_percent")
             .and_then(Value::as_i64)
+            .filter(|percent| *percent > 0)
             .unwrap_or(0),
         hotbar: normalize_hotbar(data.get("hotbar")),
         trifecta_presets,
@@ -598,9 +601,11 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
             "manual_mob_species" => assign_string(&mut config.manual_mob_species, value),
             "manual_mob_maturity" => assign_string(&mut config.manual_mob_maturity, value),
             "session_name" => assign_string(&mut config.session_name, value),
+            // Stored as given: the settings boundary refuses a negative
+            // outright rather than silently coercing it to "no boost".
             "skill_boost_percent" => {
                 if let Some(percent) = value.as_i64() {
-                    config.skill_boost_percent = percent.max(0);
+                    config.skill_boost_percent = percent;
                 }
             }
             "hotbar" => config.hotbar = normalize_hotbar(Some(value)),

@@ -86,7 +86,7 @@ async fn the_empty_hunting_serialises_to_two_empty_tables() {
     let hunting = api.analytics_hunting().await.unwrap();
     assert_eq!(
         serde_json::to_string(&hunting).unwrap(),
-        "{\"mobComparisons\":[],\"tagComparisons\":[]}"
+        "{\"mobComparisons\":[],\"nameComparisons\":[]}"
     );
 }
 

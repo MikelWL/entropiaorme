@@ -820,7 +820,6 @@ mod tests {
         assert_eq!(snap["elapsed"], 754);
         assert_eq!(snap["kill_count"], 100);
         assert_eq!(snap["currentMob"], "Caboria Old");
-        assert_eq!(snap["mobSource"], "manual");
         assert_eq!(snap["weaponAttribution"], "trifecta");
         assert!(is_iso_datetime(snap["started_at"].as_str().unwrap()));
 

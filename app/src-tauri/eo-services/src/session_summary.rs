@@ -807,28 +807,90 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bare_names_classify_as_tags_and_either_field_makes_a_mob() {
+    async fn species_presence_decides_the_mob_axis_and_the_name_facet_rides_along() {
         let (_dir, db) = env().await;
         seed_standard(&db).await;
-        // Strip the dominant rows bare: a tag, not a mob.
+        // Strip the dominant rows bare. A species-less stamp is a legacy
+        // tag-mode kill, which migration 0018 lifted onto the session row
+        // as its name, so it must not re-enter the mob axis here.
         run(
             &db,
             "UPDATE kills SET mob_species = '', mob_maturity = '' WHERE mob_species = 'Atrox'",
         )
         .await;
         let summary = compute(&db, "s1").await.unwrap();
-        assert_eq!(summary["dominantMob"], Value::Null);
-        assert_eq!(summary["dominantTag"], Value::from("Young Atrox"));
+        // The stripped rows leave both the numerator and the denominator,
+        // so the one remaining species-bearing kill dominates outright
+        // rather than the tag out-counting it.
+        assert_eq!(summary["dominantMob"], Value::from("Snable"));
+        assert_eq!(summary["dominantMobKills"], Value::from(1));
+        // The retired dominant-tag pair stays empty rather than being
+        // repurposed.
+        assert_eq!(summary["dominantTag"], Value::Null);
+        assert_eq!(summary["dominantTagKills"], Value::from(0));
+        // Nor do the stripped rows reach the session list's primary mobs.
+        assert_eq!(summary["primaryMobs"], json!(["Snable"]));
 
-        // Maturity alone is enough to classify as a mob.
+        // Maturity without a species is not an identity either: species is
+        // the stable axis.
         run(
             &db,
             "UPDATE kills SET mob_maturity = 'Young' WHERE mob_name = 'Young Atrox'",
         )
         .await;
         let summary = compute(&db, "s1").await.unwrap();
+        assert_eq!(summary["dominantMob"], Value::from("Snable"));
+
+        // Restoring the species restores the mob axis: 3 of 4 known kills.
+        run(
+            &db,
+            "UPDATE kills SET mob_species = 'Atrox' WHERE mob_name = 'Young Atrox'",
+        )
+        .await;
+        let summary = compute(&db, "s1").await.unwrap();
         assert_eq!(summary["dominantMob"], Value::from("Young Atrox"));
-        assert_eq!(summary["dominantTag"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn the_session_facets_ride_onto_the_summary() {
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
+        // Undeclared facets record as null, never as a guessed default.
+        let summary = compute(&db, "s1").await.unwrap();
+        assert_eq!(summary["sessionName"], Value::Null);
+        assert_eq!(summary["skillBoostPercent"], Value::Null);
+
+        run(
+            &db,
+            "UPDATE tracking_sessions SET session_name = 'ARIS Dailies', \
+             skill_boost_percent = 50 WHERE id = 's1'",
+        )
+        .await;
+        let summary = compute(&db, "s1").await.unwrap();
+        assert_eq!(summary["sessionName"], Value::from("ARIS Dailies"));
+        assert_eq!(summary["skillBoostPercent"], Value::from(50));
+
+        // "No boost" is NULL, never 0: the schema refuses the ambiguous
+        // encoding outright, so a zero can never reach the summary.
+        let refused = db
+            .with_writer(|conn| {
+                Ok(conn.execute(
+                    "UPDATE tracking_sessions SET skill_boost_percent = 0 WHERE id = 's1'",
+                    [],
+                )?)
+            })
+            .await;
+        assert!(refused.is_err(), "a zero boost violates the column check");
+
+        run(
+            &db,
+            "UPDATE tracking_sessions SET skill_boost_percent = NULL, session_name = NULL \
+             WHERE id = 's1'",
+        )
+        .await;
+        let summary = compute(&db, "s1").await.unwrap();
+        assert_eq!(summary["skillBoostPercent"], Value::Null);
+        assert_eq!(summary["sessionName"], Value::Null);
     }
 
     #[tokio::test]
@@ -1116,7 +1178,10 @@ mod tests {
                     "regularSkillPed": {"Rifle": 0.8},
                     "attributeLevels": {"Agility": 1.0}, "regularSkillTt": 0.8,
                     "attributeLevelsTotal": 1.0, "dominantMob": null,
-                    "dominantTag": "Atrox Young", "dominantWeapon": "LR-32",
+                    // The seeded kill carries no species, so it reaches
+                    // neither axis here; its designated identity lives on
+                    // the session row as the name facet.
+                    "dominantTag": null, "dominantWeapon": "LR-32",
                 }),
             ]
         );

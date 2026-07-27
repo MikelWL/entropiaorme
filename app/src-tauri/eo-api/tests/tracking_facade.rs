@@ -226,18 +226,18 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
         serde_json::to_string(&snapshot).unwrap(),
         "{\"status\":\"idle\",\"hotbarListenerActive\":false,\"weaponAttribution\":\"trifecta\",\
          \"repairOcrEnabled\":false,\"endOfSessionArmourReminderEnabled\":false,\
-         \"mobEntryMode\":\"mob\",\"trifectaAttribution\":{\"activePresetId\":\"default\",\
+         \"trifectaAttribution\":{\"activePresetId\":\"default\",\
          \"presetName\":\"Default\",\"presets\":[{\"id\":\"default\",\"name\":\"Default\"}],\
          \"smallWeapon\":null,\"bigWeapon\":null,\"healTool\":null},\"recentEvents\":[]}"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn empty_tag_suggestions_serialise_to_the_empty_array() {
+async fn empty_session_name_suggestions_serialise_to_the_empty_array() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), false, None).await;
     let suggestions = api
-        .tracking_tag_suggestions(String::new(), None)
+        .tracking_session_name_suggestions(String::new(), None)
         .await
         .unwrap();
     assert_eq!(serde_json::to_string(&suggestions).unwrap(), "[]");

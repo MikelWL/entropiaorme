@@ -2207,8 +2207,8 @@ mod tests {
     ///   props make totalCostPerUse == 250 so the expected 2.5 differs from
     ///   both `250 % 100` (50.0) and `250 * 100` (25000.0): kills the `/`->`%`
     ///   and `/`->`*` mutants.
-    /// - manual_mob_entry_enabled is `mob_tracking_mode != "tag"`: false
-    ///   under "tag", true under "mob" (kills `!=`->`==`, which flips both).
+    /// - the facet reads carry the stored values through unchanged
+    ///   (session_name verbatim, skill_boost_percent as stored).
     /// - weapon_attribution_trifecta is `!hotbar_hooks_enabled`: false when
     ///   hooks are on, true when off (kills the deleted `!`, which flips both).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2235,11 +2235,13 @@ mod tests {
         )
         .await;
 
-        // First on-disk config: tag mode, hotbar hooks ENABLED.
+        // First on-disk config: a named session with a boost, hotbar
+        // hooks ENABLED.
         write_settings(
             &data_dir,
             &serde_json::json!({
-                "mob_tracking_mode": "tag",
+                "session_name": "ARIS Dailies",
+                "skill_boost_percent": 50,
                 "hotbar_hooks_enabled": true,
             }),
         );
@@ -2275,29 +2277,25 @@ mod tests {
              (% would be 50.0, * would be 25000.0)"
         );
 
-        // The config seam reads the live snapshot: under tag mode +
-        // hooks-on, manual entry is disabled and trifecta attribution
-        // is off.
-        assert!(
-            !providers.config.manual_mob_entry_enabled(),
-            "manual mob entry is disabled in tag mode"
-        );
+        // The config seam reads the live snapshot: the facets come
+        // through verbatim, and hooks-on means no trifecta attribution.
+        assert_eq!(providers.config.session_name(), "ARIS Dailies");
+        assert_eq!(providers.config.skill_boost_percent(), 50);
         assert!(
             !providers.config.weapon_attribution_trifecta(),
             "trifecta attribution is off when hotbar hooks are enabled"
         );
 
         // A config-service write publishes a new snapshot, and the SAME
-        // seam follows it: mob mode + hooks-off -> manual entry enabled,
-        // trifecta attribution on.
+        // seam follows it: the facets move and hooks-off turns trifecta
+        // attribution on.
         let mut updates = serde_json::Map::new();
-        updates.insert("mob_tracking_mode".into(), serde_json::json!("mob"));
+        updates.insert("session_name".into(), serde_json::json!("Solo Run"));
+        updates.insert("skill_boost_percent".into(), serde_json::json!(100));
         updates.insert("hotbar_hooks_enabled".into(), serde_json::json!(false));
         config_service.update(&updates).expect("settings write");
-        assert!(
-            providers.config.manual_mob_entry_enabled(),
-            "manual mob entry is enabled outside tag mode"
-        );
+        assert_eq!(providers.config.session_name(), "Solo Run");
+        assert_eq!(providers.config.skill_boost_percent(), 100);
         assert!(
             providers.config.weapon_attribution_trifecta(),
             "trifecta attribution is on when hotbar hooks are disabled"

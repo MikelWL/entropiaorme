@@ -6,7 +6,6 @@ use crate::event_bus::Topic;
 use crate::harvest_yield::{HarvestYieldSource, HarvestYieldTier};
 
 use super::actor::TrackerActor;
-use super::mob::MobSource;
 use super::time::{epoch_to_naive, parse_bus_timestamp, python_total_seconds};
 use super::weapons::{value_truthy, DamageEnhancerState};
 use super::*;
@@ -62,25 +61,20 @@ impl EquipmentLibrary for ScriptedEquipment {
 /// fall back to the inert defaults.
 #[derive(Default)]
 struct ScriptedConfig {
-    mode: Option<String>,
-    tag: Option<String>,
-    manual_entry_enabled: Option<BoolScript>,
+    session_name: Option<String>,
+    skill_boost_percent: Option<i64>,
     manual_mob: Option<ManualMobScript>,
     trifecta_mode: bool,
     blacklist: Vec<String>,
 }
 
 impl TrackingConfig for ScriptedConfig {
-    fn mob_tracking_mode(&self) -> String {
-        self.mode.clone().unwrap_or_else(|| "mob".to_string())
+    fn session_name(&self) -> String {
+        self.session_name.clone().unwrap_or_default()
     }
 
-    fn mob_tracking_tag(&self) -> String {
-        self.tag.clone().unwrap_or_default()
-    }
-
-    fn manual_mob_entry_enabled(&self) -> bool {
-        self.manual_entry_enabled.as_ref().is_none_or(|f| f())
+    fn skill_boost_percent(&self) -> i64 {
+        self.skill_boost_percent.unwrap_or(0)
     }
 
     fn manual_mob(&self) -> Option<(String, String)> {
@@ -1054,8 +1048,8 @@ fn snapshot_aggregates_and_rounds_the_readout() {
     assert_eq!(active.multiplier_history, vec![33.3333, 0.6]);
     assert_eq!(active.cumulative_net_history, vec![4.82, 4.79]);
     assert_eq!(active.current_mob, None);
-    assert_eq!(active.mob_source, None);
-    assert_eq!(active.mob_entry_mode, "mob");
+    assert_eq!(active.session_name, None);
+    assert_eq!(active.skill_boost_percent, None);
     assert_eq!(active.notable_event_rows.len(), 1);
     let row = &active.notable_event_rows[0];
     assert_eq!(row.0, "global_kill");
@@ -1582,74 +1576,26 @@ fn trifecta_attribution_and_heal_filtering() {
 }
 
 #[test]
-fn tag_and_manual_mob_rules() {
+fn session_facet_and_declared_mob_rules() {
     let rig = rig();
 
-    // No session: every command refuses.
+    // No session: the declaration command refuses.
     let tracker = rig.tracker(Providers::default());
     assert_eq!(
-        rig.wait(tracker.set_manual_tag("Foo")),
+        rig.wait(tracker.set_declared_mob("Atrox", "Atrox", "Young")),
         Err(TrackerCommandError::NoActiveSession)
     );
     assert_eq!(
-        rig.wait(tracker.set_manual_mob("Atrox", "Atrox", "Young")),
+        rig.wait(tracker.set_session_name(Some("Solo Run".to_string()))),
         Err(TrackerCommandError::NoActiveSession)
     );
 
-    // Tag mode: the configured tag is stripped and stamps kills;
-    // manual mob locking refuses; empty tags refuse.
-    let tagged = rig.tracker(Providers {
+    // The facets snapshot from the config at session start: the name is
+    // trimmed, and a non-positive boost reads as no boost at all.
+    let facets = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {
-            mode: Some("tag".to_string()),
-            tag: Some("  Team Hunt \u{1c}".to_string()),
-            ..Default::default()
-        }),
-        ..Providers::default()
-    });
-    let session = rig.wait(tagged.start_session()).unwrap();
-    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
-        kind: LootTag,
-        timestamp: Some("2026-01-01T00:00:02".into()),
-        items: vec![],
-        total_ped: 0.0,
-    }));
-    let mob: String = {
-        let session_id = session.id.clone();
-        rig.wait(rig.db.with_reader(move |conn| {
-            Ok(conn.query_row(
-                "SELECT mob_name FROM kills WHERE session_id = ?",
-                rusqlite::params![session_id],
-                |row| row.get::<_, String>(0),
-            )?)
-        }))
-        .unwrap()
-    };
-    assert_eq!(mob, "Team Hunt");
-    assert_eq!(
-        rig.wait(tagged.set_manual_mob("Atrox", "Atrox", "Young")),
-        Err(TrackerCommandError::TagModeLocksMob)
-    );
-    assert_eq!(
-        rig.wait(tagged.set_manual_tag("   ")),
-        Err(TrackerCommandError::EmptyTag)
-    );
-    rig.wait(tagged.set_manual_tag(" Solo Run ")).unwrap();
-    rig.probe(&tagged, |actor| {
-        let active = actor.session.active().unwrap();
-        assert_eq!(active.mob.name(), Some("Solo Run"));
-        assert_eq!(active.tag, "Solo Run");
-        assert_eq!(active.mob.source(), Some(MobSource::Tag));
-    });
-    assert_eq!(
-        rig.wait(tagged.release_current_mob()).as_deref(),
-        Some("Solo Run")
-    );
-    rig.wait(tagged.stop_session()).unwrap();
-
-    // Mob mode: the manual provider stamps "<maturity> <species>"
-    // at start; tag setting refuses; release clears.
-    let manual = rig.tracker(Providers {
-        config: Arc::new(ScriptedConfig {
+            session_name: Some("  Team Hunt \u{1c}".to_string()),
+            skill_boost_percent: Some(50),
             manual_mob: Some(Arc::new(|| {
                 Some(("Atrox".to_string(), "Young".to_string()))
             })),
@@ -1657,59 +1603,170 @@ fn tag_and_manual_mob_rules() {
         }),
         ..Providers::default()
     });
-    rig.wait(manual.start_session()).unwrap();
-    assert_eq!(
-        rig.wait(manual.set_manual_tag("Foo")),
-        Err(TrackerCommandError::NotTagMode)
-    );
-    rig.probe(&manual, |actor| {
+    let session = rig.wait(facets.start_session()).unwrap();
+    rig.probe(&facets, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.mob.name(), Some("Young Atrox"));
-        assert_eq!(active.mob.species_maturity(), ("Atrox", "Young"));
-        assert_eq!(active.mob.source(), Some(MobSource::Manual));
+        assert_eq!(active.facets.name.as_deref(), Some("Team Hunt"));
+        assert_eq!(active.facets.skill_boost_percent, Some(50));
+        // The declared mob is independent of the name: both are in force.
+        assert_eq!(active.stamped_mob_name(), Some("Young Atrox"));
     });
-    rig.wait(manual.set_manual_mob("Old Atrox", "Atrox", "Old"))
-        .unwrap();
-    rig.probe(&manual, |actor| {
-        assert_eq!(
-            actor.session.active().unwrap().mob.name(),
-            Some("Old Atrox")
-        );
-    });
+
+    // Both facets persist onto the session row at start.
+    let row: (Option<String>, Option<i64>) = {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT session_name, skill_boost_percent FROM tracking_sessions WHERE id = ?",
+                rusqlite::params![session_id],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )?)
+        }))
+        .unwrap()
+    };
+    assert_eq!(row, (Some("Team Hunt".to_string()), Some(50)));
+
+    // A kill stamps the declared mob AND records where the stamp came
+    // from, so a later detected stamp reads apart from a declared one.
+    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+        kind: LootTag,
+        timestamp: Some("2026-01-01T00:00:02".into()),
+        items: vec![],
+        total_ped: 0.0,
+    }));
+    let stamped: (String, String, String, Option<String>) = {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT mob_name, mob_species, mob_maturity, mob_stamp_source \
+                 FROM kills WHERE session_id = ?",
+                rusqlite::params![session_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )?)
+        }))
+        .unwrap()
+    };
     assert_eq!(
-        rig.wait(manual.release_current_mob()).as_deref(),
+        stamped,
+        (
+            "Young Atrox".to_string(),
+            "Atrox".to_string(),
+            "Young".to_string(),
+            Some("declared".to_string())
+        )
+    );
+
+    // The declaration moves mid-session (no mode locks it), and the name
+    // moves with it: neither facet excludes the other.
+    rig.wait(facets.set_declared_mob("Old Atrox", "Atrox", "Old"))
+        .unwrap();
+    rig.wait(facets.set_session_name(Some("Solo Run".to_string())))
+        .unwrap();
+    rig.probe(&facets, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.stamped_mob_name(), Some("Old Atrox"));
+        assert_eq!(active.facets.name.as_deref(), Some("Solo Run"));
+        // The boost is snapshotted at start and no command moves it.
+        assert_eq!(active.facets.skill_boost_percent, Some(50));
+    });
+
+    // Releasing clears only the mob; the other facets stand.
+    assert_eq!(
+        rig.wait(facets.release_declared_mob()).as_deref(),
         Some("Old Atrox")
     );
-    assert_eq!(rig.wait(manual.release_current_mob()), None);
-    rig.wait(manual.stop_session()).unwrap();
-
-    // Manual entry disabled: the command refuses; a maturity-less
-    // manual mob displays the bare species.
-    let disabled = rig.tracker(Providers {
-        config: Arc::new(ScriptedConfig {
-            manual_entry_enabled: Some(Arc::new(|| false)),
-            ..Default::default()
-        }),
-        ..Providers::default()
+    assert_eq!(rig.wait(facets.release_declared_mob()), None);
+    rig.probe(&facets, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.stamped_mob_name(), None);
+        assert_eq!(active.facets.name.as_deref(), Some("Solo Run"));
     });
-    rig.wait(disabled.start_session()).unwrap();
-    assert_eq!(
-        rig.wait(disabled.set_manual_mob("Atrox", "Atrox", "")),
-        Err(TrackerCommandError::ManualEntryDisabled)
-    );
-    rig.wait(disabled.stop_session()).unwrap();
-    let bare = rig.tracker(Providers {
+
+    // With no declaration in force a kill stamps "Unknown" and carries no
+    // stamp source, rather than inventing provenance.
+    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+        kind: LootTag,
+        timestamp: Some("2026-01-01T00:00:09".into()),
+        items: vec![],
+        total_ped: 0.0,
+    }));
+    let undeclared: (String, Option<String>) = {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT mob_name, mob_stamp_source FROM kills \
+                 WHERE session_id = ? ORDER BY timestamp DESC LIMIT 1",
+                rusqlite::params![session_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )?)
+        }))
+        .unwrap()
+    };
+    assert_eq!(undeclared, ("Unknown".to_string(), None));
+
+    // The name write also lands on the row, so the summary at stop reads
+    // the current value rather than the one captured at start.
+    let renamed: Option<String> = {
+        let session_id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT session_name FROM tracking_sessions WHERE id = ?",
+                rusqlite::params![session_id],
+                |row| row.get::<_, Option<String>>(0),
+            )?)
+        }))
+        .unwrap()
+    };
+    assert_eq!(renamed.as_deref(), Some("Solo Run"));
+    rig.wait(facets.stop_session()).unwrap();
+
+    // An undeclared session carries neither facet: absent is recorded as
+    // NULL, never as a guessed default.
+    let bare = rig.tracker(Providers::default());
+    let bare_session = rig.wait(bare.start_session()).unwrap();
+    rig.probe(&bare, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.facets.name, None);
+        assert_eq!(active.facets.skill_boost_percent, None);
+        assert_eq!(active.stamped_mob_name(), None);
+    });
+    let bare_row: (Option<String>, Option<i64>) = {
+        let session_id = bare_session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT session_name, skill_boost_percent FROM tracking_sessions WHERE id = ?",
+                rusqlite::params![session_id],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )?)
+        }))
+        .unwrap()
+    };
+    assert_eq!(bare_row, (None, None));
+    rig.wait(bare.stop_session()).unwrap();
+
+    // A maturity-less declaration displays the bare species.
+    let bare_mob = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {
             manual_mob: Some(Arc::new(|| Some(("Atrox".to_string(), String::new())))),
             ..Default::default()
         }),
         ..Providers::default()
     });
-    rig.wait(bare.start_session()).unwrap();
-    rig.probe(&bare, |actor| {
-        assert_eq!(actor.session.active().unwrap().mob.name(), Some("Atrox"));
+    rig.wait(bare_mob.start_session()).unwrap();
+    rig.probe(&bare_mob, |actor| {
+        assert_eq!(
+            actor.session.active().unwrap().stamped_mob_name(),
+            Some("Atrox")
+        );
     });
-    rig.wait(bare.stop_session()).unwrap();
+    rig.wait(bare_mob.stop_session()).unwrap();
 }
 
 #[test]
@@ -1743,7 +1800,7 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     ));
     rig.probe(&tracker, |actor| {
         assert_eq!(
-            actor.session.active().unwrap().mob.name(),
+            actor.session.active().unwrap().stamped_mob_name(),
             Some("Young Atrox")
         );
         assert_eq!(actor.heal_tool.cost_per_use, Ped(0.03));
@@ -1755,7 +1812,7 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     *scripted_mob.lock().unwrap() = Some(("Feffoid".to_string(), String::new()));
     rig.wait(tracker.reload_config());
     rig.probe(&tracker, |actor| {
-        assert_eq!(actor.session.active().unwrap().mob.name(), Some("Feffoid"));
+        assert_eq!(actor.session.active().unwrap().stamped_mob_name(), Some("Feffoid"));
         assert_eq!(actor.heal_tool.cost_per_use, Ped::ZERO);
         assert_eq!(actor.heal_tool.reload_seconds, 2.5);
     });
@@ -1763,8 +1820,8 @@ fn reload_config_transitions_manual_mob_and_heal_state() {
     rig.wait(tracker.reload_config());
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.mob.name(), None);
-        assert_eq!(active.mob.source(), None);
+        assert_eq!(active.stamped_mob_name(), None);
+        assert!(active.declared_mob.is_none());
     });
 }
 
@@ -2312,12 +2369,15 @@ fn recovery_zero_timestamp_kills_fall_back_to_the_start() {
 }
 
 #[test]
-fn reload_config_in_tag_mode_never_consults_the_manual_provider() {
+fn reload_config_resyncs_the_declared_mob_from_the_live_config() {
+    // The declare and release commands write the config first, so a
+    // reload (a settings-page edit landing mid-session) must bring the
+    // in-memory declaration back in step with it rather than keep a
+    // stale one.
     let rig = rig();
     let tracker = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {
-            mode: Some("tag".to_string()),
-            tag: Some("Team".to_string()),
+            session_name: Some("Team".to_string()),
             manual_mob: Some(Arc::new(|| {
                 Some(("Atrox".to_string(), "Young".to_string()))
             })),
@@ -2329,82 +2389,22 @@ fn reload_config_in_tag_mode_never_consults_the_manual_provider() {
     rig.wait(tracker.reload_config());
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.mob.name(), Some("Team"));
-        assert_eq!(active.mob.source(), Some(MobSource::Tag));
+        assert_eq!(active.stamped_mob_name(), Some("Young Atrox"));
+        // The name facet is snapshotted at start, so a reload leaves it be.
+        assert_eq!(active.facets.name.as_deref(), Some("Team"));
     });
 }
 
 #[test]
-fn is_session_tag_mode_reflects_the_session_capture() {
-    // The flag is the per-session mode snapshotted at start_session,
-    // not the live config: idle is false (both before any session and
-    // after one stops, since the snapshot is not cleared on stop), a
-    // tag-mode session is true, a mob-mode session is false.
-    let tag_rig = rig();
-    let tagged = tag_rig.tracker(Providers {
-        config: Arc::new(ScriptedConfig {
-            mode: Some("tag".to_string()),
-            tag: Some("Team".to_string()),
-            ..Default::default()
-        }),
-        ..Providers::default()
-    });
-    assert!(
-        !tagged.is_session_tag_mode(),
-        "idle (no session) is never tag mode"
-    );
-    tag_rig.wait(tagged.start_session()).unwrap();
-    assert!(
-        tagged.is_session_tag_mode(),
-        "a session captured in tag mode reports tag mode"
-    );
-    tag_rig.wait(tagged.stop_session()).unwrap();
-    assert!(
-        !tagged.is_session_tag_mode(),
-        "idle after stopping a tag session is never tag mode"
-    );
-
-    let mob_rig = rig();
-    let mobbed = mob_rig.tracker(Providers {
-        config: Arc::new(ScriptedConfig {
-            mode: Some("mob".to_string()),
-            ..Default::default()
-        }),
-        ..Providers::default()
-    });
-    mob_rig.wait(mobbed.start_session()).unwrap();
-    assert!(
-        !mobbed.is_session_tag_mode(),
-        "a session captured in mob mode is not tag mode"
-    );
-    mob_rig.wait(mobbed.stop_session()).unwrap();
-}
-
-#[test]
-fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
+fn a_blank_configured_name_records_as_no_declaration() {
+    // "Not declared" must stay distinguishable from "declared as empty":
+    // a whitespace-only configured name is no name at all, and no
+    // configured mob is no declaration, never a guessed default.
     let rig = rig();
-    // A configured tag outside tag mode never stamps.
-    let mob_mode = rig.tracker(Providers {
-        config: Arc::new(ScriptedConfig {
-            tag: Some("Sneaky".to_string()),
-            manual_entry_enabled: Some(Arc::new(|| false)),
-            ..Default::default()
-        }),
-        ..Providers::default()
-    });
-    rig.wait(mob_mode.start_session()).unwrap();
-    rig.probe(&mob_mode, |actor| {
-        let active = actor.session.active().unwrap();
-        assert_eq!(active.mob.name(), None);
-        assert_eq!(active.mob.source(), None);
-    });
-    rig.wait(mob_mode.stop_session()).unwrap();
-
-    // Tag mode with an all-blank tag has nothing to stamp.
     let blank = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {
-            mode: Some("tag".to_string()),
-            tag: Some("   ".to_string()),
+            session_name: Some("   ".to_string()),
+            skill_boost_percent: Some(0),
             ..Default::default()
         }),
         ..Providers::default()
@@ -2412,9 +2412,12 @@ fn the_session_tag_stamps_only_in_tag_mode_with_a_real_tag() {
     rig.wait(blank.start_session()).unwrap();
     rig.probe(&blank, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.mob.name(), None);
-        assert_eq!(active.mob.source(), None);
+        assert_eq!(active.facets.name, None);
+        assert_eq!(active.facets.skill_boost_percent, None);
+        assert_eq!(active.stamped_mob_name(), None);
+        assert!(active.declared_mob.is_none());
     });
+    rig.wait(blank.stop_session()).unwrap();
 }
 
 #[test]
@@ -2459,26 +2462,10 @@ fn the_blacklist_provider_refreshes_at_session_start() {
 }
 
 #[test]
-fn command_error_messages_match_the_original() {
+fn command_error_messages_are_stable() {
     assert_eq!(
         TrackerCommandError::NoActiveSession.to_string(),
         "No active session"
-    );
-    assert_eq!(
-        TrackerCommandError::NotTagMode.to_string(),
-        "Active session is not in tag mode"
-    );
-    assert_eq!(
-        TrackerCommandError::EmptyTag.to_string(),
-        "Tag cannot be empty"
-    );
-    assert_eq!(
-        TrackerCommandError::TagModeLocksMob.to_string(),
-        "Tag mode sessions do not allow manual mob locking"
-    );
-    assert_eq!(
-        TrackerCommandError::ManualEntryDisabled.to_string(),
-        "Manual mob entry is not enabled for this session"
     );
 }
 
@@ -2620,16 +2607,19 @@ fn a_global_at_the_exact_window_bound_is_not_correlated() {
 }
 
 #[test]
-fn reload_clears_a_manual_stamp_once_entry_disables() {
+fn reload_clears_the_declaration_once_the_config_drops_it() {
+    // Releasing writes the config first, so the reload that follows must
+    // drop the in-memory declaration rather than keep stamping a mob the
+    // user has let go.
     let rig = rig();
-    let enabled = Arc::new(StdMutex::new(true));
-    let provider_view = enabled.clone();
+    let declared = Arc::new(StdMutex::new(Some((
+        "Atrox".to_string(),
+        "Young".to_string(),
+    ))));
+    let provider_view = declared.clone();
     let tracker = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {
-            manual_entry_enabled: Some(Arc::new(move || *provider_view.lock().unwrap())),
-            manual_mob: Some(Arc::new(|| {
-                Some(("Atrox".to_string(), "Young".to_string()))
-            })),
+            manual_mob: Some(Arc::new(move || provider_view.lock().unwrap().clone())),
             ..Default::default()
         }),
         ..Providers::default()
@@ -2637,17 +2627,17 @@ fn reload_clears_a_manual_stamp_once_entry_disables() {
     rig.wait(tracker.start_session()).unwrap();
     rig.probe(&tracker, |actor| {
         assert_eq!(
-            actor.session.active().unwrap().mob.name(),
+            actor.session.active().unwrap().stamped_mob_name(),
             Some("Young Atrox")
         );
     });
 
-    *enabled.lock().unwrap() = false;
+    *declared.lock().unwrap() = None;
     rig.wait(tracker.reload_config());
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.mob.name(), None);
-        assert_eq!(active.mob.source(), None);
+        assert_eq!(active.stamped_mob_name(), None);
+        assert!(active.declared_mob.is_none());
     });
 }
 
@@ -2667,15 +2657,18 @@ fn prime_demo_activates_a_demo_session_and_stamps_its_mob() {
     };
     rig.wait(tracker.prime_demo(
         session,
-        super::mob::MobSelection::Tag("Atrox".to_string()),
-        super::mob::TrackingMode::Tag,
+        Some(super::mob::DeclaredMob::from_parts(
+            "Atrox".to_string(),
+            String::new(),
+        )),
+        SessionFacets::default(),
     ));
 
     // The demo session is live without ever running start_session.
     assert!(tracker.is_tracking(), "prime_demo activates the session");
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().expect("a demo session is active");
-        assert_eq!(active.mob.name(), Some("Atrox"));
+        assert_eq!(active.stamped_mob_name(), Some("Atrox"));
     });
 }
 
@@ -2693,11 +2686,7 @@ fn on_tool_changed_ensures_a_bucket_before_merging_the_unknown_stats() {
         harvests: Vec::new(),
         dangling_cost: Ped::ZERO,
     };
-    rig.wait(tracker.prime_demo(
-        session,
-        super::mob::MobSelection::Unset,
-        super::mob::TrackingMode::Mob,
-    ));
+    rig.wait(tracker.prime_demo(session, None, SessionFacets::default()));
 
     rig.probe(&tracker, |actor| {
         {
@@ -3603,7 +3592,7 @@ fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
             tool_name: "Rifle".into(),
             source: Some("hotbar:1".into()),
         }));
-    let (tool, _) = rig.wait(tracker.aggregate());
+    let (tool, _, _) = rig.wait(tracker.aggregate());
     assert_eq!(tool.as_deref(), Some("Rifle"));
 
     rig.bus.publish(&BusEvent::ActiveHarvestToolChanged(
@@ -3613,7 +3602,7 @@ fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
             source: Some("hotbar:4".into()),
         },
     ));
-    let (tool, _) = rig.wait(tracker.aggregate());
+    let (tool, _, _) = rig.wait(tracker.aggregate());
     assert_eq!(
         tool.as_deref(),
         Some("Terratech PH-3"),
@@ -3625,7 +3614,7 @@ fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
             tool_name: "Rifle".into(),
             source: Some("hotbar:1".into()),
         }));
-    let (tool, _) = rig.wait(tracker.aggregate());
+    let (tool, _, _) = rig.wait(tracker.aggregate());
     assert_eq!(
         tool.as_deref(),
         Some("Rifle"),
@@ -3716,7 +3705,7 @@ fn the_cumulative_net_history_includes_harvest_swings() {
         }));
     }
 
-    let (_, aggregate) = rig.wait(tracker.aggregate());
+    let (_, _, aggregate) = rig.wait(tracker.aggregate());
     let aggregate = aggregate.expect("active aggregate");
     // Two swings: +0.08, then +0.04 -> running 0.08, 0.12; the curve's
     // endpoint reconciles with the displayed Net (returns - cost).
