@@ -70,6 +70,11 @@ pub(super) struct ActiveSession {
     /// every event written right now stamps. Session-scoped by
     /// construction, so no interval can outlive its session.
     pub(super) intervals: IntervalState,
+    /// How many segments this session has opened, custom-named or not:
+    /// the sequence an omitted segment name is auto-numbered from
+    /// ("Segment N" counts opens, so the numbering never repeats within
+    /// a session even after renames).
+    pub(super) segments_opened: i64,
     pub(super) last_heal_time: Option<DateTime<Utc>>,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
@@ -99,6 +104,7 @@ impl ActiveSession {
             declared_mob: None,
             facets,
             intervals: IntervalState::default(),
+            segments_opened: 0,
             last_heal_time: None,
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
@@ -480,6 +486,100 @@ impl TrackerActor {
             .close_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
             .await;
         Ok(())
+    }
+
+    /// Open a segment: the player-drawn slice of the session (one
+    /// instance run, one rotation of a daily). Exclusive, because a run
+    /// is sequential: opening a segment closes the standing one in the
+    /// same motion, so the boundary declaration is a single action.
+    ///
+    /// An omitted or blank name is auto-numbered "Segment N", counting
+    /// this session's opens from 1. The declaration therefore never
+    /// requires typing mid-play; the name can move afterwards (live via
+    /// [`rename_segment`](Self::rename_segment), since a segment's grain
+    /// is finer than the session).
+    ///
+    /// Contained like the other interval writes: a write that cannot
+    /// land leaves the record without the segment, and the snapshot
+    /// (which reads the interval state) tells the truth about it.
+    pub(super) async fn open_segment(
+        &mut self,
+        label: Option<String>,
+    ) -> Result<(), TrackerCommandError> {
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let session_id = active.session.id.clone();
+        let candidate = active.segments_opened + 1;
+        let label = label
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Segment {candidate}"));
+        let outcome = active
+            .intervals
+            .open_interval(
+                &db,
+                &session_id,
+                now,
+                IntervalSpec::new(IntervalKind::Segment).label(Some(label)),
+            )
+            .await;
+        if outcome.is_ok() {
+            active.segments_opened = candidate;
+        }
+        Ok(())
+    }
+
+    /// Close the open segment, leaving the session running unsegmented
+    /// from here. Idempotent: closing with no segment open is a no-op,
+    /// like the quest close, so a stale control cannot fail the user.
+    pub(super) async fn close_segment(&mut self) -> Result<(), TrackerCommandError> {
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let session_id = active.session.id.clone();
+        let _ = active
+            .intervals
+            .close_kind(&db, &session_id, now, IntervalKind::Segment)
+            .await;
+        Ok(())
+    }
+
+    /// Rename the OPEN segment in place: the live half of the segment's
+    /// correction path (a segment is finer than the session, so its
+    /// label may move while the session runs). Bounds and attribution
+    /// are untouched; only the display name moves.
+    pub(super) async fn rename_segment(
+        &mut self,
+        label: String,
+    ) -> Result<(), TrackerCommandError> {
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            // A blank rename is a no-op, not an erasure: an open segment
+            // always carries a name (the auto-number guarantees one).
+            return Ok(());
+        }
+        match active
+            .intervals
+            .relabel_kind(&db, IntervalKind::Segment, label)
+            .await
+        {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(TrackerCommandError::NoOpenSegment),
+            // Contained like the other interval writes; the snapshot
+            // still shows the previous name, which is the truth.
+            Err(_) => Ok(()),
+        }
     }
 
     /// Refresh trifecta-attribution state after config changes. The

@@ -342,6 +342,33 @@ impl IntervalState {
         .await
     }
 
+    /// Relabel the open interval of a kind, in place. A label is not
+    /// part of attribution (context membership is by interval id), so
+    /// no context is minted and events already stamped are unaffected.
+    /// Returns whether an open interval of the kind existed.
+    pub async fn relabel_kind(
+        &mut self,
+        db: &Db,
+        kind: IntervalKind,
+        label: String,
+    ) -> Result<bool, DbError> {
+        let Some(index) = self.open.iter().position(|interval| interval.kind == kind) else {
+            return Ok(false);
+        };
+        let id = self.open[index].id;
+        let value = label.clone();
+        db.with_writer(move |conn| {
+            conn.execute(
+                "UPDATE session_intervals SET label = ? WHERE id = ?",
+                rusqlite::params![value, id],
+            )?;
+            Ok(())
+        })
+        .await?;
+        self.open[index].label = Some(label);
+        Ok(true)
+    }
+
     /// The shared close transition: end the matching rows and mint the
     /// narrower context in one transaction, adopting both in memory only
     /// after the commit. A failure therefore leaves the standing set and
