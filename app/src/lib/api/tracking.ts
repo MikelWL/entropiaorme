@@ -8,11 +8,10 @@
 
 import type {
 	HarvestGuardrailAlert,
-	MobEntryMode,
-	MobSource,
 	NotableEventCategory,
 	NotableEventType,
 	RecentEvent,
+	ToolActivity,
 	TrackingSnapshot,
 	TrackingState,
 	TrifectaAttribution,
@@ -42,10 +41,14 @@ export interface TrackingLive {
 	weaponAttribution?: WeaponAttribution | null;
 	repairOcrEnabled?: boolean | null;
 	endOfSessionArmourReminderEnabled?: boolean | null;
-	mobEntryMode?: MobEntryMode | null;
+	sessionName?: string | null;
+	skillBoostPercent?: number | null;
 	currentMob?: string | null;
-	mobSource?: MobSource | null;
 	currentTool?: string | null;
+	/** What the held tool implies the next action records as. */
+	currentActivity?: ToolActivity | null;
+	/** The quest or playlist the active session declares. */
+	questName?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
 	recentEvents?: {
@@ -65,12 +68,20 @@ export const releaseMob = commands.trackingReleaseMob;
 export const deleteSession = commands.trackingSessionDelete;
 export const deactivateLootItem = commands.trackingLootItemDeactivate;
 export const activateLootItem = commands.trackingLootItemActivate;
+export const renameSession = commands.trackingRenameSession;
 export const renameSessionMob = commands.trackingRenameMob;
 export const restoreSessionMob = commands.trackingRestoreMob;
-export const lockTrackingTag = commands.trackingTagLock;
+/** Set the session facets (full-state apply: null clears a facet). The
+ * name is fixed while a session runs (the backend answers 409 on an
+ * attempted change; correct it post-hoc via `renameSession`); the boost
+ * stays editable throughout. */
+export const setSessionConfig = commands.trackingSessionConfig;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
 export const getSessionQuestLinkSuggestion = commands.trackingQuestLinkSuggestion;
+/** Declare the active session's quest facet up front (or clear it with
+ * both ids null), pre-empting the post-stop link suggestion. */
+export const declareSessionQuest = commands.trackingQuestDeclare;
 
 const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
 
@@ -88,9 +99,11 @@ export const getTrackingSnapshot = guideSwapped(
 	commands.demoTrackingSnapshot,
 );
 
-export async function getTrackingTagSuggestions(query: string): Promise<string[]> {
+/** Prior session names matching the query, most-used first: reusing a
+ * name is what keeps the designated analytics axis grouping cleanly. */
+export async function getSessionNameSuggestions(query: string): Promise<string[]> {
 	if (!query.trim()) return [];
-	return commands.trackingTagSuggestions(query.trim(), null);
+	return commands.trackingSessionNameSuggestions(query.trim(), null);
 }
 
 export async function getManualMobSuggestions(query: string) {

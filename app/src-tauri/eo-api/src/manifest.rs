@@ -52,8 +52,9 @@ use crate::scan::{
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestLinkDecision, ReleaseResult, RepairScanResult, SessionDetail, SessionPage,
-    SessionQuestLinkSuggestion, StartResult, StopResult, TagLockResult, TrackingSnapshot,
+    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionConfigResult,
+    SessionDetail, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
+    StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -826,7 +827,7 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(SessionDetail))),
         },
         CommandSpec {
-            name: "tracking_tag_suggestions",
+            name: "tracking_session_name_suggestions",
             args: vec![
                 ArgSpec {
                     name: "q",
@@ -896,12 +897,32 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(ManualMobLockResult))),
         },
         CommandSpec {
-            name: "tracking_tag_lock",
-            args: vec![ArgSpec {
-                name: "tag",
-                schema: schema(schema_for!(String)),
-            }],
-            returns: Some(schema(schema_for!(TagLockResult))),
+            name: "tracking_session_config",
+            args: vec![
+                ArgSpec {
+                    name: "session_name",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+                ArgSpec {
+                    name: "skill_boost_percent",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionConfigResult))),
+        },
+        CommandSpec {
+            name: "tracking_rename_session",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "session_name",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionRenameResult))),
         },
         CommandSpec {
             name: "tracking_rename_mob",
@@ -990,6 +1011,20 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(QuestLinkDecision))),
+        },
+        CommandSpec {
+            name: "tracking_quest_declare",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+                ArgSpec {
+                    name: "playlist_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(QuestDeclareResult))),
         },
         CommandSpec {
             name: "tracking_repair_scan",

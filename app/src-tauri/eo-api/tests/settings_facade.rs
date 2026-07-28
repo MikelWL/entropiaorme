@@ -86,8 +86,8 @@ async fn the_settings_assembly_shapes_the_default_config() {
             "repairOcrEnabled",
             "endOfSessionArmourReminderEnabled",
             "developerModeEnabled",
-            "mobTrackingMode",
-            "mobTrackingTag",
+            "sessionName",
+            "skillBoostPercent",
             "hotbar",
             "trifecta",
             "harvestGuardrail",
@@ -121,8 +121,9 @@ async fn the_settings_assembly_shapes_the_default_config() {
         ]
     );
 
-    // The default values (mirrors the HTTP-era assembly test).
-    assert_eq!(body["mobTrackingMode"], "mob");
+    // The default values: both facets undeclared.
+    assert_eq!(body["sessionName"], "");
+    assert_eq!(body["skillBoostPercent"], 0);
     assert_eq!(
         body["lootFilterBlacklist"],
         serde_json::json!(["Universal Ammo"])
@@ -179,7 +180,8 @@ async fn a_partial_update_writes_and_returns_the_assembly() {
         .settings_update(SettingsPatch {
             player_name: Some("Mikel".into()),
             hotbar_hooks_enabled: Some(true),
-            mob_tracking_tag: Some("Daily Hunt".into()),
+            session_name: Some("Daily Hunt".into()),
+            skill_boost_percent: Some(50),
             ..SettingsPatch::default()
         })
         .await
@@ -188,12 +190,14 @@ async fn a_partial_update_writes_and_returns_the_assembly() {
     // The reply is the full assembly reflecting the write.
     assert_eq!(updated.game_connection.player_name, "Mikel");
     assert!(updated.hotbar_hooks_enabled);
-    assert_eq!(updated.mob_tracking_tag, "Daily Hunt");
+    assert_eq!(updated.session_name, "Daily Hunt");
+    assert_eq!(updated.skill_boost_percent, 50);
     // The write reached the store.
     let cfg = read_settings(&dir.path().join("data"));
     assert_eq!(cfg["player_name"], "Mikel");
     assert_eq!(cfg["hotbar_hooks_enabled"], true);
-    assert_eq!(cfg["mob_tracking_tag"], "Daily Hunt");
+    assert_eq!(cfg["session_name"], "Daily Hunt");
+    assert_eq!(cfg["skill_boost_percent"], 50);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -238,15 +242,15 @@ async fn the_update_validation_ladder_refuses_the_backend_way() {
         ApiError::bad_request("chat.log path does not exist")
     );
 
-    // An unknown mob-tracking mode is refused before the write.
+    // A negative skill boost is refused before the write.
     assert_eq!(
         api.settings_update(SettingsPatch {
-            mob_tracking_mode: Some("bogus".into()),
+            skill_boost_percent: Some(-1),
             ..SettingsPatch::default()
         })
         .await
         .unwrap_err(),
-        ApiError::bad_request("Unknown mob tracking mode")
+        ApiError::bad_request("Skill boost cannot be negative")
     );
     // The refusals left the stored player name untouched (default empty).
     assert_eq!(read_settings(&dir.path().join("data"))["player_name"], "");

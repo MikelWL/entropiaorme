@@ -252,12 +252,13 @@ pub struct TimelinePoint {
     pub ledger_losses: std::collections::BTreeMap<String, f64>,
 }
 
-/// The Hunting aggregate: the per-mob and per-tag comparison tables.
+/// The Hunting aggregate: the per-mob and per-session-name comparison
+/// tables (the observed and designated axes).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HuntingData {
     pub mob_comparisons: Vec<ActivityRow>,
-    pub tag_comparisons: Vec<ActivityRow>,
+    pub name_comparisons: Vec<ActivityRow>,
 }
 
 /// The Tree Cutting aggregate: effective yield tiers and their loot
@@ -291,7 +292,7 @@ pub struct HarvestLootItemRow {
 }
 
 /// One row of a Hunting comparison table; the caller labels the name
-/// (`mobName` / `tagName`).
+/// (`mobName` / `sessionName`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityRow {
@@ -1440,8 +1441,9 @@ struct SessionAgg {
     skill_tt: f64,
     dominant_mob: Option<String>,
     dominant_mob_kills: i64,
-    dominant_tag: Option<String>,
-    dominant_tag_kills: i64,
+    /// The session-name facet (the designated axis; a legacy tag-mode
+    /// session reads its migrated name here).
+    session_name: Option<String>,
     cycled_ped: f64,
 }
 
@@ -1469,10 +1471,10 @@ fn activity_sessions_read(conn: &mut rusqlite::Connection) -> Result<Vec<Session
     // scales with the divergence, not the whole history. The divergent ids are
     // collected first, so the streaming read is done before the per-id raw
     // aggregates prepare their own statements on the same connection.
-    let divergent: Vec<(String, f64, f64, f64, f64, f64)> = {
+    let divergent: Vec<DivergentSession> = {
         let mut stmt = conn.prepare(
             "SELECT s.id, s.started_at, s.ended_at, COALESCE(s.armour_cost, 0), \
-             COALESCE(s.heal_cost, 0), COALESCE(s.dangling_cost, 0) \
+             COALESCE(s.heal_cost, 0), COALESCE(s.dangling_cost, 0), s.session_name \
              FROM tracking_sessions s \
              LEFT JOIN session_summaries ss ON ss.session_id = s.id \
              WHERE s.ended_at IS NOT NULL AND ss.session_id IS NULL",
@@ -1487,12 +1489,13 @@ fn activity_sessions_read(conn: &mut rusqlite::Connection) -> Result<Vec<Session
                 as_float(row, 3),
                 as_float(row, 4),
                 as_float(row, 5),
+                row.get::<_, Option<String>>(6)?,
             ));
         }
         out
     };
-    for (id, started, ended, armour, heal, dangling) in divergent {
-        let agg = raw_session_agg(conn, &id, started, ended, armour, heal, dangling)?;
+    for (id, started, ended, armour, heal, dangling, name) in divergent {
+        let agg = raw_session_agg(conn, &id, started, ended, armour, heal, dangling, name)?;
         sessions.insert(id, agg);
     }
 
@@ -1514,7 +1517,7 @@ fn read_summary_activity_aggs(
 ) -> Result<std::collections::HashMap<String, SessionAgg>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT session_id, duration_hours, kills, loot_tt, cycled_ped, activity_skill_tt, \
-         dominant_mob, dominant_tag, dominant_mob_kills, dominant_tag_kills \
+         dominant_mob, dominant_mob_kills, session_name \
          FROM session_summaries",
     )?;
     let mut rows = stmt.query([])?;
@@ -1530,9 +1533,8 @@ fn read_summary_activity_aggs(
                 cycled_ped: as_float(row, 4),
                 skill_tt: as_float(row, 5),
                 dominant_mob: row.get::<_, Option<String>>(6)?,
-                dominant_tag: row.get::<_, Option<String>>(7)?,
-                dominant_mob_kills: row.get::<_, i64>(8).unwrap_or(0),
-                dominant_tag_kills: row.get::<_, i64>(9).unwrap_or(0),
+                dominant_mob_kills: row.get::<_, i64>(7).unwrap_or(0),
+                session_name: row.get::<_, Option<String>>(8)?,
                 ..SessionAgg::default()
             },
         );
@@ -1540,10 +1542,16 @@ fn read_summary_activity_aggs(
     Ok(out)
 }
 
+/// One ended session with no summary row, as the reconciliation read
+/// returns it: id, start, end, armour, heal, dangling, and the session
+/// name facet.
+type DivergentSession = (String, f64, f64, f64, f64, f64, Option<String>);
+
 /// Compute one session's Activity aggregate directly from the raw tables, for
 /// the reconciliation path (an ended session with no summary row). Mirrors the
 /// summary's own per-session computation query for query, so an included
 /// no-gains session carries the same numbers a summary would if it held one.
+#[allow(clippy::too_many_arguments)]
 fn raw_session_agg(
     conn: &rusqlite::Connection,
     session_id: &str,
@@ -1552,12 +1560,16 @@ fn raw_session_agg(
     armour_cost: f64,
     heal_cost: f64,
     dangling_cost: f64,
+    session_name: Option<String>,
 ) -> Result<SessionAgg, DbError> {
     let mut agg = SessionAgg {
         duration_hours: (ended_at - started_at).max(0.0) / 3600.0,
         armour_cost,
         heal_cost,
         dangling_cost,
+        // Carried from the caller's own read of the session row rather
+        // than re-queried per session.
+        session_name: session_name.filter(|name| !name.is_empty()),
         ..SessionAgg::default()
     };
 
@@ -1588,34 +1600,27 @@ fn raw_session_agg(
         |row| Ok(as_float(row, 0)),
     )?;
 
-    let mob_rows: Vec<(String, String, String, i64)> = {
+    // Mob dominance over species-bearing stamps only, mirroring the summary
+    // writer (a species-less stamp is a legacy tag, i.e. a session name).
+    let mob_rows: Vec<(String, i64)> = {
         let mut stmt = conn.prepare(
-            "SELECT mob_name, COALESCE(mob_species, ''), COALESCE(mob_maturity, ''), COUNT(*) \
+            "SELECT mob_name, COUNT(*) \
              FROM kills WHERE session_id = ? AND mob_name IS NOT NULL AND mob_name != 'Unknown' \
-             GROUP BY mob_name, mob_species, mob_maturity ORDER BY COUNT(*) DESC, mob_name ASC",
+               AND COALESCE(mob_species, '') != '' \
+             GROUP BY mob_name ORDER BY COUNT(*) DESC, mob_name ASC",
         )?;
         let mapped = stmt.query_map(rusqlite::params![session_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
         mapped.collect::<rusqlite::Result<Vec<_>>>()?
     };
     if !mob_rows.is_empty() {
-        let total_known: i64 = mob_rows.iter().map(|r| r.3).sum();
+        let total_known: i64 = mob_rows.iter().map(|r| r.1).sum();
         if total_known > 0 {
-            let (top_name, top_species, top_maturity, top_count) = mob_rows[0].clone();
+            let (top_name, top_count) = mob_rows[0].clone();
             if top_count as f64 / total_known as f64 >= ACTIVITY_DOMINANCE_THRESHOLD {
-                if !top_species.is_empty() || !top_maturity.is_empty() {
-                    agg.dominant_mob = Some(top_name);
-                    agg.dominant_mob_kills = top_count;
-                } else {
-                    agg.dominant_tag = Some(top_name);
-                    agg.dominant_tag_kills = top_count;
-                }
+                agg.dominant_mob = Some(top_name);
+                agg.dominant_mob_kills = top_count;
             }
         }
     }
@@ -1698,14 +1703,14 @@ async fn hunting_impl(db: &Db) -> Result<HuntingData, DbError> {
         |s| s.dominant_mob.clone(),
         |s| s.dominant_mob_kills,
     );
-    let tag = build_activity_slice_rows(
-        &sessions,
-        |s| s.dominant_tag.clone(),
-        |s| s.dominant_tag_kills,
-    );
+    // The designated axis groups on the session-name facet: exact
+    // session-scoped grouping, no dominance gate, and a session appears
+    // in BOTH tables when it carries both a name and a dominant mob
+    // (the co-recording model that replaced the tag-or-mob collapse).
+    let name = build_activity_slice_rows(&sessions, |s| s.session_name.clone(), |s| s.kills);
     Ok(HuntingData {
         mob_comparisons: mob,
-        tag_comparisons: tag,
+        name_comparisons: name,
     })
 }
 
@@ -3794,7 +3799,7 @@ mod tests {
         let value = to_json(hunting_impl(&db).await.unwrap());
         assert_eq!(
             to_wire_json(&value),
-            "{\"mobComparisons\":[],\"tagComparisons\":[]}"
+            "{\"mobComparisons\":[],\"nameComparisons\":[]}"
         );
     }
 
@@ -4006,9 +4011,20 @@ mod tests {
                 ("sess-z", recent, 0.0, 0.0, 0.0), // zero-kill, zero-cost: filtered from activity
             ] {
                 conn.execute(
-                    "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost) \
-                     VALUES(?1,?2,?3,?4,?5,?6)",
-                    rusqlite::params![id, start, start + 3600.0, armour, heal, dangling],
+                    "INSERT INTO tracking_sessions(id,started_at,ended_at,armour_cost,heal_cost,dangling_cost,session_name) \
+                     VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                    rusqlite::params![
+                        id,
+                        start,
+                        start + 3600.0,
+                        armour,
+                        heal,
+                        dangling,
+                        // The designated axis is a session facet now; only
+                        // sess-b carries a name, exactly as only it carried
+                        // a tag before.
+                        (id == "sess-b").then_some("Thing"),
+                    ],
                 )
                 .expect("seed");
             }
@@ -4128,7 +4144,8 @@ mod tests {
         let (_dir, db) = open_env().await;
         seed_scenario(&db, now).await;
         let v = to_json(hunting_impl(&db).await.unwrap());
-        // sess-z (zero kills) filtered out; sess-a -> dominant mob, sess-b -> tag.
+        // sess-z (zero kills) filtered out; sess-a carries a dominant mob,
+        // sess-b a session name.
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["name"], json!("Atrox"));
@@ -4138,13 +4155,15 @@ mod tests {
         // pesPer100Ped = (skill 3.0 / cycled 6.75) * 100; lootRate = loot 50 / cycled.
         assert_eq!(mobs[0]["pesPer100Ped"], json!(44.44));
         assert_eq!(mobs[0]["lootRate"], json!(7.4074));
-        let tags = v["tagComparisons"].as_array().unwrap();
-        assert_eq!(tags.len(), 1);
-        assert_eq!(tags[0]["name"], json!("Thing"));
-        assert_eq!(tags[0]["kills"], json!(3));
-        assert_eq!(tags[0]["cycled"], json!(2.4));
-        assert_eq!(tags[0]["pesPer100Ped"], json!(41.67));
-        assert_eq!(tags[0]["lootRate"], json!(6.25));
+        let names = v["nameComparisons"].as_array().unwrap();
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0]["name"], json!("Thing"));
+        // The designated axis counts the session's whole kill stream, not a
+        // dominant slice of it: naming a session IS the declaration.
+        assert_eq!(names[0]["kills"], json!(3));
+        assert_eq!(names[0]["cycled"], json!(2.4));
+        assert_eq!(names[0]["pesPer100Ped"], json!(41.67));
+        assert_eq!(names[0]["lootRate"], json!(6.25));
     }
 
     /// The activity filter drops a session failing ANY of the three guards
@@ -4303,10 +4322,12 @@ mod tests {
         .unwrap();
         let v = to_json(hunting_impl(&db).await.unwrap());
         assert_eq!(v["mobComparisons"].as_array().unwrap().len(), 0);
-        assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
+        // An unnamed session reaches the designated axis no more than the
+        // mob axis: absent is absent, not an empty-string bucket.
+        assert_eq!(v["nameComparisons"].as_array().unwrap().len(), 0);
 
-        // Asymmetric: species present, maturity empty -> still a mob (the
-        // presence test is OR, not AND), so it lands in mobComparisons.
+        // A species with no maturity is still a mob: maturity is a finer
+        // breakdown, not part of the identity test.
         let (_dir, db) = open_env().await;
         db.with_writer(|conn| {
             conn.execute(
@@ -4329,7 +4350,7 @@ mod tests {
         let mobs = v["mobComparisons"].as_array().unwrap();
         assert_eq!(mobs.len(), 1);
         assert_eq!(mobs[0]["name"], json!("Foo"));
-        assert_eq!(v["tagComparisons"].as_array().unwrap().len(), 0);
+        assert_eq!(v["nameComparisons"].as_array().unwrap().len(), 0);
     }
 
     /// A kill referencing a session that does not exist (representable with
@@ -5958,7 +5979,7 @@ mod tests {
         .unwrap();
 
         let agg = db
-            .with_reader(|conn| raw_session_agg(conn, "rs", 1000.0, 8200.0, 0.07, 0.11, 0.13))
+            .with_reader(|conn| raw_session_agg(conn, "rs", 1000.0, 8200.0, 0.07, 0.11, 0.13, None))
             .await
             .unwrap();
         assert_eq!(agg.duration_hours, 2.0); // (8200 - 1000) / 3600
@@ -5974,14 +5995,15 @@ mod tests {
                                         // Atrox 3 of 4 known kills = 0.75, species present -> dominant mob.
         assert_eq!(agg.dominant_mob, Some("Young Atrox".to_string()));
         assert_eq!(agg.dominant_mob_kills, 3);
-        assert_eq!(agg.dominant_tag, None);
         // weapon 1.6 + enhancer 0.1 + armour 0.07 + heal 0.11 + dangling 0.13.
         assert_eq!(agg.cycled_ped, 2.01);
     }
 
-    /// Bare mob names (no species or maturity) classify as a tag, not a mob.
+    /// Species-less stamps are legacy tag-mode kills, which migration 0018
+    /// lifted onto the session row as its name. They must never re-enter the
+    /// mob axis as if they were a hunted species.
     #[tokio::test]
-    async fn raw_session_agg_classifies_bare_names_as_tags() {
+    async fn raw_session_agg_excludes_species_less_stamps_from_the_mob_axis() {
         let (_dir, db) = open_env().await;
         db.with_writer(|conn| {
             for i in 0..3 {
@@ -5997,11 +6019,24 @@ mod tests {
         .await
         .unwrap();
         let agg = db
-            .with_reader(|conn| raw_session_agg(conn, "tg", 1000.0, 4600.0, 0.0, 0.0, 0.0))
+            .with_reader(|conn| {
+                raw_session_agg(
+                    conn,
+                    "tg",
+                    1000.0,
+                    4600.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    Some("Thing".to_string()),
+                )
+            })
             .await
             .unwrap();
-        assert_eq!(agg.dominant_tag, Some("Thing".to_string()));
         assert_eq!(agg.dominant_mob, None);
+        assert_eq!(agg.dominant_mob_kills, 0);
+        // The designated axis carries it instead, under the session name.
+        assert_eq!(agg.session_name, Some("Thing".to_string()));
     }
 
     /// The trend compares the recent-30d window (lower bound `now - 30*86400`)

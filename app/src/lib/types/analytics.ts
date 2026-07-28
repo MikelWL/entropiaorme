@@ -37,6 +37,7 @@ export type {
 	LossesBreakdown,
 	MobComparison,
 	MonthlyEntry,
+	NameComparison,
 	OptimizerAttribute,
 	OptimizerSkill,
 	PathAllocation,
@@ -53,6 +54,5 @@ export type {
 	SkillLevel,
 	StatProfession,
 	StockPosition,
-	TagComparison,
 	TimelineDay,
 } from '$lib/api/commands.gen';

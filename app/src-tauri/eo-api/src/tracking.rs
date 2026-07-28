@@ -51,16 +51,18 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 40] = [
+const SNAPSHOT_FIELDS: [&str; 42] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
     "repairOcrEnabled",
     "endOfSessionArmourReminderEnabled",
-    "mobEntryMode",
+    "sessionName",
+    "skillBoostPercent",
     "currentMob",
-    "mobSource",
     "currentTool",
+    "currentActivity",
+    "questName",
     "trifectaAttribution",
     "recentEvents",
     "session_id",
@@ -113,6 +115,16 @@ fn edit_error(context: &'static str) -> impl Fn(EditError) -> ApiError {
 // compiler owns the vocabulary on both sides of the boundary. Each
 // variant's serialised form is byte-identical to the string it replaces.
 
+/// The activity family the held tool implies the next action belongs
+/// to: the overlay's derived-activity feedback ("this is Tree Cutting"
+/// versus "this is Hunting"). Absent when no tool is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolActivity {
+    Hunting,
+    Treecutting,
+}
+
 /// The session state a tracking readout reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -129,19 +141,13 @@ pub enum WeaponAttribution {
     Trifecta,
 }
 
-/// Mob-attribution input mode a session is captured under.
+/// The legacy exclusive-capture input mode recorded on pre-facet
+/// session rows; read-only vocabulary for labelling those sessions
+/// (facet-era rows all read as `mob`, the column default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MobEntryMode {
     Mob,
-    Tag,
-}
-
-/// How the current mob label was locked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum MobSource {
-    Manual,
     Tag,
 }
 
@@ -332,6 +338,10 @@ pub struct SessionDetail {
     pub session_id: String,
     pub summary: SessionSummary,
     pub harvest: HarvestSummary,
+    /// The session-name facet as recorded. Present here because the
+    /// record is where the name is corrected: the overlay fixes it once
+    /// a session starts.
+    pub session_name: Nullable<String>,
     pub mob_entry_mode: MobEntryMode,
     pub notable_events: Vec<NotableEvent>,
     pub loot_breakdown: Vec<LootEntry>,
@@ -423,14 +433,26 @@ pub struct TrackingSnapshot {
     pub repair_ocr_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_of_session_armour_reminder_enabled: Option<bool>,
+    /// The session-name facet: the active session's when tracking, the
+    /// configured next-session value when idle.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mob_entry_mode: Option<MobEntryMode>,
+    pub session_name: Option<String>,
+    /// The skill-boost facet (labelled percent), same idle/active
+    /// sourcing as the session name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_boost_percent: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_mob: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mob_source: Option<MobSource>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub current_tool: Option<String>,
+    /// What the held tool implies the next action is recorded as.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_activity: Option<ToolActivity>,
+    /// The quest or playlist the active session declares, resolved for
+    /// display. Absent when nothing is declared (or the link was
+    /// declined), so the control never claims a binding it lacks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quest_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trifecta_attribution: Option<TrifectaAttribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -553,10 +575,21 @@ pub struct ManualMobLockResult {
     pub maturity: String,
 }
 
-/// The tag-lock acknowledgement.
+/// The session-config acknowledgement: the facet values now in force
+/// (null: not declared).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TagLockResult {
-    pub tag: String,
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigResult {
+    pub session_name: Nullable<String>,
+    pub skill_boost_percent: Nullable<i64>,
+}
+
+/// The post-hoc session-rename result.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRenameResult {
+    pub session_id: String,
+    pub session_name: Nullable<String>,
 }
 
 /// The mob rename / restore result.
@@ -604,6 +637,34 @@ pub struct QuestLinkDecision {
     pub quest_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playlist_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playlist_name: Option<String>,
+}
+
+/// The quest-declaration outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestDeclareStatus {
+    Declared,
+    Cleared,
+}
+
+/// The quest-declaration acknowledgement: the curated link now in force
+/// on the active session (or its removal). The link fields ride only on
+/// a declare, resolved for display.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestDeclareResult {
+    pub session_id: String,
+    pub status: QuestDeclareStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_type: Option<QuestLinkType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quest_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quest_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playlist_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playlist_name: Option<String>,
 }
@@ -670,37 +731,23 @@ impl Api {
         }
     }
 
-    /// Free-text tag autocomplete over species-less kills.
-    pub async fn tracking_tag_suggestions(
+    /// Session-name autocomplete over the names already in the history.
+    pub async fn tracking_session_name_suggestions(
         &self,
         q: String,
         limit: Option<i64>,
     ) -> Result<Vec<String>, ApiError> {
-        tag_suggestions_impl(&self.db, &q, limit.unwrap_or(10))
+        session_name_suggestions_impl(&self.db, &q, limit.unwrap_or(10))
             .await
-            .map_err(ApiError::internal("tracking tag suggestions"))
+            .map_err(ApiError::internal("tracking session name suggestions"))
     }
 
-    /// Catalogue mob-name autocomplete. The tag-mode 409 fires first (before
-    /// the empty-query short-circuit), consulting the per-session captured
-    /// mode when tracking, else the live config.
+    /// Catalogue mob-name autocomplete for the declared-mob typeahead.
     pub async fn tracking_manual_mob_suggestions(
         &self,
         q: String,
         limit: Option<i64>,
     ) -> Result<Vec<ManualMobSuggestion>, ApiError> {
-        let tag_mode = if self.tracker.is_tracking() {
-            self.tracker.is_session_tag_mode()
-        } else {
-            load_config_readonly(&self.data_dir)
-                .map_err(ApiError::internal("manual mob suggestions config"))?
-                .mob_tracking_mode
-                == "tag"
-        };
-        if tag_mode {
-            return Err(ApiError::conflict("Tag mode disables manual mob selection"));
-        }
-
         let query = q.trim_matches(python_whitespace);
         if query.is_empty() {
             return Ok(Vec::new());
@@ -815,7 +862,7 @@ impl Api {
         }
     }
 
-    /// Clear the locked mob or tag, echoing what was released.
+    /// Clear the declared mob, echoing what was released.
     pub async fn tracking_release_mob(&self) -> Result<ReleaseResult, ApiError> {
         // The (non-`Send`) config guard is scoped around each read/write
         // so it is never held across the tracker's await points; the
@@ -825,48 +872,30 @@ impl Api {
                 .lock()
                 .map_err(|_| ApiError::invalid_state("release mob: poisoned config lock"))
         };
-        let released = if self.tracker.is_tracking() && self.tracker.is_session_tag_mode() {
-            let released = self.tracker.release_current_mob().await;
-            lock_config()?
-                .update(&clear_tag())
-                .map_err(ApiError::internal("release mob"))?;
-            released.map(Value::from).unwrap_or(Value::Null)
-        } else if !self.tracker.is_tracking() {
-            let mut guard = lock_config()?;
-            if guard.get().mob_tracking_mode == "tag" {
-                let trimmed = guard.get().mob_tracking_tag.trim().to_string();
-                let released = if trimmed.is_empty() {
-                    Value::Null
-                } else {
-                    Value::String(trimmed)
-                };
-                guard
-                    .update(&clear_tag())
-                    .map_err(ApiError::internal("release mob"))?;
-                released
-            } else {
-                let species = guard.get().manual_mob_species.trim().to_string();
-                let maturity = guard.get().manual_mob_maturity.trim().to_string();
-                let released = mob_display(&species, &maturity);
-                guard
-                    .update(&clear_manual_mob())
-                    .map_err(ApiError::internal("release mob"))?;
-                released
-            }
-        } else {
-            let released = self.tracker.release_current_mob().await;
+        let released = if self.tracker.is_tracking() {
+            let released = self.tracker.release_declared_mob().await;
             lock_config()?
                 .update(&clear_manual_mob())
                 .map_err(ApiError::internal("release mob"))?;
             released.map(Value::from).unwrap_or(Value::Null)
+        } else {
+            let mut guard = lock_config()?;
+            let species = guard.get().manual_mob_species.trim().to_string();
+            let maturity = guard.get().manual_mob_maturity.trim().to_string();
+            let released = mob_display(&species, &maturity);
+            guard
+                .update(&clear_manual_mob())
+                .map_err(ApiError::internal("release mob"))?;
+            released
         };
         Ok(ReleaseResult {
             released: opt_str(&released).into(),
         })
     }
 
-    /// Lock a catalogue mob for manual kill stamping. 409 in tag mode, 400
-    /// when the mob is absent from the catalogue.
+    /// Declare a catalogue mob for kill stamping. 400 when the mob is
+    /// absent from the catalogue; mid-session declaration changes are
+    /// allowed by design.
     pub async fn tracking_manual_mob_lock(
         &self,
         species: String,
@@ -888,11 +917,6 @@ impl Api {
                     "manual mob lock: poisoned config lock",
                 ));
             };
-            let idle_tag_mode =
-                !self.tracker.is_tracking() && guard.get().mob_tracking_mode == "tag";
-            if (self.tracker.is_tracking() && self.tracker.is_session_tag_mode()) || idle_tag_mode {
-                return Err(ApiError::conflict("Tag mode disables manual mob selection"));
-            }
             if !MobLookupService::new(&self.game_data).has_mob_name(species, maturity) {
                 return Err(ApiError::bad_request("Mob is not present in the catalogue"));
             }
@@ -903,19 +927,14 @@ impl Api {
                 .update(&updates)
                 .map_err(ApiError::internal("manual mob lock"))?;
         }
-        if self.tracker.is_tracking()
-            && self
+        if self.tracker.is_tracking() {
+            // The only reachable error is the session stopping between
+            // the check and the call; the config write above already
+            // carries the declaration into the next session either way.
+            let _ = self
                 .tracker
-                .set_manual_mob(&display, species, maturity)
-                .await
-                .is_err()
-        {
-            // The gate cleared an active non-tag session; the only reachable
-            // error is the live config having flipped to tag mode since the
-            // session started. Mirror the reference's post-write 500.
-            return Err(ApiError::invalid_state(
-                "manual mob lock: session flipped to tag mode",
-            ));
+                .set_declared_mob(&display, species, maturity)
+                .await;
         }
         Ok(ManualMobLockResult {
             mob_name: display,
@@ -924,38 +943,69 @@ impl Api {
         })
     }
 
-    /// Set the active free-text tag. 409 when not in tag mode, 400 on an
-    /// empty tag.
-    pub async fn tracking_tag_lock(&self, tag: String) -> Result<TagLockResult, ApiError> {
-        let tag = tag.trim();
+    /// Set the session facets: the designated name and the skill boost.
+    /// Full-state apply (a null clears its facet).
+    ///
+    /// The two facets differ in how they may move, not by taste. The
+    /// boost may be re-declared mid-session (a pill expiring is a real
+    /// change worth recording), and the session keeps the latest
+    /// declaration. The name names the whole session, so a live edit
+    /// could only rewrite its history: it is fixed once a session runs
+    /// (409), and correcting it is a post-hoc move through
+    /// `tracking_rename_session`.
+    pub async fn tracking_session_config(
+        &self,
+        session_name: Option<String>,
+        skill_boost_percent: Option<i64>,
+    ) -> Result<SessionConfigResult, ApiError> {
+        let name = session_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        let boost = skill_boost_percent.filter(|percent| *percent > 0);
         // Validate and write inside a block so the (non-`Send`) config
         // guard is gone before the tracker await below.
         {
             let Ok(mut guard) = self.config_service.lock() else {
-                return Err(ApiError::invalid_state("tag lock: poisoned config lock"));
+                return Err(ApiError::invalid_state(
+                    "session config: poisoned config lock",
+                ));
             };
-            if self.tracker.is_tracking() {
-                if !self.tracker.is_session_tag_mode() {
-                    return Err(ApiError::conflict("Active session is not in tag mode"));
-                }
-            } else if guard.get().mob_tracking_mode != "tag" {
-                return Err(ApiError::conflict("Tag mode is not enabled"));
-            }
-            if tag.is_empty() {
-                return Err(ApiError::bad_request("Tag cannot be empty"));
+            if self.tracker.is_tracking()
+                && name.as_deref().unwrap_or("") != guard.get().session_name.trim()
+            {
+                return Err(ApiError::conflict(
+                    "Session name is fixed for the active session; rename it from the session record once it ends",
+                ));
             }
             let mut updates = Map::new();
-            updates.insert("mob_tracking_tag".into(), json!(tag));
+            updates.insert("session_name".into(), json!(name.as_deref().unwrap_or("")));
+            updates.insert("skill_boost_percent".into(), json!(boost.unwrap_or(0)));
             guard
                 .update(&updates)
-                .map_err(ApiError::internal("tag lock"))?;
+                .map_err(ApiError::internal("session config"))?;
         }
         if self.tracker.is_tracking() {
-            let _ = self.tracker.set_manual_tag(tag).await;
+            let _ = self.tracker.set_skill_boost(boost).await;
         }
-        Ok(TagLockResult {
-            tag: tag.to_string(),
+        Ok(SessionConfigResult {
+            session_name: name.into(),
+            skill_boost_percent: boost.into(),
         })
+    }
+
+    /// Rename an ended session: the post-hoc correction path for the
+    /// name facet, which the overlay fixes once a session starts.
+    pub async fn tracking_rename_session(
+        &self,
+        session_id: String,
+        session_name: Option<String>,
+    ) -> Result<SessionRenameResult, ApiError> {
+        let value = rename_session_impl(&self.db, &session_id, session_name.as_deref())
+            .await
+            .map_err(edit_error("tracking rename session"))?;
+        serde_json::from_value(value).map_err(ApiError::internal("tracking rename session shaping"))
     }
 
     /// Rename a mob across an ended session.
@@ -1080,6 +1130,92 @@ impl Api {
         ))
     }
 
+    /// Declare (or clear) the active session's quest facet: bind the
+    /// curated analytics link to a quest or playlist up front instead of
+    /// waiting for the post-stop suggestion. Both ids null clears the
+    /// link. 409 when no session is active; 400 for a bad id pair.
+    pub async fn tracking_quest_declare(
+        &self,
+        quest_id: Option<i64>,
+        playlist_id: Option<i64>,
+    ) -> Result<QuestDeclareResult, ApiError> {
+        let readout = self
+            .tracker
+            .snapshot()
+            .await
+            .map_err(ApiError::internal("quest declare readout"))?;
+        let Some(active) = readout.active else {
+            return Err(ApiError::conflict("No active session"));
+        };
+        let session_id = active.session_id;
+
+        if quest_id.is_none() && playlist_id.is_none() {
+            self.quests
+                .clear_session_link(&session_id)
+                .await
+                .map_err(ApiError::internal("quest declare clear"))?;
+            return Ok(QuestDeclareResult {
+                session_id,
+                status: QuestDeclareStatus::Cleared,
+                link_type: None,
+                quest_id: None,
+                quest_name: None,
+                playlist_id: None,
+                playlist_name: None,
+            });
+        }
+
+        match self
+            .quests
+            .declare_session_link(&session_id, quest_id, playlist_id)
+            .await
+        {
+            Ok(()) => {}
+            Err(QuestError::Invalid(message)) => return Err(ApiError::bad_request(message)),
+            Err(_) => return Err(ApiError::invalid_state("quest declare")),
+        }
+
+        // Resolve the display name for the acknowledgement.
+        let (link_type, name) = if let Some(id) = quest_id {
+            (QuestLinkType::Quest, self.entity_name("quests", id).await?)
+        } else {
+            let id = playlist_id.expect("one id present");
+            (
+                QuestLinkType::Playlist,
+                self.entity_name("quest_playlists", id).await?,
+            )
+        };
+        Ok(QuestDeclareResult {
+            session_id,
+            status: QuestDeclareStatus::Declared,
+            link_type: Some(link_type),
+            quest_id,
+            quest_name: match link_type {
+                QuestLinkType::Quest => name.clone(),
+                QuestLinkType::Playlist => None,
+            },
+            playlist_id,
+            playlist_name: match link_type {
+                QuestLinkType::Playlist => name,
+                QuestLinkType::Quest => None,
+            },
+        })
+    }
+
+    /// A quest/playlist display name by id (None when absent).
+    async fn entity_name(&self, table: &'static str, id: i64) -> Result<Option<String>, ApiError> {
+        use rusqlite::OptionalExtension as _;
+        let sql = format!("SELECT name FROM {table} WHERE id = ?");
+        self.db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(&sql, rusqlite::params![id], |row| row.get::<_, String>(0))
+                    .optional()?)
+            })
+            .await
+            .map_err(ApiError::internal("quest declare name"))
+    }
+
     /// The one-shot repair-cost OCR read, gated on `repair_ocr_enabled`
     /// (400 when disabled). The `session_id` is unused (the reference
     /// ignores it too); it stays in the signature for the route mapping.
@@ -1146,15 +1282,56 @@ pub(crate) async fn build_snapshot_value(
         Some(tool) => Value::String(tool.clone()),
         None => Value::Null,
     };
-    // The stored mode is free text (config / session row); recover
-    // anything outside the two modes to the "mob" default, exactly as
-    // the settings read does, so the snapshot's closed vocabulary holds
-    // for a hand-edited store rather than failing the whole hydration.
-    let mob_entry_mode = |stored: &str| if stored == "tag" { "tag" } else { "mob" };
+    // The derived-activity feedback: what the held tool implies the
+    // next action is recorded as (absent when no tool is known).
+    let current_activity = match &readout.current_tool {
+        Some(_) if readout.current_tool_is_harvest => Value::String("treecutting".into()),
+        Some(_) => Value::String("hunting".into()),
+        None => Value::Null,
+    };
+    // The facet pair serialises null for "not declared" (the projection
+    // drops the key): idle reads the configured next-session values,
+    // active reads the session's snapshot.
+    let name_value = |name: Option<&str>| match name.filter(|value| !value.is_empty()) {
+        Some(name) => Value::String(name.to_string()),
+        None => Value::Null,
+    };
+    let boost_value = |percent: Option<i64>| match percent.filter(|value| *value > 0) {
+        Some(percent) => json!(percent),
+        None => Value::Null,
+    };
+
+    // The declared quest facet, read from the persisted curated link so a
+    // reopened overlay (or a restarted app) shows the binding that
+    // actually stands rather than a locally-remembered one.
+    let quest_name = match &readout.active {
+        None => Value::Null,
+        Some(active) => {
+            let session_id = active.session_id.clone();
+            let resolved: Option<String> = db
+                .with_reader(move |conn| {
+                    use rusqlite::OptionalExtension as _;
+                    Ok(conn
+                        .query_row(
+                            "SELECT COALESCE(q.name, p.name) \
+                             FROM session_quest_analytics_links l \
+                             LEFT JOIN quests q ON q.id = l.quest_id \
+                             LEFT JOIN quest_playlists p ON p.id = l.playlist_id \
+                             WHERE l.session_id = ? AND l.link_type IN ('quest', 'playlist')",
+                            rusqlite::params![session_id],
+                            |row| row.get::<_, Option<String>>(0),
+                        )
+                        .optional()?
+                        .flatten())
+                })
+                .await
+                .map_err(ApiError::internal("snapshot quest link"))?;
+            resolved.map(Value::String).unwrap_or(Value::Null)
+        }
+    };
 
     let value = match &readout.active {
         None => {
-            let (current_mob, mob_source) = configured_manual_label(config);
             json!({
                 "status": "idle",
                 "hotbarListenerActive": hotbar_active,
@@ -1162,10 +1339,11 @@ pub(crate) async fn build_snapshot_value(
                 "repairOcrEnabled": config.repair_ocr_enabled,
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
+                "currentActivity": current_activity,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": mob_entry_mode(&config.mob_tracking_mode),
-                "currentMob": current_mob,
-                "mobSource": mob_source,
+                "sessionName": name_value(Some(config.session_name.trim())),
+                "skillBoostPercent": boost_value(Some(config.skill_boost_percent)),
+                "currentMob": declared_mob_label(config),
                 "recentEvents": [],
             })
         }
@@ -1234,10 +1412,12 @@ pub(crate) async fn build_snapshot_value(
                 "repairOcrEnabled": config.repair_ocr_enabled,
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
+                "currentActivity": current_activity,
+                "questName": quest_name,
                 "trifectaAttribution": trifecta_attribution,
-                "mobEntryMode": mob_entry_mode(&active.mob_entry_mode),
+                "sessionName": name_value(active.session_name.as_deref()),
+                "skillBoostPercent": boost_value(active.skill_boost_percent),
                 "currentMob": active.current_mob.clone(),
-                "mobSource": active.mob_source.clone(),
                 "recentEvents": recent_events,
                 "warnings": warnings,
             });

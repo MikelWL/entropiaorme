@@ -153,11 +153,12 @@ pub struct MobComparison {
     pub loot_rate: f64,
 }
 
-/// One row of the per-tag activity comparison.
+/// One row of the per-session-name activity comparison (the designated
+/// axis; legacy tag-mode sessions appear under their migrated names).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct TagComparison {
-    pub tag_name: String,
+pub struct NameComparison {
+    pub session_name: String,
     pub sessions: i64,
     pub kills: i64,
     pub hours: f64,
@@ -166,12 +167,13 @@ pub struct TagComparison {
     pub loot_rate: f64,
 }
 
-/// The Hunting aggregate: the per-mob and per-tag comparison tables.
+/// The Hunting aggregate: the per-mob and per-session-name comparison
+/// tables (the observed and designated axes).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyticsHunting {
     pub mob_comparisons: Vec<MobComparison>,
-    pub tag_comparisons: Vec<TagComparison>,
+    pub name_comparisons: Vec<NameComparison>,
 }
 
 /// One item in an activity's harvest loot composition: realised TT only.
@@ -992,11 +994,11 @@ pub(crate) fn hunting_dto(data: eo_services::analytics::HuntingData) -> Analytic
                 loot_rate: row.loot_rate,
             })
             .collect(),
-        tag_comparisons: data
-            .tag_comparisons
+        name_comparisons: data
+            .name_comparisons
             .into_iter()
-            .map(|row| TagComparison {
-                tag_name: row.name,
+            .map(|row| NameComparison {
+                session_name: row.name,
                 sessions: row.sessions,
                 kills: row.kills,
                 hours: row.hours,

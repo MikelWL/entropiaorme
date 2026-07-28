@@ -158,13 +158,21 @@ impl TrackerActor {
                 active.session.harvests.push(harvest.clone());
                 (RoutedLoot::Harvest(harvest), restamps, yield_restamps)
             } else {
-                // Snapshot the mob/tag stamp from the selection (the
-                // variant carries the source, so the stamp cannot drift
-                // from where it came from).
-                let mob_name = active.stamped_mob_name().unwrap_or("Unknown").to_string();
-                let (mob_species, mob_maturity) = active.mob.species_maturity();
-                let (mob_species, mob_maturity) =
-                    (mob_species.to_string(), mob_maturity.to_string());
+                // Snapshot the mob stamp from the declaration in force.
+                // No declaration stamps "Unknown" with no source; the
+                // stamp-source discriminant records the provenance so a
+                // future detected stamp reads apart from a declared one.
+                let stamped = active.stamped_mob_name();
+                let mob_stamp_source = stamped
+                    .is_some()
+                    .then_some(crate::tracker::MobStampSource::Declared);
+                let mob_name = stamped.unwrap_or("Unknown").to_string();
+                let (mob_species, mob_maturity) = match &active.declared_mob {
+                    Some(declared) if !declared.name.is_empty() => {
+                        (declared.species.clone(), declared.maturity.clone())
+                    }
+                    _ => (String::new(), String::new()),
+                };
 
                 let session_id = active.session.id.clone();
                 let accumulator = &mut active.accumulator;
@@ -174,6 +182,7 @@ impl TrackerActor {
                     mob_name,
                     mob_species,
                     mob_maturity,
+                    mob_stamp_source,
                     timestamp: now_epoch,
                     shots_fired: accumulator.shots_fired,
                     damage_dealt: accumulator.damage_dealt,

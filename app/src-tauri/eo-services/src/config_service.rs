@@ -77,10 +77,14 @@ pub struct AppConfig {
     pub repair_ocr_enabled: bool,
     pub end_of_session_armour_reminder_enabled: bool,
     pub developer_mode_enabled: bool,
-    pub mob_tracking_mode: String,
-    pub mob_tracking_tag: String,
+    /// The declared-mob facet: the kill-stamp source in force, carried
+    /// across sessions so a declaration outlives the session that set it.
     pub manual_mob_species: String,
     pub manual_mob_maturity: String,
+    /// The designated session-name facet the next session snapshots.
+    pub session_name: String,
+    /// The skill-boost facet (labelled percent; 0 is "no boost").
+    pub skill_boost_percent: i64,
     pub hotbar: Map<String, Value>,
     pub trifecta_presets: Vec<TrifectaPresetConfig>,
     pub active_trifecta_preset_id: Option<String>,
@@ -113,10 +117,10 @@ impl Default for AppConfig {
             repair_ocr_enabled: false,
             end_of_session_armour_reminder_enabled: false,
             developer_mode_enabled: false,
-            mob_tracking_mode: "mob".to_string(),
-            mob_tracking_tag: String::new(),
             manual_mob_species: String::new(),
             manual_mob_maturity: String::new(),
+            session_name: String::new(),
+            skill_boost_percent: 0,
             hotbar,
             trifecta_presets: vec![TrifectaPresetConfig::default_preset()],
             active_trifecta_preset_id: Some(DEFAULT_TRIFECTA_PRESET_ID.to_string()),
@@ -378,10 +382,26 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
         repair_ocr_enabled: toggle("repair_ocr_enabled"),
         end_of_session_armour_reminder_enabled: toggle("end_of_session_armour_reminder_enabled"),
         developer_mode_enabled: toggle("developer_mode_enabled"),
-        mob_tracking_mode: string_or("mob_tracking_mode", "mob"),
-        mob_tracking_tag: string_or("mob_tracking_tag", ""),
         manual_mob_species: string_or("manual_mob_species", ""),
         manual_mob_maturity: string_or("manual_mob_maturity", ""),
+        // One-time legacy inheritance: a store written before the facet
+        // model has no session_name key at all, and its tag-mode tag was
+        // the de facto session name. Only key absence inherits; a stored
+        // empty string is an explicit clear and stays empty.
+        session_name: if data.contains_key("session_name") {
+            string_or("session_name", "")
+        } else if string_or("mob_tracking_mode", "mob") == "tag" {
+            string_or("mob_tracking_tag", "")
+        } else {
+            String::new()
+        },
+        // A hand-edited negative reads as no boost rather than failing the
+        // whole config load (the same tolerance the other fields carry).
+        skill_boost_percent: data
+            .get("skill_boost_percent")
+            .and_then(Value::as_i64)
+            .filter(|percent| *percent > 0)
+            .unwrap_or(0),
         hotbar: normalize_hotbar(data.get("hotbar")),
         trifecta_presets,
         active_trifecta_preset_id: Some(active_id),
@@ -409,6 +429,11 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
     }
 }
 
+// The two retired exclusive-capture keys (`mob_tracking_mode`,
+// `mob_tracking_tag`) are deliberately absent: they are no longer read
+// into the config, and leaving them unknown preserves them verbatim in
+// `extra` so the one-time legacy session-name inheritance above still
+// has them to read on a store written before the facet model.
 const KNOWN_KEYS: [&str; 18] = [
     "chatlog_path",
     "player_name",
@@ -416,10 +441,10 @@ const KNOWN_KEYS: [&str; 18] = [
     "repair_ocr_enabled",
     "end_of_session_armour_reminder_enabled",
     "developer_mode_enabled",
-    "mob_tracking_mode",
-    "mob_tracking_tag",
     "manual_mob_species",
     "manual_mob_maturity",
+    "session_name",
+    "skill_boost_percent",
     "hotbar",
     "trifecta_presets",
     "active_trifecta_preset_id",
@@ -567,10 +592,16 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
                 assign_bool(&mut config.end_of_session_armour_reminder_enabled, value)
             }
             "developer_mode_enabled" => assign_bool(&mut config.developer_mode_enabled, value),
-            "mob_tracking_mode" => assign_string(&mut config.mob_tracking_mode, value),
-            "mob_tracking_tag" => assign_string(&mut config.mob_tracking_tag, value),
             "manual_mob_species" => assign_string(&mut config.manual_mob_species, value),
             "manual_mob_maturity" => assign_string(&mut config.manual_mob_maturity, value),
+            "session_name" => assign_string(&mut config.session_name, value),
+            // Stored as given: the settings boundary refuses a negative
+            // outright rather than silently coercing it to "no boost".
+            "skill_boost_percent" => {
+                if let Some(percent) = value.as_i64() {
+                    config.skill_boost_percent = percent;
+                }
+            }
             "hotbar" => config.hotbar = normalize_hotbar(Some(value)),
             "trifecta_presets" => {
                 let (presets, active) = normalize_trifecta_presets(
@@ -653,7 +684,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let service = service(dir.path());
         assert!(service.get().chatlog_path.ends_with("chat.log"));
-        assert_eq!(service.get().mob_tracking_mode, "mob");
+        assert_eq!(service.get().manual_mob_species, "");
         assert_eq!(service.get().loot_filter_blacklist, ["Universal Ammo"]);
         assert!(dir.path().join("settings.json").exists());
     }
@@ -684,6 +715,29 @@ mod tests {
         svc.update(&updates).unwrap();
         // The write publishes the new snapshot to the read handle.
         assert_eq!(reader.current().player_name, "Live");
+    }
+
+    /// A store written under the retired exclusive-capture model still
+    /// loads: the tag inherits the session name once, the declaration is
+    /// read from its own keys rather than being shadowed by the tag, and
+    /// both retired keys survive verbatim so the inheritance stays
+    /// available to any store that has not taken it yet.
+    #[test]
+    fn retired_tag_keys_inherit_the_name_without_shadowing_the_declaration() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            "{\n  \"mob_tracking_mode\": \"tag\",\n  \"mob_tracking_tag\": \"85-B, P20\",\n  \"manual_mob_species\": \"Carabok\",\n  \"manual_mob_maturity\": \"Puny\"\n}",
+        )
+        .unwrap();
+        let svc = service(dir.path());
+        let config = svc.get();
+
+        assert_eq!(config.manual_mob_species, "Carabok");
+        assert_eq!(config.manual_mob_maturity, "Puny");
+        assert_eq!(config.session_name, "85-B, P20", "one-time tag inheritance");
+        assert_eq!(config.extra["mob_tracking_tag"], Value::from("85-B, P20"));
+        assert_eq!(config.extra["mob_tracking_mode"], Value::from("tag"));
     }
 
     #[test]
@@ -736,7 +790,7 @@ mod tests {
         let svc = service(dir.path());
         assert_eq!(svc.get().player_name, "");
         let body = read_settings(dir.path());
-        assert!(body.contains("\"mob_tracking_mode\": \"mob\""));
+        assert!(body.contains("\"manual_mob_species\": \"\""));
     }
 
     #[test]
@@ -905,8 +959,6 @@ mod tests {
             "repair_ocr_enabled": true,
             "end_of_session_armour_reminder_enabled": true,
             "developer_mode_enabled": true,
-            "mob_tracking_mode": "tag",
-            "mob_tracking_tag": "boss",
             "manual_mob_species": "Atrox",
             "manual_mob_maturity": "Old",
             "hotbar": {"1": 5},
@@ -926,8 +978,6 @@ mod tests {
         assert!(config.repair_ocr_enabled);
         assert!(config.end_of_session_armour_reminder_enabled);
         assert!(config.developer_mode_enabled);
-        assert_eq!(config.mob_tracking_mode, "tag");
-        assert_eq!(config.mob_tracking_tag, "boss");
         assert_eq!(config.manual_mob_species, "Atrox");
         assert_eq!(config.manual_mob_maturity, "Old");
         assert_eq!(config.hotbar["1"], 5);
@@ -981,7 +1031,7 @@ mod tests {
         let candidate = svc.clone_with_updates(&updates);
         assert_eq!(candidate.player_name, "Candidate");
         assert_eq!(svc.get().player_name, "");
-        assert_eq!(candidate.mob_tracking_mode, svc.get().mob_tracking_mode);
+        assert_eq!(candidate.manual_mob_species, svc.get().manual_mob_species);
     }
 
     #[test]

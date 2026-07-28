@@ -1,0 +1,167 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createSessionFacets, type SessionFacetsDeps } from './sessionFacets.svelte';
+
+function harness(overrides: Partial<SessionFacetsDeps> = {}) {
+	const facetState = { name: null as string | null, boost: null as number | null };
+	const setSessionConfig = vi.fn(async (name: string | null, boost: number | null) => {
+		facetState.name = name;
+		facetState.boost = boost;
+	});
+	const deps: SessionFacetsDeps = {
+		readFacets: () => ({ ...facetState }),
+		isSessionActive: () => true,
+		refresh: vi.fn(async () => {}),
+		searchNames: vi.fn(async () => []),
+		setSessionConfig,
+		declareQuest: vi.fn(async () => {}),
+		listQuests: vi.fn(async () => []),
+		listPlaylists: vi.fn(async () => []),
+		openNameMenu: vi.fn(),
+		closeNameMenu: vi.fn(),
+		...overrides,
+	};
+	return { facets: createSessionFacets(deps), deps, facetState, setSessionConfig };
+}
+
+describe('name facet', () => {
+	it('writes the name and carries the boost through untouched', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.boost = 50;
+
+		await facets.applyName('ARIS Dailies');
+
+		expect(setSessionConfig).toHaveBeenCalledWith('ARIS Dailies', 50);
+		expect(facetState).toEqual({ name: 'ARIS Dailies', boost: 50 });
+	});
+
+	it('clears the name without disturbing the boost', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.name = 'ARIS Dailies';
+		facetState.boost = 50;
+
+		await facets.clearName();
+
+		expect(setSessionConfig).toHaveBeenCalledWith(null, 50);
+		expect(facetState.boost).toBe(50);
+	});
+
+	it('ignores an empty name rather than writing a blank one', async () => {
+		const { facets, setSessionConfig } = harness();
+		await facets.applyName('   '.trim());
+		expect(setSessionConfig).not.toHaveBeenCalled();
+	});
+
+	it('surfaces a write failure instead of swallowing it', async () => {
+		const { facets } = harness({
+			setSessionConfig: vi.fn(async () => {
+				throw new Error('backend said no');
+			}),
+		});
+
+		await facets.applyName('ARIS Dailies');
+
+		expect(facets.facetError).toBe('backend said no');
+		expect(facets.savingName).toBe(false);
+	});
+});
+
+describe('boost facet', () => {
+	it('parses the draft and writes it beside the standing name', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.name = 'ARIS Dailies';
+		facets.boostDraft = '50';
+
+		await facets.commitBoost();
+
+		expect(setSessionConfig).toHaveBeenCalledWith('ARIS Dailies', 50);
+		expect(facets.boostDraft).toBe('50');
+	});
+
+	it('treats an empty draft as no boost', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.boost = 50;
+		facets.boostDraft = '';
+
+		await facets.commitBoost();
+
+		expect(setSessionConfig).toHaveBeenCalledWith(null, null);
+	});
+
+	it('normalises an unparseable draft without writing', async () => {
+		const { facets, setSessionConfig } = harness();
+		facets.boostDraft = 'abc';
+
+		await facets.commitBoost();
+
+		// Nothing moved (no boost either way), so no write; the buffer must
+		// not keep showing text that was never persisted.
+		expect(setSessionConfig).not.toHaveBeenCalled();
+		expect(facets.boostDraft).toBe('');
+	});
+
+	it('does not rewrite an unchanged value', async () => {
+		const { facets, facetState, setSessionConfig } = harness();
+		facetState.boost = 50;
+		facets.boostDraft = ' 50 ';
+
+		await facets.commitBoost();
+
+		expect(setSessionConfig).not.toHaveBeenCalled();
+		expect(facets.boostDraft).toBe('50');
+	});
+
+	it('syncs the draft from the persisted value', () => {
+		const { facets, facetState } = harness();
+		facetState.boost = 100;
+
+		facets.syncBoostDraft();
+
+		expect(facets.boostDraft).toBe('100');
+	});
+});
+
+describe('quest facet', () => {
+	it('offers playlists before quests, both as numeric ids', async () => {
+		const { facets } = harness({
+			listPlaylists: vi.fn(async () => [{ id: '7', name: 'ARIS Dailies' }]),
+			listQuests: vi.fn(async () => [{ id: '3', name: 'Daily Hunting I' }]),
+		});
+
+		expect(await facets.loadQuestOptions()).toBe(true);
+		expect(facets.questOptions).toEqual([
+			{ id: 7, name: 'ARIS Dailies', isPlaylist: true },
+			{ id: 3, name: 'Daily Hunting I', isPlaylist: false },
+		]);
+	});
+
+	it('reports a failed read rather than opening an empty picker', async () => {
+		const { facets } = harness({
+			listPlaylists: vi.fn(async () => {
+				throw new Error('quests unavailable');
+			}),
+		});
+
+		expect(await facets.loadQuestOptions()).toBe(false);
+		expect(facets.facetError).toBe('quests unavailable');
+	});
+
+	it('routes a playlist and a quest to their own argument', async () => {
+		const declareQuest = vi.fn(async () => {});
+		const { facets } = harness({ declareQuest });
+
+		await facets.declareQuest(7, true);
+		expect(declareQuest).toHaveBeenCalledWith(null, 7);
+
+		await facets.declareQuest(3, false);
+		expect(declareQuest).toHaveBeenCalledWith(3, null);
+	});
+
+	it('clears with both ids null', async () => {
+		const declareQuest = vi.fn(async () => {});
+		const { facets } = harness({ declareQuest });
+
+		await facets.clearQuest();
+
+		expect(declareQuest).toHaveBeenCalledWith(null, null);
+	});
+});

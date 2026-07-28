@@ -9,9 +9,9 @@
 		createHuntingModel,
 		mobColumns,
 		rowKey,
-		tagColumns
+		nameColumns
 	} from '$lib/features/analytics/huntingModel.svelte';
-	import type { MobComparison, TagComparison } from '$lib/types/analytics';
+	import type { MobComparison, NameComparison } from '$lib/types/analytics';
 	import { formatPed, formatPercent } from '$lib/utils/format';
 
 	const model = createHuntingModel();
@@ -112,7 +112,7 @@
 	{/if}
 {/snippet}
 
-{#snippet tagCell({ column, value, row }: { column: { key: string }; value: unknown; row: TagComparison })}
+{#snippet nameCell({ column, value, row }: { column: { key: string }; value: unknown; row: NameComparison })}
 	{#if column.key === 'cycled'}
 		<span class="tabular-nums">{formatPed(Number(value))}</span>
 	{:else if column.key === 'pesPer100Ped'}
@@ -120,7 +120,7 @@
 	{:else if column.key === 'lootRate'}
 		<span class="tabular-nums">{formatPercent(Number(value))}</span>
 	{:else if column.key === ACTION_KEY}
-		{@render archiveAction('tag', row.tagName)}
+		{@render archiveAction('name', row.sessionName)}
 	{:else}
 		{value}
 	{/if}
@@ -152,8 +152,8 @@
 		{#snippet mobOverlay({ row }: { row: MobComparison })}
 			{@render confirmPrompt('mob', row.mobName)}
 		{/snippet}
-		{#snippet tagOverlay({ row }: { row: TagComparison })}
-			{@render confirmPrompt('tag', row.tagName)}
+		{#snippet nameOverlay({ row }: { row: NameComparison })}
+			{@render confirmPrompt('name', row.sessionName)}
 		{/snippet}
 		<!-- Per-mob comparison -->
 		<div>
@@ -175,18 +175,18 @@
 		<Divider />
 
 		<div>
-			<h3 class="eyebrow mb-3">Per-Tag Comparison</h3>
+			<h3 class="eyebrow mb-3">Per-Session Comparison</h3>
 			<DataTable
-				columns={tagColumns}
-				rows={model.sortedTags}
-				bind:sortKey={model.tagSortKey}
-				bind:sortDir={model.tagSortDir}
-				cell={tagCell}
+				columns={nameColumns}
+				rows={model.sortedNames}
+				bind:sortKey={model.nameSortKey}
+				bind:sortDir={model.nameSortDir}
+				cell={nameCell}
 				fixedLayout={true}
-				rowKeyFn={(r: TagComparison) => rowKey('tag', r.tagName)}
+				rowKeyFn={(r: NameComparison) => rowKey('name', r.sessionName)}
 				overlayKey={model.confirmKey}
-				rowOverlay={tagOverlay}
-				emptyMessage={model.viewMode === 'archive' ? 'No archived tags' : 'No tagged hunt data available'}
+				rowOverlay={nameOverlay}
+				emptyMessage={model.viewMode === 'archive' ? 'No archived sessions' : 'No named hunt sessions yet'}
 			/>
 		</div>
 

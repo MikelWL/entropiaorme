@@ -211,8 +211,8 @@ export const dashboardSurface: GuideSurface = {
 					// lifecycle phase to 'idle' (per the dashboard page's onMount
 					// handler) so the strip lands in its no-session state first.
 					api.setOverlayDemoVisible?.(true);
-					// 1.5s dwell so the idle affordances (TRACK button, MOB/TAG
-					// segmented control, mob input, trifecta dropdown, em-dash
+					// 1.5s dwell so the idle affordances (TRACK button, session
+					// facet controls, mob input, trifecta dropdown, em-dash
 					// stat pills) dwell on screen before the cursor moves to TRACK.
 					if (!(await abortableWait(1500, stillActive))) break;
 
@@ -285,7 +285,7 @@ export const dashboardSurface: GuideSurface = {
 		},
 		{
 			id: 'overlay-mob-section',
-			// Anchor on the OverlayStrip's MOB/TAG + mob-name + release-x parent
+			// Anchor on the OverlayStrip's declared-mob input + release-x parent
 			// wrapper. Single-element anchor (vs. DOMRect[]) because the affordances
 			// sit in the same parent flex container; codex-overview's DOMRect[]
 			// pattern is reserved for non-adjacent regions.
@@ -302,18 +302,18 @@ export const dashboardSurface: GuideSurface = {
 			placementAnchor: () =>
 				document.querySelector<HTMLElement>('[data-guide-anchor="dashboard-overlay-spawn-slot"]'),
 			prose: {
-				title: 'Mob and tag',
+				title: 'Declared mob',
 				body: [
 					{
 						kind: 'p',
-						text: 'Track sessions by mob name or a free-text tag. Later analytics build on this.',
+						text: 'Declare the mob you are hunting and every kill records it, alongside the other session details: a reusable session name, the skill boost in force, and the quest the session is for.',
 					},
 					{
 						kind: 'p',
-						text: 'Tags are more versatile when a hunt involves different mobs, so the analysis describes the overall activity.',
+						text: 'Each detail is independent, so a named session keeps its per-mob record, and the declared mob can change mid-session when you move between spawns.',
 					},
 				],
-				note: 'Note: OCR auto-detection was attempted but proved too inconsistent. The manual Mob/Tag approach is less flexible but more reliable.',
+				note: 'Note: the mob is declared by hand for now; kills record it the moment it is set.',
 			},
 			async play({ demoApi }) {
 				// Re-establish (or no-op) the active lifecycle state: strip

@@ -34,7 +34,7 @@ mod tests;
 mod time;
 mod weapons;
 
-pub use mob::{MobSelection, MobSource, TrackingMode};
+pub use mob::{DeclaredMob, MobStampSource};
 pub use providers::{
     DefaultTrackingConfig, EquipmentLibrary, EquipmentProfile, GuardrailTool,
     HarvestGuardrailTools, InertEquipment, Providers, TrackingConfig, TreeSize,
@@ -53,6 +53,7 @@ use crate::tracking_models::TrackingSession;
 
 use actor::{TrackerActor, TrackerMsg, TrackerStatus};
 use session::ActiveSession;
+pub use session::SessionFacets;
 
 /// Loot groups with an identical fingerprint within this window are
 /// duplicates.
@@ -72,21 +73,13 @@ const GUARDRAIL_RETRO_WINDOW_SECONDS: f64 = 30.0;
 /// only inside this same-action window.
 const HARVEST_YIELD_WINDOW_SECONDS: f64 = 30.0;
 
-/// The mob/tag command preconditions the original raises as
-/// `RuntimeError`/`ValueError`; the messages match verbatim so the
-/// command boundary surfaces identical text.
+/// The declaration-command preconditions surfaced at the command
+/// boundary. The tag-mode variants retired with the exclusive capture
+/// model: a declaration no longer has a mode to disagree with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TrackerCommandError {
     #[error("No active session")]
     NoActiveSession,
-    #[error("Active session is not in tag mode")]
-    NotTagMode,
-    #[error("Tag cannot be empty")]
-    EmptyTag,
-    #[error("Tag mode sessions do not allow manual mob locking")]
-    TagModeLocksMob,
-    #[error("Manual mob entry is not enabled for this session")]
-    ManualEntryDisabled,
 }
 
 /// The session typestate: everything session-scoped lives inside the
@@ -208,15 +201,6 @@ impl HuntTracker {
         self.status.borrow().tracking
     }
 
-    /// Whether the active session was captured in tag mode: the
-    /// per-session mode snapshotted at `start_session`, not the live
-    /// config. Idle reads `false` structurally (the snapshot lives in
-    /// the `Active` payload).
-    pub fn is_session_tag_mode(&self) -> bool {
-        let status = self.status.borrow();
-        status.tracking && status.tag_mode
-    }
-
     /// Start a new tracking session; any prior session stops first.
     pub async fn start_session(&self) -> Result<TrackingSession, DbError> {
         self.call(TrackerMsg::Start).await
@@ -233,21 +217,21 @@ impl HuntTracker {
         self.call(TrackerMsg::ReloadConfig).await
     }
 
-    /// Immediately set the active free-text tag for tag-mode kill
-    /// stamping.
-    pub async fn set_manual_tag(&self, tag: &str) -> Result<(), TrackerCommandError> {
-        self.call(|reply| TrackerMsg::SetManualTag(tag.to_string(), reply))
+    /// Declare the skill boost now in force; the session row keeps
+    /// the latest declaration.
+    pub async fn set_skill_boost(&self, percent: Option<i64>) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::SetSkillBoost(percent, reply))
             .await
     }
 
-    /// Immediately set the active mob for manual kill stamping.
-    pub async fn set_manual_mob(
+    /// Immediately set the declared mob for kill stamping.
+    pub async fn set_declared_mob(
         &self,
         mob_name: &str,
         species: &str,
         maturity: &str,
     ) -> Result<(), TrackerCommandError> {
-        self.call(|reply| TrackerMsg::SetManualMob {
+        self.call(|reply| TrackerMsg::SetDeclaredMob {
             name: mob_name.to_string(),
             species: species.to_string(),
             maturity: maturity.to_string(),
@@ -256,8 +240,8 @@ impl HuntTracker {
         .await
     }
 
-    /// Clear the current mob selection, returning the released name.
-    pub async fn release_current_mob(&self) -> Option<String> {
+    /// Clear the declared mob, returning the released name.
+    pub async fn release_declared_mob(&self) -> Option<String> {
         self.call(TrackerMsg::ReleaseMob).await
     }
 
@@ -266,13 +250,13 @@ impl HuntTracker {
     pub async fn prime_demo(
         &self,
         session: TrackingSession,
-        mob: MobSelection,
-        mode: TrackingMode,
+        declared_mob: Option<DeclaredMob>,
+        facets: SessionFacets,
     ) {
         self.call(|reply| TrackerMsg::PrimeDemo {
             session,
-            mob,
-            mode,
+            declared_mob,
+            facets,
             reply,
         })
         .await
@@ -280,7 +264,7 @@ impl HuntTracker {
 
     /// The in-memory aggregate half of the snapshot (see
     /// `session::SessionAggregate`).
-    async fn aggregate(&self) -> (Option<String>, Option<session::SessionAggregate>) {
+    async fn aggregate(&self) -> (Option<String>, bool, Option<session::SessionAggregate>) {
         self.call(|reply| TrackerMsg::Aggregate(Box::new(reply)))
             .await
     }

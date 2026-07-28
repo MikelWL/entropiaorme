@@ -7,12 +7,15 @@
 		releaseMob,
 		getOverlayPosition,
 		saveOverlayPosition,
-		getTrackingTagSuggestions,
-		lockTrackingTag,
+		getSessionNameSuggestions,
+		setSessionConfig,
 		getManualMobSuggestions,
 		lockManualMob,
 		getSessionQuestLinkSuggestion,
 		decideSessionQuestLink,
+		declareSessionQuest,
+		getQuests,
+		getPlaylists,
 		updateSettings,
 		type TrackingLive,
 		type TrackingStatus,
@@ -23,8 +26,8 @@
 	import { useVisiblePoll, windowGeometryPoll } from '$lib/realtime/useVisiblePoll';
 	import { createSnapshotStore } from '$lib/realtime/snapshotStore.svelte';
 	import { createPostSessionFlow } from '$lib/features/tracking/postSession.svelte';
+	import { createSessionFacets } from '$lib/features/tracking/sessionFacets.svelte';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
-	import type { MobTrackingMode } from '$lib/types/settings';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { PhysicalPosition } from '@tauri-apps/api/dpi';
 	import { listen } from '@tauri-apps/api/event';
@@ -98,12 +101,13 @@
 	let starting = $state(false);
 
 	let mobQuery = $state('');
-	// The mob/tag lookup's error channel, shared between the typeahead (search
-	// failures, mirrored in by the presenter effect below) and the lock/apply
-	// actions.
+	// The mob lookup's error channel, shared between the typeahead (search
+	// failures, mirrored in by the presenter effect below) and the declare
+	// action.
 	let mobError = $state<string | null>(null);
 	let selectingMob = $state(false);
 	let mobCloseTimer: ReturnType<typeof setTimeout> | undefined;
+
 
 	// The two satellite popovers this window drives. The failure messages keep
 	// the overlay's established wording (they render in the strip).
@@ -167,6 +171,22 @@
 	});
 	const toggling = $derived(starting || flow.stopping);
 
+	// The session facets (name, boost, quest): state, lookups, and writes
+	// live in the feature model; this route owns only the popup plumbing
+	// the model calls back into.
+	const facets = createSessionFacets({
+		readFacets: () => ({ name: data.sessionName ?? null, boost: data.skillBoostPercent ?? null }),
+		isSessionActive: () => data.status === 'active',
+		refresh: () => snapshot.hydrate(),
+		searchNames: getSessionNameSuggestions,
+		setSessionConfig,
+		declareQuest: declareSessionQuest,
+		listQuests: getQuests,
+		listPlaylists: getPlaylists,
+		openNameMenu: () => openNameMenu(),
+		closeNameMenu: () => closeNameMenu()
+	});
+
 	async function handleDrag(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		if (target.closest('button, [role="button"], input, select, textarea')) return;
@@ -184,6 +204,7 @@
 		clearTimeout(mobCloseTimer);
 		mobCloseTimer = undefined;
 	}
+
 
 	function describeOverlayMenuError(error: unknown) {
 		if (error instanceof ApiError || error instanceof Error) return error.message;
@@ -231,30 +252,59 @@
 
 	function buildMobMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trimmedQuery = mobQuery.trim();
-		const shouldShow = mobLoading
-			|| !!mobError
-			|| mobSuggestions.length > 0
-			|| tagSuggestions.length > 0
-			|| !!trimmedQuery;
+		const shouldShow = mobLoading || !!mobError || mobSuggestions.length > 0 || !!trimmedQuery;
 		if (!shouldShow) return null;
 
 		const labels = mobLoading
 			? ['Searching...']
 			: mobError
 				? [mobError]
-				: showTagInput
-					? (tagSuggestions.length > 0 ? tagSuggestions : [`Press Enter to set "${trimmedQuery}"`])
-					: (mobSuggestions.length > 0 ? mobSuggestions.map((option) => option.display) : ['No matches']);
+				: (mobSuggestions.length > 0 ? mobSuggestions.map((option) => option.display) : ['No matches']);
 
 		return {
 			kind: 'mob',
 			width: computeMenuWidth(anchorWidth, labels, 28),
-			mode: showTagInput ? 'tag' : 'manual',
 			query: trimmedQuery,
 			loading: mobLoading,
 			error: mobError,
-			tagSuggestions,
 			mobSuggestions
+		};
+	}
+
+	function buildNameMenuState(anchorWidth: number): OverlayMenuState | null {
+		const trimmedQuery = facets.nameQuery.trim();
+		const shouldShow =
+			facets.nameLoading || !!facets.nameError || facets.nameSuggestions.length > 0 || !!trimmedQuery;
+		if (!shouldShow) return null;
+
+		const labels = facets.nameLoading
+			? ['Searching...']
+			: facets.nameError
+				? [facets.nameError]
+				: (facets.nameSuggestions.length > 0
+					? facets.nameSuggestions
+					: [`Press Enter to name it "${trimmedQuery}"`]);
+
+		return {
+			kind: 'name',
+			width: computeMenuWidth(anchorWidth, labels, 28),
+			query: trimmedQuery,
+			loading: facets.nameLoading,
+			error: facets.nameError,
+			suggestions: facets.nameSuggestions
+		};
+	}
+
+	function buildQuestMenuState(anchorWidth: number): OverlayMenuState | null {
+		const labels = facets.questOptions.length > 0
+			? facets.questOptions.map((option) => option.name)
+			: ['No active quests'];
+		return {
+			kind: 'quest',
+			width: computeMenuWidth(anchorWidth, labels, 88),
+			loading: false,
+			error: null,
+			options: facets.questOptions
 		};
 	}
 
@@ -284,6 +334,17 @@
 		};
 	}
 
+	/** Rows the popup will render, which sets its window height. Every
+	 * kind falls back to one row: loading, error, and empty states each
+	 * occupy exactly one line (the popup route agrees). */
+	function menuRowCount(state: OverlayMenuState): number {
+		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
+		if (state.loading || state.error) return 1;
+		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
+		if (state.kind === 'mob') return Math.max(1, state.mobSuggestions.length);
+		return Math.max(1, state.options.length);
+	}
+
 	async function showOverlayMenu(
 		kind: OverlayMenuKind,
 		anchor: HTMLElement,
@@ -297,15 +358,7 @@
 				menuWindow.ensure(),
 				anchorBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 			]);
-			const height = state.kind === 'trifecta'
-				? computeMenuHeight(state.options.length)
-				: computeMenuHeight(
-					state.loading || state.error
-						? 1
-						: state.mode === 'tag'
-							? Math.max(1, state.tagSuggestions.length)
-							: Math.max(1, state.mobSuggestions.length)
-				);
+			const height = computeMenuHeight(menuRowCount(state));
 
 			await menuWindow.show(
 				state,
@@ -326,6 +379,9 @@
 		if (overlayMenuKind === 'mob') {
 			clearMobCloseTimer();
 		}
+		if (overlayMenuKind === 'name') {
+			facets.clearNameCloseTimer();
+		}
 		overlayMenuKind = null;
 		await menuWindow.hide();
 	}
@@ -342,6 +398,31 @@
 		clearMobCloseTimer();
 		if (overlayMenuKind !== 'mob') return;
 		await hideOverlayMenu();
+	}
+
+	async function openNameMenu() {
+		if (!facets.nameInput) return;
+		const state = buildNameMenuState(facets.nameInput.getBoundingClientRect().width);
+		if (!state) return;
+		overlayMenuLaunchError = null;
+		await showOverlayMenu('name', facets.nameInput, state);
+	}
+
+	async function closeNameMenu() {
+		facets.clearNameCloseTimer();
+		if (overlayMenuKind !== 'name') return;
+		await hideOverlayMenu();
+	}
+
+	async function toggleQuestMenu(anchor: HTMLButtonElement) {
+		if (overlayMenuKind === 'quest') {
+			await hideOverlayMenu();
+			return;
+		}
+		if (!(await facets.loadQuestOptions())) return;
+		const state = buildQuestMenuState(anchor.getBoundingClientRect().width);
+		if (!state) return;
+		await showOverlayMenu('quest', anchor, state, { focusPopup: true });
 	}
 
 	async function toggleTrifectaMenu(anchor: HTMLButtonElement) {
@@ -605,9 +686,15 @@
 					return;
 				}
 
-				if (event.payload.kind === 'tag') {
+				if (event.payload.kind === 'name') {
 					overlayMenuKind = null;
-					await handleApplyTag(event.payload.tag);
+					await facets.applyName(event.payload.name);
+					return;
+				}
+
+				if (event.payload.kind === 'quest') {
+					overlayMenuKind = null;
+					await facets.declareQuest(event.payload.id, event.payload.isPlaylist);
 					return;
 				}
 
@@ -625,11 +712,13 @@
 				if (disposed) return;
 				overlayMenuKind = null;
 				clearMobCloseTimer();
+				facets.clearNameCloseTimer();
 			});
 
 			unlistenInteract = await listen(OVERLAY_MENU_INTERACT_EVENT, async () => {
-				if (disposed || overlayMenuKind !== 'mob') return;
-				clearMobCloseTimer();
+				if (disposed) return;
+				if (overlayMenuKind === 'mob') clearMobCloseTimer();
+				if (overlayMenuKind === 'name') facets.clearNameCloseTimer();
 			});
 		})();
 
@@ -683,10 +772,12 @@
 			weaponAttribution: snap.weaponAttribution,
 			repairOcrEnabled: snap.repairOcrEnabled,
 			endOfSessionArmourReminderEnabled: snap.endOfSessionArmourReminderEnabled,
-			mobEntryMode: snap.mobEntryMode,
+			sessionName: snap.sessionName,
+			skillBoostPercent: snap.skillBoostPercent,
 			currentMob: snap.currentMob,
-			mobSource: snap.mobSource,
 			currentTool: snap.currentTool,
+			currentActivity: snap.currentActivity,
+			questName: snap.questName,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
 		};
@@ -703,33 +794,21 @@
 	const isTrifectaAttribution = $derived(data.weaponAttribution === 'trifecta');
 
 	const armourSessionId = $derived(data.sessionId ?? flow.lastSessionId);
-	const isTagEntryMode = $derived(data.mobEntryMode === 'tag');
-	const mobLabel = $derived(isTagEntryMode ? 'Tag' : 'Mob');
-	const showTagInput = $derived(
-		(data.status === 'active' || data.status === 'idle')
-			&& isTagEntryMode
-			&& !data.currentMob
+	const showManualInput = $derived(
+		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	const showManualMobInput = $derived(
-		(data.status === 'active' || data.status === 'idle')
-			&& !isTagEntryMode
-			&& !data.currentMob
-	);
-	const showManualInput = $derived(showTagInput || showManualMobInput);
+	// The name is session-grain, so it takes input only while idle: once a
+	// session runs, changing it could only rewrite the whole session's
+	// history, and the correction path is the session record.
+	const showNameInput = $derived(data.status === 'idle' && !data.sessionName);
 
-	// The mob/tag lookup: a debounced typeahead over whichever endpoint the
-	// entry mode selects, its results split back into the two suggestion lists
-	// by shape (tag suggestions are bare strings). Search failures are mapped
-	// to the overlay's established wording before the typeahead records them.
-	const mobTypeahead = createTypeahead<string | ManualMobSuggestion>({
+	// Two independent debounced typeaheads, one per free-text facet: the
+	// declared mob over the catalogue, the session name over the names
+	// already in the history. They no longer share an endpoint because the
+	// facets no longer exclude one another. Search failures are mapped to
+	// the overlay's established wording before the typeahead records them.
+	const mobTypeahead = createTypeahead<ManualMobSuggestion>({
 		search: async (query) => {
-			if (showTagInput) {
-				try {
-					return await getTrackingTagSuggestions(query);
-				} catch (error) {
-					throw new Error(error instanceof ApiError ? error.message : 'Tag lookup failed');
-				}
-			}
 			try {
 				return await getManualMobSuggestions(query);
 			} catch (error) {
@@ -739,19 +818,12 @@
 		debounceMs: 120,
 		minLength: 1
 	});
-
-	const tagSuggestions = $derived(
-		mobTypeahead.results.filter((item): item is string => typeof item === 'string')
-	);
-	const mobSuggestions = $derived(
-		mobTypeahead.results.filter((item): item is ManualMobSuggestion => typeof item !== 'string')
-	);
+	const mobSuggestions = $derived(mobTypeahead.results);
 	const mobLoading = $derived(mobTypeahead.loading);
 
-	// Drive the typeahead from the input state. Hiding the input or emptying
-	// the query suspends the search and closes the menu, keeping the typed
-	// text; a tag/manual mode flip re-queries the unchanged text against the
-	// new endpoint (dropping any in-flight response from the old one).
+	// Drive each typeahead from its input state. Hiding the input or
+	// emptying the query suspends the search and closes that menu, keeping
+	// the typed text.
 	$effect(() => {
 		if (!showManualInput) {
 			mobTypeahead.cancel();
@@ -768,8 +840,12 @@
 			return;
 		}
 
-		void showTagInput;
 		mobTypeahead.refresh();
+	});
+
+	$effect(() => {
+		void facets.nameQuery;
+		facets.syncNameQuery(showNameInput);
 	});
 
 	// Present the search lifecycle in the menu window: mirror the typeahead's
@@ -791,16 +867,26 @@
 	});
 
 	$effect(() => {
-		return () => mobTypeahead.destroy();
+		void facets.nameLoading;
+		void facets.nameSuggestions;
+		untrack(() => facets.presentNameMenu(showNameInput, overlayMenuKind === 'name'));
 	});
 
-	async function handleMobTrackingModeChange(mode: MobTrackingMode) {
-		if (data.status === 'active' || data.mobEntryMode === mode) return;
-		try {
-			await updateSettings({ mob_tracking_mode: mode });
-			data.mobEntryMode = mode;
-		} catch { /* ignore */ }
-	}
+	$effect(() => {
+		return () => {
+			mobTypeahead.destroy();
+			facets.destroy();
+		};
+	});
+
+	// Keep the boost buffer in step with the persisted facet while the user
+	// is not editing it (an idle overlay re-read, or the value the last
+	// session left behind).
+	$effect(() => {
+		void data.skillBoostPercent;
+		untrack(() => facets.syncBoostDraft());
+	});
+
 
 	async function handleStart() {
 		starting = true;
@@ -836,7 +922,7 @@
 	function handleMobFocus() {
 		clearMobCloseTimer();
 		mobInputFocused = true;
-		if (mobQuery.trim() && (mobSuggestions.length > 0 || tagSuggestions.length > 0 || mobLoading || !!mobError)) {
+		if (mobQuery.trim() && (mobSuggestions.length > 0 || mobLoading || !!mobError)) {
 			void openMobMenu();
 		}
 	}
@@ -856,34 +942,12 @@
 		}
 		if (event.key !== 'Enter') return;
 
-		if (showTagInput) {
-			event.preventDefault();
-			await handleApplyTag(mobQuery.trim());
-			return;
-		}
-
+		// Only a catalogue mob can be declared, so Enter takes the top
+		// match rather than inventing a name the catalogue cannot resolve.
 		if (mobSuggestions.length > 0) {
 			event.preventDefault();
 			await handleSelectMob(mobSuggestions[0]);
 		}
-	}
-
-	async function handleApplyTag(tag: string) {
-		if (!tag) return;
-		clearMobCloseTimer();
-		selectingMob = true;
-		mobError = null;
-		try {
-			await lockTrackingTag(tag);
-			mobQuery = '';
-			mobTypeahead.cancel();
-			overlayMenuLaunchError = null;
-			await closeMobMenu();
-			await snapshot.hydrate();
-		} catch (error) {
-			mobError = error instanceof ApiError ? error.message : 'Failed to set tag';
-		}
-		selectingMob = false;
 	}
 
 	async function handleSelectMob(option: ManualMobSuggestion) {
@@ -898,7 +962,7 @@
 			await closeMobMenu();
 			await snapshot.hydrate();
 		} catch (error) {
-			mobError = error instanceof ApiError ? error.message : 'Failed to lock mob';
+			mobError = error instanceof ApiError ? error.message : 'Failed to declare mob';
 		}
 		selectingMob = false;
 	}
@@ -919,8 +983,16 @@
 		{armourCostError}
 		{armourSessionId}
 		mobMenuOpen={overlayMenuKind === 'mob'}
+		nameMenuOpen={overlayMenuKind === 'name'}
+		questMenuOpen={overlayMenuKind === 'quest'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
+		savingName={facets.savingName}
+		nameEditable={facets.nameEditable}
+		savingBoost={facets.savingBoost}
+		questSaving={facets.questSaving}
+		facetError={facets.facetError}
+		questLabel={data.questName ?? null}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}
 		questLinkSuggestion={flow.questLinkSuggestion}
@@ -928,6 +1000,9 @@
 		questLinkSaving={flow.questLinkSaving}
 		bind:mobQuery
 		bind:mobInput
+		bind:nameQuery={facets.nameQuery}
+		bind:nameInput={facets.nameInput}
+		bind:boostDraft={facets.boostDraft}
 		bind:postSessionArmourButton
 		onStart={handleStart}
 		onStop={flow.requestStop}
@@ -935,11 +1010,17 @@
 		onArmourTrackDecision={flow.decideArmourTrack}
 		attributionWarning={attributionWarning}
 		onDismissAttributionWarning={dismissAttributionWarning}
-		onMobModeChange={handleMobTrackingModeChange}
 		onReleaseMob={handleReleaseMob}
 		onMobFocus={handleMobFocus}
 		onMobBlur={handleMobBlur}
 		onMobKeydown={handleMobKeydown}
+		onNameFocus={facets.handleNameFocus}
+		onNameBlur={facets.handleNameBlur}
+		onNameKeydown={facets.handleNameKeydown}
+		onClearName={facets.clearName}
+		onBoostCommit={facets.commitBoost}
+		onQuestTrigger={toggleQuestMenu}
+		onClearQuest={facets.clearQuest}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
 		onQuestLinkDecision={flow.decideQuestLink}

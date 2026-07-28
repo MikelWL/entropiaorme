@@ -122,11 +122,12 @@ export interface AnalyticsHarvest {
 }
 
 /**
- * The Hunting aggregate: the per-mob and per-tag comparison tables.
+ * The Hunting aggregate: the per-mob and per-session-name comparison
+ * tables (the observed and designated axes).
  */
 export interface AnalyticsHunting {
 	mobComparisons: MobComparison[];
-	tagComparisons: TagComparison[];
+	nameComparisons: NameComparison[];
 }
 
 /**
@@ -154,8 +155,9 @@ export interface AppSettings {
 	repairOcrEnabled: boolean;
 	endOfSessionArmourReminderEnabled: boolean;
 	developerModeEnabled: boolean;
-	mobTrackingMode: MobEntryMode;
-	mobTrackingTag: string;
+	/** The session facets the next session snapshots: the designated name (empty: not declared) and the skill boost (0: no boost). */
+	sessionName: string;
+	skillBoostPercent: number;
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
 	hotbar: Record<string, unknown>;
 	trifecta: TrifectaSettings;
@@ -1271,14 +1273,11 @@ export interface MobEditResult {
 }
 
 /**
- * Mob-attribution input mode a session is captured under.
+ * The legacy exclusive-capture input mode recorded on pre-facet
+ * session rows; read-only vocabulary for labelling those sessions
+ * (facet-era rows all read as `mob`, the column default).
  */
 export type MobEntryMode = 'mob' | 'tag';
-
-/**
- * How the current mob label was locked.
- */
-export type MobSource = 'manual' | 'tag';
 
 /**
  * One month of the Overview monthly breakdown.
@@ -1292,6 +1291,20 @@ export interface MonthlyEntry {
 	ledgerGains: Record<string, number>;
 	trackingCost: number;
 	ledgerLosses: Record<string, number>;
+}
+
+/**
+ * One row of the per-session-name activity comparison (the designated
+ * axis; legacy tag-mode sessions appear under their migrated names).
+ */
+export interface NameComparison {
+	sessionName: string;
+	sessions: number;
+	kills: number;
+	hours: number;
+	cycled: number;
+	pesPer100Ped: number;
+	lootRate: number;
 }
 
 export interface NavigationPositionResult {
@@ -1764,6 +1777,26 @@ export interface QuestAnalyticsRow {
 }
 
 /**
+ * The quest-declaration acknowledgement: the curated link now in force
+ * on the active session (or its removal). The link fields ride only on
+ * a declare, resolved for display.
+ */
+export interface QuestDeclareResult {
+	sessionId: string;
+	status: QuestDeclareStatus;
+	linkType?: QuestLinkType | null;
+	questId?: number | null;
+	questName?: string | null;
+	playlistId?: number | null;
+	playlistName?: string | null;
+}
+
+/**
+ * The quest-declaration outcome.
+ */
+export type QuestDeclareStatus = 'declared' | 'cleared';
+
+/**
  * A quest create or update payload. One DTO serves both operations, in
  * the frontend's snake_case field casing: the sole client sends the
  * full field set for both create and update (nulls explicit), so every
@@ -1992,12 +2025,23 @@ export interface ScanStatus {
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable' | 'tool' | 'implant';
 
 /**
+ * The session-config acknowledgement: the facet values now in force
+ * (null: not declared).
+ */
+export interface SessionConfigResult {
+	sessionName: string | null;
+	skillBoostPercent: number | null;
+}
+
+/**
  * The full session detail.
  */
 export interface SessionDetail {
 	sessionId: string;
 	summary: SessionSummary;
 	harvest: HarvestSummary;
+	/** The session-name facet as recorded. Present here because the record is where the name is corrected: the overlay fixes it once a session starts. */
+	sessionName: string | null;
 	mobEntryMode: MobEntryMode;
 	notableEvents: NotableEvent[];
 	lootBreakdown: LootEntry[];
@@ -2033,6 +2077,14 @@ export interface SessionQuestLinkSuggestion {
 }
 
 /**
+ * The post-hoc session-rename result.
+ */
+export interface SessionRenameResult {
+	sessionId: string;
+	sessionName: string | null;
+}
+
+/**
  * The session-detail headline summary.
  */
 export interface SessionSummary {
@@ -2061,8 +2113,8 @@ export interface SettingsPatch {
 	repair_ocr_enabled?: boolean | null;
 	end_of_session_armour_reminder_enabled?: boolean | null;
 	developer_mode_enabled?: boolean | null;
-	mob_tracking_mode?: string | null;
-	mob_tracking_tag?: string | null;
+	session_name?: string | null;
+	skill_boost_percent?: number | null;
 	hotbar?: Record<string, unknown> | null;
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;
@@ -2174,26 +2226,6 @@ export interface TableVerdict {
 }
 
 /**
- * One row of the per-tag activity comparison.
- */
-export interface TagComparison {
-	tagName: string;
-	sessions: number;
-	kills: number;
-	hours: number;
-	cycled: number;
-	pesPer100Ped: number;
-	lootRate: number;
-}
-
-/**
- * The tag-lock acknowledgement.
- */
-export interface TagLockResult {
-	tag: string;
-}
-
-/**
  * One day of the Overview timeline.
  */
 export interface TimelineDay {
@@ -2206,6 +2238,13 @@ export interface TimelineDay {
 	trackingCost: number;
 	ledgerLosses: Record<string, number>;
 }
+
+/**
+ * The activity family the held tool implies the next action belongs
+ * to: the overlay's derived-activity feedback ("this is Tree Cutting"
+ * versus "this is Hunting"). Absent when no tool is known.
+ */
+export type ToolActivity = 'hunting' | 'treecutting';
 
 /**
  * One per-tool aggregate.
@@ -2248,10 +2287,16 @@ export interface TrackingSnapshot {
 	weaponAttribution?: WeaponAttribution | null;
 	repairOcrEnabled?: boolean | null;
 	endOfSessionArmourReminderEnabled?: boolean | null;
-	mobEntryMode?: MobEntryMode | null;
+	/** The session-name facet: the active session's when tracking, the configured next-session value when idle. */
+	sessionName?: string | null;
+	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
+	skillBoostPercent?: number | null;
 	currentMob?: string | null;
-	mobSource?: MobSource | null;
 	currentTool?: string | null;
+	/** What the held tool implies the next action is recorded as. */
+	currentActivity?: ToolActivity | null;
+	/** The quest or playlist the active session declares, resolved for display. Absent when nothing is declared (or the link was declined), so the control never claims a binding it lacks. */
+	questName?: string | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
 	session_id?: string | null;
@@ -2767,8 +2812,8 @@ export async function trackingSessionDetail(sessionId: string): Promise<SessionD
 	return invokeCommand('tracking_session_detail', { session_id: sessionId });
 }
 
-export async function trackingTagSuggestions(q: string, limit: number | null): Promise<string[]> {
-	return invokeCommand('tracking_tag_suggestions', { q, limit });
+export async function trackingSessionNameSuggestions(q: string, limit: number | null): Promise<string[]> {
+	return invokeCommand('tracking_session_name_suggestions', { q, limit });
 }
 
 export async function trackingManualMobSuggestions(q: string, limit: number | null): Promise<ManualMobSuggestion[]> {
@@ -2799,8 +2844,12 @@ export async function trackingManualMobLock(species: string, maturity: string | 
 	return invokeCommand('tracking_manual_mob_lock', { species, maturity });
 }
 
-export async function trackingTagLock(tag: string): Promise<TagLockResult> {
-	return invokeCommand('tracking_tag_lock', { tag });
+export async function trackingSessionConfig(sessionName: string | null, skillBoostPercent: number | null): Promise<SessionConfigResult> {
+	return invokeCommand('tracking_session_config', { session_name: sessionName, skill_boost_percent: skillBoostPercent });
+}
+
+export async function trackingRenameSession(sessionId: string, sessionName: string | null): Promise<SessionRenameResult> {
+	return invokeCommand('tracking_rename_session', { session_id: sessionId, session_name: sessionName });
 }
 
 export async function trackingRenameMob(sessionId: string, fromMobName: string, toMobName: string): Promise<MobEditResult> {
@@ -2825,6 +2874,10 @@ export async function trackingArmourCost(sessionId: string, cost: number): Promi
 
 export async function trackingQuestLink(sessionId: string, action: string): Promise<QuestLinkDecision> {
 	return invokeCommand('tracking_quest_link', { session_id: sessionId, action });
+}
+
+export async function trackingQuestDeclare(questId: number | null, playlistId: number | null): Promise<QuestDeclareResult> {
+	return invokeCommand('tracking_quest_declare', { quest_id: questId, playlist_id: playlistId });
 }
 
 export async function trackingRepairScan(sessionId: string): Promise<RepairScanResult> {

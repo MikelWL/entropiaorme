@@ -310,7 +310,7 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab lets you review aggregated stats by mob or tag.',
+						text: 'The Hunting tab lets you review aggregated stats by mob or by session name.',
 					},
 					{
 						kind: 'p',

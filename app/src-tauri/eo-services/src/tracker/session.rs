@@ -17,13 +17,32 @@ use crate::tracking_models::{
 use super::actor::TrackerActor;
 use super::combat::Accumulator;
 use super::harvest::GuardrailMismatch;
-use super::mob::{MobSelection, MobSource, TrackingMode};
+use super::mob::DeclaredMob;
 use super::time::{instant_to_epoch, local_isoformat, resolve_local};
 use super::weapons::WeaponRuntime;
-use super::{HealTool, HuntTracker, SessionState};
+use super::{HealTool, HuntTracker, SessionState, TrackerCommandError};
 
 /// A loot group's dedup identity: (total, item count, first item name).
 pub(super) type LootFingerprint = (f64, usize, String);
+
+/// The session-scoped facets, snapshotted from the live config at
+/// session start. Independent and optional by design (the co-recording
+/// model that replaced the mutually exclusive tag-or-mob capture):
+/// None means "not declared", never a guessed default. The name is
+/// immutable for the session's life (it names the whole session, so a
+/// live edit could only rewrite history; correcting it is a post-hoc
+/// move in session review). The boost may be re-declared while the
+/// session runs, because a pill expiring is a genuine change worth
+/// recording; the record keeps the latest declaration.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionFacets {
+    /// The user-designated session name (the designated analytics
+    /// axis; successor of the free-text tag).
+    pub name: Option<String>,
+    /// The skill-boost configuration the session runs under, as the
+    /// pill's labelled percentage.
+    pub skill_boost_percent: Option<i64>,
+}
 
 /// Everything that exists exactly while a session runs. Constructed at
 /// `start_session`, dropped wholesale when the session stops, so no
@@ -41,12 +60,11 @@ pub(super) struct ActiveSession {
     pub(super) heal_warning_emitted: bool,
     pub(super) harvest_warning_emitted: bool,
     pub(super) warnings: Vec<String>,
-    /// The mob/tag selection kills stamp from.
-    pub(super) mob: MobSelection,
-    /// The input mode snapshotted at session start (not live config).
-    pub(super) mode: TrackingMode,
-    /// The tag-mode free-text tag (empty outside tag mode).
-    pub(super) tag: String,
+    /// The declared mob that kills take their stamp from (None: no
+    /// declaration; kills stamp "Unknown" with no stamp source).
+    pub(super) declared_mob: Option<DeclaredMob>,
+    /// The session-scoped facets snapshotted at session start.
+    pub(super) facets: SessionFacets,
     pub(super) last_heal_time: Option<DateTime<Utc>>,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
@@ -64,7 +82,7 @@ pub(super) struct ActiveSession {
 }
 
 impl ActiveSession {
-    pub(super) fn new(session: TrackingSession, mode: TrackingMode, tag: String) -> Self {
+    pub(super) fn new(session: TrackingSession, facets: SessionFacets) -> Self {
         Self {
             session,
             accumulator: Accumulator::default(),
@@ -73,9 +91,8 @@ impl ActiveSession {
             heal_warning_emitted: false,
             harvest_warning_emitted: false,
             warnings: Vec::new(),
-            mob: MobSelection::Unset,
-            mode,
-            tag,
+            declared_mob: None,
+            facets,
             last_heal_time: None,
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
@@ -86,11 +103,14 @@ impl ActiveSession {
         }
     }
 
-    /// The mob name a kill stamps or the readout shows: the selection's
-    /// display name when it is set AND non-empty (an empty manual name
-    /// behaves as unset, the original's falsy check).
+    /// The mob name a kill stamps or the readout shows: the declared
+    /// mob's display name when it is set AND non-empty (an empty
+    /// declared name behaves as unset, the original's falsy check).
     pub(super) fn stamped_mob_name(&self) -> Option<&str> {
-        self.mob.name().filter(|name| !name.is_empty())
+        self.declared_mob
+            .as_ref()
+            .map(|declared| declared.name.as_str())
+            .filter(|name| !name.is_empty())
     }
 }
 
@@ -120,8 +140,8 @@ pub(super) struct SessionAggregate {
     pub(super) multiplier_history: Vec<f64>,
     pub(super) cumulative_net: Vec<f64>,
     pub(super) mob_name: Option<String>,
-    pub(super) mob_source: Option<MobSource>,
-    pub(super) mob_entry_mode: TrackingMode,
+    pub(super) session_name: Option<String>,
+    pub(super) skill_boost_percent: Option<i64>,
     pub(super) harvest_swings: i64,
     pub(super) harvest_successes: i64,
     pub(super) harvest_loot: Ped,
@@ -132,10 +152,11 @@ pub(super) struct SessionAggregate {
 
 impl TrackerActor {
     /// The in-memory aggregation over the live session: the detected
-    /// tool plus the aggregate (None when idle).
-    pub(super) fn aggregate(&self) -> (Option<String>, Option<SessionAggregate>) {
+    /// tool, whether the hand item is a harvesting tool, plus the
+    /// aggregate (None when idle).
+    pub(super) fn aggregate(&self) -> (Option<String>, bool, Option<SessionAggregate>) {
         let Some(active) = self.session.active() else {
-            return (None, None);
+            return (None, self.hand_is_harvest, None);
         };
         // The displayed hand item: the harvesting tool when it was the
         // last hand equip, otherwise the hotbar weapon.
@@ -276,8 +297,8 @@ impl TrackerActor {
             multiplier_history,
             cumulative_net,
             mob_name: active.stamped_mob_name().map(str::to_string),
-            mob_source: active.mob.source(),
-            mob_entry_mode: active.mode,
+            session_name: active.facets.name.clone(),
+            skill_boost_percent: active.facets.skill_boost_percent,
             harvest_swings: harvests.len() as i64,
             harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
             harvest_loot,
@@ -285,7 +306,7 @@ impl TrackerActor {
             guardrail_mismatch: active.guardrail_mismatch.clone(),
             warnings: active.warnings.clone(),
         };
-        (current_tool, Some(aggregate))
+        (current_tool, self.hand_is_harvest, Some(aggregate))
     }
 
     /// Prime the tracker with a fully-formed demo session, bypassing
@@ -296,13 +317,49 @@ impl TrackerActor {
     pub(super) fn prime_demo(
         &mut self,
         session: TrackingSession,
-        mob: MobSelection,
-        mode: TrackingMode,
+        declared_mob: Option<DeclaredMob>,
+        facets: SessionFacets,
     ) {
-        let mut active = ActiveSession::new(session, mode, String::new());
-        active.mob = mob;
+        let mut active = ActiveSession::new(session, facets);
+        active.declared_mob = declared_mob;
         self.session = SessionState::Active(Box::new(active));
         self.publish_status();
+    }
+
+    /// Declare the skill boost now in force. The boost is the facet
+    /// that may move while the session runs, because it is a fact about
+    /// the world that expires: a pill running out is a real change the
+    /// session must be able to record.
+    ///
+    /// The session row carries the latest declaration, re-landed here
+    /// on every change so the record never claims a boost the player
+    /// withdrew. Persistence failures are contained like the stop
+    /// path's: the in-memory facet still moves and the row heals at the
+    /// next declaration.
+    pub(super) async fn set_skill_boost(
+        &mut self,
+        percent: Option<i64>,
+    ) -> Result<(), TrackerCommandError> {
+        let percent = percent.filter(|value| *value > 0);
+        let session_id = {
+            let Some(active) = self.session.active_mut() else {
+                return Err(TrackerCommandError::NoActiveSession);
+            };
+            active.facets.skill_boost_percent = percent;
+            active.dirty = true;
+            active.session.id.clone()
+        };
+        let _ = self
+            .db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "UPDATE tracking_sessions SET skill_boost_percent = ? WHERE id = ?",
+                    rusqlite::params![percent, session_id],
+                )?;
+                Ok(())
+            })
+            .await;
+        Ok(())
     }
 
     /// Refresh trifecta-attribution state after config changes. The
@@ -335,24 +392,13 @@ impl TrackerActor {
             active.weapons.reset_runtime();
         }
 
-        if active.mode == TrackingMode::Tag {
-            return;
-        }
-
-        if providers.config.manual_mob_entry_enabled() {
-            let Some((species, maturity)) = providers.config.manual_mob() else {
-                if active.mob.source() == Some(MobSource::Manual) {
-                    active.mob = MobSelection::Unset;
-                }
-                return;
-            };
-            active.mob = MobSelection::manual_from_parts(species, maturity);
-            return;
-        }
-
-        if active.mob.source() == Some(MobSource::Manual) {
-            active.mob = MobSelection::Unset;
-        }
+        // Sync the declared mob with the live config (the declare and
+        // release commands write the config first, so this also covers
+        // a settings-page edit landing mid-session).
+        active.declared_mob = providers
+            .config
+            .manual_mob()
+            .map(|(species, maturity)| DeclaredMob::from_parts(species, maturity));
     }
 
     /// Start a new tracking session; any prior session stops first, so
@@ -362,13 +408,22 @@ impl TrackerActor {
             self.stop_session().await?;
         }
 
-        let mode = TrackingMode::from_config(&self.providers.config.mob_tracking_mode());
-        let tag = self
-            .providers
-            .config
-            .mob_tracking_tag()
-            .trim_matches(python_whitespace)
-            .to_string();
+        // Snapshot the session facets from the live config: the name
+        // (trimmed; empty is "not declared") and the skill boost (zero
+        // or negative is "no boost", stored as NULL). Both are captured
+        // here and never re-read from the config mid-session.
+        let facets = SessionFacets {
+            name: Some(
+                self.providers
+                    .config
+                    .session_name()
+                    .trim_matches(python_whitespace)
+                    .to_string(),
+            )
+            .filter(|name| !name.is_empty()),
+            skill_boost_percent: Some(self.providers.config.skill_boost_percent())
+                .filter(|percent| *percent > 0),
+        };
         let session_id = uuid::Uuid::new_v4().to_string();
         let trifecta_mode = self.providers.config.weapon_attribution_trifecta();
         let trifecta = if trifecta_mode {
@@ -393,19 +448,22 @@ impl TrackerActor {
 
         // Persist session start BEFORE activating in memory: a failed
         // insert leaves the tracker idle rather than a phantom session
-        // with no row for its kills. `mob_tracking_mode` records the
-        // input mode the session was captured under so post-hoc UI
-        // surfaces can choose label vocabulary; the value never mutates
-        // after session start.
+        // with no row for its kills. The facets snapshot onto the row
+        // at start; the name then never moves for the session's life,
+        // while a boost re-declaration re-lands on the row so it always
+        // reads as the latest declaration. (`mob_tracking_mode`
+        // keeps its column default: the mode vocabulary is legacy and
+        // records nothing about a facet-era session.)
         let insert_id = session_id.clone();
-        let mode_str = mode.as_str().to_string();
+        let insert_name = facets.name.clone();
+        let insert_boost = facets.skill_boost_percent;
         self.db
             .with_writer(move |conn| {
                 conn.execute(
                     "INSERT INTO tracking_sessions \
-                     (id, started_at, is_active, mob_tracking_mode) \
-                     VALUES (?, ?, 1, ?)",
-                    rusqlite::params![insert_id, start_ts, mode_str],
+                     (id, started_at, is_active, session_name, skill_boost_percent) \
+                     VALUES (?, ?, 1, ?, ?)",
+                    rusqlite::params![insert_id, start_ts, insert_name, insert_boost],
                 )?;
                 Ok(())
             })
@@ -415,7 +473,7 @@ impl TrackerActor {
         // session-scoped field starts at its documented initial
         // state by construction. (The equipped heal tool
         // deliberately persists; it lives outside the typestate.)
-        let mut active = ActiveSession::new(session.clone(), mode, tag.clone());
+        let mut active = ActiveSession::new(session.clone(), facets);
 
         if trifecta_mode {
             Self::load_trifecta_weapon_profiles(
@@ -425,12 +483,10 @@ impl TrackerActor {
             );
         }
 
-        if mode == TrackingMode::Tag && !tag.is_empty() {
-            active.mob = MobSelection::Tag(tag.clone());
-        } else if self.providers.config.manual_mob_entry_enabled() {
-            if let Some((species, maturity)) = self.providers.config.manual_mob() {
-                active.mob = MobSelection::manual_from_parts(species, maturity);
-            }
+        // Seed the declared mob from the configured declaration, when
+        // one is set (the same seeding the declare command performs).
+        if let Some((species, maturity)) = self.providers.config.manual_mob() {
+            active.declared_mob = Some(DeclaredMob::from_parts(species, maturity));
         }
 
         self.session = SessionState::Active(Box::new(active));
@@ -455,7 +511,7 @@ impl TrackerActor {
     /// summary, and the stop events; then the in-memory clear
     /// (dropping the whole `ActiveSession`).
     pub(super) async fn stop_session(&mut self) -> Result<Option<TrackingSession>, DbError> {
-        let (session, session_id, end_time, heal_cost, dangling_cost) = {
+        let (session, session_id, end_time, heal_cost, dangling_cost, session_name, session_boost) = {
             let Some(active) = self.session.active_mut() else {
                 return Ok(None);
             };
@@ -466,7 +522,17 @@ impl TrackerActor {
             let session_id = snapshot.id.clone();
             let end_time = snapshot.end_time.expect("just stamped");
             let heal_cost = active.heal_cost;
-            (snapshot, session_id, end_time, heal_cost, dangling_cost)
+            let session_name = active.facets.name.clone();
+            let session_boost = active.facets.skill_boost_percent;
+            (
+                snapshot,
+                session_id,
+                end_time,
+                heal_cost,
+                dangling_cost,
+                session_name,
+                session_boost,
+            )
         };
         // One transaction over the whole stop sequence, matching the
         // original's single commit: a failure (or crash) mid-way leaves
@@ -483,10 +549,21 @@ impl TrackerActor {
         self.db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
+                // Both facets re-land from memory at stop, so a contained
+                // failure of a mid-session write cannot strand the summary
+                // on a stale row.
                 tx.execute(
                     "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
-                     heal_cost = ?, dangling_cost = ? WHERE id = ?",
-                    rusqlite::params![end_epoch, heal_value, dangling_value, sid],
+                     heal_cost = ?, dangling_cost = ?, session_name = ?, \
+                     skill_boost_percent = ? WHERE id = ?",
+                    rusqlite::params![
+                        end_epoch,
+                        heal_value,
+                        dangling_value,
+                        session_name,
+                        session_boost,
+                        sid
+                    ],
                 )?;
                 // Auto-generate ledger gains derived from persisted loot rows.
                 Self::create_enhancer_rebate_ledger_entry(&tx, &sid, end_time)?;
@@ -586,10 +663,11 @@ impl HuntTracker {
     /// the actor; the two session-scoped reads (skill-gain total,
     /// notable-event feed) run here, keyed on the captured session id.
     pub async fn snapshot(&self) -> Result<TrackingReadout, DbError> {
-        let (current_tool, aggregate) = self.aggregate().await;
+        let (current_tool, current_tool_is_harvest, aggregate) = self.aggregate().await;
         let Some(aggregated) = aggregate else {
             return Ok(TrackingReadout {
                 current_tool,
+                current_tool_is_harvest,
                 active: None,
             });
         };
@@ -665,14 +743,8 @@ impl HuntTracker {
             multiplier_history: aggregated.multiplier_history,
             cumulative_net_history: aggregated.cumulative_net,
             current_mob: aggregated.mob_name.clone(),
-            mob_source: if aggregated.mob_name.is_some() {
-                aggregated
-                    .mob_source
-                    .map(|source| source.as_str().to_string())
-            } else {
-                None
-            },
-            mob_entry_mode: aggregated.mob_entry_mode.as_str().to_string(),
+            session_name: aggregated.session_name.clone(),
+            skill_boost_percent: aggregated.skill_boost_percent,
             harvest_swings: aggregated.harvest_swings,
             harvest_successes: aggregated.harvest_successes,
             // + 0.0 normalises the sign: an empty f64 sum is -0.0 (the
@@ -693,6 +765,7 @@ impl HuntTracker {
         };
         Ok(TrackingReadout {
             current_tool,
+            current_tool_is_harvest,
             active: Some(active),
         })
     }

@@ -83,12 +83,15 @@ vi.mock('$lib/api', () => {
 		releaseMob: vi.fn(),
 		getOverlayPosition: seams.getOverlayPosition,
 		saveOverlayPosition: seams.saveOverlayPosition,
-		getTrackingTagSuggestions: vi.fn(async () => []),
-		lockTrackingTag: vi.fn(),
+		getSessionNameSuggestions: vi.fn(async () => []),
+		setSessionConfig: vi.fn(),
 		getManualMobSuggestions: vi.fn(async () => []),
 		lockManualMob: vi.fn(),
 		getSessionQuestLinkSuggestion: vi.fn(),
 		decideSessionQuestLink: vi.fn(),
+		declareSessionQuest: vi.fn(),
+		getQuests: vi.fn(async () => []),
+		getPlaylists: vi.fn(async () => []),
 		updateSettings: seams.updateSettings,
 	};
 });
@@ -133,7 +136,7 @@ const activeSnapshot = {
 	elapsed: 60,
 	kill_count: 2,
 	weaponAttribution: 'trifecta',
-	mobEntryMode: 'mob',
+	sessionName: 'ARIS Dailies',
 	currentMob: 'Atrox',
 	trifectaAttribution: {
 		activePresetId: 'p1',

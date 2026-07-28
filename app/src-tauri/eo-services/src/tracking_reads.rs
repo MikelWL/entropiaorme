@@ -469,7 +469,7 @@ pub fn get_session_read(
 
     let session_meta = conn
         .query_row(
-            "SELECT id, started_at, ended_at, is_active, mob_tracking_mode \
+            "SELECT id, started_at, ended_at, is_active, mob_tracking_mode, session_name \
              FROM tracking_sessions WHERE id = ?",
             rusqlite::params![session_id],
             |row| {
@@ -478,11 +478,12 @@ pub fn get_session_read(
                     row.get::<_, Option<f64>>(2)?,
                     row.get::<_, i64>(3)? != 0,
                     row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()?;
-    let Some((started_at, ended_at, is_active, mob_mode)) = session_meta else {
+    let Some((started_at, ended_at, is_active, mob_mode, session_name)) = session_meta else {
         return Ok(None);
     };
 
@@ -676,6 +677,7 @@ pub fn get_session_read(
             "lootTt": round(harvest_loot, 2),
             "cost": round(harvest_cost, 2),
         },
+        "sessionName": session_name,
         "mobEntryMode": mob_entry_mode,
         "notableEvents": notable_events,
         "lootBreakdown": loot_breakdown,
@@ -861,20 +863,26 @@ pub async fn session_exists(db: &Db, session_id: &str) -> Result<bool, DbError> 
 
 // ── Tag suggestions ─────────────────────────────────────────────────
 
-pub async fn tag_suggestions_impl(db: &Db, q: &str, limit: i64) -> Result<Vec<String>, DbError> {
+pub async fn session_name_suggestions_impl(
+    db: &Db,
+    q: &str,
+    limit: i64,
+) -> Result<Vec<String>, DbError> {
     let query = q.trim();
     if query.is_empty() {
         return Ok(Vec::new());
     }
     let bounded = limit.clamp(1, 20);
     let like = format!("%{}%", query.to_lowercase());
+    // Prior session names, most-used first. Reusing a name is what keeps
+    // the designated axis grouping cleanly, so the typeahead offers the
+    // names already in the history rather than inventing near-duplicates.
     db.with_reader(move |conn| {
         let mut stmt = conn.prepare(
-            "SELECT mob_name, COUNT(*) as uses FROM kills \
-             WHERE mob_name IS NOT NULL AND mob_name != 'Unknown' \
-             AND COALESCE(mob_species, '') = '' AND COALESCE(mob_maturity, '') = '' \
-             AND lower(mob_name) LIKE ? \
-             GROUP BY mob_name ORDER BY uses DESC, mob_name ASC LIMIT ?",
+            "SELECT session_name, COUNT(*) as uses FROM tracking_sessions \
+             WHERE session_name IS NOT NULL AND session_name != '' \
+             AND lower(session_name) LIKE ? \
+             GROUP BY session_name ORDER BY uses DESC, session_name ASC LIMIT ?",
         )?;
         let rows = stmt.query_map(rusqlite::params![like, bounded], |row| {
             row.get::<_, String>(0)
@@ -925,7 +933,7 @@ pub async fn validate_session_exists(db: &Db, session_id: &str) -> Result<(), Ed
     };
     if is_active != 0 {
         return Err(EditError::Conflict(
-            "Session mob edits are only available after the session has ended".to_string(),
+            "Session record edits are only available after the session has ended".to_string(),
         ));
     }
     Ok(())
@@ -978,6 +986,45 @@ pub async fn build_loot_item_edit_response(
         "totalValueDelta": round(total_value_delta, 4),
         "sessionTotalReturns": round(session_returns, 2),
     }))
+}
+
+/// Rename an ended session's name facet: the post-hoc correction the
+/// overlay deliberately does not offer, because a live rename could
+/// only rewrite the whole session's history. Session-grain, so this
+/// simply restates the one value, and the summary cache is restated
+/// with it so the analytics axis and the record never disagree.
+pub async fn rename_session_impl(
+    db: &Db,
+    session_id: &str,
+    session_name: Option<&str>,
+) -> Result<Value, EditError> {
+    validate_session_exists(db, session_id).await?;
+    let name = session_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string);
+
+    let sid = session_id.to_string();
+    let write_name = name.clone();
+    db.with_writer(move |conn| {
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE tracking_sessions SET session_name = ? WHERE id = ?",
+            rusqlite::params![write_name, sid],
+        )?;
+        // The summary cache carries the facet beside its aggregates; a
+        // rename that healed only on the next summary rebuild would
+        // leave the comparison axis reading the old bucket meanwhile.
+        tx.execute(
+            "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
+            rusqlite::params![write_name, sid],
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+    .await?;
+
+    Ok(json!({ "sessionId": session_id, "sessionName": name }))
 }
 
 pub async fn rename_session_mob_impl(
@@ -1409,29 +1456,22 @@ pub fn validate_hotbar(config: &AppConfig) -> (bool, Option<String>) {
     }
 }
 
-/// `_configured_manual_label`: the idle-state mob label and its source.
-pub fn configured_manual_label(config: &AppConfig) -> (Value, Value) {
-    if config.mob_tracking_mode == "tag" {
-        let tag = config.mob_tracking_tag.trim();
-        if tag.is_empty() {
-            return (Value::Null, Value::Null);
-        }
-        return (
-            Value::String(tag.to_string()),
-            Value::String("tag".to_string()),
-        );
-    }
+/// The idle-state mob label: the standing declaration, exactly as the
+/// active-session label derives it. A declaration outlives the session
+/// that set it, so idle reads the same facet rather than any retired
+/// exclusive-capture value.
+pub fn declared_mob_label(config: &AppConfig) -> Value {
     let species = config.manual_mob_species.trim();
     let maturity = config.manual_mob_maturity.trim();
     if species.is_empty() {
-        return (Value::Null, Value::Null);
+        return Value::Null;
     }
     let display = if maturity.is_empty() {
         species.to_string()
     } else {
         format!("{maturity} {species}")
     };
-    (Value::String(display), Value::String("manual".to_string()))
+    Value::String(display)
 }
 
 /// `_notable_event_label`: the curated label for known event types, else
@@ -1473,13 +1513,6 @@ pub fn capitalize(text: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
-}
-
-/// The config update that clears the free-text session tag.
-pub fn clear_tag() -> Map<String, Value> {
-    let mut updates = Map::new();
-    updates.insert("mob_tracking_tag".into(), json!(""));
-    updates
 }
 
 /// The config update that clears the stored manual-mob selection.
@@ -2271,6 +2304,7 @@ mod tests {
                     "lootTt": 0.0,
                     "cost": 0.0,
                 },
+                "sessionName": null,
                 "mobEntryMode": "mob",
                 "notableEvents": [
                     {"type": "global", "eventType": "global_kill", "target": "Argonaut", "item": "Argonaut", "value": 50.0},
@@ -2378,6 +2412,7 @@ mod tests {
                     "lootTt": 8.0,
                     "cost": 3.0,
                 },
+                "sessionName": null,
                 "mobEntryMode": "mob",
                 "notableEvents": [],
                 "lootBreakdown": [
@@ -2585,7 +2620,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tag_suggestions_match_free_text_mobs() {
+    async fn session_name_suggestions_match_prior_names() {
         let (_dir, db) = open_db().await;
         db.with_writer(|conn| {
             seed_session(
@@ -2599,12 +2634,37 @@ mod tests {
                 0.0,
                 0.0,
             )?;
-            // Two tag-style kills (no species/maturity) and one classified kill.
-            seed_kill(conn, "k1", "s1", Some("My Tag"), None, 0.0, 0.0, 1000.0)?;
-            seed_kill(conn, "k2", "s1", Some("My Tag"), None, 0.0, 0.0, 1100.0)?;
+            seed_session(
+                conn,
+                "s2",
+                3000.0,
+                Some(4000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            seed_session(
+                conn,
+                "s3",
+                5000.0,
+                Some(6000.0),
+                false,
+                "mob",
+                0.0,
+                0.0,
+                0.0,
+            )?;
+            // Two sessions share a name; one carries a different name, and
+            // an unnamed session must never be offered.
             conn.execute(
-                "INSERT INTO kills (id, session_id, mob_name, mob_species, timestamp) \
-                 VALUES ('k3', 's1', 'Argonaut', 'Argonaut', 1200.0)",
+                "UPDATE tracking_sessions SET session_name = 'ARIS Dailies' \
+                 WHERE id IN ('s1', 's2')",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE tracking_sessions SET session_name = 'Atrox Grind' WHERE id = 's3'",
                 [],
             )?;
             Ok(())
@@ -2614,15 +2674,20 @@ mod tests {
 
         // An empty query short-circuits.
         assert_eq!(
-            tag_suggestions_impl(&db, "  ", 5).await.unwrap(),
+            session_name_suggestions_impl(&db, "  ", 5).await.unwrap(),
             Vec::<String>::new()
         );
-        // A match returns the free-text tag; the classified mob is excluded.
+        // A substring match returns the name; matching is case-insensitive.
         assert_eq!(
-            tag_suggestions_impl(&db, "tag", 5).await.unwrap(),
-            vec!["My Tag".to_string()]
+            session_name_suggestions_impl(&db, "aris", 5).await.unwrap(),
+            vec!["ARIS Dailies".to_string()]
         );
-        assert!(tag_suggestions_impl(&db, "argonaut", 5)
+        // Most-used first when several names match.
+        assert_eq!(
+            session_name_suggestions_impl(&db, "i", 5).await.unwrap(),
+            vec!["ARIS Dailies".to_string(), "Atrox Grind".to_string()]
+        );
+        assert!(session_name_suggestions_impl(&db, "nothing", 5)
             .await
             .unwrap()
             .is_empty());
@@ -3067,34 +3132,20 @@ mod tests {
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
-    fn configured_manual_label_covers_tag_and_manual() {
+    fn declared_mob_label_reads_the_standing_declaration() {
         let mut config = AppConfig::default();
 
-        // Tag mode with a tag, and with a blank tag.
-        config.mob_tracking_mode = "tag".to_string();
-        config.mob_tracking_tag = "My Tag".to_string();
-        assert_eq!(
-            configured_manual_label(&config),
-            (json!("My Tag"), json!("tag"))
-        );
-        config.mob_tracking_tag = "  ".to_string();
-        assert_eq!(configured_manual_label(&config), (Value::Null, Value::Null));
+        // No declaration at all.
+        assert_eq!(declared_mob_label(&config), Value::Null);
 
-        // Manual mode: species with and without maturity, and blank species.
-        config.mob_tracking_mode = "mob".to_string();
+        // Species with and without maturity, and a whitespace-only species.
         config.manual_mob_species = "Argonaut".to_string();
         config.manual_mob_maturity = "Young".to_string();
-        assert_eq!(
-            configured_manual_label(&config),
-            (json!("Young Argonaut"), json!("manual"))
-        );
+        assert_eq!(declared_mob_label(&config), json!("Young Argonaut"));
         config.manual_mob_maturity = String::new();
-        assert_eq!(
-            configured_manual_label(&config),
-            (json!("Argonaut"), json!("manual"))
-        );
-        config.manual_mob_species = String::new();
-        assert_eq!(configured_manual_label(&config), (Value::Null, Value::Null));
+        assert_eq!(declared_mob_label(&config), json!("Argonaut"));
+        config.manual_mob_species = "  ".to_string();
+        assert_eq!(declared_mob_label(&config), Value::Null);
     }
 
     #[test]
@@ -3128,13 +3179,6 @@ mod tests {
         assert_eq!(capitalize("global"), "Global");
         assert_eq!(capitalize("a"), "A");
         assert_eq!(capitalize(""), "");
-    }
-
-    #[test]
-    fn clear_tag_clears_the_free_text_tag() {
-        let updates = clear_tag();
-        assert_eq!(updates.get("mob_tracking_tag"), Some(&json!("")));
-        assert_eq!(updates.len(), 1);
     }
 
     #[test]

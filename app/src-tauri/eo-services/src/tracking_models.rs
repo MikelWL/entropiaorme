@@ -47,15 +47,18 @@ impl ToolStats {
 /// A single kill: one loot group with its accumulated combat stats,
 /// created when a loot group arrives. The accumulated shots and cost
 /// since the previous kill (or session start) snapshot into this
-/// record; the mob name stamps from the manual or tag state.
+/// record; the mob identity stamps from the session's declared mob.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Kill {
     pub id: String,
     pub session_id: String,
-    /// "Unknown" when no manual or tag state is set.
+    /// "Unknown" when no declared mob is in force.
     pub mob_name: String,
     pub mob_species: String,
     pub mob_maturity: String,
+    /// Where the mob stamp came from; None when the kill recorded with
+    /// no declaration in force (the stamp is "Unknown").
+    pub mob_stamp_source: Option<crate::tracker::MobStampSource>,
     /// Epoch seconds (UTC, fractional seconds preserved): when the
     /// loot arrived. The representation deliberately differs from the
     /// session's calendar fields below because the original carries
@@ -146,8 +149,10 @@ pub struct ActiveSessionView {
     pub multiplier_history: Vec<f64>,
     pub cumulative_net_history: Vec<f64>,
     pub current_mob: Option<String>,
-    pub mob_source: Option<String>,
-    pub mob_entry_mode: String,
+    /// The session's designated name facet, when one was set.
+    pub session_name: Option<String>,
+    /// The skill-boost facet the session runs under (percent), when set.
+    pub skill_boost_percent: Option<i64>,
     /// Harvesting swings this session (successes + explicit fails).
     pub harvest_swings: i64,
     pub harvest_successes: i64,
@@ -182,5 +187,10 @@ pub struct HarvestGuardrailMismatchView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackingReadout {
     pub current_tool: Option<String>,
+    /// Whether the hand item is currently a harvesting tool: the signal
+    /// the overlay's derived-activity feedback reads ("this is Tree
+    /// Cutting" versus "this is Hunting"). Meaningless when
+    /// `current_tool` is None.
+    pub current_tool_is_harvest: bool,
     pub active: Option<ActiveSessionView>,
 }

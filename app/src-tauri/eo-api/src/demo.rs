@@ -37,7 +37,7 @@ use eo_services::db::Db;
 use eo_services::event_bus::EventBus;
 use eo_services::ped::Ped;
 use eo_services::time::{epoch_to_instant, naive_to_epoch};
-use eo_services::tracker::{HuntTracker, MobSelection, Providers, TrackingMode};
+use eo_services::tracker::{DeclaredMob, HuntTracker, MobStampSource, Providers, SessionFacets};
 use eo_services::tracking_models::{
     Kill, LootItem, ToolStats, TrackingSession as TrackingSessionModel,
 };
@@ -487,6 +487,7 @@ impl DemoState {
                 mob_name: kill.mob_name.clone(),
                 mob_species: kill.mob_species.clone(),
                 mob_maturity: kill.mob_maturity.clone(),
+                mob_stamp_source: Some(MobStampSource::Declared),
                 timestamp: started_epoch + kill.ts_offset,
                 shots_fired: kill.shots_fired,
                 damage_dealt: kill.damage_dealt,
@@ -537,12 +538,12 @@ impl DemoState {
         self.tracker
             .prime_demo(
                 demo_session,
-                MobSelection::Manual {
+                Some(DeclaredMob {
                     name: DEMO_MOB.0.to_string(),
                     species: DEMO_MOB.1.to_string(),
                     maturity: DEMO_MOB.2.to_string(),
-                },
-                TrackingMode::Mob,
+                }),
+                SessionFacets::default(),
             )
             .await;
         Ok(())
@@ -563,8 +564,6 @@ impl DemoState {
             hotbar_hooks_enabled: false,
             repair_ocr_enabled: false,
             end_of_session_armour_reminder_enabled: false,
-            mob_tracking_mode: "mob".to_string(),
-            mob_tracking_tag: String::new(),
             manual_mob_species: String::new(),
             manual_mob_maturity: String::new(),
             trifecta_presets: vec![preset],
@@ -819,7 +818,6 @@ mod tests {
         assert_eq!(snap["elapsed"], 754);
         assert_eq!(snap["kill_count"], 100);
         assert_eq!(snap["currentMob"], "Caboria Old");
-        assert_eq!(snap["mobSource"], "manual");
         assert_eq!(snap["weaponAttribution"], "trifecta");
         assert!(is_iso_datetime(snap["started_at"].as_str().unwrap()));
 

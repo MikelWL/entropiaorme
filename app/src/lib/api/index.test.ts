@@ -81,10 +81,22 @@ describe('tracking wrappers dispatch typed commands', () => {
 		],
 		['releaseMob', () => api.releaseMob(), 'tracking_release_mob', {}],
 		[
-			'lockTrackingTag',
-			() => api.lockTrackingTag('team hunt'),
-			'tracking_tag_lock',
-			{ tag: 'team hunt' },
+			'setSessionConfig',
+			() => api.setSessionConfig('ARIS Dailies', 50),
+			'tracking_session_config',
+			{ session_name: 'ARIS Dailies', skill_boost_percent: 50 },
+		],
+		[
+			'setSessionConfig clears both facets with nulls',
+			() => api.setSessionConfig(null, null),
+			'tracking_session_config',
+			{ session_name: null, skill_boost_percent: null },
+		],
+		[
+			'declareSessionQuest binds a playlist',
+			() => api.declareSessionQuest(null, 7),
+			'tracking_quest_declare',
+			{ quest_id: null, playlist_id: 7 },
 		],
 		[
 			'lockManualMob defaults maturity to an empty string',
@@ -537,13 +549,13 @@ describe('quests wrappers dispatch typed commands', () => {
 });
 
 describe('suggestion lookups', () => {
-	it('getTrackingTagSuggestions short-circuits on blank input and trims the query', async () => {
-		await expect(api.getTrackingTagSuggestions('   ')).resolves.toEqual([]);
+	it('getSessionNameSuggestions short-circuits on blank input and trims the query', async () => {
+		await expect(api.getSessionNameSuggestions('   ')).resolves.toEqual([]);
 		expect(tauriInvoke).not.toHaveBeenCalled();
 
-		await api.getTrackingTagSuggestions('  team ');
-		expect(tauriInvoke).toHaveBeenCalledWith('tracking_tag_suggestions', {
-			q: 'team',
+		await api.getSessionNameSuggestions('  aris ');
+		expect(tauriInvoke).toHaveBeenCalledWith('tracking_session_name_suggestions', {
+			q: 'aris',
 			limit: null,
 		});
 	});

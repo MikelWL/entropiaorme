@@ -1,117 +1,58 @@
-//! Mob/tag selection vocabulary and commands: the session-capture
-//! input mode, the source a kill stamp came from, and the selection
-//! state machine the manual-mob and free-text-tag commands drive.
-
-use crate::mob_lookup_service::python_whitespace;
+//! The declared-mob layer: the per-kill mob stamp's vocabulary and the
+//! commands that drive the declaration. The declared mob is one of the
+//! session's independent attributions (beside the session-name and
+//! skill-boost facets, `session::SessionFacets`), changeable
+//! mid-session, and it feeds the per-kill stamp until dynamic mob
+//! detection can feed the same fields from evidence.
 
 use super::actor::TrackerActor;
 use super::TrackerCommandError;
 
-/// The input mode a session is captured under, snapshotted at session
-/// start from the live config. The configured value is free text at
-/// rest; anything other than `tag` behaves as mob mode everywhere, so
-/// parsing normalises to the two real modes at the capture boundary.
+/// Where a kill's mob stamp came from. `Declared` is the player's
+/// declaration feeding the stamp; `Detected` exists so the persisted
+/// discriminant stays forward-compatible with a source that fills the
+/// same fields from evidence. A kill recorded with no declaration in
+/// force carries no source (its stamp is "Unknown").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrackingMode {
-    Mob,
-    Tag,
+pub enum MobStampSource {
+    Declared,
+    Detected,
 }
 
-impl TrackingMode {
-    /// Parse the configured mode string (the config field is free
-    /// text; only `"tag"` selects tag mode, as every behaviour branch
-    /// has always keyed).
-    pub fn from_config(raw: &str) -> Self {
-        if raw == "tag" {
-            TrackingMode::Tag
-        } else {
-            TrackingMode::Mob
-        }
-    }
-
+impl MobStampSource {
     /// The wire/database string.
     pub fn as_str(self) -> &'static str {
         match self {
-            TrackingMode::Mob => "mob",
-            TrackingMode::Tag => "tag",
+            MobStampSource::Declared => "declared",
+            MobStampSource::Detected => "detected",
         }
     }
 }
 
-/// Where the current mob stamp came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MobSource {
-    Tag,
-    Manual,
+/// The mob the session currently declares it is hunting: the stamp
+/// source for kills recorded while it is in force. Display name and
+/// catalogue identity always travel together, so a stamped name
+/// without its species/maturity pair is unrepresentable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclaredMob {
+    /// The display name ("<maturity> <species>", or the bare species
+    /// when no maturity is set).
+    pub name: String,
+    pub species: String,
+    pub maturity: String,
 }
 
-impl MobSource {
-    /// The wire string the readout carries.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            MobSource::Tag => "tag",
-            MobSource::Manual => "manual",
-        }
-    }
-}
-
-/// The mob/tag selection stamped onto kills: unset, a free-text tag
-/// (tag-mode sessions), or a manually configured mob. The variant IS
-/// the source, so a stamped name without a source (or vice versa) is
-/// unrepresentable.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub enum MobSelection {
-    #[default]
-    Unset,
-    Tag(String),
-    Manual {
-        /// The display name ("<maturity> <species>", or the bare
-        /// species when no maturity is set).
-        name: String,
-        species: String,
-        maturity: String,
-    },
-}
-
-impl MobSelection {
-    /// The display name a kill stamps, when set.
-    pub fn name(&self) -> Option<&str> {
-        match self {
-            MobSelection::Unset => None,
-            MobSelection::Tag(tag) => Some(tag),
-            MobSelection::Manual { name, .. } => Some(name),
-        }
-    }
-
-    /// The species/maturity pair a kill stamps (empty outside manual
-    /// mode, exactly as the tag and unset stamps behaved).
-    pub(super) fn species_maturity(&self) -> (&str, &str) {
-        match self {
-            MobSelection::Manual {
-                species, maturity, ..
-            } => (species, maturity),
-            _ => ("", ""),
-        }
-    }
-
-    pub(super) fn source(&self) -> Option<MobSource> {
-        match self {
-            MobSelection::Unset => None,
-            MobSelection::Tag(_) => Some(MobSource::Tag),
-            MobSelection::Manual { .. } => Some(MobSource::Manual),
-        }
-    }
-
-    /// Build the manual selection from a species/maturity pair,
-    /// deriving the display name the way the session-start and
-    /// reload paths always have.
-    pub(super) fn manual_from_parts(species: String, maturity: String) -> Self {
+impl DeclaredMob {
+    /// Build the declaration from a species/maturity pair, deriving
+    /// the display name the way the session-start and reload paths
+    /// always have.
+    pub(super) fn from_parts(species: String, maturity: String) -> Self {
         let name = if maturity.is_empty() {
             species.clone()
         } else {
             format!("{maturity} {species}")
         };
-        MobSelection::Manual {
+        DeclaredMob {
             name,
             species,
             maturity,
@@ -120,60 +61,35 @@ impl MobSelection {
 }
 
 impl TrackerActor {
-    /// Immediately set the active free-text tag for tag-mode kill
-    /// stamping.
-    pub(super) fn set_manual_tag(&mut self, tag: &str) -> Result<(), TrackerCommandError> {
-        let Some(active) = self.session.active_mut() else {
-            return Err(TrackerCommandError::NoActiveSession);
-        };
-        if active.mode != TrackingMode::Tag {
-            return Err(TrackerCommandError::NotTagMode);
-        }
-        let cleaned = tag.trim_matches(python_whitespace);
-        if cleaned.is_empty() {
-            return Err(TrackerCommandError::EmptyTag);
-        }
-        active.tag = cleaned.to_string();
-        active.mob = MobSelection::Tag(cleaned.to_string());
-        Ok(())
-    }
-
-    /// Immediately set the active mob for manual kill stamping.
-    pub(super) fn set_manual_mob(
+    /// Immediately set the declared mob for kill stamping. Mid-session
+    /// changes are allowed by design: the declaration is the current
+    /// stamp source, not a session-frozen mode.
+    pub(super) fn set_declared_mob(
         &mut self,
         mob_name: &str,
         species: &str,
         maturity: &str,
     ) -> Result<(), TrackerCommandError> {
-        let Self {
-            session, providers, ..
-        } = self;
-        let Some(active) = session.active_mut() else {
+        let Some(active) = self.session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
-        if active.mode == TrackingMode::Tag {
-            return Err(TrackerCommandError::TagModeLocksMob);
-        }
-        // The provider may read the database or config; the actor
-        // simply runs it inline.
-        if !providers.config.manual_mob_entry_enabled() {
-            return Err(TrackerCommandError::ManualEntryDisabled);
-        }
-        active.mob = MobSelection::Manual {
+        active.declared_mob = Some(DeclaredMob {
             name: mob_name.to_string(),
             species: species.to_string(),
             maturity: maturity.to_string(),
-        };
+        });
         Ok(())
     }
 
-    /// Clear the current mob selection, returning the released name.
-    /// Idle is a no-op (idle carries no selection to release).
-    pub(super) fn release_current_mob(&mut self) -> Option<String> {
+    /// Clear the declared mob, returning the released name. Idle is a
+    /// no-op (idle carries no declaration to release).
+    pub(super) fn release_declared_mob(&mut self) -> Option<String> {
         let active = self.session.active_mut()?;
-        let released = active.mob.name().map(str::to_string);
-        active.mob = MobSelection::Unset;
-        released
+        active
+            .declared_mob
+            .take()
+            .map(|declared| declared.name)
+            .filter(|name| !name.is_empty())
     }
 }
 
@@ -182,8 +98,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mob_source_wire_strings() {
-        assert_eq!(MobSource::Tag.as_str(), "tag");
-        assert_eq!(MobSource::Manual.as_str(), "manual");
+    fn mob_stamp_source_wire_strings() {
+        assert_eq!(MobStampSource::Declared.as_str(), "declared");
+        assert_eq!(MobStampSource::Detected.as_str(), "detected");
+    }
+
+    #[test]
+    fn declared_mob_display_name_derivation() {
+        let bare = DeclaredMob::from_parts("Atrox".into(), String::new());
+        assert_eq!(bare.name, "Atrox");
+        let mature = DeclaredMob::from_parts("Atrox".into(), "Old".into());
+        assert_eq!(mature.name, "Old Atrox");
     }
 }

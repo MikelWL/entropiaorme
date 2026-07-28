@@ -27,7 +27,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::tracking::MobEntryMode;
 use crate::Nullable;
 use crate::{Api, ApiError};
 
@@ -95,8 +94,10 @@ pub struct AppSettings {
     pub repair_ocr_enabled: bool,
     pub end_of_session_armour_reminder_enabled: bool,
     pub developer_mode_enabled: bool,
-    pub mob_tracking_mode: MobEntryMode,
-    pub mob_tracking_tag: String,
+    /// The session facets the next session snapshots: the designated
+    /// name (empty: not declared) and the skill boost (0: no boost).
+    pub session_name: String,
+    pub skill_boost_percent: i64,
     /// The slot-to-equipment map, carried through in its stored insertion
     /// order (`serde_json`'s `preserve_order`), so slot "0" stays last.
     pub hotbar: Map<String, Value>,
@@ -167,9 +168,9 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub developer_mode_enabled: Option<bool>,
     #[serde(default)]
-    pub mob_tracking_mode: Option<String>,
+    pub session_name: Option<String>,
     #[serde(default)]
-    pub mob_tracking_tag: Option<String>,
+    pub skill_boost_percent: Option<i64>,
     #[serde(default)]
     pub hotbar: Option<Map<String, Value>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -221,11 +222,11 @@ impl SettingsPatch {
         if let Some(value) = self.developer_mode_enabled {
             updates.insert("developer_mode_enabled".into(), Value::Bool(value));
         }
-        if let Some(value) = self.mob_tracking_mode {
-            updates.insert("mob_tracking_mode".into(), Value::String(value));
+        if let Some(value) = self.session_name {
+            updates.insert("session_name".into(), Value::String(value));
         }
-        if let Some(value) = self.mob_tracking_tag {
-            updates.insert("mob_tracking_tag".into(), Value::String(value));
+        if let Some(value) = self.skill_boost_percent {
+            updates.insert("skill_boost_percent".into(), Value::from(value));
         }
         if let Some(value) = self.hotbar {
             updates.insert("hotbar".into(), Value::Object(value));
@@ -270,15 +271,8 @@ impl Api {
             repair_ocr_enabled: config.repair_ocr_enabled,
             end_of_session_armour_reminder_enabled: config.end_of_session_armour_reminder_enabled,
             developer_mode_enabled: config.developer_mode_enabled,
-            // The update path validates the mode to the two values; a stored
-            // value outside them (a hand-edited config) recovers to the same
-            // "mob" default the config loader applies to a missing key.
-            mob_tracking_mode: if config.mob_tracking_mode == "tag" {
-                MobEntryMode::Tag
-            } else {
-                MobEntryMode::Mob
-            },
-            mob_tracking_tag: config.mob_tracking_tag.clone(),
+            session_name: config.session_name.clone(),
+            skill_boost_percent: config.skill_boost_percent.max(0),
             hotbar: config.hotbar.clone(),
             trifecta,
             harvest_guardrail: HarvestGuardrailSettings {
@@ -370,8 +364,8 @@ impl Api {
             } else {
                 None
             };
-            if candidate.mob_tracking_mode != "mob" && candidate.mob_tracking_mode != "tag" {
-                return Err(ApiError::bad_request("Unknown mob tracking mode"));
+            if candidate.skill_boost_percent < 0 {
+                return Err(ApiError::bad_request("Skill boost cannot be negative"));
             }
             let hooks_present = updates.contains_key("hotbar_hooks_enabled");
             guard
