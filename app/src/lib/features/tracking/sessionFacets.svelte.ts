@@ -34,9 +34,11 @@ export interface SessionFacetsDeps {
 	searchNames: (query: string) => Promise<string[]>;
 	/** Full-state facet write: a null clears its facet. */
 	setSessionConfig: (name: string | null, boost: number | null) => Promise<unknown>;
-	/** Open a segment on the running session, closing any standing one;
-	 * a null name is auto-numbered ("Segment N") by the backend. */
-	openSegment: (name: string | null) => Promise<unknown>;
+	/** Open a segment on the running session, closing any standing one; a
+	 * null name is auto-numbered ("Segment N") by the backend, and the
+	 * acknowledgement echoes the name now in force so the control can
+	 * render it without waiting on a snapshot round-trip. */
+	openSegment: (name: string | null) => Promise<{ segmentName: string | null }>;
 	/** Close the open segment. */
 	closeSegment: () => Promise<unknown>;
 	/** Rename the open segment live. */
@@ -172,7 +174,14 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 
 	/** The field's commit (Enter): with a segment open it renames; with
 	 * none it opens one, a blank draft leaving the backend to
-	 * auto-number. */
+	 * auto-number.
+	 *
+	 * The buffer is set from the write's own result, never left to the
+	 * snapshot-driven sync: that sync fires while `savingSegment` still
+	 * guards it (the refresh happens inside this call), so relying on it
+	 * would leave the field stale until the next unrelated snapshot
+	 * frame. The open acknowledgement echoes the applied name for
+	 * exactly this. */
 	async function commitSegment() {
 		const name = segmentDraft.trim();
 		const open = currentSegment();
@@ -187,10 +196,13 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 					return;
 				}
 				await deps.renameSegment(name);
+				await deps.refresh();
+				segmentDraft = name;
 			} else {
-				await deps.openSegment(name || null);
+				const applied = await deps.openSegment(name || null);
+				await deps.refresh();
+				segmentDraft = applied.segmentName ?? '';
 			}
-			await deps.refresh();
 		} catch (error) {
 			facetError = describe(
 				error,
@@ -204,14 +216,16 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 	/** The one-click boundary: start the next segment, closing any
 	 * standing one (segments are sequential). With a segment open the
 	 * new one is always auto-numbered; with none open a typed draft is
-	 * honoured as its name. */
+	 * honoured as its name. The buffer takes the echoed name directly
+	 * (see commitSegment for why the sync cannot be relied on here). */
 	async function nextSegment() {
 		const name = currentSegment() === null ? segmentDraft.trim() : '';
 		savingSegment = true;
 		facetError = null;
 		try {
-			await deps.openSegment(name || null);
+			const applied = await deps.openSegment(name || null);
 			await deps.refresh();
+			segmentDraft = applied.segmentName ?? '';
 		} catch (error) {
 			facetError = describe(error, 'Failed to start segment');
 		} finally {

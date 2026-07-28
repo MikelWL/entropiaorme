@@ -12,11 +12,13 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 		facetState.boost = boost;
 	});
 	// Mirrors the backend's auto-numbering: a null name is numbered by
-	// open count, and every open replaces the standing segment.
+	// open count, every open replaces the standing segment, and the
+	// acknowledgement echoes the applied name.
 	let segmentsOpened = 0;
 	const openSegment = vi.fn(async (name: string | null) => {
 		segmentsOpened += 1;
 		facetState.segment = name ?? `Segment ${segmentsOpened}`;
+		return { segmentName: facetState.segment };
 	});
 	const closeSegment = vi.fn(async () => {
 		facetState.segment = null;
@@ -315,5 +317,28 @@ describe('segment facet', () => {
 
 		expect(facets.facetError).toBe('backend said no');
 		expect(facets.savingSegment).toBe(false);
+	});
+
+	// The write's own snapshot refresh re-runs the host's draft-sync
+	// effect while savingSegment still guards it, so that sync is a
+	// no-op by design; the buffer must come from the write's result, or
+	// the field stays stale until the next unrelated snapshot frame
+	// (the original symptom: the name only appeared on the next kill).
+	it('shows the applied name immediately even though the refresh-time sync is guarded', async () => {
+		const { facets, deps } = harness();
+		// What the route's effect does when the refresh lands.
+		deps.refresh = vi.fn(async () => {
+			facets.syncSegmentDraft();
+		});
+
+		await facets.nextSegment();
+		expect(facets.segmentDraft).toBe('Segment 1');
+
+		await facets.nextSegment();
+		expect(facets.segmentDraft).toBe('Segment 2');
+
+		facets.segmentDraft = 'Boss 2';
+		await facets.commitSegment();
+		expect(facets.segmentDraft).toBe('Boss 2');
 	});
 });
