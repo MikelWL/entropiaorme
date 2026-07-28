@@ -30,12 +30,9 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 		refresh: vi.fn(async () => {}),
 		searchNames: vi.fn(async () => []),
 		setSessionConfig,
-		declareQuest: vi.fn(async () => {}),
 		openSegment,
 		closeSegment,
 		renameSegment,
-		listQuests: vi.fn(async () => []),
-		listPlaylists: vi.fn(async () => []),
 		openNameMenu: vi.fn(),
 		closeNameMenu: vi.fn(),
 		...overrides,
@@ -204,51 +201,6 @@ describe('boost facet', () => {
 	});
 });
 
-describe('quest facet', () => {
-	it('offers playlists before quests, both as numeric ids', async () => {
-		const { facets } = harness({
-			listPlaylists: vi.fn(async () => [{ id: '7', name: 'ARIS Dailies' }]),
-			listQuests: vi.fn(async () => [{ id: '3', name: 'Daily Hunting I' }]),
-		});
-
-		expect(await facets.loadQuestOptions()).toBe(true);
-		expect(facets.questOptions).toEqual([
-			{ id: 7, name: 'ARIS Dailies', isPlaylist: true },
-			{ id: 3, name: 'Daily Hunting I', isPlaylist: false },
-		]);
-	});
-
-	it('reports a failed read rather than opening an empty picker', async () => {
-		const { facets } = harness({
-			listPlaylists: vi.fn(async () => {
-				throw new Error('quests unavailable');
-			}),
-		});
-
-		expect(await facets.loadQuestOptions()).toBe(false);
-		expect(facets.facetError).toBe('quests unavailable');
-	});
-
-	it('routes a playlist and a quest to their own argument', async () => {
-		const declareQuest = vi.fn(async () => {});
-		const { facets } = harness({ declareQuest });
-
-		await facets.declareQuest(7, true);
-		expect(declareQuest).toHaveBeenCalledWith(null, 7);
-
-		await facets.declareQuest(3, false);
-		expect(declareQuest).toHaveBeenCalledWith(3, null);
-	});
-
-	it('clears with both ids null', async () => {
-		const declareQuest = vi.fn(async () => {});
-		const { facets } = harness({ declareQuest });
-
-		await facets.clearQuest();
-
-		expect(declareQuest).toHaveBeenCalledWith(null, null);
-	});
-});
 
 describe('segment facet', () => {
 	it('opens with the typed draft as the name', async () => {

@@ -11,14 +11,9 @@
 		setSessionConfig,
 		getManualMobSuggestions,
 		lockManualMob,
-		getSessionQuestLinkSuggestion,
-		decideSessionQuestLink,
-		declareSessionQuest,
 		openSessionSegment,
 		closeSessionSegment,
 		renameSessionSegment,
-		getQuests,
-		getPlaylists,
 		updateSettings,
 		type TrackingLive,
 		type TrackingStatus,
@@ -149,10 +144,10 @@
 	// own store instance beside the dashboard's.
 	const snapshot = createSnapshotStore<TrackingSnapshot>(TRACKING_TOPIC, getTrackingSnapshot);
 
-	// Post-session flow: the armour prompt gating the stop, the final-stats
-	// readout, and the quest-link suggestion (see the module for the state
-	// machine). Render state comes off `flow`; the deps close over this
-	// window's snapshot and armour-cost popup.
+	// Post-session flow: the armour prompt gating the stop and the
+	// final-stats readout (see the module for the state machine). Render
+	// state comes off `flow`; the deps close over this window's snapshot
+	// and armour-cost popup.
 	const flow = createPostSessionFlow({
 		isSessionActive: () => data.status === 'active',
 		isBusy: () => toggling,
@@ -165,8 +160,6 @@
 			net: snapshot.current?.net ?? 0
 		}),
 		stopTracking,
-		fetchQuestLinkSuggestion: getSessionQuestLinkSuggestion,
-		decideQuestLink: decideSessionQuestLink,
 		isArmourPopupOpen: () => armourCostOpen,
 		showArmourPopup: showPostSessionArmourPopup,
 		onPromptShown: () => {
@@ -175,9 +168,10 @@
 	});
 	const toggling = $derived(starting || flow.stopping);
 
-	// The session facets (name, boost, quest): state, lookups, and writes
-	// live in the feature model; this route owns only the popup plumbing
-	// the model calls back into.
+	// The session facets (name, boost, segment): state, lookups, and
+	// writes live in the feature model; this route owns only the popup
+	// plumbing the model calls back into. (The quest facet auto-records
+	// itself and only displays.)
 	const facets = createSessionFacets({
 		readFacets: () => ({
 			name: data.sessionName ?? null,
@@ -188,12 +182,9 @@
 		refresh: () => snapshot.hydrate(),
 		searchNames: getSessionNameSuggestions,
 		setSessionConfig,
-		declareQuest: declareSessionQuest,
 		openSegment: openSessionSegment,
 		closeSegment: closeSessionSegment,
 		renameSegment: renameSessionSegment,
-		listQuests: getQuests,
-		listPlaylists: getPlaylists,
 		openNameMenu: () => openNameMenu(),
 		closeNameMenu: () => closeNameMenu()
 	});
@@ -296,19 +287,6 @@
 		};
 	}
 
-	function buildQuestMenuState(anchorWidth: number): OverlayMenuState | null {
-		const labels = facets.questOptions.length > 0
-			? facets.questOptions.map((option) => option.name)
-			: ['No active quests'];
-		return {
-			kind: 'quest',
-			width: computeMenuWidth(anchorWidth, labels, 88),
-			loading: false,
-			error: null,
-			options: facets.questOptions
-		};
-	}
-
 	function buildTrifectaMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trifecta = data.trifectaAttribution;
 		if (!trifecta || trifecta.presets.length === 0) return null;
@@ -342,8 +320,7 @@
 		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
 		if (state.loading || state.error) return 1;
 		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
-		if (state.kind === 'mob') return Math.max(1, state.mobSuggestions.length);
-		return Math.max(1, state.options.length);
+		return Math.max(1, state.mobSuggestions.length);
 	}
 
 	async function showOverlayMenu(
@@ -413,17 +390,6 @@
 		facets.clearNameCloseTimer();
 		if (overlayMenuKind !== 'name') return;
 		await hideOverlayMenu();
-	}
-
-	async function toggleQuestMenu(anchor: HTMLButtonElement) {
-		if (overlayMenuKind === 'quest') {
-			await hideOverlayMenu();
-			return;
-		}
-		if (!(await facets.loadQuestOptions())) return;
-		const state = buildQuestMenuState(anchor.getBoundingClientRect().width);
-		if (!state) return;
-		await showOverlayMenu('quest', anchor, state, { focusPopup: true });
 	}
 
 	async function toggleTrifectaMenu(anchor: HTMLButtonElement) {
@@ -693,12 +659,6 @@
 					return;
 				}
 
-				if (event.payload.kind === 'quest') {
-					overlayMenuKind = null;
-					await facets.declareQuest(event.payload.id, event.payload.isPlaylist);
-					return;
-				}
-
 				overlayMenuKind = null;
 				await handleSelectMob({
 					display: event.payload.maturity
@@ -779,7 +739,7 @@
 			currentMob: snap.currentMob,
 			currentTool: snap.currentTool,
 			currentActivity: snap.currentActivity,
-			questName: snap.questName,
+			questNames: snap.questNames,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
 		};
@@ -989,21 +949,15 @@
 		{armourSessionId}
 		mobMenuOpen={overlayMenuKind === 'mob'}
 		nameMenuOpen={overlayMenuKind === 'name'}
-		questMenuOpen={overlayMenuKind === 'quest'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
 		savingName={facets.savingName}
 		nameEditable={facets.nameEditable}
 		savingBoost={facets.savingBoost}
 		savingSegment={facets.savingSegment}
-		questSaving={facets.questSaving}
 		facetError={facets.facetError}
-		questLabel={data.questName ?? null}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}
-		questLinkSuggestion={flow.questLinkSuggestion}
-		questLinkMessage={flow.questLinkMessage}
-		questLinkSaving={flow.questLinkSaving}
 		bind:mobQuery
 		bind:mobInput
 		bind:nameQuery={facets.nameQuery}
@@ -1030,12 +984,8 @@
 		onSegmentBlur={facets.handleSegmentBlur}
 		onSegmentNext={facets.nextSegment}
 		onSegmentClose={facets.closeSegment}
-		onQuestTrigger={toggleQuestMenu}
-		onClearQuest={facets.clearQuest}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
-		onQuestLinkDecision={flow.decideQuestLink}
-		onDismissQuestLinkMessage={flow.dismissQuestLinkMessage}
 	/>
 </div>
 

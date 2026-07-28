@@ -200,31 +200,30 @@ describe('session facets and declared mob', () => {
 		expect(input.disabled).toBe(false);
 	});
 
-	it('offers the quest picker only while a session is active', () => {
-		const questTrigger = () => screen.getByText('Pick').closest('button') as HTMLButtonElement;
-
-		const { unmount } = render(OverlayStrip, { props: { data: liveData({ status: 'idle' }) } });
-		expect(questTrigger().disabled).toBe(true);
+	it('reads out the auto-recorded quest stretches, stacking as a count', () => {
+		const { unmount } = render(OverlayStrip, {
+			props: { data: liveData({ status: 'active', questNames: ['Daily: Carabok'] }) },
+		});
+		expect(screen.getByText('Daily: Carabok')).toBeTruthy();
 		unmount();
 
-		const onQuestTrigger = vi.fn();
+		// Three dailies at once: the newest shows, the rest fold into a
+		// count (the full set rides the title).
 		render(OverlayStrip, {
-			props: { data: liveData({ status: 'active' }), onQuestTrigger },
+			props: {
+				data: liveData({
+					status: 'active',
+					questNames: ['Daily: Carabok', 'Daily: Monura', 'Daily: Atrox'],
+				}),
+			},
 		});
-		expect(questTrigger().disabled).toBe(false);
-		questTrigger().click();
-		expect(onQuestTrigger).toHaveBeenCalledTimes(1);
+		expect(screen.getByText('Daily: Carabok +2')).toBeTruthy();
 	});
 
-	it('shows the declared quest with a clear control', () => {
-		const onClearQuest = vi.fn();
-		render(OverlayStrip, {
-			props: { data: liveData({ status: 'active' }), questLabel: 'ARIS Daily I', onClearQuest },
-		});
-
-		expect(screen.getByText('ARIS Daily I')).toBeTruthy();
-		screen.getByLabelText('Clear declared quest').click();
-		expect(onClearQuest).toHaveBeenCalledTimes(1);
+	it('shows no quest claim when nothing is recorded', () => {
+		render(OverlayStrip, { props: { data: liveData({ status: 'active' }) } });
+		const facet = screen.getByTestId('quest-facet');
+		expect(facet.textContent?.trim()).toBe('\u2014');
 	});
 
 	it('shows the mob input when no mob is declared', () => {
@@ -506,45 +505,6 @@ describe('post-session bar', () => {
 		expect(screen.getByText('-5.50')).toBeTruthy();
 	});
 
-	it('offers the quest-link suggestion and forwards the decision', () => {
-		const onQuestLinkDecision = vi.fn();
-		render(OverlayStrip, {
-			props: {
-				...postSession,
-				questLinkSuggestion: {
-					sessionId: 's1',
-					suggestionType: 'quest',
-					reason: 'single_quest',
-					questId: 'q1',
-					questName: 'Iron Challenge',
-					playlistId: null,
-					playlistName: null,
-				},
-				onQuestLinkDecision,
-			},
-		});
-
-		expect(screen.getByText('Iron Challenge')).toBeTruthy();
-		screen.getByText('Yes').click();
-		expect(onQuestLinkDecision).toHaveBeenCalledWith('accept');
-		screen.getByText('No').click();
-		expect(onQuestLinkDecision).toHaveBeenCalledWith('decline');
-	});
-
-	it('shows the quest-link outcome message with a dismiss control', () => {
-		const onDismissQuestLinkMessage = vi.fn();
-		render(OverlayStrip, {
-			props: {
-				...postSession,
-				questLinkMessage: 'Linked to Iron Challenge',
-				onDismissQuestLinkMessage,
-			},
-		});
-
-		expect(screen.getByText('Linked to Iron Challenge')).toBeTruthy();
-		screen.getByText('Done').click();
-		expect(onDismissQuestLinkMessage).toHaveBeenCalledTimes(1);
-	});
 });
 
 describe('segment control', () => {

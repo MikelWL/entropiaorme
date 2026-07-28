@@ -1,12 +1,7 @@
 <script lang="ts">
-	import type {
-		TrackingLive,
-		TrackingStatus,
-		SessionQuestLinkSuggestion
-	} from '$lib/api';
+	import type { TrackingLive, TrackingStatus } from '$lib/api';
 	import { overlayStats } from '$lib/statsCustomisation.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
-	import Button from '$lib/components/Button.svelte';
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 	import { NO_DATA } from '$lib/utils/format';
@@ -25,9 +20,7 @@
 		nameEditable = true,
 		savingBoost = false,
 		savingSegment = false,
-		questSaving = false,
 		facetError = null,
-		questLabel = null,
 		trifectaSaving = false,
 		trifectaError = null,
 		armourCostOpen = false,
@@ -35,14 +28,10 @@
 		armourSessionId = null,
 		mobMenuOpen = false,
 		nameMenuOpen = false,
-		questMenuOpen = false,
 		trifectaMenuOpen = false,
 		overlayMenuLaunchError = null,
 		lastSessionId = null,
 		lastSessionStats = null,
-		questLinkSuggestion = null,
-		questLinkMessage = null,
-		questLinkSaving = false,
 		mobQuery = $bindable(''),
 		mobInput = $bindable(null),
 		nameQuery = $bindable(''),
@@ -69,12 +58,8 @@
 		onSegmentBlur = noop,
 		onSegmentNext = noop,
 		onSegmentClose = noop,
-		onQuestTrigger = noop,
-		onClearQuest = noop,
 		onTrifectaTrigger = noop,
-		onArmourCostToggle = noop,
-		onQuestLinkDecision = noop,
-		onDismissQuestLinkMessage = noop
+		onArmourCostToggle = noop
 	}: {
 		data: TrackingLive;
 		status?: TrackingStatus | null;
@@ -85,9 +70,7 @@
 		nameEditable?: boolean;
 		savingBoost?: boolean;
 		savingSegment?: boolean;
-		questSaving?: boolean;
 		facetError?: string | null;
-		questLabel?: string | null;
 		trifectaSaving?: boolean;
 		trifectaError?: string | null;
 		armourCostOpen?: boolean;
@@ -95,14 +78,10 @@
 		armourSessionId?: string | null;
 		mobMenuOpen?: boolean;
 		nameMenuOpen?: boolean;
-		questMenuOpen?: boolean;
 		trifectaMenuOpen?: boolean;
 		overlayMenuLaunchError?: string | null;
 		lastSessionId?: string | null;
 		lastSessionStats?: LastSessionStats | null;
-		questLinkSuggestion?: SessionQuestLinkSuggestion | null;
-		questLinkMessage?: string | null;
-		questLinkSaving?: boolean;
 		mobQuery?: string;
 		mobInput?: HTMLInputElement | null;
 		nameQuery?: string;
@@ -129,12 +108,8 @@
 		onSegmentBlur?: () => void | Promise<void>;
 		onSegmentNext?: () => void | Promise<void>;
 		onSegmentClose?: () => void | Promise<void>;
-		onQuestTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
-		onClearQuest?: () => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onArmourCostToggle?: (event: MouseEvent) => void | Promise<void>;
-		onQuestLinkDecision?: (action: 'accept' | 'decline') => void | Promise<void>;
-		onDismissQuestLinkMessage?: () => void;
 	} = $props();
 
 	const isTrifectaAttribution = $derived(data.weaponAttribution === 'trifecta');
@@ -152,6 +127,9 @@
 	const showNameInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.sessionName
 	);
+	// The quest facet's readout: auto-recorded open stretches, never
+	// declared here (the quest lifecycle owns the writes).
+	const questNames = $derived(data.questNames ?? null);
 	// What the held tool implies the next action records as. Derived from
 	// evidence, never declared, so it is shown as feedback and never asked.
 	const activityLabel = $derived(
@@ -326,33 +304,28 @@
 				</div>
 			</div>
 
-			<!-- Quest: the curated analytics link, declared up front rather
-				 than only offered after the session ends. -->
+			<!-- Quest: auto-recorded, never declared. The quest lifecycle
+				 opens and closes each quest's stretch on the session by
+				 itself (a received mission auto-starts; a completion
+				 closes), so this is pure feedback: the newest running
+				 quest, with a count when several dailies stack. -->
 			<div class="flex flex-col shrink-0">
 				<span class="facet-label">Quest</span>
-				<div class="flex items-center gap-1">
-					<button
-						type="button"
-						class="facet-chip {questMenuOpen ? 'facet-chip-open' : ''} max-w-[110px]"
-						disabled={!isActive || questSaving}
-						aria-haspopup="menu"
-						aria-expanded={questMenuOpen}
-						onclick={(event) => onQuestTrigger(event.currentTarget as HTMLButtonElement)}
-						title={isActive
-							? 'Declare the quest or playlist this session is for'
-							: 'Start a session to declare its quest'}
-					>
-						<span class="truncate">{questSaving ? '...' : (questLabel ?? 'Pick')}</span>
-					</button>
-					{#if questLabel && isActive}
-						<button
-							type="button"
-							class="release-btn shrink-0"
-							aria-label="Clear declared quest"
-							disabled={questSaving}
-							onclick={onClearQuest}
-							title="Clear declared quest"
-						>x</button>
+				<div class="flex items-center" data-testid="quest-facet">
+					{#if questNames && questNames.length > 0}
+						<div
+							class="text-sm font-medium text-white/90 truncate px-1 max-w-[110px]"
+							title={questNames.join(', ')}
+						>
+							{questNames[0]}{questNames.length > 1 ? ` +${questNames.length - 1}` : ''}
+						</div>
+					{:else}
+						<div
+							class="text-sm font-medium text-white/20 px-1"
+							title="Quests record themselves: starting or completing a mission marks its stretch of the session"
+						>
+							{NO_DATA}
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -573,8 +546,8 @@
 			</div>
 		{/if}
 	{:else}
-		<!-- Post-session quest-link bar. Armour cost is decoupled: use the
-			 Armour badge in the active-UI strip to record it before closing. -->
+		<!-- Post-session readout: the stopped session's final totals, held
+			 while the armour-cost popup needs them. -->
 		<div class="flex items-center gap-4 shrink-0">
 			<span class="text-[10px] font-bold text-white/60 tracking-wider uppercase shrink-0">Session ended</span>
 
@@ -590,23 +563,6 @@
 							{lastSessionStats.net >= 0 ? '+' : ''}{formatPed(lastSessionStats.net)}
 						</span>
 					</div>
-				</div>
-			{/if}
-
-			{#if questLinkSuggestion}
-				<div class="flex items-center gap-2 shrink-0">
-					<span class="text-xs text-white/50">Quest:</span>
-					<span class="text-sm text-white/80 max-w-[150px] truncate">
-						{questLinkSuggestion.suggestionType === 'quest' ? questLinkSuggestion.questName : questLinkSuggestion.playlistName}
-					</span>
-					<Button variant="primary" size="sm" onclick={() => onQuestLinkDecision('accept')} disabled={questLinkSaving}>Yes</Button>
-					<Button variant="ghost" size="sm" onclick={() => onQuestLinkDecision('decline')} disabled={questLinkSaving}>No</Button>
-				</div>
-			{:else if questLinkMessage}
-				<div class="flex items-center gap-2 shrink-0">
-					<span class="text-xs text-white/50">Quest:</span>
-					<span class="text-sm text-white/70">{questLinkMessage}</span>
-					<Button variant="primary" size="sm" onclick={onDismissQuestLinkMessage}>Done</Button>
 				</div>
 			{/if}
 

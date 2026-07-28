@@ -33,7 +33,6 @@
 use eo_services::config_service::{active_trifecta_preset, load_config_readonly, AppConfig};
 use eo_services::db::Db;
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
-use eo_services::quests::QuestError;
 use eo_services::time::{local_isoformat, naive_to_epoch};
 use eo_services::tracker::{HuntTracker, TrackerCommandError};
 use eo_services::trifecta_service::{validate_trifecta, TrifectaPreset};
@@ -63,7 +62,7 @@ const SNAPSHOT_FIELDS: [&str; 43] = [
     "currentMob",
     "currentTool",
     "currentActivity",
-    "questName",
+    "questNames",
     "trifectaAttribution",
     "recentEvents",
     "session_id",
@@ -202,22 +201,6 @@ pub enum QuestLinkReason {
     AmbiguousPlaylist,
     Declined,
     AlreadyLinked,
-}
-
-/// The quest-link decision's outcome.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestLinkStatus {
-    Linked,
-    Declined,
-}
-
-/// Which entity a linked decision bound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestLinkType {
-    Quest,
-    Playlist,
 }
 
 // ── Response DTOs ───────────────────────────────────────────────────
@@ -461,11 +444,12 @@ pub struct TrackingSnapshot {
     /// What the held tool implies the next action is recorded as.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_activity: Option<ToolActivity>,
-    /// The quest or playlist the active session declares, resolved for
-    /// display. Absent when nothing is declared (or the link was
-    /// declined), so the control never claims a binding it lacks.
+    /// The open quest slices' names, newest first: the quest facet as
+    /// the lifecycle auto-records it (several dailies can stack).
+    /// Absent when no slice is open, so the readout never claims a
+    /// quest that is not actually running.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_name: Option<String>,
+    pub quest_names: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trifecta_attribution: Option<TrifectaAttribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -641,55 +625,6 @@ pub struct ArmourCostResult {
     pub armour_cost: f64,
 }
 
-/// The quest-link decision: `accept` carries the full link object, `decline`
-/// only `sessionId` / `status`. The accept-only fields skip when absent
-/// (exclude-unset -> exclude-none movement: a present-null link field is
-/// dropped rather than serialised null).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QuestLinkDecision {
-    pub session_id: String,
-    pub status: QuestLinkStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_type: Option<QuestLinkType>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_name: Option<String>,
-}
-
-/// The quest-declaration outcome.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestDeclareStatus {
-    Declared,
-    Cleared,
-}
-
-/// The quest-declaration acknowledgement: the curated link now in force
-/// on the active session (or its removal). The link fields ride only on
-/// a declare, resolved for display.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QuestDeclareResult {
-    pub session_id: String,
-    pub status: QuestDeclareStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_type: Option<QuestLinkType>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_name: Option<String>,
-}
-
 /// The one-shot repair-cost read (`exclude_unset`): the cost / raw text /
 /// confidence on success, plus `error` on a logical refusal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -797,6 +732,12 @@ impl Api {
 
     /// The curated quest-link suggestion for a completed session; an absent
     /// session is a not-found.
+    ///
+    /// Legacy read: the recorded quest stretch superseded the curated
+    /// link (analytics read intervals, nothing writes the link table,
+    /// and no UI calls this any more), but the suggestion's behaviour
+    /// is pinned by the replay corpus's expected responses, so the
+    /// read stays exactly as the port ratified it.
     pub async fn tracking_quest_link_suggestion(
         &self,
         session_id: String,
@@ -1153,150 +1094,6 @@ impl Api {
         serde_json::from_value(value).map_err(ApiError::internal("tracking armour cost shaping"))
     }
 
-    /// Accept or decline the curated quest-link suggestion. 404 for an absent
-    /// session, 400 for an unknown action; accept with no linkable suggestion
-    /// is a 409.
-    pub async fn tracking_quest_link(
-        &self,
-        session_id: String,
-        action: String,
-    ) -> Result<QuestLinkDecision, ApiError> {
-        if !self.tracking_session_exists(&session_id).await? {
-            return Err(ApiError::not_found("Session not found"));
-        }
-        let action = action.trim().to_lowercase();
-        if action == "accept" {
-            return match self
-                .quests
-                .accept_session_link_suggestion(&session_id)
-                .await
-            {
-                Ok(suggestion) => Ok(QuestLinkDecision {
-                    session_id: session_id.clone(),
-                    status: QuestLinkStatus::Linked,
-                    // Parses the service's untyped suggestion value: the two
-                    // link kinds map to their variants, and the link type is
-                    // absent for any other shape.
-                    link_type: match suggestion["suggestion_type"].as_str() {
-                        Some("quest") => Some(QuestLinkType::Quest),
-                        Some("playlist") => Some(QuestLinkType::Playlist),
-                        _ => None,
-                    },
-                    quest_id: opt_str(&str_id_or_null(&suggestion["quest_id"])),
-                    quest_name: opt_str(&suggestion["quest_name"]),
-                    playlist_id: opt_str(&str_id_or_null(&suggestion["playlist_id"])),
-                    playlist_name: opt_str(&suggestion["playlist_name"]),
-                }),
-                Err(QuestError::Invalid(message)) => Err(ApiError::conflict(message)),
-                Err(_) => Err(ApiError::invalid_state("quest-link accept")),
-            };
-        }
-        if action == "decline" {
-            self.quests
-                .decline_session_link(&session_id)
-                .await
-                .map_err(ApiError::internal("quest-link decline"))?;
-            return Ok(QuestLinkDecision {
-                session_id,
-                status: QuestLinkStatus::Declined,
-                link_type: None,
-                quest_id: None,
-                quest_name: None,
-                playlist_id: None,
-                playlist_name: None,
-            });
-        }
-        Err(ApiError::bad_request(
-            "Action must be 'accept' or 'decline'",
-        ))
-    }
-
-    /// Declare (or clear) the active session's quest facet: bind the
-    /// curated analytics link to a quest or playlist up front instead of
-    /// waiting for the post-stop suggestion. Both ids null clears the
-    /// link. 409 when no session is active; 400 for a bad id pair.
-    pub async fn tracking_quest_declare(
-        &self,
-        quest_id: Option<i64>,
-        playlist_id: Option<i64>,
-    ) -> Result<QuestDeclareResult, ApiError> {
-        let readout = self
-            .tracker
-            .snapshot()
-            .await
-            .map_err(ApiError::internal("quest declare readout"))?;
-        let Some(active) = readout.active else {
-            return Err(ApiError::conflict("No active session"));
-        };
-        let session_id = active.session_id;
-
-        if quest_id.is_none() && playlist_id.is_none() {
-            self.quests
-                .clear_session_link(&session_id)
-                .await
-                .map_err(ApiError::internal("quest declare clear"))?;
-            return Ok(QuestDeclareResult {
-                session_id,
-                status: QuestDeclareStatus::Cleared,
-                link_type: None,
-                quest_id: None,
-                quest_name: None,
-                playlist_id: None,
-                playlist_name: None,
-            });
-        }
-
-        match self
-            .quests
-            .declare_session_link(&session_id, quest_id, playlist_id)
-            .await
-        {
-            Ok(()) => {}
-            Err(QuestError::Invalid(message)) => return Err(ApiError::bad_request(message)),
-            Err(_) => return Err(ApiError::invalid_state("quest declare")),
-        }
-
-        // Resolve the display name for the acknowledgement.
-        let (link_type, name) = if let Some(id) = quest_id {
-            (QuestLinkType::Quest, self.entity_name("quests", id).await?)
-        } else {
-            let id = playlist_id.expect("one id present");
-            (
-                QuestLinkType::Playlist,
-                self.entity_name("quest_playlists", id).await?,
-            )
-        };
-        Ok(QuestDeclareResult {
-            session_id,
-            status: QuestDeclareStatus::Declared,
-            link_type: Some(link_type),
-            quest_id,
-            quest_name: match link_type {
-                QuestLinkType::Quest => name.clone(),
-                QuestLinkType::Playlist => None,
-            },
-            playlist_id,
-            playlist_name: match link_type {
-                QuestLinkType::Playlist => name,
-                QuestLinkType::Quest => None,
-            },
-        })
-    }
-
-    /// A quest/playlist display name by id (None when absent).
-    async fn entity_name(&self, table: &'static str, id: i64) -> Result<Option<String>, ApiError> {
-        use rusqlite::OptionalExtension as _;
-        let sql = format!("SELECT name FROM {table} WHERE id = ?");
-        self.db
-            .with_reader(move |conn| {
-                Ok(conn
-                    .query_row(&sql, rusqlite::params![id], |row| row.get::<_, String>(0))
-                    .optional()?)
-            })
-            .await
-            .map_err(ApiError::internal("quest declare name"))
-    }
-
     /// The one-shot repair-cost OCR read, gated on `repair_ocr_enabled`
     /// (400 when disabled). The `session_id` is unused (the reference
     /// ignores it too); it stays in the signature for the route mapping.
@@ -1384,33 +1181,13 @@ pub(crate) async fn build_snapshot_value(
         None => Value::Null,
     };
 
-    // The declared quest facet, read from the persisted curated link so a
-    // reopened overlay (or a restarted app) shows the binding that
-    // actually stands rather than a locally-remembered one.
-    let quest_name = match &readout.active {
-        None => Value::Null,
-        Some(active) => {
-            let session_id = active.session_id.clone();
-            let resolved: Option<String> = db
-                .with_reader(move |conn| {
-                    use rusqlite::OptionalExtension as _;
-                    Ok(conn
-                        .query_row(
-                            "SELECT COALESCE(q.name, p.name) \
-                             FROM session_quest_analytics_links l \
-                             LEFT JOIN quests q ON q.id = l.quest_id \
-                             LEFT JOIN quest_playlists p ON p.id = l.playlist_id \
-                             WHERE l.session_id = ? AND l.link_type IN ('quest', 'playlist')",
-                            rusqlite::params![session_id],
-                            |row| row.get::<_, Option<String>>(0),
-                        )
-                        .optional()?
-                        .flatten())
-                })
-                .await
-                .map_err(ApiError::internal("snapshot quest link"))?;
-            resolved.map(Value::String).unwrap_or(Value::Null)
-        }
+    // The quest facet: the open quest slices as the lifecycle
+    // auto-records them, newest first. Null (dropped by the projection)
+    // when none are open; the facet is never declared by hand any more,
+    // so the interval state is the only source.
+    let quest_names = match &readout.active {
+        Some(active) if !active.quest_names.is_empty() => json!(active.quest_names),
+        _ => Value::Null,
     };
 
     let value = match &readout.active {
@@ -1496,7 +1273,7 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "currentActivity": current_activity,
-                "questName": quest_name,
+                "questNames": quest_names,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "skillBoostPercent": boost_value(active.skill_boost_percent),

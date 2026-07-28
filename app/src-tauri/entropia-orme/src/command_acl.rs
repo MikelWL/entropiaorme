@@ -159,8 +159,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_loot_item_deactivate",
     "tracking_manual_mob_lock",
     "tracking_manual_mob_suggestions",
-    "tracking_quest_declare",
-    "tracking_quest_link",
     "tracking_quest_link_suggestion",
     "tracking_release_mob",
     "tracking_rename_mob",

@@ -166,6 +166,9 @@ pub struct ActiveSessionView {
     /// The open segment's name; None whenever no segment is open (a
     /// segment exists only while its session runs).
     pub segment_name: Option<String>,
+    /// The open quest slices' names, newest first: the quest facet as
+    /// the lifecycle auto-records it (several dailies can stack).
+    pub quest_names: Vec<String>,
     /// Harvesting swings this session (successes + explicit fails).
     pub harvest_swings: i64,
     pub harvest_successes: i64,

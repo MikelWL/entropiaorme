@@ -52,9 +52,9 @@ use crate::scan::{
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SegmentStateResult,
-    SessionConfigResult, SessionDetail, SessionPage, SessionQuestLinkSuggestion,
-    SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
+    ReleaseResult, RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail,
+    SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -1018,34 +1018,6 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(ArmourCostResult))),
-        },
-        CommandSpec {
-            name: "tracking_quest_link",
-            args: vec![
-                ArgSpec {
-                    name: "session_id",
-                    schema: schema(schema_for!(String)),
-                },
-                ArgSpec {
-                    name: "action",
-                    schema: schema(schema_for!(String)),
-                },
-            ],
-            returns: Some(schema(schema_for!(QuestLinkDecision))),
-        },
-        CommandSpec {
-            name: "tracking_quest_declare",
-            args: vec![
-                ArgSpec {
-                    name: "quest_id",
-                    schema: schema(schema_for!(Option<i64>)),
-                },
-                ArgSpec {
-                    name: "playlist_id",
-                    schema: schema(schema_for!(Option<i64>)),
-                },
-            ],
-            returns: Some(schema(schema_for!(QuestDeclareResult))),
         },
         CommandSpec {
             name: "tracking_repair_scan",

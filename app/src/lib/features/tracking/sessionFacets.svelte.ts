@@ -1,16 +1,17 @@
 /**
  * The session-facet view model: the independent, co-recorded attributions
- * a tracking session carries (designated name, skill boost, declared
- * quest) and the writes that move them.
+ * a tracking session carries (designated name, skill boost, player-drawn
+ * segment) and the writes that move them. The quest facet is
+ * auto-recorded by the quest lifecycle and only displayed here, never
+ * written.
  *
  * The facets are independent by construction, so each control writes only
  * its own value and carries the others through unchanged. Each facet may
  * be edited live only where its stamp grain is finer than the session:
- * the boost stamps each skill gain, so it floats; the name is
- * session-grain, so the backend fixes it once a session runs (409) and
- * correction is a post-hoc rename. A quest can only be declared against
- * an active session. The model respects these rather than duplicating
- * them.
+ * the boost stamps each skill gain and a segment is a slice of the
+ * session, so both float; the name is session-grain, so the backend
+ * fixes it once a session runs (409) and correction is a post-hoc
+ * rename. The model respects these rather than duplicating them.
  *
  * The satellite-window plumbing (anchors, popup lifecycle) stays with the
  * overlay route; this model owns the state, the lookups, and the writes,
@@ -20,19 +21,12 @@
 import { ApiError } from '$lib/api';
 import { createTypeahead } from '$lib/view/typeahead.svelte';
 
-/** One option in the quest-declaration menu. */
-export interface QuestOption {
-	id: number;
-	name: string;
-	isPlaylist: boolean;
-}
-
 export interface SessionFacetsDeps {
 	/** The facets currently in force, as the snapshot reports them.
 	 * `segment` is the open segment's name (null: none open; a segment
 	 * exists only while its session runs). */
 	readFacets: () => { name: string | null; boost: number | null; segment: string | null };
-	/** Whether a session is running (the quest declaration needs one). */
+	/** Whether a session is running (gates the name lock). */
 	isSessionActive: () => boolean;
 	/** Re-read the snapshot after a successful write. */
 	refresh: () => Promise<unknown>;
@@ -40,8 +34,6 @@ export interface SessionFacetsDeps {
 	searchNames: (query: string) => Promise<string[]>;
 	/** Full-state facet write: a null clears its facet. */
 	setSessionConfig: (name: string | null, boost: number | null) => Promise<unknown>;
-	/** Bind (or, with both ids null, clear) the session's quest facet. */
-	declareQuest: (questId: number | null, playlistId: number | null) => Promise<unknown>;
 	/** Open a segment on the running session, closing any standing one;
 	 * a null name is auto-numbered ("Segment N") by the backend. */
 	openSegment: (name: string | null) => Promise<unknown>;
@@ -49,9 +41,6 @@ export interface SessionFacetsDeps {
 	closeSegment: () => Promise<unknown>;
 	/** Rename the open segment live. */
 	renameSegment: (name: string) => Promise<unknown>;
-	/** The active quests and playlists offered by the picker. */
-	listQuests: () => Promise<{ id: string; name: string }[]>;
-	listPlaylists: () => Promise<{ id: string; name: string }[]>;
 	/** Present or dismiss the name-suggestion menu (route-owned). */
 	openNameMenu: () => void | Promise<void>;
 	closeNameMenu: () => void | Promise<void>;
@@ -74,9 +63,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 	// declaration.
 	let boostDraft = $state('');
 	let savingBoost = $state(false);
-
-	let questSaving = $state(false);
-	let questOptions = $state<QuestOption[]>([]);
 
 	// The segment's edit buffer. One field serves both moments: with no
 	// segment open it holds the prospective next name (blank means "let
@@ -179,40 +165,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		boostDraft = next === null ? '' : String(next);
 	}
 
-	/** Read the pickable quests fresh: playlists first (a playlist is the
-	 * coarser declaration), then quests. Returns false when the read
-	 * failed, so the caller can decline to open an empty menu. */
-	async function loadQuestOptions(): Promise<boolean> {
-		facetError = null;
-		try {
-			const [playlists, quests] = await Promise.all([deps.listPlaylists(), deps.listQuests()]);
-			questOptions = [
-				...playlists.map((playlist) => ({
-					id: Number(playlist.id),
-					name: playlist.name,
-					isPlaylist: true,
-				})),
-				...quests.map((quest) => ({ id: Number(quest.id), name: quest.name, isPlaylist: false })),
-			];
-			return true;
-		} catch (error) {
-			facetError = describe(error, 'Failed to read quests');
-			return false;
-		}
-	}
-
-	async function declareQuest(id: number, isPlaylist: boolean) {
-		questSaving = true;
-		facetError = null;
-		try {
-			await deps.declareQuest(isPlaylist ? null : id, isPlaylist ? id : null);
-			await deps.refresh();
-		} catch (error) {
-			facetError = describe(error, 'Failed to declare quest');
-		}
-		questSaving = false;
-	}
-
 	/** The open segment's name as the snapshot reports it (null: none). */
 	function currentSegment(): string | null {
 		return deps.readFacets().segment ?? null;
@@ -281,18 +233,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		}
 	}
 
-	async function clearQuest() {
-		questSaving = true;
-		facetError = null;
-		try {
-			await deps.declareQuest(null, null);
-			await deps.refresh();
-		} catch (error) {
-			facetError = describe(error, 'Failed to clear quest');
-		}
-		questSaving = false;
-	}
-
 	return {
 		get nameQuery() {
 			return nameQuery;
@@ -338,9 +278,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		get nameEditable() {
 			return !deps.isSessionActive();
 		},
-		get questSaving() {
-			return questSaving;
-		},
 		get segmentDraft() {
 			return segmentDraft;
 		},
@@ -349,9 +286,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		},
 		get savingSegment() {
 			return savingSegment;
-		},
-		get questOptions() {
-			return questOptions;
 		},
 		get facetError() {
 			return facetError;
@@ -449,9 +383,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		commitSegment,
 		nextSegment,
 		closeSegment,
-		loadQuestOptions,
-		declareQuest,
-		clearQuest,
 		destroy() {
 			clearNameCloseTimer();
 			nameTypeahead.destroy();

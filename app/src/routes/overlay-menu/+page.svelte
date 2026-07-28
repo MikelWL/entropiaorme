@@ -26,8 +26,7 @@
 		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
 		if (state.loading || state.error) return 1;
 		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
-		if (state.kind === 'mob') return Math.max(1, state.mobSuggestions.length);
-		return Math.max(1, state.options.length);
+		return Math.max(1, state.mobSuggestions.length);
 	}
 
 	const popupHeight = $derived.by(() => {
@@ -164,26 +163,6 @@
 						</button>
 					{/each}
 				{/if}
-			{:else if menuState.options.length === 0}
-				<div class="menu-empty">No active quests</div>
-			{:else}
-				{#each menuState.options as option}
-					<button
-						type="button"
-						class="menu-option"
-						onclick={() => handleSelection({
-							kind: 'quest',
-							id: option.id,
-							isPlaylist: option.isPlaylist,
-							name: option.name
-						})}
-					>
-						<span class="menu-option-name">{option.name}</span>
-						{#if option.isPlaylist}
-							<span class="menu-option-badge">Playlist</span>
-						{/if}
-					</button>
-				{/each}
 			{/if}
 		</div>
 	</div>

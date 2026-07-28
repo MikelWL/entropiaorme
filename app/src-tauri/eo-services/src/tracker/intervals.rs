@@ -135,6 +135,19 @@ impl IntervalState {
         self.open.iter().find(|interval| interval.kind == kind)
     }
 
+    /// Every open interval of a kind, oldest first: the whole standing
+    /// set of a stacking kind (three dailies at once), where
+    /// [`open_of_kind`](Self::open_of_kind) answers for the exclusive
+    /// kinds that admit one.
+    pub fn open_of_kind_all(
+        &self,
+        kind: IntervalKind,
+    ) -> impl DoubleEndedIterator<Item = &OpenInterval> + '_ {
+        self.open
+            .iter()
+            .filter(move |interval| interval.kind == kind)
+    }
+
     /// The open interval of a stacking kind that points at `ref_id`.
     pub fn open_of_ref(&self, kind: IntervalKind, ref_id: i64) -> Option<&OpenInterval> {
         self.open

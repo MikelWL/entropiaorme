@@ -848,31 +848,33 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     );
     assert_eq!(pl["playlist_name"], "Pair Run");
     clock.advance(60.0).unwrap();
-    svc.accept_session_link_suggestion("sess-two")
+    // Historical link rows still gate the read: nothing writes the
+    // demoted table any more (the recorded quest stretch superseded
+    // it), so the already-linked and declined branches are exercised
+    // over rows inserted as the legacy data they now are.
+    for (session, link_type) in [("sess-two", "playlist"), ("sess-decl", "declined")] {
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO session_quest_analytics_links \
+                 (session_id, link_type, quest_id, playlist_id, linked_at) \
+                 VALUES (?1, ?2, NULL, NULL, 1772366700.0)",
+                params![session, link_type],
+            )?;
+            Ok(())
+        })
         .await
         .unwrap();
+    }
     sugg(
         svc.get_session_link_suggestion("sess-two").await.unwrap(),
         "none",
         "already_linked",
     );
-    svc.decline_session_link("sess-decl").await.unwrap();
     sugg(
         svc.get_session_link_suggestion("sess-decl").await.unwrap(),
         "none",
         "declined",
     );
-    let error = svc
-        .accept_session_link_suggestion("sess-none")
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "No linkable suggestion for session sess-none: no_completions"
-    );
-    svc.accept_session_link_suggestion("sess-one")
-        .await
-        .unwrap();
     for (session, quest, at) in [("sess-three", qa, 5003.0), ("sess-three", qc, 5004.0)] {
         db.with_writer(move |conn| {
             conn.execute(
@@ -910,36 +912,6 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         "none",
         "ambiguous_playlist",
     );
-    let links = db
-        .with_reader(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT session_id, link_type, quest_id, playlist_id, linked_at \
-                 FROM session_quest_analytics_links ORDER BY session_id",
-            )?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(json!([
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<i64>>(2)?,
-                        row.get::<_, Option<i64>>(3)?,
-                        row.get::<_, f64>(4)?,
-                    ]))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        links,
-        vec![
-            json!(["sess-decl", "declined", null, null, 1772366700.0]),
-            json!(["sess-one", "quest", qa, null, 1772366700.0]),
-            json!(["sess-two", "playlist", null, 1, 1772366700.0]),
-        ]
-    );
-
     // Mission matching: exact (case/space), accent folding,
     // repeatable suffix, containment, fuzzy at the threshold, and
     // a miss below it.
@@ -1337,11 +1309,13 @@ async fn an_empty_session_id_skips_overlay_events() {
     assert_eq!(count, 0);
 }
 
-/// The analytics readers over a seeded economy, with every
-/// expected object computed by the original implementation over
-/// byte-identical seeds (engine numeric types preserved: integer
-/// zeros from NULL sums, REAL zeros from real columns, and the
-/// raw float artefacts of the engine's arithmetic).
+/// The analytics readers over a seeded economy. The numeric behaviours
+/// (engine numeric types preserved: integer zeros from NULL sums, REAL
+/// zeros from real columns, active-session exclusion, reward and markup
+/// arithmetic) descend from the original implementation; membership is
+/// the recorded quest stretch (`session_intervals`), which deliberately
+/// superseded the curated link table, so the session sets aggregate by
+/// what each session actually ran.
 #[tokio::test]
 async fn analytics_match_the_original_over_a_seeded_economy() {
     let dir = tempfile::tempdir().unwrap();
@@ -1513,26 +1487,34 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         .unwrap();
     }
     let p3 = quest_id(
-        &svc.create_playlist(&json!({"name": "Solo Immediate", "quest_ids": [qa]}))
+        &svc.create_playlist(&json!({"name": "Solo Immediate", "quest_ids": [qc]}))
             .await
             .unwrap(),
     );
     pin_ts(&db, "quest_playlists", p3, 2002.0).await;
-    for (sid, lt, qid, plid) in [
-        ("sess-1", "playlist", None::<i64>, Some(p1)),
-        ("sess-2", "quest", Some(qa), None),
-        ("sess-3", "quest", Some(qa), None),
-        ("sess-n", "quest", Some(qn), None),
-        ("sess-z", "quest", Some(qz), None),
-        ("sess-act", "quest", Some(qe2), None),
-        ("sess-solo", "playlist", None, Some(p3)),
+    // Membership is the recorded quest stretch: intervals as the
+    // lifecycle would have auto-recorded them, one per quest a session
+    // actually ran. An active session's stretch is still open (NULL
+    // end); sess-solo STARTED Gamma without completing it, which is the
+    // real-session-stats-beside-zero-rewards case the curated model
+    // used to reach with a completion-less playlist link.
+    for (sid, qid, start, end) in [
+        ("sess-1", qa, 1400.0, Some(1550.0)),
+        ("sess-1", qb, 1450.0, Some(1650.0)),
+        ("sess-1", qd, 1500.0, Some(1750.0)),
+        ("sess-2", qa, 5005.0, Some(5025.0)),
+        ("sess-3", qa, 6010.0, None),
+        ("sess-n", qn, 7010.0, Some(7045.0)),
+        ("sess-z", qz, 7110.0, Some(7155.0)),
+        ("sess-act", qe2, 8010.0, None),
+        ("sess-solo", qc, 8110.0, Some(8190.0)),
     ] {
         db.with_writer(move |conn| {
             conn.execute(
-                "INSERT INTO session_quest_analytics_links \
-                 (session_id, link_type, quest_id, playlist_id, linked_at) \
-                 VALUES (?1, ?2, ?3, ?4, 9000.0)",
-                params![sid, lt, qid, plid],
+                "INSERT INTO session_intervals \
+                 (session_id, kind, label, ref_id, started_at, ended_at) \
+                 VALUES (?1, 'quest', 'Quest', ?2, ?3, ?4)",
+                params![sid, qid, start, end],
             )?;
             Ok(())
         })
@@ -1540,12 +1522,15 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         .unwrap();
     }
 
-    // Per-quest, name-ordered: Alpha (the still-active linked
-    // session is excluded from the completed count but rides in
-    // the id set), then the NULL-reward and zero-reward quests
-    // whose collapsed rewards and expected totals stay INTEGER
-    // zeros on the wire; Echo (linked only by an active session)
-    // is excluded entirely.
+    // Per-quest, name-ordered, over recorded-stretch membership: every
+    // quest a session ran shares that session's economics, so Alpha,
+    // Beta and Delta all carry sess-1's aggregates (Alpha adds sess-2's;
+    // its still-active sess-3 stretch is excluded from the completed
+    // stats), Gamma carries the started-but-never-completed sess-solo
+    // (real session stats beside integer-zero rewards), and the
+    // NULL-reward and zero-reward quests keep their INTEGER zeros on
+    // the wire; Echo (recorded only by an active session) is excluded
+    // entirely.
     assert_eq!(
         svc.get_quest_analytics().await.unwrap(),
         vec![
@@ -1553,11 +1538,41 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "quest_id": qa, "quest_name": "Alpha", "planet": "Calypso",
                 "category": null, "reward_ped": 2.5, "reward_is_skill": false,
                 "expected_reward_markup_percent": 150.0,
-                "total_expected_reward_ped": 3.75,
-                "linked_sessions": 1, "total_duration": 30.5,
-                "weapon_cost": 0.6000000000000001, "heal_cost": 0,
-                "enhancer_cost": 0.1, "armour_cost": 0.0, "loot_tt": 0.0,
-                "skill_tt": 0.2,
+                "total_expected_reward_ped": 7.5,
+                "linked_sessions": 2, "total_duration": 3630.5,
+                "weapon_cost": 2.7, "heal_cost": 1.5,
+                "enhancer_cost": 0.6, "armour_cost": 0.25, "loot_tt": 15.75,
+                "skill_tt": 1.0,
+            }),
+            json!({
+                "quest_id": qb, "quest_name": "Beta", "planet": "Calypso",
+                "category": null, "reward_ped": 5.0, "reward_is_skill": true,
+                "expected_reward_markup_percent": null,
+                "total_expected_reward_ped": 5.0,
+                "linked_sessions": 1, "total_duration": 3600.0,
+                "weapon_cost": 2.1, "heal_cost": 1.5,
+                "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
+                "skill_tt": 0.8,
+            }),
+            json!({
+                "quest_id": qd, "quest_name": "Delta", "planet": "Calypso",
+                "category": null, "reward_ped": 1.25, "reward_is_skill": false,
+                "expected_reward_markup_percent": null,
+                "total_expected_reward_ped": 1.25,
+                "linked_sessions": 1, "total_duration": 3600.0,
+                "weapon_cost": 2.1, "heal_cost": 1.5,
+                "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
+                "skill_tt": 0.8,
+            }),
+            json!({
+                "quest_id": qc, "quest_name": "Gamma", "planet": "Calypso",
+                "category": null, "reward_ped": 0, "reward_is_skill": false,
+                "expected_reward_markup_percent": null,
+                "total_expected_reward_ped": 0,
+                "linked_sessions": 1, "total_duration": 100.0,
+                "weapon_cost": 0, "heal_cost": 0.5,
+                "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
+                "skill_tt": 0,
             }),
             json!({
                 "quest_id": qn, "quest_name": "Nul", "planet": "Calypso",
@@ -1610,15 +1625,15 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
         json!({
             "playlist_id": p1, "playlist_name": "Mixed Run", "quest_count": 2,
             "long_horizon_quest_count": 1,
-            "total_reward_ped": 8.75, "total_immediate_reward_ped": 7.5,
+            "total_reward_ped": 11.25, "total_immediate_reward_ped": 10.0,
             "total_bonus_reward_ped": 1.25, "total_skill_reward_ped": 5.0,
             "total_immediate_skill_reward_ped": 5.0, "total_bonus_skill_reward_ped": 0,
-            "total_expected_reward_ped": 10.0,
-            "total_expected_immediate_reward_ped": 8.75,
+            "total_expected_reward_ped": 13.75,
+            "total_expected_immediate_reward_ped": 12.5,
             "total_expected_bonus_reward_ped": 1.25,
-            "matched_sessions": 1, "linked_sessions": 1, "total_duration": 3600.0,
-            "weapon_cost": 2.1, "heal_cost": 1.5, "enhancer_cost": 0.5,
-            "armour_cost": 0.25, "loot_tt": 15.75, "skill_tt": 0.8,
+            "matched_sessions": 2, "linked_sessions": 2, "total_duration": 3630.5,
+            "weapon_cost": 2.7, "heal_cost": 1.5, "enhancer_cost": 0.6,
+            "armour_cost": 0.25, "loot_tt": 15.75, "skill_tt": 1.0,
         })
     );
 

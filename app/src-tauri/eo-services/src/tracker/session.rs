@@ -155,6 +155,7 @@ pub(super) struct SessionAggregate {
     pub(super) session_name: Option<String>,
     pub(super) skill_boost_percent: Option<i64>,
     pub(super) segment_name: Option<String>,
+    pub(super) quest_names: Vec<String>,
     pub(super) harvest_swings: i64,
     pub(super) harvest_successes: i64,
     pub(super) harvest_loot: Ped,
@@ -325,6 +326,15 @@ impl TrackerActor {
                 .intervals
                 .open_of_kind(IntervalKind::Segment)
                 .and_then(|interval| interval.label.clone()),
+            // Same source of truth for the quest facet: the open quest
+            // slices, newest first (the latest-started quest is the
+            // most relevant readout when several dailies stack).
+            quest_names: active
+                .intervals
+                .open_of_kind_all(IntervalKind::Quest)
+                .filter_map(|interval| interval.label.clone())
+                .rev()
+                .collect(),
             harvest_swings: harvests.len() as i64,
             harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
             harvest_loot,
@@ -1031,6 +1041,7 @@ impl HuntTracker {
             session_name: aggregated.session_name.clone(),
             skill_boost_percent: aggregated.skill_boost_percent,
             segment_name: aggregated.segment_name.clone(),
+            quest_names: aggregated.quest_names.clone(),
             harvest_swings: aggregated.harvest_swings,
             harvest_successes: aggregated.harvest_successes,
             // + 0.0 normalises the sign: an empty f64 sum is -0.0 (the

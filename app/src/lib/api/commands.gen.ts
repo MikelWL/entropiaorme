@@ -1777,26 +1777,6 @@ export interface QuestAnalyticsRow {
 }
 
 /**
- * The quest-declaration acknowledgement: the curated link now in force
- * on the active session (or its removal). The link fields ride only on
- * a declare, resolved for display.
- */
-export interface QuestDeclareResult {
-	sessionId: string;
-	status: QuestDeclareStatus;
-	linkType?: QuestLinkType | null;
-	questId?: number | null;
-	questName?: string | null;
-	playlistId?: number | null;
-	playlistName?: string | null;
-}
-
-/**
- * The quest-declaration outcome.
- */
-export type QuestDeclareStatus = 'declared' | 'cleared';
-
-/**
  * A quest create or update payload. One DTO serves both operations, in
  * the frontend's snake_case field casing: the sole client sends the
  * full field set for both create and update (nulls explicit), so every
@@ -1824,40 +1804,14 @@ export interface QuestInput {
 }
 
 /**
- * The quest-link decision: `accept` carries the full link object, `decline`
- * only `sessionId` / `status`. The accept-only fields skip when absent
- * (exclude-unset -> exclude-none movement: a present-null link field is
- * dropped rather than serialised null).
- */
-export interface QuestLinkDecision {
-	sessionId: string;
-	status: QuestLinkStatus;
-	linkType?: QuestLinkType | null;
-	questId?: string | null;
-	questName?: string | null;
-	playlistId?: string | null;
-	playlistName?: string | null;
-}
-
-/**
  * Why the quest-link suggestion took its shape.
  */
 export type QuestLinkReason = 'single_quest' | 'exact_playlist' | 'no_completions' | 'unclean' | 'ambiguous_playlist' | 'declined' | 'already_linked';
 
 /**
- * The quest-link decision's outcome.
- */
-export type QuestLinkStatus = 'linked' | 'declined';
-
-/**
  * What the quest-link suggestion proposes.
  */
 export type QuestLinkSuggestionType = 'quest' | 'playlist' | 'none';
-
-/**
- * Which entity a linked decision bound.
- */
-export type QuestLinkType = 'quest' | 'playlist';
 
 /**
  * A playlist in the wire shape (`_format_playlist`). Membership arrives
@@ -2306,8 +2260,8 @@ export interface TrackingSnapshot {
 	currentTool?: string | null;
 	/** What the held tool implies the next action is recorded as. */
 	currentActivity?: ToolActivity | null;
-	/** The quest or playlist the active session declares, resolved for display. Absent when nothing is declared (or the link was declined), so the control never claims a binding it lacks. */
-	questName?: string | null;
+	/** The open quest slices' names, newest first: the quest facet as the lifecycle auto-records it (several dailies can stack). Absent when no slice is open, so the readout never claims a quest that is not actually running. */
+	questNames?: string[] | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
 	session_id?: string | null;
@@ -2893,14 +2847,6 @@ export async function trackingLootItemDeactivate(sessionId: string, itemName: st
 
 export async function trackingArmourCost(sessionId: string, cost: number): Promise<ArmourCostResult> {
 	return invokeCommand('tracking_armour_cost', { session_id: sessionId, cost });
-}
-
-export async function trackingQuestLink(sessionId: string, action: string): Promise<QuestLinkDecision> {
-	return invokeCommand('tracking_quest_link', { session_id: sessionId, action });
-}
-
-export async function trackingQuestDeclare(questId: number | null, playlistId: number | null): Promise<QuestDeclareResult> {
-	return invokeCommand('tracking_quest_declare', { quest_id: questId, playlist_id: playlistId });
 }
 
 export async function trackingRepairScan(sessionId: string): Promise<RepairScanResult> {
