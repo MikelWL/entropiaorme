@@ -24,6 +24,7 @@
 mod actor;
 mod combat;
 mod harvest;
+mod intervals;
 mod loot;
 mod mob;
 mod persistence;
@@ -34,6 +35,7 @@ mod tests;
 mod time;
 mod weapons;
 
+pub use intervals::{IntervalKind, IntervalSpec, OpenInterval};
 pub use mob::{DeclaredMob, MobStampSource};
 pub use providers::{
     DefaultTrackingConfig, EquipmentLibrary, EquipmentProfile, GuardrailTool,
@@ -221,6 +223,29 @@ impl HuntTracker {
     /// the latest declaration.
     pub async fn set_skill_boost(&self, percent: Option<i64>) -> Result<(), TrackerCommandError> {
         self.call(|reply| TrackerMsg::SetSkillBoost(percent, reply))
+            .await
+    }
+
+    /// Record that a quest became active: open its slice on the running
+    /// session. Forward-looking, like every segment write; events
+    /// already recorded keep the context they were stamped with.
+    pub async fn open_quest_slice(
+        &self,
+        quest_id: i64,
+        name: &str,
+    ) -> Result<(), TrackerCommandError> {
+        let name = name.to_string();
+        self.call(|reply| TrackerMsg::OpenQuestSlice {
+            quest_id,
+            name,
+            reply,
+        })
+        .await
+    }
+
+    /// Record that a quest ended: close its slice, leaving siblings open.
+    pub async fn close_quest_slice(&self, quest_id: i64) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::CloseQuestSlice { quest_id, reply })
             .await
     }
 

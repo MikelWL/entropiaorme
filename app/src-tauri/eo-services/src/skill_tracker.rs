@@ -202,10 +202,27 @@ impl SkillTracker {
         let result = {
             let skill_name = skill_name.clone();
             self.db.with_writer_blocking(move |conn| {
+                // The session's current context, read inside the same
+                // write as the insert. Contexts are append-only per
+                // session, so the newest IS the one in force: exact,
+                // and never a timestamp comparison (gain timestamps
+                // carry in-game server time, interval bounds wall-clock).
+                use rusqlite::OptionalExtension as _;
+                let context_id: Option<i64> = conn
+                    .query_row(
+                        "SELECT id FROM session_contexts WHERE session_id = ? \
+                         ORDER BY id DESC LIMIT 1",
+                        rusqlite::params![session_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
                 conn.execute(
-                    "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-                     VALUES (?, ?, ?, ?, ?)",
-                    rusqlite::params![session_id, ts_epoch, skill_name, amount, ped_value],
+                    "INSERT INTO skill_gains \
+                     (session_id, timestamp, skill_name, amount, ped_value, context_id) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        session_id, ts_epoch, skill_name, amount, ped_value, context_id
+                    ],
                 )?;
                 Ok(())
             })
@@ -280,6 +297,44 @@ mod tests {
                 amount,
                 skill_name: name.into(),
             }));
+        }
+
+        /// Mint a context row for the session, as the tracker's segment
+        /// engine does when a declaration changes.
+        fn mint_context(&self) -> i64 {
+            self.runtime.block_on(async {
+                self.db
+                    .with_writer(|conn| {
+                        conn.execute(
+                            "INSERT INTO tracking_sessions (id, started_at, is_active) \
+                             VALUES ('s1', 1000.0, 1) ON CONFLICT(id) DO NOTHING",
+                            [],
+                        )?;
+                        conn.execute(
+                            "INSERT INTO session_contexts (session_id, created_at) \
+                             VALUES ('s1', 1000.0)",
+                            [],
+                        )?;
+                        Ok(conn.last_insert_rowid())
+                    })
+                    .await
+                    .unwrap()
+            })
+        }
+
+        /// Every gain's context stamp, oldest first.
+        fn context_stamps(&self) -> Vec<Option<i64>> {
+            self.runtime.block_on(async {
+                self.db
+                    .with_reader(|conn| {
+                        let mut stmt =
+                            conn.prepare("SELECT context_id FROM skill_gains ORDER BY id")?;
+                        let rows = stmt.query_map([], |row| row.get::<_, Option<i64>>(0))?;
+                        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+                    })
+                    .await
+                    .unwrap()
+            })
         }
 
         fn gains_count(&self) -> i64 {
@@ -492,5 +547,34 @@ mod tests {
         }));
         let (_, _, _, ts) = rig.last_gain();
         assert_eq!(ts, 1735680000.5);
+    }
+
+    /// The context stamp is a "from now on" declaration: each gain
+    /// records what was in force when it was written, and a later
+    /// change never reaches back to the rows already stamped. This is
+    /// the whole reason events are stamped at insert rather than
+    /// bucketed into intervals by timestamp afterwards.
+    #[test]
+    fn context_stamps_are_forward_only() {
+        let rig = rig();
+        rig.start_session();
+
+        // No context minted yet: this gain predates the segment model.
+        rig.gain("Bioregenesis", 0.1, "2026-01-01T00:00:01");
+
+        let first = rig.mint_context();
+        rig.gain("Bioregenesis", 0.1, "2026-01-01T00:00:02");
+        rig.gain("Anatomy", 0.1, "2026-01-01T00:00:03");
+
+        // A pill runs out: a fresh context, and the two rows already
+        // written keep the one they were recorded under.
+        let second = rig.mint_context();
+        rig.gain("Anatomy", 0.1, "2026-01-01T00:00:04");
+
+        assert_eq!(
+            rig.context_stamps(),
+            vec![None, Some(first), Some(first), Some(second)],
+            "each gain keeps the context it was recorded under"
+        );
     }
 }

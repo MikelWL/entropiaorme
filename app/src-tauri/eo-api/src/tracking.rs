@@ -948,10 +948,14 @@ impl Api {
     ///
     /// The two facets differ in how they may move, not by taste. The
     /// boost may be re-declared mid-session (a pill expiring is a real
-    /// change worth recording), and the session keeps the latest
-    /// declaration. The name names the whole session, so a live edit
-    /// could only rewrite its history: it is fixed once a session runs
-    /// (409), and correcting it is a post-hoc move through
+    /// change worth recording), and it is three-state: null withdraws
+    /// the declaration, 0 records deliberately-unboosted play (the
+    /// baseline a boost's effect is measured against), and a positive
+    /// value records a magnitude. The session row mirrors only the
+    /// positive case; the declared zero lives on the interval record.
+    /// The name names the whole session, so a live edit could only
+    /// rewrite its history: it is fixed once a session runs (409), and
+    /// correcting it is a post-hoc move through
     /// `tracking_rename_session`.
     pub async fn tracking_session_config(
         &self,
@@ -963,7 +967,11 @@ impl Api {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string);
-        let boost = skill_boost_percent.filter(|percent| *percent > 0);
+        // Three-state and deliberately NOT collapsed: `None` withdraws the
+        // declaration, `Some(0)` declares deliberately-unboosted play. A
+        // negative is nonsense rather than a third meaning, so it reads as
+        // a withdrawal instead of reaching the segment layer.
+        let boost = skill_boost_percent.filter(|percent| *percent >= 0);
         // Validate and write inside a block so the (non-`Send`) config
         // guard is gone before the tracker await below.
         {
@@ -981,7 +989,7 @@ impl Api {
             }
             let mut updates = Map::new();
             updates.insert("session_name".into(), json!(name.as_deref().unwrap_or("")));
-            updates.insert("skill_boost_percent".into(), json!(boost.unwrap_or(0)));
+            updates.insert("declared_skill_boost_percent".into(), json!(boost));
             guard
                 .update(&updates)
                 .map_err(ApiError::internal("session config"))?;
@@ -1296,7 +1304,9 @@ pub(crate) async fn build_snapshot_value(
         Some(name) => Value::String(name.to_string()),
         None => Value::Null,
     };
-    let boost_value = |percent: Option<i64>| match percent.filter(|value| *value > 0) {
+    // A declared zero serialises as 0, not null: null is reserved for
+    // "nothing declared", and the overlay reads the two apart.
+    let boost_value = |percent: Option<i64>| match percent.filter(|value| *value >= 0) {
         Some(percent) => json!(percent),
         None => Value::Null,
     };
@@ -1342,7 +1352,7 @@ pub(crate) async fn build_snapshot_value(
                 "currentActivity": current_activity,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(Some(config.session_name.trim())),
-                "skillBoostPercent": boost_value(Some(config.skill_boost_percent)),
+                "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
                 "recentEvents": [],
             })

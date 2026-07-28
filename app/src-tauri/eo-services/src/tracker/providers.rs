@@ -78,9 +78,10 @@ pub trait TrackingConfig: Send + Sync {
     /// snapshots at start; empty is "not declared").
     fn session_name(&self) -> String;
 
-    /// The configured skill-boost percentage (zero or negative is "no
-    /// boost").
-    fn skill_boost_percent(&self) -> i64;
+    /// The declared skill-boost facet the next session opens under:
+    /// `None` claims nothing, `Some(0)` declares deliberately-unboosted
+    /// play, `Some(n)` declares a magnitude.
+    fn declared_skill_boost_percent(&self) -> Option<i64>;
 
     /// The declared (species, maturity), when one is configured.
     fn manual_mob(&self) -> Option<(String, String)>;
@@ -142,8 +143,8 @@ impl TrackingConfig for DefaultTrackingConfig {
         String::new()
     }
 
-    fn skill_boost_percent(&self) -> i64 {
-        0
+    fn declared_skill_boost_percent(&self) -> Option<i64> {
+        None
     }
 
     fn manual_mob(&self) -> Option<(String, String)> {
@@ -176,7 +177,7 @@ mod tests {
     fn default_tracking_config_is_the_inert_fallback() {
         let config = DefaultTrackingConfig;
         assert_eq!(config.session_name(), "");
-        assert_eq!(config.skill_boost_percent(), 0);
+        assert_eq!(config.declared_skill_boost_percent(), None);
         assert_eq!(config.manual_mob(), None);
         assert!(!config.weapon_attribution_trifecta());
         assert!(config.loot_filter_blacklist().is_empty());

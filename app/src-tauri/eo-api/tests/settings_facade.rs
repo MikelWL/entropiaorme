@@ -87,7 +87,7 @@ async fn the_settings_assembly_shapes_the_default_config() {
             "endOfSessionArmourReminderEnabled",
             "developerModeEnabled",
             "sessionName",
-            "skillBoostPercent",
+            "declaredSkillBoostPercent",
             "hotbar",
             "trifecta",
             "harvestGuardrail",
@@ -121,9 +121,11 @@ async fn the_settings_assembly_shapes_the_default_config() {
         ]
     );
 
-    // The default values: both facets undeclared.
+    // The default values: both facets undeclared. The boost's undeclared
+    // state is null, NOT 0: a stored 0 is the distinct declaration that
+    // play is deliberately unboosted.
     assert_eq!(body["sessionName"], "");
-    assert_eq!(body["skillBoostPercent"], 0);
+    assert_eq!(body["declaredSkillBoostPercent"], serde_json::Value::Null);
     assert_eq!(
         body["lootFilterBlacklist"],
         serde_json::json!(["Universal Ammo"])
@@ -181,7 +183,7 @@ async fn a_partial_update_writes_and_returns_the_assembly() {
             player_name: Some("Mikel".into()),
             hotbar_hooks_enabled: Some(true),
             session_name: Some("Daily Hunt".into()),
-            skill_boost_percent: Some(50),
+            declared_skill_boost_percent: Some(Some(50)),
             ..SettingsPatch::default()
         })
         .await
@@ -191,13 +193,13 @@ async fn a_partial_update_writes_and_returns_the_assembly() {
     assert_eq!(updated.game_connection.player_name, "Mikel");
     assert!(updated.hotbar_hooks_enabled);
     assert_eq!(updated.session_name, "Daily Hunt");
-    assert_eq!(updated.skill_boost_percent, 50);
+    assert_eq!(updated.declared_skill_boost_percent, Some(50));
     // The write reached the store.
     let cfg = read_settings(&dir.path().join("data"));
     assert_eq!(cfg["player_name"], "Mikel");
     assert_eq!(cfg["hotbar_hooks_enabled"], true);
     assert_eq!(cfg["session_name"], "Daily Hunt");
-    assert_eq!(cfg["skill_boost_percent"], 50);
+    assert_eq!(cfg["declared_skill_boost_percent"], 50);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -245,7 +247,7 @@ async fn the_update_validation_ladder_refuses_the_backend_way() {
     // A negative skill boost is refused before the write.
     assert_eq!(
         api.settings_update(SettingsPatch {
-            skill_boost_percent: Some(-1),
+            declared_skill_boost_percent: Some(Some(-1)),
             ..SettingsPatch::default()
         })
         .await
@@ -254,4 +256,37 @@ async fn the_update_validation_ladder_refuses_the_backend_way() {
     );
     // The refusals left the stored player name untouched (default empty).
     assert_eq!(read_settings(&dir.path().join("data"))["player_name"], "");
+}
+
+/// The boost declaration is three-state end to end, and the facade is
+/// where it used to collapse: a `Some(0)` was filtered out alongside the
+/// withdrawal, so the overlay could never record the deliberately-
+/// unboosted baseline the whole boost-measurement question rests on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_config_facade_keeps_a_declared_zero_apart_from_a_withdrawal() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = settings_api(dir.path()).await;
+    let data_dir = dir.path().join("data");
+
+    // Declared zero: a real claim, stored and echoed as 0.
+    let declared = api.tracking_session_config(None, Some(0)).await.unwrap();
+    assert_eq!(declared.skill_boost_percent, Some(0));
+    assert_eq!(read_settings(&data_dir)["declared_skill_boost_percent"], 0);
+
+    // A magnitude replaces it.
+    let boosted = api.tracking_session_config(None, Some(50)).await.unwrap();
+    assert_eq!(boosted.skill_boost_percent, Some(50));
+    assert_eq!(read_settings(&data_dir)["declared_skill_boost_percent"], 50);
+
+    // Withdrawal: claims nothing, and is stored as null rather than 0.
+    let withdrawn = api.tracking_session_config(None, None).await.unwrap();
+    assert_eq!(withdrawn.skill_boost_percent, None::<i64>);
+    assert_eq!(
+        read_settings(&data_dir)["declared_skill_boost_percent"],
+        Value::Null
+    );
+
+    // A negative is nonsense rather than a fourth state: it withdraws.
+    let negative = api.tracking_session_config(None, Some(-5)).await.unwrap();
+    assert_eq!(negative.skill_boost_percent, None::<i64>);
 }

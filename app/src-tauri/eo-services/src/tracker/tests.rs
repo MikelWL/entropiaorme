@@ -72,8 +72,8 @@ impl TrackingConfig for ScriptedConfig {
         self.session_name.clone().unwrap_or_default()
     }
 
-    fn skill_boost_percent(&self) -> i64 {
-        self.skill_boost_percent.unwrap_or(0)
+    fn declared_skill_boost_percent(&self) -> Option<i64> {
+        self.skill_boost_percent
     }
 
     fn manual_mob(&self) -> Option<(String, String)> {
@@ -1574,6 +1574,288 @@ fn trifecta_attribution_and_heal_filtering() {
     });
 }
 
+/// A session opens its segment context before anything can be recorded
+/// into it, and the opening boost becomes a modifier interval inside
+/// that context. The context is minted even with nothing declared: an
+/// event stamped with the empty context is a different, useful fact
+/// from an event that predates the segment model.
+#[test]
+fn a_session_opens_a_context_and_its_declared_modifier() {
+    let rig = rig();
+    let boosted = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            skill_boost_percent: Some(50),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    let session = rig.wait(boosted.start_session()).unwrap();
+
+    rig.probe(&boosted, |actor| {
+        let active = actor.session.active().unwrap();
+        assert!(
+            active.segments.context_id().is_some(),
+            "opening context minted"
+        );
+        assert_eq!(active.segments.modifier_magnitude(), Some(50.0));
+    });
+
+    // The interval is a real row, open, owned by this session.
+    let row: (String, Option<f64>, Option<f64>) = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT kind, magnitude, ended_at FROM session_intervals WHERE session_id = ?",
+                rusqlite::params![session.id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<f64>>(1)?,
+                        row.get::<_, Option<f64>>(2)?,
+                    ))
+                },
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(row, ("modifier".to_string(), Some(50.0), None));
+}
+
+/// A session STARTED under a declared zero opens the same real modifier
+/// interval a mid-session declaration would, so the baseline holds from
+/// the first event rather than only from the first re-declaration. The
+/// session row's own scalar stays null (0019 constrains it to `> 0 OR
+/// NULL`), which is precisely why the segment layer is the source of
+/// truth and the readout reads from there.
+#[test]
+fn a_session_started_under_a_declared_zero_opens_its_baseline() {
+    let rig = rig();
+    let unboosted = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            skill_boost_percent: Some(0),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    let session = rig.wait(unboosted.start_session()).unwrap();
+
+    rig.probe(&unboosted, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(
+            active.segments.modifier_magnitude(),
+            Some(0.0),
+            "the declared baseline is in force from the session's first moment"
+        );
+        assert_eq!(
+            active.facets.skill_boost_percent, None,
+            "the row mirror cannot hold a zero, and does not pretend to"
+        );
+    });
+
+    let row: (String, Option<f64>) = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT kind, magnitude FROM session_intervals WHERE session_id = ?",
+                rusqlite::params![session.id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(row, ("modifier".to_string(), Some(0.0)));
+}
+
+/// Quest slices STACK: the ARIS grind runs three dailies at once, and
+/// finishing one must leave the other two running. This is the case a
+/// per-axis column on the event row could not express, and the reason
+/// attribution is one context naming a set rather than one column each.
+#[test]
+fn quest_slices_stack_and_close_one_at_a_time() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.open_quest_slice(11, "Daily: Carabok"))
+        .unwrap();
+    rig.wait(tracker.open_quest_slice(22, "Daily: Monura"))
+        .unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert!(active
+            .segments
+            .open_of_ref(IntervalKind::Quest, 11)
+            .is_some());
+        assert!(active
+            .segments
+            .open_of_ref(IntervalKind::Quest, 22)
+            .is_some());
+    });
+
+    // One finishes; the other keeps running.
+    rig.wait(tracker.close_quest_slice(11)).unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert!(
+            active
+                .segments
+                .open_of_ref(IntervalKind::Quest, 11)
+                .is_none(),
+            "the completed quest's slice closed"
+        );
+        assert!(
+            active
+                .segments
+                .open_of_ref(IntervalKind::Quest, 22)
+                .is_some(),
+            "the sibling daily is untouched"
+        );
+    });
+
+    let rows: Vec<(i64, Option<f64>, Option<String>)> = rig
+        .wait(rig.db.with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT ref_id, ended_at, label FROM session_intervals \
+                 WHERE session_id = ? AND kind = 'quest' ORDER BY ref_id",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![session.id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        }))
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 11);
+    assert!(rows[0].1.is_some(), "closed slice carries an end");
+    assert_eq!(rows[0].2.as_deref(), Some("Daily: Carabok"));
+    assert_eq!(rows[1].0, 22);
+    assert!(rows[1].1.is_none(), "the running slice has no end yet");
+}
+
+/// The same quest signalled twice must not grow a second stretch: the
+/// mission signal can repeat, and the record would then double-count the
+/// same quest's time.
+#[test]
+fn reopening_a_live_quest_slice_is_ignored() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.open_quest_slice(7, "Daily: Repeat"))
+        .unwrap();
+    rig.wait(tracker.open_quest_slice(7, "Daily: Repeat"))
+        .unwrap();
+
+    let count: i64 = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM session_intervals WHERE session_id = ? AND kind = 'quest'",
+                rusqlite::params![session.id],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(count, 1, "one stretch, not two");
+}
+
+/// A quest slice and a boost overlap, and an event recorded while both
+/// hold sits inside BOTH. That is the whole reason attribution is a
+/// context naming a set.
+#[test]
+fn a_context_can_name_a_quest_and_a_modifier_at_once() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.set_skill_boost(Some(50))).unwrap();
+    rig.wait(tracker.open_quest_slice(3, "Daily: Overlap"))
+        .unwrap();
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.segments.modifier_magnitude(), Some(50.0));
+        assert!(active
+            .segments
+            .open_of_ref(IntervalKind::Quest, 3)
+            .is_some());
+    });
+}
+
+/// Stopping the session ends every slice still open, so no interval
+/// outlives the session that owns it.
+#[test]
+fn stopping_the_session_closes_a_running_quest_slice() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    rig.wait(tracker.open_quest_slice(5, "Daily: Unfinished"))
+        .unwrap();
+    rig.wait(tracker.stop_session()).unwrap();
+
+    let open: i64 = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM session_intervals \
+                 WHERE session_id = ? AND ended_at IS NULL",
+                rusqlite::params![session.id],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(open, 0);
+}
+
+/// With no session running there is nothing to slice. The signal is
+/// refused rather than inventing a session or writing an orphan row.
+#[test]
+fn a_quest_slice_outside_a_session_records_nothing() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+
+    assert!(rig
+        .wait(tracker.open_quest_slice(1, "Daily: Idle"))
+        .is_err());
+
+    let count: i64 = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(
+                conn.query_row("SELECT COUNT(*) FROM session_intervals", [], |row| {
+                    row.get(0)
+                })?,
+            )
+        }))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+/// The three states the modifier declaration must keep apart. Only a
+/// declared zero can serve as the unboosted baseline an effect is
+/// measured against, so it must not collapse into "not declared".
+#[test]
+fn a_declared_zero_boost_is_distinct_from_no_declaration() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    // Nothing declared: no modifier interval at all.
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.segments.modifier_magnitude(), None);
+    });
+
+    // Declared unboosted: a real interval carrying zero.
+    rig.wait(tracker.set_skill_boost(Some(0))).unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.segments.modifier_magnitude(), Some(0.0));
+    });
+
+    // Withdrawn: back to claiming nothing.
+    rig.wait(tracker.set_skill_boost(None)).unwrap();
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.segments.modifier_magnitude(), None);
+    });
+}
+
 #[test]
 fn session_facet_and_declared_mob_rules() {
     let rig = rig();
@@ -2458,7 +2740,9 @@ fn reload_config_resyncs_the_declared_mob_from_the_live_config() {
 fn a_blank_configured_name_records_as_no_declaration() {
     // "Not declared" must stay distinguishable from "declared as empty":
     // a whitespace-only configured name is no name at all, and no
-    // configured mob is no declaration, never a guessed default.
+    // configured mob is no declaration, never a guessed default. The
+    // boost's declared zero is a real declaration that the row mirror
+    // simply cannot hold; the segment layer carries it (covered above).
     let rig = rig();
     let blank = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {

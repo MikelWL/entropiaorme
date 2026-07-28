@@ -166,6 +166,7 @@ impl TrackerActor {
                 cost_ped: cost,
                 loot_total_ped: Ped::ZERO,
                 loot_items: Vec::new(),
+                context_id: active.segments.context_id(),
             };
             active.session.harvests.push(harvest.clone());
             harvest
