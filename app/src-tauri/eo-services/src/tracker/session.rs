@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 use eo_wire::normalizer::round_half_even;
 
-use super::intervals::{IntervalKind, IntervalSpec, SegmentState};
+use super::intervals::{IntervalKind, IntervalSpec, IntervalState};
 use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::DbError;
 use crate::mob_lookup_service::python_whitespace;
@@ -66,10 +66,10 @@ pub(super) struct ActiveSession {
     pub(super) declared_mob: Option<DeclaredMob>,
     /// The session-scoped facets snapshotted at session start.
     pub(super) facets: SessionFacets,
-    /// The live segment state: which intervals are open and the context
+    /// The live interval state: which intervals are open and the context
     /// every event written right now stamps. Session-scoped by
-    /// construction, so no segment can outlive its session.
-    pub(super) segments: SegmentState,
+    /// construction, so no interval can outlive its session.
+    pub(super) intervals: IntervalState,
     pub(super) last_heal_time: Option<DateTime<Utc>>,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
@@ -98,7 +98,7 @@ impl ActiveSession {
             warnings: Vec::new(),
             declared_mob: None,
             facets,
-            segments: SegmentState::default(),
+            intervals: IntervalState::default(),
             last_heal_time: None,
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
@@ -304,11 +304,11 @@ impl TrackerActor {
             cumulative_net,
             mob_name: active.stamped_mob_name().map(str::to_string),
             session_name: active.facets.name.clone(),
-            // Read from the segment state, not the row mirror: the row's
+            // Read from the interval state, not the row mirror: the row's
             // scalar cannot hold a declared zero (0019's `> 0 OR NULL`),
             // and the readout is what the overlay renders the facet from.
             skill_boost_percent: active
-                .segments
+                .intervals
                 .modifier_magnitude()
                 .map(|magnitude| magnitude as i64),
             harvest_swings: harvests.len() as i64,
@@ -386,7 +386,7 @@ impl TrackerActor {
         }
         let now = instant_to_epoch(resolve_local(self.clock.now()));
 
-        // Contained like the other persistence failures: a segment write
+        // Contained like the other persistence failures: a interval write
         // that cannot land leaves the declaration unrecorded rather than
         // stamping events with a context that does not describe them.
         {
@@ -396,7 +396,7 @@ impl TrackerActor {
             };
             let outcome = match percent {
                 Some(value) => active
-                    .segments
+                    .intervals
                     .open_interval(
                         &db,
                         &session_id,
@@ -406,7 +406,7 @@ impl TrackerActor {
                     .await
                     .map(|_| ()),
                 None => active
-                    .segments
+                    .intervals
                     .close_kind(&db, &session_id, now, IntervalKind::Modifier)
                     .await
                     .map(|_| ()),
@@ -425,7 +425,7 @@ impl TrackerActor {
     /// overlap sits inside both, which the context expresses natively
     /// and a per-axis column could not.
     ///
-    /// Contained like the other segment writes: with no session running
+    /// Contained like the other interval writes: with no session running
     /// there is nothing to attach a slice to, and a quest that starts
     /// outside a session is simply not a slice of one.
     pub(super) async fn open_quest_slice(
@@ -443,14 +443,14 @@ impl TrackerActor {
         // stacked twice: the signal can repeat (a re-received mission),
         // and the record must not grow a duplicate stretch from it.
         if active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, quest_id)
             .is_some()
         {
             return Ok(());
         }
         let _ = active
-            .segments
+            .intervals
             .open_interval(
                 &db,
                 &session_id,
@@ -476,7 +476,7 @@ impl TrackerActor {
         };
         let session_id = active.session.id.clone();
         let _ = active
-            .segments
+            .intervals
             .close_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
             .await;
         Ok(())
@@ -534,7 +534,7 @@ impl TrackerActor {
         // here and never re-read from the config mid-session.
         // The declaration is three-state; the session ROW's scalar is not
         // (migration 0019 constrains it to `> 0 OR NULL`, which is why
-        // the segment model superseded it as the source of truth). The
+        // the interval model superseded it as the source of truth). The
         // row therefore keeps the magnitude only, while the declaration
         // itself rides the opening interval below, where `Some(0)`
         // survives as the baseline it is.
@@ -630,7 +630,7 @@ impl TrackerActor {
             }));
         // The session's opening context: the empty set, minted even when
         // nothing is declared, because an event stamped with it was
-        // recorded under the segment model with nothing in force, and
+        // recorded under the interval model with nothing in force, and
         // that is a different fact from an event predating the model.
         // Deliberately NOT a bus event: the only cross-service consumer
         // reads the session's current context from the database at
@@ -640,14 +640,14 @@ impl TrackerActor {
             let db = self.db.clone();
             if let Some(active) = self.session.active_mut() {
                 if active
-                    .segments
+                    .intervals
                     .open_session(&db, &session_id, start_ts)
                     .await
                     .is_ok()
                 {
                     if let Some(percent) = opening_boost {
                         let _ = active
-                            .segments
+                            .intervals
                             .open_interval(
                                 &db,
                                 &session_id,
@@ -698,13 +698,13 @@ impl TrackerActor {
             )
         };
         // Close every still-open interval before the session record is
-        // sealed, so no segment outlives the session that owns it and a
+        // sealed, so no interval outlives the session that owns it and a
         // duration read never has to guess at a missing end.
         {
             let db = self.db.clone();
             let end_ts = instant_to_epoch(end_time);
             if let Some(active) = self.session.active_mut() {
-                let _ = active.segments.close_session(&db, end_ts).await;
+                let _ = active.intervals.close_session(&db, end_ts).await;
             }
         }
         // One transaction over the whole stop sequence, matching the

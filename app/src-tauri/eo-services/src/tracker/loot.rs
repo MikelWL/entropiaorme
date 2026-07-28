@@ -154,7 +154,7 @@ impl TrackerActor {
                     cost_ped: cost,
                     loot_total_ped: filtered_total_ped,
                     loot_items: items,
-                    context_id: active.segments.context_id(),
+                    context_id: active.intervals.context_id(),
                 };
                 active.session.harvests.push(harvest.clone());
                 (RoutedLoot::Harvest(harvest), restamps, yield_restamps)
@@ -178,7 +178,7 @@ impl TrackerActor {
                 let session_id = active.session.id.clone();
                 // Read before the accumulator borrow: the stamp is what
                 // was in force at the moment the kill settled.
-                let context_id = active.segments.context_id();
+                let context_id = active.intervals.context_id();
                 let accumulator = &mut active.accumulator;
                 let kill = Kill {
                     id: uuid::Uuid::new_v4().to_string(),

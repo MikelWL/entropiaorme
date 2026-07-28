@@ -1,8 +1,8 @@
-//! The session-segment engine: intervals and the contexts that stamp
+//! The session-interval engine: intervals and the contexts that stamp
 //! events with them.
 //!
 //! A session is not uniform. A pill holds for part of it, a quest
-//! spans a stretch, and a player-drawn lap will slice one run. All
+//! spans a stretch, and a player-drawn segment will slice one run. All
 //! three are the same primitive, so they share this engine and differ
 //! only by [`IntervalKind`].
 //!
@@ -24,10 +24,10 @@ pub enum IntervalKind {
     /// A skill-affecting modifier in force (a pill, a ring). Carries a
     /// magnitude, where zero means "declared, nothing in force".
     Modifier,
-    /// Reserved for player-drawn slices of the session (one run, one
-    /// lap); nothing writes it yet, and the engine needs no change
-    /// when something does.
-    Lap,
+    /// Reserved for player-drawn slices of the session (one instance
+    /// run, one rotation); nothing writes it yet, and the engine needs
+    /// no change when something does.
+    Segment,
     /// The stretch a declared quest or playlist spans.
     Quest,
     /// Reserved for a later consumable-timer kind; nothing writes it
@@ -39,7 +39,7 @@ impl IntervalKind {
     pub fn as_str(self) -> &'static str {
         match self {
             IntervalKind::Modifier => "modifier",
-            IntervalKind::Lap => "lap",
+            IntervalKind::Segment => "segment",
             IntervalKind::Quest => "quest",
             IntervalKind::Consumable => "consumable",
         }
@@ -48,7 +48,7 @@ impl IntervalKind {
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "modifier" => IntervalKind::Modifier,
-            "lap" => IntervalKind::Lap,
+            "segment" => IntervalKind::Segment,
             "quest" => IntervalKind::Quest,
             "consumable" => IntervalKind::Consumable,
             _ => return None,
@@ -112,18 +112,18 @@ pub struct OpenInterval {
     pub magnitude: Option<f64>,
 }
 
-/// The session's live segment state: which intervals are open, and the
+/// The session's live interval state: which intervals are open, and the
 /// context that identifies that set for stamping.
 ///
 /// Held inside `ActiveSession`, so it is dropped wholesale when the
-/// session stops and no segment state can leak into the next one.
+/// session stops and no interval state can leak into the next one.
 #[derive(Debug, Default)]
-pub struct SegmentState {
+pub struct IntervalState {
     open: Vec<OpenInterval>,
     context_id: Option<i64>,
 }
 
-impl SegmentState {
+impl IntervalState {
     /// The context every event written right now stamps. None only
     /// before the session's opening context has been minted.
     pub fn context_id(&self) -> Option<i64> {
@@ -203,9 +203,9 @@ async fn mint_context(
     .await
 }
 
-impl SegmentState {
+impl IntervalState {
     /// Mint the session's opening context: the empty set. An event
-    /// stamped with it was recorded under the segment model with nothing
+    /// stamped with it was recorded under the interval model with nothing
     /// declared, which the record must be able to tell apart from an
     /// event that predates the model (those carry no context at all).
     pub async fn open_session(
@@ -425,7 +425,7 @@ mod tests {
     fn interval_kind_round_trips_its_wire_string() {
         for kind in [
             IntervalKind::Modifier,
-            IntervalKind::Lap,
+            IntervalKind::Segment,
             IntervalKind::Quest,
             IntervalKind::Consumable,
         ] {
@@ -439,7 +439,7 @@ mod tests {
     /// measured against. Only an absent interval means "not declared".
     #[test]
     fn a_declared_zero_magnitude_is_not_an_absent_modifier() {
-        let mut state = SegmentState::default();
+        let mut state = IntervalState::default();
         assert_eq!(state.modifier_magnitude(), None);
 
         state.open.push(OpenInterval {

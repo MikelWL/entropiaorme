@@ -227,7 +227,7 @@ impl HuntTracker {
     }
 
     /// Record that a quest became active: open its slice on the running
-    /// session. Forward-looking, like every segment write; events
+    /// session. Forward-looking, like every interval write; events
     /// already recorded keep the context they were stamped with.
     pub async fn open_quest_slice(
         &self,

@@ -970,7 +970,7 @@ impl Api {
         // Three-state and deliberately NOT collapsed: `None` withdraws the
         // declaration, `Some(0)` declares deliberately-unboosted play. A
         // negative is nonsense rather than a third meaning, so it reads as
-        // a withdrawal instead of reaching the segment layer.
+        // a withdrawal instead of reaching the interval layer.
         let boost = skill_boost_percent.filter(|percent| *percent >= 0);
         // Validate and write inside a block so the (non-`Send`) config
         // guard is gone before the tracker await below.

@@ -580,7 +580,7 @@ async fn the_idle_snapshot_carries_the_declared_facets() {
 /// The ACTIVE branch's boost, which has a different source from the
 /// idle branch's and so could regress without the idle pin noticing.
 ///
-/// It is read from the running session's segment state, NOT from the
+/// It is read from the running session's interval state, NOT from the
 /// session row, because the row's column cannot hold a zero (migration
 /// 0018 constrains it to `> 0 OR NULL`). A serialiser that went back to
 /// the row would silently lose the declared baseline for every running

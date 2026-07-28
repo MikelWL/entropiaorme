@@ -1574,11 +1574,11 @@ fn trifecta_attribution_and_heal_filtering() {
     });
 }
 
-/// A session opens its segment context before anything can be recorded
+/// A session opens its interval context before anything can be recorded
 /// into it, and the opening boost becomes a modifier interval inside
 /// that context. The context is minted even with nothing declared: an
 /// event stamped with the empty context is a different, useful fact
-/// from an event that predates the segment model.
+/// from an event that predates the interval model.
 #[test]
 fn a_session_opens_a_context_and_its_declared_modifier() {
     let rig = rig();
@@ -1594,10 +1594,10 @@ fn a_session_opens_a_context_and_its_declared_modifier() {
     rig.probe(&boosted, |actor| {
         let active = actor.session.active().unwrap();
         assert!(
-            active.segments.context_id().is_some(),
+            active.intervals.context_id().is_some(),
             "opening context minted"
         );
-        assert_eq!(active.segments.modifier_magnitude(), Some(50.0));
+        assert_eq!(active.intervals.modifier_magnitude(), Some(50.0));
     });
 
     // The interval is a real row, open, owned by this session.
@@ -1623,7 +1623,7 @@ fn a_session_opens_a_context_and_its_declared_modifier() {
 /// interval a mid-session declaration would, so the baseline holds from
 /// the first event rather than only from the first re-declaration. The
 /// session row's own scalar stays null (0019 constrains it to `> 0 OR
-/// NULL`), which is precisely why the segment layer is the source of
+/// NULL`), which is precisely why the interval layer is the source of
 /// truth and the readout reads from there.
 #[test]
 fn a_session_started_under_a_declared_zero_opens_its_baseline() {
@@ -1640,7 +1640,7 @@ fn a_session_started_under_a_declared_zero_opens_its_baseline() {
     rig.probe(&unboosted, |actor| {
         let active = actor.session.active().unwrap();
         assert_eq!(
-            active.segments.modifier_magnitude(),
+            active.intervals.modifier_magnitude(),
             Some(0.0),
             "the declared baseline is in force from the session's first moment"
         );
@@ -1679,11 +1679,11 @@ fn quest_slices_stack_and_close_one_at_a_time() {
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
         assert!(active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, 11)
             .is_some());
         assert!(active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, 22)
             .is_some());
     });
@@ -1694,14 +1694,14 @@ fn quest_slices_stack_and_close_one_at_a_time() {
         let active = actor.session.active().unwrap();
         assert!(
             active
-                .segments
+                .intervals
                 .open_of_ref(IntervalKind::Quest, 11)
                 .is_none(),
             "the completed quest's slice closed"
         );
         assert!(
             active
-                .segments
+                .intervals
                 .open_of_ref(IntervalKind::Quest, 22)
                 .is_some(),
             "the sibling daily is untouched"
@@ -1771,9 +1771,9 @@ fn a_context_can_name_a_quest_and_a_modifier_at_once() {
 
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), Some(50.0));
+        assert_eq!(active.intervals.modifier_magnitude(), Some(50.0));
         assert!(active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, 3)
             .is_some());
     });
@@ -1838,21 +1838,21 @@ fn a_declared_zero_boost_is_distinct_from_no_declaration() {
     // Nothing declared: no modifier interval at all.
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), None);
+        assert_eq!(active.intervals.modifier_magnitude(), None);
     });
 
     // Declared unboosted: a real interval carrying zero.
     rig.wait(tracker.set_skill_boost(Some(0))).unwrap();
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), Some(0.0));
+        assert_eq!(active.intervals.modifier_magnitude(), Some(0.0));
     });
 
     // Withdrawn: back to claiming nothing.
     rig.wait(tracker.set_skill_boost(None)).unwrap();
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), None);
+        assert_eq!(active.intervals.modifier_magnitude(), None);
     });
 }
 
@@ -2742,7 +2742,7 @@ fn a_blank_configured_name_records_as_no_declaration() {
     // a whitespace-only configured name is no name at all, and no
     // configured mob is no declaration, never a guessed default. The
     // boost's declared zero is a real declaration that the row mirror
-    // simply cannot hold; the segment layer carries it (covered above).
+    // simply cannot hold; the interval layer carries it (covered above).
     let rig = rig();
     let blank = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {

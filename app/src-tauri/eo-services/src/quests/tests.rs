@@ -1667,7 +1667,7 @@ fn truthiness_matches_python_bool() {
 }
 
 /// The quest lifecycle reports its slices to whatever owns the session's
-/// segment layer, so a quest's stretch can be measured apart from the
+/// interval layer, so a quest's stretch can be measured apart from the
 /// session around it.
 ///
 /// Hooked on the lifecycle primitives rather than the mission detector,
