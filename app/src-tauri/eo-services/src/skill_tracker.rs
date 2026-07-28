@@ -207,6 +207,7 @@ impl SkillTracker {
                 // session, so the newest IS the one in force: exact,
                 // and never a timestamp comparison (gain timestamps
                 // carry in-game server time, interval bounds wall-clock).
+                use rusqlite::OptionalExtension as _;
                 let context_id: Option<i64> = conn
                     .query_row(
                         "SELECT id FROM session_contexts WHERE session_id = ? \
@@ -214,7 +215,7 @@ impl SkillTracker {
                         rusqlite::params![session_id],
                         |row| row.get::<_, i64>(0),
                     )
-                    .ok();
+                    .optional()?;
                 conn.execute(
                     "INSERT INTO skill_gains \
                      (session_id, timestamp, skill_name, amount, ped_value, context_id) \
