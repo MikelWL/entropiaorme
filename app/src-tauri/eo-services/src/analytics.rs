@@ -292,7 +292,7 @@ pub struct HarvestLootItemRow {
 }
 
 /// One row of a Hunting comparison table; the caller labels the name
-/// (`mobName` / `tagName`).
+/// (`mobName` / `sessionName`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityRow {
