@@ -546,3 +546,68 @@ describe('post-session bar', () => {
 		expect(onDismissQuestLinkMessage).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('segment control', () => {
+	it('disables the whole control while idle: a segment exists only during a session', () => {
+		render(OverlayStrip, { props: { data: liveData() } });
+
+		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
+		expect(input.disabled).toBe(true);
+		expect(input.title).toBe('Start a session to draw segments');
+		expect((screen.getByLabelText('Start segment') as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it('offers the name field and start button while active with no segment open', async () => {
+		const onSegmentNext = vi.fn();
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active' }), onSegmentNext },
+		});
+
+		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
+		expect(input.disabled).toBe(false);
+		expect(input.title).toBe('Name the next segment; leave blank to auto-number');
+
+		screen.getByLabelText('Start segment').click();
+		expect(onSegmentNext).toHaveBeenCalledTimes(1);
+		// No segment open: nothing to close.
+		expect(screen.queryByLabelText('Close segment')).toBeNull();
+	});
+
+	it('offers next and close controls while a segment is open', async () => {
+		const onSegmentNext = vi.fn();
+		const onSegmentClose = vi.fn();
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', segmentName: 'Boss 1' }),
+				onSegmentNext,
+				onSegmentClose,
+			},
+		});
+
+		expect((screen.getByLabelText('Segment name') as HTMLInputElement).title).toBe(
+			'Rename the open segment',
+		);
+		screen.getByLabelText('Start next segment').click();
+		expect(onSegmentNext).toHaveBeenCalledTimes(1);
+		screen.getByLabelText('Close segment').click();
+		expect(onSegmentClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('commits on Enter and forwards blur to its handler', async () => {
+		const onSegmentCommit = vi.fn();
+		const onSegmentBlur = vi.fn();
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', segmentName: 'Boss 1' }),
+				onSegmentCommit,
+				onSegmentBlur,
+			},
+		});
+
+		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		expect(onSegmentCommit).toHaveBeenCalledTimes(1);
+		input.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
+		expect(onSegmentBlur).toHaveBeenCalledTimes(1);
+	});
+});

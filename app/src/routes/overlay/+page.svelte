@@ -14,6 +14,9 @@
 		getSessionQuestLinkSuggestion,
 		decideSessionQuestLink,
 		declareSessionQuest,
+		openSessionSegment,
+		closeSessionSegment,
+		renameSessionSegment,
 		getQuests,
 		getPlaylists,
 		updateSettings,
@@ -42,6 +45,7 @@
 		OVERLAY_MENU_SELECT_EVENT,
 		OVERLAY_MENU_SHOW_EVENT,
 		OVERLAY_MENU_WINDOW_LABEL,
+		measureMenuTextWidth,
 		type OverlayMenuKind,
 		type OverlayMenuSelection,
 		type OverlayMenuState
@@ -175,12 +179,19 @@
 	// live in the feature model; this route owns only the popup plumbing
 	// the model calls back into.
 	const facets = createSessionFacets({
-		readFacets: () => ({ name: data.sessionName ?? null, boost: data.skillBoostPercent ?? null }),
+		readFacets: () => ({
+			name: data.sessionName ?? null,
+			boost: data.skillBoostPercent ?? null,
+			segment: data.segmentName ?? null
+		}),
 		isSessionActive: () => data.status === 'active',
 		refresh: () => snapshot.hydrate(),
 		searchNames: getSessionNameSuggestions,
 		setSessionConfig,
 		declareQuest: declareSessionQuest,
+		openSegment: openSessionSegment,
+		closeSegment: closeSessionSegment,
+		renameSegment: renameSessionSegment,
 		listQuests: getQuests,
 		listPlaylists: getPlaylists,
 		openNameMenu: () => openNameMenu(),
@@ -227,16 +238,6 @@
 	const windowSizeSync = createWindowSizeSync(() => overlayRoot, {
 		afterSync: () => scheduleArmourCostAnchorSync()
 	});
-
-	function measureMenuTextWidth(labels: string[], font = '500 12px Inter, system-ui, sans-serif') {
-		if (labels.length === 0) return 0;
-		const canvas = document.createElement('canvas');
-		const context = canvas.getContext('2d');
-		if (!context) return labels.reduce((longest, label) => Math.max(longest, label.length * 8), 0);
-
-		context.font = font;
-		return labels.reduce((longest, label) => Math.max(longest, context.measureText(label).width), 0);
-	}
 
 	function computeMenuWidth(minWidth: number, labels: string[], padding: number) {
 		const contentWidth = measureMenuTextWidth(labels);
@@ -774,6 +775,7 @@
 			endOfSessionArmourReminderEnabled: snap.endOfSessionArmourReminderEnabled,
 			sessionName: snap.sessionName,
 			skillBoostPercent: snap.skillBoostPercent,
+			segmentName: snap.segmentName,
 			currentMob: snap.currentMob,
 			currentTool: snap.currentTool,
 			currentActivity: snap.currentActivity,
@@ -879,14 +881,17 @@
 		};
 	});
 
-	// Keep the boost buffer in step with the persisted facet while the user
-	// is not editing it (an idle overlay re-read, or the value the last
-	// session left behind).
+	// Keep the boost and segment buffers in step with their persisted
+	// facets while the user is not editing them (an idle overlay re-read,
+	// a next-segment renumber, a close emptying the field).
 	$effect(() => {
 		void data.skillBoostPercent;
-		untrack(() => facets.syncBoostDraft());
+		void data.segmentName;
+		untrack(() => {
+			facets.syncBoostDraft();
+			facets.syncSegmentDraft();
+		});
 	});
-
 
 	async function handleStart() {
 		starting = true;
@@ -990,6 +995,7 @@
 		savingName={facets.savingName}
 		nameEditable={facets.nameEditable}
 		savingBoost={facets.savingBoost}
+		savingSegment={facets.savingSegment}
 		questSaving={facets.questSaving}
 		facetError={facets.facetError}
 		questLabel={data.questName ?? null}
@@ -1003,6 +1009,7 @@
 		bind:nameQuery={facets.nameQuery}
 		bind:nameInput={facets.nameInput}
 		bind:boostDraft={facets.boostDraft}
+		bind:segmentDraft={facets.segmentDraft}
 		bind:postSessionArmourButton
 		onStart={handleStart}
 		onStop={flow.requestStop}
@@ -1019,6 +1026,10 @@
 		onNameKeydown={facets.handleNameKeydown}
 		onClearName={facets.clearName}
 		onBoostCommit={facets.commitBoost}
+		onSegmentCommit={facets.commitSegment}
+		onSegmentBlur={facets.handleSegmentBlur}
+		onSegmentNext={facets.nextSegment}
+		onSegmentClose={facets.closeSegment}
 		onQuestTrigger={toggleQuestMenu}
 		onClearQuest={facets.clearQuest}
 		onTrifectaTrigger={toggleTrifectaMenu}

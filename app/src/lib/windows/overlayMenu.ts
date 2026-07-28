@@ -64,3 +64,19 @@ export type OverlayMenuSelection =
 	| { kind: 'name'; name: string }
 	| { kind: 'mob'; species: string; maturity: string }
 	| { kind: 'quest'; id: number; isPlaylist: boolean; name: string };
+
+/** The widest label's rendered width in the overlay menus' font, for
+ * sizing a satellite menu to its content. Falls back to a character
+ * estimate where no 2D context is available (test environments). */
+export function measureMenuTextWidth(
+	labels: string[],
+	font = '500 12px Inter, system-ui, sans-serif',
+) {
+	if (labels.length === 0) return 0;
+	const canvas = document.createElement('canvas');
+	const context = canvas.getContext('2d');
+	if (!context) return labels.reduce((longest, label) => Math.max(longest, label.length * 8), 0);
+
+	context.font = font;
+	return labels.reduce((longest, label) => Math.max(longest, context.measureText(label).width), 0);
+}

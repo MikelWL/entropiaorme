@@ -24,6 +24,7 @@
 		savingName = false,
 		nameEditable = true,
 		savingBoost = false,
+		savingSegment = false,
 		questSaving = false,
 		facetError = null,
 		questLabel = null,
@@ -47,6 +48,7 @@
 		nameQuery = $bindable(''),
 		nameInput = $bindable(null),
 		boostDraft = $bindable(''),
+		segmentDraft = $bindable(''),
 		postSessionArmourButton = $bindable(null),
 		awaitingArmourTrackDecision = false,
 		attributionWarning = null,
@@ -63,6 +65,10 @@
 		onNameKeydown = noop,
 		onClearName = noop,
 		onBoostCommit = noop,
+		onSegmentCommit = noop,
+		onSegmentBlur = noop,
+		onSegmentNext = noop,
+		onSegmentClose = noop,
 		onQuestTrigger = noop,
 		onClearQuest = noop,
 		onTrifectaTrigger = noop,
@@ -78,6 +84,7 @@
 		savingName?: boolean;
 		nameEditable?: boolean;
 		savingBoost?: boolean;
+		savingSegment?: boolean;
 		questSaving?: boolean;
 		facetError?: string | null;
 		questLabel?: string | null;
@@ -101,6 +108,7 @@
 		nameQuery?: string;
 		nameInput?: HTMLInputElement | null;
 		boostDraft?: string;
+		segmentDraft?: string;
 		postSessionArmourButton?: HTMLButtonElement | null;
 		awaitingArmourTrackDecision?: boolean;
 		attributionWarning?: string | null;
@@ -117,6 +125,10 @@
 		onNameKeydown?: (event: KeyboardEvent) => void | Promise<void>;
 		onClearName?: () => void | Promise<void>;
 		onBoostCommit?: () => void | Promise<void>;
+		onSegmentCommit?: () => void | Promise<void>;
+		onSegmentBlur?: () => void | Promise<void>;
+		onSegmentNext?: () => void | Promise<void>;
+		onSegmentClose?: () => void | Promise<void>;
 		onQuestTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onClearQuest?: () => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
@@ -340,6 +352,57 @@
 							disabled={questSaving}
 							onclick={onClearQuest}
 							title="Clear declared quest"
+						>x</button>
+					{/if}
+				</div>
+			</div>
+
+			<!-- Segment: the player-drawn slice of the session (one instance
+				 run, one rotation of a daily). Finer-grained than the session,
+				 so it edits live: the field renames the open segment in place,
+				 and the + button draws the next boundary in one click, closing
+				 the standing segment (segments are sequential). A blank name
+				 is auto-numbered by open count. -->
+			<div class="flex flex-col shrink-0">
+				<span class="facet-label">Segment</span>
+				<div class="flex items-center gap-1">
+					<input
+						class="w-24 bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 transition-colors"
+						bind:value={segmentDraft}
+						placeholder={isActive ? 'Segment...' : NO_DATA}
+						aria-label="Segment name"
+						title={!isActive
+							? 'Start a session to draw segments'
+							: data.segmentName
+								? 'Rename the open segment'
+								: 'Name the next segment; leave blank to auto-number'}
+						disabled={!isActive || savingSegment}
+						onblur={onSegmentBlur}
+						onkeydown={(event) => {
+							if (event.key === 'Enter') {
+								event.preventDefault();
+								void onSegmentCommit();
+							}
+						}}
+					/>
+					<button
+						type="button"
+						class="release-btn shrink-0"
+						aria-label={data.segmentName ? 'Start next segment' : 'Start segment'}
+						disabled={!isActive || savingSegment}
+						onclick={onSegmentNext}
+						title={data.segmentName
+							? 'Start the next segment (closes the current one)'
+							: 'Start a segment'}
+					>+</button>
+					{#if data.segmentName && isActive}
+						<button
+							type="button"
+							class="release-btn shrink-0"
+							aria-label="Close segment"
+							disabled={savingSegment}
+							onclick={onSegmentClose}
+							title="Close the open segment"
 						>x</button>
 					{/if}
 				</div>

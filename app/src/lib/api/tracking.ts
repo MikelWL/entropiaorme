@@ -43,6 +43,8 @@ export interface TrackingLive {
 	endOfSessionArmourReminderEnabled?: boolean | null;
 	sessionName?: string | null;
 	skillBoostPercent?: number | null;
+	/** The open segment's name (a segment exists only while active). */
+	segmentName?: string | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
 	/** What the held tool implies the next action records as. */
@@ -82,6 +84,12 @@ export const getSessionQuestLinkSuggestion = commands.trackingQuestLinkSuggestio
 /** Declare the active session's quest facet up front (or clear it with
  * both ids null), pre-empting the post-stop link suggestion. */
 export const declareSessionQuest = commands.trackingQuestDeclare;
+/** Open a player-drawn segment on the running session, closing any
+ * standing one; a null name is auto-numbered ("Segment N"). */
+export const openSessionSegment = commands.trackingSegmentOpen;
+export const closeSessionSegment = commands.trackingSegmentClose;
+/** Rename the open segment live (its grain is finer than the session). */
+export const renameSessionSegment = commands.trackingSegmentRename;
 
 const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
 

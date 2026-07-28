@@ -28,8 +28,10 @@ export interface QuestOption {
 }
 
 export interface SessionFacetsDeps {
-	/** The facets currently in force, as the snapshot reports them. */
-	readFacets: () => { name: string | null; boost: number | null };
+	/** The facets currently in force, as the snapshot reports them.
+	 * `segment` is the open segment's name (null: none open; a segment
+	 * exists only while its session runs). */
+	readFacets: () => { name: string | null; boost: number | null; segment: string | null };
 	/** Whether a session is running (the quest declaration needs one). */
 	isSessionActive: () => boolean;
 	/** Re-read the snapshot after a successful write. */
@@ -40,6 +42,13 @@ export interface SessionFacetsDeps {
 	setSessionConfig: (name: string | null, boost: number | null) => Promise<unknown>;
 	/** Bind (or, with both ids null, clear) the session's quest facet. */
 	declareQuest: (questId: number | null, playlistId: number | null) => Promise<unknown>;
+	/** Open a segment on the running session, closing any standing one;
+	 * a null name is auto-numbered ("Segment N") by the backend. */
+	openSegment: (name: string | null) => Promise<unknown>;
+	/** Close the open segment. */
+	closeSegment: () => Promise<unknown>;
+	/** Rename the open segment live. */
+	renameSegment: (name: string) => Promise<unknown>;
 	/** The active quests and playlists offered by the picker. */
 	listQuests: () => Promise<{ id: string; name: string }[]>;
 	listPlaylists: () => Promise<{ id: string; name: string }[]>;
@@ -68,6 +77,14 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 
 	let questSaving = $state(false);
 	let questOptions = $state<QuestOption[]>([]);
+
+	// The segment's edit buffer. One field serves both moments: with no
+	// segment open it holds the prospective next name (blank means "let
+	// the backend auto-number"), and with one open it renames it live,
+	// which the facet-grain rule allows because a segment is finer than
+	// the session.
+	let segmentDraft = $state('');
+	let savingSegment = $state(false);
 
 	// One channel for every facet write failure, so a refusal is surfaced
 	// beside the controls rather than swallowed.
@@ -196,6 +213,74 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		questSaving = false;
 	}
 
+	/** The open segment's name as the snapshot reports it (null: none). */
+	function currentSegment(): string | null {
+		return deps.readFacets().segment ?? null;
+	}
+
+	/** The field's commit (Enter): with a segment open it renames; with
+	 * none it opens one, a blank draft leaving the backend to
+	 * auto-number. */
+	async function commitSegment() {
+		const name = segmentDraft.trim();
+		const open = currentSegment();
+		savingSegment = true;
+		facetError = null;
+		try {
+			if (open !== null) {
+				// A blank or unchanged rename is a normalisation, not a
+				// write: an open segment always carries a name.
+				if (!name || name === open) {
+					segmentDraft = open;
+					return;
+				}
+				await deps.renameSegment(name);
+			} else {
+				await deps.openSegment(name || null);
+			}
+			await deps.refresh();
+		} catch (error) {
+			facetError = describe(
+				error,
+				open !== null ? 'Failed to rename segment' : 'Failed to start segment',
+			);
+		} finally {
+			savingSegment = false;
+		}
+	}
+
+	/** The one-click boundary: start the next segment, closing any
+	 * standing one (segments are sequential). With a segment open the
+	 * new one is always auto-numbered; with none open a typed draft is
+	 * honoured as its name. */
+	async function nextSegment() {
+		const name = currentSegment() === null ? segmentDraft.trim() : '';
+		savingSegment = true;
+		facetError = null;
+		try {
+			await deps.openSegment(name || null);
+			await deps.refresh();
+		} catch (error) {
+			facetError = describe(error, 'Failed to start segment');
+		} finally {
+			savingSegment = false;
+		}
+	}
+
+	async function closeSegment() {
+		savingSegment = true;
+		facetError = null;
+		try {
+			await deps.closeSegment();
+			await deps.refresh();
+			segmentDraft = '';
+		} catch (error) {
+			facetError = describe(error, 'Failed to close segment');
+		} finally {
+			savingSegment = false;
+		}
+	}
+
 	async function clearQuest() {
 		questSaving = true;
 		facetError = null;
@@ -256,6 +341,15 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		get questSaving() {
 			return questSaving;
 		},
+		get segmentDraft() {
+			return segmentDraft;
+		},
+		set segmentDraft(value: string) {
+			segmentDraft = value;
+		},
+		get savingSegment() {
+			return savingSegment;
+		},
 		get questOptions() {
 			return questOptions;
 		},
@@ -302,6 +396,23 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 				persisted !== null && persisted !== undefined && persisted >= 0 ? String(persisted) : '';
 		},
 
+		/** Keep the segment buffer in step with the open segment's name
+		 * while the user is not editing it (a next-segment click
+		 * renumbered it; a close or session stop emptied it). Runs only
+		 * when the persisted name moves, so a prospective name being
+		 * typed while no segment is open survives snapshot refreshes. */
+		syncSegmentDraft() {
+			if (savingSegment) return;
+			segmentDraft = currentSegment() ?? '';
+		},
+
+		/** Blur commits only a rename: with no segment open, clicking
+		 * away must not start one (opening is a deliberate Enter or
+		 * next-segment click), and the typed prospective name is kept. */
+		async handleSegmentBlur() {
+			if (currentSegment() !== null) await commitSegment();
+		},
+
 		handleNameFocus() {
 			clearNameCloseTimer();
 			nameInputFocused = true;
@@ -335,6 +446,9 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		applyName,
 		clearName,
 		commitBoost,
+		commitSegment,
+		nextSegment,
+		closeSegment,
 		loadQuestOptions,
 		declareQuest,
 		clearQuest,
