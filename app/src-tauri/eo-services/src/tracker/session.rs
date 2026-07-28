@@ -418,6 +418,70 @@ impl TrackerActor {
         Ok(())
     }
 
+    /// Open a quest's slice on the running session.
+    ///
+    /// Stacking, not exclusive: the ARIS grind runs three daily quests
+    /// at once, and each is its own slice. An event recorded while two
+    /// overlap sits inside both, which the context expresses natively
+    /// and a per-axis column could not.
+    ///
+    /// Contained like the other segment writes: with no session running
+    /// there is nothing to attach a slice to, and a quest that starts
+    /// outside a session is simply not a slice of one.
+    pub(super) async fn open_quest_slice(
+        &mut self,
+        quest_id: i64,
+        name: String,
+    ) -> Result<(), TrackerCommandError> {
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let session_id = active.session.id.clone();
+        // An already-open slice for this quest is left alone rather than
+        // stacked twice: the signal can repeat (a re-received mission),
+        // and the record must not grow a duplicate stretch from it.
+        if active
+            .segments
+            .open_of_ref(IntervalKind::Quest, quest_id)
+            .is_some()
+        {
+            return Ok(());
+        }
+        let _ = active
+            .segments
+            .open_interval(
+                &db,
+                &session_id,
+                now,
+                IntervalSpec::new(IntervalKind::Quest)
+                    .label(Some(name))
+                    .ref_id(Some(quest_id))
+                    .stacking(),
+            )
+            .await;
+        Ok(())
+    }
+
+    /// Close one quest's slice, leaving any sibling quest's running.
+    pub(super) async fn close_quest_slice(
+        &mut self,
+        quest_id: i64,
+    ) -> Result<(), TrackerCommandError> {
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let session_id = active.session.id.clone();
+        let _ = active
+            .segments
+            .close_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
+            .await;
+        Ok(())
+    }
+
     /// Refresh trifecta-attribution state after config changes. The
     /// providers may read the database; the actor simply runs them
     /// inline (nothing else can touch its state meanwhile).

@@ -135,6 +135,13 @@ impl SegmentState {
         self.open.iter().find(|interval| interval.kind == kind)
     }
 
+    /// The open interval of a stacking kind that points at `ref_id`.
+    pub fn open_of_ref(&self, kind: IntervalKind, ref_id: i64) -> Option<&OpenInterval> {
+        self.open
+            .iter()
+            .find(|interval| interval.kind == kind && interval.ref_id == Some(ref_id))
+    }
+
     /// The modifier magnitude in force, as the denormalised per-row
     /// mirror wants it. None when no modifier is declared at all, which
     /// is a different fact from a declared zero.
@@ -142,6 +149,28 @@ impl SegmentState {
         self.open_of_kind(IntervalKind::Modifier)
             .and_then(|interval| interval.magnitude)
     }
+}
+
+/// Stamp `ended_at` on the given interval rows, in one transaction so a
+/// partial close cannot leave some members of a set open. Idempotent per
+/// row: an already-ended row is left as it was.
+async fn end_rows(db: &Db, now: f64, ids: impl IntoIterator<Item = i64>) -> Result<(), DbError> {
+    let ids: Vec<i64> = ids.into_iter().collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    db.with_writer(move |conn| {
+        let tx = conn.transaction()?;
+        for id in &ids {
+            tx.execute(
+                "UPDATE session_intervals SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+                rusqlite::params![now, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    })
+    .await
 }
 
 /// Mint a context for the given open set and make it current. Every
@@ -253,6 +282,32 @@ impl SegmentState {
         Ok(closed)
     }
 
+    /// Close the open interval of a kind that points at `ref_id`, and
+    /// adopt the narrower context. Returns what was closed.
+    ///
+    /// Distinct from [`close_kind`](Self::close_kind) because a stacking
+    /// kind ends one member at a time: three daily quests can run at
+    /// once, and finishing one must not end the other two.
+    pub async fn close_ref(
+        &mut self,
+        db: &Db,
+        session_id: &str,
+        now: f64,
+        kind: IntervalKind,
+        ref_id: i64,
+    ) -> Result<Vec<OpenInterval>, DbError> {
+        let (closing, keeping): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open)
+            .into_iter()
+            .partition(|interval| interval.kind == kind && interval.ref_id == Some(ref_id));
+        self.open = keeping;
+        if closing.is_empty() {
+            return Ok(closing);
+        }
+        end_rows(db, now, closing.iter().map(|interval| interval.id)).await?;
+        self.context_id = Some(mint_context(db, session_id, now, &self.open).await?);
+        Ok(closing)
+    }
+
     /// Stamp the end time on a kind's open rows and drop them from the
     /// open set, WITHOUT minting a context. Private because a caller
     /// that stops here would leave events stamping a context naming an
@@ -270,19 +325,7 @@ impl SegmentState {
         if closing.is_empty() {
             return Ok(closing);
         }
-        let ids: Vec<i64> = closing.iter().map(|interval| interval.id).collect();
-        db.with_writer(move |conn| {
-            let tx = conn.transaction()?;
-            for id in &ids {
-                tx.execute(
-                    "UPDATE session_intervals SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
-                    rusqlite::params![now, id],
-                )?;
-            }
-            tx.commit()?;
-            Ok(())
-        })
-        .await?;
+        end_rows(db, now, closing.iter().map(|interval| interval.id)).await?;
         Ok(closing)
     }
 
@@ -292,21 +335,7 @@ impl SegmentState {
         let ids: Vec<i64> = self.open.iter().map(|interval| interval.id).collect();
         self.open.clear();
         self.context_id = None;
-        if ids.is_empty() {
-            return Ok(());
-        }
-        db.with_writer(move |conn| {
-            let tx = conn.transaction()?;
-            for id in &ids {
-                tx.execute(
-                    "UPDATE session_intervals SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
-                    rusqlite::params![now, id],
-                )?;
-            }
-            tx.commit()?;
-            Ok(())
-        })
-        .await
+        end_rows(db, now, ids).await
     }
 }
 

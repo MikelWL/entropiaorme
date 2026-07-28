@@ -36,9 +36,30 @@ mod playlists;
 mod tests;
 
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
+
+/// What a quest's lifecycle reports to the running session's segment
+/// layer, so a quest's stretch becomes a slice of the session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuestSlice {
+    Opened { quest_id: i64, name: String },
+    Closed { quest_id: i64 },
+}
+
+/// The sink for [`QuestSlice`] reports.
+///
+/// Injected after construction rather than taken as a constructor
+/// argument, because composition builds the quest service before the
+/// tracker that owns the segment state. Deliberately NOT a bus topic:
+/// the corpus fingerprints capture the published event stream, and the
+/// banked port-equivalence captures cannot move.
+pub type QuestSliceWriter = Arc<
+    dyn Fn(QuestSlice) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 pub use playlists::{PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_LONG_HORIZON};
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -82,6 +103,10 @@ pub struct QuestService {
     /// The sender into the owning task, for the watcher's
     /// reward-filter rendezvous.
     pump: mpsc::UnboundedSender<QuestMsg>,
+    /// Where quest slices are reported, once composition has wired it.
+    /// Absent in every test and composition that has no tracker, which
+    /// is why every report is best-effort.
+    slice_writer: OnceLock<QuestSliceWriter>,
 }
 
 impl QuestService {
@@ -117,6 +142,7 @@ impl QuestService {
             id_source,
             session: session_rx,
             pump: pump.clone(),
+            slice_writer: OnceLock::new(),
         });
         let subscriptions = actor::subscribe_handlers(bus, &pump);
         runtime.spawn(actor::run(
@@ -147,6 +173,24 @@ impl QuestService {
     /// the truthiness gates downstream treat it as no session).
     pub(super) fn current_session(&self) -> Option<String> {
         self.session.borrow().clone()
+    }
+
+    /// Wire the segment-layer sink. Composition calls this once, after
+    /// the tracker exists; a second call is ignored.
+    pub fn set_slice_writer(&self, writer: QuestSliceWriter) {
+        let _ = self.slice_writer.set(writer);
+    }
+
+    /// Report a quest slice, if anything is listening.
+    ///
+    /// Best-effort by design, and never on the caller's error path: a
+    /// segment write that cannot land must not fail the quest action
+    /// that prompted it. The quest's own state is the durable record;
+    /// the slice is the session's view of it.
+    pub(super) async fn report_slice(&self, slice: QuestSlice) {
+        if let Some(writer) = self.slice_writer.get() {
+            writer(slice).await;
+        }
     }
 
     /// The chat-log watcher's reward-filter seam: a synchronous closure

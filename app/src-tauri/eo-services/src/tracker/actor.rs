@@ -62,6 +62,18 @@ pub(super) enum TrackerMsg {
         maturity: String,
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
+    /// A quest became active: open its slice on the running session.
+    /// Stacking, because several quests run at once.
+    OpenQuestSlice {
+        quest_id: i64,
+        name: String,
+        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+    },
+    /// A quest ended: close its slice, leaving any sibling quest's open.
+    CloseQuestSlice {
+        quest_id: i64,
+        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+    },
     ReleaseMob(oneshot::Sender<Option<String>>),
     PrimeDemo {
         session: TrackingSession,
@@ -191,6 +203,16 @@ impl TrackerActor {
             }
             TrackerMsg::SetSkillBoost(percent, reply) => {
                 let _ = reply.send(self.set_skill_boost(percent).await);
+            }
+            TrackerMsg::OpenQuestSlice {
+                quest_id,
+                name,
+                reply,
+            } => {
+                let _ = reply.send(self.open_quest_slice(quest_id, name).await);
+            }
+            TrackerMsg::CloseQuestSlice { quest_id, reply } => {
+                let _ = reply.send(self.close_quest_slice(quest_id).await);
             }
             TrackerMsg::SetDeclaredMob {
                 name,

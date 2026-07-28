@@ -226,6 +226,29 @@ impl HuntTracker {
             .await
     }
 
+    /// Record that a quest became active: open its slice on the running
+    /// session. Forward-looking, like every segment write; events
+    /// already recorded keep the context they were stamped with.
+    pub async fn open_quest_slice(
+        &self,
+        quest_id: i64,
+        name: &str,
+    ) -> Result<(), TrackerCommandError> {
+        let name = name.to_string();
+        self.call(|reply| TrackerMsg::OpenQuestSlice {
+            quest_id,
+            name,
+            reply,
+        })
+        .await
+    }
+
+    /// Record that a quest ended: close its slice, leaving siblings open.
+    pub async fn close_quest_slice(&self, quest_id: i64) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::CloseQuestSlice { quest_id, reply })
+            .await
+    }
+
     /// Immediately set the declared mob for kill stamping.
     pub async fn set_declared_mob(
         &self,

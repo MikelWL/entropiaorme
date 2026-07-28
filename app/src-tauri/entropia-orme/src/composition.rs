@@ -83,7 +83,7 @@ use eo_services::keystroke_source::{HookKeystrokeSource, KeystrokeSource, Shared
 use eo_services::ocr_engine::load_bgr_png;
 pub use eo_services::ocr_engine::OcrEngine;
 use eo_services::paths::{resolve_data_dir, DB_FILE_NAME};
-use eo_services::quests::QuestService;
+use eo_services::quests::{QuestService, QuestSlice};
 use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
 use eo_services::scan_completion::{complete_skill_scan, hydrate_skill_scan_state};
 use eo_services::scan_presets::ScanPresets;
@@ -1233,6 +1233,33 @@ fn compose_producers(
             build_providers(db, config_reader, &config, runtime.clone()),
         ),
     )?;
+
+    // Wire the quest service's segment sink now that the tracker owning
+    // the segment state exists (the quest service is built first, so this
+    // cannot be a constructor argument). A quest's start and completion
+    // become a slice of the running session, which is what lets a
+    // quest-shaped stretch be measured apart from the session around it.
+    //
+    // Deliberately a direct call rather than a bus topic: the corpus
+    // fingerprints capture the published event stream, and the banked
+    // port-equivalence captures must stay byte-identical.
+    {
+        let tracker_sink = tracker.clone();
+        quests.set_slice_writer(Arc::new(move |slice| {
+            let tracker = tracker_sink.clone();
+            Box::pin(async move {
+                // Errors are swallowed on purpose: with no session
+                // running there is nothing to slice, and a quest that
+                // starts outside a session is not a slice of one.
+                let _ = match slice {
+                    QuestSlice::Opened { quest_id, name } => {
+                        tracker.open_quest_slice(quest_id, &name).await
+                    }
+                    QuestSlice::Closed { quest_id } => tracker.close_quest_slice(quest_id).await,
+                };
+            })
+        }));
+    }
 
     // Start the tail thread last, after every subscriber is registered,
     // so no published tick can land before the trackers can see it.

@@ -9,7 +9,7 @@ use crate::ped::Ped;
 use crate::time::to_iso_utc;
 
 use super::payload::json_truthy;
-use super::{QuestError, QuestService};
+use super::{QuestError, QuestService, QuestSlice};
 
 /// The overlay-event vocabulary the quest flows record: a started
 /// quest, a completed liquid reward, a completed skill (PES) reward.
@@ -46,7 +46,21 @@ impl QuestService {
             })
             .await?;
         if affected > 0 {
-            self.get_quest(quest_id).await
+            let quest = self.get_quest(quest_id).await?;
+            // Hooked on the lifecycle primitive rather than the mission
+            // detector, so the manual start and the auto-start from a
+            // MISSION_RECEIVED tick both open the slice; only a start
+            // that actually moved the quest reports one.
+            if let Some(quest) = quest.as_ref() {
+                let name = quest
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                self.report_slice(QuestSlice::Opened { quest_id, name })
+                    .await;
+            }
+            Ok(quest)
         } else {
             Ok(None)
         }
@@ -71,6 +85,10 @@ impl QuestService {
                 Ok(())
             })
             .await?;
+        // Closed before the reward is recorded, so the slice bounds the
+        // quest's own stretch and not the bookkeeping that follows it.
+        // Only this quest's slice closes; a sibling daily keeps running.
+        self.report_slice(QuestSlice::Closed { quest_id }).await;
 
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
         if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
