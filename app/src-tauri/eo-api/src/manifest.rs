@@ -52,9 +52,9 @@ use crate::scan::{
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
-    StopResult, TrackingSnapshot,
+    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SegmentStateResult,
+    SessionConfigResult, SessionDetail, SessionPage, SessionQuestLinkSuggestion,
+    SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -909,6 +909,27 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(SessionConfigResult))),
+        },
+        CommandSpec {
+            name: "tracking_segment_open",
+            args: vec![ArgSpec {
+                name: "segment_name",
+                schema: schema(schema_for!(Option<String>)),
+            }],
+            returns: Some(schema(schema_for!(SegmentStateResult))),
+        },
+        CommandSpec {
+            name: "tracking_segment_close",
+            args: vec![],
+            returns: Some(schema(schema_for!(SegmentStateResult))),
+        },
+        CommandSpec {
+            name: "tracking_segment_rename",
+            args: vec![ArgSpec {
+                name: "segment_name",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(SegmentStateResult))),
         },
         CommandSpec {
             name: "tracking_rename_session",

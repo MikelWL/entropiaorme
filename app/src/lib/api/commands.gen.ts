@@ -2025,6 +2025,14 @@ export interface ScanStatus {
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable' | 'tool' | 'implant';
 
 /**
+ * The segment acknowledgement: the segment name now in force on the
+ * running session (null: no segment open).
+ */
+export interface SegmentStateResult {
+	segmentName: string | null;
+}
+
+/**
  * The session-config acknowledgement: the facet values now in force
  * (null: not declared).
  */
@@ -2292,6 +2300,8 @@ export interface TrackingSnapshot {
 	sessionName?: string | null;
 	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
 	skillBoostPercent?: number | null;
+	/** The open segment's name. Active-only by nature: a segment exists exactly while its session runs, so the idle branch never carries the key and an active session without a segment drops it too. */
+	segmentName?: string | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
 	/** What the held tool implies the next action is recorded as. */
@@ -2847,6 +2857,18 @@ export async function trackingManualMobLock(species: string, maturity: string | 
 
 export async function trackingSessionConfig(sessionName: string | null, skillBoostPercent: number | null): Promise<SessionConfigResult> {
 	return invokeCommand('tracking_session_config', { session_name: sessionName, skill_boost_percent: skillBoostPercent });
+}
+
+export async function trackingSegmentOpen(segmentName: string | null): Promise<SegmentStateResult> {
+	return invokeCommand('tracking_segment_open', { segment_name: segmentName });
+}
+
+export async function trackingSegmentClose(): Promise<SegmentStateResult> {
+	return invokeCommand('tracking_segment_close', {});
+}
+
+export async function trackingSegmentRename(segmentName: string): Promise<SegmentStateResult> {
+	return invokeCommand('tracking_segment_rename', { segment_name: segmentName });
 }
 
 export async function trackingRenameSession(sessionId: string, sessionName: string | null): Promise<SessionRenameResult> {

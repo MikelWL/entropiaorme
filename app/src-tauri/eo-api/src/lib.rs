@@ -16,6 +16,11 @@
 //! the in-process HTTP router the migration era ran on, since deleted
 //! (ADR-0019).
 
+// The tracking snapshot's `json!` literal expands one level per field
+// and outgrew the default limit at 43; the literal stays declarative
+// rather than assembling the map imperatively around a macro artefact.
+#![recursion_limit = "256"]
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

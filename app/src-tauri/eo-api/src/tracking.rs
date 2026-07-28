@@ -35,7 +35,7 @@ use eo_services::db::Db;
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
 use eo_services::quests::QuestError;
 use eo_services::time::{local_isoformat, naive_to_epoch};
-use eo_services::tracker::HuntTracker;
+use eo_services::tracker::{HuntTracker, TrackerCommandError};
 use eo_services::trifecta_service::{validate_trifecta, TrifectaPreset};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 42] = [
+const SNAPSHOT_FIELDS: [&str; 43] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -59,6 +59,7 @@ const SNAPSHOT_FIELDS: [&str; 42] = [
     "endOfSessionArmourReminderEnabled",
     "sessionName",
     "skillBoostPercent",
+    "segmentName",
     "currentMob",
     "currentTool",
     "currentActivity",
@@ -98,6 +99,13 @@ const SNAPSHOT_FIELDS: [&str; 42] = [
 
 /// The repair-scan response-model field order (`exclude_unset`).
 const REPAIR_FIELDS: [&str; 4] = ["cost_ped", "raw_text", "confidence", "error"];
+
+/// A tracker-command precondition surfaced at the facade: both
+/// variants are state conflicts ("No active session" / "No open
+/// segment"), so they map to 409 with the error's own message.
+fn tracker_conflict(error: TrackerCommandError) -> ApiError {
+    ApiError::conflict(error.to_string())
+}
 
 fn edit_error(context: &'static str) -> impl Fn(EditError) -> ApiError {
     move |error| match error {
@@ -441,6 +449,11 @@ pub struct TrackingSnapshot {
     /// sourcing as the session name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_boost_percent: Option<i64>,
+    /// The open segment's name. Active-only by nature: a segment exists
+    /// exactly while its session runs, so the idle branch never carries
+    /// the key and an active session without a segment drops it too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_mob: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -582,6 +595,14 @@ pub struct ManualMobLockResult {
 pub struct SessionConfigResult {
     pub session_name: Nullable<String>,
     pub skill_boost_percent: Nullable<i64>,
+}
+
+/// The segment acknowledgement: the segment name now in force on the
+/// running session (null: no segment open).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentStateResult {
+    pub segment_name: Nullable<String>,
 }
 
 /// The post-hoc session-rename result.
@@ -1000,6 +1021,58 @@ impl Api {
         Ok(SessionConfigResult {
             session_name: name.into(),
             skill_boost_percent: boost.into(),
+        })
+    }
+
+    /// Open a player-drawn segment on the running session, closing any
+    /// standing one (segments are sequential, not stacking). A null or
+    /// blank name is auto-numbered "Segment N"; the acknowledgement
+    /// echoes the name now in force. 409 when no session is active.
+    pub async fn tracking_segment_open(
+        &self,
+        segment_name: Option<String>,
+    ) -> Result<SegmentStateResult, ApiError> {
+        let applied = self
+            .tracker
+            .open_segment(segment_name)
+            .await
+            .map_err(tracker_conflict)?;
+        Ok(SegmentStateResult {
+            segment_name: applied.into(),
+        })
+    }
+
+    /// Close the open segment; the session keeps running unsegmented.
+    /// Closing with no segment open acknowledges as a no-op, so a stale
+    /// control cannot fail the user. 409 when no session is active.
+    pub async fn tracking_segment_close(&self) -> Result<SegmentStateResult, ApiError> {
+        self.tracker
+            .close_segment()
+            .await
+            .map_err(tracker_conflict)?;
+        Ok(SegmentStateResult {
+            segment_name: None.into(),
+        })
+    }
+
+    /// Rename the OPEN segment live: a segment's grain is finer than
+    /// the session, so its label may move while the session runs. 400
+    /// for a blank name; 409 when no session is active or no segment is
+    /// open (the close raced the edit).
+    pub async fn tracking_segment_rename(
+        &self,
+        segment_name: String,
+    ) -> Result<SegmentStateResult, ApiError> {
+        let name = segment_name.trim().to_string();
+        if name.is_empty() {
+            return Err(ApiError::bad_request("Segment name must not be empty"));
+        }
+        self.tracker
+            .rename_segment(&name)
+            .await
+            .map_err(tracker_conflict)?;
+        Ok(SegmentStateResult {
+            segment_name: Some(name).into(),
         })
     }
 
@@ -1427,6 +1500,7 @@ pub(crate) async fn build_snapshot_value(
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "skillBoostPercent": boost_value(active.skill_boost_percent),
+                "segmentName": name_value(active.segment_name.as_deref()),
                 "currentMob": active.current_mob.clone(),
                 "recentEvents": recent_events,
                 "warnings": warnings,

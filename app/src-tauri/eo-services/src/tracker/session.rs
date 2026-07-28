@@ -154,6 +154,7 @@ pub(super) struct SessionAggregate {
     pub(super) mob_name: Option<String>,
     pub(super) session_name: Option<String>,
     pub(super) skill_boost_percent: Option<i64>,
+    pub(super) segment_name: Option<String>,
     pub(super) harvest_swings: i64,
     pub(super) harvest_successes: i64,
     pub(super) harvest_loot: Ped,
@@ -317,6 +318,13 @@ impl TrackerActor {
                 .intervals
                 .modifier_magnitude()
                 .map(|magnitude| magnitude as i64),
+            // The interval state is the only source: a segment exists
+            // exactly while its session runs, so there is no idle or
+            // row-mirror fallback to disagree with it.
+            segment_name: active
+                .intervals
+                .open_of_kind(IntervalKind::Segment)
+                .and_then(|interval| interval.label.clone()),
             harvest_swings: harvests.len() as i64,
             harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
             harvest_loot,
@@ -502,10 +510,13 @@ impl TrackerActor {
     /// Contained like the other interval writes: a write that cannot
     /// land leaves the record without the segment, and the snapshot
     /// (which reads the interval state) tells the truth about it.
+    ///
+    /// Returns the name now in force: the applied label on success,
+    /// None when the contained write failed and no segment opened.
     pub(super) async fn open_segment(
         &mut self,
         label: Option<String>,
-    ) -> Result<(), TrackerCommandError> {
+    ) -> Result<Option<String>, TrackerCommandError> {
         let now = instant_to_epoch(resolve_local(self.clock.now()));
         let db = self.db.clone();
         let Some(active) = self.session.active_mut() else {
@@ -525,13 +536,14 @@ impl TrackerActor {
                 &db,
                 &session_id,
                 now,
-                IntervalSpec::new(IntervalKind::Segment).label(Some(label)),
+                IntervalSpec::new(IntervalKind::Segment).label(Some(label.clone())),
             )
             .await;
-        if outcome.is_ok() {
-            active.segments_opened = candidate;
+        if outcome.is_err() {
+            return Ok(None);
         }
-        Ok(())
+        active.segments_opened = candidate;
+        Ok(Some(label))
     }
 
     /// Close the open segment, leaving the session running unsegmented
@@ -1018,6 +1030,7 @@ impl HuntTracker {
             current_mob: aggregated.mob_name.clone(),
             session_name: aggregated.session_name.clone(),
             skill_boost_percent: aggregated.skill_boost_percent,
+            segment_name: aggregated.segment_name.clone(),
             harvest_swings: aggregated.harvest_swings,
             harvest_successes: aggregated.harvest_successes,
             // + 0.0 normalises the sign: an empty f64 sum is -0.0 (the

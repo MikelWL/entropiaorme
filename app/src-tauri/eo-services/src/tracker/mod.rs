@@ -253,8 +253,13 @@ impl HuntTracker {
 
     /// Open a segment (the player-drawn slice of the session), closing
     /// any standing one: segments are sequential, not stacking. A None
-    /// or blank label auto-numbers the segment "Segment N".
-    pub async fn open_segment(&self, label: Option<String>) -> Result<(), TrackerCommandError> {
+    /// or blank label auto-numbers the segment "Segment N". Returns the
+    /// name now in force (None when the contained interval write failed
+    /// and no segment opened).
+    pub async fn open_segment(
+        &self,
+        label: Option<String>,
+    ) -> Result<Option<String>, TrackerCommandError> {
         self.call(|reply| TrackerMsg::OpenSegment { label, reply })
             .await
     }

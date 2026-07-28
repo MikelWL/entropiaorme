@@ -163,6 +163,9 @@ pub struct ActiveSessionView {
     pub session_name: Option<String>,
     /// The skill-boost facet the session runs under (percent), when set.
     pub skill_boost_percent: Option<i64>,
+    /// The open segment's name; None whenever no segment is open (a
+    /// segment exists only while its session runs).
+    pub segment_name: Option<String>,
     /// Harvesting swings this session (successes + explicit fails).
     pub harvest_swings: i64,
     pub harvest_successes: i64,

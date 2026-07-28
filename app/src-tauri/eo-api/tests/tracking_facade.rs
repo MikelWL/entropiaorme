@@ -621,3 +621,94 @@ async fn the_active_snapshot_carries_the_declared_boost() {
     let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
     assert!(value.get("skillBoostPercent").is_none());
 }
+
+/// The segment lifecycle at the facade: open auto-numbers when no name
+/// is given, rename moves the live label, a second open replaces the
+/// standing segment, and close drops the key from the projection. The
+/// snapshot's `segmentName` is pinned here for the same reason the
+/// facet keys are pinned above: it is a newly emitted field nothing
+/// else asserts, and an unpinned field is cheapest to get wrong at
+/// first generation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_segment_commands_move_the_active_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+    api.tracking_start().await.unwrap();
+
+    // No segment open: the key is absent, not null.
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert!(value.get("segmentName").is_none());
+
+    // A nameless open is auto-numbered, and the acknowledgement echoes
+    // the applied name so the control can render without a re-read.
+    let opened = api.tracking_segment_open(None).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&opened).unwrap()["segmentName"],
+        "Segment 1"
+    );
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["segmentName"], "Segment 1");
+
+    // A live rename moves the label under the same open segment.
+    let renamed = api
+        .tracking_segment_rename("Boss: Kreltin".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&renamed).unwrap()["segmentName"],
+        "Boss: Kreltin"
+    );
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["segmentName"], "Boss: Kreltin");
+
+    // Opening again replaces the standing segment; the auto-number
+    // counts opens, so the second nameless open is "Segment 2" even
+    // though the first was renamed.
+    let replaced = api.tracking_segment_open(None).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&replaced).unwrap()["segmentName"],
+        "Segment 2"
+    );
+
+    // Close: the key leaves the projection, and a rename now has
+    // nothing to move (409, so a raced edit surfaces).
+    api.tracking_segment_close().await.unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert!(value.get("segmentName").is_none());
+    let refused = api
+        .tracking_segment_rename("Too late".to_string())
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&refused).unwrap()["kind"], "conflict");
+}
+
+/// The segment commands' refusals: everything needs a running session,
+/// and a blank rename is a request error rather than a silent no-op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_segment_commands_refuse_an_idle_tracker_and_blank_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(dir.path(), false, None).await;
+
+    let open = api.tracking_segment_open(None).await.unwrap_err();
+    assert_eq!(serde_json::to_value(&open).unwrap()["kind"], "conflict");
+    let close = api.tracking_segment_close().await.unwrap_err();
+    assert_eq!(serde_json::to_value(&close).unwrap()["kind"], "conflict");
+    let rename = api
+        .tracking_segment_rename("Boss 1".to_string())
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&rename).unwrap()["kind"], "conflict");
+
+    // Blank is refused before any tracker call: an open segment always
+    // carries a name, and a rename must not erase that invariant.
+    let blank = api.tracking_segment_rename("   ".to_string()).await;
+    assert_eq!(
+        serde_json::to_value(blank.unwrap_err()).unwrap()["kind"],
+        "badRequest"
+    );
+}

@@ -76,10 +76,11 @@ pub(super) enum TrackerMsg {
     },
     /// The user drew a segment boundary: open a segment, closing any
     /// standing one (segments are sequential, not stacking). A None or
-    /// blank label auto-numbers it "Segment N".
+    /// blank label auto-numbers it "Segment N"; the reply carries the
+    /// name now in force.
     OpenSegment {
         label: Option<String>,
-        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+        reply: oneshot::Sender<Result<Option<String>, TrackerCommandError>>,
     },
     /// Close the open segment (a no-op when none is open).
     CloseSegment {
