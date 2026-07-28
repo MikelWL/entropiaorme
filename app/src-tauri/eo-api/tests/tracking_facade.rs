@@ -538,3 +538,86 @@ async fn the_quest_link_decline_reply_narrows_to_the_two_set_fields() {
         "{\"sessionId\":\"ended\",\"status\":\"declined\"}"
     );
 }
+
+/// The facet keys must actually reach the wire, with the values that
+/// were declared.
+///
+/// Pinned because nothing else pins it: every other snapshot assertion
+/// leaves both facets undeclared, so the exclude-none projection drops
+/// the keys and a serialiser that emitted null unconditionally would
+/// pass the whole suite. These are newly emitted fields; first
+/// generation is exactly when an unpinned field is cheapest to get
+/// wrong and hardest to notice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_idle_snapshot_carries_the_declared_facets() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(dir.path(), false, None).await;
+
+    api.tracking_session_config(Some("ARIS Dailies".into()), Some(50))
+        .await
+        .unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["sessionName"], "ARIS Dailies");
+    assert_eq!(value["skillBoostPercent"], 50);
+
+    // The declared zero survives the wire as 0, NOT as null and NOT
+    // dropped: null is reserved for "nothing declared", and collapsing
+    // the two would erase the unboosted baseline the whole
+    // boost-measurement question rests on.
+    api.tracking_session_config(Some("ARIS Dailies".into()), Some(0))
+        .await
+        .unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["skillBoostPercent"], 0);
+
+    // Withdrawn: the key drops out of the projection entirely.
+    api.tracking_session_config(None, None).await.unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert!(value.get("skillBoostPercent").is_none());
+    assert!(value.get("sessionName").is_none());
+}
+
+/// The ACTIVE branch's boost, which has a different source from the
+/// idle branch's and so could regress without the idle pin noticing.
+///
+/// It is read from the running session's segment state, NOT from the
+/// session row, because the row's column cannot hold a zero (migration
+/// 0018 constrains it to `> 0 OR NULL`). A serialiser that went back to
+/// the row would silently lose the declared baseline for every running
+/// session; that is the regression this pins.
+///
+/// Only the boost is asserted here. The session name is seeded onto the
+/// session from config at start, and this harness composes its tracker
+/// with the inert config providers, so an active session in it never
+/// carries one. The name's projection is the same `name_value` helper
+/// the idle branch pins above; the boost's is not shared, which is why
+/// it needs its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_active_snapshot_carries_the_declared_boost() {
+    let dir = tempfile::tempdir().unwrap();
+    // Hotbar attribution with one slot bound, so the start satisfies
+    // that gate rather than the trifecta loadout one.
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+    api.tracking_start().await.unwrap();
+
+    api.tracking_session_config(None, Some(50)).await.unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["status"], "active");
+    assert_eq!(value["skillBoostPercent"], 50);
+
+    // Re-declared mid-session to the unboosted baseline: the running
+    // session must report 0, not null and not the opening 50.
+    api.tracking_session_config(None, Some(0)).await.unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["skillBoostPercent"], 0);
+
+    // Withdrawn mid-session: the key leaves the projection.
+    api.tracking_session_config(None, None).await.unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert!(value.get("skillBoostPercent").is_none());
+}
