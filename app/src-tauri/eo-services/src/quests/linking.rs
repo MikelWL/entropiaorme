@@ -23,8 +23,7 @@ use serde_json::{json, Value};
 use super::{QuestError, QuestService};
 
 /// A curated analytics link's kind: the closed vocabulary the link
-/// table stores, parsed at the database boundary and rendered back at
-/// the bind.
+/// table stores, parsed at the database boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LinkType {
     Quest,

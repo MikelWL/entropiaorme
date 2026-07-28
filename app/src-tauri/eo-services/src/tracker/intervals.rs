@@ -24,9 +24,9 @@ pub enum IntervalKind {
     /// A skill-affecting modifier in force (a pill, a ring). Carries a
     /// magnitude, where zero means "declared, nothing in force".
     Modifier,
-    /// Reserved for player-drawn slices of the session (one instance
-    /// run, one rotation); nothing writes it yet, and the engine needs
-    /// no change when something does.
+    /// A player-drawn slice of the session (one instance run, one
+    /// rotation), opened and sealed from the overlay; sequential, so
+    /// opening one closes the standing one.
     Segment,
     /// The stretch a declared quest or playlist spans.
     Quest,
