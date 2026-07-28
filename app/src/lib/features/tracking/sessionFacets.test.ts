@@ -203,7 +203,6 @@ describe('boost facet', () => {
 	});
 });
 
-
 describe('segment facet', () => {
 	it('opens with the typed draft as the name', async () => {
 		const { facets, facetState, openSegment } = harness();

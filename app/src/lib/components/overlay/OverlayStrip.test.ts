@@ -504,7 +504,6 @@ describe('post-session bar', () => {
 		});
 		expect(screen.getByText('-5.50')).toBeTruthy();
 	});
-
 });
 
 describe('segment control', () => {
