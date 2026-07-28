@@ -1817,6 +1817,12 @@ fn a_boost_redeclaration_lands_on_the_session_row() {
     // Withdrawn mid-session: the row must stop claiming it.
     rig.wait(tracker.set_skill_boost(None)).unwrap();
     assert_eq!(row_boost(&rig, session.id.clone()), None);
+
+    // The stop re-lands the in-memory facet like the name, so a
+    // contained mid-session write failure cannot strand the record.
+    rig.wait(tracker.set_skill_boost(Some(25))).unwrap();
+    rig.wait(tracker.stop_session()).unwrap();
+    assert_eq!(row_boost(&rig, session.id.clone()), Some(25));
 }
 
 #[test]

@@ -131,9 +131,9 @@
 	const showManualInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	// The name facet edits live: it renames the whole session's bucket, so
-	// a late set loses nothing. The boost is fixed once a session runs
-	// (the backend refuses a change), so it renders read-only there.
+	// The name names the whole session, so once one runs the backend
+	// refuses a change (correction is the post-hoc rename on the record);
+	// the boost stays editable throughout.
 	const showNameInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.sessionName
 	);

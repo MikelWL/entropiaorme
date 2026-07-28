@@ -60,8 +60,8 @@ pub(super) struct ActiveSession {
     pub(super) heal_warning_emitted: bool,
     pub(super) harvest_warning_emitted: bool,
     pub(super) warnings: Vec<String>,
-    /// The declared mob kills stamp from (None: no declaration, kills
-    /// stamp "Unknown" with no stamp source).
+    /// The declared mob that kills take their stamp from (None: no
+    /// declaration; kills stamp "Unknown" with no stamp source).
     pub(super) declared_mob: Option<DeclaredMob>,
     /// The session-scoped facets snapshotted at session start.
     pub(super) facets: SessionFacets,
@@ -511,7 +511,7 @@ impl TrackerActor {
     /// summary, and the stop events; then the in-memory clear
     /// (dropping the whole `ActiveSession`).
     pub(super) async fn stop_session(&mut self) -> Result<Option<TrackingSession>, DbError> {
-        let (session, session_id, end_time, heal_cost, dangling_cost, session_name) = {
+        let (session, session_id, end_time, heal_cost, dangling_cost, session_name, session_boost) = {
             let Some(active) = self.session.active_mut() else {
                 return Ok(None);
             };
@@ -523,6 +523,7 @@ impl TrackerActor {
             let end_time = snapshot.end_time.expect("just stamped");
             let heal_cost = active.heal_cost;
             let session_name = active.facets.name.clone();
+            let session_boost = active.facets.skill_boost_percent;
             (
                 snapshot,
                 session_id,
@@ -530,6 +531,7 @@ impl TrackerActor {
                 heal_cost,
                 dangling_cost,
                 session_name,
+                session_boost,
             )
         };
         // One transaction over the whole stop sequence, matching the
@@ -547,13 +549,21 @@ impl TrackerActor {
         self.db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
-                // `session_name` re-lands the in-memory facet at stop, so a
-                // contained failure of a mid-session name write cannot
-                // strand the summary on a stale row.
+                // Both facets re-land from memory at stop, so a contained
+                // failure of a mid-session write cannot strand the summary
+                // on a stale row.
                 tx.execute(
                     "UPDATE tracking_sessions SET ended_at = ?, is_active = 0, \
-                     heal_cost = ?, dangling_cost = ?, session_name = ? WHERE id = ?",
-                    rusqlite::params![end_epoch, heal_value, dangling_value, session_name, sid],
+                     heal_cost = ?, dangling_cost = ?, session_name = ?, \
+                     skill_boost_percent = ? WHERE id = ?",
+                    rusqlite::params![
+                        end_epoch,
+                        heal_value,
+                        dangling_value,
+                        session_name,
+                        session_boost,
+                        sid
+                    ],
                 )?;
                 // Auto-generate ledger gains derived from persisted loot rows.
                 Self::create_enhancer_rebate_ledger_entry(&tx, &sid, end_time)?;

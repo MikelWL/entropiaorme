@@ -6,8 +6,10 @@
  * The facets are independent by construction, so each control writes only
  * its own value and carries the others through unchanged. Two rules the
  * backend enforces and this model respects rather than duplicates: the
- * boost is fixed while a session runs (a change is refused), and a quest
- * can only be declared against an active session.
+ * name is fixed while a session runs (a change is refused; correction is
+ * a post-hoc rename on the session record) while the boost stays
+ * editable throughout, and a quest can only be declared against an
+ * active session.
  *
  * The satellite-window plumbing (anchors, popup lifecycle) stays with the
  * overlay route; this model owns the state, the lookups, and the writes,
