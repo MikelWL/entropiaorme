@@ -9,6 +9,7 @@
 	import Button from '$lib/components/Button.svelte';
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
+	import { NO_DATA } from '$lib/utils/format';
 
 	type LastSessionStats = { cost: number; returns: number; pes: number; net: number };
 
@@ -271,7 +272,7 @@
 							</button>
 						{/if}
 					{:else}
-						<div class="text-sm font-medium text-white/20 px-1">—</div>
+						<div class="text-sm font-medium text-white/20 px-1">{NO_DATA}</div>
 					{/if}
 				</div>
 			</div>
@@ -286,7 +287,7 @@
 					<input
 						class="w-9 bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 tabular-nums transition-colors"
 						bind:value={boostDraft}
-						placeholder="—"
+						placeholder={NO_DATA}
 						inputmode="numeric"
 						aria-label="Skill boost percent"
 						disabled={savingBoost}
@@ -358,7 +359,7 @@
 					{:else if data.currentMob}
 						<div class="text-sm font-medium text-white/90 truncate px-1 w-full">{data.currentMob}</div>
 					{:else}
-						<div class="text-sm font-medium text-white/20 px-1">—</div>
+						<div class="text-sm font-medium text-white/20 px-1">{NO_DATA}</div>
 					{/if}
 				</div>
 				{#if showManualInput && overlayMenuLaunchError && !mobMenuOpen}
@@ -424,7 +425,7 @@
 			{:else}
 				<div class="flex flex-col min-w-0">
 					<div class="text-xs {data.currentTool ? 'text-white/70' : 'text-white/20'} truncate max-w-[120px]">
-						{data.currentTool || '—'}
+						{data.currentTool || NO_DATA}
 					</div>
 					{#if activityLabel}
 						<!-- Derived, never declared: the held tool implies which
