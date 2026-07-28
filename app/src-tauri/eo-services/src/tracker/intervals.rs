@@ -214,8 +214,9 @@ impl SegmentState {
         session_id: &str,
         now: f64,
     ) -> Result<(), DbError> {
+        let context_id = mint_context(db, session_id, now, &[]).await?;
         self.open.clear();
-        self.context_id = Some(mint_context(db, session_id, now, &[]).await?);
+        self.context_id = Some(context_id);
         Ok(())
     }
 
@@ -224,6 +225,12 @@ impl SegmentState {
     /// `exclusive` kinds close any already-open interval of the same
     /// kind first, in the same motion: declaring a new modifier replaces
     /// the standing one rather than stacking a second silently.
+    ///
+    /// The whole transition is one transaction (the closes, the insert,
+    /// the fresh context and its membership), and memory adopts the new
+    /// state only after it commits: a failure leaves the database and
+    /// the live set exactly as they were, so events keep stamping a
+    /// context that still describes them.
     pub async fn open_interval(
         &mut self,
         db: &Db,
@@ -238,23 +245,59 @@ impl SegmentState {
             magnitude,
             exclusive,
         } = spec;
-        if exclusive {
-            self.close_kind_rows(db, now, kind).await?;
-        }
+        let closing: Vec<i64> = if exclusive {
+            self.open
+                .iter()
+                .filter(|interval| interval.kind == kind)
+                .map(|interval| interval.id)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let survivors: Vec<i64> = self
+            .open
+            .iter()
+            .filter(|interval| !closing.contains(&interval.id))
+            .map(|interval| interval.id)
+            .collect();
         let session = session_id.to_string();
         let insert_label = label.clone();
         let kind_str = kind.as_str();
-        let interval_id = db
+        let closing_tx = closing.clone();
+        let (interval_id, context_id) = db
             .with_writer(move |conn| {
-                conn.execute(
+                let tx = conn.transaction()?;
+                for id in &closing_tx {
+                    tx.execute(
+                        "UPDATE session_intervals SET ended_at = ? \
+                         WHERE id = ? AND ended_at IS NULL",
+                        rusqlite::params![now, id],
+                    )?;
+                }
+                tx.execute(
                     "INSERT INTO session_intervals \
                      (session_id, kind, label, ref_id, magnitude, started_at) \
                      VALUES (?, ?, ?, ?, ?, ?)",
                     rusqlite::params![session, kind_str, insert_label, ref_id, magnitude, now],
                 )?;
-                Ok(conn.last_insert_rowid())
+                let interval_id = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO session_contexts (session_id, created_at) VALUES (?, ?)",
+                    rusqlite::params![session, now],
+                )?;
+                let context_id = tx.last_insert_rowid();
+                for member in survivors.iter().chain(std::iter::once(&interval_id)) {
+                    tx.execute(
+                        "INSERT INTO session_context_intervals (context_id, interval_id) \
+                         VALUES (?, ?)",
+                        rusqlite::params![context_id, member],
+                    )?;
+                }
+                tx.commit()?;
+                Ok((interval_id, context_id))
             })
             .await?;
+        self.open.retain(|interval| !closing.contains(&interval.id));
         self.open.push(OpenInterval {
             id: interval_id,
             kind,
@@ -262,7 +305,7 @@ impl SegmentState {
             ref_id,
             magnitude,
         });
-        self.context_id = Some(mint_context(db, session_id, now, &self.open).await?);
+        self.context_id = Some(context_id);
         Ok(interval_id)
     }
 
@@ -275,11 +318,8 @@ impl SegmentState {
         now: f64,
         kind: IntervalKind,
     ) -> Result<Vec<OpenInterval>, DbError> {
-        let closed = self.close_kind_rows(db, now, kind).await?;
-        if !closed.is_empty() {
-            self.context_id = Some(mint_context(db, session_id, now, &self.open).await?);
-        }
-        Ok(closed)
+        self.close_matching(db, session_id, now, |interval| interval.kind == kind)
+            .await
     }
 
     /// Close the open interval of a kind that points at `ref_id`, and
@@ -296,46 +336,84 @@ impl SegmentState {
         kind: IntervalKind,
         ref_id: i64,
     ) -> Result<Vec<OpenInterval>, DbError> {
-        let (closing, keeping): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open)
-            .into_iter()
-            .partition(|interval| interval.kind == kind && interval.ref_id == Some(ref_id));
-        self.open = keeping;
-        if closing.is_empty() {
-            return Ok(closing);
-        }
-        end_rows(db, now, closing.iter().map(|interval| interval.id)).await?;
-        self.context_id = Some(mint_context(db, session_id, now, &self.open).await?);
-        Ok(closing)
+        self.close_matching(db, session_id, now, |interval| {
+            interval.kind == kind && interval.ref_id == Some(ref_id)
+        })
+        .await
     }
 
-    /// Stamp the end time on a kind's open rows and drop them from the
-    /// open set, WITHOUT minting a context. Private because a caller
-    /// that stops here would leave events stamping a context naming an
-    /// interval that has already ended.
-    async fn close_kind_rows(
+    /// The shared close transition: end the matching rows and mint the
+    /// narrower context in one transaction, adopting both in memory only
+    /// after the commit. A failure therefore leaves the standing set and
+    /// its context untouched rather than half-closed.
+    async fn close_matching(
         &mut self,
         db: &Db,
+        session_id: &str,
         now: f64,
-        kind: IntervalKind,
+        matches: impl Fn(&OpenInterval) -> bool,
     ) -> Result<Vec<OpenInterval>, DbError> {
-        let (closing, keeping): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open)
-            .into_iter()
-            .partition(|interval| interval.kind == kind);
-        self.open = keeping;
-        if closing.is_empty() {
-            return Ok(closing);
+        let closing_ids: Vec<i64> = self
+            .open
+            .iter()
+            .filter(|interval| matches(interval))
+            .map(|interval| interval.id)
+            .collect();
+        if closing_ids.is_empty() {
+            return Ok(Vec::new());
         }
-        end_rows(db, now, closing.iter().map(|interval| interval.id)).await?;
-        Ok(closing)
+        let keeping_ids: Vec<i64> = self
+            .open
+            .iter()
+            .filter(|interval| !closing_ids.contains(&interval.id))
+            .map(|interval| interval.id)
+            .collect();
+        let session = session_id.to_string();
+        let closing_tx = closing_ids.clone();
+        let context_id = db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                for id in &closing_tx {
+                    tx.execute(
+                        "UPDATE session_intervals SET ended_at = ? \
+                         WHERE id = ? AND ended_at IS NULL",
+                        rusqlite::params![now, id],
+                    )?;
+                }
+                tx.execute(
+                    "INSERT INTO session_contexts (session_id, created_at) VALUES (?, ?)",
+                    rusqlite::params![session, now],
+                )?;
+                let context_id = tx.last_insert_rowid();
+                for member in &keeping_ids {
+                    tx.execute(
+                        "INSERT INTO session_context_intervals (context_id, interval_id) \
+                         VALUES (?, ?)",
+                        rusqlite::params![context_id, member],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(context_id)
+            })
+            .await?;
+        let (closed, keeping): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open)
+            .into_iter()
+            .partition(|interval| closing_ids.contains(&interval.id));
+        self.open = keeping;
+        self.context_id = Some(context_id);
+        Ok(closed)
     }
 
     /// Close everything still open at the session's end, so no interval
-    /// outlives the session that owns it.
+    /// outlives the session that owns it. The rows end in one
+    /// transaction; the in-memory clear follows the commit (the whole
+    /// `ActiveSession` drops immediately afterwards anyway).
     pub async fn close_session(&mut self, db: &Db, now: f64) -> Result<(), DbError> {
         let ids: Vec<i64> = self.open.iter().map(|interval| interval.id).collect();
+        end_rows(db, now, ids).await?;
         self.open.clear();
         self.context_id = None;
-        end_rows(db, now, ids).await
+        Ok(())
     }
 }
 
