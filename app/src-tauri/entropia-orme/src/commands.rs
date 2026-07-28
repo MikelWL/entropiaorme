@@ -51,8 +51,8 @@ use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
     ReleaseResult, RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail,
-    SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult,
-    TrackingSnapshot,
+    SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
+    StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -845,6 +845,14 @@ pub async fn tracking_session_detail(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_session_intervals(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<SessionIntervals, ApiError> {
+    facade(&app)?.tracking_session_intervals(session_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_session_name_suggestions(
     app: tauri::AppHandle,
     q: String,
@@ -1500,6 +1508,7 @@ mod tests {
         "scan_spacebar_capture",
         "tracking_sessions",
         "tracking_session_detail",
+        "tracking_session_intervals",
         "tracking_session_name_suggestions",
         "tracking_manual_mob_suggestions",
         "tracking_snapshot",

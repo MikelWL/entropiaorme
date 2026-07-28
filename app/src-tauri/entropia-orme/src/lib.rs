@@ -406,6 +406,7 @@ pub fn run() {
             commands::scan_spacebar_capture,
             commands::tracking_sessions,
             commands::tracking_session_detail,
+            commands::tracking_session_intervals,
             commands::tracking_session_name_suggestions,
             commands::tracking_manual_mob_suggestions,
             commands::tracking_snapshot,

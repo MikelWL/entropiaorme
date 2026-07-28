@@ -695,3 +695,124 @@ async fn the_segment_commands_refuse_an_idle_tracker_and_blank_names() {
         "badRequest"
     );
 }
+
+/// The thin interval read over a live lifecycle: the boost declaration
+/// and a segment each record an interval with real bounds, and the stop
+/// seals whatever is still open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_intervals_read_demonstrates_the_live_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+    let started = api.tracking_start().await.unwrap();
+    let session_id = started.session_id.clone();
+
+    api.tracking_session_config(None, Some(50)).await.unwrap();
+    api.tracking_segment_open(None).await.unwrap();
+
+    let read = api
+        .tracking_session_intervals(session_id.clone())
+        .await
+        .unwrap();
+    assert_eq!(read.session_id, session_id);
+    let value = serde_json::to_value(&read).unwrap();
+    let rows = value["intervals"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["kind"], "modifier");
+    assert_eq!(rows[0]["magnitude"], 50.0);
+    assert_eq!(rows[0]["endedAt"], serde_json::Value::Null);
+    assert_eq!(rows[1]["kind"], "segment");
+    assert_eq!(rows[1]["label"], "Segment 1");
+    assert_eq!(rows[1]["endedAt"], serde_json::Value::Null);
+
+    api.tracking_stop().await.unwrap();
+    let read = api.tracking_session_intervals(session_id).await.unwrap();
+    assert!(
+        read.intervals
+            .iter()
+            .all(|row| serde_json::to_value(row.ended_at).unwrap() != serde_json::Value::Null),
+        "the stop seals every open interval"
+    );
+
+    let missing = api
+        .tracking_session_intervals("no-such-session".to_string())
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&missing).unwrap()["kind"], "notFound");
+}
+
+/// Attribution counts come from the stamped contexts, never from
+/// comparing timestamps: an event whose context names two intervals
+/// counts for both, and an event with no context (predating the
+/// interval model) counts for none, whatever its timestamp says.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_intervals_read_counts_by_context_membership() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active) \
+             VALUES ('sess-i', 1000.0, 2000.0, 0)",
+            [],
+        )?;
+        // Two intervals overlapping: a modifier and a segment.
+        conn.execute(
+            "INSERT INTO session_intervals (id, session_id, kind, label, magnitude, started_at, ended_at) \
+             VALUES (1, 'sess-i', 'modifier', NULL, 0.0, 1000.0, 2000.0), \
+                    (2, 'sess-i', 'segment', 'Boss 1', NULL, 1200.0, 1800.0)",
+            [],
+        )?;
+        // Context 10 names only the modifier; context 11 names both.
+        conn.execute(
+            "INSERT INTO session_contexts (id, session_id, created_at) \
+             VALUES (10, 'sess-i', 1000.0), (11, 'sess-i', 1200.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_context_intervals (context_id, interval_id) \
+             VALUES (10, 1), (11, 1), (11, 2)",
+            [],
+        )?;
+        // One kill inside the segment's context, one before it, and one
+        // with no context at all (a pre-model row). The timestamps are
+        // deliberately nonsense relative to the interval bounds: they
+        // must not matter.
+        conn.execute(
+            "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
+             damage_taken, critical_hits, cost_ped, loot_total_ped, context_id) \
+             VALUES ('k1', 'sess-i', 'Atrox', 1.0, 5, 10.0, 0.0, 0, 0.5, 1.0, 11), \
+                    ('k2', 'sess-i', 'Atrox', 9999.0, 5, 10.0, 0.0, 0, 0.5, 1.0, 10), \
+                    ('k3', 'sess-i', 'Atrox', 1500.0, 5, 10.0, 0.0, 0, 0.5, 1.0, NULL)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value, context_id) \
+             VALUES ('sess-i', 1.0, 'Rifle', 1.0, 0.1, 11)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let read = api
+        .tracking_session_intervals("sess-i".to_string())
+        .await
+        .unwrap();
+    assert_eq!(read.intervals.len(), 2);
+    let modifier = &read.intervals[0];
+    assert_eq!(
+        modifier.kills, 2,
+        "both stamped kills sit inside the modifier"
+    );
+    assert_eq!(modifier.skill_gains, 1);
+    let segment = &read.intervals[1];
+    assert_eq!(segment.kills, 1, "only the k1 context names the segment");
+    assert_eq!(segment.skill_gains, 1);
+    assert_eq!(segment.harvests, 0);
+}

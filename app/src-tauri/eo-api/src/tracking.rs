@@ -30,6 +30,8 @@
 //!   command answers a body, not a status + headers), and the body-taint /
 //!   int-parse 422s (typed args are pre-validated).
 
+use std::collections::HashMap;
+
 use eo_services::config_service::{active_trifecta_preset, load_config_readonly, AppConfig};
 use eo_services::db::Db;
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
@@ -349,6 +351,56 @@ pub struct ManualMobSuggestion {
     pub display: String,
     pub species: String,
     pub maturity: String,
+}
+
+/// The interval kinds as the engine writes them today. The schema keeps
+/// the vocabulary open on purpose (a new kind must not need a
+/// migration); the wire types the set that exists, and the reader skips
+/// a row it cannot parse rather than failing the whole read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionIntervalKind {
+    Modifier,
+    Segment,
+    Quest,
+    Consumable,
+}
+
+/// One recorded interval of a session: its identity, bounds, and the
+/// events attributed to it through the contexts stamped at insert.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionIntervalRow {
+    pub id: i64,
+    pub kind: SessionIntervalKind,
+    /// The display name (a segment's name, a quest's title); null for
+    /// kinds that need none.
+    pub label: Nullable<String>,
+    /// What the interval points at (a quest id); interpretation is
+    /// implied by `kind`.
+    pub ref_id: Nullable<i64>,
+    /// The modifier magnitude, where 0 is the declared unboosted
+    /// baseline and null means the kind carries none.
+    pub magnitude: Nullable<f64>,
+    /// Wall-clock bounds in epoch seconds, exactly as declared. Never
+    /// compare these against event timestamps: events carry the chat
+    /// log's centralised server time, an hour apart on real data, which
+    /// is why attribution goes through contexts instead.
+    pub started_at: f64,
+    /// Null while the interval is still open.
+    pub ended_at: Nullable<f64>,
+    /// Attributed event counts, by context membership.
+    pub kills: i64,
+    pub harvests: i64,
+    pub skill_gains: i64,
+}
+
+/// A session's recorded intervals, oldest first.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionIntervals {
+    pub session_id: String,
+    pub intervals: Vec<SessionIntervalRow>,
 }
 
 /// The quest-link suggestion (all seven fields always present).
@@ -728,6 +780,112 @@ impl Api {
             build_snapshot_value(&self.db, &self.tracker, &config, self.hotbar.is_running())
                 .await?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking snapshot shaping"))
+    }
+
+    /// A session's recorded intervals with bounds and attributed event
+    /// counts: the thin read over the segment contract. Membership
+    /// comes from the contexts stamped on each event row at insert,
+    /// never from comparing timestamps (interval bounds are wall-clock
+    /// declarations; event timestamps carry the chat log's server
+    /// time). The economics on top of this (cycled PED, return rate,
+    /// per-segment rewards) belong to the analytics surfaces, not here.
+    /// 404 for an absent session.
+    pub async fn tracking_session_intervals(
+        &self,
+        session_id: String,
+    ) -> Result<SessionIntervals, ApiError> {
+        if !self.tracking_session_exists(&session_id).await? {
+            return Err(ApiError::not_found("Session not found"));
+        }
+        let session = session_id.clone();
+        let (rows, counts) = self
+            .db
+            .with_reader(move |conn| {
+                let session_scope = session.clone();
+                let mut stmt = conn.prepare(
+                    "SELECT id, kind, label, ref_id, magnitude, started_at, ended_at \
+                     FROM session_intervals WHERE session_id = ? ORDER BY id",
+                )?;
+                let rows = stmt
+                    .query_map(rusqlite::params![session], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                            row.get::<_, Option<f64>>(4)?,
+                            row.get::<_, f64>(5)?,
+                            row.get::<_, Option<f64>>(6)?,
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+
+                // One count map per event table: every event whose
+                // stamped context names the interval belongs to it.
+                let mut counts: HashMap<i64, (i64, i64, i64)> = HashMap::new();
+                for (table, slot) in [("kills", 0usize), ("harvest_events", 1), ("skill_gains", 2)]
+                {
+                    let sql = format!(
+                        "SELECT sci.interval_id, COUNT(*) \
+                         FROM session_context_intervals sci \
+                         JOIN session_contexts sc ON sc.id = sci.context_id \
+                         JOIN {table} e ON e.context_id = sci.context_id \
+                         WHERE sc.session_id = ? \
+                         GROUP BY sci.interval_id",
+                    );
+                    let mut stmt = conn.prepare(&sql)?;
+                    let mapped = stmt.query_map(rusqlite::params![session_scope], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                    })?;
+                    for entry in mapped {
+                        let (interval_id, count) = entry?;
+                        let bucket = counts.entry(interval_id).or_default();
+                        match slot {
+                            0 => bucket.0 = count,
+                            1 => bucket.1 = count,
+                            _ => bucket.2 = count,
+                        }
+                    }
+                }
+                Ok((rows, counts))
+            })
+            .await
+            .map_err(ApiError::internal("session intervals"))?;
+
+        let intervals = rows
+            .into_iter()
+            .filter_map(
+                |(id, kind, label, ref_id, magnitude, started_at, ended_at)| {
+                    // An unparseable kind can only come from a future build's
+                    // rows; skip it rather than failing the whole read.
+                    let kind = match kind.as_str() {
+                        "modifier" => SessionIntervalKind::Modifier,
+                        "segment" => SessionIntervalKind::Segment,
+                        "quest" => SessionIntervalKind::Quest,
+                        "consumable" => SessionIntervalKind::Consumable,
+                        _ => return None,
+                    };
+                    let (kills, harvests, skill_gains) =
+                        counts.get(&id).copied().unwrap_or((0, 0, 0));
+                    Some(SessionIntervalRow {
+                        id,
+                        kind,
+                        label: label.into(),
+                        ref_id: ref_id.into(),
+                        magnitude: magnitude.into(),
+                        started_at,
+                        ended_at: ended_at.into(),
+                        kills,
+                        harvests,
+                        skill_gains,
+                    })
+                },
+            )
+            .collect();
+        Ok(SessionIntervals {
+            session_id,
+            intervals,
+        })
     }
 
     /// The curated quest-link suggestion for a completed session; an absent

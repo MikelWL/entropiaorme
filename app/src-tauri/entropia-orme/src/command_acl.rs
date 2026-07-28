@@ -171,6 +171,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_session_config",
     "tracking_session_delete",
     "tracking_session_detail",
+    "tracking_session_intervals",
     "tracking_session_name_suggestions",
     "tracking_sessions",
     "tracking_snapshot",

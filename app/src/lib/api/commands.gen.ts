@@ -2015,6 +2015,45 @@ export interface SessionDetail {
 }
 
 /**
+ * The interval kinds as the engine writes them today. The schema keeps
+ * the vocabulary open on purpose (a new kind must not need a
+ * migration); the wire types the set that exists, and the reader skips
+ * a row it cannot parse rather than failing the whole read.
+ */
+export type SessionIntervalKind = 'modifier' | 'segment' | 'quest' | 'consumable';
+
+/**
+ * One recorded interval of a session: its identity, bounds, and the
+ * events attributed to it through the contexts stamped at insert.
+ */
+export interface SessionIntervalRow {
+	id: number;
+	kind: SessionIntervalKind;
+	/** The display name (a segment's name, a quest's title); null for kinds that need none. */
+	label: string | null;
+	/** What the interval points at (a quest id); interpretation is implied by `kind`. */
+	refId: number | null;
+	/** The modifier magnitude, where 0 is the declared unboosted baseline and null means the kind carries none. */
+	magnitude: number | null;
+	/** Wall-clock bounds in epoch seconds, exactly as declared. Never compare these against event timestamps: events carry the chat log's centralised server time, an hour apart on real data, which is why attribution goes through contexts instead. */
+	startedAt: number;
+	/** Null while the interval is still open. */
+	endedAt: number | null;
+	/** Attributed event counts, by context membership. */
+	kills: number;
+	harvests: number;
+	skillGains: number;
+}
+
+/**
+ * A session's recorded intervals, oldest first.
+ */
+export interface SessionIntervals {
+	sessionId: string;
+	intervals: SessionIntervalRow[];
+}
+
+/**
  * A keyset page of session-list rows plus the opaque cursor for the
  * next page (`null` on the last page) and the whole-table session
  * count, mirroring the ledger's [`crate::analytics::LedgerPage`] shape.
@@ -2775,6 +2814,10 @@ export async function trackingSessions(cursor: string | null, limit: number | nu
 
 export async function trackingSessionDetail(sessionId: string): Promise<SessionDetail> {
 	return invokeCommand('tracking_session_detail', { session_id: sessionId });
+}
+
+export async function trackingSessionIntervals(sessionId: string): Promise<SessionIntervals> {
+	return invokeCommand('tracking_session_intervals', { session_id: sessionId });
 }
 
 export async function trackingSessionNameSuggestions(q: string, limit: number | null): Promise<string[]> {
