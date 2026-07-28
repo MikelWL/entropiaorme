@@ -135,6 +135,15 @@ describe('attribution warning', () => {
 });
 
 describe('session facets and declared mob', () => {
+	it('disables the name input during an unnamed active session: the name is session-grain', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active', sessionName: null }), nameEditable: false },
+		});
+		const input = screen.getByPlaceholderText('Name...') as HTMLInputElement;
+		expect(input.disabled).toBe(true);
+		expect(input.title).toContain('fixed while a session runs');
+	});
+
 	it('takes the session name while idle', () => {
 		render(OverlayStrip, { props: { data: liveData({ status: 'idle', sessionName: null }) } });
 		expect(screen.getByPlaceholderText('Name...')).toBeTruthy();

@@ -72,8 +72,9 @@ export const renameSession = commands.trackingRenameSession;
 export const renameSessionMob = commands.trackingRenameMob;
 export const restoreSessionMob = commands.trackingRestoreMob;
 /** Set the session facets (full-state apply: null clears a facet). The
- * name applies to the active session live; the boost is fixed while a
- * session runs (the backend answers 409 on an attempted change). */
+ * name is fixed while a session runs (the backend answers 409 on an
+ * attempted change; correct it post-hoc via `renameSession`); the boost
+ * stays editable throughout. */
 export const setSessionConfig = commands.trackingSessionConfig;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;

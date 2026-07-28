@@ -22,6 +22,7 @@
 		releasing = false,
 		selectingMob = false,
 		savingName = false,
+		nameEditable = true,
 		savingBoost = false,
 		questSaving = false,
 		facetError = null,
@@ -75,6 +76,7 @@
 		releasing?: boolean;
 		selectingMob?: boolean;
 		savingName?: boolean;
+		nameEditable?: boolean;
 		savingBoost?: boolean;
 		questSaving?: boolean;
 		facetError?: string | null;
@@ -245,7 +247,10 @@
 							class="w-full bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 transition-colors"
 							bind:value={nameQuery}
 							placeholder="Name..."
-							disabled={savingName}
+							title={nameEditable
+								? 'Name the next session'
+								: 'The name is fixed while a session runs; set it before starting, or rename from the session record'}
+							disabled={savingName || !nameEditable}
 							onfocus={onNameFocus}
 							onblur={onNameBlur}
 							onkeydown={onNameKeydown}

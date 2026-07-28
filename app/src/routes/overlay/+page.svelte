@@ -988,6 +988,7 @@
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
 		savingName={facets.savingName}
+		nameEditable={facets.nameEditable}
 		savingBoost={facets.savingBoost}
 		questSaving={facets.questSaving}
 		facetError={facets.facetError}
