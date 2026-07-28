@@ -43,12 +43,15 @@ export interface TrackingLive {
 	endOfSessionArmourReminderEnabled?: boolean | null;
 	sessionName?: string | null;
 	skillBoostPercent?: number | null;
+	/** The open segment's name (a segment exists only while active). */
+	segmentName?: string | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
 	/** What the held tool implies the next action records as. */
 	currentActivity?: ToolActivity | null;
-	/** The quest or playlist the active session declares. */
-	questName?: string | null;
+	/** The open quest slices' names, newest first (auto-recorded by the
+	 * quest lifecycle; several dailies can stack). */
+	questNames?: string[] | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
 	recentEvents?: {
@@ -78,10 +81,12 @@ export const restoreSessionMob = commands.trackingRestoreMob;
 export const setSessionConfig = commands.trackingSessionConfig;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
-export const getSessionQuestLinkSuggestion = commands.trackingQuestLinkSuggestion;
-/** Declare the active session's quest facet up front (or clear it with
- * both ids null), pre-empting the post-stop link suggestion. */
-export const declareSessionQuest = commands.trackingQuestDeclare;
+/** Open a player-drawn segment on the running session, closing any
+ * standing one; a null name is auto-numbered ("Segment N"). */
+export const openSessionSegment = commands.trackingSegmentOpen;
+export const closeSessionSegment = commands.trackingSegmentClose;
+/** Rename the open segment live (its grain is finer than the session). */
+export const renameSessionSegment = commands.trackingSegmentRename;
 
 const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
 
@@ -113,8 +118,4 @@ export async function getManualMobSuggestions(query: string) {
 
 export async function lockManualMob(species: string, maturity = '') {
 	return commands.trackingManualMobLock(species, maturity);
-}
-
-export async function decideSessionQuestLink(sessionId: string, action: 'accept' | 'decline') {
-	return commands.trackingQuestLink(sessionId, action);
 }

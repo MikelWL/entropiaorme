@@ -82,6 +82,8 @@ const HARVEST_YIELD_WINDOW_SECONDS: f64 = 30.0;
 pub enum TrackerCommandError {
     #[error("No active session")]
     NoActiveSession,
+    #[error("No open segment")]
+    NoOpenSegment,
 }
 
 /// The session typestate: everything session-scoped lives inside the
@@ -227,7 +229,7 @@ impl HuntTracker {
     }
 
     /// Record that a quest became active: open its slice on the running
-    /// session. Forward-looking, like every segment write; events
+    /// session. Forward-looking, like every interval write; events
     /// already recorded keep the context they were stamped with.
     pub async fn open_quest_slice(
         &self,
@@ -246,6 +248,32 @@ impl HuntTracker {
     /// Record that a quest ended: close its slice, leaving siblings open.
     pub async fn close_quest_slice(&self, quest_id: i64) -> Result<(), TrackerCommandError> {
         self.call(|reply| TrackerMsg::CloseQuestSlice { quest_id, reply })
+            .await
+    }
+
+    /// Open a segment (the player-drawn slice of the session), closing
+    /// any standing one: segments are sequential, not stacking. A None
+    /// or blank label auto-numbers the segment "Segment N". Returns the
+    /// name now in force (None when the contained interval write failed
+    /// and no segment opened).
+    pub async fn open_segment(
+        &self,
+        label: Option<String>,
+    ) -> Result<Option<String>, TrackerCommandError> {
+        self.call(|reply| TrackerMsg::OpenSegment { label, reply })
+            .await
+    }
+
+    /// Close the open segment; the session keeps running unsegmented.
+    pub async fn close_segment(&self) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::CloseSegment { reply }).await
+    }
+
+    /// Rename the open segment live (a segment's grain is finer than
+    /// the session, so its label may move while the session runs).
+    pub async fn rename_segment(&self, label: &str) -> Result<(), TrackerCommandError> {
+        let label = label.to_string();
+        self.call(|reply| TrackerMsg::RenameSegment { label, reply })
             .await
     }
 

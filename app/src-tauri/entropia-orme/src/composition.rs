@@ -1234,8 +1234,8 @@ fn compose_producers(
         ),
     )?;
 
-    // Wire the quest service's segment sink now that the tracker owning
-    // the segment state exists (the quest service is built first, so this
+    // Wire the quest service's interval sink now that the tracker owning
+    // the interval state exists (the quest service is built first, so this
     // cannot be a constructor argument). A quest's start and completion
     // become a slice of the running session, which is what lets a
     // quest-shaped stretch be measured apart from the session around it.

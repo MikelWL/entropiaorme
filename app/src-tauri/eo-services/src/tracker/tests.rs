@@ -1574,11 +1574,11 @@ fn trifecta_attribution_and_heal_filtering() {
     });
 }
 
-/// A session opens its segment context before anything can be recorded
+/// A session opens its interval context before anything can be recorded
 /// into it, and the opening boost becomes a modifier interval inside
 /// that context. The context is minted even with nothing declared: an
 /// event stamped with the empty context is a different, useful fact
-/// from an event that predates the segment model.
+/// from an event that predates the interval model.
 #[test]
 fn a_session_opens_a_context_and_its_declared_modifier() {
     let rig = rig();
@@ -1594,10 +1594,10 @@ fn a_session_opens_a_context_and_its_declared_modifier() {
     rig.probe(&boosted, |actor| {
         let active = actor.session.active().unwrap();
         assert!(
-            active.segments.context_id().is_some(),
+            active.intervals.context_id().is_some(),
             "opening context minted"
         );
-        assert_eq!(active.segments.modifier_magnitude(), Some(50.0));
+        assert_eq!(active.intervals.modifier_magnitude(), Some(50.0));
     });
 
     // The interval is a real row, open, owned by this session.
@@ -1623,7 +1623,7 @@ fn a_session_opens_a_context_and_its_declared_modifier() {
 /// interval a mid-session declaration would, so the baseline holds from
 /// the first event rather than only from the first re-declaration. The
 /// session row's own scalar stays null (0019 constrains it to `> 0 OR
-/// NULL`), which is precisely why the segment layer is the source of
+/// NULL`), which is precisely why the interval layer is the source of
 /// truth and the readout reads from there.
 #[test]
 fn a_session_started_under_a_declared_zero_opens_its_baseline() {
@@ -1640,7 +1640,7 @@ fn a_session_started_under_a_declared_zero_opens_its_baseline() {
     rig.probe(&unboosted, |actor| {
         let active = actor.session.active().unwrap();
         assert_eq!(
-            active.segments.modifier_magnitude(),
+            active.intervals.modifier_magnitude(),
             Some(0.0),
             "the declared baseline is in force from the session's first moment"
         );
@@ -1679,11 +1679,11 @@ fn quest_slices_stack_and_close_one_at_a_time() {
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
         assert!(active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, 11)
             .is_some());
         assert!(active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, 22)
             .is_some());
     });
@@ -1694,14 +1694,14 @@ fn quest_slices_stack_and_close_one_at_a_time() {
         let active = actor.session.active().unwrap();
         assert!(
             active
-                .segments
+                .intervals
                 .open_of_ref(IntervalKind::Quest, 11)
                 .is_none(),
             "the completed quest's slice closed"
         );
         assert!(
             active
-                .segments
+                .intervals
                 .open_of_ref(IntervalKind::Quest, 22)
                 .is_some(),
             "the sibling daily is untouched"
@@ -1771,9 +1771,9 @@ fn a_context_can_name_a_quest_and_a_modifier_at_once() {
 
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), Some(50.0));
+        assert_eq!(active.intervals.modifier_magnitude(), Some(50.0));
         assert!(active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, 3)
             .is_some());
     });
@@ -1826,6 +1826,193 @@ fn a_quest_slice_outside_a_session_records_nothing() {
     assert_eq!(count, 0);
 }
 
+/// Segments are sequential, not stacking: opening one closes the
+/// standing one in the same motion, and an omitted name is
+/// auto-numbered "Segment N" so the boundary declaration is a single
+/// action mid-play.
+#[test]
+fn a_segment_open_is_auto_numbered_and_closes_the_standing_one() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.open_segment(None)).unwrap();
+    rig.wait(tracker.open_segment(None)).unwrap();
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        let open = active
+            .intervals
+            .open_of_kind(IntervalKind::Segment)
+            .expect("one segment open");
+        assert_eq!(open.label.as_deref(), Some("Segment 2"));
+    });
+
+    let rows: Vec<(Option<String>, Option<f64>)> = rig
+        .wait(rig.db.with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT label, ended_at FROM session_intervals \
+                 WHERE session_id = ? AND kind = 'segment' ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![session.id], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        }))
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0.as_deref(), Some("Segment 1"));
+    assert!(
+        rows[0].1.is_some(),
+        "the first segment closed on the second's open"
+    );
+    assert_eq!(rows[1].0.as_deref(), Some("Segment 2"));
+    assert!(rows[1].1.is_none(), "the standing segment has no end yet");
+}
+
+/// A custom name is kept verbatim (trimmed), and the auto-number keeps
+/// counting opens regardless: naming "Boss 1" by hand does not make the
+/// next unnamed segment "Segment 1".
+#[test]
+fn a_custom_segment_name_is_kept_and_numbering_still_advances() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.open_segment(Some("  Boss: Kreltin  ".into())))
+        .unwrap();
+    rig.wait(tracker.open_segment(Some("   ".into()))).unwrap();
+
+    let labels: Vec<Option<String>> = rig
+        .wait(rig.db.with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT label FROM session_intervals \
+                 WHERE session_id = ? AND kind = 'segment' ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![session.id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        }))
+        .unwrap();
+    assert_eq!(
+        labels,
+        vec![
+            Some("Boss: Kreltin".to_string()),
+            Some("Segment 2".to_string())
+        ],
+        "trimmed custom name; a blank name auto-numbers by open count"
+    );
+}
+
+/// Renaming the open segment moves only its label: same row, same
+/// bounds, and no context is minted (attribution names interval ids,
+/// not labels, so events already stamped are untouched).
+#[test]
+fn renaming_the_open_segment_moves_only_its_label() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    rig.wait(tracker.open_segment(None)).unwrap();
+
+    let session_id = session.id.clone();
+    let contexts_before: i64 = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM session_contexts WHERE session_id = ?",
+                rusqlite::params![session_id],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap();
+
+    rig.wait(tracker.rename_segment("Boss 3")).unwrap();
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        let open = active
+            .intervals
+            .open_of_kind(IntervalKind::Segment)
+            .expect("still open");
+        assert_eq!(open.label.as_deref(), Some("Boss 3"));
+    });
+
+    let session_id = session.id.clone();
+    let (label, contexts_after): (Option<String>, i64) = rig
+        .wait(rig.db.with_reader(move |conn| {
+            let label = conn.query_row(
+                "SELECT label FROM session_intervals \
+                 WHERE session_id = ? AND kind = 'segment'",
+                rusqlite::params![session_id.clone()],
+                |row| row.get(0),
+            )?;
+            let contexts = conn.query_row(
+                "SELECT COUNT(*) FROM session_contexts WHERE session_id = ?",
+                rusqlite::params![session_id],
+                |row| row.get(0),
+            )?;
+            Ok((label, contexts))
+        }))
+        .unwrap();
+    assert_eq!(label.as_deref(), Some("Boss 3"));
+    assert_eq!(
+        contexts_after, contexts_before,
+        "a rename mints no context; attribution is untouched"
+    );
+}
+
+/// Renaming with no open segment is refused loudly: the control should
+/// not be offered, and a race (segment closed under the edit) must
+/// surface rather than silently rename nothing.
+#[test]
+fn renaming_without_an_open_segment_is_refused() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    assert_eq!(
+        rig.wait(tracker.rename_segment("Boss 1")),
+        Err(TrackerCommandError::NoOpenSegment)
+    );
+
+    rig.wait(tracker.open_segment(None)).unwrap();
+    rig.wait(tracker.close_segment()).unwrap();
+    assert_eq!(
+        rig.wait(tracker.rename_segment("Boss 1")),
+        Err(TrackerCommandError::NoOpenSegment)
+    );
+}
+
+/// Stopping the session ends the open segment like every other
+/// interval, and the segment commands refuse an idle tracker.
+#[test]
+fn segments_are_session_scoped() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+
+    assert!(rig.wait(tracker.open_segment(None)).is_err());
+    assert!(rig.wait(tracker.close_segment()).is_err());
+    assert!(rig.wait(tracker.rename_segment("Idle")).is_err());
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    rig.wait(tracker.open_segment(None)).unwrap();
+    rig.wait(tracker.stop_session()).unwrap();
+
+    let open: i64 = rig
+        .wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM session_intervals \
+                 WHERE session_id = ? AND ended_at IS NULL",
+                rusqlite::params![session.id],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(open, 0);
+}
+
 /// The three states the modifier declaration must keep apart. Only a
 /// declared zero can serve as the unboosted baseline an effect is
 /// measured against, so it must not collapse into "not declared".
@@ -1838,21 +2025,21 @@ fn a_declared_zero_boost_is_distinct_from_no_declaration() {
     // Nothing declared: no modifier interval at all.
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), None);
+        assert_eq!(active.intervals.modifier_magnitude(), None);
     });
 
     // Declared unboosted: a real interval carrying zero.
     rig.wait(tracker.set_skill_boost(Some(0))).unwrap();
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), Some(0.0));
+        assert_eq!(active.intervals.modifier_magnitude(), Some(0.0));
     });
 
     // Withdrawn: back to claiming nothing.
     rig.wait(tracker.set_skill_boost(None)).unwrap();
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.segments.modifier_magnitude(), None);
+        assert_eq!(active.intervals.modifier_magnitude(), None);
     });
 }
 
@@ -2742,7 +2929,7 @@ fn a_blank_configured_name_records_as_no_declaration() {
     // a whitespace-only configured name is no name at all, and no
     // configured mob is no declaration, never a guessed default. The
     // boost's declared zero is a real declaration that the row mirror
-    // simply cannot hold; the segment layer carries it (covered above).
+    // simply cannot hold; the interval layer carries it (covered above).
     let rig = rig();
     let blank = rig.tracker(Providers {
         config: Arc::new(ScriptedConfig {

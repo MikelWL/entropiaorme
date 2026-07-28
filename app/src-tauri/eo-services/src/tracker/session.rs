@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 use eo_wire::normalizer::round_half_even;
 
-use super::intervals::{IntervalKind, IntervalSpec, SegmentState};
+use super::intervals::{IntervalKind, IntervalSpec, IntervalState};
 use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::DbError;
 use crate::mob_lookup_service::python_whitespace;
@@ -66,10 +66,15 @@ pub(super) struct ActiveSession {
     pub(super) declared_mob: Option<DeclaredMob>,
     /// The session-scoped facets snapshotted at session start.
     pub(super) facets: SessionFacets,
-    /// The live segment state: which intervals are open and the context
+    /// The live interval state: which intervals are open and the context
     /// every event written right now stamps. Session-scoped by
-    /// construction, so no segment can outlive its session.
-    pub(super) segments: SegmentState,
+    /// construction, so no interval can outlive its session.
+    pub(super) intervals: IntervalState,
+    /// How many segments this session has opened, custom-named or not:
+    /// the sequence an omitted segment name is auto-numbered from
+    /// ("Segment N" counts opens, so the numbering never repeats within
+    /// a session even after renames).
+    pub(super) segments_opened: i64,
     pub(super) last_heal_time: Option<DateTime<Utc>>,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
@@ -98,7 +103,8 @@ impl ActiveSession {
             warnings: Vec::new(),
             declared_mob: None,
             facets,
-            segments: SegmentState::default(),
+            intervals: IntervalState::default(),
+            segments_opened: 0,
             last_heal_time: None,
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
@@ -148,6 +154,8 @@ pub(super) struct SessionAggregate {
     pub(super) mob_name: Option<String>,
     pub(super) session_name: Option<String>,
     pub(super) skill_boost_percent: Option<i64>,
+    pub(super) segment_name: Option<String>,
+    pub(super) quest_names: Vec<String>,
     pub(super) harvest_swings: i64,
     pub(super) harvest_successes: i64,
     pub(super) harvest_loot: Ped,
@@ -304,13 +312,29 @@ impl TrackerActor {
             cumulative_net,
             mob_name: active.stamped_mob_name().map(str::to_string),
             session_name: active.facets.name.clone(),
-            // Read from the segment state, not the row mirror: the row's
+            // Read from the interval state, not the row mirror: the row's
             // scalar cannot hold a declared zero (0019's `> 0 OR NULL`),
             // and the readout is what the overlay renders the facet from.
             skill_boost_percent: active
-                .segments
+                .intervals
                 .modifier_magnitude()
                 .map(|magnitude| magnitude as i64),
+            // The interval state is the only source: a segment exists
+            // exactly while its session runs, so there is no idle or
+            // row-mirror fallback to disagree with it.
+            segment_name: active
+                .intervals
+                .open_of_kind(IntervalKind::Segment)
+                .and_then(|interval| interval.label.clone()),
+            // Same source of truth for the quest facet: the open quest
+            // slices, newest first (the latest-started quest is the
+            // most relevant readout when several dailies stack).
+            quest_names: active
+                .intervals
+                .open_of_kind_all(IntervalKind::Quest)
+                .filter_map(|interval| interval.label.clone())
+                .rev()
+                .collect(),
             harvest_swings: harvests.len() as i64,
             harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
             harvest_loot,
@@ -386,7 +410,7 @@ impl TrackerActor {
         }
         let now = instant_to_epoch(resolve_local(self.clock.now()));
 
-        // Contained like the other persistence failures: a segment write
+        // Contained like the other persistence failures: a interval write
         // that cannot land leaves the declaration unrecorded rather than
         // stamping events with a context that does not describe them.
         {
@@ -396,7 +420,7 @@ impl TrackerActor {
             };
             let outcome = match percent {
                 Some(value) => active
-                    .segments
+                    .intervals
                     .open_interval(
                         &db,
                         &session_id,
@@ -406,7 +430,7 @@ impl TrackerActor {
                     .await
                     .map(|_| ()),
                 None => active
-                    .segments
+                    .intervals
                     .close_kind(&db, &session_id, now, IntervalKind::Modifier)
                     .await
                     .map(|_| ()),
@@ -425,7 +449,7 @@ impl TrackerActor {
     /// overlap sits inside both, which the context expresses natively
     /// and a per-axis column could not.
     ///
-    /// Contained like the other segment writes: with no session running
+    /// Contained like the other interval writes: with no session running
     /// there is nothing to attach a slice to, and a quest that starts
     /// outside a session is simply not a slice of one.
     pub(super) async fn open_quest_slice(
@@ -443,14 +467,14 @@ impl TrackerActor {
         // stacked twice: the signal can repeat (a re-received mission),
         // and the record must not grow a duplicate stretch from it.
         if active
-            .segments
+            .intervals
             .open_of_ref(IntervalKind::Quest, quest_id)
             .is_some()
         {
             return Ok(());
         }
         let _ = active
-            .segments
+            .intervals
             .open_interval(
                 &db,
                 &session_id,
@@ -476,10 +500,108 @@ impl TrackerActor {
         };
         let session_id = active.session.id.clone();
         let _ = active
-            .segments
+            .intervals
             .close_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
             .await;
         Ok(())
+    }
+
+    /// Open a segment: the player-drawn slice of the session (one
+    /// instance run, one rotation of a daily). Exclusive, because a run
+    /// is sequential: opening a segment closes the standing one in the
+    /// same motion, so the boundary declaration is a single action.
+    ///
+    /// An omitted or blank name is auto-numbered "Segment N", counting
+    /// this session's opens from 1. The declaration therefore never
+    /// requires typing mid-play; the name can move afterwards (live via
+    /// [`rename_segment`](Self::rename_segment), since a segment's grain
+    /// is finer than the session).
+    ///
+    /// Contained like the other interval writes: a write that cannot
+    /// land leaves the record without the segment, and the snapshot
+    /// (which reads the interval state) tells the truth about it.
+    ///
+    /// Returns the name now in force: the applied label on success,
+    /// None when the contained write failed and no segment opened.
+    pub(super) async fn open_segment(
+        &mut self,
+        label: Option<String>,
+    ) -> Result<Option<String>, TrackerCommandError> {
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let session_id = active.session.id.clone();
+        let candidate = active.segments_opened + 1;
+        let label = label
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Segment {candidate}"));
+        let outcome = active
+            .intervals
+            .open_interval(
+                &db,
+                &session_id,
+                now,
+                IntervalSpec::new(IntervalKind::Segment).label(Some(label.clone())),
+            )
+            .await;
+        if outcome.is_err() {
+            return Ok(None);
+        }
+        active.segments_opened = candidate;
+        Ok(Some(label))
+    }
+
+    /// Close the open segment, leaving the session running unsegmented
+    /// from here. Idempotent: closing with no segment open is a no-op,
+    /// like the quest close, so a stale control cannot fail the user.
+    pub(super) async fn close_segment(&mut self) -> Result<(), TrackerCommandError> {
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let session_id = active.session.id.clone();
+        let _ = active
+            .intervals
+            .close_kind(&db, &session_id, now, IntervalKind::Segment)
+            .await;
+        Ok(())
+    }
+
+    /// Rename the OPEN segment in place: the live half of the segment's
+    /// correction path (a segment is finer than the session, so its
+    /// label may move while the session runs). Bounds and attribution
+    /// are untouched; only the display name moves.
+    pub(super) async fn rename_segment(
+        &mut self,
+        label: String,
+    ) -> Result<(), TrackerCommandError> {
+        let db = self.db.clone();
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            // A blank rename is a no-op, not an erasure: an open segment
+            // always carries a name (the auto-number guarantees one).
+            return Ok(());
+        }
+        match active
+            .intervals
+            .relabel_kind(&db, IntervalKind::Segment, label)
+            .await
+        {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(TrackerCommandError::NoOpenSegment),
+            // Contained like the other interval writes; the snapshot
+            // still shows the previous name, which is the truth.
+            Err(_) => Ok(()),
+        }
     }
 
     /// Refresh trifecta-attribution state after config changes. The
@@ -534,7 +656,7 @@ impl TrackerActor {
         // here and never re-read from the config mid-session.
         // The declaration is three-state; the session ROW's scalar is not
         // (migration 0019 constrains it to `> 0 OR NULL`, which is why
-        // the segment model superseded it as the source of truth). The
+        // the interval model superseded it as the source of truth). The
         // row therefore keeps the magnitude only, while the declaration
         // itself rides the opening interval below, where `Some(0)`
         // survives as the baseline it is.
@@ -630,7 +752,7 @@ impl TrackerActor {
             }));
         // The session's opening context: the empty set, minted even when
         // nothing is declared, because an event stamped with it was
-        // recorded under the segment model with nothing in force, and
+        // recorded under the interval model with nothing in force, and
         // that is a different fact from an event predating the model.
         // Deliberately NOT a bus event: the only cross-service consumer
         // reads the session's current context from the database at
@@ -640,14 +762,14 @@ impl TrackerActor {
             let db = self.db.clone();
             if let Some(active) = self.session.active_mut() {
                 if active
-                    .segments
+                    .intervals
                     .open_session(&db, &session_id, start_ts)
                     .await
                     .is_ok()
                 {
                     if let Some(percent) = opening_boost {
                         let _ = active
-                            .segments
+                            .intervals
                             .open_interval(
                                 &db,
                                 &session_id,
@@ -698,13 +820,13 @@ impl TrackerActor {
             )
         };
         // Close every still-open interval before the session record is
-        // sealed, so no segment outlives the session that owns it and a
+        // sealed, so no interval outlives the session that owns it and a
         // duration read never has to guess at a missing end.
         {
             let db = self.db.clone();
             let end_ts = instant_to_epoch(end_time);
             if let Some(active) = self.session.active_mut() {
-                let _ = active.segments.close_session(&db, end_ts).await;
+                let _ = active.intervals.close_session(&db, end_ts).await;
             }
         }
         // One transaction over the whole stop sequence, matching the
@@ -918,6 +1040,8 @@ impl HuntTracker {
             current_mob: aggregated.mob_name.clone(),
             session_name: aggregated.session_name.clone(),
             skill_boost_percent: aggregated.skill_boost_percent,
+            segment_name: aggregated.segment_name.clone(),
+            quest_names: aggregated.quest_names.clone(),
             harvest_swings: aggregated.harvest_swings,
             harvest_successes: aggregated.harvest_successes,
             // + 0.0 normalises the sign: an empty f64 sum is -0.0 (the

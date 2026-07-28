@@ -356,16 +356,21 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
                     rusqlite::params![sid, qid, at],
                 )?;
             }
-            for (sid, lt, qid, plid) in [
-                ("sess-1", "quest", Some(1i64), None::<i64>),
-                ("sess-n", "quest", Some(2), None),
-                ("sess-p", "playlist", None, Some(1)),
+            // Membership is the recorded quest stretch: one interval per
+            // session naming the quest it ran. sess-p ran quest 1 (a
+            // member of playlist 1), so it counts for BOTH the quest and
+            // the playlist; under intervals a playlist's sessions are
+            // derived from its members', never declared separately.
+            for (sid, qid, start, end) in [
+                ("sess-1", 1i64, 1000.0, 1030.5),
+                ("sess-n", 2, 7000.0, 7050.0),
+                ("sess-p", 1, 2000.0, 2100.0),
             ] {
                 conn.execute(
-                    "INSERT INTO session_quest_analytics_links \
-                     (session_id, link_type, quest_id, playlist_id, linked_at) \
-                     VALUES (?1, ?2, ?3, ?4, 9000.0)",
-                    rusqlite::params![sid, lt, qid, plid],
+                    "INSERT INTO session_intervals \
+                     (session_id, kind, label, ref_id, started_at, ended_at) \
+                     VALUES (?1, 'quest', 'Quest', ?2, ?3, ?4)",
+                    rusqlite::params![sid, qid, start, end],
                 )?;
             }
             Ok(())
@@ -381,8 +386,8 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
         serde_json::to_string(&quest_rows).unwrap(),
         "[{\"questId\":\"1\",\"questName\":\"Alpha\",\"planet\":\"Calypso\",\"category\":null,\
          \"rewardPed\":2.5,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":150.0,\
-         \"totalExpectedRewardPed\":3.75,\"linkedSessions\":1,\"totalDurationSec\":30.5,\
-         \"totalWeaponCost\":10.0,\"totalHealCost\":1.5,\"totalEnhancerCost\":0.5,\
+         \"totalExpectedRewardPed\":7.5,\"linkedSessions\":2,\"totalDurationSec\":130.5,\
+         \"totalWeaponCost\":10.0,\"totalHealCost\":2.0,\"totalEnhancerCost\":0.5,\
          \"totalArmourCost\":0.25,\"totalLootTt\":12.75,\"totalPes\":0.75},\
          {\"questId\":\"2\",\"questName\":\"Nul\",\"planet\":\"Calypso\",\"category\":null,\
          \"rewardPed\":0.0,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":null,\
@@ -394,13 +399,13 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
     assert_eq!(
         serde_json::to_string(&playlist_rows).unwrap(),
         "[{\"playlistId\":\"1\",\"playlistName\":\"Run\",\"questCount\":1,\
-         \"longHorizonQuestCount\":0,\"matchedSessions\":1,\"totalRewardPed\":2.5,\
-         \"totalImmediateRewardPed\":2.5,\"totalBonusRewardPed\":0.0,\"totalPesReward\":0.0,\
+         \"longHorizonQuestCount\":0,\"matchedSessions\":2,\"totalRewardPed\":5.0,\
+         \"totalImmediateRewardPed\":5.0,\"totalBonusRewardPed\":0.0,\"totalPesReward\":0.0,\
          \"totalImmediatePesReward\":0.0,\"totalBonusPesReward\":0.0,\
-         \"totalExpectedRewardPed\":3.75,\"totalExpectedImmediateRewardPed\":3.75,\
-         \"totalExpectedBonusRewardPed\":0.0,\"totalDurationSec\":100.0,\
-         \"totalWeaponCost\":0.0,\"totalHealCost\":0.5,\"totalEnhancerCost\":0.0,\
-         \"totalArmourCost\":0.0,\"totalLootTt\":0.0,\"totalPes\":0.0}]"
+         \"totalExpectedRewardPed\":7.5,\"totalExpectedImmediateRewardPed\":7.5,\
+         \"totalExpectedBonusRewardPed\":0.0,\"totalDurationSec\":130.5,\
+         \"totalWeaponCost\":10.0,\"totalHealCost\":2.0,\"totalEnhancerCost\":0.5,\
+         \"totalArmourCost\":0.25,\"totalLootTt\":12.75,\"totalPes\":0.75}]"
     );
 }
 

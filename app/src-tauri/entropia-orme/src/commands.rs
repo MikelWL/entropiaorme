@@ -50,8 +50,8 @@ use eo_api::scan::{
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
+    ReleaseResult, RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail,
+    SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
     StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
@@ -845,6 +845,14 @@ pub async fn tracking_session_detail(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_session_intervals(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<SessionIntervals, ApiError> {
+    facade(&app)?.tracking_session_intervals(session_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_session_name_suggestions(
     app: tauri::AppHandle,
     q: String,
@@ -927,6 +935,27 @@ pub async fn tracking_session_config(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_segment_open(
+    app: tauri::AppHandle,
+    segment_name: Option<String>,
+) -> Result<SegmentStateResult, ApiError> {
+    facade(&app)?.tracking_segment_open(segment_name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_segment_close(app: tauri::AppHandle) -> Result<SegmentStateResult, ApiError> {
+    facade(&app)?.tracking_segment_close().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_segment_rename(
+    app: tauri::AppHandle,
+    segment_name: String,
+) -> Result<SegmentStateResult, ApiError> {
+    facade(&app)?.tracking_segment_rename(segment_name).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_rename_session(
     app: tauri::AppHandle,
     session_id: String,
@@ -989,26 +1018,6 @@ pub async fn tracking_armour_cost(
     cost: f64,
 ) -> Result<ArmourCostResult, ApiError> {
     facade(&app)?.tracking_armour_cost(session_id, cost).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_quest_link(
-    app: tauri::AppHandle,
-    session_id: String,
-    action: String,
-) -> Result<QuestLinkDecision, ApiError> {
-    facade(&app)?.tracking_quest_link(session_id, action).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_quest_declare(
-    app: tauri::AppHandle,
-    quest_id: Option<i64>,
-    playlist_id: Option<i64>,
-) -> Result<QuestDeclareResult, ApiError> {
-    facade(&app)?
-        .tracking_quest_declare(quest_id, playlist_id)
-        .await
 }
 
 // The repair scan runs a synchronous screen grab + one-shot OCR read;
@@ -1499,6 +1508,7 @@ mod tests {
         "scan_spacebar_capture",
         "tracking_sessions",
         "tracking_session_detail",
+        "tracking_session_intervals",
         "tracking_session_name_suggestions",
         "tracking_manual_mob_suggestions",
         "tracking_snapshot",
@@ -1508,14 +1518,15 @@ mod tests {
         "tracking_release_mob",
         "tracking_manual_mob_lock",
         "tracking_session_config",
+        "tracking_segment_open",
+        "tracking_segment_close",
+        "tracking_segment_rename",
         "tracking_rename_session",
         "tracking_rename_mob",
         "tracking_restore_mob",
         "tracking_loot_item_activate",
         "tracking_loot_item_deactivate",
         "tracking_armour_cost",
-        "tracking_quest_link",
-        "tracking_quest_declare",
         "tracking_repair_scan",
         "tracking_session_delete",
         "demo_analytics_overview",

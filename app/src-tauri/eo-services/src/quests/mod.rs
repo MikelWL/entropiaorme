@@ -49,7 +49,7 @@ pub enum QuestSlice {
 ///
 /// Injected after construction rather than taken as a constructor
 /// argument, because composition builds the quest service before the
-/// tracker that owns the segment state. Deliberately NOT a bus topic:
+/// tracker that owns the interval state. Deliberately NOT a bus topic:
 /// the corpus fingerprints capture the published event stream, and the
 /// banked port-equivalence captures cannot move.
 pub type QuestSliceWriter = Arc<
@@ -175,7 +175,7 @@ impl QuestService {
         self.session.borrow().clone()
     }
 
-    /// Wire the segment-layer sink. Composition calls this once, after
+    /// Wire the interval-layer sink. Composition calls this once, after
     /// the tracker exists; a second call is ignored.
     pub fn set_slice_writer(&self, writer: QuestSliceWriter) {
         let _ = self.slice_writer.set(writer);
@@ -184,7 +184,7 @@ impl QuestService {
     /// Report a quest slice, if anything is listening.
     ///
     /// Best-effort by design, and never on the caller's error path: a
-    /// segment write that cannot land must not fail the quest action
+    /// interval write that cannot land must not fail the quest action
     /// that prompted it. The quest's own state is the durable record;
     /// the slice is the session's view of it.
     pub(super) async fn report_slice(&self, slice: QuestSlice) {

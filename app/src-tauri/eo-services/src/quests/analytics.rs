@@ -1,6 +1,7 @@
 //! The analytics readers: per-quest and per-playlist sustainability
-//! metrics over curated session links, with the engine's own numeric
-//! types preserved on the wire.
+//! metrics over the sessions whose recorded quest stretches
+//! (`session_intervals`, kind `quest`) name them, with the engine's
+//! own numeric types preserved on the wire.
 
 use serde_json::{json, Map, Value};
 
@@ -10,9 +11,9 @@ use super::{QuestError, QuestService, PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_L
 impl QuestService {
     // ── Analytics ───────────────────────────────────────────────────
 
-    /// Per-quest sustainability metrics across all linked sessions:
-    /// raw totals (the frontend derives averages), only for quests
-    /// with at least one curated linked session.
+    /// Per-quest sustainability metrics across all sessions with a
+    /// recorded stretch of the quest: raw totals (the frontend derives
+    /// averages), only for quests at least one session recorded.
     pub async fn get_quest_analytics(&self) -> Result<Vec<Value>, QuestError> {
         let quest_rows = self
             .db
@@ -77,15 +78,19 @@ impl QuestService {
         Ok(results)
     }
 
-    /// Aggregate economics for all sessions where this quest was
-    /// completed, via the curated analytics link table.
+    /// The sessions a quest's metrics aggregate over: every session
+    /// with a recorded stretch of the quest (an interval, whether
+    /// auto-recorded by the lifecycle or hand-placed on history). The
+    /// interval superseded the curated `session_quest_analytics_links`
+    /// row as the membership truth; the wire keeps the historical
+    /// `linked_sessions` field name.
     async fn compute_quest_session_stats(&self, quest_id: i64) -> Result<Value, QuestError> {
         let session_ids = self
             .db
             .with_reader(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT session_id FROM session_quest_analytics_links \
-                     WHERE quest_id = ? AND link_type = 'quest'",
+                    "SELECT DISTINCT session_id FROM session_intervals \
+                     WHERE kind = 'quest' AND ref_id = ? ORDER BY session_id",
                 )?;
                 let mut rows = stmt.query(rusqlite::params![quest_id])?;
                 let mut out = Vec::new();
@@ -98,8 +103,8 @@ impl QuestService {
         self.compute_session_set_stats(&session_ids).await
     }
 
-    /// Per-playlist sustainability metrics from curated linked
-    /// sessions, for every active playlist.
+    /// Per-playlist sustainability metrics over sessions with recorded
+    /// stretches of the playlist's quests, for every active playlist.
     pub async fn get_all_playlist_analytics(&self) -> Result<Vec<Value>, QuestError> {
         let playlists = self.get_playlists(true).await?;
         let mut results = Vec::new();
@@ -112,8 +117,9 @@ impl QuestService {
         Ok(results)
     }
 
-    /// Analytics for a single playlist from curated linked sessions;
-    /// `None` when the playlist is absent.
+    /// Analytics for a single playlist over sessions with recorded
+    /// stretches of its member quests; `None` when the playlist is
+    /// absent.
     pub async fn get_playlist_analytics(
         &self,
         playlist_id: i64,
@@ -154,7 +160,7 @@ impl QuestService {
             })));
         }
 
-        let session_ids = self.curated_playlist_session_ids(playlist_id).await?;
+        let session_ids = self.playlist_session_ids(playlist_id).await?;
         let stats = if session_ids.is_empty() {
             json!({
                 "linked_sessions": 0,
@@ -191,16 +197,19 @@ impl QuestService {
         Ok(Some(Value::Object(entry)))
     }
 
-    async fn curated_playlist_session_ids(
-        &self,
-        playlist_id: i64,
-    ) -> Result<Vec<String>, QuestError> {
+    /// The sessions a playlist's metrics aggregate over: every session
+    /// with a recorded stretch of any member quest. Playlist membership
+    /// is derived, never declared per session; a session that ran two
+    /// members counts once.
+    async fn playlist_session_ids(&self, playlist_id: i64) -> Result<Vec<String>, QuestError> {
         Ok(self
             .db
             .with_reader(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT session_id FROM session_quest_analytics_links \
-                     WHERE playlist_id = ? AND link_type = 'playlist'",
+                    "SELECT DISTINCT si.session_id FROM session_intervals si \
+                     JOIN quest_playlist_items items ON items.quest_id = si.ref_id \
+                     WHERE si.kind = 'quest' AND items.playlist_id = ? \
+                     ORDER BY si.session_id",
                 )?;
                 let mut rows = stmt.query(rusqlite::params![playlist_id])?;
                 let mut out = Vec::new();

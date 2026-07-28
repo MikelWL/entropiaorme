@@ -52,8 +52,8 @@ use crate::scan::{
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    QuestDeclareResult, QuestLinkDecision, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
+    ReleaseResult, RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail,
+    SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
     StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
@@ -827,6 +827,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(SessionDetail))),
         },
         CommandSpec {
+            name: "tracking_session_intervals",
+            args: vec![ArgSpec {
+                name: "session_id",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(SessionIntervals))),
+        },
+        CommandSpec {
             name: "tracking_session_name_suggestions",
             args: vec![
                 ArgSpec {
@@ -909,6 +917,27 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(SessionConfigResult))),
+        },
+        CommandSpec {
+            name: "tracking_segment_open",
+            args: vec![ArgSpec {
+                name: "segment_name",
+                schema: schema(schema_for!(Option<String>)),
+            }],
+            returns: Some(schema(schema_for!(SegmentStateResult))),
+        },
+        CommandSpec {
+            name: "tracking_segment_close",
+            args: vec![],
+            returns: Some(schema(schema_for!(SegmentStateResult))),
+        },
+        CommandSpec {
+            name: "tracking_segment_rename",
+            args: vec![ArgSpec {
+                name: "segment_name",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(SegmentStateResult))),
         },
         CommandSpec {
             name: "tracking_rename_session",
@@ -997,34 +1026,6 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(ArmourCostResult))),
-        },
-        CommandSpec {
-            name: "tracking_quest_link",
-            args: vec![
-                ArgSpec {
-                    name: "session_id",
-                    schema: schema(schema_for!(String)),
-                },
-                ArgSpec {
-                    name: "action",
-                    schema: schema(schema_for!(String)),
-                },
-            ],
-            returns: Some(schema(schema_for!(QuestLinkDecision))),
-        },
-        CommandSpec {
-            name: "tracking_quest_declare",
-            args: vec![
-                ArgSpec {
-                    name: "quest_id",
-                    schema: schema(schema_for!(Option<i64>)),
-                },
-                ArgSpec {
-                    name: "playlist_id",
-                    schema: schema(schema_for!(Option<i64>)),
-                },
-            ],
-            returns: Some(schema(schema_for!(QuestDeclareResult))),
         },
         CommandSpec {
             name: "tracking_repair_scan",

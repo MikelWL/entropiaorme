@@ -30,12 +30,13 @@
 //!   command answers a body, not a status + headers), and the body-taint /
 //!   int-parse 422s (typed args are pre-validated).
 
+use std::collections::HashMap;
+
 use eo_services::config_service::{active_trifecta_preset, load_config_readonly, AppConfig};
 use eo_services::db::Db;
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
-use eo_services::quests::QuestError;
 use eo_services::time::{local_isoformat, naive_to_epoch};
-use eo_services::tracker::HuntTracker;
+use eo_services::tracker::{HuntTracker, TrackerCommandError};
 use eo_services::trifecta_service::{validate_trifecta, TrifectaPreset};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -51,7 +52,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 42] = [
+const SNAPSHOT_FIELDS: [&str; 43] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -59,10 +60,11 @@ const SNAPSHOT_FIELDS: [&str; 42] = [
     "endOfSessionArmourReminderEnabled",
     "sessionName",
     "skillBoostPercent",
+    "segmentName",
     "currentMob",
     "currentTool",
     "currentActivity",
-    "questName",
+    "questNames",
     "trifectaAttribution",
     "recentEvents",
     "session_id",
@@ -98,6 +100,13 @@ const SNAPSHOT_FIELDS: [&str; 42] = [
 
 /// The repair-scan response-model field order (`exclude_unset`).
 const REPAIR_FIELDS: [&str; 4] = ["cost_ped", "raw_text", "confidence", "error"];
+
+/// A tracker-command precondition surfaced at the facade: both
+/// variants are state conflicts ("No active session" / "No open
+/// segment"), so they map to 409 with the error's own message.
+fn tracker_conflict(error: TrackerCommandError) -> ApiError {
+    ApiError::conflict(error.to_string())
+}
 
 fn edit_error(context: &'static str) -> impl Fn(EditError) -> ApiError {
     move |error| match error {
@@ -194,22 +203,6 @@ pub enum QuestLinkReason {
     AmbiguousPlaylist,
     Declined,
     AlreadyLinked,
-}
-
-/// The quest-link decision's outcome.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestLinkStatus {
-    Linked,
-    Declined,
-}
-
-/// Which entity a linked decision bound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestLinkType {
-    Quest,
-    Playlist,
 }
 
 // ── Response DTOs ───────────────────────────────────────────────────
@@ -360,6 +353,56 @@ pub struct ManualMobSuggestion {
     pub maturity: String,
 }
 
+/// The interval kinds as the engine writes them today. The schema keeps
+/// the vocabulary open on purpose (a new kind must not need a
+/// migration); the wire types the set that exists, and the reader skips
+/// a row it cannot parse rather than failing the whole read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionIntervalKind {
+    Modifier,
+    Segment,
+    Quest,
+    Consumable,
+}
+
+/// One recorded interval of a session: its identity, bounds, and the
+/// events attributed to it through the contexts stamped at insert.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionIntervalRow {
+    pub id: i64,
+    pub kind: SessionIntervalKind,
+    /// The display name (a segment's name, a quest's title); null for
+    /// kinds that need none.
+    pub label: Nullable<String>,
+    /// What the interval points at (a quest id); interpretation is
+    /// implied by `kind`.
+    pub ref_id: Nullable<i64>,
+    /// The modifier magnitude, where 0 is the declared unboosted
+    /// baseline and null means the kind carries none.
+    pub magnitude: Nullable<f64>,
+    /// Wall-clock bounds in epoch seconds, exactly as declared. Never
+    /// compare these against event timestamps: events carry the chat
+    /// log's centralised server time, an hour apart on real data, which
+    /// is why attribution goes through contexts instead.
+    pub started_at: f64,
+    /// Null while the interval is still open.
+    pub ended_at: Nullable<f64>,
+    /// Attributed event counts, by context membership.
+    pub kills: i64,
+    pub harvests: i64,
+    pub skill_gains: i64,
+}
+
+/// A session's recorded intervals, oldest first.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionIntervals {
+    pub session_id: String,
+    pub intervals: Vec<SessionIntervalRow>,
+}
+
 /// The quest-link suggestion (all seven fields always present).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -441,6 +484,11 @@ pub struct TrackingSnapshot {
     /// sourcing as the session name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_boost_percent: Option<i64>,
+    /// The open segment's name. Active-only by nature: a segment exists
+    /// exactly while its session runs, so the idle branch never carries
+    /// the key and an active session without a segment drops it too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_mob: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -448,11 +496,12 @@ pub struct TrackingSnapshot {
     /// What the held tool implies the next action is recorded as.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_activity: Option<ToolActivity>,
-    /// The quest or playlist the active session declares, resolved for
-    /// display. Absent when nothing is declared (or the link was
-    /// declined), so the control never claims a binding it lacks.
+    /// The open quest slices' names, newest first: the quest facet as
+    /// the lifecycle auto-records it (several dailies can stack).
+    /// Absent when no slice is open, so the readout never claims a
+    /// quest that is not actually running.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_name: Option<String>,
+    pub quest_names: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trifecta_attribution: Option<TrifectaAttribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -584,6 +633,14 @@ pub struct SessionConfigResult {
     pub skill_boost_percent: Nullable<i64>,
 }
 
+/// The segment acknowledgement: the segment name now in force on the
+/// running session (null: no segment open).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentStateResult {
+    pub segment_name: Nullable<String>,
+}
+
 /// The post-hoc session-rename result.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -618,55 +675,6 @@ pub struct LootItemEditResult {
 pub struct ArmourCostResult {
     pub session_id: String,
     pub armour_cost: f64,
-}
-
-/// The quest-link decision: `accept` carries the full link object, `decline`
-/// only `sessionId` / `status`. The accept-only fields skip when absent
-/// (exclude-unset -> exclude-none movement: a present-null link field is
-/// dropped rather than serialised null).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QuestLinkDecision {
-    pub session_id: String,
-    pub status: QuestLinkStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_type: Option<QuestLinkType>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_name: Option<String>,
-}
-
-/// The quest-declaration outcome.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestDeclareStatus {
-    Declared,
-    Cleared,
-}
-
-/// The quest-declaration acknowledgement: the curated link now in force
-/// on the active session (or its removal). The link fields ride only on
-/// a declare, resolved for display.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QuestDeclareResult {
-    pub session_id: String,
-    pub status: QuestDeclareStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_type: Option<QuestLinkType>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playlist_name: Option<String>,
 }
 
 /// The one-shot repair-cost read (`exclude_unset`): the cost / raw text /
@@ -774,8 +782,120 @@ impl Api {
         serde_json::from_value(value).map_err(ApiError::internal("tracking snapshot shaping"))
     }
 
+    /// A session's recorded intervals with bounds and attributed event
+    /// counts: the thin read over the segment contract. Membership
+    /// comes from the contexts stamped on each event row at insert,
+    /// never from comparing timestamps (interval bounds are wall-clock
+    /// declarations; event timestamps carry the chat log's server
+    /// time). The economics on top of this (cycled PED, return rate,
+    /// per-segment rewards) belong to the analytics surfaces, not here.
+    /// 404 for an absent session.
+    pub async fn tracking_session_intervals(
+        &self,
+        session_id: String,
+    ) -> Result<SessionIntervals, ApiError> {
+        if !self.tracking_session_exists(&session_id).await? {
+            return Err(ApiError::not_found("Session not found"));
+        }
+        let session = session_id.clone();
+        let (rows, counts) = self
+            .db
+            .with_reader(move |conn| {
+                let session_scope = session.clone();
+                let mut stmt = conn.prepare(
+                    "SELECT id, kind, label, ref_id, magnitude, started_at, ended_at \
+                     FROM session_intervals WHERE session_id = ? ORDER BY id",
+                )?;
+                let rows = stmt
+                    .query_map(rusqlite::params![session], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                            row.get::<_, Option<f64>>(4)?,
+                            row.get::<_, f64>(5)?,
+                            row.get::<_, Option<f64>>(6)?,
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+
+                // One count map per event table: every event whose
+                // stamped context names the interval belongs to it.
+                let mut counts: HashMap<i64, (i64, i64, i64)> = HashMap::new();
+                for (table, slot) in [("kills", 0usize), ("harvest_events", 1), ("skill_gains", 2)]
+                {
+                    let sql = format!(
+                        "SELECT sci.interval_id, COUNT(*) \
+                         FROM session_context_intervals sci \
+                         JOIN session_contexts sc ON sc.id = sci.context_id \
+                         JOIN {table} e ON e.context_id = sci.context_id \
+                         WHERE sc.session_id = ? \
+                         GROUP BY sci.interval_id",
+                    );
+                    let mut stmt = conn.prepare(&sql)?;
+                    let mapped = stmt.query_map(rusqlite::params![session_scope], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                    })?;
+                    for entry in mapped {
+                        let (interval_id, count) = entry?;
+                        let bucket = counts.entry(interval_id).or_default();
+                        match slot {
+                            0 => bucket.0 = count,
+                            1 => bucket.1 = count,
+                            _ => bucket.2 = count,
+                        }
+                    }
+                }
+                Ok((rows, counts))
+            })
+            .await
+            .map_err(ApiError::internal("session intervals"))?;
+
+        let intervals = rows
+            .into_iter()
+            .filter_map(
+                |(id, kind, label, ref_id, magnitude, started_at, ended_at)| {
+                    // An unparseable kind can only come from a future build's
+                    // rows; skip it rather than failing the whole read.
+                    let kind = match kind.as_str() {
+                        "modifier" => SessionIntervalKind::Modifier,
+                        "segment" => SessionIntervalKind::Segment,
+                        "quest" => SessionIntervalKind::Quest,
+                        "consumable" => SessionIntervalKind::Consumable,
+                        _ => return None,
+                    };
+                    let (kills, harvests, skill_gains) =
+                        counts.get(&id).copied().unwrap_or((0, 0, 0));
+                    Some(SessionIntervalRow {
+                        id,
+                        kind,
+                        label: label.into(),
+                        ref_id: ref_id.into(),
+                        magnitude: magnitude.into(),
+                        started_at,
+                        ended_at: ended_at.into(),
+                        kills,
+                        harvests,
+                        skill_gains,
+                    })
+                },
+            )
+            .collect();
+        Ok(SessionIntervals {
+            session_id,
+            intervals,
+        })
+    }
+
     /// The curated quest-link suggestion for a completed session; an absent
     /// session is a not-found.
+    ///
+    /// Legacy read: the recorded quest stretch superseded the curated
+    /// link (analytics read intervals, nothing writes the link table,
+    /// and no UI calls this any more), but the suggestion's behaviour
+    /// is pinned by the replay corpus's expected responses, so the
+    /// read stays exactly as the port ratified it.
     pub async fn tracking_quest_link_suggestion(
         &self,
         session_id: String,
@@ -970,7 +1090,7 @@ impl Api {
         // Three-state and deliberately NOT collapsed: `None` withdraws the
         // declaration, `Some(0)` declares deliberately-unboosted play. A
         // negative is nonsense rather than a third meaning, so it reads as
-        // a withdrawal instead of reaching the segment layer.
+        // a withdrawal instead of reaching the interval layer.
         let boost = skill_boost_percent.filter(|percent| *percent >= 0);
         // Validate and write inside a block so the (non-`Send`) config
         // guard is gone before the tracker await below.
@@ -1000,6 +1120,58 @@ impl Api {
         Ok(SessionConfigResult {
             session_name: name.into(),
             skill_boost_percent: boost.into(),
+        })
+    }
+
+    /// Open a player-drawn segment on the running session, closing any
+    /// standing one (segments are sequential, not stacking). A null or
+    /// blank name is auto-numbered "Segment N"; the acknowledgement
+    /// echoes the name now in force. 409 when no session is active.
+    pub async fn tracking_segment_open(
+        &self,
+        segment_name: Option<String>,
+    ) -> Result<SegmentStateResult, ApiError> {
+        let applied = self
+            .tracker
+            .open_segment(segment_name)
+            .await
+            .map_err(tracker_conflict)?;
+        Ok(SegmentStateResult {
+            segment_name: applied.into(),
+        })
+    }
+
+    /// Close the open segment; the session keeps running unsegmented.
+    /// Closing with no segment open acknowledges as a no-op, so a stale
+    /// control cannot fail the user. 409 when no session is active.
+    pub async fn tracking_segment_close(&self) -> Result<SegmentStateResult, ApiError> {
+        self.tracker
+            .close_segment()
+            .await
+            .map_err(tracker_conflict)?;
+        Ok(SegmentStateResult {
+            segment_name: None.into(),
+        })
+    }
+
+    /// Rename the OPEN segment live: a segment's grain is finer than
+    /// the session, so its label may move while the session runs. 400
+    /// for a blank name; 409 when no session is active or no segment is
+    /// open (the close raced the edit).
+    pub async fn tracking_segment_rename(
+        &self,
+        segment_name: String,
+    ) -> Result<SegmentStateResult, ApiError> {
+        let name = segment_name.trim().to_string();
+        if name.is_empty() {
+            return Err(ApiError::bad_request("Segment name must not be empty"));
+        }
+        self.tracker
+            .rename_segment(&name)
+            .await
+            .map_err(tracker_conflict)?;
+        Ok(SegmentStateResult {
+            segment_name: Some(name).into(),
         })
     }
 
@@ -1078,150 +1250,6 @@ impl Api {
             .await
             .map_err(edit_error("tracking armour cost"))?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking armour cost shaping"))
-    }
-
-    /// Accept or decline the curated quest-link suggestion. 404 for an absent
-    /// session, 400 for an unknown action; accept with no linkable suggestion
-    /// is a 409.
-    pub async fn tracking_quest_link(
-        &self,
-        session_id: String,
-        action: String,
-    ) -> Result<QuestLinkDecision, ApiError> {
-        if !self.tracking_session_exists(&session_id).await? {
-            return Err(ApiError::not_found("Session not found"));
-        }
-        let action = action.trim().to_lowercase();
-        if action == "accept" {
-            return match self
-                .quests
-                .accept_session_link_suggestion(&session_id)
-                .await
-            {
-                Ok(suggestion) => Ok(QuestLinkDecision {
-                    session_id: session_id.clone(),
-                    status: QuestLinkStatus::Linked,
-                    // Parses the service's untyped suggestion value: the two
-                    // link kinds map to their variants, and the link type is
-                    // absent for any other shape.
-                    link_type: match suggestion["suggestion_type"].as_str() {
-                        Some("quest") => Some(QuestLinkType::Quest),
-                        Some("playlist") => Some(QuestLinkType::Playlist),
-                        _ => None,
-                    },
-                    quest_id: opt_str(&str_id_or_null(&suggestion["quest_id"])),
-                    quest_name: opt_str(&suggestion["quest_name"]),
-                    playlist_id: opt_str(&str_id_or_null(&suggestion["playlist_id"])),
-                    playlist_name: opt_str(&suggestion["playlist_name"]),
-                }),
-                Err(QuestError::Invalid(message)) => Err(ApiError::conflict(message)),
-                Err(_) => Err(ApiError::invalid_state("quest-link accept")),
-            };
-        }
-        if action == "decline" {
-            self.quests
-                .decline_session_link(&session_id)
-                .await
-                .map_err(ApiError::internal("quest-link decline"))?;
-            return Ok(QuestLinkDecision {
-                session_id,
-                status: QuestLinkStatus::Declined,
-                link_type: None,
-                quest_id: None,
-                quest_name: None,
-                playlist_id: None,
-                playlist_name: None,
-            });
-        }
-        Err(ApiError::bad_request(
-            "Action must be 'accept' or 'decline'",
-        ))
-    }
-
-    /// Declare (or clear) the active session's quest facet: bind the
-    /// curated analytics link to a quest or playlist up front instead of
-    /// waiting for the post-stop suggestion. Both ids null clears the
-    /// link. 409 when no session is active; 400 for a bad id pair.
-    pub async fn tracking_quest_declare(
-        &self,
-        quest_id: Option<i64>,
-        playlist_id: Option<i64>,
-    ) -> Result<QuestDeclareResult, ApiError> {
-        let readout = self
-            .tracker
-            .snapshot()
-            .await
-            .map_err(ApiError::internal("quest declare readout"))?;
-        let Some(active) = readout.active else {
-            return Err(ApiError::conflict("No active session"));
-        };
-        let session_id = active.session_id;
-
-        if quest_id.is_none() && playlist_id.is_none() {
-            self.quests
-                .clear_session_link(&session_id)
-                .await
-                .map_err(ApiError::internal("quest declare clear"))?;
-            return Ok(QuestDeclareResult {
-                session_id,
-                status: QuestDeclareStatus::Cleared,
-                link_type: None,
-                quest_id: None,
-                quest_name: None,
-                playlist_id: None,
-                playlist_name: None,
-            });
-        }
-
-        match self
-            .quests
-            .declare_session_link(&session_id, quest_id, playlist_id)
-            .await
-        {
-            Ok(()) => {}
-            Err(QuestError::Invalid(message)) => return Err(ApiError::bad_request(message)),
-            Err(_) => return Err(ApiError::invalid_state("quest declare")),
-        }
-
-        // Resolve the display name for the acknowledgement.
-        let (link_type, name) = if let Some(id) = quest_id {
-            (QuestLinkType::Quest, self.entity_name("quests", id).await?)
-        } else {
-            let id = playlist_id.expect("one id present");
-            (
-                QuestLinkType::Playlist,
-                self.entity_name("quest_playlists", id).await?,
-            )
-        };
-        Ok(QuestDeclareResult {
-            session_id,
-            status: QuestDeclareStatus::Declared,
-            link_type: Some(link_type),
-            quest_id,
-            quest_name: match link_type {
-                QuestLinkType::Quest => name.clone(),
-                QuestLinkType::Playlist => None,
-            },
-            playlist_id,
-            playlist_name: match link_type {
-                QuestLinkType::Playlist => name,
-                QuestLinkType::Quest => None,
-            },
-        })
-    }
-
-    /// A quest/playlist display name by id (None when absent).
-    async fn entity_name(&self, table: &'static str, id: i64) -> Result<Option<String>, ApiError> {
-        use rusqlite::OptionalExtension as _;
-        let sql = format!("SELECT name FROM {table} WHERE id = ?");
-        self.db
-            .with_reader(move |conn| {
-                Ok(conn
-                    .query_row(&sql, rusqlite::params![id], |row| row.get::<_, String>(0))
-                    .optional()?)
-            })
-            .await
-            .map_err(ApiError::internal("quest declare name"))
     }
 
     /// The one-shot repair-cost OCR read, gated on `repair_ocr_enabled`
@@ -1311,33 +1339,13 @@ pub(crate) async fn build_snapshot_value(
         None => Value::Null,
     };
 
-    // The declared quest facet, read from the persisted curated link so a
-    // reopened overlay (or a restarted app) shows the binding that
-    // actually stands rather than a locally-remembered one.
-    let quest_name = match &readout.active {
-        None => Value::Null,
-        Some(active) => {
-            let session_id = active.session_id.clone();
-            let resolved: Option<String> = db
-                .with_reader(move |conn| {
-                    use rusqlite::OptionalExtension as _;
-                    Ok(conn
-                        .query_row(
-                            "SELECT COALESCE(q.name, p.name) \
-                             FROM session_quest_analytics_links l \
-                             LEFT JOIN quests q ON q.id = l.quest_id \
-                             LEFT JOIN quest_playlists p ON p.id = l.playlist_id \
-                             WHERE l.session_id = ? AND l.link_type IN ('quest', 'playlist')",
-                            rusqlite::params![session_id],
-                            |row| row.get::<_, Option<String>>(0),
-                        )
-                        .optional()?
-                        .flatten())
-                })
-                .await
-                .map_err(ApiError::internal("snapshot quest link"))?;
-            resolved.map(Value::String).unwrap_or(Value::Null)
-        }
+    // The quest facet: the open quest slices as the lifecycle
+    // auto-records them, newest first. Null (dropped by the projection)
+    // when none are open; the facet is never declared by hand any more,
+    // so the interval state is the only source.
+    let quest_names = match &readout.active {
+        Some(active) if !active.quest_names.is_empty() => json!(active.quest_names),
+        _ => Value::Null,
     };
 
     let value = match &readout.active {
@@ -1423,10 +1431,11 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "currentActivity": current_activity,
-                "questName": quest_name,
+                "questNames": quest_names,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "skillBoostPercent": boost_value(active.skill_boost_percent),
+                "segmentName": name_value(active.segment_name.as_deref()),
                 "currentMob": active.current_mob.clone(),
                 "recentEvents": recent_events,
                 "warnings": warnings,

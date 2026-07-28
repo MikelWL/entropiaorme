@@ -200,31 +200,30 @@ describe('session facets and declared mob', () => {
 		expect(input.disabled).toBe(false);
 	});
 
-	it('offers the quest picker only while a session is active', () => {
-		const questTrigger = () => screen.getByText('Pick').closest('button') as HTMLButtonElement;
-
-		const { unmount } = render(OverlayStrip, { props: { data: liveData({ status: 'idle' }) } });
-		expect(questTrigger().disabled).toBe(true);
+	it('reads out the auto-recorded quest stretches, stacking as a count', () => {
+		const { unmount } = render(OverlayStrip, {
+			props: { data: liveData({ status: 'active', questNames: ['Daily: Carabok'] }) },
+		});
+		expect(screen.getByText('Daily: Carabok')).toBeTruthy();
 		unmount();
 
-		const onQuestTrigger = vi.fn();
+		// Three dailies at once: the newest shows, the rest fold into a
+		// count (the full set rides the title).
 		render(OverlayStrip, {
-			props: { data: liveData({ status: 'active' }), onQuestTrigger },
+			props: {
+				data: liveData({
+					status: 'active',
+					questNames: ['Daily: Carabok', 'Daily: Monura', 'Daily: Atrox'],
+				}),
+			},
 		});
-		expect(questTrigger().disabled).toBe(false);
-		questTrigger().click();
-		expect(onQuestTrigger).toHaveBeenCalledTimes(1);
+		expect(screen.getByText('Daily: Carabok +2')).toBeTruthy();
 	});
 
-	it('shows the declared quest with a clear control', () => {
-		const onClearQuest = vi.fn();
-		render(OverlayStrip, {
-			props: { data: liveData({ status: 'active' }), questLabel: 'ARIS Daily I', onClearQuest },
-		});
-
-		expect(screen.getByText('ARIS Daily I')).toBeTruthy();
-		screen.getByLabelText('Clear declared quest').click();
-		expect(onClearQuest).toHaveBeenCalledTimes(1);
+	it('shows no quest claim when nothing is recorded', () => {
+		render(OverlayStrip, { props: { data: liveData({ status: 'active' }) } });
+		const facet = screen.getByTestId('quest-facet');
+		expect(facet.textContent?.trim()).toBe('\u2014');
 	});
 
 	it('shows the mob input when no mob is declared', () => {
@@ -505,44 +504,69 @@ describe('post-session bar', () => {
 		});
 		expect(screen.getByText('-5.50')).toBeTruthy();
 	});
+});
 
-	it('offers the quest-link suggestion and forwards the decision', () => {
-		const onQuestLinkDecision = vi.fn();
-		render(OverlayStrip, {
-			props: {
-				...postSession,
-				questLinkSuggestion: {
-					sessionId: 's1',
-					suggestionType: 'quest',
-					reason: 'single_quest',
-					questId: 'q1',
-					questName: 'Iron Challenge',
-					playlistId: null,
-					playlistName: null,
-				},
-				onQuestLinkDecision,
-			},
-		});
+describe('segment control', () => {
+	it('disables the whole control while idle: a segment exists only during a session', () => {
+		render(OverlayStrip, { props: { data: liveData() } });
 
-		expect(screen.getByText('Iron Challenge')).toBeTruthy();
-		screen.getByText('Yes').click();
-		expect(onQuestLinkDecision).toHaveBeenCalledWith('accept');
-		screen.getByText('No').click();
-		expect(onQuestLinkDecision).toHaveBeenCalledWith('decline');
+		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
+		expect(input.disabled).toBe(true);
+		expect(input.title).toBe('Start a session to draw segments');
+		expect((screen.getByLabelText('Start segment') as HTMLButtonElement).disabled).toBe(true);
 	});
 
-	it('shows the quest-link outcome message with a dismiss control', () => {
-		const onDismissQuestLinkMessage = vi.fn();
+	it('offers the name field and start button while active with no segment open', async () => {
+		const onSegmentNext = vi.fn();
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active' }), onSegmentNext },
+		});
+
+		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
+		expect(input.disabled).toBe(false);
+		expect(input.title).toBe('Name the next segment; leave blank to auto-number');
+
+		screen.getByLabelText('Start segment').click();
+		expect(onSegmentNext).toHaveBeenCalledTimes(1);
+		// No segment open: nothing to close.
+		expect(screen.queryByLabelText('Close segment')).toBeNull();
+	});
+
+	it('offers next and close controls while a segment is open', async () => {
+		const onSegmentNext = vi.fn();
+		const onSegmentClose = vi.fn();
 		render(OverlayStrip, {
 			props: {
-				...postSession,
-				questLinkMessage: 'Linked to Iron Challenge',
-				onDismissQuestLinkMessage,
+				data: liveData({ status: 'active', segmentName: 'Boss 1' }),
+				onSegmentNext,
+				onSegmentClose,
 			},
 		});
 
-		expect(screen.getByText('Linked to Iron Challenge')).toBeTruthy();
-		screen.getByText('Done').click();
-		expect(onDismissQuestLinkMessage).toHaveBeenCalledTimes(1);
+		expect((screen.getByLabelText('Segment name') as HTMLInputElement).title).toBe(
+			'Rename the open segment',
+		);
+		screen.getByLabelText('Start next segment').click();
+		expect(onSegmentNext).toHaveBeenCalledTimes(1);
+		screen.getByLabelText('Close segment').click();
+		expect(onSegmentClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('commits on Enter and forwards blur to its handler', async () => {
+		const onSegmentCommit = vi.fn();
+		const onSegmentBlur = vi.fn();
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', segmentName: 'Boss 1' }),
+				onSegmentCommit,
+				onSegmentBlur,
+			},
+		});
+
+		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		expect(onSegmentCommit).toHaveBeenCalledTimes(1);
+		input.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
+		expect(onSegmentBlur).toHaveBeenCalledTimes(1);
 	});
 });

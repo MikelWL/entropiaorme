@@ -559,7 +559,7 @@ mod tests {
         let rig = rig();
         rig.start_session();
 
-        // No context minted yet: this gain predates the segment model.
+        // No context minted yet: this gain predates the interval model.
         rig.gain("Bioregenesis", 0.1, "2026-01-01T00:00:01");
 
         let first = rig.mint_context();

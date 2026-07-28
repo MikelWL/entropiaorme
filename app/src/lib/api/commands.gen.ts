@@ -1777,26 +1777,6 @@ export interface QuestAnalyticsRow {
 }
 
 /**
- * The quest-declaration acknowledgement: the curated link now in force
- * on the active session (or its removal). The link fields ride only on
- * a declare, resolved for display.
- */
-export interface QuestDeclareResult {
-	sessionId: string;
-	status: QuestDeclareStatus;
-	linkType?: QuestLinkType | null;
-	questId?: number | null;
-	questName?: string | null;
-	playlistId?: number | null;
-	playlistName?: string | null;
-}
-
-/**
- * The quest-declaration outcome.
- */
-export type QuestDeclareStatus = 'declared' | 'cleared';
-
-/**
  * A quest create or update payload. One DTO serves both operations, in
  * the frontend's snake_case field casing: the sole client sends the
  * full field set for both create and update (nulls explicit), so every
@@ -1824,40 +1804,14 @@ export interface QuestInput {
 }
 
 /**
- * The quest-link decision: `accept` carries the full link object, `decline`
- * only `sessionId` / `status`. The accept-only fields skip when absent
- * (exclude-unset -> exclude-none movement: a present-null link field is
- * dropped rather than serialised null).
- */
-export interface QuestLinkDecision {
-	sessionId: string;
-	status: QuestLinkStatus;
-	linkType?: QuestLinkType | null;
-	questId?: string | null;
-	questName?: string | null;
-	playlistId?: string | null;
-	playlistName?: string | null;
-}
-
-/**
  * Why the quest-link suggestion took its shape.
  */
 export type QuestLinkReason = 'single_quest' | 'exact_playlist' | 'no_completions' | 'unclean' | 'ambiguous_playlist' | 'declined' | 'already_linked';
 
 /**
- * The quest-link decision's outcome.
- */
-export type QuestLinkStatus = 'linked' | 'declined';
-
-/**
  * What the quest-link suggestion proposes.
  */
 export type QuestLinkSuggestionType = 'quest' | 'playlist' | 'none';
-
-/**
- * Which entity a linked decision bound.
- */
-export type QuestLinkType = 'quest' | 'playlist';
 
 /**
  * A playlist in the wire shape (`_format_playlist`). Membership arrives
@@ -2025,6 +1979,14 @@ export interface ScanStatus {
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable' | 'tool' | 'implant';
 
 /**
+ * The segment acknowledgement: the segment name now in force on the
+ * running session (null: no segment open).
+ */
+export interface SegmentStateResult {
+	segmentName: string | null;
+}
+
+/**
  * The session-config acknowledgement: the facet values now in force
  * (null: not declared).
  */
@@ -2050,6 +2012,45 @@ export interface SessionDetail {
 	effectiveLoot: number;
 	toolStats: ToolStat[];
 	skillGains: SkillGain[];
+}
+
+/**
+ * The interval kinds as the engine writes them today. The schema keeps
+ * the vocabulary open on purpose (a new kind must not need a
+ * migration); the wire types the set that exists, and the reader skips
+ * a row it cannot parse rather than failing the whole read.
+ */
+export type SessionIntervalKind = 'modifier' | 'segment' | 'quest' | 'consumable';
+
+/**
+ * One recorded interval of a session: its identity, bounds, and the
+ * events attributed to it through the contexts stamped at insert.
+ */
+export interface SessionIntervalRow {
+	id: number;
+	kind: SessionIntervalKind;
+	/** The display name (a segment's name, a quest's title); null for kinds that need none. */
+	label: string | null;
+	/** What the interval points at (a quest id); interpretation is implied by `kind`. */
+	refId: number | null;
+	/** The modifier magnitude, where 0 is the declared unboosted baseline and null means the kind carries none. */
+	magnitude: number | null;
+	/** Wall-clock bounds in epoch seconds, exactly as declared. Never compare these against event timestamps: events carry the chat log's centralised server time, an hour apart on real data, which is why attribution goes through contexts instead. */
+	startedAt: number;
+	/** Null while the interval is still open. */
+	endedAt: number | null;
+	/** Attributed event counts, by context membership. */
+	kills: number;
+	harvests: number;
+	skillGains: number;
+}
+
+/**
+ * A session's recorded intervals, oldest first.
+ */
+export interface SessionIntervals {
+	sessionId: string;
+	intervals: SessionIntervalRow[];
 }
 
 /**
@@ -2292,12 +2293,14 @@ export interface TrackingSnapshot {
 	sessionName?: string | null;
 	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
 	skillBoostPercent?: number | null;
+	/** The open segment's name. Active-only by nature: a segment exists exactly while its session runs, so the idle branch never carries the key and an active session without a segment drops it too. */
+	segmentName?: string | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
 	/** What the held tool implies the next action is recorded as. */
 	currentActivity?: ToolActivity | null;
-	/** The quest or playlist the active session declares, resolved for display. Absent when nothing is declared (or the link was declined), so the control never claims a binding it lacks. */
-	questName?: string | null;
+	/** The open quest slices' names, newest first: the quest facet as the lifecycle auto-records it (several dailies can stack). Absent when no slice is open, so the readout never claims a quest that is not actually running. */
+	questNames?: string[] | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
 	session_id?: string | null;
@@ -2813,6 +2816,10 @@ export async function trackingSessionDetail(sessionId: string): Promise<SessionD
 	return invokeCommand('tracking_session_detail', { session_id: sessionId });
 }
 
+export async function trackingSessionIntervals(sessionId: string): Promise<SessionIntervals> {
+	return invokeCommand('tracking_session_intervals', { session_id: sessionId });
+}
+
 export async function trackingSessionNameSuggestions(q: string, limit: number | null): Promise<string[]> {
 	return invokeCommand('tracking_session_name_suggestions', { q, limit });
 }
@@ -2849,6 +2856,18 @@ export async function trackingSessionConfig(sessionName: string | null, skillBoo
 	return invokeCommand('tracking_session_config', { session_name: sessionName, skill_boost_percent: skillBoostPercent });
 }
 
+export async function trackingSegmentOpen(segmentName: string | null): Promise<SegmentStateResult> {
+	return invokeCommand('tracking_segment_open', { segment_name: segmentName });
+}
+
+export async function trackingSegmentClose(): Promise<SegmentStateResult> {
+	return invokeCommand('tracking_segment_close', {});
+}
+
+export async function trackingSegmentRename(segmentName: string): Promise<SegmentStateResult> {
+	return invokeCommand('tracking_segment_rename', { segment_name: segmentName });
+}
+
 export async function trackingRenameSession(sessionId: string, sessionName: string | null): Promise<SessionRenameResult> {
 	return invokeCommand('tracking_rename_session', { session_id: sessionId, session_name: sessionName });
 }
@@ -2871,14 +2890,6 @@ export async function trackingLootItemDeactivate(sessionId: string, itemName: st
 
 export async function trackingArmourCost(sessionId: string, cost: number): Promise<ArmourCostResult> {
 	return invokeCommand('tracking_armour_cost', { session_id: sessionId, cost });
-}
-
-export async function trackingQuestLink(sessionId: string, action: string): Promise<QuestLinkDecision> {
-	return invokeCommand('tracking_quest_link', { session_id: sessionId, action });
-}
-
-export async function trackingQuestDeclare(questId: number | null, playlistId: number | null): Promise<QuestDeclareResult> {
-	return invokeCommand('tracking_quest_declare', { quest_id: questId, playlist_id: playlistId });
 }
 
 export async function trackingRepairScan(sessionId: string): Promise<RepairScanResult> {

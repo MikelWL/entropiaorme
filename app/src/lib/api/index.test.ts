@@ -48,7 +48,7 @@ beforeEach(() => {
 });
 
 // The tracking family serves its live surface over typed IPC commands. The
-// session-scoped writes, lifecycle verbs, mob/loot edits, and quest-link
+// session-scoped writes, lifecycle verbs, and mob/loot edits
 // decision are always commands (no demo branch); the camelCase call
 // arguments map to the snake_case invoke keys the generated bindings send.
 describe('tracking wrappers dispatch typed commands', () => {
@@ -93,12 +93,6 @@ describe('tracking wrappers dispatch typed commands', () => {
 			{ session_name: null, skill_boost_percent: null },
 		],
 		[
-			'declareSessionQuest binds a playlist',
-			() => api.declareSessionQuest(null, 7),
-			'tracking_quest_declare',
-			{ quest_id: null, playlist_id: 7 },
-		],
-		[
 			'lockManualMob defaults maturity to an empty string',
 			() => api.lockManualMob('Atrox'),
 			'tracking_manual_mob_lock',
@@ -115,18 +109,6 @@ describe('tracking wrappers dispatch typed commands', () => {
 			() => api.saveArmourCost('s1', 1.25),
 			'tracking_armour_cost',
 			{ session_id: 's1', cost: 1.25 },
-		],
-		[
-			'getSessionQuestLinkSuggestion',
-			() => api.getSessionQuestLinkSuggestion('s1'),
-			'tracking_quest_link_suggestion',
-			{ session_id: 's1' },
-		],
-		[
-			'decideSessionQuestLink',
-			() => api.decideSessionQuestLink('s1', 'accept'),
-			'tracking_quest_link',
-			{ session_id: 's1', action: 'accept' },
 		],
 		[
 			'deleteSession',

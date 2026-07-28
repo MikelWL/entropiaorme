@@ -74,6 +74,23 @@ pub(super) enum TrackerMsg {
         quest_id: i64,
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
+    /// The user drew a segment boundary: open a segment, closing any
+    /// standing one (segments are sequential, not stacking). A None or
+    /// blank label auto-numbers it "Segment N"; the reply carries the
+    /// name now in force.
+    OpenSegment {
+        label: Option<String>,
+        reply: oneshot::Sender<Result<Option<String>, TrackerCommandError>>,
+    },
+    /// Close the open segment (a no-op when none is open).
+    CloseSegment {
+        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+    },
+    /// Rename the open segment in place, live.
+    RenameSegment {
+        label: String,
+        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+    },
     ReleaseMob(oneshot::Sender<Option<String>>),
     PrimeDemo {
         session: TrackingSession,
@@ -213,6 +230,15 @@ impl TrackerActor {
             }
             TrackerMsg::CloseQuestSlice { quest_id, reply } => {
                 let _ = reply.send(self.close_quest_slice(quest_id).await);
+            }
+            TrackerMsg::OpenSegment { label, reply } => {
+                let _ = reply.send(self.open_segment(label).await);
+            }
+            TrackerMsg::CloseSegment { reply } => {
+                let _ = reply.send(self.close_segment().await);
+            }
+            TrackerMsg::RenameSegment { label, reply } => {
+                let _ = reply.send(self.rename_segment(label).await);
             }
             TrackerMsg::SetDeclaredMob {
                 name,

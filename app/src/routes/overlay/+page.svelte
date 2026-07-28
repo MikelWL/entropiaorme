@@ -11,11 +11,9 @@
 		setSessionConfig,
 		getManualMobSuggestions,
 		lockManualMob,
-		getSessionQuestLinkSuggestion,
-		decideSessionQuestLink,
-		declareSessionQuest,
-		getQuests,
-		getPlaylists,
+		openSessionSegment,
+		closeSessionSegment,
+		renameSessionSegment,
 		updateSettings,
 		type TrackingLive,
 		type TrackingStatus,
@@ -42,6 +40,7 @@
 		OVERLAY_MENU_SELECT_EVENT,
 		OVERLAY_MENU_SHOW_EVENT,
 		OVERLAY_MENU_WINDOW_LABEL,
+		measureMenuTextWidth,
 		type OverlayMenuKind,
 		type OverlayMenuSelection,
 		type OverlayMenuState
@@ -145,10 +144,10 @@
 	// own store instance beside the dashboard's.
 	const snapshot = createSnapshotStore<TrackingSnapshot>(TRACKING_TOPIC, getTrackingSnapshot);
 
-	// Post-session flow: the armour prompt gating the stop, the final-stats
-	// readout, and the quest-link suggestion (see the module for the state
-	// machine). Render state comes off `flow`; the deps close over this
-	// window's snapshot and armour-cost popup.
+	// Post-session flow: the armour prompt gating the stop and the
+	// final-stats readout (see the module for the state machine). Render
+	// state comes off `flow`; the deps close over this window's snapshot
+	// and armour-cost popup.
 	const flow = createPostSessionFlow({
 		isSessionActive: () => data.status === 'active',
 		isBusy: () => toggling,
@@ -161,8 +160,6 @@
 			net: snapshot.current?.net ?? 0
 		}),
 		stopTracking,
-		fetchQuestLinkSuggestion: getSessionQuestLinkSuggestion,
-		decideQuestLink: decideSessionQuestLink,
 		isArmourPopupOpen: () => armourCostOpen,
 		showArmourPopup: showPostSessionArmourPopup,
 		onPromptShown: () => {
@@ -171,18 +168,23 @@
 	});
 	const toggling = $derived(starting || flow.stopping);
 
-	// The session facets (name, boost, quest): state, lookups, and writes
-	// live in the feature model; this route owns only the popup plumbing
-	// the model calls back into.
+	// The session facets (name, boost, segment): state, lookups, and
+	// writes live in the feature model; this route owns only the popup
+	// plumbing the model calls back into. (The quest facet auto-records
+	// itself and only displays.)
 	const facets = createSessionFacets({
-		readFacets: () => ({ name: data.sessionName ?? null, boost: data.skillBoostPercent ?? null }),
+		readFacets: () => ({
+			name: data.sessionName ?? null,
+			boost: data.skillBoostPercent ?? null,
+			segment: data.segmentName ?? null
+		}),
 		isSessionActive: () => data.status === 'active',
 		refresh: () => snapshot.hydrate(),
 		searchNames: getSessionNameSuggestions,
 		setSessionConfig,
-		declareQuest: declareSessionQuest,
-		listQuests: getQuests,
-		listPlaylists: getPlaylists,
+		openSegment: openSessionSegment,
+		closeSegment: closeSessionSegment,
+		renameSegment: renameSessionSegment,
 		openNameMenu: () => openNameMenu(),
 		closeNameMenu: () => closeNameMenu()
 	});
@@ -227,16 +229,6 @@
 	const windowSizeSync = createWindowSizeSync(() => overlayRoot, {
 		afterSync: () => scheduleArmourCostAnchorSync()
 	});
-
-	function measureMenuTextWidth(labels: string[], font = '500 12px Inter, system-ui, sans-serif') {
-		if (labels.length === 0) return 0;
-		const canvas = document.createElement('canvas');
-		const context = canvas.getContext('2d');
-		if (!context) return labels.reduce((longest, label) => Math.max(longest, label.length * 8), 0);
-
-		context.font = font;
-		return labels.reduce((longest, label) => Math.max(longest, context.measureText(label).width), 0);
-	}
 
 	function computeMenuWidth(minWidth: number, labels: string[], padding: number) {
 		const contentWidth = measureMenuTextWidth(labels);
@@ -295,19 +287,6 @@
 		};
 	}
 
-	function buildQuestMenuState(anchorWidth: number): OverlayMenuState | null {
-		const labels = facets.questOptions.length > 0
-			? facets.questOptions.map((option) => option.name)
-			: ['No active quests'];
-		return {
-			kind: 'quest',
-			width: computeMenuWidth(anchorWidth, labels, 88),
-			loading: false,
-			error: null,
-			options: facets.questOptions
-		};
-	}
-
 	function buildTrifectaMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trifecta = data.trifectaAttribution;
 		if (!trifecta || trifecta.presets.length === 0) return null;
@@ -341,8 +320,7 @@
 		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
 		if (state.loading || state.error) return 1;
 		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
-		if (state.kind === 'mob') return Math.max(1, state.mobSuggestions.length);
-		return Math.max(1, state.options.length);
+		return Math.max(1, state.mobSuggestions.length);
 	}
 
 	async function showOverlayMenu(
@@ -412,17 +390,6 @@
 		facets.clearNameCloseTimer();
 		if (overlayMenuKind !== 'name') return;
 		await hideOverlayMenu();
-	}
-
-	async function toggleQuestMenu(anchor: HTMLButtonElement) {
-		if (overlayMenuKind === 'quest') {
-			await hideOverlayMenu();
-			return;
-		}
-		if (!(await facets.loadQuestOptions())) return;
-		const state = buildQuestMenuState(anchor.getBoundingClientRect().width);
-		if (!state) return;
-		await showOverlayMenu('quest', anchor, state, { focusPopup: true });
 	}
 
 	async function toggleTrifectaMenu(anchor: HTMLButtonElement) {
@@ -692,12 +659,6 @@
 					return;
 				}
 
-				if (event.payload.kind === 'quest') {
-					overlayMenuKind = null;
-					await facets.declareQuest(event.payload.id, event.payload.isPlaylist);
-					return;
-				}
-
 				overlayMenuKind = null;
 				await handleSelectMob({
 					display: event.payload.maturity
@@ -774,10 +735,11 @@
 			endOfSessionArmourReminderEnabled: snap.endOfSessionArmourReminderEnabled,
 			sessionName: snap.sessionName,
 			skillBoostPercent: snap.skillBoostPercent,
+			segmentName: snap.segmentName,
 			currentMob: snap.currentMob,
 			currentTool: snap.currentTool,
 			currentActivity: snap.currentActivity,
-			questName: snap.questName,
+			questNames: snap.questNames,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
 		};
@@ -879,14 +841,17 @@
 		};
 	});
 
-	// Keep the boost buffer in step with the persisted facet while the user
-	// is not editing it (an idle overlay re-read, or the value the last
-	// session left behind).
+	// Keep the boost and segment buffers in step with their persisted
+	// facets while the user is not editing them (an idle overlay re-read,
+	// a next-segment renumber, a close emptying the field).
 	$effect(() => {
 		void data.skillBoostPercent;
-		untrack(() => facets.syncBoostDraft());
+		void data.segmentName;
+		untrack(() => {
+			facets.syncBoostDraft();
+			facets.syncSegmentDraft();
+		});
 	});
-
 
 	async function handleStart() {
 		starting = true;
@@ -984,25 +949,21 @@
 		{armourSessionId}
 		mobMenuOpen={overlayMenuKind === 'mob'}
 		nameMenuOpen={overlayMenuKind === 'name'}
-		questMenuOpen={overlayMenuKind === 'quest'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
 		savingName={facets.savingName}
 		nameEditable={facets.nameEditable}
 		savingBoost={facets.savingBoost}
-		questSaving={facets.questSaving}
+		savingSegment={facets.savingSegment}
 		facetError={facets.facetError}
-		questLabel={data.questName ?? null}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}
-		questLinkSuggestion={flow.questLinkSuggestion}
-		questLinkMessage={flow.questLinkMessage}
-		questLinkSaving={flow.questLinkSaving}
 		bind:mobQuery
 		bind:mobInput
 		bind:nameQuery={facets.nameQuery}
 		bind:nameInput={facets.nameInput}
 		bind:boostDraft={facets.boostDraft}
+		bind:segmentDraft={facets.segmentDraft}
 		bind:postSessionArmourButton
 		onStart={handleStart}
 		onStop={flow.requestStop}
@@ -1019,12 +980,12 @@
 		onNameKeydown={facets.handleNameKeydown}
 		onClearName={facets.clearName}
 		onBoostCommit={facets.commitBoost}
-		onQuestTrigger={toggleQuestMenu}
-		onClearQuest={facets.clearQuest}
+		onSegmentCommit={facets.commitSegment}
+		onSegmentBlur={facets.handleSegmentBlur}
+		onSegmentNext={facets.nextSegment}
+		onSegmentClose={facets.closeSegment}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
-		onQuestLinkDecision={flow.decideQuestLink}
-		onDismissQuestLinkMessage={flow.dismissQuestLinkMessage}
 	/>
 </div>
 

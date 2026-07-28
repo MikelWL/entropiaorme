@@ -1,9 +1,19 @@
-//! The curated session-link surface: the suggestion tree, accept /
-//! decline persistence, and the playlist-matching subset tests.
+//! The curated session-link surface, demoted to a legacy read.
+//!
+//! The session-scoped `session_quest_analytics_links` row was the old
+//! model's only way to say "this session was for that quest"; the
+//! recorded quest stretch (`session_intervals`, kind `quest`) has
+//! superseded it as the membership truth, analytics read the intervals,
+//! and nothing writes the link table any more. What remains here is the
+//! suggestion READ: its behaviour (the resolution tree, the
+//! playlist-matching subset rules, the wire shape) is pinned by the
+//! replay corpus's expected responses, so it stays byte-for-byte as the
+//! port ratified it. Standing link rows still gate the suggestion to
+//! "already_linked", which keeps the read truthful over historical
+//! databases; the stranded table itself is future reseed cleanup.
 //!
 //! The suggestion resolves to a typed [`LinkSuggestion`] first and is
-//! shaped to its wire form in one place, so the accept flow matches on
-//! the resolution rather than re-parsing its own rendered output.
+//! shaped to its wire form in one place.
 
 use std::collections::HashSet;
 
@@ -13,8 +23,7 @@ use serde_json::{json, Value};
 use super::{QuestError, QuestService};
 
 /// A curated analytics link's kind: the closed vocabulary the link
-/// table stores, parsed at the database boundary and rendered back at
-/// the bind.
+/// table stores, parsed at the database boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LinkType {
     Quest,
@@ -23,15 +32,7 @@ pub(super) enum LinkType {
 }
 
 impl LinkType {
-    fn as_str(self) -> &'static str {
-        match self {
-            LinkType::Quest => "quest",
-            LinkType::Playlist => "playlist",
-            LinkType::Declined => "declined",
-        }
-    }
-
-    /// Parse a stored `link_type`. Only the three variants are ever
+    /// Parse a stored `link_type`. Only the three variants were ever
     /// written; an unrecognised value reads as `None`, and the caller
     /// treats the row as a standing (non-declined) link, exactly as
     /// the original's declined-or-not test does.
@@ -173,102 +174,6 @@ impl QuestService {
         self.shape_link_suggestion(suggestion).await
     }
 
-    /// Persist the current curated analytics suggestion for a session.
-    pub async fn accept_session_link_suggestion(
-        &self,
-        session_id: &str,
-    ) -> Result<Value, QuestError> {
-        let suggestion = self.resolve_link_suggestion(session_id).await?;
-        let shaped = self.shape_link_suggestion(suggestion).await?;
-        match suggestion {
-            LinkSuggestion::SingleQuest(quest_id) => {
-                self.set_session_analytics_link(session_id, LinkType::Quest, Some(quest_id), None)
-                    .await?;
-            }
-            LinkSuggestion::ExactPlaylist(playlist_id) => {
-                self.set_session_analytics_link(
-                    session_id,
-                    LinkType::Playlist,
-                    None,
-                    Some(playlist_id),
-                )
-                .await?;
-            }
-            _ => {
-                return Err(QuestError::Invalid(format!(
-                    "No linkable suggestion for session {session_id}: {}",
-                    suggestion.reason()
-                )));
-            }
-        }
-        Ok(shaped)
-    }
-
-    /// Persist that the user declined curated analytics linkage.
-    pub async fn decline_session_link(&self, session_id: &str) -> Result<(), QuestError> {
-        self.set_session_analytics_link(session_id, LinkType::Declined, None, None)
-            .await
-    }
-
-    /// Declare the curated analytics link up front (the ask-at-start
-    /// path): bind the session to a quest or a playlist directly,
-    /// pre-empting the post-stop suggestion (which reads
-    /// `already_linked` thereafter). Exactly one of the two ids must be
-    /// given, and it must name an active row.
-    pub async fn declare_session_link(
-        &self,
-        session_id: &str,
-        quest_id: Option<i64>,
-        playlist_id: Option<i64>,
-    ) -> Result<(), QuestError> {
-        let (link_type, id, table) = match (quest_id, playlist_id) {
-            (Some(id), None) => (LinkType::Quest, id, "quests"),
-            (None, Some(id)) => (LinkType::Playlist, id, "quest_playlists"),
-            _ => {
-                return Err(QuestError::Invalid(
-                    "Declare exactly one of quest_id or playlist_id".to_string(),
-                ))
-            }
-        };
-        let sql = format!("SELECT 1 FROM {table} WHERE id = ? AND is_active = 1");
-        let exists = self
-            .db
-            .with_reader(move |conn| {
-                Ok(conn
-                    .query_row(&sql, rusqlite::params![id], |_| Ok(()))
-                    .optional()?)
-            })
-            .await?;
-        if exists.is_none() {
-            return Err(QuestError::Invalid(format!(
-                "No active {} with id {id}",
-                match link_type {
-                    LinkType::Quest => "quest",
-                    _ => "playlist",
-                }
-            )));
-        }
-        self.set_session_analytics_link(session_id, link_type, quest_id, playlist_id)
-            .await
-    }
-
-    /// Remove the curated analytics link entirely (an undeclare):
-    /// distinct from a decline, which persists a "declined" row. The
-    /// post-stop suggestion becomes available again.
-    pub async fn clear_session_link(&self, session_id: &str) -> Result<(), QuestError> {
-        let session_id = session_id.to_string();
-        self.db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "DELETE FROM session_quest_analytics_links WHERE session_id = ?",
-                    rusqlite::params![session_id],
-                )?;
-                Ok(())
-            })
-            .await?;
-        Ok(())
-    }
-
     async fn session_completed_quest_ids(&self, session_id: &str) -> Result<Vec<i64>, QuestError> {
         let session_id = session_id.to_string();
         Ok(self
@@ -315,35 +220,6 @@ impl QuestService {
                     .optional()?)
             })
             .await?)
-    }
-
-    async fn set_session_analytics_link(
-        &self,
-        session_id: &str,
-        link_type: LinkType,
-        quest_id: Option<i64>,
-        playlist_id: Option<i64>,
-    ) -> Result<(), QuestError> {
-        let session_id = session_id.to_string();
-        let link_type = link_type.as_str();
-        let now = self.now_epoch();
-        self.db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "INSERT INTO session_quest_analytics_links \
-                     (session_id, link_type, quest_id, playlist_id, linked_at) \
-                     VALUES (?, ?, ?, ?, ?) \
-                     ON CONFLICT(session_id) DO UPDATE SET \
-                         link_type = excluded.link_type, \
-                         quest_id = excluded.quest_id, \
-                         playlist_id = excluded.playlist_id, \
-                         linked_at = excluded.linked_at",
-                    rusqlite::params![session_id, link_type, quest_id, playlist_id, now],
-                )?;
-                Ok(())
-            })
-            .await?;
-        Ok(())
     }
 
     /// Playlists whose immediate set is fully completed while every
