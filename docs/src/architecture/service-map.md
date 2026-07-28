@@ -70,9 +70,9 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 | Codex | `species`; species `ranks`; `recommend`; `calibrate`; `claim`; meta `claim`; meta `attributes` |
 | Analytics | period-scoped `overview`; `hunting`; period-scoped tier-first `harvest`; harvest stock positions and realised markup; the auction lifecycle (listings list, create, confirm, expire) and stock `convert`; activity `history` with its undos (sale revert, listing, conversion); the ledger (paged list, whole-ledger `summary`, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
 | Market | paste `preview` and `commit`; `overview`; item `history`; `break-even`; mob `ranking` |
-| Tracking (reads) | `sessions` (paged); session read; `session-name-suggestions`; `snapshot` |
-| Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `session-config`, `quest-declare` |
-| Tracking (session edits) | session `rename`, `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `quest-link`, `repair-scan`, session delete; `quest-link-suggestion` |
+| Tracking (reads) | `sessions` (paged); session read; `session-intervals`; `session-name-suggestions`; `snapshot` |
+| Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `session-config`; segment `open`, `close`, `rename` |
+| Tracking (session edits) | session `rename`, `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `repair-scan`, session delete; `quest-link-suggestion` (legacy read) |
 | Scan | skills `status`; `start`, `capture`, `cancel`, `undo`, `process`, `accept`, `reject`; skills capture read by page; skills `pending`; `spacebar-capture` |
 | Maps | planet-map catalogue and coordinate scan; pin list/viewport/nearby/create/update/delete; named map list/create/rename/delete; coordinate calibration start/cancel/status; navigation snapshot/start/update/mark-visited/skip/resolve-harvest/undo/end; radar calibration start/cancel/status/geometry |
 | Settings | settings read/patch; overlay-position read/update |
