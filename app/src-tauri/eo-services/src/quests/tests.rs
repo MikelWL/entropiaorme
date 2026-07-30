@@ -13,7 +13,7 @@ use tokio::runtime::Handle;
 use crate::bus_events::{
     BusEvent, MissionReceivedPayload, MissionReceivedTag, SessionLifecyclePayload,
 };
-use crate::chatlog_watcher::MissionCompletion;
+use crate::chatlog_watcher::{MissionCompletion, SignalLoot};
 use crate::db::Db;
 
 use super::lifecycle::{delete_latest_quest_claim, delete_latest_quest_reward_entry};
@@ -1749,6 +1749,14 @@ async fn only_a_completion_reports_to_the_interval_layer() {
 
 // ── Signal-completed quests ─────────────────────────────────────────
 
+/// A signal-probe loot line, as the watcher would hand it over.
+fn marker(item_name: &str, quantity: i64) -> SignalLoot {
+    SignalLoot {
+        item_name: item_name.to_string(),
+        quantity,
+    }
+}
+
 /// The signal path end to end at the service: an in-progress signal
 /// quest completes when its item arrives (case-insensitively, trimmed),
 /// records the completion, reports the focus close, and clears the
@@ -1778,9 +1786,9 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     // A mission-less loot tick with the marker (case and padding off on
     // purpose) completes the run; unrelated items complete nothing.
     svc.signal_loot_check(&[
-        "Shrapnel".to_string(),
-        " hyperion daily voucher ".to_string(),
-        "Hyperium".to_string(),
+        marker("Shrapnel", 4639),
+        marker(" hyperion daily voucher ", 1),
+        marker("Hyperium", 2),
     ])
     .await
     .unwrap();
@@ -1808,7 +1816,7 @@ async fn a_signal_without_a_declared_run_completes_nothing() {
         .unwrap(),
     );
 
-    svc.signal_loot_check(&["Hyperion Daily Voucher".to_string()])
+    svc.signal_loot_check(&[marker("Hyperion Daily Voucher", 1)])
         .await
         .unwrap();
 
@@ -1860,7 +1868,7 @@ async fn one_marker_completes_one_of_two_quests_sharing_the_signal() {
     .await
     .unwrap();
 
-    svc.signal_loot_check(&["Hyperion Daily Voucher".to_string()])
+    svc.signal_loot_check(&[marker("Hyperion Daily Voucher", 1)])
         .await
         .unwrap();
 
@@ -1874,6 +1882,59 @@ async fn one_marker_completes_one_of_two_quests_sharing_the_signal() {
         second_quest["last_completed_at"].is_null() && !second_quest["started_at"].is_null(),
         "the newer run keeps going"
     );
+}
+
+/// A stacked marker line pays for that many runs: the budget counts
+/// units, not lines, so one loot line carrying quantity 2 completes
+/// two in-progress quests sharing the signal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stacked_marker_line_pays_for_that_many_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+
+    let first = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss A",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    let second = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss B",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(first).await.unwrap();
+    svc.start_quest(second).await.unwrap();
+    db.with_writer(move |conn| {
+        conn.execute(
+            "UPDATE quests SET started_at = 100.0 WHERE id = ?",
+            params![first],
+        )?;
+        conn.execute(
+            "UPDATE quests SET started_at = 200.0 WHERE id = ?",
+            params![second],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.signal_loot_check(&[marker("Hyperion Daily Voucher", 2)])
+        .await
+        .unwrap();
+
+    for quest in [first, second] {
+        let row = svc.get_quest(quest).await.unwrap().unwrap();
+        assert!(
+            !row["last_completed_at"].is_null(),
+            "both stacked-paid runs completed"
+        );
+    }
 }
 
 /// The colon-variant discipline: a variant-family quest is matched

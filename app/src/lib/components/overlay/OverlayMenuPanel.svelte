@@ -237,10 +237,12 @@
 		justify-content: center;
 		transition: all 140ms ease;
 	}
-	.menu-join-btn:hover {
+	.menu-join-btn:hover,
+	.menu-join-btn:focus-visible {
 		background: rgba(56, 189, 248, 0.16);
 		border-color: rgba(56, 189, 248, 0.4);
 		color: rgba(186, 230, 253, 0.96);
+		outline: none;
 	}
 
 	.menu-heading {

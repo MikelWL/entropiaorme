@@ -1286,13 +1286,13 @@ fn compose_producers(
     {
         let quests_probe = quests.clone();
         let probe_runtime = runtime.clone();
-        watcher.set_signal_loot_probe(Arc::new(move |item_names| {
+        watcher.set_signal_loot_probe(Arc::new(move |loot| {
             let quests = quests_probe.clone();
             probe_runtime.spawn(async move {
                 // Errors are contained: a failed check must not take the
                 // tail loop's attention, and the quest's own state is
                 // re-derivable from the next matching tick.
-                let _ = quests.signal_loot_check(&item_names).await;
+                let _ = quests.signal_loot_check(&loot).await;
             });
         }));
     }

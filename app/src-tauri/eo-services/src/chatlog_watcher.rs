@@ -53,13 +53,22 @@ const COMBAT_MESSAGE_PREFIXES: [&str; 12] = [
 /// items, and its skill gains; may return indexes to suppress.
 pub type QuestRewardFilter = Arc<dyn Fn(&str, &[Value], &[Value]) -> Option<Value> + Send + Sync>;
 
-/// The signal-loot probe: receives the item names of a loot tick that
+/// One loot line of a mission-less tick, as the signal probe sees it:
+/// the item name plus the line's stacked quantity (one marker per
+/// unit, so a stacked pair of markers pays for two runs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalLoot {
+    pub item_name: String,
+    pub quantity: i64,
+}
+
+/// The signal-loot probe: receives the loot lines of a tick that
 /// carried NO mission completion (a mission tick is the mission
 /// machinery's to route). Fire-and-forget by contract: the tail thread
 /// never blocks on it, so an implementation dispatches its own async
 /// work. Injected after construction (composition wires it once the
 /// quest service exists), like the quest service's own sinks.
-pub type SignalLootProbe = Arc<dyn Fn(Vec<String>) + Send + Sync>;
+pub type SignalLootProbe = Arc<dyn Fn(Vec<SignalLoot>) + Send + Sync>;
 
 /// One mission completion a flushed tick carried, handed to the
 /// post-publish completion probe with the loot and skill picture the
@@ -634,16 +643,25 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
     // with no mission-log line to route by). A tick WITH a completion
     // is the mission machinery's, so the probe never sees it and a
     // daily's voucher cannot masquerade as a boss's. Post-suppression,
-    // so a suppressed reward echo cannot double as a signal. Collected
-    // here, but PROBED only after every publish below: the completion
-    // closes the focused stretch, and the clump that pays for the run
-    // must stamp into that stretch before anything can close it.
-    let signal_names: Option<Vec<String>> = if completes.is_empty() && !loot_events.is_empty() {
+    // so a suppressed reward echo cannot double as a signal. Each entry
+    // carries the line's quantity: a stacked line (quantity 2) is two
+    // markers, so the probe's one-marker-one-run budget sees both.
+    // Collected here, but PROBED only after every publish below: the
+    // completion closes the focused stretch, and the clump that pays
+    // for the run must stamp into that stretch before anything can
+    // close it.
+    let signal_loot: Option<Vec<SignalLoot>> = if completes.is_empty() && !loot_events.is_empty() {
         shared.signal_loot_probe.get().map(|_| {
             loot_events
                 .iter()
-                .filter_map(|e| e.data.get("item_name").and_then(Value::as_str))
-                .map(str::to_string)
+                .filter_map(|e| {
+                    let item_name = e.data.get("item_name").and_then(Value::as_str)?;
+                    let quantity = e.data.get("quantity").and_then(Value::as_i64).unwrap_or(1);
+                    Some(SignalLoot {
+                        item_name: item_name.to_string(),
+                        quantity: quantity.max(1),
+                    })
+                })
                 .collect()
         })
     } else {
@@ -738,10 +756,10 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
             }));
         }
     }
-    if let (Some(names), Some(probe)) = (signal_names, shared.signal_loot_probe.get()) {
-        if !names.is_empty() {
+    if let (Some(loot), Some(probe)) = (signal_loot, shared.signal_loot_probe.get()) {
+        if !loot.is_empty() {
             let probe = probe.clone();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(names)));
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(loot)));
         }
     }
 
@@ -1210,14 +1228,14 @@ mod tests {
         // One ordered log for both observers: bus taps and probe calls
         // interleave in dispatch order.
         let order = Arc::new(Mutex::new(Vec::<String>::new()));
-        let probed = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+        let probed = Arc::new(Mutex::new(Vec::<Vec<SignalLoot>>::new()));
         let sink = probed.clone();
         let probe_order = order.clone();
         pipeline
             .watcher
-            .set_signal_loot_probe(Arc::new(move |names| {
+            .set_signal_loot_probe(Arc::new(move |loot| {
                 probe_order.lock().unwrap().push("probe".to_string());
-                sink.lock().unwrap().push(names);
+                sink.lock().unwrap().push(loot);
             }));
         let tap_order = order.clone();
         pipeline.bus.add_tap(move |event| {
@@ -1240,9 +1258,16 @@ mod tests {
         assert_eq!(
             *probed.lock().unwrap(),
             vec![vec![
-                "Shrapnel".to_string(),
-                "Hyperion Daily Voucher".to_string()
-            ]]
+                SignalLoot {
+                    item_name: "Shrapnel".to_string(),
+                    quantity: 4639,
+                },
+                SignalLoot {
+                    item_name: "Hyperion Daily Voucher".to_string(),
+                    quantity: 1,
+                },
+            ]],
+            "each entry carries its line's stacked quantity"
         );
         {
             let order = order.lock().unwrap();

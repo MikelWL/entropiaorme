@@ -8,7 +8,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::chatlog_watcher::MissionCompletion;
+use crate::chatlog_watcher::{MissionCompletion, SignalLoot};
 use crate::difflib::sequence_ratio;
 use crate::ped::Ped;
 
@@ -163,14 +163,15 @@ impl QuestService {
     /// with no mission-log line to route by).
     ///
     /// Matching is trimmed and case-insensitive on the item name. Each
-    /// occurrence of a signal item completes at most ONE quest (one
-    /// marker, one run); when several in-progress quests share a signal
-    /// item, the oldest-started completes first, deterministically. No
-    /// reward bookkeeping and no suppression happen here: a signal
-    /// quest's reward IS the tracked loot, so completion only records
-    /// the lifecycle fact, the overlay event, and the focus close.
-    pub async fn signal_loot_check(&self, item_names: &[String]) -> Result<(), QuestError> {
-        if item_names.is_empty() {
+    /// UNIT of a signal item completes at most ONE quest (one marker,
+    /// one run; a stacked line's quantity is that many markers); when
+    /// several in-progress quests share a signal item, the
+    /// oldest-started completes first, deterministically. No reward
+    /// bookkeeping and no suppression happen here: a signal quest's
+    /// reward IS the tracked loot, so completion only records the
+    /// lifecycle fact, the overlay event, and the focus close.
+    pub async fn signal_loot_check(&self, loot: &[SignalLoot]) -> Result<(), QuestError> {
+        if loot.is_empty() {
             return Ok(());
         }
         let candidates: Vec<(i64, String, String)> = self
@@ -198,13 +199,16 @@ impl QuestService {
             return Ok(());
         }
 
-        // One marker completes one run: each signal item's occurrence
-        // count is a budget the candidate walk draws down, so a single
-        // marker never completes two quests sharing it, and two markers
-        // in one tick (two runs paid at once) complete two.
-        let mut budget: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        for name in item_names {
-            *budget.entry(name.trim().to_ascii_lowercase()).or_insert(0) += 1;
+        // One marker completes one run: each signal item's unit count
+        // (line occurrences times stacked quantity) is a budget the
+        // candidate walk draws down, so a single marker never completes
+        // two quests sharing it, and two markers in one tick (two runs
+        // paid at once) complete two, stacked or not.
+        let mut budget: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for line in loot {
+            *budget
+                .entry(line.item_name.trim().to_ascii_lowercase())
+                .or_insert(0) += line.quantity.max(1);
         }
         for (quest_id, quest_name, signal) in candidates {
             let key = signal.trim().to_ascii_lowercase();

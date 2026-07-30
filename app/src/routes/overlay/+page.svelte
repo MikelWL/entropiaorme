@@ -401,6 +401,8 @@
 			facets.facetError = describeOverlayMenuError(error);
 			return;
 		}
+		// A successful open clears a prior open's failure message.
+		facets.facetError = null;
 		const state = buildFocusMenuState(anchor.getBoundingClientRect().width, options);
 		focusAnchor = anchor;
 		await showOverlayMenu('focus', anchor, state, { focusPopup: true });

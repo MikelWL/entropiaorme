@@ -387,7 +387,10 @@ export function createQuestsModel() {
 			chain_position: questForm.chain_position,
 			chain_total: questForm.chain_total,
 			mobs: questForm.mobs,
-			signal_loot_item: questForm.signal_loot_item.trim() || null,
+			// A positive reward disables the signal field in the form; a
+			// value typed before the reward never rides along disabled.
+			signal_loot_item:
+				(questForm.reward_ped ?? 0) > 0 ? null : questForm.signal_loot_item.trim() || null,
 		};
 		try {
 			if (editingQuest) {
