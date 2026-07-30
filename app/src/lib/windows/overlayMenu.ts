@@ -90,7 +90,10 @@ export function computeMenuWidth(minWidth: number, labels: string[], padding: nu
 	const contentWidth = measureMenuTextWidth(labels);
 	return Math.max(
 		Math.ceil(minWidth),
-		Math.min(OVERLAY_MENU_MAX_WIDTH, Math.max(OVERLAY_MENU_MIN_WIDTH, Math.ceil(contentWidth + padding)))
+		Math.min(
+			OVERLAY_MENU_MAX_WIDTH,
+			Math.max(OVERLAY_MENU_MIN_WIDTH, Math.ceil(contentWidth + padding)),
+		),
 	);
 }
 
@@ -126,12 +129,16 @@ export function buildFocusMenuState(
 	const labels = [
 		...options.quests.map((quest) => quest.name),
 		...options.segmentPresets,
-		...(options.segmentPresets.length > 0 ? ['Recent segments'] : [])
+		...(options.segmentPresets.length > 0 ? ['Recent segments'] : []),
 	];
 	return {
 		kind: 'focus',
-		width: computeMenuWidth(anchorWidth, labels.length > 0 ? labels : ['No quests in progress'], 96),
+		width: computeMenuWidth(
+			anchorWidth,
+			labels.length > 0 ? labels : ['No quests in progress'],
+			96,
+		),
 		quests: options.quests,
-		presets: options.segmentPresets
+		presets: options.segmentPresets,
 	};
 }
