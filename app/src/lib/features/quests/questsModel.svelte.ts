@@ -40,6 +40,7 @@ import { type GlobalRates, globalRates, type RewardMode } from './economics';
 /** The planet options the quest and playlist forms offer. */
 export const PLANETS = [
 	'Calypso',
+	'ARIS',
 	'Arkadia',
 	'Cyrene',
 	'Monria',
