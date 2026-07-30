@@ -34,6 +34,7 @@ const RATIFICATIONS_PREFIX: &str = "app/src-tauri/ratifications/";
 const CONTRACTS_PREFIX: &str = "app/src-tauri/contracts/";
 const CORPUS_PREFIX: &str = "app/src-tauri/fixtures/corpus/";
 const WIRE_FIXTURES_PREFIX: &str = "app/src-tauri/eo-wire/tests/fixtures/";
+const DEMO_GOLDENS_PREFIX: &str = "app/src-tauri/eo-api/resources/demo_goldens/";
 const EXPECTED_SEGMENT: &str = "/expected/";
 
 /// The documented goldens-regeneration commit-message marker.
@@ -48,15 +49,20 @@ fn marker_re() -> &'static Regex {
 ///
 /// Covers the contract snapshots (`contracts/*.snapshot.json`), the per-scenario
 /// corpus goldens (anything under a corpus `expected/` directory: the
-/// fingerprint, the DB-state snapshot, and the HTTP-response goldens), and the
+/// fingerprint, the DB-state snapshot, and the HTTP-response goldens), the
 /// eo-wire conformance fixtures (the normaliser conformance set and the
-/// yml-family consistency goldens).
+/// yml-family consistency goldens), and the demo response goldens
+/// (`eo-api/resources/demo_goldens/*.txt`, the pinned typed-command outputs
+/// over the bundled demo database).
 pub fn is_golden_path(path: &str) -> bool {
     let posix = path.replace('\\', "/");
     if posix.starts_with(CONTRACTS_PREFIX) && posix.ends_with(".snapshot.json") {
         return true;
     }
     if posix.starts_with(CORPUS_PREFIX) && posix.contains(EXPECTED_SEGMENT) {
+        return true;
+    }
+    if posix.starts_with(DEMO_GOLDENS_PREFIX) && posix.ends_with(".txt") {
         return true;
     }
     posix.starts_with(WIRE_FIXTURES_PREFIX)
@@ -88,6 +94,11 @@ pub fn golden_set_key(path: &str) -> String {
             return stem.to_string();
         }
         return file.to_string();
+    }
+    if let Some(rest) = posix.strip_prefix(DEMO_GOLDENS_PREFIX) {
+        if let Some(stem) = rest.strip_suffix(".txt") {
+            return stem.to_string();
+        }
     }
     if let Some(caps) = scenario_re().captures(&posix) {
         return caps[1].to_string();
@@ -588,6 +599,9 @@ VERDICT: ratification-sound | regression-suspected | needs-user-judgement\n```";
         assert!(is_golden_path(
             "app/src-tauri/eo-wire/tests/fixtures/yml_family/hotbar_slot_use.json"
         ));
+        assert!(is_golden_path(
+            "app/src-tauri/eo-api/resources/demo_goldens/tracking_snapshot.txt"
+        ));
         // Old backend paths are NO LONGER goldens.
         assert!(!is_golden_path(
             "backend/tests/expected/openapi.snapshot.json"
@@ -632,6 +646,10 @@ VERDICT: ratification-sound | regression-suspected | needs-user-judgement\n```";
         assert_eq!(
             golden_set_key("app/src-tauri/eo-wire/tests/fixtures/yml_family/hotbar_slot_use.json"),
             "hotbar_slot_use"
+        );
+        assert_eq!(
+            golden_set_key("app/src-tauri/eo-api/resources/demo_goldens/tracking_snapshot.txt"),
+            "tracking_snapshot"
         );
     }
 
