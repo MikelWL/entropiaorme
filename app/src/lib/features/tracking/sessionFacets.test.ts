@@ -347,3 +347,46 @@ describe('segment facet', () => {
 		expect(facets.segmentDraft).toBe('Boss 2');
 	});
 });
+
+describe('quest focus', () => {
+	it('writes the focus and refreshes the snapshot', async () => {
+		const { facets, focusQuest, deps } = harness();
+
+		await facets.focusQuest(11, false);
+		expect(focusQuest).toHaveBeenCalledWith(11, false);
+		expect(deps.refresh).toHaveBeenCalled();
+		expect(facets.savingFocus).toBe(false);
+		expect(facets.facetError).toBeNull();
+	});
+
+	it('passes the additive join through', async () => {
+		const { facets, focusQuest } = harness();
+
+		await facets.focusQuest(22, true);
+		expect(focusQuest).toHaveBeenCalledWith(22, true);
+	});
+
+	it('unfocuses one quest and surfaces a refusal on the shared channel', async () => {
+		const unfocusQuest = vi
+			.fn()
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce(new Error('No active session'));
+		const { facets } = harness({ unfocusQuest });
+
+		await facets.unfocusQuest(11);
+		expect(unfocusQuest).toHaveBeenCalledWith(11);
+		expect(facets.facetError).toBeNull();
+
+		await facets.unfocusQuest(11);
+		expect(facets.facetError).toBe('No active session');
+		expect(facets.savingFocus).toBe(false);
+	});
+
+	it('starts a segment from a preset, echoing the applied name', async () => {
+		const { facets, openSegment } = harness();
+
+		await facets.applySegmentPreset('Boss 1');
+		expect(openSegment).toHaveBeenCalledWith('Boss 1');
+		expect(facets.segmentDraft).toBe('Boss 1');
+	});
+});

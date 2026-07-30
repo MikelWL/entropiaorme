@@ -62,6 +62,20 @@ pub async fn producer_handles(
     data_dir: &Path,
     handle: tokio::runtime::Handle,
 ) -> ProducerHandles {
+    producer_handles_with_tracker(db, data_dir, handle, Providers::default()).await
+}
+
+/// [`producer_handles`] with the tracker's providers supplied, for tests
+/// whose sessions must snapshot real config facets at start (the default
+/// harness composes the inert config, so its sessions never carry a
+/// name). Unread by the test binaries that keep the inert default.
+#[allow(dead_code)]
+pub async fn producer_handles_with_tracker(
+    db: &Db,
+    data_dir: &Path,
+    handle: tokio::runtime::Handle,
+    providers: Providers,
+) -> ProducerHandles {
     let bus = Arc::new(EventBus::new());
     let config_service = Arc::new(Mutex::new(
         ConfigService::new(data_dir).expect("config service"),
@@ -70,7 +84,7 @@ pub async fn producer_handles(
         bus.clone(),
         db.clone(),
         Arc::new(RealClock::new()),
-        Providers::default(),
+        providers,
     )
     .await
     .expect("tracker");

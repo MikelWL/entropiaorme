@@ -973,9 +973,7 @@ pub async fn tracking_quest_unfocus(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_focus_options(
-    app: tauri::AppHandle,
-) -> Result<FocusOptionsResult, ApiError> {
+pub async fn tracking_focus_options(app: tauri::AppHandle) -> Result<FocusOptionsResult, ApiError> {
     facade(&app)?.tracking_focus_options().await
 }
 

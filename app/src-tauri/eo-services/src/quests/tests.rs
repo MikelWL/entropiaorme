@@ -1681,22 +1681,20 @@ fn truthiness_matches_python_bool() {
     assert!(json_truthy(Some(&json!({"k": 1}))));
 }
 
-/// The quest lifecycle reports its slices to whatever owns the session's
-/// interval layer, so a quest's stretch can be measured apart from the
-/// session around it.
-///
-/// Hooked on the lifecycle primitives rather than the mission detector,
-/// which is what makes the manual start and the auto-start from a
-/// MISSION_RECEIVED tick report identically.
+/// A completion reports the quest to the interval layer so a focused
+/// stretch of it closes at the completion moment; a start reports
+/// NOTHING, because the mission log only witnesses pickup (bulk pickup
+/// separates it from the play that advances the quest), and which
+/// stretch of play is toward a quest is the user's focus declaration.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_quest_lifecycle_reports_its_slices() {
+async fn only_a_completion_reports_to_the_interval_layer() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
 
     let reported = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = reported.clone();
-    svc.set_slice_writer(Arc::new(move |slice| {
-        sink.lock().unwrap().push(slice);
+    svc.set_focus_closer(Arc::new(move |quest_id| {
+        sink.lock().unwrap().push(quest_id);
         Box::pin(async {})
     }));
 
@@ -1707,44 +1705,11 @@ async fn the_quest_lifecycle_reports_its_slices() {
     );
 
     svc.start_quest(quest).await.unwrap();
-    svc.complete_quest(quest).await.unwrap();
-
-    assert_eq!(
-        *reported.lock().unwrap(),
-        vec![
-            super::QuestSlice::Opened {
-                quest_id: quest,
-                name: "Daily: Carabok".to_string()
-            },
-            super::QuestSlice::Closed { quest_id: quest },
-        ]
-    );
-}
-
-/// A start that moves nothing reports nothing: an inactive quest never
-/// became in-progress, so no stretch of the session belongs to it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_start_that_moves_nothing_reports_no_slice() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, _db) = service(dir.path()).await;
-
-    let reported = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let sink = reported.clone();
-    svc.set_slice_writer(Arc::new(move |slice| {
-        sink.lock().unwrap().push(slice);
-        Box::pin(async {})
-    }));
-
-    // No such quest at all.
-    svc.start_quest(9_999).await.unwrap();
-    assert!(reported.lock().unwrap().is_empty());
-
-    // Present but soft-deleted: the start is gated on `is_active = 1`.
-    let quest = quest_id(&svc.create_quest(&json!({"name": "Retired"})).await.unwrap());
-    assert!(svc.delete_quest(quest).await.unwrap());
-    svc.start_quest(quest).await.unwrap();
     assert!(
         reported.lock().unwrap().is_empty(),
-        "an inactive quest cannot open a slice"
+        "a start opens no stretch: focus is the user's declaration"
     );
+
+    svc.complete_quest(quest).await.unwrap();
+    assert_eq!(*reported.lock().unwrap(), vec![quest]);
 }

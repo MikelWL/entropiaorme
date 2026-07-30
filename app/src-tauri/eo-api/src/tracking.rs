@@ -1291,10 +1291,7 @@ impl Api {
         let (active_session, session_name) = match &readout.active {
             Some(active) => (
                 Some(active.session_id.clone()),
-                active
-                    .session_name
-                    .clone()
-                    .filter(|name| !name.is_empty()),
+                active.session_name.clone().filter(|name| !name.is_empty()),
             ),
             None => (None, None),
         };
