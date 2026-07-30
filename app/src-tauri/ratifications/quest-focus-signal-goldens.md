@@ -1,7 +1,7 @@
 # Ratification: quest focus and signal-quest golden growth
 
 Independent semantic review of the pinned-output changes accompanying the
-quest focus pivot: the tracking snapshot demo golden gaining the
+move to user-declared quest focus: the tracking snapshot demo golden gaining the
 `questsInProgress` field, and the quest wire-shape pins gaining the
 `signal_loot_item` column added by migration `0020_signal_quests.sql`.
 

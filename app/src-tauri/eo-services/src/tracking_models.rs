@@ -83,9 +83,9 @@ pub struct Kill {
     pub is_global: bool,
     pub is_hof: bool,
     /// The session context in force when this was recorded: the set of
-    /// intervals (a quest slice, a modifier declaration) it belongs
-    /// to. None when the row predates the interval model, never
-    /// "nothing was in force".
+    /// intervals (a focused quest stretch, a modifier declaration) it
+    /// belongs to. None when the row predates the interval model,
+    /// never "nothing was in force".
     pub context_id: Option<i64>,
 }
 
@@ -111,9 +111,9 @@ pub struct HarvestEvent {
     pub loot_total_ped: Ped,
     pub loot_items: Vec<LootItem>,
     /// The session context in force when this was recorded: the set of
-    /// intervals (a quest slice, a modifier declaration) it belongs
-    /// to. None when the row predates the interval model, never
-    /// "nothing was in force".
+    /// intervals (a focused quest stretch, a modifier declaration) it
+    /// belongs to. None when the row predates the interval model,
+    /// never "nothing was in force".
     pub context_id: Option<i64>,
 }
 
@@ -166,8 +166,8 @@ pub struct ActiveSessionView {
     /// The open segment's name; None whenever no segment is open (a
     /// segment exists only while its session runs).
     pub segment_name: Option<String>,
-    /// The open quest slices' names, newest first: the quest facet as
-    /// the lifecycle auto-records it (several dailies can stack).
+    /// The focused quests' names, newest first: the quest facet as
+    /// the user declared it (several dailies can stack).
     pub quest_names: Vec<String>,
     /// Harvesting swings this session (successes + explicit fails).
     pub harvest_swings: i64,
