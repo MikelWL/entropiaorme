@@ -51,10 +51,10 @@ use crate::scan::{
 };
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
-    ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    ReleaseResult, RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail,
-    SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
-    StopResult, TrackingSnapshot,
+    ArmourCostResult, FocusOptionsResult, LootItemEditResult, ManualMobLockResult,
+    ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult, RepairScanResult,
+    SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals, SessionPage,
+    SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -938,6 +938,33 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(String)),
             }],
             returns: Some(schema(schema_for!(SegmentStateResult))),
+        },
+        CommandSpec {
+            name: "tracking_quest_focus",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "additive",
+                    schema: schema(schema_for!(Option<bool>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(QuestFocusResult))),
+        },
+        CommandSpec {
+            name: "tracking_quest_unfocus",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(QuestFocusResult))),
+        },
+        CommandSpec {
+            name: "tracking_focus_options",
+            args: vec![],
+            returns: Some(schema(schema_for!(FocusOptionsResult))),
         },
         CommandSpec {
             name: "tracking_rename_session",

@@ -620,6 +620,27 @@ export interface ExcludedSkill {
 }
 
 /**
+ * What the focus picker offers: the in-progress quests with their
+ * focused state, and the segment-name presets recalled from history
+ * under the current session's name (most recent first, auto-numbered
+ * names excluded).
+ */
+export interface FocusOptionsResult {
+	quests: FocusQuestOption[];
+	segmentPresets: string[];
+}
+
+/**
+ * One quest the focus picker can offer: an in-progress quest, and
+ * whether an effort stretch of it is open on the running session.
+ */
+export interface FocusQuestOption {
+	questId: number;
+	name: string;
+	focused: boolean;
+}
+
+/**
  * The game-connection block: the configured chat-log path, whether it
  * currently resolves to a file, and the player name.
  */
@@ -1777,6 +1798,14 @@ export interface QuestAnalyticsRow {
 }
 
 /**
+ * The quest-focus acknowledgement: the focused quests' names now in
+ * force on the running session, newest first (empty: none focused).
+ */
+export interface QuestFocusResult {
+	questNames: string[];
+}
+
+/**
  * A quest create or update payload. One DTO serves both operations, in
  * the frontend's snake_case field casing: the sole client sends the
  * full field set for both create and update (nulls explicit), so every
@@ -2299,8 +2328,10 @@ export interface TrackingSnapshot {
 	currentTool?: string | null;
 	/** What the held tool implies the next action is recorded as. */
 	currentActivity?: ToolActivity | null;
-	/** The open quest slices' names, newest first: the quest facet as the lifecycle auto-records it (several dailies can stack). Absent when no slice is open, so the readout never claims a quest that is not actually running. */
+	/** The focused quests' names, newest first: the effort stretches the user declared on the running session (several can stack via additive focus). Absent when none are focused, so the readout never claims effort that was not declared. */
 	questNames?: string[] | null;
+	/** How many quests are in progress (received and not yet handed in): the focus picker's chip supply, surfaced as a passive cue. Present idle and active alike; absent only at zero. */
+	questsInProgress?: number | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
 	session_id?: string | null;
@@ -2866,6 +2897,18 @@ export async function trackingSegmentClose(): Promise<SegmentStateResult> {
 
 export async function trackingSegmentRename(segmentName: string): Promise<SegmentStateResult> {
 	return invokeCommand('tracking_segment_rename', { segment_name: segmentName });
+}
+
+export async function trackingQuestFocus(questId: number, additive: boolean | null): Promise<QuestFocusResult> {
+	return invokeCommand('tracking_quest_focus', { quest_id: questId, additive });
+}
+
+export async function trackingQuestUnfocus(questId: number): Promise<QuestFocusResult> {
+	return invokeCommand('tracking_quest_unfocus', { quest_id: questId });
+}
+
+export async function trackingFocusOptions(): Promise<FocusOptionsResult> {
+	return invokeCommand('tracking_focus_options', {});
 }
 
 export async function trackingRenameSession(sessionId: string, sessionName: string | null): Promise<SessionRenameResult> {
