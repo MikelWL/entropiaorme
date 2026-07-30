@@ -17,7 +17,7 @@
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::NaiveDateTime;
@@ -52,6 +52,14 @@ const COMBAT_MESSAGE_PREFIXES: [&str; 12] = [
 /// The quest-reward filter: receives the mission name, the tick's loot
 /// items, and its skill gains; may return indexes to suppress.
 pub type QuestRewardFilter = Arc<dyn Fn(&str, &[Value], &[Value]) -> Option<Value> + Send + Sync>;
+
+/// The signal-loot probe: receives the item names of a loot tick that
+/// carried NO mission completion (a mission tick is the mission
+/// machinery's to route). Fire-and-forget by contract: the tail thread
+/// never blocks on it, so an implementation dispatches its own async
+/// work. Injected after construction (composition wires it once the
+/// quest service exists), like the quest service's own sinks.
+pub type SignalLootProbe = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 
 /// A verbatim line observer (the recording controller's seam).
 pub type LineTap = Arc<dyn Fn(&str) + Send + Sync>;
@@ -207,6 +215,7 @@ struct Shared {
     pending_tick: AtomicBool,
     line_tap: Mutex<Option<LineTap>>,
     quest_reward_filter: Option<QuestRewardFilter>,
+    signal_loot_probe: OnceLock<SignalLootProbe>,
 }
 
 pub struct ChatlogWatcher {
@@ -247,9 +256,16 @@ impl ChatlogWatcher {
                 pending_tick: AtomicBool::new(false),
                 line_tap: Mutex::new(None),
                 quest_reward_filter,
+                signal_loot_probe: OnceLock::new(),
             }),
             thread: Mutex::new(None),
         }
+    }
+
+    /// Wire the signal-loot probe. Composition calls this once, after
+    /// the quest service exists; a second call is ignored.
+    pub fn set_signal_loot_probe(&self, probe: SignalLootProbe) {
+        let _ = self.shared.signal_loot_probe.set(probe);
     }
 
     pub fn is_running(&self) -> bool {
@@ -574,6 +590,27 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
                         skill_events.remove(index as usize);
                     }
                 }
+            }
+        }
+    }
+
+    // Signal-loot detection: a loot tick that carried no mission
+    // completion may still complete a signal quest (the instance-boss
+    // pattern: the marker item arrives inside the boss's loot clump,
+    // with no mission-log line to route by). A tick WITH a completion
+    // is the mission machinery's, so the probe never sees it and a
+    // daily's voucher cannot masquerade as a boss's. Post-suppression,
+    // so a suppressed reward echo cannot double as a signal.
+    if completes.is_empty() && !loot_events.is_empty() {
+        if let Some(probe) = shared.signal_loot_probe.get() {
+            let names: Vec<String> = loot_events
+                .iter()
+                .filter_map(|e| e.data.get("item_name").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect();
+            if !names.is_empty() {
+                let probe = probe.clone();
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(names)));
             }
         }
     }
@@ -1099,6 +1136,58 @@ mod tests {
         assert!(
             stream.lock().unwrap().is_empty(),
             "a dropped watcher no longer tails"
+        );
+    }
+
+    /// The signal-loot probe fires for a loot tick with NO mission
+    /// completion (the whole tick's item names, in order) and never for
+    /// a tick that carries one: a mission tick is the mission
+    /// machinery's, so a daily's marker item cannot masquerade as an
+    /// instance boss's.
+    #[test]
+    fn the_signal_probe_sees_only_mission_less_loot_ticks() {
+        let pipeline = pipeline(None);
+        let probed = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+        let sink = probed.clone();
+        pipeline
+            .watcher
+            .set_signal_loot_probe(Arc::new(move |names| {
+                sink.lock().unwrap().push(names);
+            }));
+
+        // A boss-shaped tick: loot only, no mission line.
+        append(
+            &pipeline,
+            &[
+                "2026-05-19 10:00:00 [System] [] You received Shrapnel x (4639) Value: 0.4639 PED",
+                "2026-05-19 10:00:00 [System] [] You received Hyperion Daily Voucher x (1) Value: 0 PED",
+                "2026-05-19 10:00:01 [System] [] You inflicted 10.0 points of damage",
+            ],
+        );
+        drain(&pipeline, 3);
+        assert_eq!(
+            *probed.lock().unwrap(),
+            vec![vec![
+                "Shrapnel".to_string(),
+                "Hyperion Daily Voucher".to_string()
+            ]]
+        );
+
+        // A daily-shaped tick: the same marker beside a mission
+        // completion. The probe must not fire for it.
+        probed.lock().unwrap().clear();
+        append(
+            &pipeline,
+            &[
+                "2026-05-19 10:00:05 [System] [] You received Hyperion Daily Voucher x (1) Value: 0 PED",
+                "2026-05-19 10:00:05 [System] [] Mission completed (Iron Challenge)",
+                "2026-05-19 10:00:06 [System] [] You inflicted 10.0 points of damage",
+            ],
+        );
+        drain(&pipeline, 6);
+        assert!(
+            probed.lock().unwrap().is_empty(),
+            "a mission tick never reaches the signal probe"
         );
     }
 }

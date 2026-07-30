@@ -103,6 +103,71 @@ impl QuestService {
         Ok(())
     }
 
+    /// A loot tick that carried no mission completion: complete the
+    /// in-progress signal quests its items pay for (the instance-boss
+    /// pattern: the marker item arrives inside the boss's loot clump,
+    /// with no mission-log line to route by).
+    ///
+    /// Matching is trimmed and case-insensitive on the item name. Each
+    /// occurrence of a signal item completes at most ONE quest (one
+    /// marker, one run); when several in-progress quests share a signal
+    /// item, the oldest-started completes first, deterministically. No
+    /// reward bookkeeping and no suppression happen here: a signal
+    /// quest's reward IS the tracked loot, so completion only records
+    /// the lifecycle fact, the overlay event, and the focus close.
+    pub async fn signal_loot_check(&self, item_names: &[String]) -> Result<(), QuestError> {
+        if item_names.is_empty() {
+            return Ok(());
+        }
+        let candidates: Vec<(i64, String, String)> = self
+            .db
+            .with_reader(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, signal_loot_item FROM quests \
+                     WHERE is_active = 1 AND started_at IS NOT NULL \
+                       AND signal_loot_item IS NOT NULL \
+                     ORDER BY started_at ASC, id ASC",
+                )?;
+                let mut rows = stmt.query([])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ));
+                }
+                Ok(out)
+            })
+            .await?;
+        if candidates.is_empty() {
+            return Ok(());
+        }
+
+        // One marker completes one run: each signal item's occurrence
+        // count is a budget the candidate walk draws down, so a single
+        // marker never completes two quests sharing it, and two markers
+        // in one tick (two runs paid at once) complete two.
+        let mut budget: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for name in item_names {
+            *budget.entry(name.trim().to_ascii_lowercase()).or_insert(0) += 1;
+        }
+        for (quest_id, quest_name, signal) in candidates {
+            let key = signal.trim().to_ascii_lowercase();
+            let Some(remaining) = budget.get_mut(&key) else {
+                continue;
+            };
+            if *remaining == 0 {
+                continue;
+            }
+            *remaining -= 1;
+            self.complete_quest(quest_id).await?;
+            self.record_notable_event(NotableEventKind::Completed, &quest_name, Ped::ZERO)
+                .await;
+        }
+        Ok(())
+    }
+
     /// A MISSION_COMPLETE tick: match the mission, auto-complete the
     /// quest, and name which loot item or skill gain to suppress so
     /// the reward is not double-counted by tracking.

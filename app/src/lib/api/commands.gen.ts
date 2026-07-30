@@ -631,13 +631,16 @@ export interface FocusOptionsResult {
 }
 
 /**
- * One quest the focus picker can offer: an in-progress quest, and
- * whether an effort stretch of it is open on the running session.
+ * One quest the focus picker can offer: an in-progress quest (or a
+ * standing signal quest), and whether an effort stretch of it is open
+ * on the running session.
  */
 export interface FocusQuestOption {
 	questId: number;
 	name: string;
 	focused: boolean;
+	/** Whether this is a signal-completed quest: a standing, repeatable chip (focusing starts it; its signal loot completes it), as opposed to a mission-log quest that lists only while in progress. */
+	signalQuest: boolean;
 }
 
 /**
@@ -1771,6 +1774,8 @@ export interface Quest {
 	playlistIds: string[];
 	/** A fractional epoch-seconds timestamp (the tracker's clock is sub-second), null while the quest is not in progress. */
 	startedAt: number | null;
+	/** The signal loot item completing this quest, null for quests on the mission-log lifecycle. */
+	signalLootItem: string | null;
 }
 
 /**
@@ -1830,6 +1835,8 @@ export interface QuestInput {
 	chain_position?: number | null;
 	chain_total?: number | null;
 	mobs?: string[];
+	/** The signal loot item, when set: the quest completes the moment this item arrives in a loot pickup carrying no mission completion (the instance-boss pattern), and focusing it starts it directly. Mutually exclusive with a positive `reward_ped`. */
+	signal_loot_item?: string | null;
 }
 
 /**
@@ -2330,7 +2337,7 @@ export interface TrackingSnapshot {
 	currentActivity?: ToolActivity | null;
 	/** The focused quests' names, newest first: the effort stretches the user declared on the running session (several can stack via additive focus). Absent when none are focused, so the readout never claims effort that was not declared. */
 	questNames?: string[] | null;
-	/** How many quests are in progress (received and not yet handed in): the focus picker's chip supply, surfaced as a passive cue. Present idle and active alike; absent only at zero. */
+	/** How many quests the focus picker can offer (in-progress mission-log quests plus standing signal quests), surfaced as a passive cue. Present idle and active alike; absent only at zero. */
 	questsInProgress?: number | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;

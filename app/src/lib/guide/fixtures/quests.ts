@@ -29,6 +29,7 @@ export const questsDemoQuests: Quest[] = [
 		chainTotal: 12,
 		playlistIds: ['pl1', 'pl2'],
 		startedAt: null,
+		signalLootItem: null,
 	},
 	{
 		id: 'q2',
@@ -49,6 +50,7 @@ export const questsDemoQuests: Quest[] = [
 		chainTotal: null,
 		playlistIds: ['pl1'],
 		startedAt: null,
+		signalLootItem: null,
 	},
 	{
 		id: 'q3',
@@ -69,6 +71,7 @@ export const questsDemoQuests: Quest[] = [
 		chainTotal: null,
 		playlistIds: ['pl1'],
 		startedAt: null,
+		signalLootItem: null,
 	},
 	{
 		id: 'q4',
@@ -89,6 +92,7 @@ export const questsDemoQuests: Quest[] = [
 		chainTotal: null,
 		playlistIds: ['pl2'],
 		startedAt: null,
+		signalLootItem: null,
 	},
 ];
 

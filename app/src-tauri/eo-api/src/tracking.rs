@@ -515,9 +515,9 @@ pub struct TrackingSnapshot {
     /// never claims effort that was not declared.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quest_names: Option<Vec<String>>,
-    /// How many quests are in progress (received and not yet handed
-    /// in): the focus picker's chip supply, surfaced as a passive cue.
-    /// Present idle and active alike; absent only at zero.
+    /// How many quests the focus picker can offer (in-progress
+    /// mission-log quests plus standing signal quests), surfaced as a
+    /// passive cue. Present idle and active alike; absent only at zero.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quests_in_progress: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -667,14 +667,20 @@ pub struct QuestFocusResult {
     pub quest_names: Vec<String>,
 }
 
-/// One quest the focus picker can offer: an in-progress quest, and
-/// whether an effort stretch of it is open on the running session.
+/// One quest the focus picker can offer: an in-progress quest (or a
+/// standing signal quest), and whether an effort stretch of it is open
+/// on the running session.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FocusQuestOption {
     pub quest_id: i64,
     pub name: String,
     pub focused: bool,
+    /// Whether this is a signal-completed quest: a standing, repeatable
+    /// chip (focusing starts it; its signal loot completes it), as
+    /// opposed to a mission-log quest that lists only while in
+    /// progress.
+    pub signal_quest: bool,
 }
 
 /// What the focus picker offers: the in-progress quests with their
@@ -1246,9 +1252,20 @@ impl Api {
             return Err(ApiError::not_found("Quest not found"));
         };
         if quest["started_at"].is_null() {
-            return Err(ApiError::bad_request(
-                "Quest is not in progress; start it before focusing on it",
-            ));
+            // A signal quest has no mission-log entry to mirror, so its
+            // in-progress state IS the user's declaration: focusing it
+            // starts it in the same motion (and its signal loot will
+            // complete it). A mission-log quest still refuses, because
+            // play cannot be toward a quest the log does not carry.
+            if quest["signal_loot_item"].is_null() {
+                return Err(ApiError::bad_request(
+                    "Quest is not in progress; start it before focusing on it",
+                ));
+            }
+            self.quests
+                .start_quest(quest_id)
+                .await
+                .map_err(ApiError::internal("signal quest start"))?;
         }
         let name = quest["name"].as_str().unwrap_or_default().to_string();
         let quest_names = self
@@ -1319,13 +1336,16 @@ impl Api {
             None => HashSet::new(),
         };
 
+        // Mission-log quests list while in progress; signal quests are
+        // standing chips (repeatable: focusing one starts it), so they
+        // list regardless of their in-progress state.
         let quests = self
             .quests
             .get_quests(true)
             .await
             .map_err(ApiError::internal("focus options quests"))?
             .into_iter()
-            .filter(|quest| !quest["started_at"].is_null())
+            .filter(|quest| !quest["started_at"].is_null() || !quest["signal_loot_item"].is_null())
             .filter_map(|quest| {
                 let quest_id = quest["id"].as_i64()?;
                 let name = quest["name"].as_str()?.to_string();
@@ -1333,6 +1353,7 @@ impl Api {
                     quest_id,
                     name,
                     focused: focused.contains(&quest_id),
+                    signal_quest: !quest["signal_loot_item"].is_null(),
                 })
             })
             .collect();
@@ -1549,14 +1570,15 @@ pub(crate) async fn build_snapshot_value(
         _ => Value::Null,
     };
 
-    // The focus picker's chip supply, as a passive cue: how many
-    // quests the mission log carries right now (received, not yet
-    // handed in). Zero drops the key.
+    // The focus picker's chip supply, as a passive cue: the in-progress
+    // mission-log quests plus the standing signal quests (always
+    // offerable; focusing one starts a run). Zero drops the key.
     let quests_in_progress = db
         .with_reader(|conn| {
             Ok(conn.query_row(
                 "SELECT COUNT(*) FROM quests \
-                 WHERE is_active = 1 AND started_at IS NOT NULL",
+                 WHERE is_active = 1 \
+                   AND (started_at IS NOT NULL OR signal_loot_item IS NOT NULL)",
                 [],
                 |row| row.get::<_, i64>(0),
             )?)

@@ -74,6 +74,7 @@ fn minimal(name: &str) -> QuestInput {
         chain_position: None,
         chain_total: None,
         mobs: Vec::new(),
+        signal_loot_item: None,
     }
 }
 
@@ -96,7 +97,9 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
 
     // Transport invariance: the created quest serialises to the exact
     // bytes the HTTP route answered (id "1" over the fresh database, the
-    // planet/reward_is_skill defaults, null-or-empty text columns).
+    // planet/reward_is_skill defaults, null-or-empty text columns), plus
+    // the one ratified extension: the trailing `signalLootItem` key
+    // (null for mission-log quests) added with signal-completed quests.
     let created = api.quest_create(minimal("Alpha")).await.unwrap();
     assert_eq!(
         serde_json::to_string(&created).unwrap(),
@@ -105,7 +108,7 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
          \"cooldownExpiresAt\":null,\"reward\":null,\"rewardIsSkill\":false,\
          \"expectedRewardMarkupPercent\":null,\"rewardDescription\":\"\",\"notes\":\"\",\
          \"chainName\":null,\"chainPosition\":null,\"chainTotal\":null,\
-         \"playlistIds\":[],\"startedAt\":null}"
+         \"playlistIds\":[],\"startedAt\":null,\"signalLootItem\":null}"
     );
 
     // The read-back through the listing and the by-id read agree.

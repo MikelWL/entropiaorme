@@ -127,7 +127,7 @@
 		<div class="menu-panel">
 			{#if menuState.kind === 'focus'}
 				{#if menuState.quests.length === 0 && menuState.presets.length === 0}
-					<div class="menu-empty">No quests in progress</div>
+					<div class="menu-empty">No quests to focus</div>
 				{:else}
 					{@const anyFocused = menuState.quests.some((quest) => quest.focused)}
 					{#each menuState.quests as quest (quest.questId)}
@@ -137,7 +137,9 @@
 								class="menu-option {quest.focused ? 'menu-option-active' : ''}"
 								title={quest.focused
 									? 'Unfocus (the stretch ends here)'
-									: 'Focus: play from now on counts toward this quest'}
+									: quest.signalQuest
+										? 'Start a run: play counts toward it until its signal loot drops'
+										: 'Focus: play from now on counts toward this quest'}
 								onclick={() =>
 									handleFocusQuestSelection(
 										quest.focused
@@ -148,6 +150,10 @@
 								<span class="menu-option-name">{quest.name}</span>
 								{#if quest.focused}
 									<span class="menu-option-badge">Focused</span>
+								{:else if quest.signalQuest}
+									<!-- The standing, repeatable chip: focusing starts a
+										 run; the signal loot ends it. -->
+									<span class="menu-option-badge menu-option-badge-muted">Run</span>
 								{/if}
 							</button>
 							{#if !quest.focused && anyFocused}
@@ -308,6 +314,11 @@
 		font-size: 10px;
 		font-weight: 600;
 		letter-spacing: 0.02em;
+	}
+
+	.menu-option-badge-muted {
+		background: rgba(255, 255, 255, 0.07);
+		color: rgba(255, 255, 255, 0.45);
 	}
 
 	.menu-empty {

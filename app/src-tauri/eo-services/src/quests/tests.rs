@@ -220,7 +220,8 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
             "expected_reward_markup_percent": null, "notes": null, "chain_name": null,
             "chain_position": null, "chain_total": null, "started_at": null,
             "is_active": 1, "created_at": 1000.0, "category": null,
-            "reward_description": null, "updated_at": 1000.0, "last_completed_at": null,
+            "reward_description": null, "updated_at": 1000.0, "signal_loot_item": null,
+            "last_completed_at": null,
             "cooldown_expires_at": null, "mobs": [], "playlist_ids": [],
         })
     );
@@ -1712,4 +1713,195 @@ async fn only_a_completion_reports_to_the_interval_layer() {
 
     svc.complete_quest(quest).await.unwrap();
     assert_eq!(*reported.lock().unwrap(), vec![quest]);
+}
+
+// ── Signal-completed quests ─────────────────────────────────────────
+
+/// The signal path end to end at the service: an in-progress signal
+/// quest completes when its item arrives (case-insensitively, trimmed),
+/// records the completion, reports the focus close, and clears the
+/// in-progress state so the run is over until the next focus.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    let closed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = closed.clone();
+    svc.set_focus_closer(Arc::new(move |quest_id| {
+        sink.lock().unwrap().push(quest_id);
+        Box::pin(async {})
+    }));
+
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Hyperion Boss 1",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(boss).await.unwrap();
+
+    // A mission-less loot tick with the marker (case and padding off on
+    // purpose) completes the run; unrelated items complete nothing.
+    svc.signal_loot_check(&[
+        "Shrapnel".to_string(),
+        " hyperion daily voucher ".to_string(),
+        "Hyperium".to_string(),
+    ])
+    .await
+    .unwrap();
+
+    let quest = svc.get_quest(boss).await.unwrap().unwrap();
+    assert!(quest["started_at"].is_null(), "the run ended");
+    assert!(!quest["last_completed_at"].is_null(), "completion recorded");
+    assert_eq!(*closed.lock().unwrap(), vec![boss]);
+}
+
+/// A signal quest that is NOT in progress ignores its marker: an
+/// undeclared run stays unrecorded rather than being invented from
+/// loot (the same honesty rule as the focus system's).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_without_a_declared_run_completes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Hyperion Boss 1",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+
+    svc.signal_loot_check(&["Hyperion Daily Voucher".to_string()])
+        .await
+        .unwrap();
+
+    let quest = svc.get_quest(boss).await.unwrap().unwrap();
+    assert!(
+        quest["last_completed_at"].is_null(),
+        "no declared run, no completion"
+    );
+}
+
+/// One marker completes one run: two in-progress quests sharing a
+/// signal item draw on the tick's occurrence budget oldest-first, so a
+/// single marker cannot complete both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_marker_completes_one_of_two_quests_sharing_the_signal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+
+    let first = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss A",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    let second = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss B",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(first).await.unwrap();
+    svc.start_quest(second).await.unwrap();
+    // Pin distinct start instants so "oldest first" is deterministic.
+    db.with_writer(move |conn| {
+        conn.execute(
+            "UPDATE quests SET started_at = 100.0 WHERE id = ?",
+            params![first],
+        )?;
+        conn.execute(
+            "UPDATE quests SET started_at = 200.0 WHERE id = ?",
+            params![second],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.signal_loot_check(&["Hyperion Daily Voucher".to_string()])
+        .await
+        .unwrap();
+
+    let first_quest = svc.get_quest(first).await.unwrap().unwrap();
+    let second_quest = svc.get_quest(second).await.unwrap().unwrap();
+    assert!(
+        !first_quest["last_completed_at"].is_null(),
+        "the oldest-started run completed"
+    );
+    assert!(
+        second_quest["last_completed_at"].is_null() && !second_quest["started_at"].is_null(),
+        "the newer run keeps going"
+    );
+}
+
+/// The signal/reward exclusion: a signal quest cannot carry a fixed
+/// positive reward (its reward is the tracked loot itself), on create
+/// and on the merged update picture alike. A blank signal normalises
+/// to none and lifts the exclusion.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_quest_refuses_a_fixed_reward() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    let refused = svc
+        .create_quest(&json!({
+            "name": "Boss",
+            "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_ped": 2.0,
+        }))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("signal-completed"));
+
+    // Blank signal is no signal: the reward is fine.
+    let plain = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Daily",
+            "signal_loot_item": "  ",
+            "reward_ped": 2.0,
+        }))
+        .await
+        .unwrap(),
+    );
+
+    // Adding a signal to a rewarded quest is refused over the merge...
+    let refused = svc
+        .update_quest(plain, &json!({"signal_loot_item": "Voucher"}))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("signal-completed"));
+
+    // ...and adding a reward to a signal quest likewise.
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss",
+            "signal_loot_item": "Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    let refused = svc
+        .update_quest(boss, &json!({"reward_ped": 2.0}))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("signal-completed"));
+
+    // Clearing the signal lifts the exclusion in the same patch.
+    let updated = svc
+        .update_quest(boss, &json!({"signal_loot_item": null, "reward_ped": 2.0}))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated["reward_ped"], json!(2.0));
+    assert!(updated["signal_loot_item"].is_null());
 }

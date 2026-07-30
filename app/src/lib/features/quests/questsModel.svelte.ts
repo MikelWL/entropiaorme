@@ -66,6 +66,10 @@ export interface QuestFormState {
 	chain_position: number | null;
 	chain_total: number | null;
 	mobs: string[];
+	/** The signal loot item: set makes this a signal-completed quest
+	 * (focusing starts it; the item's arrival in a mission-less loot
+	 * pickup completes it). Exclusive with a positive reward. */
+	signal_loot_item: string;
 }
 
 function defaultQuestForm(): QuestFormState {
@@ -84,6 +88,7 @@ function defaultQuestForm(): QuestFormState {
 		chain_position: null,
 		chain_total: null,
 		mobs: [],
+		signal_loot_item: '',
 	};
 }
 
@@ -354,6 +359,7 @@ export function createQuestsModel() {
 			chain_position: quest.chainPosition,
 			chain_total: quest.chainTotal,
 			mobs: [...quest.targetMobs],
+			signal_loot_item: quest.signalLootItem ?? '',
 		};
 		mobInput = '';
 		showQuestModal = true;
@@ -380,6 +386,7 @@ export function createQuestsModel() {
 			chain_position: questForm.chain_position,
 			chain_total: questForm.chain_total,
 			mobs: questForm.mobs,
+			signal_loot_item: questForm.signal_loot_item.trim() || null,
 		};
 		try {
 			if (editingQuest) {

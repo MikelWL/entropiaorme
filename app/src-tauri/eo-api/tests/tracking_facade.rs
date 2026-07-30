@@ -1029,3 +1029,71 @@ async fn focus_options_list_quests_and_recall_presets_by_session_name() {
     assert!(options.quests[0].focused);
     assert_eq!(options.segment_presets, vec!["Boss 2", "Boss 1"]);
 }
+
+/// A signal quest is a standing, repeatable chip whose in-progress
+/// state survives session boundaries: it lists in the picker before
+/// any start, focusing it from cold starts it in the same motion (no
+/// mission log to mirror), and stopping the tracking session ends the
+/// stretch but NOT the run, so the next session lists it again and can
+/// re-focus without a restart. This is the collect-now-finish-later
+/// flow pinned end to end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_quest_focuses_from_cold_and_survives_session_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+
+    let input = serde_json::from_value(serde_json::json!({
+        "name": "Hyperion Boss 1",
+        "signal_loot_item": "Hyperion Daily Voucher",
+    }))
+    .expect("quest input shape");
+    let boss = api.quest_create(input).await.unwrap();
+    let boss_id: i64 = serde_json::to_value(&boss).unwrap()["id"]
+        .as_str()
+        .expect("quest id")
+        .parse()
+        .expect("numeric quest id");
+
+    // Idle, never started: the signal quest still lists (standing chip)
+    // and counts in the picker cue.
+    let options = api.tracking_focus_options().await.unwrap();
+    assert_eq!(options.quests.len(), 1);
+    assert!(options.quests[0].signal_quest);
+    assert!(!options.quests[0].focused);
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["questsInProgress"], 1);
+
+    // Focusing from cold starts the run and opens the stretch.
+    api.tracking_start().await.unwrap();
+    let focused = api.tracking_quest_focus(boss_id, None).await.unwrap();
+    assert_eq!(focused.quest_names, vec!["Hyperion Boss 1"]);
+    let quest = api.quest_get(boss_id).await.unwrap();
+    assert!(
+        !serde_json::to_value(&quest).unwrap()["startedAt"].is_null(),
+        "focusing a cold signal quest started it"
+    );
+
+    // Session stop ends the stretch, not the run.
+    api.tracking_stop().await.unwrap();
+    let options = api.tracking_focus_options().await.unwrap();
+    assert!(options.quests[0].signal_quest);
+    assert!(
+        !options.quests[0].focused,
+        "the stretch died with its session"
+    );
+    let quest = api.quest_get(boss_id).await.unwrap();
+    assert!(
+        !serde_json::to_value(&quest).unwrap()["startedAt"].is_null(),
+        "the run itself is still going"
+    );
+
+    // The next session re-focuses the still-running quest directly.
+    api.tracking_start().await.unwrap();
+    let refocused = api.tracking_quest_focus(boss_id, None).await.unwrap();
+    assert_eq!(refocused.quest_names, vec!["Hyperion Boss 1"]);
+}
