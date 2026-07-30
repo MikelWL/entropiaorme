@@ -1662,20 +1662,29 @@ fn a_session_started_under_a_declared_zero_opens_its_baseline() {
     assert_eq!(row, ("modifier".to_string(), Some(0.0)));
 }
 
-/// Quest slices STACK: the ARIS grind runs three dailies at once, and
-/// finishing one must leave the other two running. This is the case a
-/// per-axis column on the event row could not express, and the reason
-/// attribution is one context naming a set rather than one column each.
+/// An additive focus STACKS: one hunt can genuinely advance two quests
+/// at once, and finishing one must leave the other running. This is the
+/// case a per-axis column on the event row could not express, and the
+/// reason attribution is one context naming a set rather than one
+/// column each.
 #[test]
-fn quest_slices_stack_and_close_one_at_a_time() {
+fn additive_focus_stacks_and_closes_one_at_a_time() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
 
-    rig.wait(tracker.open_quest_slice(11, "Daily: Carabok"))
+    let names = rig
+        .wait(tracker.focus_quest(11, "Daily: Carabok", false))
         .unwrap();
-    rig.wait(tracker.open_quest_slice(22, "Daily: Monura"))
+    assert_eq!(names, vec!["Daily: Carabok"]);
+    let names = rig
+        .wait(tracker.focus_quest(22, "Daily: Monura", true))
         .unwrap();
+    assert_eq!(
+        names,
+        vec!["Daily: Monura", "Daily: Carabok"],
+        "newest first, both focused"
+    );
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
         assert!(active
@@ -1689,7 +1698,8 @@ fn quest_slices_stack_and_close_one_at_a_time() {
     });
 
     // One finishes; the other keeps running.
-    rig.wait(tracker.close_quest_slice(11)).unwrap();
+    let names = rig.wait(tracker.unfocus_quest(11)).unwrap();
+    assert_eq!(names, vec!["Daily: Monura"]);
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
         assert!(
@@ -1697,7 +1707,7 @@ fn quest_slices_stack_and_close_one_at_a_time() {
                 .intervals
                 .open_of_ref(IntervalKind::Quest, 11)
                 .is_none(),
-            "the completed quest's slice closed"
+            "the completed quest's stretch closed"
         );
         assert!(
             active
@@ -1724,24 +1734,27 @@ fn quest_slices_stack_and_close_one_at_a_time() {
         .unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].0, 11);
-    assert!(rows[0].1.is_some(), "closed slice carries an end");
+    assert!(rows[0].1.is_some(), "the closed stretch carries an end");
     assert_eq!(rows[0].2.as_deref(), Some("Daily: Carabok"));
     assert_eq!(rows[1].0, 22);
-    assert!(rows[1].1.is_none(), "the running slice has no end yet");
+    assert!(rows[1].1.is_none(), "the running stretch has no end yet");
 }
 
-/// The same quest signalled twice must not grow a second stretch: the
-/// mission signal can repeat, and the record would then double-count the
-/// same quest's time.
+/// Re-focusing an already-focused quest must not grow a second stretch
+/// (the record would double-count the same quest's time): the additive
+/// re-focus is a no-op, and the exclusive re-focus closes only its
+/// siblings, never splitting the target's own continuous stretch.
 #[test]
-fn reopening_a_live_quest_slice_is_ignored() {
+fn refocusing_a_focused_quest_never_splits_its_stretch() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
 
-    rig.wait(tracker.open_quest_slice(7, "Daily: Repeat"))
+    rig.wait(tracker.focus_quest(7, "Daily: Repeat", false))
         .unwrap();
-    rig.wait(tracker.open_quest_slice(7, "Daily: Repeat"))
+    rig.wait(tracker.focus_quest(7, "Daily: Repeat", true))
+        .unwrap();
+    rig.wait(tracker.focus_quest(7, "Daily: Repeat", false))
         .unwrap();
 
     let count: i64 = rig
@@ -1756,7 +1769,78 @@ fn reopening_a_live_quest_slice_is_ignored() {
     assert_eq!(count, 1, "one stretch, not two");
 }
 
-/// A quest slice and a boost overlap, and an event recorded while both
+/// The default focus is the one-tap switch: focusing the next daily
+/// closes the standing quest stretch in the same motion. An already
+/// standing sibling of an exclusive re-focus closes too, while the
+/// target's own stretch survives unsplit.
+#[test]
+fn exclusive_focus_switches_between_quests_in_one_motion() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.focus_quest(11, "Daily: Carabok", false))
+        .unwrap();
+    let names = rig
+        .wait(tracker.focus_quest(22, "Daily: Monura", false))
+        .unwrap();
+    assert_eq!(names, vec!["Daily: Monura"], "the switch closed the first");
+
+    let rows: Vec<(i64, Option<f64>)> = rig
+        .wait(rig.db.with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT ref_id, ended_at FROM session_intervals \
+                 WHERE session_id = ? AND kind = 'quest' ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![session.id], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        }))
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 11);
+    assert!(rows[0].1.is_some(), "the switched-away stretch closed");
+    assert_eq!(rows[1].0, 22);
+    assert!(rows[1].1.is_none(), "the switched-to stretch runs");
+}
+
+/// Segments and quest focus are independent axes: an exclusive quest
+/// switch never touches the open segment (a segment can be drawn INSIDE
+/// a long quest focus, and the context names both).
+#[test]
+fn a_quest_switch_leaves_the_open_segment_running() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.open_segment(Some("Rotation 1".into())))
+        .unwrap();
+    rig.wait(tracker.focus_quest(11, "Daily: Carabok", false))
+        .unwrap();
+    rig.wait(tracker.focus_quest(22, "Daily: Monura", false))
+        .unwrap();
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(
+            active
+                .intervals
+                .open_of_kind(IntervalKind::Segment)
+                .and_then(|interval| interval.label.as_deref()),
+            Some("Rotation 1"),
+            "the segment axis is untouched by the quest switch"
+        );
+        assert!(active
+            .intervals
+            .open_of_ref(IntervalKind::Quest, 22)
+            .is_some());
+    });
+}
+
+/// A quest stretch and a boost overlap, and an event recorded while both
 /// hold sits inside BOTH. That is the whole reason attribution is a
 /// context naming a set.
 #[test]
@@ -1766,7 +1850,7 @@ fn a_context_can_name_a_quest_and_a_modifier_at_once() {
     rig.wait(tracker.start_session()).unwrap();
 
     rig.wait(tracker.set_skill_boost(Some(50))).unwrap();
-    rig.wait(tracker.open_quest_slice(3, "Daily: Overlap"))
+    rig.wait(tracker.focus_quest(3, "Daily: Overlap", false))
         .unwrap();
 
     rig.probe(&tracker, |actor| {
@@ -1779,14 +1863,14 @@ fn a_context_can_name_a_quest_and_a_modifier_at_once() {
     });
 }
 
-/// Stopping the session ends every slice still open, so no interval
+/// Stopping the session ends every stretch still open, so no interval
 /// outlives the session that owns it.
 #[test]
-fn stopping_the_session_closes_a_running_quest_slice() {
+fn stopping_the_session_closes_a_focused_stretch() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
-    rig.wait(tracker.open_quest_slice(5, "Daily: Unfinished"))
+    rig.wait(tracker.focus_quest(5, "Daily: Unfinished", false))
         .unwrap();
     rig.wait(tracker.stop_session()).unwrap();
 
@@ -1803,15 +1887,15 @@ fn stopping_the_session_closes_a_running_quest_slice() {
     assert_eq!(open, 0);
 }
 
-/// With no session running there is nothing to slice. The signal is
+/// With no session running there is nothing to focus. The signal is
 /// refused rather than inventing a session or writing an orphan row.
 #[test]
-fn a_quest_slice_outside_a_session_records_nothing() {
+fn focusing_outside_a_session_records_nothing() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
 
     assert!(rig
-        .wait(tracker.open_quest_slice(1, "Daily: Idle"))
+        .wait(tracker.focus_quest(1, "Daily: Idle", false))
         .is_err());
 
     let count: i64 = rig

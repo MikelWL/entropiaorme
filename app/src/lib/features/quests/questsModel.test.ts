@@ -40,6 +40,7 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		chainTotal: null,
 		playlistIds: [],
 		startedAt: null,
+		signalLootItem: null,
 		...overrides,
 	};
 }

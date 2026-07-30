@@ -62,17 +62,22 @@ pub(super) enum TrackerMsg {
         maturity: String,
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
-    /// A quest became active: open its slice on the running session.
-    /// Stacking, because several quests run at once.
-    OpenQuestSlice {
+    /// The user focused a quest: open its effort stretch on the running
+    /// session. Exclusive over quests by default (the one-tap switch);
+    /// additive joins the standing focus instead. The reply carries the
+    /// focused names now in force, newest first.
+    FocusQuest {
         quest_id: i64,
         name: String,
-        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+        additive: bool,
+        reply: oneshot::Sender<Result<Vec<String>, TrackerCommandError>>,
     },
-    /// A quest ended: close its slice, leaving any sibling quest's open.
-    CloseQuestSlice {
+    /// A quest's focus ended (the user's toggle-off, or its completion
+    /// closing the stretch), leaving any sibling quest's focus open.
+    /// The reply carries the focused names still in force.
+    UnfocusQuest {
         quest_id: i64,
-        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+        reply: oneshot::Sender<Result<Vec<String>, TrackerCommandError>>,
     },
     /// The user drew a segment boundary: open a segment, closing any
     /// standing one (segments are sequential, not stacking). A None or
@@ -221,15 +226,16 @@ impl TrackerActor {
             TrackerMsg::SetSkillBoost(percent, reply) => {
                 let _ = reply.send(self.set_skill_boost(percent).await);
             }
-            TrackerMsg::OpenQuestSlice {
+            TrackerMsg::FocusQuest {
                 quest_id,
                 name,
+                additive,
                 reply,
             } => {
-                let _ = reply.send(self.open_quest_slice(quest_id, name).await);
+                let _ = reply.send(self.focus_quest(quest_id, name, additive).await);
             }
-            TrackerMsg::CloseQuestSlice { quest_id, reply } => {
-                let _ = reply.send(self.close_quest_slice(quest_id).await);
+            TrackerMsg::UnfocusQuest { quest_id, reply } => {
+                let _ = reply.send(self.unfocus_quest(quest_id).await);
             }
             TrackerMsg::OpenSegment { label, reply } => {
                 let _ = reply.send(self.open_segment(label).await);

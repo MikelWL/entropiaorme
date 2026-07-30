@@ -1,9 +1,9 @@
 /**
  * The session-facet view model: the independent, co-recorded attributions
  * a tracking session carries (designated name, skill boost, player-drawn
- * segment) and the writes that move them. The quest facet is
- * auto-recorded by the quest lifecycle and only displayed here, never
- * written.
+ * segment, quest focus) and the writes that move them. The quest facet is
+ * user-declared: the picker focuses and unfocuses in-progress quests
+ * (completion closes a focused stretch by itself, backend-side).
  *
  * The facets are independent by construction, so each control writes only
  * its own value and carries the others through unchanged. Each facet may
@@ -43,6 +43,10 @@ export interface SessionFacetsDeps {
 	closeSegment: () => Promise<unknown>;
 	/** Rename the open segment live. */
 	renameSegment: (name: string) => Promise<unknown>;
+	/** Focus a quest (exclusive switch, or additive join). */
+	focusQuest: (questId: number, additive: boolean) => Promise<unknown>;
+	/** End one quest's focus, leaving siblings running. */
+	unfocusQuest: (questId: number) => Promise<unknown>;
 	/** Present or dismiss the name-suggestion menu (route-owned). */
 	openNameMenu: () => void | Promise<void>;
 	closeNameMenu: () => void | Promise<void>;
@@ -73,6 +77,10 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 	// the session.
 	let segmentDraft = $state('');
 	let savingSegment = $state(false);
+
+	// The quest-focus writes' in-flight guard (the picker disables its
+	// trigger while one lands).
+	let savingFocus = $state(false);
 
 	// One channel for every facet write failure, so a refusal is surfaced
 	// beside the controls rather than swallowed.
@@ -247,6 +255,52 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		}
 	}
 
+	/** Focus a quest: the one-tap switch (exclusive over quests), or an
+	 * additive join when the play ahead advances two quests at once. */
+	async function focusQuest(questId: number, additive: boolean) {
+		savingFocus = true;
+		facetError = null;
+		try {
+			await deps.focusQuest(questId, additive);
+			await deps.refresh();
+		} catch (error) {
+			facetError = describe(error, 'Failed to focus quest');
+		} finally {
+			savingFocus = false;
+		}
+	}
+
+	/** End one quest's focus, leaving siblings running. */
+	async function unfocusQuest(questId: number) {
+		savingFocus = true;
+		facetError = null;
+		try {
+			await deps.unfocusQuest(questId);
+			await deps.refresh();
+		} catch (error) {
+			facetError = describe(error, 'Failed to unfocus quest');
+		} finally {
+			savingFocus = false;
+		}
+	}
+
+	/** Start a segment from a recalled preset name (closes any standing
+	 * one, like every segment open). The buffer takes the echoed name
+	 * directly, as in commitSegment. */
+	async function applySegmentPreset(label: string) {
+		savingSegment = true;
+		facetError = null;
+		try {
+			const applied = await deps.openSegment(label);
+			await deps.refresh();
+			segmentDraft = applied.segmentName ?? '';
+		} catch (error) {
+			facetError = describe(error, 'Failed to start segment');
+		} finally {
+			savingSegment = false;
+		}
+	}
+
 	return {
 		get nameQuery() {
 			return nameQuery;
@@ -300,6 +354,9 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		},
 		get savingSegment() {
 			return savingSegment;
+		},
+		get savingFocus() {
+			return savingFocus;
 		},
 		get facetError() {
 			return facetError;
@@ -397,6 +454,9 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		commitSegment,
 		nextSegment,
 		closeSegment,
+		focusQuest,
+		unfocusQuest,
+		applySegmentPreset,
 		destroy() {
 			clearNameCloseTimer();
 			nameTypeahead.destroy();

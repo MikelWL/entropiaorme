@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import type { UnlistenFn } from '@tauri-apps/api/event';
+	import OverlayMenuPanel from '$lib/components/overlay/OverlayMenuPanel.svelte';
 	import {
 		OVERLAY_MENU_CLOSED_EVENT,
 		OVERLAY_MENU_HIDE_EVENT,
@@ -8,32 +9,18 @@
 		OVERLAY_MENU_READY_EVENT,
 		OVERLAY_MENU_SELECT_EVENT,
 		OVERLAY_MENU_SHOW_EVENT,
+		computeMenuHeight,
+		menuRowCount,
 		type OverlayMenuSelection,
 		type OverlayMenuState
 	} from '$lib/windows/overlayMenu';
-
-	const MENU_MAX_HEIGHT = 220;
 
 	const currentWindow = getCurrentWebviewWindow();
 
 	let menuState = $state<OverlayMenuState | null>(null);
 	let suppressBlurCloseUntil = 0;
 
-	/** Rows the panel will render, which drives the window height. Every
-	 * kind falls back to one row: the loading, error, and empty states each
-	 * occupy exactly one line. */
-	function getRowCount(state: OverlayMenuState): number {
-		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
-		if (state.loading || state.error) return 1;
-		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
-		return Math.max(1, state.mobSuggestions.length);
-	}
-
-	const popupHeight = $derived.by(() => {
-		if (!menuState) return 1;
-		return Math.min(MENU_MAX_HEIGHT, Math.max(44, getRowCount(menuState) * 34 + 12));
-	});
-
+	const popupHeight = $derived(menuState ? computeMenuHeight(menuRowCount(menuState)) : 1);
 	const popupWidth = $derived(menuState?.width ?? 1);
 
 	async function requestClose() {
@@ -46,6 +33,15 @@
 	async function handleSelection(selection: OverlayMenuSelection) {
 		await currentWindow.emitTo('overlay', OVERLAY_MENU_SELECT_EVENT, selection).catch(() => {});
 		await requestClose();
+	}
+
+	/** A focus quest toggle keeps the picker open (the overlay re-shows it
+	 * with the refreshed focused states), so joining a second daily is not
+	 * a close-and-reopen; presets still close on selection, like every
+	 * other menu pick. */
+	async function handleFocusQuestSelection(selection: OverlayMenuSelection) {
+		suppressBlurCloseUntil = Date.now() + 400;
+		await currentWindow.emitTo('overlay', OVERLAY_MENU_SELECT_EVENT, selection).catch(() => {});
 	}
 
 	function signalInteraction() {
@@ -110,61 +106,11 @@
 		onpointerdown={signalInteraction}
 		onwheel={signalInteraction}
 	>
-		<div class="menu-panel">
-			{#if menuState.kind === 'trifecta'}
-				{#each menuState.options as option}
-					<button
-						type="button"
-						class="menu-option {option.active ? 'menu-option-active' : ''}"
-						onclick={() => handleSelection({ kind: 'trifecta', presetId: option.id })}
-					>
-						<span class="menu-option-name">{option.name}</span>
-						{#if option.active}
-							<span class="menu-option-badge">Active</span>
-						{/if}
-					</button>
-				{/each}
-			{:else if menuState.loading}
-				<div class="menu-empty">Searching...</div>
-			{:else if menuState.error}
-				<div class="menu-empty">{menuState.error}</div>
-			{:else if menuState.kind === 'name'}
-				{#if menuState.suggestions.length === 0}
-					{@const typed = menuState.query.trim()}
-					<button
-						type="button"
-						class="menu-option"
-						onclick={() => handleSelection({ kind: 'name', name: typed })}
-					>
-						<span class="menu-option-name">Press Enter to name it "{typed}"</span>
-					</button>
-				{:else}
-					{#each menuState.suggestions as option}
-						<button
-							type="button"
-							class="menu-option"
-							onclick={() => handleSelection({ kind: 'name', name: option })}
-						>
-							<span class="menu-option-name">{option}</span>
-						</button>
-					{/each}
-				{/if}
-			{:else if menuState.kind === 'mob'}
-				{#if menuState.mobSuggestions.length === 0}
-					<div class="menu-empty">No matches</div>
-				{:else}
-					{#each menuState.mobSuggestions as option}
-						<button
-							type="button"
-							class="menu-option"
-							onclick={() => handleSelection({ kind: 'mob', species: option.species, maturity: option.maturity })}
-						>
-							<span class="menu-option-name">{option.display}</span>
-						</button>
-					{/each}
-				{/if}
-			{/if}
-		</div>
+		<OverlayMenuPanel
+			state={menuState}
+			onSelect={handleSelection}
+			onFocusSelect={handleFocusQuestSelection}
+		/>
 	</div>
 {/if}
 
@@ -173,76 +119,5 @@
 		display: flex;
 		align-items: stretch;
 		justify-content: stretch;
-	}
-
-	.menu-panel {
-		display: flex;
-		flex-direction: column;
-		width: 100%;
-		max-height: 220px;
-		overflow-y: auto;
-		padding: 6px;
-		border-radius: 8px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(11, 15, 25, 0.96);
-		backdrop-filter: blur(16px) saturate(150%);
-		box-shadow:
-			0 14px 30px rgba(0, 0, 0, 0.48),
-			0 0 0 1px rgba(255, 255, 255, 0.03);
-	}
-
-	.menu-option {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-		width: 100%;
-		padding: 7px 8px;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		color: rgba(255, 255, 255, 0.82);
-		font-size: 12px;
-		text-align: left;
-		cursor: pointer;
-		transition:
-			background-color 140ms ease,
-			color 140ms ease;
-	}
-
-	.menu-option:hover,
-	.menu-option:focus-visible {
-		background: rgba(255, 255, 255, 0.06);
-		color: rgba(255, 255, 255, 0.94);
-		outline: none;
-	}
-
-	.menu-option-active {
-		background: rgba(56, 189, 248, 0.14);
-		color: rgba(186, 230, 253, 0.98);
-	}
-
-	.menu-option-name {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.menu-option-badge {
-		flex-shrink: 0;
-		padding: 2px 6px;
-		border-radius: 999px;
-		background: rgba(56, 189, 248, 0.16);
-		color: rgba(186, 230, 253, 0.96);
-		font-size: 10px;
-		font-weight: 600;
-		letter-spacing: 0.02em;
-	}
-
-	.menu-empty {
-		padding: 8px 10px;
-		color: rgba(255, 255, 255, 0.45);
-		font-size: 11px;
 	}
 </style>

@@ -816,3 +816,284 @@ async fn the_session_intervals_read_counts_by_context_membership() {
     assert_eq!(segment.skill_gains, 1);
     assert_eq!(segment.harvests, 0);
 }
+
+/// A helper for the quest-focus tests: an active quest in the catalogue,
+/// optionally started (in progress). Built through the facade's own
+/// commands so the pin covers the real path.
+async fn seed_quest(api: &Api, name: &str, started: bool) -> i64 {
+    let input =
+        serde_json::from_value(serde_json::json!({ "name": name })).expect("quest input shape");
+    let quest = api.quest_create(input).await.unwrap();
+    let value = serde_json::to_value(&quest).unwrap();
+    // The Quest DTO serialises its id as a string (the HTTP-era shape).
+    let quest_id: i64 = value["id"]
+        .as_str()
+        .expect("quest id")
+        .parse()
+        .expect("numeric quest id");
+    if started {
+        api.quest_start(quest_id).await.unwrap();
+    }
+    quest_id
+}
+
+/// The quest-focus lifecycle at the facade: focusing declares the effort
+/// stretch (the snapshot's `questNames` is the readout), the default
+/// re-focus is the one-tap exclusive switch, `additive` joins, and
+/// unfocus ends one stretch leaving siblings. `questsInProgress` rides
+/// the snapshot as the picker's cue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quest_focus_declares_switches_and_joins_stretches() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+    let carabok = seed_quest(&api, "Daily: Carabok", true).await;
+    let monura = seed_quest(&api, "Daily: Monura", true).await;
+    api.tracking_start().await.unwrap();
+
+    // Nothing focused: the key is absent; the in-progress count rides.
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert!(value.get("questNames").is_none());
+    assert_eq!(value["questsInProgress"], 2);
+
+    // Focus declares the stretch; the ack echoes the names in force.
+    let focused = api.tracking_quest_focus(carabok, None).await.unwrap();
+    assert_eq!(focused.quest_names, vec!["Daily: Carabok"]);
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["questNames"], serde_json::json!(["Daily: Carabok"]));
+
+    // Additive joins (newest first); the default is the exclusive switch.
+    let joined = api.tracking_quest_focus(monura, Some(true)).await.unwrap();
+    assert_eq!(joined.quest_names, vec!["Daily: Monura", "Daily: Carabok"]);
+    let switched = api.tracking_quest_focus(carabok, None).await.unwrap();
+    assert_eq!(switched.quest_names, vec!["Daily: Carabok"]);
+
+    // Unfocus ends the last stretch; the key leaves the projection.
+    let cleared = api.tracking_quest_unfocus(carabok).await.unwrap();
+    assert!(cleared.quest_names.is_empty());
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert!(value.get("questNames").is_none());
+}
+
+/// The focus command's refusals: an unknown quest is a not-found, a
+/// quest that is not in progress is a request error (the mission log
+/// has to carry it before play can be toward it), and an idle tracker
+/// is a conflict, mirroring the segment commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quest_focus_refuses_unknown_unstarted_and_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+
+    let missing = api.tracking_quest_focus(9_999, None).await.unwrap_err();
+    assert_eq!(serde_json::to_value(&missing).unwrap()["kind"], "notFound");
+
+    let unstarted = seed_quest(&api, "Daily: Unpicked", false).await;
+    let refused = api.tracking_quest_focus(unstarted, None).await.unwrap_err();
+    assert_eq!(
+        serde_json::to_value(&refused).unwrap()["kind"],
+        "badRequest"
+    );
+
+    let started = seed_quest(&api, "Daily: Idle", true).await;
+    let idle = api.tracking_quest_focus(started, None).await.unwrap_err();
+    assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
+    let idle = api.tracking_quest_unfocus(started).await.unwrap_err();
+    assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
+
+    // With a session running, unfocusing a quest with no open stretch is
+    // an idempotent no-op: a stale control cannot fail the user.
+    api.tracking_start().await.unwrap();
+    let noop = api.tracking_quest_unfocus(started).await.unwrap();
+    assert!(noop.quest_names.is_empty());
+}
+
+/// A scripted tracker config carrying only a session name: what the
+/// preset-recall test needs its active session to snapshot at start
+/// (the shared harness's inert config never names a session).
+struct NamedSessionConfig(&'static str);
+
+impl eo_services::tracker::TrackingConfig for NamedSessionConfig {
+    fn session_name(&self) -> String {
+        self.0.to_string()
+    }
+    fn declared_skill_boost_percent(&self) -> Option<i64> {
+        None
+    }
+    fn manual_mob(&self) -> Option<(String, String)> {
+        None
+    }
+    fn weapon_attribution_trifecta(&self) -> bool {
+        false
+    }
+    fn loot_filter_blacklist(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// The focus picker's options: in-progress quests carry their focused
+/// state, and the segment presets recall this session name's history
+/// (most recent first), excluding auto-numbered names and the running
+/// session's own rows. Idle, the quests still list and presets are
+/// empty.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn focus_options_list_quests_and_recall_presets_by_session_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let snapshot = dir.path().join("snapshot");
+    std::fs::create_dir_all(&snapshot).unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::write(
+        data_dir.join("settings.json"),
+        "{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}",
+    )
+    .unwrap();
+    let db = Db::open(&data_dir.join("entropia_orme.db"))
+        .await
+        .expect("migrated database");
+    let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
+    let providers = eo_services::tracker::Providers {
+        config: Arc::new(NamedSessionConfig("ARIS Dailies")),
+        ..Default::default()
+    };
+    let handles = common::producer_handles_with_tracker(
+        &db,
+        &data_dir,
+        tokio::runtime::Handle::current(),
+        providers,
+    )
+    .await;
+    let api = Api::new(
+        db.clone(),
+        game_data,
+        Arc::new(RealClock::new()),
+        data_dir,
+        handles.config_service,
+        handles.tracker,
+        handles.hotbar,
+        handles.watcher,
+        handles.skill_tracker,
+        handles.skill_scan,
+        handles.spacebar,
+        handles.repair_ocr,
+        handles.quests.clone(),
+        None,
+        None,
+        None,
+        None,
+    );
+    let carabok = seed_quest(&api, "Daily: Carabok", true).await;
+
+    // History: an ended "ARIS Dailies" session with named segments and
+    // one auto-numbered segment (noise, excluded from recall).
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id,started_at,ended_at,is_active,armour_cost,heal_cost,\
+             dangling_cost,mob_tracking_mode,session_name,updated_at) \
+             VALUES('hist',1000.0,4600.0,0,0,0,0,'mob','ARIS Dailies',4600.0)",
+            [],
+        )?;
+        for (label, at) in [("Boss 1", 100.0), ("Boss 2", 200.0), ("Segment 3", 300.0)] {
+            conn.execute(
+                "INSERT INTO session_intervals(session_id,kind,label,started_at,ended_at) \
+                 VALUES('hist','segment',?,?,?)",
+                rusqlite::params![label, at, at + 10.0],
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    // Idle: quests list unfocused; no session name, so no presets.
+    let options = api.tracking_focus_options().await.unwrap();
+    assert_eq!(options.quests.len(), 1);
+    assert_eq!(options.quests[0].quest_id, carabok);
+    assert!(!options.quests[0].focused);
+    assert!(options.segment_presets.is_empty());
+
+    // Active under the same name (the scripted provider seeds it at
+    // start): recall is most-recent-first, the auto-number is excluded,
+    // and the focused flag tracks the stretch.
+    api.tracking_start().await.unwrap();
+    api.tracking_quest_focus(carabok, None).await.unwrap();
+    let options = api.tracking_focus_options().await.unwrap();
+    assert!(options.quests[0].focused);
+    assert_eq!(options.segment_presets, vec!["Boss 2", "Boss 1"]);
+}
+
+/// A signal quest is a standing, repeatable chip whose in-progress
+/// state survives session boundaries: it lists in the picker before
+/// any start, focusing it from cold starts it in the same motion (no
+/// mission log to mirror), and stopping the tracking session ends the
+/// stretch but NOT the run, so the next session lists it again and can
+/// re-focus without a restart. This is the collect-now-finish-later
+/// flow pinned end to end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_quest_focuses_from_cold_and_survives_session_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+
+    let input = serde_json::from_value(serde_json::json!({
+        "name": "Hyperion Boss 1",
+        "signal_loot_item": "Hyperion Daily Voucher",
+    }))
+    .expect("quest input shape");
+    let boss = api.quest_create(input).await.unwrap();
+    let boss_id: i64 = serde_json::to_value(&boss).unwrap()["id"]
+        .as_str()
+        .expect("quest id")
+        .parse()
+        .expect("numeric quest id");
+
+    // Idle, never started: the signal quest still lists (standing chip)
+    // and counts in the picker cue.
+    let options = api.tracking_focus_options().await.unwrap();
+    assert_eq!(options.quests.len(), 1);
+    assert!(options.quests[0].signal_quest);
+    assert!(!options.quests[0].focused);
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["questsInProgress"], 1);
+
+    // Focusing from cold starts the run and opens the stretch.
+    api.tracking_start().await.unwrap();
+    let focused = api.tracking_quest_focus(boss_id, None).await.unwrap();
+    assert_eq!(focused.quest_names, vec!["Hyperion Boss 1"]);
+    let quest = api.quest_get(boss_id).await.unwrap();
+    assert!(
+        !serde_json::to_value(&quest).unwrap()["startedAt"].is_null(),
+        "focusing a cold signal quest started it"
+    );
+
+    // Session stop ends the stretch, not the run.
+    api.tracking_stop().await.unwrap();
+    let options = api.tracking_focus_options().await.unwrap();
+    assert!(options.quests[0].signal_quest);
+    assert!(
+        !options.quests[0].focused,
+        "the stretch died with its session"
+    );
+    let quest = api.quest_get(boss_id).await.unwrap();
+    assert!(
+        !serde_json::to_value(&quest).unwrap()["startedAt"].is_null(),
+        "the run itself is still going"
+    );
+
+    // The next session re-focuses the still-running quest directly.
+    api.tracking_start().await.unwrap();
+    let refocused = api.tracking_quest_focus(boss_id, None).await.unwrap();
+    assert_eq!(refocused.quest_names, vec!["Hyperion Boss 1"]);
+}

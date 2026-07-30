@@ -228,26 +228,35 @@ impl HuntTracker {
             .await
     }
 
-    /// Record that a quest became active: open its slice on the running
-    /// session. Forward-looking, like every interval write; events
-    /// already recorded keep the context they were stamped with.
-    pub async fn open_quest_slice(
+    /// Focus a quest: open its effort stretch on the running session.
+    /// Exclusive over quests by default (the one-tap switch between
+    /// dailies); `additive` joins the standing focus instead, for the
+    /// hunt that genuinely advances two quests at once. Segments are an
+    /// independent axis and are never touched. Forward-looking, like
+    /// every interval write; events already recorded keep the context
+    /// they were stamped with. Returns the focused names now in force,
+    /// newest first.
+    pub async fn focus_quest(
         &self,
         quest_id: i64,
         name: &str,
-    ) -> Result<(), TrackerCommandError> {
+        additive: bool,
+    ) -> Result<Vec<String>, TrackerCommandError> {
         let name = name.to_string();
-        self.call(|reply| TrackerMsg::OpenQuestSlice {
+        self.call(|reply| TrackerMsg::FocusQuest {
             quest_id,
             name,
+            additive,
             reply,
         })
         .await
     }
 
-    /// Record that a quest ended: close its slice, leaving siblings open.
-    pub async fn close_quest_slice(&self, quest_id: i64) -> Result<(), TrackerCommandError> {
-        self.call(|reply| TrackerMsg::CloseQuestSlice { quest_id, reply })
+    /// End one quest's focus (the user's toggle-off, or its completion
+    /// closing the stretch), leaving siblings focused. Idempotent when
+    /// no stretch is open. Returns the focused names still in force.
+    pub async fn unfocus_quest(&self, quest_id: i64) -> Result<Vec<String>, TrackerCommandError> {
+        self.call(|reply| TrackerMsg::UnfocusQuest { quest_id, reply })
             .await
     }
 

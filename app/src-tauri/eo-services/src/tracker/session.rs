@@ -126,6 +126,18 @@ impl ActiveSession {
     }
 }
 
+/// The focused quests' names, newest first (the latest-focused quest is
+/// the most relevant readout when several stack): the ack every focus
+/// transition echoes, matching the snapshot's ordering.
+fn focused_quest_names(active: &ActiveSession) -> Vec<String> {
+    active
+        .intervals
+        .open_of_kind_all(IntervalKind::Quest)
+        .filter_map(|interval| interval.label.clone())
+        .rev()
+        .collect()
+}
+
 /// The in-memory half of the tracking readout, computed by the actor
 /// against its owned state and returned detached. The caller finishes
 /// the readout with the two session-scoped database reads, off the
@@ -442,57 +454,68 @@ impl TrackerActor {
         Ok(())
     }
 
-    /// Open a quest's slice on the running session.
+    /// Focus a quest: open its effort stretch on the running session.
     ///
-    /// Stacking, not exclusive: the ARIS grind runs three daily quests
-    /// at once, and each is its own slice. An event recorded while two
-    /// overlap sits inside both, which the context expresses natively
-    /// and a per-axis column could not.
+    /// The default is the one-tap switch: exclusive over quests, so
+    /// focusing the next daily closes the standing quest stretches in
+    /// the same motion (segments are an independent axis and are never
+    /// touched). `additive` joins the standing focus instead, for the
+    /// hunt that genuinely advances two quests at once; an event
+    /// recorded while two stretches overlap sits inside both, which the
+    /// context expresses natively and a per-axis column could not.
     ///
-    /// Contained like the other interval writes: with no session running
-    /// there is nothing to attach a slice to, and a quest that starts
-    /// outside a session is simply not a slice of one.
-    pub(super) async fn open_quest_slice(
+    /// An already-focused quest never grows a duplicate stretch: the
+    /// additive re-focus is a no-op, and the exclusive re-focus closes
+    /// only its siblings (closing and reopening the target would split
+    /// one continuous stretch into two).
+    ///
+    /// Contained like the other interval writes: a write that cannot
+    /// land leaves the declaration unrecorded, and the returned names
+    /// echo the state actually in force.
+    pub(super) async fn focus_quest(
         &mut self,
         quest_id: i64,
         name: String,
-    ) -> Result<(), TrackerCommandError> {
+        additive: bool,
+    ) -> Result<Vec<String>, TrackerCommandError> {
         let now = instant_to_epoch(resolve_local(self.clock.now()));
         let db = self.db.clone();
         let Some(active) = self.session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
         let session_id = active.session.id.clone();
-        // An already-open slice for this quest is left alone rather than
-        // stacked twice: the signal can repeat (a re-received mission),
-        // and the record must not grow a duplicate stretch from it.
         if active
             .intervals
             .open_of_ref(IntervalKind::Quest, quest_id)
             .is_some()
         {
-            return Ok(());
+            if !additive {
+                let _ = active
+                    .intervals
+                    .close_kind_except_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
+                    .await;
+            }
+            return Ok(focused_quest_names(active));
         }
+        let spec = IntervalSpec::new(IntervalKind::Quest)
+            .label(Some(name))
+            .ref_id(Some(quest_id));
+        let spec = if additive { spec.stacking() } else { spec };
         let _ = active
             .intervals
-            .open_interval(
-                &db,
-                &session_id,
-                now,
-                IntervalSpec::new(IntervalKind::Quest)
-                    .label(Some(name))
-                    .ref_id(Some(quest_id))
-                    .stacking(),
-            )
+            .open_interval(&db, &session_id, now, spec)
             .await;
-        Ok(())
+        Ok(focused_quest_names(active))
     }
 
-    /// Close one quest's slice, leaving any sibling quest's running.
-    pub(super) async fn close_quest_slice(
+    /// Unfocus one quest (the user's toggle-off, or its completion
+    /// closing the stretch), leaving any sibling quest's focus running.
+    /// Idempotent: unfocusing a quest with no open stretch is a no-op.
+    /// Returns the focused names still in force.
+    pub(super) async fn unfocus_quest(
         &mut self,
         quest_id: i64,
-    ) -> Result<(), TrackerCommandError> {
+    ) -> Result<Vec<String>, TrackerCommandError> {
         let now = instant_to_epoch(resolve_local(self.clock.now()));
         let db = self.db.clone();
         let Some(active) = self.session.active_mut() else {
@@ -503,7 +526,7 @@ impl TrackerActor {
             .intervals
             .close_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
             .await;
-        Ok(())
+        Ok(focused_quest_names(active))
     }
 
     /// Open a segment: the player-drawn slice of the session (one

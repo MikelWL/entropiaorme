@@ -355,6 +355,25 @@ impl IntervalState {
         .await
     }
 
+    /// Close every open interval of a kind EXCEPT the one pointing at
+    /// `keep_ref`, and adopt the narrower context: the exclusive switch
+    /// of a stacking kind. The kept interval survives with its stretch
+    /// intact, because closing and reopening it would split one
+    /// continuous stretch into two.
+    pub async fn close_kind_except_ref(
+        &mut self,
+        db: &Db,
+        session_id: &str,
+        now: f64,
+        kind: IntervalKind,
+        keep_ref: i64,
+    ) -> Result<Vec<OpenInterval>, DbError> {
+        self.close_matching(db, session_id, now, |interval| {
+            interval.kind == kind && interval.ref_id != Some(keep_ref)
+        })
+        .await
+    }
+
     /// Relabel the open interval of a kind, in place. A label is not
     /// part of attribution (context membership is by interval id), so
     /// no context is minted and events already stamped are unaffected.

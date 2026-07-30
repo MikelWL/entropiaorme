@@ -13,6 +13,7 @@ use tokio::runtime::Handle;
 use crate::bus_events::{
     BusEvent, MissionReceivedPayload, MissionReceivedTag, SessionLifecyclePayload,
 };
+use crate::chatlog_watcher::{MissionCompletion, SignalLoot};
 use crate::db::Db;
 
 use super::lifecycle::{delete_latest_quest_claim, delete_latest_quest_reward_entry};
@@ -220,7 +221,8 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
             "expected_reward_markup_percent": null, "notes": null, "chain_name": null,
             "chain_position": null, "chain_total": null, "started_at": null,
             "is_active": 1, "created_at": 1000.0, "category": null,
-            "reward_description": null, "updated_at": 1000.0, "last_completed_at": null,
+            "reward_description": null, "updated_at": 1000.0, "signal_loot_item": null,
+            "last_completed_at": null,
             "cooldown_expires_at": null, "mobs": [], "playlist_ids": [],
         })
     );
@@ -918,7 +920,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     let match_id = |name: &'static str| {
         let svc = svc.clone();
         async move {
-            svc.match_quest_by_mission_name(name)
+            svc.match_quest_by_mission_name(name, false)
                 .await
                 .unwrap()
                 .map(|quest| quest["id"].as_i64().unwrap())
@@ -945,69 +947,94 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         .await
         .unwrap();
 
-    // The reward filter's five legs.
+    // The reward filter's five legs, each now a pre-publish
+    // suppression answer paired with the post-publish completion
+    // check (the tick's loot must reach the consumers before the
+    // completion closes anything, so the two are separate calls);
+    // the suppression decisions and the overlay trail they leave
+    // are the original's. The filter's in-progress gate means each
+    // leg starts its quest first, as the mission log would have.
+    let complete_tick = |mission: &'static str, loot: Vec<Value>, skills: Vec<Value>| {
+        let svc = svc.clone();
+        async move {
+            svc.mission_complete_check(&[MissionCompletion {
+                mission_name: mission.to_string(),
+                loot_items: loot,
+                skill_gains: skills,
+            }])
+            .await
+            .unwrap();
+        }
+    };
     clock.advance(60.0).unwrap();
+    svc.start_quest(qb).await.unwrap().unwrap();
+    let atrox_skills = vec![json!({"skill_name": "Rifle", "amount": 1.0})];
     assert_eq!(
-        svc.quest_reward_filter(
-            "Daily Hunt: Atrox",
-            &[],
-            &[json!({"skill_name": "Rifle", "amount": 1.0})]
-        )
-        .await
-        .unwrap(),
+        svc.quest_reward_filter("Daily Hunt: Atrox", &[], &atrox_skills)
+            .await
+            .unwrap(),
         Some(json!({"suppress_loot_index": null, "suppress_skill_index": 0}))
     );
+    complete_tick("Daily Hunt: Atrox", vec![], atrox_skills).await;
     clock.advance(60.0).unwrap();
+    svc.start_quest(qa).await.unwrap().unwrap();
+    let iron_loot = vec![
+        json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1}),
+        json!({"item_name": "Universal Ammo", "quantity": 1, "value": 2.51}),
+    ];
     assert_eq!(
-        svc.quest_reward_filter(
-            "Iron Challenge",
-            &[
-                json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1}),
-                json!({"item_name": "Universal Ammo", "quantity": 1, "value": 2.51}),
-            ],
-            &[]
-        )
-        .await
-        .unwrap(),
+        svc.quest_reward_filter("Iron Challenge", &iron_loot, &[])
+            .await
+            .unwrap(),
         Some(json!({"suppress_loot_index": 1, "suppress_skill_index": null}))
     );
+    complete_tick("Iron Challenge", iron_loot, vec![]).await;
     clock.advance(60.0).unwrap();
+    svc.start_quest(qa).await.unwrap().unwrap();
+    let bare_loot = vec![json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1})];
     assert_eq!(
-        svc.quest_reward_filter(
-            "Iron Challenge",
-            &[json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1})],
-            &[]
-        )
-        .await
-        .unwrap(),
+        svc.quest_reward_filter("Iron Challenge", &bare_loot, &[])
+            .await
+            .unwrap(),
         None
     );
+    complete_tick("Iron Challenge", bare_loot, vec![]).await;
     clock.advance(60.0).unwrap();
+    svc.start_quest(qe).await.unwrap().unwrap();
+    let bounty_loot = vec![
+        json!({"item_name": "A", "value": 0.5}),
+        json!({"item_name": "B", "value": 0.2}),
+        json!({"item_name": "C", "value": 0.9}),
+    ];
     assert_eq!(
-        svc.quest_reward_filter(
-            "Zero Bounty",
-            &[
-                json!({"item_name": "A", "value": 0.5}),
-                json!({"item_name": "B", "value": 0.2}),
-                json!({"item_name": "C", "value": 0.9}),
-            ],
-            &[]
-        )
-        .await
-        .unwrap(),
+        svc.quest_reward_filter("Zero Bounty", &bounty_loot, &[])
+            .await
+            .unwrap(),
         Some(json!({"suppress_loot_index": 1, "suppress_skill_index": null}))
     );
+    complete_tick("Zero Bounty", bounty_loot, vec![]).await;
     clock.advance(60.0).unwrap();
+    svc.start_quest(qc).await.unwrap().unwrap();
+    let survey_loot = vec![json!({"item_name": "A", "value": 0.5})];
     assert_eq!(
-        svc.quest_reward_filter(
-            "Geologist Survey",
-            &[json!({"item_name": "A", "value": 0.5})],
-            &[]
-        )
-        .await
-        .unwrap(),
+        svc.quest_reward_filter("Geologist Survey", &survey_loot, &[])
+            .await
+            .unwrap(),
         None
     );
+    complete_tick("Geologist Survey", survey_loot, vec![]).await;
+    // A completion line for a quest the log does not carry as in
+    // progress is not ours to act on: no suppression, no completion.
+    assert_eq!(
+        svc.quest_reward_filter("Iron Challenge", &[], &[])
+            .await
+            .unwrap(),
+        None
+    );
+    let trail_before = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
+    complete_tick("Iron Challenge", vec![], vec![]).await;
+    let trail_after = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
+    assert_eq!(trail_after, trail_before, "an idle quest never completes");
 
     // The overlay trail, exactly as the original recorded it.
     let events = db
@@ -1168,7 +1195,7 @@ async fn equal_fuzzy_scores_keep_the_first_quest() {
     // reference's figure); the strictly-greater comparison keeps
     // the earlier quest.
     let matched = svc
-        .match_quest_by_mission_name("iron chal c")
+        .match_quest_by_mission_name("iron chal c", false)
         .await
         .unwrap()
         .unwrap();
@@ -1179,12 +1206,18 @@ async fn equal_fuzzy_scores_keep_the_first_quest() {
 async fn filter_ties_keep_the_first_item() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
-    svc.create_quest(&json!({"name": "Tie Quest", "reward_ped": 2.5}))
-        .await
-        .unwrap();
-    svc.create_quest(&json!({"name": "Zed Bounty", "reward_ped": 0}))
-        .await
-        .unwrap();
+    let tie = quest_id(
+        &svc.create_quest(&json!({"name": "Tie Quest", "reward_ped": 2.5}))
+            .await
+            .unwrap(),
+    );
+    let zed = quest_id(
+        &svc.create_quest(&json!({"name": "Zed Bounty", "reward_ped": 0}))
+            .await
+            .unwrap(),
+    );
+    svc.start_quest(tie).await.unwrap().unwrap();
+    svc.start_quest(zed).await.unwrap().unwrap();
 
     // Equal absolute differences (2.49 and 2.51 against 2.5) keep
     // the first item, as the original's strictly-less tracking does.
@@ -1681,22 +1714,20 @@ fn truthiness_matches_python_bool() {
     assert!(json_truthy(Some(&json!({"k": 1}))));
 }
 
-/// The quest lifecycle reports its slices to whatever owns the session's
-/// interval layer, so a quest's stretch can be measured apart from the
-/// session around it.
-///
-/// Hooked on the lifecycle primitives rather than the mission detector,
-/// which is what makes the manual start and the auto-start from a
-/// MISSION_RECEIVED tick report identically.
+/// A completion reports the quest to the interval layer so a focused
+/// stretch of it closes at the completion moment; a start reports
+/// NOTHING, because the mission log only witnesses pickup (bulk pickup
+/// separates it from the play that advances the quest), and which
+/// stretch of play is toward a quest is the user's focus declaration.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_quest_lifecycle_reports_its_slices() {
+async fn only_a_completion_reports_to_the_interval_layer() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
 
     let reported = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = reported.clone();
-    svc.set_slice_writer(Arc::new(move |slice| {
-        sink.lock().unwrap().push(slice);
+    svc.set_focus_closer(Arc::new(move |quest_id| {
+        sink.lock().unwrap().push(quest_id);
         Box::pin(async {})
     }));
 
@@ -1707,44 +1738,341 @@ async fn the_quest_lifecycle_reports_its_slices() {
     );
 
     svc.start_quest(quest).await.unwrap();
-    svc.complete_quest(quest).await.unwrap();
-
-    assert_eq!(
-        *reported.lock().unwrap(),
-        vec![
-            super::QuestSlice::Opened {
-                quest_id: quest,
-                name: "Daily: Carabok".to_string()
-            },
-            super::QuestSlice::Closed { quest_id: quest },
-        ]
+    assert!(
+        reported.lock().unwrap().is_empty(),
+        "a start opens no stretch: focus is the user's declaration"
     );
+
+    svc.complete_quest(quest).await.unwrap();
+    assert_eq!(*reported.lock().unwrap(), vec![quest]);
 }
 
-/// A start that moves nothing reports nothing: an inactive quest never
-/// became in-progress, so no stretch of the session belongs to it.
+// ── Signal-completed quests ─────────────────────────────────────────
+
+/// A signal-probe loot line, as the watcher would hand it over.
+fn marker(item_name: &str, quantity: i64) -> SignalLoot {
+    SignalLoot {
+        item_name: item_name.to_string(),
+        quantity,
+    }
+}
+
+/// The signal path end to end at the service: an in-progress signal
+/// quest completes when its item arrives (case-insensitively, trimmed),
+/// records the completion, reports the focus close, and clears the
+/// in-progress state so the run is over until the next focus.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_start_that_moves_nothing_reports_no_slice() {
+async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
 
-    let reported = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let sink = reported.clone();
-    svc.set_slice_writer(Arc::new(move |slice| {
-        sink.lock().unwrap().push(slice);
+    let closed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = closed.clone();
+    svc.set_focus_closer(Arc::new(move |quest_id| {
+        sink.lock().unwrap().push(quest_id);
         Box::pin(async {})
     }));
 
-    // No such quest at all.
-    svc.start_quest(9_999).await.unwrap();
-    assert!(reported.lock().unwrap().is_empty());
-
-    // Present but soft-deleted: the start is gated on `is_active = 1`.
-    let quest = quest_id(&svc.create_quest(&json!({"name": "Retired"})).await.unwrap());
-    assert!(svc.delete_quest(quest).await.unwrap());
-    svc.start_quest(quest).await.unwrap();
-    assert!(
-        reported.lock().unwrap().is_empty(),
-        "an inactive quest cannot open a slice"
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Hyperion Boss 1",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
     );
+    svc.start_quest(boss).await.unwrap();
+
+    // A mission-less loot tick with the marker (case and padding off on
+    // purpose) completes the run; unrelated items complete nothing.
+    svc.signal_loot_check(&[
+        marker("Shrapnel", 4639),
+        marker(" hyperion daily voucher ", 1),
+        marker("Hyperium", 2),
+    ])
+    .await
+    .unwrap();
+
+    let quest = svc.get_quest(boss).await.unwrap().unwrap();
+    assert!(quest["started_at"].is_null(), "the run ended");
+    assert!(!quest["last_completed_at"].is_null(), "completion recorded");
+    assert_eq!(*closed.lock().unwrap(), vec![boss]);
+}
+
+/// A signal quest that is NOT in progress ignores its marker: an
+/// undeclared run stays unrecorded rather than being invented from
+/// loot (the same honesty rule as the focus system's).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_without_a_declared_run_completes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Hyperion Boss 1",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+
+    svc.signal_loot_check(&[marker("Hyperion Daily Voucher", 1)])
+        .await
+        .unwrap();
+
+    let quest = svc.get_quest(boss).await.unwrap().unwrap();
+    assert!(
+        quest["last_completed_at"].is_null(),
+        "no declared run, no completion"
+    );
+}
+
+/// One marker completes one run: two in-progress quests sharing a
+/// signal item draw on the tick's occurrence budget oldest-first, so a
+/// single marker cannot complete both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_marker_completes_one_of_two_quests_sharing_the_signal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+
+    let first = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss A",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    let second = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss B",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(first).await.unwrap();
+    svc.start_quest(second).await.unwrap();
+    // Pin distinct start instants so "oldest first" is deterministic.
+    db.with_writer(move |conn| {
+        conn.execute(
+            "UPDATE quests SET started_at = 100.0 WHERE id = ?",
+            params![first],
+        )?;
+        conn.execute(
+            "UPDATE quests SET started_at = 200.0 WHERE id = ?",
+            params![second],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.signal_loot_check(&[marker("Hyperion Daily Voucher", 1)])
+        .await
+        .unwrap();
+
+    let first_quest = svc.get_quest(first).await.unwrap().unwrap();
+    let second_quest = svc.get_quest(second).await.unwrap().unwrap();
+    assert!(
+        !first_quest["last_completed_at"].is_null(),
+        "the oldest-started run completed"
+    );
+    assert!(
+        second_quest["last_completed_at"].is_null() && !second_quest["started_at"].is_null(),
+        "the newer run keeps going"
+    );
+}
+
+/// A stacked marker line pays for that many runs: the budget counts
+/// units, not lines, so one loot line carrying quantity 2 completes
+/// two in-progress quests sharing the signal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stacked_marker_line_pays_for_that_many_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+
+    let first = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss A",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    let second = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss B",
+            "signal_loot_item": "Hyperion Daily Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(first).await.unwrap();
+    svc.start_quest(second).await.unwrap();
+    db.with_writer(move |conn| {
+        conn.execute(
+            "UPDATE quests SET started_at = 100.0 WHERE id = ?",
+            params![first],
+        )?;
+        conn.execute(
+            "UPDATE quests SET started_at = 200.0 WHERE id = ?",
+            params![second],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.signal_loot_check(&[marker("Hyperion Daily Voucher", 2)])
+        .await
+        .unwrap();
+
+    for quest in [first, second] {
+        let row = svc.get_quest(quest).await.unwrap().unwrap();
+        assert!(
+            !row["last_completed_at"].is_null(),
+            "both stacked-paid runs completed"
+        );
+    }
+}
+
+/// The colon-variant discipline: a variant-family quest is matched
+/// only by a mission line carrying the same family and a variant that
+/// clears the fuzzy bar on its own, so the bare umbrella line a
+/// pickup emits (which crosses the whole-string fuzzy bar) and a
+/// sibling variant's line can never cross-match it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn variant_family_quests_refuse_umbrella_and_sibling_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    let variant = quest_id(
+        &svc.create_quest(&json!({"name": "ARIS - Daily Hunting 3: Verderons"}))
+            .await
+            .unwrap(),
+    );
+    svc.start_quest(variant).await.unwrap();
+
+    // The umbrella chooser line is a DIFFERENT mission: whole-string
+    // scoring puts it exactly at the 0.8 bar, but the structural rule
+    // refuses a family-only line against a variant quest.
+    assert!(svc
+        .match_quest_by_mission_name("ARIS - Daily Hunting 3", true)
+        .await
+        .unwrap()
+        .is_none());
+    // A sibling variant shares the long family prefix but is its own
+    // mission: variants are compared on their own, and "Fieroids"
+    // against "Verderons" is nowhere near the bar.
+    assert!(svc
+        .match_quest_by_mission_name("ARIS - Daily Hunting 3: Fieroids", true)
+        .await
+        .unwrap()
+        .is_none());
+    // The quest's own line still matches through the decorations...
+    let matched = svc
+        .match_quest_by_mission_name("ARIS - Daily Hunting 3: VERDERONS (Repeatable)", true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(matched["id"], json!(variant));
+    // ...and a near-identical variant spelling fuzzy-matches within
+    // the family.
+    let matched = svc
+        .match_quest_by_mission_name("ARIS - Daily Hunting 3: Verderon", true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(matched["id"], json!(variant));
+}
+
+/// The completion gate composes with the discipline: an umbrella line
+/// through the completion check completes nothing even while the
+/// variant quest is in progress.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_umbrella_line_never_completes_a_variant_quest() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    let variant = quest_id(
+        &svc.create_quest(&json!({"name": "ARIS - Daily Hunting 1: Faint Fieroids"}))
+            .await
+            .unwrap(),
+    );
+    svc.start_quest(variant).await.unwrap();
+
+    svc.mission_complete_check(&[MissionCompletion {
+        mission_name: "ARIS - Daily Hunting 1".to_string(),
+        loot_items: vec![],
+        skill_gains: vec![],
+    }])
+    .await
+    .unwrap();
+
+    let quest = svc.get_quest(variant).await.unwrap().unwrap();
+    assert!(
+        quest["last_completed_at"].is_null() && !quest["started_at"].is_null(),
+        "the variant keeps running through its umbrella's line"
+    );
+}
+
+/// The signal/reward exclusion: a signal quest cannot carry a fixed
+/// positive reward (its reward is the tracked loot itself), on create
+/// and on the merged update picture alike. A blank signal normalises
+/// to none and lifts the exclusion.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_quest_refuses_a_fixed_reward() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    let refused = svc
+        .create_quest(&json!({
+            "name": "Boss",
+            "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_ped": 2.0,
+        }))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("signal-completed"));
+
+    // Blank signal is no signal: the reward is fine.
+    let plain = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Daily",
+            "signal_loot_item": "  ",
+            "reward_ped": 2.0,
+        }))
+        .await
+        .unwrap(),
+    );
+
+    // Adding a signal to a rewarded quest is refused over the merge...
+    let refused = svc
+        .update_quest(plain, &json!({"signal_loot_item": "Voucher"}))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("signal-completed"));
+
+    // ...and adding a reward to a signal quest likewise.
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Boss",
+            "signal_loot_item": "Voucher",
+        }))
+        .await
+        .unwrap(),
+    );
+    let refused = svc
+        .update_quest(boss, &json!({"reward_ped": 2.0}))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("signal-completed"));
+
+    // Clearing the signal lifts the exclusion in the same patch.
+    let updated = svc
+        .update_quest(boss, &json!({"signal_loot_item": null, "reward_ped": 2.0}))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated["reward_ped"], json!(2.0));
+    assert!(updated["signal_loot_item"].is_null());
 }

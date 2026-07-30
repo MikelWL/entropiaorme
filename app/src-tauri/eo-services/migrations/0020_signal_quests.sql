@@ -1,0 +1,11 @@
+-- Signal-completed quests: a quest may name a "signal" loot item whose
+-- arrival in a loot pickup marks the quest complete (the pattern: an
+-- instance boss with no mission-log presence drops a marker item, e.g.
+-- a daily voucher, alongside its reward pool). NULL keeps the quest on
+-- the mission-log lifecycle; non-NULL switches its completion to the
+-- signal and lets focusing it start it directly (there is no mission
+-- log entry to mirror).
+--
+-- Additive and forward-only: no existing row changes meaning, and a
+-- build that predates this column simply never reads it.
+ALTER TABLE quests ADD COLUMN signal_loot_item TEXT;

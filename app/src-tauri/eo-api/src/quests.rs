@@ -77,6 +77,12 @@ pub struct QuestInput {
     pub chain_total: Option<i64>,
     #[serde(default)]
     pub mobs: Vec<String>,
+    /// The signal loot item, when set: the quest completes the moment
+    /// this item arrives in a loot pickup carrying no mission
+    /// completion (the instance-boss pattern), and focusing it starts
+    /// it directly. Mutually exclusive with a positive `reward_ped`.
+    #[serde(default)]
+    pub signal_loot_item: Option<String>,
 }
 
 impl QuestInput {
@@ -100,6 +106,7 @@ impl QuestInput {
             "chain_position": self.chain_position,
             "chain_total": self.chain_total,
             "mobs": self.mobs,
+            "signal_loot_item": self.signal_loot_item,
         })
     }
 }
@@ -195,6 +202,9 @@ pub struct Quest {
     /// A fractional epoch-seconds timestamp (the tracker's clock is
     /// sub-second), null while the quest is not in progress.
     pub started_at: Nullable<f64>,
+    /// The signal loot item completing this quest, null for quests on
+    /// the mission-log lifecycle.
+    pub signal_loot_item: Nullable<String>,
 }
 
 impl Quest {
@@ -221,6 +231,7 @@ impl Quest {
             chain_total: opt_i64(&quest["chain_total"]).into(),
             playlist_ids: string_id_list(&quest["playlist_ids"]),
             started_at: opt_f64(&quest["started_at"]).into(),
+            signal_loot_item: opt_string(&quest["signal_loot_item"]).into(),
         }
     }
 }
@@ -667,7 +678,12 @@ impl Api {
 /// `bad_request` on this family); the source is logged server-side while
 /// the boundary reply stays fixed.
 fn quest_error(context: &'static str) -> impl FnOnce(QuestError) -> ApiError {
-    ApiError::internal(context)
+    move |error| match error {
+        // A validation refusal is the caller's to fix, not an internal
+        // fault: it surfaces with its own message as a request error.
+        QuestError::Invalid(message) => ApiError::bad_request(message),
+        other => ApiError::internal(context)(other),
+    }
 }
 
 fn quest_not_found() -> ApiError {

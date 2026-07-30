@@ -17,7 +17,7 @@ const QUEST_SELECT: &str = "\
            q.reward_ped, q.reward_is_skill, q.expected_reward_markup_percent, \
            q.notes, q.chain_name, q.chain_position, q.chain_total, \
            q.started_at, q.is_active, q.created_at, q.category, \
-           q.reward_description, q.updated_at, \
+           q.reward_description, q.updated_at, q.signal_loot_item, \
            (SELECT MAX(completed_at) \
             FROM session_quest_completions \
             WHERE quest_id = q.id) AS last_completed_at \
@@ -87,6 +87,8 @@ impl QuestService {
 
     /// Create a quest and return it.
     pub async fn create_quest(&self, data: &Value) -> Result<Value, QuestError> {
+        let signal_loot_item = normalize_signal_loot_item(data.get("signal_loot_item"));
+        validate_signal_reward(signal_loot_item.as_deref(), data.get("reward_ped"))?;
         let markup = normalize_expected_reward_markup(
             data.get("reward_ped"),
             data.get("reward_is_skill"),
@@ -112,6 +114,7 @@ impl QuestService {
             value_to_sql(data.get("chain_total").unwrap_or(&Value::Null)),
             value_to_sql(data.get("category").unwrap_or(&Value::Null)),
             value_to_sql(data.get("reward_description").unwrap_or(&Value::Null)),
+            value_to_sql(&json!(signal_loot_item)),
         ];
         // The original's truthiness gate: an empty (or null) mobs payload
         // writes nothing, and the `expect` fires only for a truthy
@@ -131,8 +134,8 @@ impl QuestService {
                     "INSERT INTO quests (name, planet, waypoint, cooldown_hours, \
                      reward_ped, reward_is_skill, expected_reward_markup_percent, \
                      notes, chain_name, chain_position, chain_total, \
-                     category, reward_description) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     category, reward_description, signal_loot_item) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params_from_iter(params),
                 )?;
                 let quest_id = tx.last_insert_rowid();
@@ -160,7 +163,7 @@ impl QuestService {
             return Ok(None);
         };
 
-        const ALLOWED: [&str; 13] = [
+        const ALLOWED: [&str; 14] = [
             "name",
             "planet",
             "waypoint",
@@ -174,17 +177,38 @@ impl QuestService {
             "category",
             "reward_description",
             "expected_reward_markup_percent",
+            "signal_loot_item",
         ];
         let mut updates: Vec<(&str, Value)> = Vec::new();
         for key in ALLOWED {
             if let Some(value) = data.get(key) {
                 let value = if key == "reward_is_skill" {
                     json!(i64::from(json_truthy(Some(value))))
+                } else if key == "signal_loot_item" {
+                    json!(normalize_signal_loot_item(Some(value)))
                 } else {
                     value.clone()
                 };
                 updates.push((key, value));
             }
+        }
+
+        // The signal/reward exclusion holds over the MERGED picture, so
+        // neither adding a signal to a rewarded quest nor adding a reward
+        // to a signal quest can slip through a partial patch.
+        {
+            let merged_signal = match data.get("signal_loot_item") {
+                Some(value) => normalize_signal_loot_item(Some(value)),
+                None => existing
+                    .get("signal_loot_item")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            };
+            let merged_reward = data
+                .get("reward_ped")
+                .cloned()
+                .unwrap_or_else(|| existing.get("reward_ped").cloned().unwrap_or(Value::Null));
+            validate_signal_reward(merged_signal.as_deref(), Some(&merged_reward))?;
         }
 
         // A change to any reward field re-normalises the stored markup
@@ -407,6 +431,10 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
         "updated_at".into(),
         json!(row.get_unwrap::<_, Option<f64>>("updated_at")),
     );
+    quest.insert(
+        "signal_loot_item".into(),
+        json!(row.get_unwrap::<_, Option<String>>("signal_loot_item")),
+    );
     let last_completed = row.get_unwrap::<_, Option<f64>>("last_completed_at");
     quest.insert("last_completed_at".into(), json!(last_completed));
 
@@ -417,6 +445,36 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
     };
     quest.insert("cooldown_expires_at".into(), json!(expires));
     quest
+}
+
+/// The signal item, trimmed; blank and null both mean "no signal" (the
+/// quest stays on the mission-log lifecycle).
+fn normalize_signal_loot_item(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+}
+
+/// A signal-completed quest cannot also carry a fixed PED reward: its
+/// reward arrives as tracked loot (the signal clump), so a ledger write
+/// on completion would count the same PED twice.
+fn validate_signal_reward(
+    signal: Option<&str>,
+    reward_ped: Option<&Value>,
+) -> Result<(), QuestError> {
+    let rewarded = reward_ped
+        .and_then(Value::as_f64)
+        .is_some_and(|reward| reward > 0.0);
+    if signal.is_some() && rewarded {
+        return Err(QuestError::Invalid(
+            "A signal-completed quest cannot carry a fixed reward: its reward is the loot \
+             itself, which tracking already counts"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// The stored markup only exists for liquid (non-skill) rewards with a

@@ -83,7 +83,7 @@ use eo_services::keystroke_source::{HookKeystrokeSource, KeystrokeSource, Shared
 use eo_services::ocr_engine::load_bgr_png;
 pub use eo_services::ocr_engine::OcrEngine;
 use eo_services::paths::{resolve_data_dir, DB_FILE_NAME};
-use eo_services::quests::{QuestService, QuestSlice};
+use eo_services::quests::QuestService;
 use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
 use eo_services::scan_completion::{complete_skill_scan, hydrate_skill_scan_state};
 use eo_services::scan_presets::ScanPresets;
@@ -1236,28 +1236,64 @@ fn compose_producers(
 
     // Wire the quest service's interval sink now that the tracker owning
     // the interval state exists (the quest service is built first, so this
-    // cannot be a constructor argument). A quest's start and completion
-    // become a slice of the running session, which is what lets a
-    // quest-shaped stretch be measured apart from the session around it.
+    // cannot be a constructor argument). A completion closes the quest's
+    // focused stretch, when the user declared one on the running session;
+    // opening a stretch is the user's own focus declaration, never the
+    // lifecycle's (the mission log only witnesses pickup and hand-in,
+    // which bulk play separates from the effort between them).
     //
     // Deliberately a direct call rather than a bus topic: the corpus
     // fingerprints capture the published event stream, and the banked
     // port-equivalence captures must stay byte-identical.
     {
         let tracker_sink = tracker.clone();
-        quests.set_slice_writer(Arc::new(move |slice| {
+        quests.set_focus_closer(Arc::new(move |quest_id| {
             let tracker = tracker_sink.clone();
             Box::pin(async move {
                 // Errors are swallowed on purpose: with no session
-                // running there is nothing to slice, and a quest that
-                // starts outside a session is not a slice of one.
-                let _ = match slice {
-                    QuestSlice::Opened { quest_id, name } => {
-                        tracker.open_quest_slice(quest_id, &name).await
-                    }
-                    QuestSlice::Closed { quest_id } => tracker.close_quest_slice(quest_id).await,
-                };
+                // running (or no focus declared) there is nothing to
+                // close, and that is not a failure of the completion.
+                let _ = tracker.unfocus_quest(quest_id).await;
             })
+        }));
+    }
+
+    // Wire the mission-completion probe: a tick's completions land
+    // strictly after its publishes, so the tick's own loot (the final
+    // objective kill, the payout) stamps into the focused stretch
+    // before the completion closes it. Fire-and-forget onto the
+    // runtime, because the probe is called from the tail thread and
+    // must never block it.
+    {
+        let quests_probe = quests.clone();
+        let probe_runtime = runtime.clone();
+        watcher.set_mission_complete_probe(Arc::new(move |completions| {
+            let quests = quests_probe.clone();
+            probe_runtime.spawn(async move {
+                // Errors are contained: a failed check must not take the
+                // tail loop's attention, and the quest's own state is
+                // re-derivable from the next matching tick.
+                let _ = quests.mission_complete_check(&completions).await;
+            });
+        }));
+    }
+
+    // Wire the signal-loot probe: a loot tick with no mission completion
+    // may complete a signal quest (the instance-boss pattern). Fire-and-
+    // forget onto the runtime, because the probe is called from the tail
+    // thread and must never block it; the quest service serialises the
+    // completion itself.
+    {
+        let quests_probe = quests.clone();
+        let probe_runtime = runtime.clone();
+        watcher.set_signal_loot_probe(Arc::new(move |loot| {
+            let quests = quests_probe.clone();
+            probe_runtime.spawn(async move {
+                // Errors are contained: a failed check must not take the
+                // tail loop's attention, and the quest's own state is
+                // re-derivable from the next matching tick.
+                let _ = quests.signal_loot_check(&loot).await;
+            });
         }));
     }
 

@@ -37,25 +37,20 @@ mod tests;
 
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
 
-/// What a quest's lifecycle reports to the running session's segment
-/// layer, so a quest's stretch becomes a slice of the session.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QuestSlice {
-    Opened { quest_id: i64, name: String },
-    Closed { quest_id: i64 },
-}
-
-/// The sink for [`QuestSlice`] reports.
+/// The sink a quest completion reports through, so a completed quest's
+/// focused stretch (when the user declared one on the running session)
+/// closes at the completion moment. Completion is the lifecycle's only
+/// interval-layer report: which stretches of play advance a quest is
+/// the user's declaration (the focus control), not something the
+/// mission log can witness, so starting a quest opens nothing.
 ///
 /// Injected after construction rather than taken as a constructor
 /// argument, because composition builds the quest service before the
 /// tracker that owns the interval state. Deliberately NOT a bus topic:
 /// the corpus fingerprints capture the published event stream, and the
 /// banked port-equivalence captures cannot move.
-pub type QuestSliceWriter = Arc<
-    dyn Fn(QuestSlice) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-        + Send
-        + Sync,
+pub type QuestFocusCloser = Arc<
+    dyn Fn(i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
 pub use playlists::{PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_LONG_HORIZON};
 
@@ -103,10 +98,10 @@ pub struct QuestService {
     /// The sender into the owning task, for the watcher's
     /// reward-filter rendezvous.
     pump: mpsc::UnboundedSender<QuestMsg>,
-    /// Where quest slices are reported, once composition has wired it.
-    /// Absent in every test and composition that has no tracker, which
-    /// is why every report is best-effort.
-    slice_writer: OnceLock<QuestSliceWriter>,
+    /// Where quest completions are reported to the interval layer, once
+    /// composition has wired it. Absent in every test and composition
+    /// that has no tracker, which is why every report is best-effort.
+    focus_closer: OnceLock<QuestFocusCloser>,
 }
 
 impl QuestService {
@@ -142,7 +137,7 @@ impl QuestService {
             id_source,
             session: session_rx,
             pump: pump.clone(),
-            slice_writer: OnceLock::new(),
+            focus_closer: OnceLock::new(),
         });
         let subscriptions = actor::subscribe_handlers(bus, &pump);
         runtime.spawn(actor::run(
@@ -177,19 +172,20 @@ impl QuestService {
 
     /// Wire the interval-layer sink. Composition calls this once, after
     /// the tracker exists; a second call is ignored.
-    pub fn set_slice_writer(&self, writer: QuestSliceWriter) {
-        let _ = self.slice_writer.set(writer);
+    pub fn set_focus_closer(&self, closer: QuestFocusCloser) {
+        let _ = self.focus_closer.set(closer);
     }
 
-    /// Report a quest slice, if anything is listening.
+    /// Report a quest's completion to the interval layer, if anything
+    /// is listening, so a focused stretch of it closes.
     ///
-    /// Best-effort by design, and never on the caller's error path: a
+    /// Best-effort by design, and never on the caller's error path: an
     /// interval write that cannot land must not fail the quest action
     /// that prompted it. The quest's own state is the durable record;
-    /// the slice is the session's view of it.
-    pub(super) async fn report_slice(&self, slice: QuestSlice) {
-        if let Some(writer) = self.slice_writer.get() {
-            writer(slice).await;
+    /// the focused stretch is the session's view of it.
+    pub(super) async fn report_focus_closed(&self, quest_id: i64) {
+        if let Some(closer) = self.focus_closer.get() {
+            closer(quest_id).await;
         }
     }
 

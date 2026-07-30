@@ -89,6 +89,27 @@
 				</div>
 			</div>
 
+			<!-- Signal loot: set makes this a signal-completed quest (an
+				 instance boss with no mission-log presence): focusing it in
+				 the overlay starts a run, and this item's arrival in loot
+				 completes it. Exclusive with a fixed reward, because the
+				 boss's drop IS the reward and tracking already counts it. -->
+			<div>
+				<label class="block text-xs text-text-secondary mb-1" for="q-signal">Signal Loot (auto-complete)</label>
+				<Input id="q-signal" type="text" bind:value={model.questForm.signal_loot_item}
+					disabled={(model.questForm.reward_ped ?? 0) > 0}
+					placeholder="e.g., Hyperion Daily Voucher" />
+				<p class="text-[11px] text-text-secondary/70 mt-1">
+					{#if (model.questForm.reward_ped ?? 0) > 0}
+						Unavailable with a fixed reward: a signal quest's reward is its loot, which tracking already counts.
+					{:else if model.questForm.signal_loot_item.trim()}
+						Completes when this item drops outside a mission completion; focusing it in the overlay starts a run.
+					{:else}
+						Optional. For repeatable runs with no mission log entry (instance bosses): name the loot item whose drop marks completion.
+					{/if}
+				</p>
+			</div>
+
 			<!-- Target Mobs -->
 			<div>
 				<div class="block text-xs text-text-secondary mb-1">Target Mobs</div>

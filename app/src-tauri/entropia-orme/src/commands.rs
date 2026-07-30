@@ -49,10 +49,10 @@ use eo_api::scan::{
 };
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
-    ArmourCostResult, LootItemEditResult, ManualMobLockResult, ManualMobSuggestion, MobEditResult,
-    ReleaseResult, RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail,
-    SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult,
-    StopResult, TrackingSnapshot,
+    ArmourCostResult, FocusOptionsResult, LootItemEditResult, ManualMobLockResult,
+    ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult, RepairScanResult,
+    SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals, SessionPage,
+    SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -956,6 +956,28 @@ pub async fn tracking_segment_rename(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_quest_focus(
+    app: tauri::AppHandle,
+    quest_id: i64,
+    additive: Option<bool>,
+) -> Result<QuestFocusResult, ApiError> {
+    facade(&app)?.tracking_quest_focus(quest_id, additive).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_quest_unfocus(
+    app: tauri::AppHandle,
+    quest_id: i64,
+) -> Result<QuestFocusResult, ApiError> {
+    facade(&app)?.tracking_quest_unfocus(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_focus_options(app: tauri::AppHandle) -> Result<FocusOptionsResult, ApiError> {
+    facade(&app)?.tracking_focus_options().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_rename_session(
     app: tauri::AppHandle,
     session_id: String,
@@ -1521,6 +1543,9 @@ mod tests {
         "tracking_segment_open",
         "tracking_segment_close",
         "tracking_segment_rename",
+        "tracking_quest_focus",
+        "tracking_quest_unfocus",
+        "tracking_focus_options",
         "tracking_rename_session",
         "tracking_rename_mob",
         "tracking_restore_mob",
