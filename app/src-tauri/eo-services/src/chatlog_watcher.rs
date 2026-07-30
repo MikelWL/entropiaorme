@@ -594,26 +594,27 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
         }
     }
 
-    // Signal-loot detection: a loot tick that carried no mission
-    // completion may still complete a signal quest (the instance-boss
+    // The signal-loot candidates: a loot tick that carried no mission
+    // completion may complete a signal quest (the instance-boss
     // pattern: the marker item arrives inside the boss's loot clump,
     // with no mission-log line to route by). A tick WITH a completion
     // is the mission machinery's, so the probe never sees it and a
     // daily's voucher cannot masquerade as a boss's. Post-suppression,
-    // so a suppressed reward echo cannot double as a signal.
-    if completes.is_empty() && !loot_events.is_empty() {
-        if let Some(probe) = shared.signal_loot_probe.get() {
-            let names: Vec<String> = loot_events
+    // so a suppressed reward echo cannot double as a signal. Collected
+    // here, but PROBED only after every publish below: the completion
+    // closes the focused stretch, and the clump that pays for the run
+    // must stamp into that stretch before anything can close it.
+    let signal_names: Option<Vec<String>> = if completes.is_empty() && !loot_events.is_empty() {
+        shared.signal_loot_probe.get().map(|_| {
+            loot_events
                 .iter()
                 .filter_map(|e| e.data.get("item_name").and_then(Value::as_str))
                 .map(str::to_string)
-                .collect();
-            if !names.is_empty() {
-                let probe = probe.clone();
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(names)));
-            }
-        }
-    }
+                .collect()
+        })
+    } else {
+        None
+    };
 
     let refund_matches = match_enhancer_shrapnel(&loot_events, &enhancer_events);
 
@@ -687,6 +688,17 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
         .publish(&BusEvent::TickFlushed(TickFlushedPayload {
             timestamp: tick_ts.map(timestamp_string),
         }));
+
+    // Signal-loot detection, strictly after every publish: by now the
+    // tick's loot has dispatched into the consumers' inboxes, so the
+    // completion this may trigger (and the stretch close it carries)
+    // is ordered after the clump's own attribution stamping.
+    if let (Some(names), Some(probe)) = (signal_names, shared.signal_loot_probe.get()) {
+        if !names.is_empty() {
+            let probe = probe.clone();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(names)));
+        }
+    }
 
     tick.timestamp = None;
     shared.pending_tick.store(false, Ordering::SeqCst);
@@ -1143,17 +1155,32 @@ mod tests {
     /// completion (the whole tick's item names, in order) and never for
     /// a tick that carries one: a mission tick is the mission
     /// machinery's, so a daily's marker item cannot masquerade as an
-    /// instance boss's.
+    /// instance boss's. The probe fires strictly AFTER the tick's loot
+    /// publish: the completion it triggers closes the focused stretch,
+    /// and the clump that pays for the run must be dispatched for
+    /// attribution stamping before anything can close it.
     #[test]
-    fn the_signal_probe_sees_only_mission_less_loot_ticks() {
+    fn the_signal_probe_sees_only_mission_less_loot_ticks_after_their_publish() {
         let pipeline = pipeline(None);
+        // One ordered log for both observers: bus taps and probe calls
+        // interleave in dispatch order.
+        let order = Arc::new(Mutex::new(Vec::<String>::new()));
         let probed = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
         let sink = probed.clone();
+        let probe_order = order.clone();
         pipeline
             .watcher
             .set_signal_loot_probe(Arc::new(move |names| {
+                probe_order.lock().unwrap().push("probe".to_string());
                 sink.lock().unwrap().push(names);
             }));
+        let tap_order = order.clone();
+        pipeline.bus.add_tap(move |event| {
+            tap_order
+                .lock()
+                .unwrap()
+                .push(format!("{:?}", event.topic()));
+        });
 
         // A boss-shaped tick: loot only, no mission line.
         append(
@@ -1172,6 +1199,15 @@ mod tests {
                 "Hyperion Daily Voucher".to_string()
             ]]
         );
+        {
+            let order = order.lock().unwrap();
+            let probe_at = order.iter().position(|entry| entry == "probe");
+            let loot_at = order.iter().position(|entry| entry.contains("Loot"));
+            assert!(
+                loot_at.is_some() && probe_at > loot_at,
+                "the probe fires after the tick's loot publish, not before: {order:?}"
+            );
+        }
 
         // A daily-shaped tick: the same marker beside a mission
         // completion. The probe must not fire for it.
