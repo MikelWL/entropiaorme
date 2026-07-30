@@ -1707,7 +1707,7 @@ fn additive_focus_stacks_and_closes_one_at_a_time() {
                 .intervals
                 .open_of_ref(IntervalKind::Quest, 11)
                 .is_none(),
-            "the completed quest's slice closed"
+            "the completed quest's stretch closed"
         );
         assert!(
             active
@@ -1734,10 +1734,10 @@ fn additive_focus_stacks_and_closes_one_at_a_time() {
         .unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].0, 11);
-    assert!(rows[0].1.is_some(), "closed slice carries an end");
+    assert!(rows[0].1.is_some(), "the closed stretch carries an end");
     assert_eq!(rows[0].2.as_deref(), Some("Daily: Carabok"));
     assert_eq!(rows[1].0, 22);
-    assert!(rows[1].1.is_none(), "the running slice has no end yet");
+    assert!(rows[1].1.is_none(), "the running stretch has no end yet");
 }
 
 /// Re-focusing an already-focused quest must not grow a second stretch
@@ -1840,7 +1840,7 @@ fn a_quest_switch_leaves_the_open_segment_running() {
     });
 }
 
-/// A quest slice and a boost overlap, and an event recorded while both
+/// A quest stretch and a boost overlap, and an event recorded while both
 /// hold sits inside BOTH. That is the whole reason attribution is a
 /// context naming a set.
 #[test]
@@ -1863,10 +1863,10 @@ fn a_context_can_name_a_quest_and_a_modifier_at_once() {
     });
 }
 
-/// Stopping the session ends every slice still open, so no interval
+/// Stopping the session ends every stretch still open, so no interval
 /// outlives the session that owns it.
 #[test]
-fn stopping_the_session_closes_a_running_quest_slice() {
+fn stopping_the_session_closes_a_focused_stretch() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
@@ -1887,10 +1887,10 @@ fn stopping_the_session_closes_a_running_quest_slice() {
     assert_eq!(open, 0);
 }
 
-/// With no session running there is nothing to slice. The signal is
+/// With no session running there is nothing to focus. The signal is
 /// refused rather than inventing a session or writing an orphan row.
 #[test]
-fn a_quest_slice_outside_a_session_records_nothing() {
+fn focusing_outside_a_session_records_nothing() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
 
