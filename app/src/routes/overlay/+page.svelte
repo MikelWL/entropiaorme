@@ -44,7 +44,11 @@
 		OVERLAY_MENU_SELECT_EVENT,
 		OVERLAY_MENU_SHOW_EVENT,
 		OVERLAY_MENU_WINDOW_LABEL,
-		measureMenuTextWidth,
+		OVERLAY_MENU_MIN_WIDTH,
+		buildFocusMenuState,
+		computeMenuHeight,
+		computeMenuWidth,
+		menuRowCount,
 		type OverlayMenuKind,
 		type OverlayMenuSelection,
 		type OverlayMenuState
@@ -68,9 +72,6 @@
 	// the overlay can re-read config/runtime fields no tracking frame announces.
 	const OVERLAY_SHOWN_EVENT = 'overlay-shown';
 	const OVERLAY_MENU_VERTICAL_GAP = 6;
-	const OVERLAY_MENU_MAX_HEIGHT = 220;
-	const OVERLAY_MENU_MAX_WIDTH = 340;
-	const OVERLAY_MENU_MIN_WIDTH = 180;
 
 	let overlayRoot: HTMLDivElement | null = $state(null);
 	let overlayMenuKind = $state<OverlayMenuKind | null>(null);
@@ -236,18 +237,6 @@
 		afterSync: () => scheduleArmourCostAnchorSync()
 	});
 
-	function computeMenuWidth(minWidth: number, labels: string[], padding: number) {
-		const contentWidth = measureMenuTextWidth(labels);
-		return Math.max(
-			Math.ceil(minWidth),
-			Math.min(OVERLAY_MENU_MAX_WIDTH, Math.max(OVERLAY_MENU_MIN_WIDTH, Math.ceil(contentWidth + padding)))
-		);
-	}
-
-	function computeMenuHeight(rows: number) {
-		return Math.min(OVERLAY_MENU_MAX_HEIGHT, Math.max(44, rows * 34 + 12));
-	}
-
 	function buildMobMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trimmedQuery = mobQuery.trim();
 		const shouldShow = mobLoading || !!mobError || mobSuggestions.length > 0 || !!trimmedQuery;
@@ -293,25 +282,6 @@
 		};
 	}
 
-	function buildFocusMenuState(
-		anchorWidth: number,
-		options: FocusOptionsResult
-	): OverlayMenuState {
-		const labels = [
-			...options.quests.map((quest) => quest.name),
-			...options.segmentPresets,
-			...(options.segmentPresets.length > 0 ? ['Recent segments'] : [])
-		];
-		return {
-			kind: 'focus',
-			// The extra padding leaves room for the Focused badge and the
-			// additive join button beside a row's name.
-			width: computeMenuWidth(anchorWidth, labels.length > 0 ? labels : ['No quests in progress'], 96),
-			quests: options.quests,
-			presets: options.segmentPresets
-		};
-	}
-
 	function buildTrifectaMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trifecta = data.trifectaAttribution;
 		if (!trifecta || trifecta.presets.length === 0) return null;
@@ -336,20 +306,6 @@
 			repairOcrEnabled: data.repairOcrEnabled === true,
 			anchor: await anchorCentreBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 		};
-	}
-
-	/** Rows the popup will render, which sets its window height. Every
-	 * kind falls back to one row: loading, error, and empty states each
-	 * occupy exactly one line (the popup route agrees). */
-	function menuRowCount(state: OverlayMenuState): number {
-		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
-		if (state.kind === 'focus') {
-			const headings = state.presets.length > 0 ? 1 : 0;
-			return Math.max(1, state.quests.length + state.presets.length + headings);
-		}
-		if (state.loading || state.error) return 1;
-		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
-		return Math.max(1, state.mobSuggestions.length);
 	}
 
 	async function showOverlayMenu(
