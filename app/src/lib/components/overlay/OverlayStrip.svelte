@@ -20,6 +20,8 @@
 		nameEditable = true,
 		savingBoost = false,
 		savingSegment = false,
+		savingFocus = false,
+		focusMenuOpen = false,
 		facetError = null,
 		trifectaSaving = false,
 		trifectaError = null,
@@ -58,6 +60,7 @@
 		onSegmentBlur = noop,
 		onSegmentNext = noop,
 		onSegmentClose = noop,
+		onFocusTrigger = noop,
 		onTrifectaTrigger = noop,
 		onArmourCostToggle = noop
 	}: {
@@ -70,6 +73,8 @@
 		nameEditable?: boolean;
 		savingBoost?: boolean;
 		savingSegment?: boolean;
+		savingFocus?: boolean;
+		focusMenuOpen?: boolean;
 		facetError?: string | null;
 		trifectaSaving?: boolean;
 		trifectaError?: string | null;
@@ -108,6 +113,7 @@
 		onSegmentBlur?: () => void | Promise<void>;
 		onSegmentNext?: () => void | Promise<void>;
 		onSegmentClose?: () => void | Promise<void>;
+		onFocusTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onArmourCostToggle?: (event: MouseEvent) => void | Promise<void>;
 	} = $props();
@@ -304,29 +310,40 @@
 				</div>
 			</div>
 
-			<!-- Quest: auto-recorded, never declared. The quest lifecycle
-				 opens and closes each quest's stretch on the session by
-				 itself (a received mission auto-starts; a completion
-				 closes), so this is pure feedback: the newest running
-				 quest, with a count when several dailies stack. -->
+			<!-- Quest: the focus declaration. The mission log only witnesses
+				 pickup and hand-in, so which stretch of play advances a quest
+				 is declared here: the picker lists the in-progress quests
+				 (one tap switches, + joins additively) and recalls segment
+				 presets for this session name. A completion closes its
+				 focused stretch by itself. -->
 			<div class="flex flex-col shrink-0">
 				<span class="facet-label">Quest</span>
 				<div class="flex items-center" data-testid="quest-facet">
-					{#if questNames && questNames.length > 0}
-						<div
-							class="text-sm font-medium text-white/90 truncate px-1 max-w-[110px]"
-							title={questNames.join(', ')}
-						>
-							{questNames[0]}{questNames.length > 1 ? ` +${questNames.length - 1}` : ''}
-						</div>
-					{:else}
-						<div
-							class="text-sm font-medium text-white/20 px-1"
-							title="Quests record themselves: starting or completing a mission marks its stretch of the session"
-						>
-							{NO_DATA}
-						</div>
-					{/if}
+					<button
+						type="button"
+						class="facet-chip {questNames && questNames.length > 0 ? 'facet-chip-open' : ''}"
+						disabled={!isActive || savingFocus}
+						aria-haspopup="menu"
+						aria-expanded={focusMenuOpen}
+						title={!isActive
+							? 'Start a session to declare which quest the play is toward'
+							: questNames && questNames.length > 0
+								? `Focused: ${questNames.join(', ')}`
+								: 'Declare which quest the play from now on is toward'}
+						onclick={(event) => onFocusTrigger(event.currentTarget as HTMLButtonElement)}
+					>
+						{#if questNames && questNames.length > 0}
+							<span class="truncate max-w-[110px]"
+								>{questNames[0]}{questNames.length > 1 ? ` +${questNames.length - 1}` : ''}</span
+							>
+						{:else if data.questsInProgress}
+							<span class="whitespace-nowrap"
+								>{data.questsInProgress} ready</span
+							>
+						{:else}
+							<span>{NO_DATA}</span>
+						{/if}
+					</button>
 				</div>
 			</div>
 

@@ -49,9 +49,12 @@ export interface TrackingLive {
 	currentTool?: string | null;
 	/** What the held tool implies the next action records as. */
 	currentActivity?: ToolActivity | null;
-	/** The open quest slices' names, newest first (auto-recorded by the
-	 * quest lifecycle; several dailies can stack). */
+	/** The focused quests' names, newest first: the effort stretches the
+	 * user declared (several can stack via additive focus). */
 	questNames?: string[] | null;
+	/** How many quests the mission log carries right now (the focus
+	 * picker's chip supply). */
+	questsInProgress?: number | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
 	recentEvents?: {
@@ -87,6 +90,14 @@ export const openSessionSegment = commands.trackingSegmentOpen;
 export const closeSessionSegment = commands.trackingSegmentClose;
 /** Rename the open segment live (its grain is finer than the session). */
 export const renameSessionSegment = commands.trackingSegmentRename;
+/** Focus a quest: the one-tap switch (exclusive over quests) unless
+ * additive, which joins the standing focus instead. */
+export const focusSessionQuest = commands.trackingQuestFocus;
+/** End one quest's focus, leaving siblings running. Idempotent. */
+export const unfocusSessionQuest = commands.trackingQuestUnfocus;
+/** The focus picker's options: in-progress quests (with focused state)
+ * and recalled segment-name presets for the current session name. */
+export const getFocusOptions = commands.trackingFocusOptions;
 
 const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
 

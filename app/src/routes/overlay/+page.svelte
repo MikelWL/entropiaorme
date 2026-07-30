@@ -14,7 +14,11 @@
 		openSessionSegment,
 		closeSessionSegment,
 		renameSessionSegment,
+		focusSessionQuest,
+		unfocusSessionQuest,
+		getFocusOptions,
 		updateSettings,
+		type FocusOptionsResult,
 		type TrackingLive,
 		type TrackingStatus,
 		type TrackingSnapshot,
@@ -185,6 +189,8 @@
 		openSegment: openSessionSegment,
 		closeSegment: closeSessionSegment,
 		renameSegment: renameSessionSegment,
+		focusQuest: (questId, additive) => focusSessionQuest(questId, additive),
+		unfocusQuest: (questId) => unfocusSessionQuest(questId),
 		openNameMenu: () => openNameMenu(),
 		closeNameMenu: () => closeNameMenu()
 	});
@@ -287,6 +293,25 @@
 		};
 	}
 
+	function buildFocusMenuState(
+		anchorWidth: number,
+		options: FocusOptionsResult
+	): OverlayMenuState {
+		const labels = [
+			...options.quests.map((quest) => quest.name),
+			...options.segmentPresets,
+			...(options.segmentPresets.length > 0 ? ['Recent segments'] : [])
+		];
+		return {
+			kind: 'focus',
+			// The extra padding leaves room for the Focused badge and the
+			// additive join button beside a row's name.
+			width: computeMenuWidth(anchorWidth, labels.length > 0 ? labels : ['No quests in progress'], 96),
+			quests: options.quests,
+			presets: options.segmentPresets
+		};
+	}
+
 	function buildTrifectaMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trifecta = data.trifectaAttribution;
 		if (!trifecta || trifecta.presets.length === 0) return null;
@@ -318,6 +343,10 @@
 	 * occupy exactly one line (the popup route agrees). */
 	function menuRowCount(state: OverlayMenuState): number {
 		if (state.kind === 'trifecta') return Math.max(1, state.options.length);
+		if (state.kind === 'focus') {
+			const headings = state.presets.length > 0 ? 1 : 0;
+			return Math.max(1, state.quests.length + state.presets.length + headings);
+		}
 		if (state.loading || state.error) return 1;
 		if (state.kind === 'name') return Math.max(1, state.suggestions.length);
 		return Math.max(1, state.mobSuggestions.length);
@@ -402,6 +431,40 @@
 		const state = buildTrifectaMenuState(anchor.getBoundingClientRect().width);
 		if (!state) return;
 		await showOverlayMenu('trifecta', anchor, state, { focusPopup: true });
+	}
+
+	// The focus picker's anchor, kept so a quest toggle can re-present
+	// the still-open menu with the refreshed focused states.
+	let focusAnchor: HTMLButtonElement | null = null;
+
+	async function openFocusMenu(anchor: HTMLButtonElement) {
+		let options: FocusOptionsResult;
+		try {
+			options = await getFocusOptions();
+		} catch (error) {
+			facets.facetError = describeOverlayMenuError(error);
+			return;
+		}
+		const state = buildFocusMenuState(anchor.getBoundingClientRect().width, options);
+		focusAnchor = anchor;
+		await showOverlayMenu('focus', anchor, state, { focusPopup: true });
+	}
+
+	async function toggleFocusMenu(anchor: HTMLButtonElement) {
+		if (overlayMenuKind === 'focus') {
+			await hideOverlayMenu();
+			return;
+		}
+		await openFocusMenu(anchor);
+	}
+
+	/** A quest toggle keeps the picker open (joining a second daily must
+	 * not be a close-and-reopen): apply the write, then re-present the
+	 * menu with the refreshed focused states off the unchanged anchor. */
+	async function handleFocusQuestAction(action: () => Promise<void>) {
+		await action();
+		if (overlayMenuKind !== 'focus' || !focusAnchor || !focusAnchor.isConnected) return;
+		await openFocusMenu(focusAnchor);
 	}
 
 	async function showArmourCost(anchor: HTMLElement) {
@@ -659,6 +722,21 @@
 					return;
 				}
 
+				if (event.payload.kind === 'focus') {
+					const payload = event.payload;
+					if (payload.action === 'preset') {
+						overlayMenuKind = null;
+						await facets.applySegmentPreset(payload.label);
+						return;
+					}
+					await handleFocusQuestAction(() =>
+						payload.action === 'questFocus'
+							? facets.focusQuest(payload.questId, payload.additive)
+							: facets.unfocusQuest(payload.questId)
+					);
+					return;
+				}
+
 				overlayMenuKind = null;
 				await handleSelectMob({
 					display: event.payload.maturity
@@ -740,6 +818,7 @@
 			currentTool: snap.currentTool,
 			currentActivity: snap.currentActivity,
 			questNames: snap.questNames,
+			questsInProgress: snap.questsInProgress,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
 		};
@@ -955,6 +1034,8 @@
 		nameEditable={facets.nameEditable}
 		savingBoost={facets.savingBoost}
 		savingSegment={facets.savingSegment}
+		savingFocus={facets.savingFocus}
+		focusMenuOpen={overlayMenuKind === 'focus'}
 		facetError={facets.facetError}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}
@@ -984,6 +1065,7 @@
 		onSegmentBlur={facets.handleSegmentBlur}
 		onSegmentNext={facets.nextSegment}
 		onSegmentClose={facets.closeSegment}
+		onFocusTrigger={toggleFocusMenu}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
 	/>

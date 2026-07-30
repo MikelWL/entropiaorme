@@ -26,6 +26,8 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 	const renameSegment = vi.fn(async (name: string) => {
 		facetState.segment = name;
 	});
+	const focusQuest = vi.fn(async () => {});
+	const unfocusQuest = vi.fn(async () => {});
 	const deps: SessionFacetsDeps = {
 		readFacets: () => ({ ...facetState }),
 		isSessionActive: () => true,
@@ -35,6 +37,8 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 		openSegment,
 		closeSegment,
 		renameSegment,
+		focusQuest,
+		unfocusQuest,
 		openNameMenu: vi.fn(),
 		closeNameMenu: vi.fn(),
 		...overrides,
@@ -47,6 +51,8 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 		openSegment,
 		closeSegment,
 		renameSegment,
+		focusQuest,
+		unfocusQuest,
 	};
 }
 

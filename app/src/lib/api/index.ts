@@ -26,6 +26,8 @@ export type {
 	AuctionExpireInput,
 	AuctionListing,
 	AuctionListingInput,
+	FocusOptionsResult,
+	FocusQuestOption,
 	ManualMobSuggestion,
 	MarketBreakEven,
 	MarketBreakEvenCell,
