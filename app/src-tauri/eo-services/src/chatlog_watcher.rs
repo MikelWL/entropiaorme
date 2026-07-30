@@ -61,6 +61,25 @@ pub type QuestRewardFilter = Arc<dyn Fn(&str, &[Value], &[Value]) -> Option<Valu
 /// quest service exists), like the quest service's own sinks.
 pub type SignalLootProbe = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 
+/// One mission completion a flushed tick carried, handed to the
+/// post-publish completion probe with the loot and skill picture the
+/// suppression filter saw for the same line (the completion check
+/// re-derives the suppressed-reward description from it).
+#[derive(Debug, Clone)]
+pub struct MissionCompletion {
+    pub mission_name: String,
+    pub loot_items: Vec<Value>,
+    pub skill_gains: Vec<Value>,
+}
+
+/// The mission-completion probe, invoked strictly AFTER a tick's
+/// publishes: by then the tick's loot (the final objective kill and
+/// the payout) has dispatched to the consumers, so the completion
+/// (and the focused-stretch close it carries) is ordered after the
+/// tick's own attribution stamping. Fire-and-forget by contract, like
+/// the signal probe.
+pub type MissionCompleteProbe = Arc<dyn Fn(Vec<MissionCompletion>) + Send + Sync>;
+
 /// A verbatim line observer (the recording controller's seam).
 pub type LineTap = Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -216,6 +235,7 @@ struct Shared {
     line_tap: Mutex<Option<LineTap>>,
     quest_reward_filter: Option<QuestRewardFilter>,
     signal_loot_probe: OnceLock<SignalLootProbe>,
+    mission_complete_probe: OnceLock<MissionCompleteProbe>,
 }
 
 pub struct ChatlogWatcher {
@@ -257,6 +277,7 @@ impl ChatlogWatcher {
                 line_tap: Mutex::new(None),
                 quest_reward_filter,
                 signal_loot_probe: OnceLock::new(),
+                mission_complete_probe: OnceLock::new(),
             }),
             thread: Mutex::new(None),
         }
@@ -266,6 +287,12 @@ impl ChatlogWatcher {
     /// the quest service exists; a second call is ignored.
     pub fn set_signal_loot_probe(&self, probe: SignalLootProbe) {
         let _ = self.shared.signal_loot_probe.set(probe);
+    }
+
+    /// Wire the mission-completion probe. Composition calls this once,
+    /// after the quest service exists; a second call is ignored.
+    pub fn set_mission_complete_probe(&self, probe: MissionCompleteProbe) {
+        let _ = self.shared.mission_complete_probe.set(probe);
     }
 
     pub fn is_running(&self) -> bool {
@@ -534,64 +561,71 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
         }
     }
 
-    // Quest-reward suppression.
+    // Quest-reward suppression, plus the completion entries for the
+    // post-publish probe. Each entry snapshots the loot and skill
+    // picture as the filter saw it for that line, so the completion
+    // check downstream derives the same suppressed-reward description.
     let completes: Vec<ChatEvent> = mission_events
         .iter()
         .filter(|e| e.event_type == EventType::MissionComplete)
         .cloned()
         .collect();
-    if !completes.is_empty() {
+    let mut mission_completions: Vec<MissionCompletion> = Vec::with_capacity(completes.len());
+    for complete in &completes {
+        let mission_name = complete
+            .data
+            .get("mission_name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let loot_data: Vec<Value> = loot_events
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "item_name": e.data.get("item_name").cloned().unwrap_or(Value::from("")),
+                    "quantity": e.data.get("quantity").cloned().unwrap_or(Value::from(1)),
+                    "value": e.data.get("value").cloned().unwrap_or(Value::from(0.0)),
+                })
+            })
+            .collect();
+        let skill_data: Vec<Value> = skill_events
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "skill_name": e.data.get("skill_name").cloned().unwrap_or(Value::from("")),
+                    "amount": e.data.get("amount").cloned().unwrap_or(Value::from(0.0)),
+                })
+            })
+            .collect();
+
         if let Some(filter) = shared.quest_reward_filter.clone() {
-            for complete in &completes {
-                let mission_name = complete
-                    .data
-                    .get("mission_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                let loot_data: Vec<Value> = loot_events
-                    .iter()
-                    .map(|e| {
-                        serde_json::json!({
-                            "item_name": e.data.get("item_name").cloned().unwrap_or(Value::from("")),
-                            "quantity": e.data.get("quantity").cloned().unwrap_or(Value::from(1)),
-                            "value": e.data.get("value").cloned().unwrap_or(Value::from(0.0)),
-                        })
-                    })
-                    .collect();
-                let skill_data: Vec<Value> = skill_events
-                    .iter()
-                    .map(|e| {
-                        serde_json::json!({
-                            "skill_name": e.data.get("skill_name").cloned().unwrap_or(Value::from("")),
-                            "amount": e.data.get("amount").cloned().unwrap_or(Value::from(0.0)),
-                        })
-                    })
-                    .collect();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                filter(&mission_name, &loot_data, &skill_data)
+            }))
+            .unwrap_or(None);
 
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    filter(&mission_name, &loot_data, &skill_data)
-                }))
-                .unwrap_or(None);
-
-                if let Some(result) = result {
-                    if let Some(index) = result
-                        .get("suppress_loot_index")
-                        .and_then(Value::as_i64)
-                        .filter(|i| *i >= 0 && (*i as usize) < loot_events.len())
-                    {
-                        loot_events.remove(index as usize);
-                    }
-                    if let Some(index) = result
-                        .get("suppress_skill_index")
-                        .and_then(Value::as_i64)
-                        .filter(|i| *i >= 0 && (*i as usize) < skill_events.len())
-                    {
-                        skill_events.remove(index as usize);
-                    }
+            if let Some(result) = result {
+                if let Some(index) = result
+                    .get("suppress_loot_index")
+                    .and_then(Value::as_i64)
+                    .filter(|i| *i >= 0 && (*i as usize) < loot_events.len())
+                {
+                    loot_events.remove(index as usize);
+                }
+                if let Some(index) = result
+                    .get("suppress_skill_index")
+                    .and_then(Value::as_i64)
+                    .filter(|i| *i >= 0 && (*i as usize) < skill_events.len())
+                {
+                    skill_events.remove(index as usize);
                 }
             }
         }
+        mission_completions.push(MissionCompletion {
+            mission_name,
+            loot_items: loot_data,
+            skill_gains: skill_data,
+        });
     }
 
     // The signal-loot candidates: a loot tick that carried no mission
@@ -689,10 +723,21 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
             timestamp: tick_ts.map(timestamp_string),
         }));
 
-    // Signal-loot detection, strictly after every publish: by now the
-    // tick's loot has dispatched into the consumers' inboxes, so the
-    // completion this may trigger (and the stretch close it carries)
-    // is ordered after the clump's own attribution stamping.
+    // Completions fire strictly after every publish, one rule for
+    // both quest kinds: by now the tick's loot (the final objective
+    // kill, the payout, a boss's clump) has dispatched into the
+    // consumers' inboxes, so the completion (and the focused-stretch
+    // close it carries) is ordered after the tick's own attribution
+    // stamping. The suppression filter already answered pre-publish,
+    // so a suppressed reward echo never reached anyone.
+    if !mission_completions.is_empty() {
+        if let Some(probe) = shared.mission_complete_probe.get() {
+            let probe = probe.clone();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                probe(mission_completions)
+            }));
+        }
+    }
     if let (Some(names), Some(probe)) = (signal_names, shared.signal_loot_probe.get()) {
         if !names.is_empty() {
             let probe = probe.clone();
@@ -1224,6 +1269,64 @@ mod tests {
         assert!(
             probed.lock().unwrap().is_empty(),
             "a mission tick never reaches the signal probe"
+        );
+    }
+
+    /// The mission-completion probe fires strictly AFTER a mission
+    /// tick's publishes, one ordering rule for both quest kinds: the
+    /// tick's own loot (the final objective kill, the payout) is
+    /// dispatched for attribution stamping before the completion can
+    /// close the focused stretch. Each entry carries the loot and
+    /// skill picture the suppression filter saw for its line.
+    #[test]
+    fn the_mission_probe_fires_after_the_ticks_publishes() {
+        let pipeline = pipeline(None);
+        let order = Arc::new(Mutex::new(Vec::<String>::new()));
+        let probed = Arc::new(Mutex::new(Vec::<MissionCompletion>::new()));
+        let sink = probed.clone();
+        let probe_order = order.clone();
+        pipeline
+            .watcher
+            .set_mission_complete_probe(Arc::new(move |completions| {
+                probe_order.lock().unwrap().push("probe".to_string());
+                sink.lock().unwrap().extend(completions);
+            }));
+        let tap_order = order.clone();
+        pipeline.bus.add_tap(move |event| {
+            tap_order
+                .lock()
+                .unwrap()
+                .push(format!("{:?}", event.topic()));
+        });
+
+        append(
+            &pipeline,
+            &[
+                "2026-05-19 10:00:00 [System] [] You received Shrapnel x (4639) Value: 0.4639 PED",
+                "2026-05-19 10:00:00 [System] [] Mission completed (ARIS - Daily Hunting 1: Faint Fieroids)",
+                "2026-05-19 10:00:01 [System] [] You inflicted 10.0 points of damage",
+            ],
+        );
+        drain(&pipeline, 3);
+        {
+            let probed = probed.lock().unwrap();
+            assert_eq!(probed.len(), 1);
+            assert_eq!(
+                probed[0].mission_name,
+                "ARIS - Daily Hunting 1: Faint Fieroids"
+            );
+            assert_eq!(probed[0].loot_items[0]["item_name"], "Shrapnel");
+        }
+        let order = order.lock().unwrap();
+        let probe_at = order.iter().position(|entry| entry == "probe");
+        let loot_at = order.iter().position(|entry| entry.contains("Loot"));
+        let flushed_at = order.iter().position(|entry| entry.contains("TickFlushed"));
+        assert!(
+            loot_at.is_some()
+                && flushed_at.is_some()
+                && probe_at > loot_at
+                && probe_at > flushed_at,
+            "the completion probe fires after the tick's publishes: {order:?}"
         );
     }
 }

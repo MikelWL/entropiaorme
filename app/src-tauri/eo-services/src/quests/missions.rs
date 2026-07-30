@@ -8,6 +8,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use unicode_normalization::UnicodeNormalization;
 
+use crate::chatlog_watcher::MissionCompletion;
 use crate::difflib::sequence_ratio;
 use crate::ped::Ped;
 
@@ -36,6 +37,15 @@ pub fn normalize_quest_name(name: &str) -> String {
         .to_lowercase()
 }
 
+/// Split a colon-variant name into its normalised family and variant
+/// parts (last colon wins): "ARIS - Daily Hunting 1: Weak Mortirex"
+/// becomes ("aris - daily hunting 1", "weak mortirex"). `None` for a
+/// name with no colon.
+fn variant_split(name: &str) -> Option<(String, String)> {
+    name.rsplit_once(':')
+        .map(|(family, variant)| (normalize_quest_name(family), normalize_quest_name(variant)))
+}
+
 impl QuestService {
     // ── Chat.log mission detection ──────────────────────────────────
 
@@ -43,13 +53,32 @@ impl QuestService {
     /// "(repeatable)" suffix strips, then a normalised exact match, a
     /// normalised containment (five characters minimum), and finally
     /// the highest fuzzy score at or above the threshold.
+    ///
+    /// A quest named as a colon-variant family ("Family: Variant") is
+    /// held to a structural bar in the non-exact tiers: the mission
+    /// line must itself carry the family (equal, or containing it) AND
+    /// a variant that clears the fuzzy threshold on its own. The bare
+    /// family line is a DIFFERENT mission (the umbrella chooser a
+    /// pickup emits), and sibling variants share a long prefix that
+    /// whole-string scoring would cross-match.
+    ///
+    /// `in_progress_only` restricts the candidates to started quests:
+    /// the completion path's gate, so a mission line can never complete
+    /// a quest the log does not carry as in progress.
     pub async fn match_quest_by_mission_name(
         &self,
         mission_name: &str,
+        in_progress_only: bool,
     ) -> Result<Option<Value>, QuestError> {
         let stripped = REPEATABLE_SUFFIX.replace(mission_name, "");
-        let mission_norm = normalize_quest_name(stripped.trim());
-        let quests = self.get_quests(true).await?;
+        let mission_raw = stripped.trim();
+        let mission_norm = normalize_quest_name(mission_raw);
+        let quests: Vec<Value> = self
+            .get_quests(true)
+            .await?
+            .into_iter()
+            .filter(|quest| !in_progress_only || json_truthy(quest.get("started_at")))
+            .collect();
 
         for quest in &quests {
             if normalize_quest_name(quest["name"].as_str().expect("quest name")) == mission_norm {
@@ -57,8 +86,14 @@ impl QuestService {
             }
         }
 
+        let mission_variant = variant_split(mission_raw);
+
         for quest in &quests {
-            let quest_norm = normalize_quest_name(quest["name"].as_str().expect("quest name"));
+            let name = quest["name"].as_str().expect("quest name");
+            if name.contains(':') {
+                continue; // Variant families match structurally below.
+            }
+            let quest_norm = normalize_quest_name(name);
             if quest_norm.len() >= 5 && mission_norm.contains(&quest_norm) {
                 return Ok(Some(quest.clone()));
             }
@@ -68,9 +103,25 @@ impl QuestService {
         let mut best_score = 0.0f64;
         let mut best_quest: Option<&Value> = None;
         for quest in &quests {
-            let quest_norm = normalize_quest_name(quest["name"].as_str().expect("quest name"));
-            let quest_chars: Vec<char> = quest_norm.chars().collect();
-            let score = sequence_ratio(&quest_chars, &mission_chars);
+            let name = quest["name"].as_str().expect("quest name");
+            let score = match variant_split(name) {
+                Some((quest_family, quest_variant)) => match &mission_variant {
+                    Some((mission_family, mission_variant))
+                        if *mission_family == quest_family
+                            || (quest_family.len() >= 5
+                                && mission_family.contains(&quest_family)) =>
+                    {
+                        let quest_chars: Vec<char> = quest_variant.chars().collect();
+                        let variant_chars: Vec<char> = mission_variant.chars().collect();
+                        sequence_ratio(&quest_chars, &variant_chars)
+                    }
+                    _ => 0.0,
+                },
+                None => {
+                    let quest_chars: Vec<char> = normalize_quest_name(name).chars().collect();
+                    sequence_ratio(&quest_chars, &mission_chars)
+                }
+            };
             if score > best_score {
                 best_score = score;
                 best_quest = Some(quest);
@@ -86,7 +137,10 @@ impl QuestService {
     /// A "New Mission received" chat.log event: match the mission to a
     /// known quest and start tracking it as if the user clicked Start.
     pub async fn start_quest_from_mission(&self, mission_name: &str) -> Result<(), QuestError> {
-        let Some(quest) = self.match_quest_by_mission_name(mission_name).await? else {
+        let Some(quest) = self
+            .match_quest_by_mission_name(mission_name, false)
+            .await?
+        else {
             return Ok(());
         };
         if json_truthy(quest.get("started_at")) {
@@ -168,102 +222,144 @@ impl QuestService {
         Ok(())
     }
 
-    /// A MISSION_COMPLETE tick: match the mission, auto-complete the
-    /// quest, and name which loot item or skill gain to suppress so
-    /// the reward is not double-counted by tracking.
+    /// A MISSION_COMPLETE tick, before its publishes: match the mission
+    /// to an in-progress quest and name which loot item or skill gain
+    /// to suppress so the reward is not double-counted by tracking.
+    /// Suppression MUST answer before the tick's loot publishes (the
+    /// suppressed echo never reaches the consumers); the completion
+    /// itself is deliberately NOT here; it lands post-publish through
+    /// [`mission_complete_check`](Self::mission_complete_check), so the
+    /// tick's own loot stamps into the focused stretch first.
     pub async fn quest_reward_filter(
         &self,
         mission_name: &str,
         loot_items: &[Value],
         skill_gains: &[Value],
     ) -> Result<Option<Value>, QuestError> {
-        let Some(quest) = self.match_quest_by_mission_name(mission_name).await? else {
+        let Some(quest) = self.match_quest_by_mission_name(mission_name, true).await? else {
             return Ok(None);
         };
+        let (result, _) = reward_suppression(&quest, loot_items, skill_gains);
+        Ok(result)
+    }
 
-        self.complete_quest(quest["id"].as_i64().expect("quest id"))
-            .await?;
+    /// A flushed tick's mission completions, strictly AFTER the tick's
+    /// publishes (the watcher's post-publish probe): match each to an
+    /// in-progress quest, complete it (closing any focused stretch),
+    /// and record the overlay event. Ordered after the publishes so the
+    /// tick's own loot (the final objective kill and the payout)
+    /// stamps into the focused stretch before the completion closes it.
+    pub async fn mission_complete_check(
+        &self,
+        completions: &[MissionCompletion],
+    ) -> Result<(), QuestError> {
+        for completion in completions {
+            let Some(quest) = self
+                .match_quest_by_mission_name(&completion.mission_name, true)
+                .await?
+            else {
+                continue;
+            };
+            self.complete_quest(quest["id"].as_i64().expect("quest id"))
+                .await?;
 
-        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
-        let is_skill = json_truthy(quest.get("reward_is_skill"));
-        let mut result = None;
-        let mut suppressed_desc: Option<String> = None;
-
-        if is_skill {
-            // The in-game skill pop-up is the same PES reward just
-            // recorded as a claim; suppress it from tracking.
-            if !skill_gains.is_empty() {
-                result = Some(json!({
-                    "suppress_loot_index": null,
-                    "suppress_skill_index": 0,
-                }));
-                suppressed_desc = Some("skill reward suppressed".to_string());
+            let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
+            let is_skill = json_truthy(quest.get("reward_is_skill"));
+            let (_, suppressed_desc) =
+                reward_suppression(&quest, &completion.loot_items, &completion.skill_gains);
+            let mut description = quest["name"].as_str().expect("quest name").to_string();
+            if let Some(suppressed) = suppressed_desc {
+                description.push_str(": ");
+                description.push_str(&suppressed);
             }
-        } else if let Some(reward) = reward_ped {
-            if !loot_items.is_empty() {
-                if reward.is_positive() {
-                    let mut best_idx: Option<usize> = None;
-                    let mut best_diff = Ped(f64::INFINITY);
-                    for (index, item) in loot_items.iter().enumerate() {
-                        let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
-                        let diff = (value - reward).abs();
-                        if diff < best_diff && diff <= REWARD_MATCH_TOLERANCE {
-                            best_diff = diff;
-                            best_idx = Some(index);
-                        }
+            let kind = if is_skill {
+                NotableEventKind::CompletedPes
+            } else {
+                NotableEventKind::Completed
+            };
+            self.record_notable_event(kind, &description, reward_ped.unwrap_or(Ped::ZERO))
+                .await;
+        }
+        Ok(())
+    }
+}
+
+/// The reward-echo decision for one completion: which loot item or
+/// skill gain (by index) duplicates the quest's configured reward, plus
+/// the overlay description of what got suppressed. Pure over the
+/// quest row and the tick's data, so the pre-publish filter and the
+/// post-publish completion check derive the SAME picture from it.
+fn reward_suppression(
+    quest: &Value,
+    loot_items: &[Value],
+    skill_gains: &[Value],
+) -> (Option<Value>, Option<String>) {
+    let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
+    let is_skill = json_truthy(quest.get("reward_is_skill"));
+    let mut result = None;
+    let mut suppressed_desc: Option<String> = None;
+
+    if is_skill {
+        // The in-game skill pop-up is the same PES reward just
+        // recorded as a claim; suppress it from tracking.
+        if !skill_gains.is_empty() {
+            result = Some(json!({
+                "suppress_loot_index": null,
+                "suppress_skill_index": 0,
+            }));
+            suppressed_desc = Some("skill reward suppressed".to_string());
+        }
+    } else if let Some(reward) = reward_ped {
+        if !loot_items.is_empty() {
+            if reward.is_positive() {
+                let mut best_idx: Option<usize> = None;
+                let mut best_diff = Ped(f64::INFINITY);
+                for (index, item) in loot_items.iter().enumerate() {
+                    let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
+                    let diff = (value - reward).abs();
+                    if diff < best_diff && diff <= REWARD_MATCH_TOLERANCE {
+                        best_diff = diff;
+                        best_idx = Some(index);
                     }
-                    if let Some(best_idx) = best_idx {
-                        result = Some(json!({
-                            "suppress_loot_index": best_idx,
-                            "suppress_skill_index": null,
-                        }));
-                        let item_name = loot_items[best_idx]
-                            .get("item_name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("?");
-                        suppressed_desc = Some(format!(
-                            "{item_name} ({:.2} PED) suppressed",
-                            reward.value()
-                        ));
-                    }
-                } else {
-                    // A non-positive reward still suppresses the
-                    // cheapest item of the tick.
-                    let mut min_idx = 0usize;
-                    let mut min_value = Ped(f64::INFINITY);
-                    for (index, item) in loot_items.iter().enumerate() {
-                        let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
-                        if value < min_value {
-                            min_value = value;
-                            min_idx = index;
-                        }
-                    }
+                }
+                if let Some(best_idx) = best_idx {
                     result = Some(json!({
-                        "suppress_loot_index": min_idx,
+                        "suppress_loot_index": best_idx,
                         "suppress_skill_index": null,
                     }));
-                    let item_name = loot_items[min_idx]
+                    let item_name = loot_items[best_idx]
                         .get("item_name")
                         .and_then(Value::as_str)
                         .unwrap_or("?");
-                    suppressed_desc = Some(format!("{item_name} suppressed"));
+                    suppressed_desc = Some(format!(
+                        "{item_name} ({:.2} PED) suppressed",
+                        reward.value()
+                    ));
                 }
+            } else {
+                // A non-positive reward still suppresses the
+                // cheapest item of the tick.
+                let mut min_idx = 0usize;
+                let mut min_value = Ped(f64::INFINITY);
+                for (index, item) in loot_items.iter().enumerate() {
+                    let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
+                    if value < min_value {
+                        min_value = value;
+                        min_idx = index;
+                    }
+                }
+                result = Some(json!({
+                    "suppress_loot_index": min_idx,
+                    "suppress_skill_index": null,
+                }));
+                let item_name = loot_items[min_idx]
+                    .get("item_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                suppressed_desc = Some(format!("{item_name} suppressed"));
             }
         }
-
-        let mut description = quest["name"].as_str().expect("quest name").to_string();
-        if let Some(suppressed) = suppressed_desc {
-            description.push_str(": ");
-            description.push_str(&suppressed);
-        }
-        let kind = if is_skill {
-            NotableEventKind::CompletedPes
-        } else {
-            NotableEventKind::Completed
-        };
-        self.record_notable_event(kind, &description, reward_ped.unwrap_or(Ped::ZERO))
-            .await;
-
-        Ok(result)
     }
+
+    (result, suppressed_desc)
 }

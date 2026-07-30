@@ -1258,6 +1258,26 @@ fn compose_producers(
         }));
     }
 
+    // Wire the mission-completion probe: a tick's completions land
+    // strictly after its publishes, so the tick's own loot (the final
+    // objective kill, the payout) stamps into the focused stretch
+    // before the completion closes it. Fire-and-forget onto the
+    // runtime, because the probe is called from the tail thread and
+    // must never block it.
+    {
+        let quests_probe = quests.clone();
+        let probe_runtime = runtime.clone();
+        watcher.set_mission_complete_probe(Arc::new(move |completions| {
+            let quests = quests_probe.clone();
+            probe_runtime.spawn(async move {
+                // Errors are contained: a failed check must not take the
+                // tail loop's attention, and the quest's own state is
+                // re-derivable from the next matching tick.
+                let _ = quests.mission_complete_check(&completions).await;
+            });
+        }));
+    }
+
     // Wire the signal-loot probe: a loot tick with no mission completion
     // may complete a signal quest (the instance-boss pattern). Fire-and-
     // forget onto the runtime, because the probe is called from the tail
