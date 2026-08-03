@@ -14,11 +14,13 @@ import {
 	getPlaylistAnalytics,
 	getPlaylists,
 	getQuestAnalytics,
+	getQuestFamilies,
 	getQuests,
 	startQuest,
 	updateQuest,
 } from '$lib/api';
 import {
+	questsDemoFamilies,
 	questsDemoGlobalLiquidReturnRate,
 	questsDemoGlobalSkillProgressionRate,
 	questsDemoPlaylistAnalytics,
@@ -30,7 +32,9 @@ import type {
 	PlaylistAnalyticsRow,
 	Quest,
 	QuestAnalyticsRow,
+	QuestCooldownAnchor,
 	QuestCreateData,
+	QuestFamily,
 	QuestPlaylist,
 } from '$lib/types';
 import { describeError } from '$lib/view/errorState';
@@ -71,6 +75,10 @@ export interface QuestFormState {
 	 * (focusing starts it; the item's arrival in a mission-less loot
 	 * pickup completes it). Exclusive with a positive reward. */
 	signal_loot_item: string;
+	/** The family this quest is a variant of (string id), null standalone. */
+	family_id: string | null;
+	/** When the quest's OWN cooldown timer starts. */
+	cooldown_anchor: QuestCooldownAnchor;
 }
 
 function defaultQuestForm(): QuestFormState {
@@ -90,13 +98,24 @@ function defaultQuestForm(): QuestFormState {
 		chain_total: null,
 		mobs: [],
 		signal_loot_item: '',
+		family_id: null,
+		cooldown_anchor: 'completion',
 	};
+}
+
+/** The lowercased family part of a colon-variant name, null without a colon. */
+function familyPartOf(name: string): string | null {
+	const idx = name.lastIndexOf(':');
+	if (idx <= 0) return null;
+	const part = name.slice(0, idx).trim().toLowerCase();
+	return part || null;
 }
 
 export function createQuestsModel() {
 	// ── Data ──
 	let quests = $state<Quest[]>([]);
 	let playlists = $state<QuestPlaylist[]>([]);
+	let families = $state<QuestFamily[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -119,6 +138,10 @@ export function createQuestsModel() {
 	let mobInput = $state('');
 	let cooldownUnit = $state<CooldownUnit>('hours');
 	let cooldownInput = $state<number | null>(null);
+	// Whether the user explicitly chose a family in the open form; until
+	// they do, a name matching "Family: Variant" keeps the select in sync
+	// with its family (visible, overridable auto-attach).
+	let familySelectTouched = $state(false);
 
 	// ── Analytics ──
 	let analyticsData = $state<QuestAnalyticsRow[]>([]);
@@ -199,6 +222,7 @@ export function createQuestsModel() {
 			if (guideMode) {
 				quests = questsDemoQuests.map((q) => ({ ...q }));
 				playlists = questsDemoPlaylists.map((p) => ({ ...p }));
+				families = questsDemoFamilies.map((f) => ({ ...f }));
 				analyticsData = questsDemoQuestAnalytics.map((a) => ({ ...a }));
 				playlistAnalyticsData = questsDemoPlaylistAnalytics.map((a) => ({ ...a }));
 				rates = {
@@ -213,9 +237,10 @@ export function createQuestsModel() {
 			// Leaving guide mode must drop the seeded demo analytics: re-arm
 			// the lazy analytics load so the next visit reads live data.
 			analyticsLoaded = false;
-			const [q, p] = await Promise.all([getQuests(), getPlaylists()]);
+			const [q, p, f] = await Promise.all([getQuests(), getPlaylists(), getQuestFamilies()]);
 			quests = q;
 			playlists = p;
+			families = f;
 			initialiseCollapsedCategories(q);
 		} catch (e) {
 			error = describeError(e, 'Failed to load quests');
@@ -226,9 +251,12 @@ export function createQuestsModel() {
 
 	async function refresh() {
 		try {
-			const [q, p] = await Promise.all([getQuests(), getPlaylists()]);
+			// Families ride the same poll: a chat-log completion or an
+			// auto-created variant moves the family availability picture.
+			const [q, p, f] = await Promise.all([getQuests(), getPlaylists(), getQuestFamilies()]);
 			quests = q;
 			playlists = p;
+			families = f;
 			// A refresh can drop a quest (deleted elsewhere); a pending cancel
 			// choice on a vanished quest would otherwise dangle forever.
 			if (
@@ -332,7 +360,15 @@ export function createQuestsModel() {
 		cooldownUnit = 'hours';
 		cooldownInput = null;
 		mobInput = '';
+		familySelectTouched = false;
 		showQuestModal = true;
+	}
+
+	/** The family whose name matches a quest name's colon-split family part. */
+	function familyMatchForName(name: string): QuestFamily | null {
+		const part = familyPartOf(name);
+		if (!part) return null;
+		return families.find((f) => f.name.trim().toLowerCase() === part) ?? null;
 	}
 
 	function openEditQuest(quest: Quest) {
@@ -345,6 +381,8 @@ export function createQuestsModel() {
 			cooldownUnit = 'hours';
 			cooldownInput = h;
 		}
+		// An existing quest's membership is explicit; never auto-retarget it.
+		familySelectTouched = true;
 		questForm = {
 			name: quest.name,
 			planet: quest.planet,
@@ -361,6 +399,8 @@ export function createQuestsModel() {
 			chain_total: quest.chainTotal,
 			mobs: [...quest.targetMobs],
 			signal_loot_item: quest.signalLootItem ?? '',
+			family_id: quest.familyId,
+			cooldown_anchor: quest.cooldownAnchor,
 		};
 		mobInput = '';
 		showQuestModal = true;
@@ -391,6 +431,8 @@ export function createQuestsModel() {
 			// value typed before the reward never rides along disabled.
 			signal_loot_item:
 				(questForm.reward_ped ?? 0) > 0 ? null : questForm.signal_loot_item.trim() || null,
+			family_id: questForm.family_id != null ? Number(questForm.family_id) : null,
+			cooldown_anchor: questForm.cooldown_anchor,
 		};
 		try {
 			if (editingQuest) {
@@ -443,6 +485,12 @@ export function createQuestsModel() {
 		},
 		set playlists(value: QuestPlaylist[]) {
 			playlists = value;
+		},
+		get families() {
+			return families;
+		},
+		set families(value: QuestFamily[]) {
+			families = value;
 		},
 		get loading() {
 			return loading;
@@ -528,6 +576,12 @@ export function createQuestsModel() {
 		set cooldownInput(value: number | null) {
 			cooldownInput = value;
 		},
+		get familySelectTouched() {
+			return familySelectTouched;
+		},
+		set familySelectTouched(value: boolean) {
+			familySelectTouched = value;
+		},
 
 		// ── Analytics ──
 		get analyticsData() {
@@ -573,6 +627,7 @@ export function createQuestsModel() {
 		refresh,
 		loadAnalytics,
 		categoryStatusCounts,
+		familyMatchForName,
 		handleStart,
 		handleComplete,
 		handleCancel,

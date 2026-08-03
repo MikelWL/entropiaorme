@@ -11,17 +11,31 @@ use super::{QuestError, QuestService};
 
 /// The enriched quest SELECT: every quest column plus the latest
 /// completion instant (cooldown and completion counts derive at read
-/// time; no counter column exists).
+/// time; no counter column exists) and the family picture: the active
+/// family's own columns plus the family-wide anchor instants (latest
+/// member start / completion, soft-deleted members included: their
+/// starts and completions happened in game, so their timers ran).
 const QUEST_SELECT: &str = "\
     SELECT q.id, q.name, q.planet, q.waypoint, q.cooldown_hours, \
            q.reward_ped, q.reward_is_skill, q.expected_reward_markup_percent, \
            q.notes, q.chain_name, q.chain_position, q.chain_total, \
            q.started_at, q.is_active, q.created_at, q.category, \
            q.reward_description, q.updated_at, q.signal_loot_item, \
+           q.family_id, q.cooldown_anchor, q.last_started_at, \
+           f.name AS family_name, \
+           f.cooldown_hours AS family_cooldown_hours, \
+           f.cooldown_anchor AS family_cooldown_anchor, \
+           (SELECT MAX(m.last_started_at) FROM quests m \
+            WHERE m.family_id = q.family_id) AS family_last_started_at, \
+           (SELECT MAX(c.completed_at) \
+            FROM session_quest_completions c \
+            JOIN quests m ON m.id = c.quest_id \
+            WHERE m.family_id = q.family_id) AS family_last_completed_at, \
            (SELECT MAX(completed_at) \
             FROM session_quest_completions \
             WHERE quest_id = q.id) AS last_completed_at \
-    FROM quests q";
+    FROM quests q \
+    LEFT JOIN quest_families f ON f.id = q.family_id AND f.is_active = 1";
 
 impl QuestService {
     // ── Quest CRUD ──────────────────────────────────────────────────
@@ -94,6 +108,30 @@ impl QuestService {
             data.get("reward_is_skill"),
             data.get("expected_reward_markup_percent"),
         );
+        // The cooldown anchor: absent (or null) keeps the pre-family
+        // default; a string must parse the vocabulary.
+        let cooldown_anchor = match data.get("cooldown_anchor").and_then(Value::as_str) {
+            Some(anchor) => super::families::CooldownAnchor::parse(anchor)?.as_str(),
+            None => "completion",
+        };
+        // Family membership: an explicit key binds (null detaches, an id
+        // must name an active family); an ABSENT key auto-attaches by
+        // the colon-split family part, so a variant created while its
+        // family exists lands as a member without being told.
+        let family_id: Option<i64> = match data.get("family_id") {
+            Some(value) => self.validate_family_ref(value).await?,
+            None => match data
+                .get("name")
+                .and_then(Value::as_str)
+                .and_then(super::missions::variant_family_part)
+            {
+                Some(part) => self
+                    .find_family_by_norm(&part)
+                    .await?
+                    .map(|(family_id, _)| family_id),
+                None => None,
+            },
+        };
         let planet = match data.get("planet") {
             None => json!("Calypso"),
             Some(value) => value.clone(),
@@ -115,6 +153,8 @@ impl QuestService {
             value_to_sql(data.get("category").unwrap_or(&Value::Null)),
             value_to_sql(data.get("reward_description").unwrap_or(&Value::Null)),
             value_to_sql(&json!(signal_loot_item)),
+            value_to_sql(&json!(family_id)),
+            value_to_sql(&json!(cooldown_anchor)),
         ];
         // The original's truthiness gate: an empty (or null) mobs payload
         // writes nothing, and the `expect` fires only for a truthy
@@ -134,8 +174,9 @@ impl QuestService {
                     "INSERT INTO quests (name, planet, waypoint, cooldown_hours, \
                      reward_ped, reward_is_skill, expected_reward_markup_percent, \
                      notes, chain_name, chain_position, chain_total, \
-                     category, reward_description, signal_loot_item) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     category, reward_description, signal_loot_item, \
+                     family_id, cooldown_anchor) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params_from_iter(params),
                 )?;
                 let quest_id = tx.last_insert_rowid();
@@ -191,6 +232,26 @@ impl QuestService {
                 };
                 updates.push((key, value));
             }
+        }
+
+        // Family membership and the cooldown anchor bind only when sent
+        // (an update never re-attaches implicitly, so a deliberate
+        // detach stays detached); both validate before anything writes.
+        if let Some(value) = data.get("family_id") {
+            let family_id = self.validate_family_ref(value).await?;
+            updates.push(("family_id", json!(family_id)));
+        }
+        if let Some(value) = data.get("cooldown_anchor") {
+            let anchor = value
+                .as_str()
+                .map(super::families::CooldownAnchor::parse)
+                .transpose()?
+                .ok_or_else(|| {
+                    QuestError::Invalid(
+                        "cooldown_anchor must be 'pickup' or 'completion', not null".to_string(),
+                    )
+                })?;
+            updates.push(("cooldown_anchor", json!(anchor.as_str())));
         }
 
         // The signal/reward exclusion holds over the MERGED picture, so
@@ -435,15 +496,52 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
         "signal_loot_item".into(),
         json!(row.get_unwrap::<_, Option<String>>("signal_loot_item")),
     );
+    quest.insert(
+        "family_id".into(),
+        json!(row.get_unwrap::<_, Option<i64>>("family_id")),
+    );
+    let anchor = row.get_unwrap::<_, String>("cooldown_anchor");
+    quest.insert("cooldown_anchor".into(), json!(anchor));
+    let last_started = row.get_unwrap::<_, Option<f64>>("last_started_at");
+    quest.insert("last_started_at".into(), json!(last_started));
+    quest.insert(
+        "family_name".into(),
+        json!(row.get_unwrap::<_, Option<String>>("family_name")),
+    );
+    let family_cooldown_hours = row.get_unwrap::<_, Option<f64>>("family_cooldown_hours");
+    quest.insert("family_cooldown_hours".into(), json!(family_cooldown_hours));
+    let family_anchor = row.get_unwrap::<_, Option<String>>("family_cooldown_anchor");
+    quest.insert("family_cooldown_anchor".into(), json!(family_anchor));
     let last_completed = row.get_unwrap::<_, Option<f64>>("last_completed_at");
     quest.insert("last_completed_at".into(), json!(last_completed));
 
+    // The quest's OWN cooldown expiry, anchored per its own anchor.
+    // Pre-family rows carry the 'completion' default, so their derived
+    // expiry is unchanged.
     let cooldown_hours = row.get_unwrap::<_, Option<f64>>("cooldown_hours");
-    let expires = match (last_completed, cooldown_hours) {
+    let own_anchor_instant = match anchor.as_str() {
+        "pickup" => last_started,
+        _ => last_completed,
+    };
+    let expires = match (own_anchor_instant, cooldown_hours) {
         (Some(last), Some(hours)) if hours > 0.0 => Some(to_iso_utc(last + hours * 3600.0)),
         _ => None,
     };
     quest.insert("cooldown_expires_at".into(), json!(expires));
+
+    // The FAMILY's cooldown expiry, from the family's anchor over the
+    // family-wide instants. Availability is the LATER of the two
+    // expiries; the frontend derives that, keeping both visible.
+    let family_anchor_instant = match family_anchor.as_deref() {
+        Some("pickup") => row.get_unwrap::<_, Option<f64>>("family_last_started_at"),
+        Some(_) => row.get_unwrap::<_, Option<f64>>("family_last_completed_at"),
+        None => None,
+    };
+    let family_expires = match (family_anchor_instant, family_cooldown_hours) {
+        (Some(last), Some(hours)) if hours > 0.0 => Some(to_iso_utc(last + hours * 3600.0)),
+        _ => None,
+    };
+    quest.insert("family_cooldown_expires_at".into(), json!(family_expires));
     quest
 }
 

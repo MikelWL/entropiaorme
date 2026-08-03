@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Button, ErrorNotice, Tabs } from '$lib/components';
+	import FamilyFormModal from '$lib/features/quests/FamilyFormModal.svelte';
+	import FamilyListView from '$lib/features/quests/FamilyListView.svelte';
+	import { createFamilyModel } from '$lib/features/quests/familyModel.svelte';
 	import PlaylistFormModal from '$lib/features/quests/PlaylistFormModal.svelte';
 	import PlaylistListView from '$lib/features/quests/PlaylistListView.svelte';
 	import { createPlaylistModel } from '$lib/features/quests/playlistModel.svelte';
@@ -17,9 +20,30 @@
 
 	const model = createQuestsModel();
 	const playlistModel = createPlaylistModel(model);
+	const familyModel = createFamilyModel({
+		get families() {
+			return model.families;
+		},
+		set families(value) {
+			model.families = value;
+		},
+		get error() {
+			return model.error;
+		},
+		set error(value) {
+			model.error = value;
+		},
+		get deleteConfirmId() {
+			return model.deleteConfirmId;
+		},
+		set deleteConfirmId(value) {
+			model.deleteConfirmId = value;
+		},
+		refreshQuests: () => model.refresh(),
+	});
 
 	// View toggle
-	let view: 'quests' | 'playlists' | 'analytics' = $state('quests');
+	let view: 'quests' | 'families' | 'playlists' | 'analytics' = $state('quests');
 
 	// Cooldown tick
 	let now = $state(Date.now());
@@ -44,7 +68,7 @@
 		const stopClock = useVisiblePoll(() => { now = Date.now(); }, { intervalMs: 1000 });
 		registerDemoApi('quests', {
 			setView: (v: string) => {
-				view = v as 'quests' | 'playlists' | 'analytics';
+				view = v as 'quests' | 'families' | 'playlists' | 'analytics';
 			},
 			openNewQuestModal: () => {
 				model.openNewQuest();
@@ -56,6 +80,10 @@
 			closePlaylistModal: () => {
 				playlistModel.showPlaylistModal = false;
 				playlistModel.editingPlaylist = null;
+			},
+			closeFamilyModal: () => {
+				familyModel.showFamilyModal = false;
+				familyModel.editingFamily = null;
 			}
 		});
 		return () => {
@@ -141,6 +169,9 @@
 			<Button size="sm" variant="secondary" onclick={() => model.openNewQuest()}>
 				{#snippet children()}+ Quest{/snippet}
 			</Button>
+			<Button size="sm" variant="secondary" onclick={() => familyModel.openNewFamily()}>
+				{#snippet children()}+ Family{/snippet}
+			</Button>
 			<Button size="sm" variant="secondary" onclick={() => playlistModel.openNewPlaylist()}>
 				{#snippet children()}+ Playlist{/snippet}
 			</Button>
@@ -153,17 +184,20 @@
 	<Tabs
 		tabs={[
 			{ id: 'quests', label: 'Quests' },
+			{ id: 'families', label: 'Families' },
 			{ id: 'playlists', label: 'Playlists' },
 			{ id: 'analytics', label: 'Analytics' }
 		]}
 		active={view}
-		onchange={(id) => (view = id as 'quests' | 'playlists' | 'analytics')}
+		onchange={(id) => (view = id as 'quests' | 'families' | 'playlists' | 'analytics')}
 	/>
 
 	{#if model.loading}
 		<div class="text-sm text-text-tertiary py-8 text-center">Loading quests...</div>
 	{:else if view === 'quests'}
 		<QuestListView {model} {now} />
+	{:else if view === 'families'}
+		<FamilyListView model={familyModel} questsModel={model} {now} />
 	{:else if view === 'playlists'}
 		<PlaylistListView model={playlistModel} questsModel={model} {now} />
 	{:else if view === 'analytics'}
@@ -172,4 +206,5 @@
 </div>
 
 <QuestFormModal {model} />
+<FamilyFormModal model={familyModel} />
 <PlaylistFormModal model={playlistModel} />

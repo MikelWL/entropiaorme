@@ -14,7 +14,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use eo_api::quests::{PlaylistInput, PlaylistItemInput, QuestInput};
+use eo_api::quests::{
+    PlaylistInput, PlaylistItemInput, QuestCooldownAnchor, QuestFamilyInput, QuestInput,
+};
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -75,6 +77,8 @@ fn minimal(name: &str) -> QuestInput {
         chain_total: None,
         mobs: Vec::new(),
         signal_loot_item: None,
+        family_id: None,
+        cooldown_anchor: None,
     }
 }
 
@@ -98,8 +102,11 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
     // Transport invariance: the created quest serialises to the exact
     // bytes the HTTP route answered (id "1" over the fresh database, the
     // planet/reward_is_skill defaults, null-or-empty text columns), plus
-    // the one ratified extension: the trailing `signalLootItem` key
-    // (null for mission-log quests) added with signal-completed quests.
+    // the ratified extensions: the `signalLootItem` key (null for
+    // mission-log quests) added with signal-completed quests, and the
+    // trailing anchor + family availability keys added with quest
+    // families (a standalone quest carries the 'completion' default and
+    // nulls).
     let created = api.quest_create(minimal("Alpha")).await.unwrap();
     assert_eq!(
         serde_json::to_string(&created).unwrap(),
@@ -108,7 +115,10 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
          \"cooldownExpiresAt\":null,\"reward\":null,\"rewardIsSkill\":false,\
          \"expectedRewardMarkupPercent\":null,\"rewardDescription\":\"\",\"notes\":\"\",\
          \"chainName\":null,\"chainPosition\":null,\"chainTotal\":null,\
-         \"playlistIds\":[],\"startedAt\":null,\"signalLootItem\":null}"
+         \"playlistIds\":[],\"startedAt\":null,\"signalLootItem\":null,\
+         \"cooldownAnchor\":\"completion\",\"lastStartedAt\":null,\"familyId\":null,\
+         \"familyName\":null,\"familyCooldownDurationHours\":null,\
+         \"familyCooldownAnchor\":null,\"familyCooldownExpiresAt\":null}"
     );
 
     // The read-back through the listing and the by-id read agree.
@@ -409,6 +419,109 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
          \"totalExpectedBonusRewardPed\":0.0,\"totalDurationSec\":130.5,\
          \"totalWeaponCost\":10.0,\"totalHealCost\":2.0,\"totalEnhancerCost\":0.5,\
          \"totalArmourCost\":0.25,\"totalLootTt\":12.75,\"totalPes\":0.75}]"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quest_families_round_trip_over_the_typed_surface() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = quests_api(dir.path()).await;
+
+    assert!(api.quest_families_list().await.unwrap().is_empty());
+
+    // Create with the pickup default; the wire shape is a declared DTO.
+    let created = api
+        .quest_family_create(QuestFamilyInput {
+            name: "Daily Hunting 1".to_string(),
+            planet: "ARIS".to_string(),
+            cooldown_hours: Some(20.0),
+            cooldown_anchor: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(&created).unwrap(),
+        "{\"id\":\"1\",\"name\":\"Daily Hunting 1\",\"planet\":\"ARIS\",\
+         \"cooldownDurationHours\":20.0,\"cooldownAnchor\":\"pickup\",\
+         \"cooldownExpiresAt\":null,\"memberCount\":0,\"lastStartedAt\":null,\
+         \"lastCompletedAt\":null}"
+    );
+
+    // The typed input always sends `family_id` explicitly (the form's
+    // visible name-match suggestion fills the select), so a create
+    // without one stays standalone even with a matching name; the
+    // absent-key auto-attach is the service layer's, exercised by the
+    // chat-log auto-create path.
+    let standalone = api
+        .quest_create(minimal("Daily Hunting 1: Standalone"))
+        .await
+        .unwrap();
+    assert_eq!(standalone.family_id, None);
+
+    // An explicit member carries the family picture, and starting it
+    // opens the family window on the wire.
+    let mut member_input = minimal("Daily Hunting 1: Weak Mortirex");
+    member_input.family_id = Some(1);
+    let member = api.quest_create(member_input).await.unwrap();
+    assert_eq!(member.family_id, Some("1".to_string()));
+    assert_eq!(member.family_name, Some("Daily Hunting 1".to_string()));
+    assert_eq!(member.family_cooldown_duration_hours, Some(20.0));
+    api.quest_start(2).await.unwrap();
+    let started = api.quest_get(2).await.unwrap();
+    assert!(started.last_started_at.is_some());
+    assert!(started.family_cooldown_expires_at.is_some());
+    let families = api.quest_families_list().await.unwrap();
+    assert_eq!(families[0].member_count, 1);
+    assert!(families[0].cooldown_expires_at.is_some());
+
+    // A validation refusal surfaces as the typed bad request.
+    let refused = api
+        .quest_family_create(QuestFamilyInput {
+            name: "  ".to_string(),
+            planet: "Calypso".to_string(),
+            cooldown_hours: None,
+            cooldown_anchor: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, ApiError::BadRequest { .. }));
+
+    // Update binds; delete detaches the member and 404s thereafter.
+    let updated = api
+        .quest_family_update(
+            1,
+            QuestFamilyInput {
+                name: "Daily Hunting 1".to_string(),
+                planet: "ARIS".to_string(),
+                cooldown_hours: None,
+                cooldown_anchor: Some(QuestCooldownAnchor::Completion),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.cooldown_duration_hours, None);
+    assert_eq!(updated.cooldown_anchor, QuestCooldownAnchor::Completion);
+    api.quest_family_delete(1).await.unwrap();
+    assert!(api.quest_families_list().await.unwrap().is_empty());
+    let detached = api.quest_get(2).await.unwrap();
+    assert_eq!(detached.family_id, None);
+    assert_eq!(
+        api.quest_family_delete(1).await.unwrap_err(),
+        ApiError::not_found("Quest family not found")
+    );
+    assert_eq!(
+        api.quest_family_update(
+            424242,
+            QuestFamilyInput {
+                name: "Z".to_string(),
+                planet: "Calypso".to_string(),
+                cooldown_hours: None,
+                cooldown_anchor: None,
+            }
+        )
+        .await
+        .unwrap_err(),
+        ApiError::not_found("Quest family not found")
     );
 }
 

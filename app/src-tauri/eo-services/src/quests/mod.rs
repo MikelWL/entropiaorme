@@ -27,6 +27,7 @@
 mod actor;
 mod analytics;
 mod crud;
+mod families;
 mod lifecycle;
 mod linking;
 mod missions;
@@ -35,6 +36,7 @@ mod playlists;
 #[cfg(test)]
 mod tests;
 
+pub use families::CooldownAnchor;
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
 
 /// The sink a quest completion reports through, so a completed quest's

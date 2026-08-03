@@ -83,6 +83,15 @@ pub struct QuestInput {
     /// it directly. Mutually exclusive with a positive `reward_ped`.
     #[serde(default)]
     pub signal_loot_item: Option<String>,
+    /// The family this quest is a variant of; null (or absent) leaves
+    /// it standalone. Sent explicitly by the form so a cleared select
+    /// detaches; the service refuses an id that names no active family.
+    #[serde(default)]
+    pub family_id: Option<i64>,
+    /// When this quest's OWN cooldown timer starts; absent keeps the
+    /// service default ('completion', the pre-family behaviour).
+    #[serde(default)]
+    pub cooldown_anchor: Option<QuestCooldownAnchor>,
 }
 
 impl QuestInput {
@@ -91,7 +100,7 @@ impl QuestInput {
     /// applied. `create_quest` reads the full set; `update_quest` applies
     /// the keys it allows (all but `mobs`), present-null included.
     fn to_service_value(&self) -> Value {
-        json!({
+        let mut payload = json!({
             "name": self.name,
             "planet": self.planet,
             "category": self.category,
@@ -107,7 +116,15 @@ impl QuestInput {
             "chain_total": self.chain_total,
             "mobs": self.mobs,
             "signal_loot_item": self.signal_loot_item,
-        })
+            "family_id": self.family_id,
+        });
+        // The anchor column is non-nullable, so the key is sent only
+        // when a value was chosen; absent keeps the stored/default
+        // anchor (present-null would be a refusal, not a clear).
+        if let Some(anchor) = self.cooldown_anchor {
+            payload["cooldown_anchor"] = json!(anchor.as_service_str());
+        }
+        payload
     }
 }
 
@@ -176,6 +193,37 @@ fn default_group_type() -> String {
 
 // ── Response DTOs ───────────────────────────────────────────────────
 
+/// When a cooldown timer starts: `pickup` runs it from the last
+/// recorded start (the giver hands the mission over and the slot's
+/// timer begins, whatever happens after); `completion` runs it from the
+/// last recorded completion (the pre-family rule, and the natural shape
+/// for boss runs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestCooldownAnchor {
+    Pickup,
+    Completion,
+}
+
+impl QuestCooldownAnchor {
+    fn as_service_str(self) -> &'static str {
+        match self {
+            QuestCooldownAnchor::Pickup => "pickup",
+            QuestCooldownAnchor::Completion => "completion",
+        }
+    }
+
+    /// The stored vocabulary back to the typed wire form; the schema
+    /// admits nothing else, so anything unexpected reads as the
+    /// pre-family default rather than inventing a third state.
+    fn from_service(value: &Value) -> Self {
+        match value.as_str() {
+            Some("pickup") => QuestCooldownAnchor::Pickup,
+            _ => QuestCooldownAnchor::Completion,
+        }
+    }
+}
+
 /// A quest in the wire shape (`_format_quest` key for key). Ids are
 /// stringified; `rewardDescription` / `notes` collapse null-or-empty to
 /// `""`; `rewardIsSkill` is the boolean of the stored int flag.
@@ -205,6 +253,20 @@ pub struct Quest {
     /// The signal loot item completing this quest, null for quests on
     /// the mission-log lifecycle.
     pub signal_loot_item: Nullable<String>,
+    /// When this quest's OWN cooldown timer starts.
+    pub cooldown_anchor: QuestCooldownAnchor,
+    /// The durable last-start instant (fractional epoch seconds); the
+    /// pickup anchor's base fact, surviving completion and cancel.
+    pub last_started_at: Nullable<f64>,
+    /// The family this quest is a variant of (stringified id), null for
+    /// a standalone quest.
+    pub family_id: Nullable<String>,
+    pub family_name: Nullable<String>,
+    pub family_cooldown_duration_hours: Nullable<f64>,
+    pub family_cooldown_anchor: Nullable<QuestCooldownAnchor>,
+    /// The family-wide cooldown expiry: availability is the LATER of
+    /// this and `cooldownExpiresAt` (the quest's own window).
+    pub family_cooldown_expires_at: Nullable<String>,
 }
 
 impl Quest {
@@ -232,6 +294,85 @@ impl Quest {
             playlist_ids: string_id_list(&quest["playlist_ids"]),
             started_at: opt_f64(&quest["started_at"]).into(),
             signal_loot_item: opt_string(&quest["signal_loot_item"]).into(),
+            cooldown_anchor: QuestCooldownAnchor::from_service(&quest["cooldown_anchor"]),
+            last_started_at: opt_f64(&quest["last_started_at"]).into(),
+            family_id: opt_i64(&quest["family_id"]).map(|id| id.to_string()).into(),
+            family_name: opt_string(&quest["family_name"]).into(),
+            family_cooldown_duration_hours: opt_f64(&quest["family_cooldown_hours"]).into(),
+            family_cooldown_anchor: quest
+                .get("family_cooldown_anchor")
+                .filter(|value| !value.is_null())
+                .map(QuestCooldownAnchor::from_service)
+                .into(),
+            family_cooldown_expires_at: opt_string(&quest["family_cooldown_expires_at"]).into(),
+        }
+    }
+}
+
+/// A quest-family create or update payload, in the frontend's
+/// snake_case casing. One DTO serves both operations, exactly the quest
+/// pattern: `name` and `planet` always bind, a null `cooldown_hours`
+/// clears the gate (the family then groups without gating), and the
+/// anchor binds only when chosen (the column is non-nullable).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct QuestFamilyInput {
+    pub name: String,
+    #[serde(default = "default_planet")]
+    pub planet: String,
+    #[serde(default)]
+    pub cooldown_hours: Option<f64>,
+    #[serde(default)]
+    pub cooldown_anchor: Option<QuestCooldownAnchor>,
+}
+
+impl QuestFamilyInput {
+    fn to_service_value(&self) -> Value {
+        let mut payload = json!({
+            "name": self.name,
+            "planet": self.planet,
+            "cooldown_hours": self.cooldown_hours,
+        });
+        if let Some(anchor) = self.cooldown_anchor {
+            payload["cooldown_anchor"] = json!(anchor.as_service_str());
+        }
+        payload
+    }
+}
+
+/// A quest family in the wire shape: the authored slot (name, planet,
+/// cooldown hours + anchor) plus the derived availability picture (the
+/// family-wide anchor instants and the expiry they produce) and the
+/// active member count.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestFamily {
+    pub id: String,
+    pub name: String,
+    pub planet: String,
+    pub cooldown_duration_hours: Nullable<f64>,
+    pub cooldown_anchor: QuestCooldownAnchor,
+    /// The family's derived cooldown expiry (UTC ISO), null when ready
+    /// or ungated.
+    pub cooldown_expires_at: Nullable<String>,
+    pub member_count: i64,
+    /// The latest member start (fractional epoch seconds).
+    pub last_started_at: Nullable<f64>,
+    /// The latest member completion (fractional epoch seconds).
+    pub last_completed_at: Nullable<f64>,
+}
+
+impl QuestFamily {
+    fn from_service(family: &Value) -> Self {
+        Self {
+            id: str_of(&family["id"]),
+            name: string_field(&family["name"]),
+            planet: string_field(&family["planet"]),
+            cooldown_duration_hours: opt_f64(&family["cooldown_hours"]).into(),
+            cooldown_anchor: QuestCooldownAnchor::from_service(&family["cooldown_anchor"]),
+            cooldown_expires_at: opt_string(&family["cooldown_expires_at"]).into(),
+            member_count: family["member_count"].as_i64().unwrap_or(0),
+            last_started_at: opt_f64(&family["last_started_at"]).into(),
+            last_completed_at: opt_f64(&family["last_completed_at"]).into(),
         }
     }
 }
@@ -658,6 +799,62 @@ impl Api {
         }
     }
 
+    /// All active quest families, with their derived availability.
+    pub async fn quest_families_list(&self) -> Result<Vec<QuestFamily>, ApiError> {
+        let families = self
+            .quests
+            .get_families(true)
+            .await
+            .map_err(quest_error("quest families list read"))?;
+        Ok(families.iter().map(QuestFamily::from_service).collect())
+    }
+
+    /// Create a quest family; unattached quests whose colon-split
+    /// family part matches the name sweep in as members.
+    pub async fn quest_family_create(
+        &self,
+        input: QuestFamilyInput,
+    ) -> Result<QuestFamily, ApiError> {
+        let created = self
+            .quests
+            .create_family(&input.to_service_value())
+            .await
+            .map_err(quest_error("quest family create"))?;
+        Ok(QuestFamily::from_service(&created))
+    }
+
+    /// Update a quest family; a rename sweeps newly matching quests in.
+    /// A missing family is a 404.
+    pub async fn quest_family_update(
+        &self,
+        family_id: i64,
+        input: QuestFamilyInput,
+    ) -> Result<QuestFamily, ApiError> {
+        match self
+            .quests
+            .update_family(family_id, &input.to_service_value())
+            .await
+            .map_err(quest_error("quest family update"))?
+        {
+            Some(updated) => Ok(QuestFamily::from_service(&updated)),
+            None => Err(family_not_found()),
+        }
+    }
+
+    /// Delete a quest family, detaching its members; a missing family
+    /// is a 404.
+    pub async fn quest_family_delete(&self, family_id: i64) -> Result<(), ApiError> {
+        match self
+            .quests
+            .delete_family(family_id)
+            .await
+            .map_err(quest_error("quest family delete"))?
+        {
+            true => Ok(()),
+            false => Err(family_not_found()),
+        }
+    }
+
     /// Per-playlist analytics over exact-match linked sessions.
     pub async fn playlists_analytics(&self) -> Result<Vec<PlaylistAnalyticsRow>, ApiError> {
         let rows = self
@@ -692,4 +889,8 @@ fn quest_not_found() -> ApiError {
 
 fn playlist_not_found() -> ApiError {
     ApiError::not_found("Playlist not found")
+}
+
+fn family_not_found() -> ApiError {
+    ApiError::not_found("Quest family not found")
 }

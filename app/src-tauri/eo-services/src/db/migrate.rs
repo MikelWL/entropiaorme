@@ -138,6 +138,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "signal quests",
         sql: include_str!("../../migrations/0020_signal_quests.sql"),
     },
+    Migration {
+        version: 21,
+        description: "quest families",
+        sql: include_str!("../../migrations/0021_quest_families.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -166,6 +171,7 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "451A61961B15890F10954495E2E2E151BBC4AF47B36B498794B64FF65A07C89F420E205AAF7B8817295E74AE7F48C410",
     "147A07C1055FDD09810E13259D24FEBB4E078C2EA9D8C0FF6631943038D8900AC8031AFCD56F17A22C56F00FEEE46799",
     "321911B525CF5B0EFFB1F763563CC3F982F20930DA7B8B4754E5AD777394EDE6F15A7D1419E41BF8058CB70634BED329",
+    "E1754050167F73A9B97809EC1399B88C016A5F71422B8684225FD7B834546545A2766FCF0C072BE7089B5DEEA855A41C",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

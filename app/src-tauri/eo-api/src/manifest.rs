@@ -43,7 +43,8 @@ use crate::market::{
     MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use crate::quests::{
-    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
+    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
+    QuestInput, QuestPlaylist,
 };
 use crate::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -484,6 +485,41 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "playlists_analytics",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Vec<PlaylistAnalyticsRow>))),
+        },
+        CommandSpec {
+            name: "quest_families_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<QuestFamily>))),
+        },
+        CommandSpec {
+            name: "quest_family_create",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(QuestFamilyInput)),
+            }],
+            returns: Some(schema(schema_for!(QuestFamily))),
+        },
+        CommandSpec {
+            name: "quest_family_update",
+            args: vec![
+                ArgSpec {
+                    name: "family_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "input",
+                    schema: schema(schema_for!(QuestFamilyInput)),
+                },
+            ],
+            returns: Some(schema(schema_for!(QuestFamily))),
+        },
+        CommandSpec {
+            name: "quest_family_delete",
+            args: vec![ArgSpec {
+                name: "family_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
         },
         CommandSpec {
             name: "analytics_overview",

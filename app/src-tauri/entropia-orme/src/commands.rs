@@ -41,7 +41,8 @@ use eo_api::market::{
     MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
 };
 use eo_api::quests::{
-    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestInput, QuestPlaylist,
+    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
+    QuestInput, QuestPlaylist,
 };
 use eo_api::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -424,6 +425,33 @@ pub async fn playlists_analytics(
     app: tauri::AppHandle,
 ) -> Result<Vec<PlaylistAnalyticsRow>, ApiError> {
     facade(&app)?.playlists_analytics().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_families_list(app: tauri::AppHandle) -> Result<Vec<QuestFamily>, ApiError> {
+    facade(&app)?.quest_families_list().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_family_create(
+    app: tauri::AppHandle,
+    input: QuestFamilyInput,
+) -> Result<QuestFamily, ApiError> {
+    facade(&app)?.quest_family_create(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_family_update(
+    app: tauri::AppHandle,
+    family_id: i64,
+    input: QuestFamilyInput,
+) -> Result<QuestFamily, ApiError> {
+    facade(&app)?.quest_family_update(family_id, input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_family_delete(app: tauri::AppHandle, family_id: i64) -> Result<(), ApiError> {
+    facade(&app)?.quest_family_delete(family_id).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1484,6 +1512,10 @@ mod tests {
         "playlist_update",
         "playlist_delete",
         "playlists_analytics",
+        "quest_families_list",
+        "quest_family_create",
+        "quest_family_update",
+        "quest_family_delete",
         "analytics_overview",
         "analytics_hunting",
         "analytics_harvest",

@@ -1,4 +1,21 @@
-import type { PlaylistAnalyticsRow, Quest, QuestAnalyticsRow, QuestPlaylist } from '$lib/types';
+import type {
+	PlaylistAnalyticsRow,
+	Quest,
+	QuestAnalyticsRow,
+	QuestFamily,
+	QuestPlaylist,
+} from '$lib/types';
+
+/** The family-availability fields a standalone demo quest carries. */
+const standaloneQuest = {
+	cooldownAnchor: 'completion' as const,
+	lastStartedAt: null,
+	familyId: null,
+	familyName: null,
+	familyCooldownDurationHours: null,
+	familyCooldownAnchor: null,
+	familyCooldownExpiresAt: null,
+};
 
 /**
  * Inline demo data for the quests surface guide-mode mount.
@@ -30,6 +47,7 @@ export const questsDemoQuests: Quest[] = [
 		playlistIds: ['pl1', 'pl2'],
 		startedAt: null,
 		signalLootItem: null,
+		...standaloneQuest,
 	},
 	{
 		id: 'q2',
@@ -51,6 +69,7 @@ export const questsDemoQuests: Quest[] = [
 		playlistIds: ['pl1'],
 		startedAt: null,
 		signalLootItem: null,
+		...standaloneQuest,
 	},
 	{
 		id: 'q3',
@@ -72,6 +91,7 @@ export const questsDemoQuests: Quest[] = [
 		playlistIds: ['pl1'],
 		startedAt: null,
 		signalLootItem: null,
+		...standaloneQuest,
 	},
 	{
 		id: 'q4',
@@ -93,6 +113,78 @@ export const questsDemoQuests: Quest[] = [
 		playlistIds: ['pl2'],
 		startedAt: null,
 		signalLootItem: null,
+		...standaloneQuest,
+	},
+	{
+		id: 'q5',
+		name: 'Daily Contract: Berycled',
+		category: 'Daily Tokens',
+		targetMobs: ['Berycled'],
+		planet: 'Calypso',
+		waypoint: null,
+		cooldownDurationHours: null,
+		cooldownExpiresAt: null,
+		reward: 1.5,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: null,
+		rewardDescription: 'Token of Calypso x2',
+		notes: '',
+		chainName: null,
+		chainPosition: null,
+		chainTotal: null,
+		playlistIds: [],
+		startedAt: null,
+		signalLootItem: null,
+		cooldownAnchor: 'completion',
+		lastStartedAt: null,
+		familyId: 'f1',
+		familyName: 'Daily Contract',
+		familyCooldownDurationHours: 20,
+		familyCooldownAnchor: 'pickup',
+		familyCooldownExpiresAt: null,
+	},
+	{
+		id: 'q6',
+		name: 'Daily Contract: Snablesnot',
+		category: 'Daily Tokens',
+		targetMobs: ['Snablesnot'],
+		planet: 'Calypso',
+		waypoint: null,
+		cooldownDurationHours: null,
+		cooldownExpiresAt: null,
+		reward: 1.5,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: null,
+		rewardDescription: 'Token of Calypso x2',
+		notes: '',
+		chainName: null,
+		chainPosition: null,
+		chainTotal: null,
+		playlistIds: [],
+		startedAt: null,
+		signalLootItem: null,
+		cooldownAnchor: 'completion',
+		lastStartedAt: null,
+		familyId: 'f1',
+		familyName: 'Daily Contract',
+		familyCooldownDurationHours: 20,
+		familyCooldownAnchor: 'pickup',
+		familyCooldownExpiresAt: null,
+	},
+];
+
+/** The variants of one repeatable slot, cooling as a unit (see q5/q6). */
+export const questsDemoFamilies: QuestFamily[] = [
+	{
+		id: 'f1',
+		name: 'Daily Contract',
+		planet: 'Calypso',
+		cooldownDurationHours: 20,
+		cooldownAnchor: 'pickup',
+		cooldownExpiresAt: null,
+		memberCount: 2,
+		lastStartedAt: null,
+		lastCompletedAt: null,
 	},
 ];
 

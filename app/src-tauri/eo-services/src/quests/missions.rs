@@ -46,6 +46,12 @@ fn variant_split(name: &str) -> Option<(String, String)> {
         .map(|(family, variant)| (normalize_quest_name(family), normalize_quest_name(variant)))
 }
 
+/// The normalised family part of a colon-variant name, for family
+/// membership matching; `None` for a name with no colon.
+pub(super) fn variant_family_part(name: &str) -> Option<String> {
+    variant_split(name).map(|(family, _)| family)
+}
+
 impl QuestService {
     // ── Chat.log mission detection ──────────────────────────────────
 
@@ -136,12 +142,40 @@ impl QuestService {
 
     /// A "New Mission received" chat.log event: match the mission to a
     /// known quest and start tracking it as if the user clicked Start.
+    ///
+    /// An UNKNOWN mission whose colon-split family part names an active
+    /// quest family is a fresh variant of that family (the catalogue
+    /// grows by observation: the giver rotates variants, and they are
+    /// not enumerable up front). It auto-creates as a family member,
+    /// named exactly as the line reads, and starts in the same motion,
+    /// so the second encounter onward is an exact match with zero
+    /// clicks. A line matching no quest AND no family stays ignored.
     pub async fn start_quest_from_mission(&self, mission_name: &str) -> Result<(), QuestError> {
-        let Some(quest) = self
+        let quest = match self
             .match_quest_by_mission_name(mission_name, false)
             .await?
-        else {
-            return Ok(());
+        {
+            Some(quest) => quest,
+            None => {
+                let stripped = REPEATABLE_SUFFIX.replace(mission_name, "");
+                let mission_raw = stripped.trim();
+                let Some((family_part, variant_part)) = variant_split(mission_raw) else {
+                    return Ok(());
+                };
+                if variant_part.is_empty() {
+                    return Ok(());
+                }
+                let Some((family_id, planet)) = self.find_family_by_norm(&family_part).await?
+                else {
+                    return Ok(());
+                };
+                self.create_quest(&json!({
+                    "name": mission_raw,
+                    "planet": planet,
+                    "family_id": family_id,
+                }))
+                .await?
+            }
         };
         if json_truthy(quest.get("started_at")) {
             return Ok(());
