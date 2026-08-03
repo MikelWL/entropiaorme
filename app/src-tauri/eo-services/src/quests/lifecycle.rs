@@ -34,14 +34,19 @@ impl QuestService {
     // ── Quest actions ───────────────────────────────────────────────
 
     /// Mark a quest as in-progress; `None` when absent or inactive.
+    /// The start also stamps `last_started_at`, the DURABLE start fact:
+    /// `started_at` is lifecycle state (completion and cancel clear
+    /// it), while a pickup-anchored cooldown needs the instant the
+    /// mission was collected to survive both.
     pub async fn start_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
         let now = self.now_epoch();
         let affected = self
             .db
             .with_writer(move |conn| {
                 Ok(conn.execute(
-                    "UPDATE quests SET started_at = ? WHERE id = ? AND is_active = 1",
-                    rusqlite::params![now, quest_id],
+                    "UPDATE quests SET started_at = ?, last_started_at = ? \
+                     WHERE id = ? AND is_active = 1",
+                    rusqlite::params![now, now, quest_id],
                 )?)
             })
             .await?;
@@ -171,6 +176,18 @@ impl QuestService {
 
         // The original groups the completion delete and the optional
         // reward undo under one commit.
+        //
+        // A pickup-anchored quest additionally clears its durable start
+        // stamp: for that anchor, "reset the cooldown" IS forgetting
+        // the last collection. The first cancel of a started quest
+        // deliberately keeps the stamp (an abandoned mission's timer
+        // keeps running in game); cancelling AGAIN while cooling is the
+        // explicit "that start should not gate me" correction, exactly
+        // parallel to the completion-anchored double-cancel.
+        let clear_pickup_stamp = quest
+            .get("cooldown_anchor")
+            .and_then(Value::as_str)
+            .is_some_and(|anchor| anchor == "pickup");
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
         let reward_is_skill = json_truthy(quest.get("reward_is_skill"));
         // Extracted before the closure so the panic on a missing name fires
@@ -194,6 +211,12 @@ impl QuestService {
                      )",
                     rusqlite::params![quest_id],
                 )?;
+                if clear_pickup_stamp {
+                    tx.execute(
+                        "UPDATE quests SET last_started_at = NULL WHERE id = ?",
+                        rusqlite::params![quest_id],
+                    )?;
+                }
 
                 if undo_reward {
                     if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
@@ -276,10 +299,17 @@ impl QuestService {
         Ok(())
     }
 
-    /// Whether the quest's cooldown window is still open against the
-    /// injected clock.
+    /// Whether the quest's OWN cooldown window is still open against
+    /// the injected clock, anchored per its own anchor. Deliberately
+    /// blind to the family window: this predicate gates the cancel
+    /// flow's reset branch, and a member cancel must never mutate
+    /// family-level state (the giver's timer does not care).
     fn is_quest_cooling(&self, quest: &Value) -> bool {
-        let last = quest.get("last_completed_at").and_then(Value::as_f64);
+        let anchor = quest.get("cooldown_anchor").and_then(Value::as_str);
+        let last = match anchor {
+            Some("pickup") => quest.get("last_started_at").and_then(Value::as_f64),
+            _ => quest.get("last_completed_at").and_then(Value::as_f64),
+        };
         let cooldown_hours = quest.get("cooldown_hours").and_then(Value::as_f64);
         let (Some(last), Some(cooldown_hours)) = (last, cooldown_hours) else {
             return false;

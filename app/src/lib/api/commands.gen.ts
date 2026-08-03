@@ -1776,6 +1776,17 @@ export interface Quest {
 	startedAt: number | null;
 	/** The signal loot item completing this quest, null for quests on the mission-log lifecycle. */
 	signalLootItem: string | null;
+	/** When this quest's OWN cooldown timer starts. */
+	cooldownAnchor: QuestCooldownAnchor;
+	/** The durable last-start instant (fractional epoch seconds); the pickup anchor's base fact, surviving completion and cancel. */
+	lastStartedAt: number | null;
+	/** The family this quest is a variant of (stringified id), null for a standalone quest. */
+	familyId: string | null;
+	familyName: string | null;
+	familyCooldownDurationHours: number | null;
+	familyCooldownAnchor: QuestCooldownAnchor | null;
+	/** The family-wide cooldown expiry: availability is the LATER of this and `cooldownExpiresAt` (the quest's own window). */
+	familyCooldownExpiresAt: string | null;
 }
 
 /**
@@ -1800,6 +1811,50 @@ export interface QuestAnalyticsRow {
 	totalArmourCost: number;
 	totalLootTt: number;
 	totalPes: number;
+}
+
+/**
+ * When a cooldown timer starts: `pickup` runs it from the last
+ * recorded start (the giver hands the mission over and the slot's
+ * timer begins, whatever happens after); `completion` runs it from the
+ * last recorded completion (the pre-family rule, and the natural shape
+ * for boss runs).
+ */
+export type QuestCooldownAnchor = 'pickup' | 'completion';
+
+/**
+ * A quest family in the wire shape: the authored slot (name, planet,
+ * cooldown hours + anchor) plus the derived availability picture (the
+ * family-wide anchor instants and the expiry they produce) and the
+ * active member count.
+ */
+export interface QuestFamily {
+	id: string;
+	name: string;
+	planet: string;
+	cooldownDurationHours: number | null;
+	cooldownAnchor: QuestCooldownAnchor;
+	/** The family's derived cooldown expiry (UTC ISO), null when ready or ungated. */
+	cooldownExpiresAt: string | null;
+	memberCount: number;
+	/** The latest member start (fractional epoch seconds). */
+	lastStartedAt: number | null;
+	/** The latest member completion (fractional epoch seconds). */
+	lastCompletedAt: number | null;
+}
+
+/**
+ * A quest-family create or update payload, in the frontend's
+ * snake_case casing. One DTO serves both operations, exactly the quest
+ * pattern: `name` and `planet` always bind, a null `cooldown_hours`
+ * clears the gate (the family then groups without gating), and the
+ * anchor binds only when chosen (the column is non-nullable).
+ */
+export interface QuestFamilyInput {
+	name: string;
+	planet?: string;
+	cooldown_hours?: number | null;
+	cooldown_anchor?: QuestCooldownAnchor | null;
 }
 
 /**
@@ -1837,6 +1892,10 @@ export interface QuestInput {
 	mobs?: string[];
 	/** The signal loot item, when set: the quest completes the moment this item arrives in a loot pickup carrying no mission completion (the instance-boss pattern), and focusing it starts it directly. Mutually exclusive with a positive `reward_ped`. */
 	signal_loot_item?: string | null;
+	/** The family this quest is a variant of; null (or absent) leaves it standalone. Sent explicitly by the form so a cleared select detaches; the service refuses an id that names no active family. */
+	family_id?: number | null;
+	/** When this quest's OWN cooldown timer starts; absent keeps the service default ('completion', the pre-family behaviour). */
+	cooldown_anchor?: QuestCooldownAnchor | null;
 }
 
 /**
@@ -2668,6 +2727,22 @@ export async function playlistDelete(playlistId: number): Promise<void> {
 
 export async function playlistsAnalytics(): Promise<PlaylistAnalyticsRow[]> {
 	return invokeCommand('playlists_analytics', {});
+}
+
+export async function questFamiliesList(): Promise<QuestFamily[]> {
+	return invokeCommand('quest_families_list', {});
+}
+
+export async function questFamilyCreate(input: QuestFamilyInput): Promise<QuestFamily> {
+	return invokeCommand('quest_family_create', { input });
+}
+
+export async function questFamilyUpdate(familyId: number, input: QuestFamilyInput): Promise<QuestFamily> {
+	return invokeCommand('quest_family_update', { family_id: familyId, input });
+}
+
+export async function questFamilyDelete(familyId: number): Promise<void> {
+	return invokeCommand('quest_family_delete', { family_id: familyId });
 }
 
 export async function analyticsOverview(period: string): Promise<AnalyticsOverview> {
