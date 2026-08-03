@@ -144,15 +144,21 @@ impl QuestService {
 
     /// Update a family's fields (present keys bind, absent keys keep);
     /// `None` when absent. A rename sweeps newly matching unattached
-    /// quests; existing members stay members.
+    /// quests; existing members stay members. A soft-deleted family
+    /// reads as absent: mutating one would let a rename re-attach
+    /// active quests to a dead family, undoing exactly the detach its
+    /// deletion performed.
     pub async fn update_family(
         &self,
         family_id: i64,
         data: &Value,
     ) -> Result<Option<Value>, QuestError> {
-        let Some(_existing) = self.get_family(family_id).await? else {
+        let Some(existing) = self.get_family(family_id).await? else {
             return Ok(None);
         };
+        if existing.get("is_active").and_then(Value::as_i64) != Some(1) {
+            return Ok(None);
+        }
 
         let mut updates: Vec<(&str, Value)> = Vec::new();
         if let Some(value) = data.get("name") {

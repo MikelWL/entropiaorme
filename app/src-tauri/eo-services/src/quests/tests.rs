@@ -2364,9 +2364,11 @@ async fn a_member_cancel_never_clears_the_family_window() {
     svc.start_quest(a).await.unwrap();
     // Two cancels: the first un-starts; the second finds the member
     // neither started nor own-cooling (its own anchor is 'completion'
-    // and it has no own gate), so it returns as-is. Either way the
-    // family-wide stamp survives: only the family's own management
-    // surface may move the family's timer.
+    // and it has no own gate), so it returns as-is. FAMILY cooling
+    // alone never opens the reset branch, so the family-wide stamp
+    // survives. (A member with its OWN pickup gate can still disavow
+    // its start via the reset, and the family window derived from that
+    // fact moves with it; that is the correction working, not a leak.)
     svc.cancel_quest(a, false).await.unwrap();
     svc.cancel_quest(a, false).await.unwrap();
     let row = svc.get_quest(a).await.unwrap().unwrap();
@@ -2430,4 +2432,33 @@ async fn an_unknown_variant_of_a_known_family_auto_creates_and_starts() {
     assert_eq!(svc.get_quests(true).await.unwrap().len(), 1);
     let quest_rows = count_rows(&db, "SELECT COUNT(*) FROM quests").await;
     assert_eq!(quest_rows, 1);
+}
+
+#[tokio::test]
+async fn updating_a_soft_deleted_family_finds_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    let family = svc
+        .create_family(&json!({"name": "Daily Hunting 1", "cooldown_hours": 20.0}))
+        .await
+        .unwrap();
+    let fid = family["id"].as_i64().unwrap();
+    let member = quest_id(
+        &svc.create_quest(&json!({"name": "Daily Hunting 1: Weak Mortirex"}))
+            .await
+            .unwrap(),
+    );
+
+    assert!(svc.delete_family(fid).await.unwrap());
+    // A soft-deleted family reads as absent: no mutation, and above all
+    // no rename sweep re-pointing active quests at a dead family (the
+    // delete detached them precisely to prevent that).
+    assert_eq!(
+        svc.update_family(fid, &json!({"name": "Daily Hunting 1"}))
+            .await
+            .unwrap(),
+        None
+    );
+    let row = svc.get_quest(member).await.unwrap().unwrap();
+    assert_eq!(row["family_id"], Value::Null, "the detach stands");
 }

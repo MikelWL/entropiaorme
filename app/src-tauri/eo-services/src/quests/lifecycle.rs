@@ -302,8 +302,10 @@ impl QuestService {
     /// Whether the quest's OWN cooldown window is still open against
     /// the injected clock, anchored per its own anchor. Deliberately
     /// blind to the family window: this predicate gates the cancel
-    /// flow's reset branch, and a member cancel must never mutate
-    /// family-level state (the giver's timer does not care).
+    /// flow's reset branch, so FAMILY cooling alone never makes a
+    /// member cancellable. (The reset itself disavows the quest's own
+    /// start fact; a family window derived from that same fact moves
+    /// with it, which is the point of the correction.)
     fn is_quest_cooling(&self, quest: &Value) -> bool {
         let anchor = quest.get("cooldown_anchor").and_then(Value::as_str);
         let last = match anchor {
