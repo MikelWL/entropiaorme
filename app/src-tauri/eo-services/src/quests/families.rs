@@ -192,7 +192,8 @@ impl QuestService {
                 .map(|(key, _)| format!("{key} = ?"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let sql = format!("UPDATE quest_families SET {set_clause}, updated_at = ? WHERE id = ?");
+            let sql =
+                format!("UPDATE quest_families SET {set_clause}, updated_at = ? WHERE id = ?");
             let mut params: Vec<rusqlite::types::Value> = updates
                 .iter()
                 .map(|(_, value)| value_to_sql(value))
@@ -270,8 +271,7 @@ impl QuestService {
         let members: Vec<i64> = candidates
             .into_iter()
             .filter(|(_, name)| {
-                super::missions::variant_family_part(name)
-                    .is_some_and(|part| part == family_norm)
+                super::missions::variant_family_part(name).is_some_and(|part| part == family_norm)
             })
             .map(|(id, _)| id)
             .collect();
@@ -303,9 +303,8 @@ impl QuestService {
         let families: Vec<(i64, String, String)> = self
             .db
             .with_reader(|conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, name, planet FROM quest_families WHERE is_active = 1",
-                )?;
+                let mut stmt = conn
+                    .prepare("SELECT id, name, planet FROM quest_families WHERE is_active = 1")?;
                 let mut rows = stmt.query([])?;
                 let mut out = Vec::new();
                 while let Some(row) = rows.next()? {

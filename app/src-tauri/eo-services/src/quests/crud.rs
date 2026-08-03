@@ -509,10 +509,7 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
         json!(row.get_unwrap::<_, Option<String>>("family_name")),
     );
     let family_cooldown_hours = row.get_unwrap::<_, Option<f64>>("family_cooldown_hours");
-    quest.insert(
-        "family_cooldown_hours".into(),
-        json!(family_cooldown_hours),
-    );
+    quest.insert("family_cooldown_hours".into(), json!(family_cooldown_hours));
     let family_anchor = row.get_unwrap::<_, Option<String>>("family_cooldown_anchor");
     quest.insert("family_cooldown_anchor".into(), json!(family_anchor));
     let last_completed = row.get_unwrap::<_, Option<f64>>("last_completed_at");

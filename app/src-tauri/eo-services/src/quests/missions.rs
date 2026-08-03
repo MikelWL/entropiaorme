@@ -151,7 +151,10 @@ impl QuestService {
     /// so the second encounter onward is an exact match with zero
     /// clicks. A line matching no quest AND no family stays ignored.
     pub async fn start_quest_from_mission(&self, mission_name: &str) -> Result<(), QuestError> {
-        let quest = match self.match_quest_by_mission_name(mission_name, false).await? {
+        let quest = match self
+            .match_quest_by_mission_name(mission_name, false)
+            .await?
+        {
             Some(quest) => quest,
             None => {
                 let stripped = REPEATABLE_SUFFIX.replace(mission_name, "");

@@ -2152,7 +2152,10 @@ async fn creating_a_family_sweeps_matching_unattached_variants() {
             .unwrap(),
     );
     // A variant already claimed by another family is never stolen.
-    let other = svc.create_family(&json!({"name": "Daily Hunting 2"})).await.unwrap();
+    let other = svc
+        .create_family(&json!({"name": "Daily Hunting 2"}))
+        .await
+        .unwrap();
     let claimed = quest_id(
         &svc.create_quest(&json!({
             "name": "Daily Hunting 1: Poached",
@@ -2183,7 +2186,10 @@ async fn creating_a_family_sweeps_matching_unattached_variants() {
 async fn creating_a_quest_auto_attaches_by_name_only_when_family_id_is_absent() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
-    let family = svc.create_family(&json!({"name": "Daily Hunting 1"})).await.unwrap();
+    let family = svc
+        .create_family(&json!({"name": "Daily Hunting 1"}))
+        .await
+        .unwrap();
     let fid = family["id"].as_i64().unwrap();
 
     // Absent key: the colon-split name attaches.
@@ -2274,7 +2280,11 @@ async fn family_cooldown_derives_from_member_instants_per_anchor() {
 async fn start_stamps_a_durable_last_started_at_surviving_completion_and_cancel() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db, clock, _bus) = service_with_clock(dir.path()).await;
-    let q = quest_id(&svc.create_quest(&json!({"name": "Iron Challenge"})).await.unwrap());
+    let q = quest_id(
+        &svc.create_quest(&json!({"name": "Iron Challenge"}))
+            .await
+            .unwrap(),
+    );
 
     svc.start_quest(q).await.unwrap();
     let first_start = svc.get_quest(q).await.unwrap().unwrap()["last_started_at"]
@@ -2283,7 +2293,11 @@ async fn start_stamps_a_durable_last_started_at_surviving_completion_and_cancel(
     svc.complete_quest(q).await.unwrap();
     let row = svc.get_quest(q).await.unwrap().unwrap();
     assert_eq!(row["started_at"], Value::Null);
-    assert_eq!(row["last_started_at"], json!(first_start), "survives completion");
+    assert_eq!(
+        row["last_started_at"],
+        json!(first_start),
+        "survives completion"
+    );
 
     clock.advance(60.0).unwrap();
     svc.start_quest(q).await.unwrap();
@@ -2357,7 +2371,10 @@ async fn a_member_cancel_never_clears_the_family_window() {
     svc.cancel_quest(a, false).await.unwrap();
     let row = svc.get_quest(a).await.unwrap().unwrap();
     assert!(!row["last_started_at"].is_null());
-    assert!(!row["family_cooldown_expires_at"].is_null(), "family still cooling");
+    assert!(
+        !row["family_cooldown_expires_at"].is_null(),
+        "family still cooling"
+    );
     let families = svc.get_families(true).await.unwrap();
     assert_eq!(families[0]["id"], family["id"]);
     assert!(!families[0]["cooldown_expires_at"].is_null());
@@ -2368,7 +2385,9 @@ async fn an_unknown_variant_of_a_known_family_auto_creates_and_starts() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, db) = service(dir.path()).await;
     let family = svc
-        .create_family(&json!({"name": "ARIS - Daily Hunting 1", "planet": "ARIS", "cooldown_hours": 20.0}))
+        .create_family(
+            &json!({"name": "ARIS - Daily Hunting 1", "planet": "ARIS", "cooldown_hours": 20.0}),
+        )
         .await
         .unwrap();
 
@@ -2383,9 +2402,16 @@ async fn an_unknown_variant_of_a_known_family_auto_creates_and_starts() {
         json!("ARIS - Daily Hunting 1: Weak Mortirex"),
         "named as the line reads, repeatable suffix stripped"
     );
-    assert_eq!(created["planet"], json!("ARIS"), "inherits the family planet");
+    assert_eq!(
+        created["planet"],
+        json!("ARIS"),
+        "inherits the family planet"
+    );
     assert_eq!(created["family_id"], family["id"]);
-    assert!(json_truthy(created.get("started_at")), "starts in the same motion");
+    assert!(
+        json_truthy(created.get("started_at")),
+        "starts in the same motion"
+    );
 
     // The second encounter is an exact match: no duplicate row.
     svc.start_quest_from_mission("ARIS - Daily Hunting 1: Weak Mortirex")
@@ -2395,8 +2421,12 @@ async fn an_unknown_variant_of_a_known_family_auto_creates_and_starts() {
 
     // A line matching no quest and no family stays ignored, and the
     // bare umbrella line (no variant part) never creates a quest.
-    svc.start_quest_from_mission("Some Other Mission").await.unwrap();
-    svc.start_quest_from_mission("ARIS - Daily Hunting 1: ").await.unwrap();
+    svc.start_quest_from_mission("Some Other Mission")
+        .await
+        .unwrap();
+    svc.start_quest_from_mission("ARIS - Daily Hunting 1: ")
+        .await
+        .unwrap();
     assert_eq!(svc.get_quests(true).await.unwrap().len(), 1);
     let quest_rows = count_rows(&db, "SELECT COUNT(*) FROM quests").await;
     assert_eq!(quest_rows, 1);

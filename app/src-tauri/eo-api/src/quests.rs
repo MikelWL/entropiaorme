@@ -296,9 +296,7 @@ impl Quest {
             signal_loot_item: opt_string(&quest["signal_loot_item"]).into(),
             cooldown_anchor: QuestCooldownAnchor::from_service(&quest["cooldown_anchor"]),
             last_started_at: opt_f64(&quest["last_started_at"]).into(),
-            family_id: opt_i64(&quest["family_id"])
-                .map(|id| id.to_string())
-                .into(),
+            family_id: opt_i64(&quest["family_id"]).map(|id| id.to_string()).into(),
             family_name: opt_string(&quest["family_name"]).into(),
             family_cooldown_duration_hours: opt_f64(&quest["family_cooldown_hours"]).into(),
             family_cooldown_anchor: quest
