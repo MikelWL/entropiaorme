@@ -3,6 +3,19 @@
 	import { PLANETS, type CooldownUnit, type QuestsModel } from './questsModel.svelte';
 
 	let { model }: { model: QuestsModel } = $props();
+
+	// Visible auto-attach: while creating and until the family select is
+	// touched, a name reading "Family: Variant" keeps the select on its
+	// matching family, so membership is suggested in the open form rather
+	// than applied invisibly on save.
+	$effect(() => {
+		if (!model.showQuestModal || model.editingQuest || model.familySelectTouched) return;
+		model.questForm.family_id = model.familyMatchForName(model.questForm.name)?.id ?? null;
+	});
+
+	const selectedFamily = $derived(
+		model.families.find((f) => f.id === model.questForm.family_id) ?? null,
+	);
 </script>
 
 <Modal bind:open={model.showQuestModal} title={model.editingQuest ? 'Edit Quest' : 'New Quest'} class="max-w-lg">
@@ -87,6 +100,50 @@
 						class="font-mono"
 						placeholder="/wp [Planet, Lon, Lat, Alt]" />
 				</div>
+				{#if (model.cooldownInput ?? 0) > 0}
+					<!-- The anchor decides WHEN the quest's own timer starts;
+						 the observed daily behaviour starts it at collection,
+						 not completion, so getting this wrong misreports
+						 availability for a whole cycle. -->
+					<div class="col-span-2">
+						<div class="block text-xs text-text-secondary mb-1">Cooldown starts</div>
+						<SegmentedControl
+							size="md"
+							options={[
+								{ id: 'completion', label: 'On completion' },
+								{ id: 'pickup', label: 'On pickup' }
+							]}
+							active={model.questForm.cooldown_anchor}
+							onchange={(id) => (model.questForm.cooldown_anchor = id as 'pickup' | 'completion')}
+						/>
+						<p class="text-[11px] text-text-secondary/70 mt-1">
+							{#if model.questForm.cooldown_anchor === 'pickup'}
+								Timer runs from when the mission is collected; abandoning or completing it does not restart the wait.
+							{:else}
+								Timer runs from when the quest completes.
+							{/if}
+						</p>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Family: variants of one repeatable slot cool as a unit. -->
+			<div>
+				<label class="block text-xs text-text-secondary mb-1" for="q-family">Family</label>
+				<Select id="q-family" bind:value={model.questForm.family_id}
+					onchange={() => (model.familySelectTouched = true)}>
+					<option value={null}>None (standalone)</option>
+					{#each model.families as family (family.id)}
+						<option value={family.id}>{family.name}</option>
+					{/each}
+				</Select>
+				<p class="text-[11px] text-text-secondary/70 mt-1">
+					{#if selectedFamily}
+						Availability follows the family: completing or collecting any variant gates every sibling{#if selectedFamily.cooldownDurationHours}&nbsp;for {selectedFamily.cooldownDurationHours}h from {selectedFamily.cooldownAnchor === 'pickup' ? 'pickup' : 'completion'}{/if}.
+					{:else}
+						Optional. Rotating variants of one repeatable slot ("Family: Variant" names match automatically) share the family's cooldown.
+					{/if}
+				</p>
 			</div>
 
 			<!-- Signal loot: set makes this a signal-completed quest (an

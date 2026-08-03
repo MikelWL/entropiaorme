@@ -3,10 +3,11 @@ import type { GuideSurface } from '../types';
 
 /** Quests-surface demoApi method names (declared here for documentation). */
 type QuestsDemoApi = {
-	setView(view: 'quests' | 'playlists' | 'analytics'): void;
+	setView(view: 'quests' | 'families' | 'playlists' | 'analytics'): void;
 	openNewQuestModal(): void;
 	closeNewQuestModal(): void;
 	closePlaylistModal(): void;
+	closeFamilyModal(): void;
 };
 
 function questsApi(): Partial<QuestsDemoApi> {
@@ -21,6 +22,7 @@ export const questsSurface: GuideSurface = {
 		api.setView?.('quests');
 		api.closeNewQuestModal?.();
 		api.closePlaylistModal?.();
+		api.closeFamilyModal?.();
 	},
 	steps: [
 		{
@@ -69,6 +71,24 @@ export const questsSurface: GuideSurface = {
 			},
 		},
 		{
+			id: 'families-overview',
+			anchor: () =>
+				document.querySelector<HTMLElement>('[data-guide-anchor="quests-families-view"]'),
+			prose: {
+				title: 'Families',
+				body: 'A family groups the rotating variants of one repeatable slot (a daily whose giver hands out a different variant each day) so they share one cooldown: doing any variant gates every sibling. The timer can run from pickup (collecting at the giver) or completion, and a newly received variant attaches to its family automatically.',
+			},
+			async play({ demoApi, wait }) {
+				const api = demoApi as Partial<QuestsDemoApi>;
+				api.closeNewQuestModal?.();
+				api.setView?.('families');
+				await wait(500);
+			},
+			resetDemo() {
+				questsApi().setView?.('quests');
+			},
+		},
+		{
 			id: 'playlists-overview',
 			anchor: () =>
 				document.querySelector<HTMLElement>('[data-guide-anchor="quests-playlists-view"]'),
@@ -78,7 +98,6 @@ export const questsSurface: GuideSurface = {
 			},
 			async play({ demoApi, wait }) {
 				const api = demoApi as Partial<QuestsDemoApi>;
-				api.closeNewQuestModal?.();
 				api.setView?.('playlists');
 				await wait(500);
 			},
@@ -90,7 +109,7 @@ export const questsSurface: GuideSurface = {
 			id: 'analytics-tip',
 			prose: {
 				title: 'Quest analytics',
-				body: 'Tip: When tracking a session, start tracking right before a quest/playlist, and finish tracking right after completing the quest/playlist. If the session matches a single quest/playlist, your overlay will suggest if you want to link that session to the given quest/playlist. That enables quest/playlist analytics.',
+				body: 'Tip: While tracking, declare which quest your play is toward from the overlay quest picker. Analytics aggregate the sessions that recorded a declared stretch of a quest, so the picker is what turns gameplay into quest and playlist economics.',
 			},
 			async play({ demoApi, wait }) {
 				const api = demoApi as Partial<QuestsDemoApi>;

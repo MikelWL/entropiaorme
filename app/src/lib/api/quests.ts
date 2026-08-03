@@ -4,7 +4,14 @@
  * commands; argument shaping (string ids onto numeric commands) only.
  */
 
-import type { PlaylistInput, Quest, QuestInput, QuestPlaylist } from './commands.gen';
+import type {
+	PlaylistInput,
+	Quest,
+	QuestFamily,
+	QuestFamilyInput,
+	QuestInput,
+	QuestPlaylist,
+} from './commands.gen';
 import * as commands from './commands.gen';
 
 export const getQuests = commands.questsList;
@@ -13,6 +20,16 @@ export const getPlaylistAnalytics = commands.playlistsAnalytics;
 export const getPlaylists = commands.playlistsList;
 export const createQuest = commands.questCreate;
 export const createPlaylist = commands.playlistCreate;
+export const getQuestFamilies = commands.questFamiliesList;
+export const createQuestFamily = commands.questFamilyCreate;
+
+export async function updateQuestFamily(id: string, data: QuestFamilyInput): Promise<QuestFamily> {
+	return commands.questFamilyUpdate(Number(id), data);
+}
+
+export async function deleteQuestFamily(id: string): Promise<void> {
+	await commands.questFamilyDelete(Number(id));
+}
 
 export async function getQuest(id: string): Promise<Quest> {
 	return commands.questGet(Number(id));

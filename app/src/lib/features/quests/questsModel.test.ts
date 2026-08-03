@@ -5,6 +5,7 @@ import { createQuestsModel } from './questsModel.svelte';
 vi.mock('$lib/api', () => ({
 	getQuests: vi.fn(),
 	getPlaylists: vi.fn(),
+	getQuestFamilies: vi.fn(),
 	createQuest: vi.fn(),
 	updateQuest: vi.fn(),
 	deleteQuest: vi.fn(),
@@ -41,6 +42,13 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		playlistIds: [],
 		startedAt: null,
 		signalLootItem: null,
+		cooldownAnchor: 'completion',
+		lastStartedAt: null,
+		familyId: null,
+		familyName: null,
+		familyCooldownDurationHours: null,
+		familyCooldownAnchor: null,
+		familyCooldownExpiresAt: null,
 		...overrides,
 	};
 }
@@ -51,6 +59,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mocked.getQuests.mockResolvedValue([]);
 	mocked.getPlaylists.mockResolvedValue([]);
+	mocked.getQuestFamilies.mockResolvedValue([]);
 });
 
 describe('loadData', () => {

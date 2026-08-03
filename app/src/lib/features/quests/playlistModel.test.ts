@@ -33,6 +33,13 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		playlistIds: [],
 		startedAt: null,
 		signalLootItem: null,
+		cooldownAnchor: 'completion',
+		lastStartedAt: null,
+		familyId: null,
+		familyName: null,
+		familyCooldownDurationHours: null,
+		familyCooldownAnchor: null,
+		familyCooldownExpiresAt: null,
 		...overrides,
 	};
 }

@@ -7,6 +7,7 @@
 		quest,
 		status,
 		remaining,
+		familyGated = false,
 		pendingCancelChoice,
 		remainingDetail = false,
 		onStart,
@@ -17,6 +18,9 @@
 		quest: Quest;
 		status: CooldownStatus;
 		remaining: string | null;
+		/** Cooling held ONLY by the family window: show the wait, but no
+		 * Cancel (a member action must never eat the family's timer). */
+		familyGated?: boolean;
 		/** Whether this quest is showing the Keep/Undo reward cancel choice. */
 		pendingCancelChoice: boolean;
 		/** Quest-row style two-line remaining readout; playlist items use the inline span. */
@@ -28,16 +32,30 @@
 	} = $props();
 </script>
 
-{#if status === 'cooling' && remaining}
+<!-- An in-progress quest leads: since pickup anchors landed, a started
+	 quest can be cooling at the same time (its own or its family's timer
+	 runs from the start), and Complete must stay reachable through it. -->
+{#if quest.startedAt}
+	<Button size="sm" onclick={onComplete}>
+		{#snippet children()}Complete{/snippet}
+	</Button>
+	<Button size="sm" variant="ghost" onclick={() => onCancel(false)}>
+		{#snippet children()}Cancel{/snippet}
+	</Button>
+{:else if status === 'cooling' && remaining}
 	{#if remainingDetail}
 		<div class="text-right">
 			<div class="text-xs text-warning tabular-nums font-mono">{remaining}</div>
-			<div class="text-[10px] text-text-tertiary">remaining</div>
+			<div class="text-[10px] text-text-tertiary">{familyGated ? 'family cd' : 'remaining'}</div>
 		</div>
 	{:else}
-		<span class="text-xs text-warning tabular-nums font-mono">{remaining}</span>
+		<span class="text-xs text-warning tabular-nums font-mono" title={familyGated ? 'Held by the family cooldown' : undefined}>{remaining}</span>
 	{/if}
-	{#if pendingCancelChoice}
+	{#if familyGated}
+		<!-- No Cancel: the wait belongs to the family, and resetting it is
+			 a family-level decision, not a row action. Start stays absent
+			 too: the giver will not offer this slot while it cools. -->
+	{:else if pendingCancelChoice}
 		<Button size="sm" variant="secondary" onclick={() => onCancel(false)}>
 			{#snippet children()}Keep Reward{/snippet}
 		</Button>
@@ -49,13 +67,6 @@
 			{#snippet children()}Cancel{/snippet}
 		</Button>
 	{/if}
-{:else if quest.startedAt}
-	<Button size="sm" onclick={onComplete}>
-		{#snippet children()}Complete{/snippet}
-	</Button>
-	<Button size="sm" variant="ghost" onclick={() => onCancel(false)}>
-		{#snippet children()}Cancel{/snippet}
-	</Button>
 {:else}
 	<Button size="sm" variant="secondary" onclick={onStart}>
 		{#snippet children()}Start{/snippet}

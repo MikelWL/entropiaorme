@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { Button, Menu } from '$lib/components';
 	import type { Quest } from '$lib/types';
-	import { formatCooldownHours, getCooldownRemaining, getCooldownStatus } from './cooldown';
+	import {
+		formatCooldownHours,
+		getCooldownGate,
+		getCooldownRemaining,
+		getCooldownStatus,
+	} from './cooldown';
 	import QuestActions from './QuestActions.svelte';
 	import type { QuestsModel } from './questsModel.svelte';
 
@@ -9,6 +14,7 @@
 
 	const status = $derived(getCooldownStatus(quest, now));
 	const remaining = $derived(getCooldownRemaining(quest, now));
+	const familyGated = $derived(getCooldownGate(quest, now) === 'family');
 </script>
 
 <div class="bg-surface-raised/50 rounded-lg border border-border/50 hover:bg-surface-raised/70 transition-colors px-4 py-2.5">
@@ -39,6 +45,9 @@
 						onclick={() => model.copyWaypoint(quest.id, quest.waypoint!)}
 					>{model.copiedWp === quest.id ? 'Copied!' : 'WP'}</button>
 				{/if}
+				{#if quest.familyName}
+					<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-surface text-text-tertiary border border-border/50">{quest.familyName}</span>
+				{/if}
 				{#each quest.targetMobs as mob}
 					<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent/70 border border-accent/20">{mob}</span>
 				{/each}
@@ -51,11 +60,17 @@
 					</span>
 					<span>{quest.rewardIsSkill ? 'PES' : 'PED'}</span>
 				{/if}
-				{#if quest.reward && quest.cooldownDurationHours}
+				{#if quest.reward && (quest.cooldownDurationHours || quest.familyCooldownDurationHours)}
 					<span class="text-text-tertiary/50">|</span>
 				{/if}
 				{#if quest.cooldownDurationHours}
-					<span>CD: {formatCooldownHours(quest.cooldownDurationHours)}</span>
+					<span>CD: {formatCooldownHours(quest.cooldownDurationHours)}{quest.cooldownAnchor === 'pickup' ? ' from pickup' : ''}</span>
+				{/if}
+				{#if quest.cooldownDurationHours && quest.familyCooldownDurationHours}
+					<span class="text-text-tertiary/50">|</span>
+				{/if}
+				{#if quest.familyCooldownDurationHours}
+					<span>Family CD: {formatCooldownHours(quest.familyCooldownDurationHours)}{quest.familyCooldownAnchor === 'pickup' ? ' from pickup' : ''}</span>
 				{/if}
 			</div>
 		</div>
@@ -66,6 +81,7 @@
 				{quest}
 				{status}
 				{remaining}
+				{familyGated}
 				remainingDetail
 				pendingCancelChoice={model.pendingCancelChoiceQuestId === quest.id}
 				onStart={() => model.handleStart(quest.id)}

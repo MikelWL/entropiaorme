@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PlaylistItemGroup, Quest } from '$lib/types';
-	import { getCooldownRemaining, getCooldownStatus } from './cooldown';
+	import { getCooldownGate, getCooldownRemaining, getCooldownStatus } from './cooldown';
 	import QuestActions from './QuestActions.svelte';
 	import type { QuestsModel } from './questsModel.svelte';
 
@@ -19,6 +19,7 @@
 
 	const status = $derived(getCooldownStatus(item.quest, now));
 	const remaining = $derived(getCooldownRemaining(item.quest, now));
+	const familyGated = $derived(getCooldownGate(item.quest, now) === 'family');
 </script>
 
 {#if item.description}
@@ -50,6 +51,7 @@
 			quest={item.quest}
 			{status}
 			{remaining}
+			{familyGated}
 			pendingCancelChoice={model.pendingCancelChoiceQuestId === item.quest.id}
 			onStart={() => model.handleStart(item.quest.id)}
 			onComplete={() => model.handleComplete(item.quest.id)}
