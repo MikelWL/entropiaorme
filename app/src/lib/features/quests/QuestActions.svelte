@@ -32,9 +32,9 @@
 	} = $props();
 </script>
 
-<!-- An in-progress quest leads: since pickup anchors landed, a started
-	 quest can be cooling at the same time (its own or its family's timer
-	 runs from the start), and Complete must stay reachable through it. -->
+<!-- An in-progress quest leads: under a pickup anchor a started quest
+	 can be cooling at the same time (its own or its family's timer runs
+	 from the start), and Complete must stay reachable through it. -->
 {#if quest.startedAt}
 	<Button size="sm" onclick={onComplete}>
 		{#snippet children()}Complete{/snippet}

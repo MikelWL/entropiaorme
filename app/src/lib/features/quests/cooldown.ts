@@ -3,11 +3,11 @@
  * instant is always passed in as `now` (epoch milliseconds), so the functions
  * are directly testable and the caller owns the ticking.
  *
- * Availability has TWO gates since quest families landed: the quest's own
- * cooldown window and its family's window (variants of one repeatable slot
- * cool as a unit). A quest is cooling while EITHER window is open; the two
- * are kept distinguishable because only the OWN window is cancellable from
- * a quest row (a member action must never eat the family's timer).
+ * Availability has TWO gates: the quest's own cooldown window and its
+ * family's window (variants of one repeatable slot cool as a unit). A
+ * quest is cooling while EITHER window is open; the two are kept
+ * distinguishable because only the OWN window is cancellable from a
+ * quest row (a member action must never eat the family's timer).
  */
 
 import type { Quest } from '$lib/types';
