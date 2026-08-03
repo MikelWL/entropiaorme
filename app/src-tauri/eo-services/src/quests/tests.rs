@@ -222,8 +222,11 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
             "chain_position": null, "chain_total": null, "started_at": null,
             "is_active": 1, "created_at": 1000.0, "category": null,
             "reward_description": null, "updated_at": 1000.0, "signal_loot_item": null,
-            "last_completed_at": null,
-            "cooldown_expires_at": null, "mobs": [], "playlist_ids": [],
+            "family_id": null, "cooldown_anchor": "completion", "last_started_at": null,
+            "family_name": null, "family_cooldown_hours": null,
+            "family_cooldown_anchor": null, "last_completed_at": null,
+            "cooldown_expires_at": null, "family_cooldown_expires_at": null,
+            "mobs": [], "playlist_ids": [],
         })
     );
 
@@ -2075,4 +2078,326 @@ async fn a_signal_quest_refuses_a_fixed_reward() {
         .unwrap();
     assert_eq!(updated["reward_ped"], json!(2.0));
     assert!(updated["signal_loot_item"].is_null());
+}
+
+// ── Quest families: shared, anchor-aware cooldowns ──────────────────
+
+#[tokio::test]
+async fn family_crud_round_trips_and_validates() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    // Defaults: planet Calypso, pickup anchor, no gate, no members.
+    let family = svc
+        .create_family(&json!({"name": "  Daily Hunting 1  "}))
+        .await
+        .unwrap();
+    assert_eq!(family["name"], json!("Daily Hunting 1"), "name trims");
+    assert_eq!(family["planet"], json!("Calypso"));
+    assert_eq!(family["cooldown_anchor"], json!("pickup"));
+    assert_eq!(family["cooldown_hours"], Value::Null);
+    assert_eq!(family["member_count"], json!(0));
+    assert_eq!(family["cooldown_expires_at"], Value::Null);
+
+    // Refusals: blank name, bad anchor, non-positive hours.
+    assert!(svc.create_family(&json!({"name": "  "})).await.is_err());
+    assert!(svc
+        .create_family(&json!({"name": "X", "cooldown_anchor": "sometimes"}))
+        .await
+        .is_err());
+    assert!(svc
+        .create_family(&json!({"name": "X", "cooldown_hours": 0}))
+        .await
+        .is_err());
+
+    // Update binds present keys; absent keys keep.
+    let fid = family["id"].as_i64().unwrap();
+    let updated = svc
+        .update_family(
+            fid,
+            &json!({"cooldown_hours": 20.0, "cooldown_anchor": "completion"}),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated["name"], json!("Daily Hunting 1"));
+    assert_eq!(updated["cooldown_hours"], json!(20.0));
+    assert_eq!(updated["cooldown_anchor"], json!("completion"));
+
+    // Delete soft-deletes off the active list.
+    assert!(svc.delete_family(fid).await.unwrap());
+    assert!(!svc.delete_family(fid).await.unwrap(), "already inactive");
+    assert_eq!(svc.get_families(true).await.unwrap().len(), 0);
+    assert_eq!(svc.get_families(false).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn creating_a_family_sweeps_matching_unattached_variants() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    let a = quest_id(
+        &svc.create_quest(&json!({"name": "Daily Hunting 1: Weak Mortirex"}))
+            .await
+            .unwrap(),
+    );
+    let b = quest_id(
+        &svc.create_quest(&json!({"name": "Daily Hunting 1: Derilect Destroyer"}))
+            .await
+            .unwrap(),
+    );
+    let unrelated = quest_id(
+        &svc.create_quest(&json!({"name": "Iron Challenge"}))
+            .await
+            .unwrap(),
+    );
+    // A variant already claimed by another family is never stolen.
+    let other = svc.create_family(&json!({"name": "Daily Hunting 2"})).await.unwrap();
+    let claimed = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Daily Hunting 1: Poached",
+            "family_id": other["id"].as_i64().unwrap(),
+        }))
+        .await
+        .unwrap(),
+    );
+
+    let family = svc
+        .create_family(&json!({"name": "daily hunting 1", "cooldown_hours": 20.0}))
+        .await
+        .unwrap();
+    assert_eq!(family["member_count"], json!(2), "case-insensitive sweep");
+    let fid = family["id"].as_i64().unwrap();
+    for (id, expect) in [
+        (a, Some(fid)),
+        (b, Some(fid)),
+        (unrelated, None),
+        (claimed, Some(other["id"].as_i64().unwrap())),
+    ] {
+        let quest = svc.get_quest(id).await.unwrap().unwrap();
+        assert_eq!(quest["family_id"], json!(expect), "quest {id}");
+    }
+}
+
+#[tokio::test]
+async fn creating_a_quest_auto_attaches_by_name_only_when_family_id_is_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    let family = svc.create_family(&json!({"name": "Daily Hunting 1"})).await.unwrap();
+    let fid = family["id"].as_i64().unwrap();
+
+    // Absent key: the colon-split name attaches.
+    let auto = svc
+        .create_quest(&json!({"name": "Daily Hunting 1: Weak Mortirex"}))
+        .await
+        .unwrap();
+    assert_eq!(auto["family_id"], json!(fid));
+    assert_eq!(auto["family_name"], json!("Daily Hunting 1"));
+
+    // Present-null key: explicitly standalone, no auto-attach.
+    let standalone = svc
+        .create_quest(&json!({"name": "Daily Hunting 1: Loner", "family_id": null}))
+        .await
+        .unwrap();
+    assert_eq!(standalone["family_id"], Value::Null);
+
+    // A dangling id refuses; an update never re-attaches implicitly.
+    assert!(svc
+        .create_quest(&json!({"name": "X", "family_id": 999}))
+        .await
+        .is_err());
+    let renamed = svc
+        .update_quest(
+            quest_id(&standalone),
+            &json!({"name": "Daily Hunting 1: Renamed Loner"}),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(renamed["family_id"], Value::Null, "detached stays detached");
+}
+
+#[tokio::test]
+async fn family_cooldown_derives_from_member_instants_per_anchor() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db, clock, _bus) = service_with_clock(dir.path()).await;
+    let family = svc
+        .create_family(&json!({"name": "Daily Hunting 1", "cooldown_hours": 20.0}))
+        .await
+        .unwrap();
+    let fid = family["id"].as_i64().unwrap();
+    let a = quest_id(
+        &svc.create_quest(&json!({"name": "Daily Hunting 1: Weak Mortirex"}))
+            .await
+            .unwrap(),
+    );
+    let b = quest_id(
+        &svc.create_quest(&json!({"name": "Daily Hunting 1: Derilect Destroyer"}))
+            .await
+            .unwrap(),
+    );
+
+    // Pickup anchor: starting ANY member opens the family window on
+    // EVERY member row, from the latest member start.
+    svc.start_quest(a).await.unwrap();
+    let a_row = svc.get_quest(a).await.unwrap().unwrap();
+    let start_epoch = a_row["last_started_at"].as_f64().unwrap();
+    let expected = crate::time::to_iso_utc(start_epoch + 20.0 * 3600.0);
+    for id in [a, b] {
+        let row = svc.get_quest(id).await.unwrap().unwrap();
+        assert_eq!(row["family_id"], json!(fid));
+        assert_eq!(row["family_cooldown_anchor"], json!("pickup"));
+        assert_eq!(row["family_cooldown_expires_at"], json!(expected.clone()));
+        assert_eq!(row["cooldown_expires_at"], Value::Null, "no own gate");
+    }
+
+    // Completing the run later leaves the pickup-anchored window where
+    // the start put it; flipping the family to completion re-anchors
+    // the same window on the completion instant.
+    clock.advance(3600.0).unwrap();
+    svc.complete_quest(a).await.unwrap();
+    let row = svc.get_quest(b).await.unwrap().unwrap();
+    assert_eq!(row["family_cooldown_expires_at"], json!(expected.clone()));
+    let completion_epoch = start_epoch + 3600.0;
+    svc.update_family(fid, &json!({"cooldown_anchor": "completion"}))
+        .await
+        .unwrap()
+        .unwrap();
+    let row = svc.get_quest(b).await.unwrap().unwrap();
+    assert_eq!(
+        row["family_cooldown_expires_at"],
+        json!(crate::time::to_iso_utc(completion_epoch + 20.0 * 3600.0))
+    );
+}
+
+#[tokio::test]
+async fn start_stamps_a_durable_last_started_at_surviving_completion_and_cancel() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db, clock, _bus) = service_with_clock(dir.path()).await;
+    let q = quest_id(&svc.create_quest(&json!({"name": "Iron Challenge"})).await.unwrap());
+
+    svc.start_quest(q).await.unwrap();
+    let first_start = svc.get_quest(q).await.unwrap().unwrap()["last_started_at"]
+        .as_f64()
+        .unwrap();
+    svc.complete_quest(q).await.unwrap();
+    let row = svc.get_quest(q).await.unwrap().unwrap();
+    assert_eq!(row["started_at"], Value::Null);
+    assert_eq!(row["last_started_at"], json!(first_start), "survives completion");
+
+    clock.advance(60.0).unwrap();
+    svc.start_quest(q).await.unwrap();
+    svc.cancel_quest(q, false).await.unwrap();
+    let row = svc.get_quest(q).await.unwrap().unwrap();
+    assert_eq!(row["started_at"], Value::Null);
+    assert_eq!(
+        row["last_started_at"],
+        json!(first_start + 60.0),
+        "an abandon keeps the durable stamp (the giver's timer keeps running)"
+    );
+}
+
+#[tokio::test]
+async fn pickup_anchored_own_cooldown_cools_from_start_and_double_cancel_resets() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    let q = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Standing Contract",
+            "cooldown_hours": 20.0,
+            "cooldown_anchor": "pickup",
+        }))
+        .await
+        .unwrap(),
+    );
+
+    svc.start_quest(q).await.unwrap();
+    let row = svc.get_quest(q).await.unwrap().unwrap();
+    let start_epoch = row["last_started_at"].as_f64().unwrap();
+    assert_eq!(
+        row["cooldown_expires_at"],
+        json!(crate::time::to_iso_utc(start_epoch + 20.0 * 3600.0)),
+        "a pickup-anchored own window opens at the start itself"
+    );
+
+    // First cancel un-starts and honours the timer; the second cancel is
+    // the explicit reset, clearing the durable stamp (the pickup-anchor
+    // parallel of deleting the latest completion).
+    svc.cancel_quest(q, false).await.unwrap();
+    let row = svc.get_quest(q).await.unwrap().unwrap();
+    assert_eq!(row["started_at"], Value::Null);
+    assert!(!row["cooldown_expires_at"].is_null(), "still cooling");
+    svc.cancel_quest(q, false).await.unwrap();
+    let row = svc.get_quest(q).await.unwrap().unwrap();
+    assert_eq!(row["last_started_at"], Value::Null);
+    assert_eq!(row["cooldown_expires_at"], Value::Null, "reset to ready");
+}
+
+#[tokio::test]
+async fn a_member_cancel_never_clears_the_family_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    let family = svc
+        .create_family(&json!({"name": "Daily Hunting 1", "cooldown_hours": 20.0}))
+        .await
+        .unwrap();
+    let a = quest_id(
+        &svc.create_quest(&json!({"name": "Daily Hunting 1: Weak Mortirex"}))
+            .await
+            .unwrap(),
+    );
+
+    svc.start_quest(a).await.unwrap();
+    // Two cancels: the first un-starts; the second finds the member
+    // neither started nor own-cooling (its own anchor is 'completion'
+    // and it has no own gate), so it returns as-is. Either way the
+    // family-wide stamp survives: only the family's own management
+    // surface may move the family's timer.
+    svc.cancel_quest(a, false).await.unwrap();
+    svc.cancel_quest(a, false).await.unwrap();
+    let row = svc.get_quest(a).await.unwrap().unwrap();
+    assert!(!row["last_started_at"].is_null());
+    assert!(!row["family_cooldown_expires_at"].is_null(), "family still cooling");
+    let families = svc.get_families(true).await.unwrap();
+    assert_eq!(families[0]["id"], family["id"]);
+    assert!(!families[0]["cooldown_expires_at"].is_null());
+}
+
+#[tokio::test]
+async fn an_unknown_variant_of_a_known_family_auto_creates_and_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let family = svc
+        .create_family(&json!({"name": "ARIS - Daily Hunting 1", "planet": "ARIS", "cooldown_hours": 20.0}))
+        .await
+        .unwrap();
+
+    svc.start_quest_from_mission("ARIS - Daily Hunting 1: Weak Mortirex (Repeatable)")
+        .await
+        .unwrap();
+    let quests = svc.get_quests(true).await.unwrap();
+    assert_eq!(quests.len(), 1);
+    let created = &quests[0];
+    assert_eq!(
+        created["name"],
+        json!("ARIS - Daily Hunting 1: Weak Mortirex"),
+        "named as the line reads, repeatable suffix stripped"
+    );
+    assert_eq!(created["planet"], json!("ARIS"), "inherits the family planet");
+    assert_eq!(created["family_id"], family["id"]);
+    assert!(json_truthy(created.get("started_at")), "starts in the same motion");
+
+    // The second encounter is an exact match: no duplicate row.
+    svc.start_quest_from_mission("ARIS - Daily Hunting 1: Weak Mortirex")
+        .await
+        .unwrap();
+    assert_eq!(svc.get_quests(true).await.unwrap().len(), 1);
+
+    // A line matching no quest and no family stays ignored, and the
+    // bare umbrella line (no variant part) never creates a quest.
+    svc.start_quest_from_mission("Some Other Mission").await.unwrap();
+    svc.start_quest_from_mission("ARIS - Daily Hunting 1: ").await.unwrap();
+    assert_eq!(svc.get_quests(true).await.unwrap().len(), 1);
+    let quest_rows = count_rows(&db, "SELECT COUNT(*) FROM quests").await;
+    assert_eq!(quest_rows, 1);
 }

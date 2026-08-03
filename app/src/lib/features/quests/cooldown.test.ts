@@ -210,10 +210,7 @@ describe('family cooldown derivations', () => {
 
 	it('a gated family past its window is ready', () => {
 		expect(
-			getFamilyCooldownStatus(
-				{ cooldownDurationHours: 20, cooldownExpiresAt: expiresIn(-1) },
-				NOW,
-			),
+			getFamilyCooldownStatus({ cooldownDurationHours: 20, cooldownExpiresAt: expiresIn(-1) }, NOW),
 		).toBe('ready');
 	});
 });
