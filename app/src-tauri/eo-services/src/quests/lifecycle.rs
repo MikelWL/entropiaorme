@@ -55,7 +55,7 @@ impl QuestService {
             // an administrative fact (it is in the mission log), not a
             // declaration that the gameplay from here advances it. Bulk
             // pickup makes the two diverge; which stretches of play are
-            // toward a quest is the user's focus declaration.
+            // toward a quest is the user's own declaration.
             self.get_quest(quest_id).await
         } else {
             Ok(None)
@@ -81,13 +81,13 @@ impl QuestService {
                 Ok(())
             })
             .await?;
-        // A focused stretch of this quest (when the user declared one)
+        // A declared stretch of this quest (when the user declared one)
         // closes at the completion moment, before the reward is
         // recorded, so it bounds the quest's own play and not the
         // bookkeeping that follows it. Only this quest's stretch
-        // closes; a sibling daily's focus keeps running. With no focus
-        // declared this is a no-op.
-        self.report_focus_closed(quest_id).await;
+        // closes; a sibling daily's stretch keeps running. With no
+        // stretch declared this is a no-op.
+        self.report_stretch_closed(quest_id).await;
 
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
         if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {

@@ -84,7 +84,7 @@ pub struct Kill {
     pub is_global: bool,
     pub is_hof: bool,
     /// The session context in force when this was recorded: the set of
-    /// intervals (a focused quest stretch, a modifier declaration) it
+    /// intervals (a declared quest stretch, a modifier declaration) it
     /// belongs to. None when the row predates the interval model,
     /// never "nothing was in force".
     pub context_id: Option<i64>,
@@ -112,7 +112,7 @@ pub struct HarvestEvent {
     pub loot_total_ped: Ped,
     pub loot_items: Vec<LootItem>,
     /// The session context in force when this was recorded: the set of
-    /// intervals (a focused quest stretch, a modifier declaration) it
+    /// intervals (a declared quest stretch, a modifier declaration) it
     /// belongs to. None when the row predates the interval model,
     /// never "nothing was in force".
     pub context_id: Option<i64>,

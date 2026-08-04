@@ -333,7 +333,7 @@ impl DemoState {
         // running); the snapshot assembly is the live one, reused verbatim.
         // No definition service: the demo database predates session
         // definitions, so its primed session is an instance of none and
-        // the Activities control has only facts to offer.
+        // the Activities control has nothing at all to offer.
         let value = build_snapshot_value(
             &self.db,
             &self.tracker,

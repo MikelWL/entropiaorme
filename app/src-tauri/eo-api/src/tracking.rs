@@ -500,9 +500,11 @@ pub struct TrackingSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_activity: Option<ToolActivity>,
     /// The Activities control's strip-level readout: whether it appears
-    /// at all, the ready cue, and the standing set. Active-only by
-    /// nature (an activity exists exactly while its session runs), so
-    /// the idle branch never carries the key.
+    /// at all, the ready cue, and the standing set. Carried on every
+    /// frame, idle included, over the definition a start would stamp, so
+    /// picking a session shows what it will offer rather than making the
+    /// surface appear only once tracking begins. The standing set is
+    /// necessarily empty while idle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activities: Option<ActivitySummary>,
     #[serde(skip_serializing_if = "Option::is_none")]

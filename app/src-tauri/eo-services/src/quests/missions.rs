@@ -203,7 +203,7 @@ impl QuestService {
     /// oldest-started completes first, deterministically. No reward
     /// bookkeeping and no suppression happen here: a signal quest's
     /// reward IS the tracked loot, so completion only records the
-    /// lifecycle fact, the overlay event, and the focus close.
+    /// lifecycle fact, the overlay event, and the stretch close.
     pub async fn signal_loot_check(&self, loot: &[SignalLoot]) -> Result<(), QuestError> {
         if loot.is_empty() {
             return Ok(());
@@ -267,7 +267,7 @@ impl QuestService {
     /// suppressed echo never reaches the consumers); the completion
     /// itself is deliberately NOT here; it lands post-publish through
     /// [`mission_complete_check`](Self::mission_complete_check), so the
-    /// tick's own loot stamps into the focused stretch first.
+    /// tick's own loot stamps into the declared stretch first.
     pub async fn quest_reward_filter(
         &self,
         mission_name: &str,
@@ -283,10 +283,10 @@ impl QuestService {
 
     /// A flushed tick's mission completions, strictly AFTER the tick's
     /// publishes (the watcher's post-publish probe): match each to an
-    /// in-progress quest, complete it (closing any focused stretch),
+    /// in-progress quest, complete it (closing any declared stretch),
     /// and record the overlay event. Ordered after the publishes so the
     /// tick's own loot (the final objective kill and the payout)
-    /// stamps into the focused stretch before the completion closes it.
+    /// stamps into the declared stretch before the completion closes it.
     pub async fn mission_complete_check(
         &self,
         completions: &[MissionCompletion],

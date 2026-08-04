@@ -1946,7 +1946,7 @@ export interface QuestInput {
 	chain_position?: number | null;
 	chain_total?: number | null;
 	mobs?: string[];
-	/** The signal loot item, when set: the quest completes the moment this item arrives in a loot pickup carrying no mission completion (the instance-boss pattern), and focusing it starts it directly. Mutually exclusive with a positive `reward_ped`. */
+	/** The signal loot item, when set: the quest completes the moment this item arrives in a loot pickup carrying no mission completion (the instance-boss pattern), and declaring it starts it directly. Mutually exclusive with a positive `reward_ped`. */
 	signal_loot_item?: string | null;
 	/** The family this quest is a variant of; null (or absent) leaves it standalone. Sent explicitly by the form so a cleared select detaches; the service refuses an id that names no active family. */
 	family_id?: number | null;
@@ -2506,7 +2506,7 @@ export interface TrackingSnapshot {
 	currentTool?: string | null;
 	/** What the held tool implies the next action is recorded as. */
 	currentActivity?: ToolActivity | null;
-	/** The Activities control's strip-level readout: whether it appears at all, the ready cue, and the standing set. Active-only by nature (an activity exists exactly while its session runs), so the idle branch never carries the key. */
+	/** The Activities control's strip-level readout: whether it appears at all, the ready cue, and the standing set. Carried on every frame, idle included, over the definition a start would stamp, so picking a session shows what it will offer rather than making the surface appear only once tracking begins. The standing set is necessarily empty while idle. */
 	activities?: ActivitySummary | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;

@@ -53,8 +53,9 @@ export interface TrackingLive {
 	/** What the held tool implies the next action records as. */
 	currentActivity?: ToolActivity | null;
 	/** The Activities control's strip-level readout: whether the control
-	 * appears at all, the ready cue, and the standing set. Active-only
-	 * (an activity exists exactly while its session runs). */
+	 * appears at all, the ready cue, and the standing set. Carried on
+	 * every frame, idle included, over the session a start would run as;
+	 * the standing set is necessarily empty until one does. */
 	activities?: ActivitySummary | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
@@ -98,8 +99,9 @@ export const saveArmourCost = commands.trackingArmourCost;
  * has nothing to offer. */
 export const getActivityOptions = commands.trackingActivityOptions;
 /** Declare an activity: the one-tap switch (exclusive across quests AND
- * segments) unless additive, which co-activates instead. A blank segment
- * label is auto-numbered; a typed one is promoted into the roster. */
+ * segments) unless additive, which co-activates instead. A segment needs
+ * a name (a blank one is refused), and that name is promoted into the
+ * session's activities. */
 export const activateActivity = commands.trackingActivityActivate;
 /** End one standing activity, leaving the others running. Idempotent. */
 export const deactivateActivity = commands.trackingActivityDeactivate;

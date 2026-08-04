@@ -79,7 +79,7 @@ pub struct QuestInput {
     pub mobs: Vec<String>,
     /// The signal loot item, when set: the quest completes the moment
     /// this item arrives in a loot pickup carrying no mission
-    /// completion (the instance-boss pattern), and focusing it starts
+    /// completion (the instance-boss pattern), and declaring it starts
     /// it directly. Mutually exclusive with a positive `reward_ped`.
     #[serde(default)]
     pub signal_loot_item: Option<String>,

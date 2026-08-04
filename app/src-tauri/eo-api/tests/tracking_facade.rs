@@ -732,7 +732,7 @@ async fn the_session_intervals_read_counts_by_context_membership() {
     assert_eq!(segment.harvests, 0);
 }
 
-/// A helper for the quest-focus tests: an active quest in the catalogue,
+/// A helper for the activity tests: an active quest in the catalogue,
 /// optionally started (in progress). Built through the facade's own
 /// commands so the pin covers the real path.
 async fn seed_quest(api: &Api, name: &str, started: bool) -> i64 {

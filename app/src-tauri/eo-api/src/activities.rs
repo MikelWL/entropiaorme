@@ -21,9 +21,11 @@
 //! Declaring no activities and leaving self-named segments off IS the
 //! choice of a simple session, and it is honoured with no activity
 //! surface at all: the seeded default is exactly that, so a new player
-//! meets no options they have no use for yet. It is likewise absent
-//! while idle, because every declaration here is "from now on" and
-//! there is no now to declare into until a session runs.
+//! meets no options they have no use for yet. It is present at rest,
+//! though, over the session a start would run as: picking a session
+//! should show what it will offer rather than making the surface appear
+//! only once tracking begins. Nothing is standing then and nothing can
+//! be declared, which is the caller's to render.
 //!
 //! **A family stands for whichever variant the day serves.** A family
 //! roster entry resolves to its in-progress member and acts on that

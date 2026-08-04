@@ -494,9 +494,7 @@ impl TrackerActor {
             ActivityRef::Quest { quest_id, name } => {
                 (IntervalKind::Quest, Some(*quest_id), name.clone())
             }
-            ActivityRef::Segment { name } => {
-                (IntervalKind::Segment, None, name.trim().to_string())
-            }
+            ActivityRef::Segment { name } => (IntervalKind::Segment, None, name.trim().to_string()),
         };
 
         let standing = match kind {
