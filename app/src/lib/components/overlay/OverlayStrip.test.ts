@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatId } from '$lib/statsRegistry';
 import { getStatDef } from '$lib/statsRegistry';
+import { NO_DATA } from '$lib/utils/format';
 
 // The strip renders from props plus the overlayStats customisation state; the
 // state module is the one side-effecting seam (the real module pulls in the
@@ -487,7 +488,6 @@ describe('post-session bar', () => {
 });
 
 describe('activities control', () => {
-	/** The strip-level readout, as the tracking frame carries it. */
 	function activities(overrides: Partial<NonNullable<TrackingLive['activities']>> = {}) {
 		return {
 			visible: true,
@@ -505,9 +505,17 @@ describe('activities control', () => {
 		expect(screen.queryByTestId('activities-facet')).toBeNull();
 	});
 
-	it('is absent while idle: there is no now to declare into', () => {
+	it('is absent when the frame carries no readout at all', () => {
 		render(OverlayStrip, { props: { data: liveData({ status: 'idle' }) } });
 		expect(screen.queryByTestId('activities-facet')).toBeNull();
+	});
+
+	it('shows what the session will offer before tracking starts', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'idle', activities: activities({ readyCount: 3 }) }) },
+		});
+		expect(screen.getByTestId('activities-facet')).toBeTruthy();
+		expect(screen.getByText('3 ready')).toBeTruthy();
 	});
 
 	it('shows how many rows a tap could start when nothing is recording', () => {
@@ -521,7 +529,7 @@ describe('activities control', () => {
 		render(OverlayStrip, {
 			props: { data: liveData({ status: 'active', activities: activities() }) },
 		});
-		expect(screen.getByTestId('activities-facet').textContent).toContain('\u2014');
+		expect(screen.getByTestId('activities-facet').textContent).toContain(NO_DATA);
 	});
 
 	it('shows every standing activity as its own chip, whichever kind it is', () => {

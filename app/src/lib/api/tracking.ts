@@ -100,8 +100,9 @@ export const saveArmourCost = commands.trackingArmourCost;
 export const getActivityOptions = commands.trackingActivityOptions;
 /** Declare an activity: the one-tap switch (exclusive across quests AND
  * segments) unless additive, which co-activates instead. A segment needs
- * a name (a blank one is refused), and that name is promoted into the
- * session's activities. */
+ * a name (a blank one is refused); the name joins the session's own
+ * activities only where that session opted into naming them as it
+ * plays, and is simply recorded otherwise. */
 export const activateActivity = commands.trackingActivityActivate;
 /** End one standing activity, leaving the others running. Idempotent. */
 export const deactivateActivity = commands.trackingActivityDeactivate;

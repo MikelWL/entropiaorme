@@ -42,8 +42,10 @@ export function createActivitiesModel(deps: ActivitiesModelDeps) {
 	// The last fetched offerings. Null until the control is first
 	// opened; the strip renders from the snapshot meanwhile.
 	let options = $state<ActivityOptionsResult | null>(null);
-	// The in-flight guard for a declaration (the menu disables while one
-	// lands, so a double tap cannot open two stretches).
+	// The in-flight guard for a declaration. Enforced in `write`, not
+	// merely reported: the menu is a satellite window whose rows stay
+	// clickable while a write lands, so a second tap would otherwise
+	// race the first on the tracker's standing set.
 	let saving = $state(false);
 	// One channel for every failure, surfaced beside the control rather
 	// than swallowed.
@@ -69,6 +71,7 @@ export function createActivitiesModel(deps: ActivitiesModelDeps) {
 	/** Run a write, then refresh the snapshot and the offerings so the
 	 * menu re-presents with the standing set it produced. */
 	async function write(action: () => Promise<unknown>, fallback: string): Promise<boolean> {
+		if (saving) return false;
 		saving = true;
 		error = null;
 		try {

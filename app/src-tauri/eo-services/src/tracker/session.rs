@@ -490,22 +490,24 @@ impl TrackerActor {
         };
         let session_id = active.session.id.clone();
 
-        let (kind, ref_id, label) = match &activity {
-            ActivityRef::Quest { quest_id, name } => {
-                (IntervalKind::Quest, Some(*quest_id), name.clone())
+        // One match over the declaration, so what identifies the target
+        // and what the interval records cannot drift apart.
+        let (kind, ref_id, label, standing) = match &activity {
+            ActivityRef::Quest { quest_id, name } => (
+                IntervalKind::Quest,
+                Some(*quest_id),
+                name.clone(),
+                active.intervals.open_of_ref(IntervalKind::Quest, *quest_id),
+            ),
+            ActivityRef::Segment { name } => {
+                let label = name.trim().to_string();
+                let standing = active
+                    .intervals
+                    .open_of_label(IntervalKind::Segment, &label);
+                (IntervalKind::Segment, None, label, standing)
             }
-            ActivityRef::Segment { name } => (IntervalKind::Segment, None, name.trim().to_string()),
         };
-
-        let standing = match kind {
-            IntervalKind::Quest => active
-                .intervals
-                .open_of_ref(IntervalKind::Quest, ref_id.unwrap_or_default()),
-            _ => active
-                .intervals
-                .open_of_label(IntervalKind::Segment, &label),
-        }
-        .map(|interval| interval.id);
+        let standing = standing.map(|interval| interval.id);
 
         if let Some(keep_id) = standing {
             if !additive {

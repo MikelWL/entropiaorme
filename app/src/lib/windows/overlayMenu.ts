@@ -67,6 +67,11 @@ export interface OverlayActivitiesMenuState {
 	/** No session is running, so the rows show what this session WILL
 	 * offer and none of them can be declared yet. */
 	idle: boolean;
+	/** The name typed but not yet recorded, so a re-presented menu
+	 * restores it. The model owns the buffer; the panel's input is a
+	 * view of it, or a refused declaration would silently eat what was
+	 * typed. */
+	segmentDraft: string;
 }
 
 export type OverlayMenuSelection =
@@ -162,6 +167,7 @@ export function buildActivitiesMenuState(
 	anchorWidth: number,
 	options: ActivityOptionsResult,
 	idle: boolean,
+	segmentDraft: string,
 ): OverlayActivitiesMenuState {
 	const labels = options.options.map((option) => option.name);
 	return {
@@ -170,5 +176,6 @@ export function buildActivitiesMenuState(
 		options: options.options,
 		adHocSegments: options.adHocSegments,
 		idle,
+		segmentDraft,
 	};
 }

@@ -128,6 +128,38 @@ describe('declaring an activity', () => {
 		expect(deps.activateSegment).toHaveBeenCalledWith('Warm-up', false);
 	});
 
+	it('acts on the variant a family row resolved to, not on the family', async () => {
+		const { model, deps } = harness();
+
+		await model.toggle(
+			option({
+				key: 'quest_family:3',
+				kind: 'quest_family',
+				name: 'ARIS - Daily Hunting 1: Weak Mortirex',
+				questId: 42,
+			}),
+		);
+
+		expect(deps.activateQuest).toHaveBeenCalledWith(42, false);
+	});
+
+	it('declares nothing for a family row with no variant in play', async () => {
+		const { model, deps } = harness();
+
+		expect(
+			await model.toggle(
+				option({
+					key: 'quest_family:3',
+					kind: 'quest_family',
+					name: 'ARIS - Daily Hunting 1',
+					questId: null,
+					available: false,
+				}),
+			),
+		).toBe(false);
+		expect(deps.activateQuest).not.toHaveBeenCalled();
+	});
+
 	it('surfaces a refused declaration instead of swallowing it', async () => {
 		const { model } = harness({
 			activateQuest: vi.fn(async () => {

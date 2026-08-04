@@ -1148,14 +1148,21 @@ async fn stored_roster(
         .roster
 }
 
-/// Author a quest family and answer its numeric id.
+/// Author a quest family (pickup-anchored, the daily's own shape) and
+/// answer its numeric id.
 async fn seed_family(api: &Api, name: &str, cooldown_hours: f64) -> i64 {
+    seed_family_anchored(api, name, cooldown_hours, "pickup").await
+}
+
+/// [`seed_family`] with the cooldown anchor named, for the tests that
+/// turn on which instant the gate runs from.
+async fn seed_family_anchored(api: &Api, name: &str, cooldown_hours: f64, anchor: &str) -> i64 {
     let family = api
         .quest_family_create(
             serde_json::from_value(serde_json::json!({
                 "name": name,
                 "cooldown_hours": cooldown_hours,
-                "cooldown_anchor": "pickup",
+                "cooldown_anchor": anchor,
             }))
             .expect("family input shape"),
         )
@@ -1202,6 +1209,8 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
     // And a daily the mission log carries that nobody rostered.
     seed_quest(&api, "ARIS - Daily Samples", true).await;
 
+    // Authored family-then-segment; alphabetically the segment leads, so
+    // the assertion below can tell the two orders apart.
     let definition_id = seed_definition(
         &api,
         &selection,
@@ -1210,7 +1219,7 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
             "ad_hoc_segments": true,
             "roster": [
                 { "kind": "quest_family", "ref_id": family_id },
-                { "kind": "segment", "label": "Warm-up" },
+                { "kind": "segment", "label": "A warm-up lap" },
             ],
         }),
     )
@@ -1228,15 +1237,15 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
     assert_eq!(
         rows,
         vec![
+            ("A warm-up lap", true, false),
             // The family row names the variant in play, because that is
             // what a tap records.
             ("ARIS - Daily Hunting 1: Weak Mortirex", true, false),
-            ("Warm-up", true, false),
         ],
-        "the roster, in the order it was authored, and nothing else"
+        "what the session offers, alphabetically, and nothing else"
     );
     assert_eq!(
-        options.options[0].quest_id,
+        options.options[1].quest_id,
         Some(today),
         "the family acts on its serving variant"
     );
@@ -1263,8 +1272,8 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
         .collect();
     assert_eq!(
         names,
-        vec!["ARIS - Daily Hunting 1", "Warm-up", "Boss lap"],
-        "the typed name was appended to the authored roster"
+        vec!["ARIS - Daily Hunting 1", "A warm-up lap", "Boss lap"],
+        "the typed name was appended to the stored roster"
     );
 
     // Declaring it again does not duplicate the chip.
@@ -1292,7 +1301,10 @@ async fn a_family_with_no_variant_in_play_is_offered_but_not_available() {
     let dir = tempfile::tempdir().unwrap();
     let (api, selection) = make_api_with_selection(dir.path(), "ARIS Dailies").await;
 
-    let family_id = seed_family(&api, "ARIS - Daily Hunting 2", 20.0).await;
+    // Completion-anchored on purpose: under the pickup anchor the family
+    // would already be cooling from the variant's own start, and the
+    // completion below would prove nothing.
+    let family_id = seed_family_anchored(&api, "ARIS - Daily Hunting 2", 20.0, "completion").await;
     seed_definition(
         &api,
         &selection,

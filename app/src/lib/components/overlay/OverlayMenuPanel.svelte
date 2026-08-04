@@ -27,7 +27,14 @@
 		}, { intervalMs: 1000 })
 	);
 
+	// A view of the model's buffer, not a second copy of it: each
+	// presentation restores what was typed, so a refused declaration
+	// hands the name back rather than eating it.
 	let segmentDraft = $state('');
+	$effect(() => {
+		if (menuState.kind !== 'activities') return;
+		segmentDraft = menuState.segmentDraft;
+	});
 
 	/** What a row says about itself on its right: the standing state, or
 	 * why it cannot be declared (with the gate counted down where there
@@ -38,6 +45,7 @@
 		if (option.active) return 'Recording';
 		if (option.available) return null;
 		const left = option.availableFrom === null ? null : formatTimeUntil(option.availableFrom, now);
+		if (!option.unavailableReason) return left;
 		return left ? `${option.unavailableReason} · ${left}` : option.unavailableReason;
 	}
 
@@ -51,8 +59,9 @@
 	function declareTyped() {
 		const label = segmentDraft.trim();
 		if (!label) return;
+		// Cleared by the re-presentation when the write lands, and
+		// restored by it when the write is refused.
 		onActivitySelect({ kind: 'activities', action: 'declare', label });
-		segmentDraft = '';
 	}
 </script>
 

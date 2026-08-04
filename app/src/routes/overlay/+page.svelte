@@ -400,6 +400,7 @@
 			anchor.getBoundingClientRect().width,
 			options,
 			data.status !== 'active',
+			activities.segmentDraft,
 		);
 		activitiesAnchor = anchor;
 		await showOverlayMenu('activities', anchor, state, { focusPopup: true });
@@ -420,11 +421,14 @@
 	 * anchor. */
 	async function handleActivityAction(action: () => Promise<unknown>) {
 		await action();
-		if (activities.error) facets.facetError = activities.error;
-		if (overlayMenuKind !== 'activities' || !activitiesAnchor || !activitiesAnchor.isConnected) {
-			return;
+		// Held across the re-present: re-opening the menu re-reads the
+		// offerings, and a successful read clears the error channel that
+		// the refusal just wrote to.
+		const failure = activities.error;
+		if (overlayMenuKind === 'activities' && activitiesAnchor?.isConnected) {
+			await openActivitiesMenu(activitiesAnchor);
 		}
-		await openActivitiesMenu(activitiesAnchor);
+		if (failure) facets.facetError = failure;
 	}
 
 	/** The row an Activities selection names, matched on the key the menu
