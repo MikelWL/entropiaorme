@@ -50,7 +50,6 @@
 		onMobBlur = noop,
 		onMobKeydown = noop,
 		onDefinitionTrigger = noop,
-		onClearDefinition = noop,
 		onBoostCommit = noop,
 		onSegmentCommit = noop,
 		onSegmentBlur = noop,
@@ -99,7 +98,6 @@
 		onMobBlur?: () => void;
 		onMobKeydown?: (event: KeyboardEvent) => void | Promise<void>;
 		onDefinitionTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
-		onClearDefinition?: () => void | Promise<void>;
 		onBoostCommit?: () => void | Promise<void>;
 		onSegmentCommit?: () => void | Promise<void>;
 		onSegmentBlur?: () => void | Promise<void>;
@@ -254,18 +252,9 @@
 								<span class="text-white/40">Pick...</span>
 							{/if}
 						</button>
-						{#if data.sessionName}
-							<button
-								type="button"
-								class="release-btn shrink-0"
-								aria-label="Clear session"
-								disabled={savingDefinition || !definitionEditable}
-								onclick={onClearDefinition}
-								title="Clear session"
-							>
-								{savingDefinition ? '...' : 'x'}
-							</button>
-						{/if}
+						<!-- No clear: a session always runs under a definition, so
+							 "nothing in particular" is picked from the menu (the
+							 protected default) rather than emptied here. -->
 					{/if}
 				</div>
 			</div>

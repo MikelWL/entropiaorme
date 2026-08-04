@@ -102,6 +102,11 @@ pub struct SessionDefinition {
     pub name: String,
     pub ad_hoc_segments: bool,
     pub is_active: bool,
+    /// A definition that must not be deleted: tracking always has one
+    /// to be an instance of, and this is the one that guarantees it.
+    /// Protection is about existence, not identity: the row is renamed
+    /// and rostered like any other.
+    pub is_protected: bool,
     pub created_at: f64,
     pub updated_at: Option<f64>,
     pub instance_count: i64,
@@ -126,7 +131,8 @@ pub struct SessionDefinitionService {
 }
 
 const DEFINITION_SELECT: &str = "\
-    SELECT d.id, d.name, d.ad_hoc_segments, d.is_active, d.created_at, d.updated_at, \
+    SELECT d.id, d.name, d.ad_hoc_segments, d.is_active, d.is_protected, \
+           d.created_at, d.updated_at, \
            (SELECT COUNT(*) FROM tracking_sessions s \
             WHERE s.definition_id = d.id) AS instance_count \
     FROM session_definitions d";
@@ -297,6 +303,24 @@ impl SessionDefinitionService {
     /// stamp is recorded history, and the id stays addressable for a
     /// future read over an inactive definition.
     pub async fn delete(&self, definition_id: i64) -> Result<bool, SessionDefinitionError> {
+        let protected = self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM session_definitions \
+                     WHERE id = ? AND is_active = 1 AND is_protected = 1",
+                    rusqlite::params![definition_id],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await?
+            > 0;
+        if protected {
+            return Err(SessionDefinitionError::Invalid(
+                "This session cannot be deleted; tracking always needs one to run under"
+                    .to_string(),
+            ));
+        }
         Ok(self
             .db
             .with_writer(move |conn| {
@@ -427,6 +451,49 @@ impl SessionDefinitionService {
     }
 }
 
+/// The definition a session is (or would be) an instance of: the
+/// configured selection while it is still active, otherwise the
+/// protected default. Returns the name alongside the id because both
+/// callers stamp or display the two together.
+///
+/// This is where "nothing chosen" stops being a hole. Settings live in
+/// a JSON file, so a fresh install has no selection to read; rather
+/// than backfill one, both the idle snapshot and session start resolve
+/// through here, and the snapshot therefore shows exactly what a start
+/// would stamp. `None` only when no protected definition exists (a
+/// database built by a harness that predates the seeding migration).
+pub async fn resolve_selection(
+    db: &Db,
+    configured: Option<i64>,
+) -> Result<Option<(i64, String)>, DbError> {
+    db.with_reader(move |conn| {
+        use rusqlite::OptionalExtension as _;
+        if let Some(id) = configured {
+            let selected = conn
+                .query_row(
+                    "SELECT id, name FROM session_definitions \
+                     WHERE id = ? AND is_active = 1",
+                    rusqlite::params![id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            if selected.is_some() {
+                return Ok(selected);
+            }
+        }
+        Ok(conn
+            .query_row(
+                "SELECT id, name FROM session_definitions \
+                 WHERE is_active = 1 AND is_protected = 1 \
+                 ORDER BY id ASC LIMIT 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?)
+    })
+    .await
+}
+
 /// One definition header row (roster filled in by the caller).
 fn row_to_definition(row: &rusqlite::Row) -> Result<SessionDefinition, rusqlite::Error> {
     Ok(SessionDefinition {
@@ -434,6 +501,7 @@ fn row_to_definition(row: &rusqlite::Row) -> Result<SessionDefinition, rusqlite:
         name: row.get("name")?,
         ad_hoc_segments: row.get::<_, i64>("ad_hoc_segments")? != 0,
         is_active: row.get::<_, i64>("is_active")? != 0,
+        is_protected: row.get::<_, i64>("is_protected")? != 0,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         instance_count: row.get("instance_count")?,

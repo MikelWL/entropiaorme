@@ -441,7 +441,10 @@
 			<!-- Footer: destructive on the left, the exits on the right -->
 			<div class="mt-auto flex items-center justify-between gap-3 pt-2">
 				<div>
-					{#if editing}
+					<!-- A protected session is the one tracking always has to run
+						 under, so it offers no delete; everything else about it is
+						 editable. The service refuses the delete too. -->
+					{#if editing && !model.editingProtected}
 						<Button
 							size="sm"
 							variant="danger"

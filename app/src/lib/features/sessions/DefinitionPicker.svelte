@@ -96,20 +96,6 @@
 					</div>
 				{/each}
 
-				{#if selectedId !== null}
-					<button
-						type="button"
-						role="menuitem"
-						class="mt-1 w-full rounded border-t border-border/50 px-2 py-2 text-left text-sm
-							cursor-pointer text-text-secondary hover:bg-surface-hover hover:text-text"
-						onclick={() => {
-							void model.select(null);
-							close();
-						}}
-					>
-						None
-					</button>
-				{/if}
 			{/snippet}
 		</Menu>
 	{/if}

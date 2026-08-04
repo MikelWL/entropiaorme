@@ -82,12 +82,15 @@ fn segment(label: &str) -> SessionRosterEntryInput {
     }
 }
 
+/// Pin a definition's authored stamp, oldest id first, so list order is
+/// deterministic under the byte-for-byte assertions.
 async fn pin_timestamps(db: &Db, definition_id: i64) {
+    let stamp = 1000.0 * definition_id as f64;
     db.with_writer(move |conn| {
         conn.execute(
-            "UPDATE session_definitions SET created_at = 1000.0, updated_at = NULL \
+            "UPDATE session_definitions SET created_at = ?, updated_at = NULL \
              WHERE id = ?",
-            rusqlite::params![definition_id],
+            rusqlite::params![stamp, definition_id],
         )?;
         Ok(())
     })
@@ -95,11 +98,19 @@ async fn pin_timestamps(db: &Db, definition_id: i64) {
     .unwrap();
 }
 
+/// A fresh database is never definition-less: tracking always needs one
+/// to run under, so the migration seeds a protected default and the list
+/// answers with it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_list_answers_the_empty_database() {
+async fn the_list_answers_the_fresh_database_with_the_protected_default() {
     let dir = tempfile::tempdir().unwrap();
     let (api, _db) = definitions_api(dir.path()).await;
-    assert!(api.session_definitions_list().await.unwrap().is_empty());
+    let listed = api.session_definitions_list().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, "1");
+    assert_eq!(listed[0].name, "Default Tracking");
+    assert!(listed[0].is_protected);
+    assert!(!listed[0].ad_hoc_segments);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -148,17 +159,22 @@ async fn a_create_reads_back_the_wire_shape() {
         })
         .await
         .unwrap();
-    assert_eq!(created.id, "1");
+    // Id 1 is the seeded default, so the first authored definition is 2.
+    assert_eq!(created.id, "2");
 
     // Transport invariance: the exact wire bytes, with the wall-clock
-    // stamp pinned first.
+    // stamps pinned first. The seeded default is pinned too, so the
+    // list's authored-order sort is deterministic rather than a race
+    // between a pinned stamp and a real one.
     pin_timestamps(&db, 1).await;
+    pin_timestamps(&db, 2).await;
     let listed = api.session_definitions_list().await.unwrap();
-    assert_eq!(listed.len(), 1);
+    assert_eq!(listed.len(), 2);
     assert_eq!(
-        serde_json::to_string(&listed[0]).unwrap(),
-        "{\"id\":\"1\",\"name\":\"ARIS Dailies\",\"adHocSegments\":true,\
-         \"instanceCount\":0,\"createdAt\":1000.0,\"updatedAt\":null,\"roster\":[\
+        serde_json::to_string(&listed[1]).unwrap(),
+        "{\"id\":\"2\",\"name\":\"ARIS Dailies\",\"adHocSegments\":true,\
+         \"isProtected\":false,\
+         \"instanceCount\":0,\"createdAt\":2000.0,\"updatedAt\":null,\"roster\":[\
          {\"id\":\"1\",\"kind\":\"quest_family\",\"refId\":\"1\",\"label\":null,\
          \"displayName\":\"Daily Hunting 1\"},\
          {\"id\":\"2\",\"kind\":\"quest\",\"refId\":\"1\",\"label\":null,\
@@ -181,7 +197,7 @@ async fn the_update_and_delete_ladder_holds() {
     // Update replaces the roster wholesale and flips the flag.
     let updated = api
         .session_definition_update(
-            1,
+            2,
             SessionDefinitionInput {
                 name: "General Hunting".to_string(),
                 ad_hoc_segments: true,
@@ -211,18 +227,34 @@ async fn the_update_and_delete_ladder_holds() {
         api.session_definition_delete(99).await.unwrap_err(),
         ApiError::not_found("Session definition not found")
     );
-    api.session_definition_delete(1).await.unwrap();
-    assert!(api.session_definitions_list().await.unwrap().is_empty());
+    api.session_definition_delete(2).await.unwrap();
+    let remaining = api.session_definitions_list().await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].name, "Default Tracking");
     assert_eq!(
-        api.session_definition_delete(1).await.unwrap_err(),
+        api.session_definition_delete(2).await.unwrap_err(),
         ApiError::not_found("Session definition not found")
     );
     assert_eq!(
-        api.session_definition_update(1, definition("X", vec![]))
+        api.session_definition_update(2, definition("X", vec![]))
             .await
             .unwrap_err(),
         ApiError::not_found("Session definition not found")
     );
+
+    // The protected default refuses deletion in the service, not merely
+    // in the UI: something must always be there to track under. It is
+    // otherwise an ordinary definition, so a rename still lands.
+    assert!(matches!(
+        api.session_definition_delete(1).await.unwrap_err(),
+        ApiError::BadRequest { .. }
+    ));
+    let renamed = api
+        .session_definition_update(1, definition("General Play", vec![segment("Roam")]))
+        .await
+        .unwrap();
+    assert_eq!(renamed.name, "General Play");
+    assert!(renamed.is_protected);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -285,11 +317,11 @@ async fn selection_writes_the_config_and_the_snapshot_reports_it() {
 
     // Selection acknowledges and writes both config facets; the idle
     // snapshot reports them.
-    let selected = api.tracking_definition_select(Some(1)).await.unwrap();
-    assert_eq!(selected.session_definition_id, Some("1".to_string()));
+    let selected = api.tracking_definition_select(Some(2)).await.unwrap();
+    assert_eq!(selected.session_definition_id, Some("2".to_string()));
     assert_eq!(selected.session_name, Some("ARIS Dailies".to_string()));
     let snapshot = api.tracking_snapshot().await.unwrap();
-    assert_eq!(snapshot.session_definition_id, Some("1".to_string()));
+    assert_eq!(snapshot.session_definition_id, Some("2".to_string()));
     assert_eq!(snapshot.session_name, Some("ARIS Dailies".to_string()));
 
     // A boost-only config write (name unchanged) keeps the selection; a
@@ -298,27 +330,32 @@ async fn selection_writes_the_config_and_the_snapshot_reports_it() {
         .await
         .unwrap();
     let kept = api.tracking_snapshot().await.unwrap();
-    assert_eq!(kept.session_definition_id, Some("1".to_string()));
+    assert_eq!(kept.session_definition_id, Some("2".to_string()));
     api.tracking_session_config(Some("Something Else".into()), None)
         .await
         .unwrap();
+    // A free-text rename still disavows the authored selection; what it
+    // falls back to is the protected default rather than nothing, while
+    // the typed name stays the user's own declaration.
     let disavowed = api.tracking_snapshot().await.unwrap();
-    assert_eq!(disavowed.session_definition_id, None);
+    assert_eq!(disavowed.session_definition_id, Some("1".to_string()));
     assert_eq!(disavowed.session_name, Some("Something Else".to_string()));
 
-    // Withdrawing the selection clears both facets.
-    api.tracking_definition_select(Some(1)).await.unwrap();
+    // Withdrawing the selection clears the config facets, and the
+    // readout resolves to the protected default: "nothing in
+    // particular" is a definition, not a hole.
+    api.tracking_definition_select(Some(2)).await.unwrap();
     api.tracking_definition_select(None).await.unwrap();
     let cleared = api.tracking_snapshot().await.unwrap();
-    assert_eq!(cleared.session_definition_id, None);
-    assert_eq!(cleared.session_name, None);
+    assert_eq!(cleared.session_definition_id, Some("1".to_string()));
+    assert_eq!(cleared.session_name, Some("Default Tracking".to_string()));
 
     // A selection whose definition is later deleted stops reading as
-    // selected (the idle snapshot re-validates).
-    api.tracking_definition_select(Some(1)).await.unwrap();
-    api.session_definition_delete(1).await.unwrap();
+    // selected and falls through to the default the same way.
+    api.tracking_definition_select(Some(2)).await.unwrap();
+    api.session_definition_delete(2).await.unwrap();
     let stale = api.tracking_snapshot().await.unwrap();
-    assert_eq!(stale.session_definition_id, None);
+    assert_eq!(stale.session_definition_id, Some("1".to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

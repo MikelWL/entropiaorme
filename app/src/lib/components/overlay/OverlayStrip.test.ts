@@ -166,20 +166,18 @@ describe('session facets and declared mob', () => {
 		expect(screen.queryByLabelText('Clear session')).toBeNull();
 	});
 
-	it('shows the selected type with a clear control beside the picker chip', () => {
-		const onClearDefinition = vi.fn();
+	// A session always runs under a definition, so the chip offers no
+	// clear: "nothing in particular" is picked from the menu (the
+	// protected default), which keeps tracking from ever having nothing
+	// to be an instance of.
+	it('shows the selected session with no way to empty it', () => {
 		render(OverlayStrip, {
-			props: {
-				data: liveData({ sessionName: 'ARIS Dailies', sessionDefinitionId: '1' }),
-				onClearDefinition,
-			},
+			props: { data: liveData({ sessionName: 'ARIS Dailies', sessionDefinitionId: '1' }) },
 		});
 
 		expect(screen.getByText('ARIS Dailies')).toBeTruthy();
 		expect(screen.queryByText('Pick...')).toBeNull();
-
-		screen.getByLabelText('Clear session').click();
-		expect(onClearDefinition).toHaveBeenCalledTimes(1);
+		expect(screen.queryByLabelText('Clear session')).toBeNull();
 	});
 
 	it('edits the skill boost while idle', () => {

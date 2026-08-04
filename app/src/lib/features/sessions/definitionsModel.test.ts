@@ -9,6 +9,7 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 		id: '1',
 		name: 'ARIS Dailies',
 		adHocSegments: false,
+		isProtected: false,
 		instanceCount: 0,
 		createdAt: 1000,
 		updatedAt: null,

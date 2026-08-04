@@ -123,6 +123,9 @@ pub struct SessionDefinition {
     pub id: String,
     pub name: String,
     pub ad_hoc_segments: bool,
+    /// A session that cannot be deleted, because tracking always needs
+    /// one to run under. It renames and takes a roster like any other.
+    pub is_protected: bool,
     pub instance_count: i64,
     /// Authored instant (fractional epoch seconds).
     pub created_at: f64,
@@ -138,6 +141,7 @@ impl SessionDefinition {
             id: definition.id.to_string(),
             name: definition.name.clone(),
             ad_hoc_segments: definition.ad_hoc_segments,
+            is_protected: definition.is_protected,
             instance_count: definition.instance_count,
             created_at: definition.created_at,
             updated_at: definition.updated_at.into(),

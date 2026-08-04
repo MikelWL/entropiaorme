@@ -2107,6 +2107,8 @@ export interface SessionDefinition {
 	id: string;
 	name: string;
 	adHocSegments: boolean;
+	/** A session that cannot be deleted, because tracking always needs one to run under. It renames and takes a roster like any other. */
+	isProtected: boolean;
 	instanceCount: number;
 	/** Authored instant (fractional epoch seconds). */
 	createdAt: number;

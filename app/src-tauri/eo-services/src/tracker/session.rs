@@ -694,36 +694,31 @@ impl TrackerActor {
             .config
             .declared_skill_boost_percent()
             .filter(|percent| *percent >= 0);
-        // The definition selection re-validates against the database at
-        // the stamping moment: a definition deleted after being picked
-        // resolves to "no definition" rather than stamping a dead id.
-        // The name facet still stamps as configured; the name is its
-        // own declaration and stays honest history either way.
-        let definition_id = match self.providers.config.session_definition_id() {
-            Some(configured) => self
-                .db
-                .with_reader(move |conn| {
-                    Ok(conn.query_row(
-                        "SELECT COUNT(*) FROM session_definitions \
-                         WHERE id = ? AND is_active = 1",
-                        rusqlite::params![configured],
-                        |row| row.get::<_, i64>(0),
-                    )?)
-                })
-                .await
-                .map(|found| (found > 0).then_some(configured))?,
-            None => None,
-        };
+        // The definition resolves against the database at the stamping
+        // moment: a selection deleted after being picked falls through
+        // to the protected default rather than stamping a dead id, and
+        // an install that never picked one starts under that default
+        // too, so every session is an instance of something.
+        let resolved = crate::session_definitions::resolve_selection(
+            &self.db,
+            self.providers.config.session_definition_id(),
+        )
+        .await?;
+        // The configured name is the user's own declaration and wins;
+        // only when there is none does the resolved definition name the
+        // session, which is what keeps a never-touched install from
+        // recording nameless history.
+        let configured_name = self
+            .providers
+            .config
+            .session_name()
+            .trim_matches(python_whitespace)
+            .to_string();
         let facets = SessionFacets {
-            name: Some(
-                self.providers
-                    .config
-                    .session_name()
-                    .trim_matches(python_whitespace)
-                    .to_string(),
-            )
-            .filter(|name| !name.is_empty()),
-            definition_id,
+            name: Some(configured_name)
+                .filter(|name| !name.is_empty())
+                .or_else(|| resolved.as_ref().map(|(_, name)| name.clone())),
+            definition_id: resolved.map(|(id, _)| id),
             skill_boost_percent: declared_boost.filter(|percent| *percent > 0),
         };
         let session_id = uuid::Uuid::new_v4().to_string();

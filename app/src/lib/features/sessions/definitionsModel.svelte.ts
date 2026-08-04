@@ -67,6 +67,9 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	// ── The authoring environment ──
 	let mode = $state<AuthoringMode>('closed');
 	let editingId = $state<string | null>(null);
+	/** The definition being edited cannot be deleted (see the wire's
+	 * `isProtected`): tracking always needs one to run under. */
+	let editingProtected = $state(false);
 	let name = $state('');
 	let adHocSegments = $state(false);
 	let roster = $state<RosterDraftEntry[]>([]);
@@ -187,6 +190,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	function openCreate() {
 		mode = 'create';
 		editingId = null;
+		editingProtected = false;
 		name = '';
 		adHocSegments = false;
 		roster = [];
@@ -200,6 +204,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	function openEdit(definition: SessionDefinition) {
 		mode = 'edit';
 		editingId = definition.id;
+		editingProtected = definition.isProtected;
 		name = definition.name;
 		adHocSegments = definition.adHocSegments;
 		roster = definition.roster.map((entry) => ({
@@ -377,6 +382,9 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		},
 		get editingId() {
 			return editingId;
+		},
+		get editingProtected() {
+			return editingProtected;
 		},
 		get name() {
 			return name;

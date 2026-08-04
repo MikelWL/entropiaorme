@@ -985,7 +985,6 @@
 		onMobBlur={handleMobBlur}
 		onMobKeydown={handleMobKeydown}
 		onDefinitionTrigger={toggleDefinitionMenu}
-		onClearDefinition={() => facets.selectDefinition(null)}
 		onBoostCommit={facets.commitBoost}
 		onSegmentCommit={facets.commitSegment}
 		onSegmentBlur={facets.handleSegmentBlur}

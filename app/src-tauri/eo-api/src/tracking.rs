@@ -1675,21 +1675,16 @@ pub(crate) async fn build_snapshot_value(
         Some(id) => json!(id.to_string()),
         None => Value::Null,
     };
-    let idle_definition_id = match config.session_definition_id {
-        Some(configured) => db
-            .with_reader(move |conn| {
-                Ok(conn.query_row(
-                    "SELECT COUNT(*) FROM session_definitions \
-                     WHERE id = ? AND is_active = 1",
-                    rusqlite::params![configured],
-                    |row| row.get::<_, i64>(0),
-                )?)
-            })
-            .await
-            .map(|found| (found > 0).then_some(configured))
-            .map_err(ApiError::internal("snapshot definition selection"))?,
-        None => None,
-    };
+    // Idle resolves through the same rule session start stamps with, so
+    // the readout shows exactly what starting now would record: the
+    // selection while it is active, otherwise the protected default.
+    let idle_selection = eo_services::session_definitions::resolve_selection(
+        db,
+        config.session_definition_id,
+    )
+    .await
+    .map_err(ApiError::internal("snapshot definition selection"))?;
+    let idle_definition_id = idle_selection.as_ref().map(|(id, _)| *id);
 
     let value = match &readout.active {
         None => {
@@ -1702,7 +1697,11 @@ pub(crate) async fn build_snapshot_value(
                 "currentTool": current_tool,
                 "currentActivity": current_activity,
                 "trifectaAttribution": trifecta_attribution,
-                "sessionName": name_value(Some(config.session_name.trim())),
+                "sessionName": name_value(Some(if config.session_name.trim().is_empty() {
+                    idle_selection.as_ref().map_or("", |(_, name)| name.as_str())
+                } else {
+                    config.session_name.trim()
+                })),
                 "sessionDefinitionId": definition_value(idle_definition_id),
                 "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
