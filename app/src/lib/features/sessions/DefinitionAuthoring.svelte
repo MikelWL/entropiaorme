@@ -315,28 +315,10 @@
 							{/if}
 						{/if}
 
-						<!-- A segment is the activity the player names themselves. -->
-						<div class="flex items-center gap-2 border-t border-border/50 pt-3">
-							<input
-								bind:value={segmentDraft}
-								class="flex-1 h-9 px-3 text-sm bg-surface/70 text-text rounded-md border border-border
-									outline-none transition-colors focus:border-accent/60
-									placeholder:text-text-tertiary"
-								placeholder="Add a segment of your own (e.g. Warm-up)..."
-								aria-label="New segment name"
-								disabled={model.saving}
-								onkeydown={(e) => {
-									if (e.key === 'Enter') {
-										e.preventDefault();
-										addSegmentDraft();
-									}
-								}}
-							/>
-							<Button size="sm" variant="secondary" disabled={model.saving || !segmentDraft.trim()} onclick={addSegmentDraft}>
-								{#snippet children()}Add segment{/snippet}
-							</Button>
-						</div>
-
+						<!-- Segments are the activities the player names themselves, so
+							 they are one capability with one switch: off, the session has
+							 no segment concept at all; on, names can be seeded here as
+							 well as typed during play. -->
 						<div class="flex items-center justify-between gap-4 border-t border-border/50 pt-3">
 							<div class="flex flex-col gap-0.5">
 								<span class="text-sm text-text">Name segments on the fly</span>
@@ -351,6 +333,29 @@
 								onchange={(checked) => (model.adHocSegments = checked)}
 							/>
 						</div>
+
+						{#if model.adHocSegments}
+							<div class="flex items-center gap-2">
+								<input
+									bind:value={segmentDraft}
+									class="flex-1 h-9 px-3 text-sm bg-surface/70 text-text rounded-md border border-border
+										outline-none transition-colors focus:border-accent/60
+										placeholder:text-text-tertiary"
+									placeholder="Name one now if you already know it (e.g. Warm-up)..."
+									aria-label="New segment name"
+									disabled={model.saving}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											addSegmentDraft();
+										}
+									}}
+								/>
+								<Button size="sm" variant="secondary" disabled={model.saving || !segmentDraft.trim()} onclick={addSegmentDraft}>
+									{#snippet children()}Add segment{/snippet}
+								</Button>
+							</div>
+						{/if}
 					</div>
 				{/if}
 			</section>
