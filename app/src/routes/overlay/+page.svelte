@@ -12,14 +12,10 @@
 		setSessionConfig,
 		getManualMobSuggestions,
 		lockManualMob,
-		openSessionSegment,
-		closeSessionSegment,
-		renameSessionSegment,
-		focusSessionQuest,
-		unfocusSessionQuest,
-		getFocusOptions,
+		getActivityOptions,
+		activateActivity,
+		deactivateActivity,
 		updateSettings,
-		type FocusOptionsResult,
 		type TrackingLive,
 		type TrackingStatus,
 		type TrackingSnapshot,
@@ -30,6 +26,7 @@
 	import { createSnapshotStore } from '$lib/realtime/snapshotStore.svelte';
 	import { createPostSessionFlow } from '$lib/features/tracking/postSession.svelte';
 	import { createSessionFacets } from '$lib/features/tracking/sessionFacets.svelte';
+	import { createActivitiesModel } from '$lib/features/tracking/activitiesModel.svelte';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { PhysicalPosition } from '@tauri-apps/api/dpi';
@@ -46,8 +43,8 @@
 		OVERLAY_MENU_SHOW_EVENT,
 		OVERLAY_MENU_WINDOW_LABEL,
 		OVERLAY_MENU_MIN_WIDTH,
+		buildActivitiesMenuState,
 		buildDefinitionMenuState,
-		buildFocusMenuState,
 		computeMenuHeight,
 		computeMenuWidth,
 		menuRowCount,
@@ -175,25 +172,33 @@
 	});
 	const toggling = $derived(starting || flow.stopping);
 
-	// The session facets (the session and its name, boost, segment): state and writes
-	// live in the feature model; this route owns only the popup plumbing.
-	// (The quest facet auto-records itself and only displays.)
+	// The session facets (the session it runs as, and the boost): state
+	// and writes live in the feature model; this route owns only the
+	// popup plumbing.
 	const facets = createSessionFacets({
 		readFacets: () => ({
 			name: data.sessionName ?? null,
 			definitionId: data.sessionDefinitionId ?? null,
-			boost: data.skillBoostPercent ?? null,
-			segment: data.segmentName ?? null
+			boost: data.skillBoostPercent ?? null
 		}),
 		isSessionActive: () => data.status === 'active',
 		refresh: () => snapshot.hydrate(),
 		setSessionConfig,
-		selectDefinition: (id) => selectDefinition(id),
-		openSegment: openSessionSegment,
-		closeSegment: closeSessionSegment,
-		renameSegment: renameSessionSegment,
-		focusQuest: (questId, additive) => focusSessionQuest(questId, additive),
-		unfocusQuest: (questId) => unfocusSessionQuest(questId)
+		selectDefinition: (id) => selectDefinition(id)
+	});
+
+	// The Activities control: what the session offers and the two writes
+	// that move between offered and standing. The strip renders its chips
+	// off the tracking frame; this model feeds the menu.
+	const activities = createActivitiesModel({
+		readOptions: getActivityOptions,
+		activateQuest: (questId, additive) =>
+			activateActivity('quest', questId, null, additive),
+		activateSegment: (label, additive) =>
+			activateActivity('segment', null, label, additive),
+		deactivateQuest: (questId) => deactivateActivity('quest', questId, null),
+		deactivateSegment: (label) => deactivateActivity('segment', null, label),
+		refresh: () => snapshot.hydrate()
 	});
 
 	async function handleDrag(e: MouseEvent) {
@@ -377,40 +382,60 @@
 		await showOverlayMenu('trifecta', anchor, state, { focusPopup: true });
 	}
 
-	// The focus picker's anchor, kept so a quest toggle can re-present
-	// the still-open menu with the refreshed focused states.
-	let focusAnchor: HTMLButtonElement | null = null;
+	// The Activities control's anchor, kept so an action can re-present
+	// the still-open menu with the refreshed rows. It is the section
+	// element rather than the chip clicked, because a declaration swaps
+	// the chips out from under the gesture that caused it.
+	let activitiesAnchor: HTMLElement | null = null;
 
-	async function openFocusMenu(anchor: HTMLButtonElement) {
-		let options: FocusOptionsResult;
-		try {
-			options = await getFocusOptions();
-		} catch (error) {
-			facets.facetError = describeOverlayMenuError(error);
+	async function openActivitiesMenu(anchor: HTMLElement) {
+		const options = await activities.load();
+		if (!options) {
+			facets.facetError = activities.error;
 			return;
 		}
 		// A successful open clears a prior open's failure message.
 		facets.facetError = null;
-		const state = buildFocusMenuState(anchor.getBoundingClientRect().width, options);
-		focusAnchor = anchor;
-		await showOverlayMenu('focus', anchor, state, { focusPopup: true });
+		const state = buildActivitiesMenuState(
+			anchor.getBoundingClientRect().width,
+			options,
+			data.status !== 'active',
+			activities.segmentDraft,
+		);
+		activitiesAnchor = anchor;
+		await showOverlayMenu('activities', anchor, state, { focusPopup: true });
 	}
 
-	async function toggleFocusMenu(anchor: HTMLButtonElement) {
-		if (overlayMenuKind === 'focus') {
+	async function toggleActivitiesMenu(anchor: HTMLElement) {
+		if (overlayMenuKind === 'activities') {
 			await hideOverlayMenu();
 			return;
 		}
-		await openFocusMenu(anchor);
+		await openActivitiesMenu(anchor);
 	}
 
-	/** A quest toggle keeps the picker open (joining a second daily must
-	 * not be a close-and-reopen): apply the write, then re-present the
-	 * menu with the refreshed focused states off the unchanged anchor. */
-	async function handleFocusQuestAction(action: () => Promise<void>) {
+	/** An Activities action keeps the control open (declaring one thing
+	 * after another must not be a close-and-reopen, and the switch's
+	 * effect should be visible where it happened): apply the write, then
+	 * re-present the menu with the refreshed rows off the unchanged
+	 * anchor. */
+	async function handleActivityAction(action: () => Promise<unknown>) {
 		await action();
-		if (overlayMenuKind !== 'focus' || !focusAnchor || !focusAnchor.isConnected) return;
-		await openFocusMenu(focusAnchor);
+		// Held across the re-present: re-opening the menu re-reads the
+		// offerings, and a successful read clears the error channel that
+		// the refusal just wrote to.
+		const failure = activities.error;
+		if (overlayMenuKind === 'activities' && activitiesAnchor?.isConnected) {
+			await openActivitiesMenu(activitiesAnchor);
+		}
+		if (failure) facets.facetError = failure;
+	}
+
+	/** The row an Activities selection names, matched on the key the menu
+	 * was presented with. A row that vanished between the present and the
+	 * tap (a completion landing, a definition edit) simply does nothing. */
+	function selectedActivity(key: string) {
+		return activities.options?.options.find((option) => option.key === key) ?? null;
 	}
 
 	async function showArmourCost(anchor: HTMLElement) {
@@ -673,18 +698,19 @@
 					return;
 				}
 
-				if (event.payload.kind === 'focus') {
+				if (event.payload.kind === 'activities') {
 					const payload = event.payload;
-					if (payload.action === 'preset') {
-						overlayMenuKind = null;
-						await facets.applySegmentPreset(payload.label);
-						return;
-					}
-					await handleFocusQuestAction(() =>
-						payload.action === 'questFocus'
-							? facets.focusQuest(payload.questId, payload.additive)
-							: facets.unfocusQuest(payload.questId)
-					);
+					await handleActivityAction(() => {
+						if (payload.action === 'declare') {
+							activities.segmentDraft = payload.label;
+							return activities.declareTyped();
+						}
+						const option = selectedActivity(payload.key);
+						if (!option) return Promise.resolve(false);
+						return payload.action === 'toggle'
+							? activities.toggle(option)
+							: activities.declare(option, true);
+					});
 					return;
 				}
 
@@ -763,12 +789,10 @@
 			sessionName: snap.sessionName,
 			sessionDefinitionId: snap.sessionDefinitionId,
 			skillBoostPercent: snap.skillBoostPercent,
-			segmentName: snap.segmentName,
 			currentMob: snap.currentMob,
 			currentTool: snap.currentTool,
 			currentActivity: snap.currentActivity,
-			questNames: snap.questNames,
-			questsInProgress: snap.questsInProgress,
+			activities: snap.activities,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
 		};
@@ -852,15 +876,13 @@
 		};
 	});
 
-	// Keep the boost and segment buffers in step with their persisted
-	// facets while the user is not editing them (an idle overlay re-read,
-	// a next-segment renumber, a close emptying the field).
+	// Keep the boost buffer in step with its persisted facet while the
+	// user is not editing it (an idle overlay re-read, a session start
+	// snapshotting the declaration).
 	$effect(() => {
 		void data.skillBoostPercent;
-		void data.segmentName;
 		untrack(() => {
 			facets.syncBoostDraft();
-			facets.syncSegmentDraft();
 		});
 	});
 
@@ -965,16 +987,14 @@
 		savingDefinition={facets.savingDefinition}
 		definitionEditable={facets.definitionEditable}
 		savingBoost={facets.savingBoost}
-		savingSegment={facets.savingSegment}
-		savingFocus={facets.savingFocus}
-		focusMenuOpen={overlayMenuKind === 'focus'}
+		savingActivity={activities.saving}
+		activitiesMenuOpen={overlayMenuKind === 'activities'}
 		facetError={facets.facetError}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}
 		bind:mobQuery
 		bind:mobInput
 		bind:boostDraft={facets.boostDraft}
-		bind:segmentDraft={facets.segmentDraft}
 		bind:postSessionArmourButton
 		onStart={handleStart}
 		onStop={flow.requestStop}
@@ -988,11 +1008,7 @@
 		onMobKeydown={handleMobKeydown}
 		onDefinitionTrigger={toggleDefinitionMenu}
 		onBoostCommit={facets.commitBoost}
-		onSegmentCommit={facets.commitSegment}
-		onSegmentBlur={facets.handleSegmentBlur}
-		onSegmentNext={facets.nextSegment}
-		onSegmentClose={facets.closeSegment}
-		onFocusTrigger={toggleFocusMenu}
+		onActivitiesTrigger={toggleActivitiesMenu}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
 	/>

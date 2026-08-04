@@ -306,7 +306,7 @@ export const dashboardSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'Declare the mob you are hunting and every kill records it, alongside the other session details: the session it was picked to run as, the skill boost in force, and player-drawn segments; quests record their own stretches as you start and complete them.',
+						text: 'Declare the mob you are hunting and every kill records it, alongside the other session details: the session it was picked to run as, the skill boost in force, and whatever you have said the play counts toward, from the quests and named activities that session offers.',
 					},
 					{
 						kind: 'p',

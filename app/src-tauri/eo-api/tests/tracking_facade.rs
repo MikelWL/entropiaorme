@@ -11,6 +11,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use eo_api::activities::ActivityTargetKind;
 use eo_api::Api;
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -223,13 +224,16 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
     // its own null bindings on the wire. The session facets are present
     // even with nothing configured: an unconfigured install resolves to
     // the protected default, so the readout shows what a start would
-    // stamp.
+    // stamp, and the Activities block rides idle too: the seeded default
+    // rosters nothing, so it reports no surface.
     let snapshot = api.tracking_snapshot().await.unwrap();
     assert_eq!(
         serde_json::to_string(&snapshot).unwrap(),
         "{\"status\":\"idle\",\"hotbarListenerActive\":false,\"weaponAttribution\":\"trifecta\",\
          \"repairOcrEnabled\":false,\"endOfSessionArmourReminderEnabled\":false,\
          \"sessionName\":\"Default Tracking\",\"sessionDefinitionId\":\"1\",\
+         \"activities\":{\"visible\":false,\"adHocSegments\":false,\"readyCount\":0,\
+         \"active\":[]},\
          \"trifectaAttribution\":{\"activePresetId\":\"default\",\
          \"presetName\":\"Default\",\"presets\":[{\"id\":\"default\",\"name\":\"Default\"}],\
          \"smallWeapon\":null,\"bigWeapon\":null,\"healTool\":null},\"recentEvents\":[]}"
@@ -600,97 +604,6 @@ async fn the_active_snapshot_carries_the_declared_boost() {
     assert!(value.get("skillBoostPercent").is_none());
 }
 
-/// The segment lifecycle at the facade: open auto-numbers when no name
-/// is given, rename moves the live label, a second open replaces the
-/// standing segment, and close drops the key from the projection. The
-/// snapshot's `segmentName` is pinned here for the same reason the
-/// facet keys are pinned above: it is a newly emitted field nothing
-/// else asserts, and an unpinned field is cheapest to get wrong at
-/// first generation.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_segment_commands_move_the_active_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let api = make_api(
-        dir.path(),
-        false,
-        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
-    )
-    .await;
-    api.tracking_start().await.unwrap();
-
-    // No segment open: the key is absent, not null.
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert!(value.get("segmentName").is_none());
-
-    // A nameless open is auto-numbered, and the acknowledgement echoes
-    // the applied name so the control can render without a re-read.
-    let opened = api.tracking_segment_open(None).await.unwrap();
-    assert_eq!(
-        serde_json::to_value(&opened).unwrap()["segmentName"],
-        "Segment 1"
-    );
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert_eq!(value["segmentName"], "Segment 1");
-
-    // A live rename moves the label under the same open segment.
-    let renamed = api
-        .tracking_segment_rename("Boss: Kreltin".to_string())
-        .await
-        .unwrap();
-    assert_eq!(
-        serde_json::to_value(&renamed).unwrap()["segmentName"],
-        "Boss: Kreltin"
-    );
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert_eq!(value["segmentName"], "Boss: Kreltin");
-
-    // Opening again replaces the standing segment; the auto-number
-    // counts opens, so the second nameless open is "Segment 2" even
-    // though the first was renamed.
-    let replaced = api.tracking_segment_open(None).await.unwrap();
-    assert_eq!(
-        serde_json::to_value(&replaced).unwrap()["segmentName"],
-        "Segment 2"
-    );
-
-    // Close: the key leaves the projection, and a rename now has
-    // nothing to move (409, so a raced edit surfaces).
-    api.tracking_segment_close().await.unwrap();
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert!(value.get("segmentName").is_none());
-    let refused = api
-        .tracking_segment_rename("Too late".to_string())
-        .await
-        .unwrap_err();
-    assert_eq!(serde_json::to_value(&refused).unwrap()["kind"], "conflict");
-}
-
-/// The segment commands' refusals: everything needs a running session,
-/// and a blank rename is a request error rather than a silent no-op.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_segment_commands_refuse_an_idle_tracker_and_blank_names() {
-    let dir = tempfile::tempdir().unwrap();
-    let api = make_api(dir.path(), false, None).await;
-
-    let open = api.tracking_segment_open(None).await.unwrap_err();
-    assert_eq!(serde_json::to_value(&open).unwrap()["kind"], "conflict");
-    let close = api.tracking_segment_close().await.unwrap_err();
-    assert_eq!(serde_json::to_value(&close).unwrap()["kind"], "conflict");
-    let rename = api
-        .tracking_segment_rename("Boss 1".to_string())
-        .await
-        .unwrap_err();
-    assert_eq!(serde_json::to_value(&rename).unwrap()["kind"], "conflict");
-
-    // Blank is refused before any tracker call: an open segment always
-    // carries a name, and a rename must not erase that invariant.
-    let blank = api.tracking_segment_rename("   ".to_string()).await;
-    assert_eq!(
-        serde_json::to_value(blank.unwrap_err()).unwrap()["kind"],
-        "badRequest"
-    );
-}
-
 /// The thin interval read over a live lifecycle: the boost declaration
 /// and a segment each record an interval with real bounds, and the stop
 /// seals whatever is still open.
@@ -707,7 +620,14 @@ async fn the_session_intervals_read_demonstrates_the_live_contract() {
     let session_id = started.session_id.clone();
 
     api.tracking_session_config(None, Some(50)).await.unwrap();
-    api.tracking_segment_open(None).await.unwrap();
+    api.tracking_activity_activate(
+        ActivityTargetKind::Segment,
+        None,
+        Some("Rotation 1".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
 
     let read = api
         .tracking_session_intervals(session_id.clone())
@@ -721,7 +641,7 @@ async fn the_session_intervals_read_demonstrates_the_live_contract() {
     assert_eq!(rows[0]["magnitude"], 50.0);
     assert_eq!(rows[0]["endedAt"], serde_json::Value::Null);
     assert_eq!(rows[1]["kind"], "segment");
-    assert_eq!(rows[1]["label"], "Segment 1");
+    assert_eq!(rows[1]["label"], "Rotation 1");
     assert_eq!(rows[1]["endedAt"], serde_json::Value::Null);
 
     api.tracking_stop().await.unwrap();
@@ -812,12 +732,20 @@ async fn the_session_intervals_read_counts_by_context_membership() {
     assert_eq!(segment.harvests, 0);
 }
 
-/// A helper for the quest-focus tests: an active quest in the catalogue,
+/// A helper for the activity tests: an active quest in the catalogue,
 /// optionally started (in progress). Built through the facade's own
 /// commands so the pin covers the real path.
 async fn seed_quest(api: &Api, name: &str, started: bool) -> i64 {
-    let input =
-        serde_json::from_value(serde_json::json!({ "name": name })).expect("quest input shape");
+    seed_family_quest(api, name, started, None).await
+}
+
+/// [`seed_quest`] with an explicit family. The facade's create always
+/// sends the `family_id` key, so the service's colon-split auto-attach
+/// (the chat-log path's convenience) never fires through it: a variant
+/// is bound to its family here the way the Quests page binds one.
+async fn seed_family_quest(api: &Api, name: &str, started: bool, family_id: Option<i64>) -> i64 {
+    let input = serde_json::from_value(serde_json::json!({ "name": name, "family_id": family_id }))
+        .expect("quest input shape");
     let quest = api.quest_create(input).await.unwrap();
     let value = serde_json::to_value(&quest).unwrap();
     // The Quest DTO serialises its id as a string (the HTTP-era shape).
@@ -832,54 +760,158 @@ async fn seed_quest(api: &Api, name: &str, started: bool) -> i64 {
     quest_id
 }
 
-/// The quest-focus lifecycle at the facade: focusing declares the effort
-/// stretch (the snapshot's `questNames` is the readout), the default
-/// re-focus is the one-tap exclusive switch, `additive` joins, and
-/// unfocus ends one stretch leaving siblings. `questsInProgress` rides
-/// the snapshot as the picker's cue.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn quest_focus_declares_switches_and_joins_stretches() {
-    let dir = tempfile::tempdir().unwrap();
-    let api = make_api(
-        dir.path(),
-        false,
-        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
-    )
-    .await;
-    let carabok = seed_quest(&api, "Daily: Carabok", true).await;
-    let monura = seed_quest(&api, "Daily: Monura", true).await;
-    api.tracking_start().await.unwrap();
-
-    // Nothing focused: the key is absent; the in-progress count rides.
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert!(value.get("questNames").is_none());
-    assert_eq!(value["questsInProgress"], 2);
-
-    // Focus declares the stretch; the ack echoes the names in force.
-    let focused = api.tracking_quest_focus(carabok, None).await.unwrap();
-    assert_eq!(focused.quest_names, vec!["Daily: Carabok"]);
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert_eq!(value["questNames"], serde_json::json!(["Daily: Carabok"]));
-
-    // Additive joins (newest first); the default is the exclusive switch.
-    let joined = api.tracking_quest_focus(monura, Some(true)).await.unwrap();
-    assert_eq!(joined.quest_names, vec!["Daily: Monura", "Daily: Carabok"]);
-    let switched = api.tracking_quest_focus(carabok, None).await.unwrap();
-    assert_eq!(switched.quest_names, vec!["Daily: Carabok"]);
-
-    // Unfocus ends the last stretch; the key leaves the projection.
-    let cleared = api.tracking_quest_unfocus(carabok).await.unwrap();
-    assert!(cleared.quest_names.is_empty());
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert!(value.get("questNames").is_none());
+/// The names of a standing set, in declaration order.
+fn activity_names(standing: &[eo_api::activities::ActiveActivityView]) -> Vec<&str> {
+    standing
+        .iter()
+        .map(|activity| activity.name.as_str())
+        .collect()
 }
 
-/// The focus command's refusals: an unknown quest is a not-found, a
-/// quest that is not in progress is a request error (the mission log
-/// has to carry it before play can be toward it), and an idle tracker
-/// is a conflict, mirroring the segment commands.
+/// The Activities lifecycle at the facade: declaring a quest opens its
+/// stretch (the snapshot's `activities` block is the readout), the
+/// default re-declaration is the one-tap switch across BOTH kinds,
+/// `additive` co-activates, and deactivating ends one stretch leaving
+/// siblings. The ready cue rides the same block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn quest_focus_refuses_unknown_unstarted_and_idle() {
+async fn activities_declare_switch_and_co_activate() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, selection) = make_api_with_selection(dir.path(), "Dailies").await;
+    let carabok = seed_quest(&api, "Daily: Carabok", true).await;
+    let monura = seed_quest(&api, "Daily: Monura", true).await;
+    seed_definition(
+        &api,
+        &selection,
+        serde_json::json!({
+            "name": "Dailies",
+            "ad_hoc_segments": true,
+            "roster": [
+                { "kind": "quest", "ref_id": carabok },
+                { "kind": "quest", "ref_id": monura },
+            ],
+        }),
+    )
+    .await;
+    api.tracking_start().await.unwrap();
+
+    // Nothing standing: both rostered dailies are offered and ready.
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["activities"]["visible"], true);
+    assert_eq!(value["activities"]["readyCount"], 2);
+    assert_eq!(value["activities"]["active"], serde_json::json!([]));
+
+    // Declaring opens the stretch; the ack echoes the set in force.
+    let standing = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(carabok), None, None)
+        .await
+        .unwrap();
+    assert_eq!(activity_names(&standing.active), vec!["Daily: Carabok"]);
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["activities"]["active"][0]["name"], "Daily: Carabok");
+    assert_eq!(value["activities"]["active"][0]["kind"], "quest");
+    assert_eq!(value["activities"]["readyCount"], 1);
+
+    // Co-activation stacks; the default is the exclusive switch.
+    let joined = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(monura), None, Some(true))
+        .await
+        .unwrap();
+    assert_eq!(
+        activity_names(&joined.active),
+        vec!["Daily: Carabok", "Daily: Monura"]
+    );
+    let switched = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(carabok), None, None)
+        .await
+        .unwrap();
+    assert_eq!(activity_names(&switched.active), vec!["Daily: Carabok"]);
+
+    // A segment joins the standing quest only when asked to; a plain
+    // declaration would have sealed it.
+    let both = api
+        .tracking_activity_activate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("Boss lap".to_string()),
+            Some(true),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        activity_names(&both.active),
+        vec!["Daily: Carabok", "Boss lap"]
+    );
+
+    // Deactivating ends one, leaving the other; then the block empties.
+    let left = api
+        .tracking_activity_deactivate(ActivityTargetKind::Quest, Some(carabok), None)
+        .await
+        .unwrap();
+    assert_eq!(activity_names(&left.active), vec!["Boss lap"]);
+    let cleared = api
+        .tracking_activity_deactivate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("Boss lap".to_string()),
+        )
+        .await
+        .unwrap();
+    assert!(cleared.active.is_empty());
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["activities"]["active"], serde_json::json!([]));
+}
+
+/// A segment declaration carries the name the player gave it, trimmed,
+/// and the acknowledgement echoes it so the control renders without a
+/// re-read; the next declaration seals the standing one, because a
+/// player-drawn slice is a sequential cut of the run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_segment_declaration_is_named_trimmed_and_echoed() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+    api.tracking_start().await.unwrap();
+
+    let opened = api
+        .tracking_activity_activate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("  Boss: Kreltin  ".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(activity_names(&opened.active), vec!["Boss: Kreltin"]);
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["activities"]["active"][0]["name"], "Boss: Kreltin");
+    assert_eq!(value["activities"]["active"][0]["kind"], "segment");
+
+    let next = api
+        .tracking_activity_activate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("Boss: Feffoid".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        activity_names(&next.active),
+        vec!["Boss: Feffoid"],
+        "the standing slice was sealed by the next one"
+    );
+}
+
+/// The Activities verbs' refusals: everything needs a running session,
+/// each target needs the payload that identifies it, and ending a
+/// stretch that is not standing is an idempotent no-op rather than a
+/// failure, so a stale control cannot fail the user.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_activity_commands_refuse_an_idle_tracker_and_incomplete_targets() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(
         dir.path(),
@@ -888,40 +920,132 @@ async fn quest_focus_refuses_unknown_unstarted_and_idle() {
     )
     .await;
 
-    let missing = api.tracking_quest_focus(9_999, None).await.unwrap_err();
+    let idle = api
+        .tracking_activity_activate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("Boss lap".to_string()),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
+    let idle = api
+        .tracking_activity_deactivate(ActivityTargetKind::Segment, None, Some("Idle".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
+
+    // The payload each target needs is checked before any tracker call.
+    let no_quest = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, None, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        serde_json::to_value(&no_quest).unwrap()["kind"],
+        "badRequest"
+    );
+    let blank_label = api
+        .tracking_activity_deactivate(ActivityTargetKind::Segment, None, Some("   ".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        serde_json::to_value(&blank_label).unwrap()["kind"],
+        "badRequest"
+    );
+
+    api.tracking_start().await.unwrap();
+    let noop = api
+        .tracking_activity_deactivate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("Never opened".to_string()),
+        )
+        .await
+        .unwrap();
+    assert!(noop.active.is_empty());
+}
+/// The quest-declaration refusals: an unknown quest is a not-found, a
+/// mission-log quest the log does not carry is a request error (play
+/// cannot be toward a mission you have not been given), and an idle
+/// tracker is a conflict.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn declaring_a_quest_refuses_unknown_unstarted_and_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = make_api(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+
+    let missing = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(9_999), None, None)
+        .await
+        .unwrap_err();
     assert_eq!(serde_json::to_value(&missing).unwrap()["kind"], "notFound");
 
     let unstarted = seed_quest(&api, "Daily: Unpicked", false).await;
-    let refused = api.tracking_quest_focus(unstarted, None).await.unwrap_err();
+    let refused = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(unstarted), None, None)
+        .await
+        .unwrap_err();
     assert_eq!(
         serde_json::to_value(&refused).unwrap()["kind"],
         "badRequest"
     );
 
     let started = seed_quest(&api, "Daily: Idle", true).await;
-    let idle = api.tracking_quest_focus(started, None).await.unwrap_err();
+    let idle = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(started), None, None)
+        .await
+        .unwrap_err();
     assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
-    let idle = api.tracking_quest_unfocus(started).await.unwrap_err();
+    let idle = api
+        .tracking_activity_deactivate(ActivityTargetKind::Quest, Some(started), None)
+        .await
+        .unwrap_err();
     assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
 
-    // With a session running, unfocusing a quest with no open stretch is
-    // an idempotent no-op: a stale control cannot fail the user.
+    // With a session running, ending a quest with no open stretch is an
+    // idempotent no-op: a stale control cannot fail the user.
     api.tracking_start().await.unwrap();
-    let noop = api.tracking_quest_unfocus(started).await.unwrap();
-    assert!(noop.quest_names.is_empty());
+    let noop = api
+        .tracking_activity_deactivate(ActivityTargetKind::Quest, Some(started), None)
+        .await
+        .unwrap();
+    assert!(noop.active.is_empty());
 }
 
-/// A scripted tracker config carrying only a session name: what the
-/// preset-recall test needs its active session to snapshot at start
-/// (the shared harness's inert config never names a session).
-struct NamedSessionConfig(&'static str);
+/// A scripted tracker config carrying the session facets a start
+/// snapshots: what the roster tests need, since the shared harness
+/// composes the inert config and its sessions are instances of nothing.
+/// The selected definition is settable after construction, because a
+/// definition has to be authored (and given an id) before a session can
+/// be an instance of it.
+struct ScriptedSessionConfig {
+    name: &'static str,
+    definition_id: Arc<std::sync::atomic::AtomicI64>,
+}
 
-impl eo_services::tracker::TrackingConfig for NamedSessionConfig {
+impl ScriptedSessionConfig {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            definition_id: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        }
+    }
+}
+
+impl eo_services::tracker::TrackingConfig for ScriptedSessionConfig {
     fn session_name(&self) -> String {
-        self.0.to_string()
+        self.name.to_string()
     }
     fn session_definition_id(&self) -> Option<i64> {
-        None
+        match self.definition_id.load(std::sync::atomic::Ordering::SeqCst) {
+            0 => None,
+            id => Some(id),
+        }
     }
     fn declared_skill_boost_percent(&self) -> Option<i64> {
         None
@@ -937,17 +1061,16 @@ impl eo_services::tracker::TrackingConfig for NamedSessionConfig {
     }
 }
 
-/// The focus picker's options: in-progress quests carry their focused
-/// state, and the segment presets recall this session name's history
-/// (most recent first), excluding auto-numbered names and the running
-/// session's own rows. Idle, the quests still list and presets are
-/// empty.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn focus_options_list_quests_and_recall_presets_by_session_name() {
-    let dir = tempfile::tempdir().unwrap();
-    let snapshot = dir.path().join("snapshot");
+/// The facade over a tracker whose sessions snapshot a scripted
+/// definition selection; the handle sets which definition once it has
+/// been authored.
+async fn make_api_with_selection(
+    dir: &Path,
+    name: &'static str,
+) -> (Api, Arc<std::sync::atomic::AtomicI64>) {
+    let snapshot = dir.join("snapshot");
     std::fs::create_dir_all(&snapshot).unwrap();
-    let data_dir = dir.path().join("data");
+    let data_dir = dir.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
     std::fs::write(
         data_dir.join("settings.json"),
@@ -958,19 +1081,20 @@ async fn focus_options_list_quests_and_recall_presets_by_session_name() {
         .await
         .expect("migrated database");
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
-    let providers = eo_services::tracker::Providers {
-        config: Arc::new(NamedSessionConfig("ARIS Dailies")),
-        ..Default::default()
-    };
+    let config = ScriptedSessionConfig::new(name);
+    let selection = config.definition_id.clone();
     let handles = common::producer_handles_with_tracker(
         &db,
         &data_dir,
         tokio::runtime::Handle::current(),
-        providers,
+        eo_services::tracker::Providers {
+            config: Arc::new(config),
+            ..Default::default()
+        },
     )
     .await;
     let api = Api::new(
-        db.clone(),
+        db,
         game_data,
         Arc::new(RealClock::new()),
         data_dir,
@@ -988,55 +1112,252 @@ async fn focus_options_list_quests_and_recall_presets_by_session_name() {
         None,
         None,
     );
-    let carabok = seed_quest(&api, "Daily: Carabok", true).await;
+    (api, selection)
+}
 
-    // History: an ended "ARIS Dailies" session with named segments and
-    // one auto-numbered segment (noise, excluded from recall).
-    db.with_writer(move |conn| {
-        conn.execute(
-            "INSERT INTO tracking_sessions(id,started_at,ended_at,is_active,armour_cost,heal_cost,\
-             dangling_cost,mob_tracking_mode,session_name,updated_at) \
-             VALUES('hist',1000.0,4600.0,0,0,0,0,'mob','ARIS Dailies',4600.0)",
-            [],
-        )?;
-        for (label, at) in [("Boss 1", 100.0), ("Boss 2", 200.0), ("Segment 3", 300.0)] {
-            conn.execute(
-                "INSERT INTO session_intervals(session_id,kind,label,started_at,ended_at) \
-                 VALUES('hist','segment',?,?,?)",
-                rusqlite::params![label, at, at + 10.0],
-            )?;
-        }
-        Ok(())
-    })
+/// Author a definition and make it the scripted selection.
+async fn seed_definition(
+    api: &Api,
+    selection: &Arc<std::sync::atomic::AtomicI64>,
+    input: serde_json::Value,
+) -> String {
+    let definition = api
+        .session_definition_create(serde_json::from_value(input).expect("definition input shape"))
+        .await
+        .unwrap();
+    let id: i64 = definition.id.parse().expect("numeric definition id");
+    selection.store(id, std::sync::atomic::Ordering::SeqCst);
+    // The scripted provider is what a session start snapshots; the
+    // stored selection is what the idle read resolves through. The app
+    // moves both with one verb, so the harness does too.
+    api.tracking_definition_select(Some(id)).await.unwrap();
+    definition.id
+}
+
+/// A definition's stored roster, read back through the facade.
+async fn stored_roster(
+    api: &Api,
+    definition_id: &str,
+) -> Vec<eo_api::session_definitions::SessionRosterEntry> {
+    api.session_definitions_list()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.id == definition_id)
+        .expect("the definition")
+        .roster
+}
+
+/// Author a quest family (pickup-anchored, the daily's own shape) and
+/// answer its numeric id.
+async fn seed_family(api: &Api, name: &str, cooldown_hours: f64) -> i64 {
+    seed_family_anchored(api, name, cooldown_hours, "pickup").await
+}
+
+/// [`seed_family`] with the cooldown anchor named, for the tests that
+/// turn on which instant the gate runs from.
+async fn seed_family_anchored(api: &Api, name: &str, cooldown_hours: f64, anchor: &str) -> i64 {
+    let family = api
+        .quest_family_create(
+            serde_json::from_value(serde_json::json!({
+                "name": name,
+                "cooldown_hours": cooldown_hours,
+                "cooldown_anchor": anchor,
+            }))
+            .expect("family input shape"),
+        )
+        .await
+        .unwrap();
+    serde_json::to_value(&family).unwrap()["id"]
+        .as_str()
+        .expect("family id")
+        .parse()
+        .expect("numeric family id")
+}
+
+/// The whole roster-fed read, on a session that is an instance of an
+/// authored definition.
+///
+/// A family entry resolves to the variant in play and acts on that
+/// quest, and a segment entry is always declarable. A quest the mission
+/// log happens to carry is NOT offered unless the session rostered it:
+/// the roster is the whole offering, and an arbitrary assortment of open
+/// quests is not this session's business. The ready cue counts the
+/// family once. A name typed in play is promoted into the roster, so it
+/// is a one-tap chip next time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, selection) = make_api_with_selection(dir.path(), "ARIS Dailies").await;
+
+    // A family with two rotating variants: one received today, one not.
+    let family_id = seed_family(&api, "ARIS - Daily Hunting 1", 20.0).await;
+    let today = seed_family_quest(
+        &api,
+        "ARIS - Daily Hunting 1: Weak Mortirex",
+        true,
+        Some(family_id),
+    )
+    .await;
+    seed_family_quest(
+        &api,
+        "ARIS - Daily Hunting 1: Weak Atrox",
+        false,
+        Some(family_id),
+    )
+    .await;
+    // And a daily the mission log carries that nobody rostered.
+    seed_quest(&api, "ARIS - Daily Samples", true).await;
+
+    // Authored family-then-segment; alphabetically the segment leads, so
+    // the assertion below can tell the two orders apart.
+    let definition_id = seed_definition(
+        &api,
+        &selection,
+        serde_json::json!({
+            "name": "ARIS Dailies",
+            "ad_hoc_segments": true,
+            "roster": [
+                { "kind": "quest_family", "ref_id": family_id },
+                { "kind": "segment", "label": "A warm-up lap" },
+            ],
+        }),
+    )
+    .await;
+    api.tracking_start().await.unwrap();
+
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.visible);
+    assert!(options.ad_hoc_segments);
+    let rows: Vec<(&str, bool, bool)> = options
+        .options
+        .iter()
+        .map(|option| (option.name.as_str(), option.available, option.off_roster))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("A warm-up lap", true, false),
+            // The family row names the variant in play, because that is
+            // what a tap records.
+            ("ARIS - Daily Hunting 1: Weak Mortirex", true, false),
+        ],
+        "what the session offers, alphabetically, and nothing else"
+    );
+    assert_eq!(
+        options.options[1].quest_id,
+        Some(today),
+        "the family acts on its serving variant"
+    );
+    assert_eq!(
+        options.ready_count, 2,
+        "the family counts once, not once per variant"
+    );
+
+    // A name typed in play is declared AND promoted, so it is a chip
+    // next time.
+    api.tracking_activity_activate(
+        ActivityTargetKind::Segment,
+        None,
+        Some("Boss lap".to_string()),
+        None,
+    )
     .await
     .unwrap();
 
-    // Idle: quests list unfocused; no session name, so no presets.
-    let options = api.tracking_focus_options().await.unwrap();
-    assert_eq!(options.quests.len(), 1);
-    assert_eq!(options.quests[0].quest_id, carabok);
-    assert!(!options.quests[0].focused);
-    assert!(options.segment_presets.is_empty());
+    let entries = stored_roster(&api, &definition_id).await;
+    let names: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.display_name.as_deref())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["ARIS - Daily Hunting 1", "A warm-up lap", "Boss lap"],
+        "the typed name was appended to the stored roster"
+    );
 
-    // Active under the same name (the scripted provider seeds it at
-    // start): recall is most-recent-first, the auto-number is excluded,
-    // and the focused flag tracks the stretch.
-    api.tracking_start().await.unwrap();
-    api.tracking_quest_focus(carabok, None).await.unwrap();
-    let options = api.tracking_focus_options().await.unwrap();
-    assert!(options.quests[0].focused);
-    assert_eq!(options.segment_presets, vec!["Boss 2", "Boss 1"]);
+    // Declaring it again does not duplicate the chip.
+    api.tracking_activity_activate(
+        ActivityTargetKind::Segment,
+        None,
+        Some("  boss lap  ".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        stored_roster(&api, &definition_id).await.len(),
+        3,
+        "promotion dedupes case-insensitively"
+    );
 }
 
-/// A signal quest is a standing, repeatable chip whose in-progress
-/// state survives session boundaries: it lists in the picker before
-/// any start, focusing it from cold starts it in the same motion (no
-/// mission log to mirror), and stopping the tracking session ends the
-/// stretch but NOT the run, so the next session lists it again and can
-/// re-focus without a restart. This is the collect-now-finish-later
-/// flow pinned end to end.
+/// A family with nothing in play says so rather than offering a tap that
+/// would do nothing, and names the cooldown when one is what is holding
+/// it back: the picker must tell the truth about availability, which is
+/// the whole reason the family carries the timer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_signal_quest_focuses_from_cold_and_survives_session_boundaries() {
+async fn a_family_with_no_variant_in_play_is_offered_but_not_available() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, selection) = make_api_with_selection(dir.path(), "ARIS Dailies").await;
+
+    // Completion-anchored on purpose: under the pickup anchor the family
+    // would already be cooling from the variant's own start, and the
+    // completion below would prove nothing.
+    let family_id = seed_family_anchored(&api, "ARIS - Daily Hunting 2", 20.0, "completion").await;
+    seed_definition(
+        &api,
+        &selection,
+        serde_json::json!({
+            "name": "ARIS Dailies",
+            "roster": [{ "kind": "quest_family", "ref_id": family_id }],
+        }),
+    )
+    .await;
+    api.tracking_start().await.unwrap();
+
+    // No member ever received: nothing to serve, and no timer running.
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.visible, "an authored roster is reason enough");
+    assert_eq!(options.options.len(), 1);
+    assert_eq!(options.options[0].name, "ARIS - Daily Hunting 2");
+    assert!(!options.options[0].available);
+    assert_eq!(
+        options.options[0].unavailable_reason.as_deref(),
+        Some("No variant received yet")
+    );
+    assert_eq!(options.ready_count, 0, "the ready cue cannot overpromise");
+
+    // A variant received then completed puts the FAMILY on cooldown, so
+    // the row's reason changes and its gate rides with it.
+    let variant = seed_family_quest(
+        &api,
+        "ARIS - Daily Hunting 2: Weak Berycled",
+        true,
+        Some(family_id),
+    )
+    .await;
+    api.quest_complete(variant).await.unwrap();
+    let options = api.tracking_activity_options().await.unwrap();
+    assert_eq!(options.options.len(), 1, "the completed variant is no fact");
+    assert!(!options.options[0].available);
+    assert_eq!(
+        options.options[0].unavailable_reason.as_deref(),
+        Some("On cooldown")
+    );
+    assert!(
+        options.options[0].available_from.is_some(),
+        "the gate's lift instant rides with the row so it can count down"
+    );
+}
+
+/// A session that offers nothing gets no surface at all, whatever the
+/// mission log happens to carry. Declaring no activities and leaving
+/// self-named segments off IS the choice of a simple session (the
+/// seeded default is exactly that), so honouring it is the point: a new
+/// player meets no options they have no use for yet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_that_offers_nothing_gets_no_surface() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(
         dir.path(),
@@ -1044,6 +1365,36 @@ async fn a_signal_quest_focuses_from_cold_and_survives_session_boundaries() {
         Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
     )
     .await;
+    api.tracking_start().await.unwrap();
+
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(!options.visible);
+    assert!(!options.ad_hoc_segments);
+    assert!(options.options.is_empty());
+
+    // Three received missions later: still nothing, because none of
+    // them is what this session said it was for.
+    for name in ["ARIS - Daily Samples", "Pluck the Wing", "Poison the Hive"] {
+        seed_quest(&api, name, true).await;
+    }
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(!options.visible, "an open mission log is not an offering");
+    assert!(options.options.is_empty());
+    assert_eq!(options.ready_count, 0);
+}
+
+/// A signal quest rostered on the session is a standing, repeatable row
+/// whose in-progress state survives session boundaries: it is offered
+/// before any start, declaring it from cold starts it in the same motion
+/// (there is no mission log to mirror), and stopping the tracking
+/// session ends the stretch but NOT the run, so the next session offers
+/// it again and can re-declare without a restart. This is the
+/// collect-now-finish-later flow pinned end to end, on the roster entry
+/// that names a single quest rather than a family.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rostered_signal_quest_declares_from_cold_and_survives_session_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, selection) = make_api_with_selection(dir.path(), "Boss runs").await;
 
     let input = serde_json::from_value(serde_json::json!({
         "name": "Hyperion Boss 1",
@@ -1056,42 +1407,68 @@ async fn a_signal_quest_focuses_from_cold_and_survives_session_boundaries() {
         .expect("quest id")
         .parse()
         .expect("numeric quest id");
+    seed_definition(
+        &api,
+        &selection,
+        serde_json::json!({
+            "name": "Boss runs",
+            "roster": [{ "kind": "quest", "ref_id": boss_id }],
+        }),
+    )
+    .await;
 
-    // Idle, never started: the signal quest still lists (standing chip)
-    // and counts in the picker cue.
-    let options = api.tracking_focus_options().await.unwrap();
-    assert_eq!(options.quests.len(), 1);
-    assert!(options.quests[0].signal_quest);
-    assert!(!options.quests[0].focused);
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert_eq!(value["questsInProgress"], 1);
+    // Idle: the session is picked but not running, and the control
+    // already shows what it will offer. Nothing is standing, because
+    // nothing can be until a session does.
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.visible, "picking a session shows what it offers");
+    assert_eq!(options.options.len(), 1);
+    assert!(options.active.is_empty());
 
-    // Focusing from cold starts the run and opens the stretch.
+    // Running: the roster offers it even though nothing has started it,
+    // which is what makes a repeatable run reachable at all.
     api.tracking_start().await.unwrap();
-    let focused = api.tracking_quest_focus(boss_id, None).await.unwrap();
-    assert_eq!(focused.quest_names, vec!["Hyperion Boss 1"]);
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.visible);
+    assert_eq!(options.options.len(), 1);
+    assert!(options.options[0].available);
+    assert!(!options.options[0].active);
+    assert_eq!(options.ready_count, 1);
+
+    // Declaring from cold starts the run and opens the stretch.
+    let standing = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(boss_id), None, None)
+        .await
+        .unwrap();
+    assert_eq!(activity_names(&standing.active), vec!["Hyperion Boss 1"]);
     let quest = api.quest_get(boss_id).await.unwrap();
     assert!(
         !serde_json::to_value(&quest).unwrap()["startedAt"].is_null(),
-        "focusing a cold signal quest started it"
+        "declaring a cold signal quest started it"
     );
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.options[0].active);
+    assert_eq!(options.ready_count, 0, "what is standing is not also ready");
 
     // Session stop ends the stretch, not the run.
     api.tracking_stop().await.unwrap();
-    let options = api.tracking_focus_options().await.unwrap();
-    assert!(options.quests[0].signal_quest);
-    assert!(
-        !options.quests[0].focused,
-        "the stretch died with its session"
-    );
     let quest = api.quest_get(boss_id).await.unwrap();
     assert!(
         !serde_json::to_value(&quest).unwrap()["startedAt"].is_null(),
         "the run itself is still going"
     );
 
-    // The next session re-focuses the still-running quest directly.
+    // The next session offers it again, unstanding, and re-declares it.
     api.tracking_start().await.unwrap();
-    let refocused = api.tracking_quest_focus(boss_id, None).await.unwrap();
-    assert_eq!(refocused.quest_names, vec!["Hyperion Boss 1"]);
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(
+        !options.options[0].active,
+        "the stretch died with its session"
+    );
+    assert_eq!(options.ready_count, 1);
+    let standing = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(boss_id), None, None)
+        .await
+        .unwrap();
+    assert_eq!(activity_names(&standing.active), vec!["Hyperion Boss 1"]);
 }

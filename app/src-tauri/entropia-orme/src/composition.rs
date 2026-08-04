@@ -95,8 +95,8 @@ use eo_services::skill_tracker::SkillTracker;
 pub use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
 use eo_services::time::naive_to_epoch;
 use eo_services::tracker::{
-    EquipmentLibrary, EquipmentProfile, GuardrailTool, HarvestGuardrailTools, HuntTracker,
-    Providers, TrackingConfig,
+    ActivityKey, EquipmentLibrary, EquipmentProfile, GuardrailTool, HarvestGuardrailTools,
+    HuntTracker, Providers, TrackingConfig,
 };
 use eo_services::trifecta_service::{describe_trifecta, TrifectaPreset};
 use eo_wire::bus::DomainBus;
@@ -1237,8 +1237,8 @@ fn compose_producers(
     // Wire the quest service's interval sink now that the tracker owning
     // the interval state exists (the quest service is built first, so this
     // cannot be a constructor argument). A completion closes the quest's
-    // focused stretch, when the user declared one on the running session;
-    // opening a stretch is the user's own focus declaration, never the
+    // declared stretch, when the user declared one on the running session;
+    // opening a stretch is the user's own declaration, never the
     // lifecycle's (the mission log only witnesses pickup and hand-in,
     // which bulk play separates from the effort between them).
     //
@@ -1247,20 +1247,22 @@ fn compose_producers(
     // port-equivalence captures must stay byte-identical.
     {
         let tracker_sink = tracker.clone();
-        quests.set_focus_closer(Arc::new(move |quest_id| {
+        quests.set_stretch_closer(Arc::new(move |quest_id| {
             let tracker = tracker_sink.clone();
             Box::pin(async move {
                 // Errors are swallowed on purpose: with no session
-                // running (or no focus declared) there is nothing to
+                // running (or no stretch declared) there is nothing to
                 // close, and that is not a failure of the completion.
-                let _ = tracker.unfocus_quest(quest_id).await;
+                let _ = tracker
+                    .deactivate_activity(ActivityKey::Quest(quest_id))
+                    .await;
             })
         }));
     }
 
     // Wire the mission-completion probe: a tick's completions land
     // strictly after its publishes, so the tick's own loot (the final
-    // objective kill, the payout) stamps into the focused stretch
+    // objective kill, the payout) stamps into the declared stretch
     // before the completion closes it. Fire-and-forget onto the
     // runtime, because the probe is called from the tail thread and
     // must never block it.

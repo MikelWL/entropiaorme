@@ -2,7 +2,6 @@
 	import { untrack } from 'svelte';
 	import { quintOut } from 'svelte/easing';
 	import { Button, ErrorNotice, SearchInput, Select, Toggle } from '$lib/components';
-	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import type {
 		DefinitionsModel,
@@ -18,7 +17,6 @@
 
 	let nameInput = $state<HTMLInputElement | null>(null);
 	let sourceFilter = $state('');
-	let segmentDraft = $state('');
 
 	// Activities are progressive disclosure, and so is the catalogue
 	// inside them: a planet narrows it, categories fold their quests away
@@ -52,11 +50,6 @@
 
 	function kindLabel(entry: RosterDraftEntry): string {
 		return entry.kind === 'quest_family' ? 'Family' : entry.kind === 'quest' ? 'Quest' : 'Segment';
-	}
-
-	function addSegmentDraft() {
-		model.addSegment(segmentDraft);
-		segmentDraft = '';
 	}
 
 	/** The surface's entrance: it arrives AFTER the page content has
@@ -149,11 +142,8 @@
 			/>
 
 			<!-- Activities: the roster and its on-the-fly option, folded away
-				 behind one disclosure. Authored and saved now, consumed by the
-				 overlay's roster-fed activity picker once that control lands.
-				 Registered in-development: hidden on the stable channel, marked
-				 everywhere else. -->
-			{#if inDevelopment.visible}
+				 behind one disclosure. What is authored here is what the
+				 overlay's Activities control offers while the session runs. -->
 			<section class="panel flex flex-col">
 				<div class="flex items-center gap-2 pr-4">
 					<button
@@ -179,7 +169,6 @@
 							<span class="text-sm text-text-secondary tabular-nums">{model.roster.length}</span>
 						{/if}
 					</button>
-					<InDevelopmentMark id="session-definition-roster" />
 				</div>
 
 				{#if activitiesOpen}
@@ -198,36 +187,14 @@
 										{:else}
 											<span class="text-sm text-text truncate flex-1">{entry.displayName}</span>
 										{/if}
-										<div class="flex items-center gap-0.5 shrink-0">
-											<button
-												type="button"
-												class="p-1 text-text-secondary cursor-pointer transition-colors
-													duration-[var(--duration-base)] hover:text-text
-													disabled:opacity-40 disabled:cursor-not-allowed"
-												aria-label="Move up"
-												title="Move up"
-												disabled={i === 0 || model.saving}
-												onclick={() => model.moveEntry(i, -1)}
-											>&uarr;</button>
-											<button
-												type="button"
-												class="p-1 text-text-secondary cursor-pointer transition-colors
-													duration-[var(--duration-base)] hover:text-text
-													disabled:opacity-40 disabled:cursor-not-allowed"
-												aria-label="Move down"
-												title="Move down"
-												disabled={i === model.roster.length - 1 || model.saving}
-												onclick={() => model.moveEntry(i, 1)}
-											>&darr;</button>
-											<button
-												type="button"
-												class="icon-button-row p-1"
-												aria-label="Remove from the session"
-												title="Remove"
-												disabled={model.saving}
-												onclick={() => model.removeEntry(i)}
-											>&times;</button>
-										</div>
+										<button
+											type="button"
+											class="icon-button-row p-1 shrink-0"
+											aria-label="Remove from the session"
+											title="Remove"
+											disabled={model.saving}
+											onclick={() => model.removeEntry(i)}
+										>&times;</button>
 									</li>
 								{/each}
 							</ul>
@@ -390,13 +357,16 @@
 
 						<!-- Segments are the activities the player names themselves, so
 							 they are one capability with one switch: off, the session has
-							 no segment concept at all; on, names can be seeded here as
-							 well as typed during play. -->
+							 no segment concept at all; on, they are named in the overlay as
+							 they happen and join this list from there. Nothing is
+							 pre-ordered here: a slice you have not played yet is not one
+							 you know the name of. -->
 						<div class="flex items-center justify-between gap-4 border-t border-border/50 pt-3">
 							<div class="flex flex-col gap-0.5">
 								<span class="text-sm text-text">Name segments on the fly</span>
 								<span class="text-sm text-text-secondary leading-relaxed max-w-sm">
-									Type a segment name while you play, instead of only picking from this list.
+									Name what you are doing as you play; each name you use joins this
+									list for next time.
 								</span>
 							</div>
 							<Toggle
@@ -406,33 +376,9 @@
 								onchange={(checked) => (model.adHocSegments = checked)}
 							/>
 						</div>
-
-						{#if model.adHocSegments}
-							<div class="flex items-center gap-2">
-								<input
-									bind:value={segmentDraft}
-									class="flex-1 h-9 px-3 text-sm bg-surface/70 text-text rounded-md border border-border
-										outline-none transition-colors focus:border-accent/60
-										placeholder:text-text-tertiary"
-									placeholder="Name one now if you already know it (e.g. Warm-up)..."
-									aria-label="New segment name"
-									disabled={model.saving}
-									onkeydown={(e) => {
-										if (e.key === 'Enter') {
-											e.preventDefault();
-											addSegmentDraft();
-										}
-									}}
-								/>
-								<Button size="sm" variant="secondary" disabled={model.saving || !segmentDraft.trim()} onclick={addSegmentDraft}>
-									{#snippet children()}Add segment{/snippet}
-								</Button>
-							</div>
-						{/if}
 					</div>
 				{/if}
 			</section>
-			{/if}
 
 			{#if model.authoringError}
 				<ErrorNotice message={model.authoringError} />

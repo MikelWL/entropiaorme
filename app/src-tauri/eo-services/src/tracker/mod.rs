@@ -35,7 +35,9 @@ mod tests;
 mod time;
 mod weapons;
 
-pub use intervals::{IntervalKind, IntervalSpec, OpenInterval};
+pub use intervals::{
+    ActiveActivity, ActivityKey, ActivityRef, CloseScope, IntervalKind, IntervalSpec, OpenInterval,
+};
 pub use mob::{DeclaredMob, MobStampSource};
 pub use providers::{
     DefaultTrackingConfig, EquipmentLibrary, EquipmentProfile, GuardrailTool,
@@ -76,14 +78,15 @@ const GUARDRAIL_RETRO_WINDOW_SECONDS: f64 = 30.0;
 const HARVEST_YIELD_WINDOW_SECONDS: f64 = 30.0;
 
 /// The declaration-command preconditions surfaced at the command
-/// boundary. The tag-mode variants retired with the exclusive capture
-/// model: a declaration no longer has a mode to disagree with.
+/// boundary. One variant, because a declaration needs only a session to
+/// act on: the tag-mode variants retired with the exclusive capture
+/// model, and the no-open-segment variant with the live rename the
+/// unified Activities control replaced (every Activities verb is
+/// idempotent over the standing set, so a stale control cannot fail).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TrackerCommandError {
     #[error("No active session")]
     NoActiveSession,
-    #[error("No open segment")]
-    NoOpenSegment,
 }
 
 /// The session typestate: everything session-scoped lives inside the
@@ -228,61 +231,36 @@ impl HuntTracker {
             .await
     }
 
-    /// Focus a quest: open its effort stretch on the running session.
-    /// Exclusive over quests by default (the one-tap switch between
-    /// dailies); `additive` joins the standing focus instead, for the
-    /// hunt that genuinely advances two quests at once. Segments are an
-    /// independent axis and are never touched. Forward-looking, like
-    /// every interval write; events already recorded keep the context
-    /// they were stamped with. Returns the focused names now in force,
-    /// newest first.
-    pub async fn focus_quest(
+    /// Declare an activity on the running session: open the stretch of
+    /// play advancing a quest, or a player-named segment. The default is
+    /// the one-tap switch, exclusive across both kinds (declaring the
+    /// next boss seals whatever was standing); `additive` co-activates
+    /// instead, keeping each kind's own standing rule. Forward-looking,
+    /// like every interval write; events already recorded keep the
+    /// context they were stamped with. Returns the standing set, in
+    /// declaration order.
+    pub async fn activate_activity(
         &self,
-        quest_id: i64,
-        name: &str,
+        activity: ActivityRef,
         additive: bool,
-    ) -> Result<Vec<String>, TrackerCommandError> {
-        let name = name.to_string();
-        self.call(|reply| TrackerMsg::FocusQuest {
-            quest_id,
-            name,
+    ) -> Result<Vec<ActiveActivity>, TrackerCommandError> {
+        self.call(|reply| TrackerMsg::ActivateActivity {
+            activity,
             additive,
             reply,
         })
         .await
     }
 
-    /// End one quest's focus (the user's toggle-off, or its completion
-    /// closing the stretch), leaving siblings focused. Idempotent when
-    /// no stretch is open. Returns the focused names still in force.
-    pub async fn unfocus_quest(&self, quest_id: i64) -> Result<Vec<String>, TrackerCommandError> {
-        self.call(|reply| TrackerMsg::UnfocusQuest { quest_id, reply })
-            .await
-    }
-
-    /// Open a segment (the player-drawn slice of the session), closing
-    /// any standing one: segments are sequential, not stacking. A None
-    /// or blank label auto-numbers the segment "Segment N". Returns the
-    /// name now in force (None when the contained interval write failed
-    /// and no segment opened).
-    pub async fn open_segment(
+    /// End one standing activity (the user's toggle-off, or a quest's
+    /// completion closing its stretch), leaving the others running.
+    /// Idempotent when nothing matching is standing. Returns the set
+    /// still in force.
+    pub async fn deactivate_activity(
         &self,
-        label: Option<String>,
-    ) -> Result<Option<String>, TrackerCommandError> {
-        self.call(|reply| TrackerMsg::OpenSegment { label, reply })
-            .await
-    }
-
-    /// Close the open segment; the session keeps running unsegmented.
-    pub async fn close_segment(&self) -> Result<(), TrackerCommandError> {
-        self.call(|reply| TrackerMsg::CloseSegment { reply }).await
-    }
-
-    /// Rename the open segment live (a segment's grain is finer than
-    /// the session, so its label may move while the session runs).
-    pub async fn rename_segment(&self, label: &str) -> Result<(), TrackerCommandError> {
-        let label = label.to_string();
-        self.call(|reply| TrackerMsg::RenameSegment { label, reply })
+        target: ActivityKey,
+    ) -> Result<Vec<ActiveActivity>, TrackerCommandError> {
+        self.call(|reply| TrackerMsg::DeactivateActivity { target, reply })
             .await
     }
 

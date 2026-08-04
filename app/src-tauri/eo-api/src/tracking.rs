@@ -30,11 +30,12 @@
 //!   command answers a body, not a status + headers), and the body-taint /
 //!   int-parse 422s (typed args are pre-validated).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use eo_services::config_service::{active_trifecta_preset, load_config_readonly, AppConfig};
 use eo_services::db::Db;
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
+use eo_services::session_definitions::SessionDefinitionService;
 use eo_services::time::{local_isoformat, naive_to_epoch};
 use eo_services::tracker::{HuntTracker, TrackerCommandError};
 use eo_services::trifecta_service::{validate_trifecta, TrifectaPreset};
@@ -44,6 +45,7 @@ use serde_json::{json, Map, Value};
 
 use eo_services::tracking_reads::*;
 
+use crate::activities::ActivitySummary;
 use crate::Nullable;
 use crate::{Api, ApiError};
 
@@ -52,7 +54,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 45] = [
+const SNAPSHOT_FIELDS: [&str; 43] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -61,12 +63,10 @@ const SNAPSHOT_FIELDS: [&str; 45] = [
     "sessionName",
     "sessionDefinitionId",
     "skillBoostPercent",
-    "segmentName",
     "currentMob",
     "currentTool",
     "currentActivity",
-    "questNames",
-    "questsInProgress",
+    "activities",
     "trifectaAttribution",
     "recentEvents",
     "session_id",
@@ -103,22 +103,10 @@ const SNAPSHOT_FIELDS: [&str; 45] = [
 /// The repair-scan response-model field order (`exclude_unset`).
 const REPAIR_FIELDS: [&str; 4] = ["cost_ped", "raw_text", "confidence", "error"];
 
-/// How many recalled segment-name presets the focus picker offers.
-const FOCUS_PRESET_CAP: usize = 8;
-
-/// Whether a segment label is an auto-numbered "Segment N": recalled
-/// presets exclude them, because an auto-number names nothing worth
-/// offering again.
-fn is_auto_numbered_segment(label: &str) -> bool {
-    label
-        .strip_prefix("Segment ")
-        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
-/// A tracker-command precondition surfaced at the facade: both
-/// variants are state conflicts ("No active session" / "No open
-/// segment"), so they map to 409 with the error's own message.
-fn tracker_conflict(error: TrackerCommandError) -> ApiError {
+/// A tracker-command precondition surfaced at the facade: a state
+/// conflict ("No active session"), mapped to 409 with the error's own
+/// message.
+pub(crate) fn tracker_conflict(error: TrackerCommandError) -> ApiError {
     ApiError::conflict(error.to_string())
 }
 
@@ -504,11 +492,6 @@ pub struct TrackingSnapshot {
     /// sourcing as the session name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_boost_percent: Option<i64>,
-    /// The open segment's name. Active-only by nature: a segment exists
-    /// exactly while its session runs, so the idle branch never carries
-    /// the key and an active session without a segment drops it too.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub segment_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_mob: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -516,17 +499,14 @@ pub struct TrackingSnapshot {
     /// What the held tool implies the next action is recorded as.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_activity: Option<ToolActivity>,
-    /// The focused quests' names, newest first: the effort stretches
-    /// the user declared on the running session (several can stack via
-    /// additive focus). Absent when none are focused, so the readout
-    /// never claims effort that was not declared.
+    /// The Activities control's strip-level readout: whether it appears
+    /// at all, the ready cue, and the standing set. Carried on every
+    /// frame, idle included, over the definition a start would stamp, so
+    /// picking a session shows what it will offer rather than making the
+    /// surface appear only once tracking begins. The standing set is
+    /// necessarily empty while idle.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub quest_names: Option<Vec<String>>,
-    /// How many quests the focus picker can offer (in-progress
-    /// mission-log quests plus standing signal quests), surfaced as a
-    /// passive cue. Present idle and active alike; absent only at zero.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quests_in_progress: Option<i64>,
+    pub activities: Option<ActivitySummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trifecta_attribution: Option<TrifectaAttribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -667,49 +647,6 @@ pub struct DefinitionSelectResult {
     pub session_name: Nullable<String>,
 }
 
-/// The segment acknowledgement: the segment name now in force on the
-/// running session (null: no segment open).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SegmentStateResult {
-    pub segment_name: Nullable<String>,
-}
-
-/// The quest-focus acknowledgement: the focused quests' names now in
-/// force on the running session, newest first (empty: none focused).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QuestFocusResult {
-    pub quest_names: Vec<String>,
-}
-
-/// One quest the focus picker can offer: an in-progress quest (or a
-/// standing signal quest), and whether an effort stretch of it is open
-/// on the running session.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FocusQuestOption {
-    pub quest_id: i64,
-    pub name: String,
-    pub focused: bool,
-    /// Whether this is a signal-completed quest: a standing, repeatable
-    /// chip (focusing starts it; its signal loot completes it), as
-    /// opposed to a mission-log quest that lists only while in
-    /// progress.
-    pub signal_quest: bool,
-}
-
-/// What the focus picker offers: the in-progress quests with their
-/// focused state, and the segment-name presets recalled from history
-/// under the current session's name (most recent first, auto-numbered
-/// names excluded).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FocusOptionsResult {
-    pub quests: Vec<FocusQuestOption>,
-    pub segment_presets: Vec<String>,
-}
-
 /// The post-hoc session-rename result.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -834,9 +771,15 @@ impl Api {
     pub async fn tracking_snapshot(&self) -> Result<TrackingSnapshot, ApiError> {
         let config = load_config_readonly(&self.data_dir)
             .map_err(ApiError::internal("tracking snapshot config"))?;
-        let value =
-            build_snapshot_value(&self.db, &self.tracker, &config, self.hotbar.is_running())
-                .await?;
+        let value = build_snapshot_value(
+            &self.db,
+            &self.tracker,
+            &config,
+            self.hotbar.is_running(),
+            Some(&self.session_definitions),
+            naive_to_epoch(self.clock.now()),
+        )
+        .await?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking snapshot shaping"))
     }
 
@@ -1241,227 +1184,6 @@ impl Api {
         })
     }
 
-    /// Open a player-drawn segment on the running session, closing any
-    /// standing one (segments are sequential, not stacking). A null or
-    /// blank name is auto-numbered "Segment N"; the acknowledgement
-    /// echoes the name now in force. 409 when no session is active.
-    pub async fn tracking_segment_open(
-        &self,
-        segment_name: Option<String>,
-    ) -> Result<SegmentStateResult, ApiError> {
-        let applied = self
-            .tracker
-            .open_segment(segment_name)
-            .await
-            .map_err(tracker_conflict)?;
-        Ok(SegmentStateResult {
-            segment_name: applied.into(),
-        })
-    }
-
-    /// Close the open segment; the session keeps running unsegmented.
-    /// Closing with no segment open acknowledges as a no-op, so a stale
-    /// control cannot fail the user. 409 when no session is active.
-    pub async fn tracking_segment_close(&self) -> Result<SegmentStateResult, ApiError> {
-        self.tracker
-            .close_segment()
-            .await
-            .map_err(tracker_conflict)?;
-        Ok(SegmentStateResult {
-            segment_name: None.into(),
-        })
-    }
-
-    /// Rename the OPEN segment live: a segment's grain is finer than
-    /// the session, so its label may move while the session runs. 400
-    /// for a blank name; 409 when no session is active or no segment is
-    /// open (the close raced the edit).
-    pub async fn tracking_segment_rename(
-        &self,
-        segment_name: String,
-    ) -> Result<SegmentStateResult, ApiError> {
-        let name = segment_name.trim().to_string();
-        if name.is_empty() {
-            return Err(ApiError::bad_request("Segment name must not be empty"));
-        }
-        self.tracker
-            .rename_segment(&name)
-            .await
-            .map_err(tracker_conflict)?;
-        Ok(SegmentStateResult {
-            segment_name: Some(name).into(),
-        })
-    }
-
-    /// Focus a quest: declare that the gameplay from now on advances
-    /// it, opening its effort stretch on the running session. The
-    /// default is the one-tap switch (exclusive over quests: focusing
-    /// the next daily closes the standing quest stretches in the same
-    /// motion); `additive` joins the standing focus instead, for a hunt
-    /// that genuinely advances two quests at once. Segments are an
-    /// independent axis and are never touched. 404 for an unknown
-    /// quest; 400 for a quest not in progress (the mission log has to
-    /// carry it before play can be toward it); 409 when no session is
-    /// active.
-    pub async fn tracking_quest_focus(
-        &self,
-        quest_id: i64,
-        additive: Option<bool>,
-    ) -> Result<QuestFocusResult, ApiError> {
-        let Some(quest) = self
-            .quests
-            .get_quest(quest_id)
-            .await
-            .map_err(ApiError::internal("quest focus lookup"))?
-        else {
-            return Err(ApiError::not_found("Quest not found"));
-        };
-        if quest["started_at"].is_null() {
-            // A signal quest has no mission-log entry to mirror, so its
-            // in-progress state IS the user's declaration: focusing it
-            // starts it in the same motion (and its signal loot will
-            // complete it). A mission-log quest still refuses, because
-            // play cannot be toward a quest the log does not carry.
-            if quest["signal_loot_item"].is_null() {
-                return Err(ApiError::bad_request(
-                    "Quest is not in progress; start it before focusing on it",
-                ));
-            }
-            self.quests
-                .start_quest(quest_id)
-                .await
-                .map_err(ApiError::internal("signal quest start"))?;
-        }
-        let name = quest["name"].as_str().unwrap_or_default().to_string();
-        let quest_names = self
-            .tracker
-            .focus_quest(quest_id, &name, additive.unwrap_or(false))
-            .await
-            .map_err(tracker_conflict)?;
-        Ok(QuestFocusResult { quest_names })
-    }
-
-    /// End one quest's focus, leaving any sibling focus running.
-    /// Idempotent over the focus state (a stale control cannot fail
-    /// the user), like the segment close. 409 when no session is
-    /// active.
-    pub async fn tracking_quest_unfocus(
-        &self,
-        quest_id: i64,
-    ) -> Result<QuestFocusResult, ApiError> {
-        let quest_names = self
-            .tracker
-            .unfocus_quest(quest_id)
-            .await
-            .map_err(tracker_conflict)?;
-        Ok(QuestFocusResult { quest_names })
-    }
-
-    /// What the focus picker offers right now: every in-progress quest
-    /// (with its focused state on the running session), plus the
-    /// segment-name presets recalled from history under the current
-    /// session's name (most recent first, capped, auto-numbered
-    /// "Segment N" names excluded as noise). Callable while idle: the
-    /// quests still list (unfocused) and the presets are empty, since
-    /// both focus and segments need a running session to act on.
-    pub async fn tracking_focus_options(&self) -> Result<FocusOptionsResult, ApiError> {
-        let readout = self
-            .tracker
-            .snapshot()
-            .await
-            .map_err(ApiError::internal("focus options readout"))?;
-        let (active_session, session_name) = match &readout.active {
-            Some(active) => (
-                Some(active.session_id.clone()),
-                active.session_name.clone().filter(|name| !name.is_empty()),
-            ),
-            None => (None, None),
-        };
-
-        let focused: HashSet<i64> = match &active_session {
-            Some(session_id) => {
-                let session = session_id.clone();
-                self.db
-                    .with_reader(move |conn| {
-                        let mut stmt = conn.prepare(
-                            "SELECT ref_id FROM session_intervals \
-                             WHERE session_id = ? AND kind = 'quest' \
-                               AND ended_at IS NULL AND ref_id IS NOT NULL",
-                        )?;
-                        let mut rows = stmt.query(rusqlite::params![session])?;
-                        let mut out = HashSet::new();
-                        while let Some(row) = rows.next()? {
-                            out.insert(row.get::<_, i64>(0)?);
-                        }
-                        Ok(out)
-                    })
-                    .await
-                    .map_err(ApiError::internal("focus options focused set"))?
-            }
-            None => HashSet::new(),
-        };
-
-        // Mission-log quests list while in progress; signal quests are
-        // standing chips (repeatable: focusing one starts it), so they
-        // list regardless of their in-progress state.
-        let quests = self
-            .quests
-            .get_quests(true)
-            .await
-            .map_err(ApiError::internal("focus options quests"))?
-            .into_iter()
-            .filter(|quest| !quest["started_at"].is_null() || !quest["signal_loot_item"].is_null())
-            .filter_map(|quest| {
-                let quest_id = quest["id"].as_i64()?;
-                let name = quest["name"].as_str()?.to_string();
-                Some(FocusQuestOption {
-                    quest_id,
-                    name,
-                    focused: focused.contains(&quest_id),
-                    signal_quest: !quest["signal_loot_item"].is_null(),
-                })
-            })
-            .collect();
-
-        let segment_presets = match (&active_session, session_name.as_deref()) {
-            (Some(session_id), Some(name)) => {
-                let session = session_id.clone();
-                let name = name.to_string();
-                let labels: Vec<String> = self
-                    .db
-                    .with_reader(move |conn| {
-                        let mut stmt = conn.prepare(
-                            "SELECT si.label FROM session_intervals si \
-                             JOIN tracking_sessions ts ON ts.id = si.session_id \
-                             WHERE si.kind = 'segment' AND si.label IS NOT NULL \
-                               AND ts.session_name = ? AND si.session_id <> ? \
-                             GROUP BY si.label \
-                             ORDER BY MAX(si.started_at) DESC",
-                        )?;
-                        let mut rows = stmt.query(rusqlite::params![name, session])?;
-                        let mut out = Vec::new();
-                        while let Some(row) = rows.next()? {
-                            out.push(row.get::<_, String>(0)?);
-                        }
-                        Ok(out)
-                    })
-                    .await
-                    .map_err(ApiError::internal("focus options presets"))?;
-                labels
-                    .into_iter()
-                    .filter(|label| !is_auto_numbered_segment(label))
-                    .take(FOCUS_PRESET_CAP)
-                    .collect()
-            }
-            _ => Vec::new(),
-        };
-
-        Ok(FocusOptionsResult {
-            quests,
-            segment_presets,
-        })
-    }
-
     /// Rename an ended session: the post-hoc correction path for the
     /// name facet, which the overlay fixes once a session starts.
     pub async fn tracking_rename_session(
@@ -1584,6 +1306,8 @@ pub(crate) async fn build_snapshot_value(
     tracker: &HuntTracker,
     config: &AppConfig,
     hotbar_active: bool,
+    definitions: Option<&SessionDefinitionService>,
+    now: f64,
 ) -> Result<Value, ApiError> {
     let weapon_attribution = if config.hotbar_hooks_enabled {
         "hotbar"
@@ -1626,36 +1350,6 @@ pub(crate) async fn build_snapshot_value(
         None => Value::Null,
     };
 
-    // The quest facet: the focused quests' effort stretches as the
-    // user declared them, newest first. Null (dropped by the
-    // projection) when none are focused; the interval state is the
-    // only source.
-    let quest_names = match &readout.active {
-        Some(active) if !active.quest_names.is_empty() => json!(active.quest_names),
-        _ => Value::Null,
-    };
-
-    // The focus picker's chip supply, as a passive cue: the in-progress
-    // mission-log quests plus the standing signal quests (always
-    // offerable; focusing one starts a run). Zero drops the key.
-    let quests_in_progress = db
-        .with_reader(|conn| {
-            Ok(conn.query_row(
-                "SELECT COUNT(*) FROM quests \
-                 WHERE is_active = 1 \
-                   AND (started_at IS NOT NULL OR signal_loot_item IS NOT NULL)",
-                [],
-                |row| row.get::<_, i64>(0),
-            )?)
-        })
-        .await
-        .map_err(ApiError::internal("snapshot quests in progress"))?;
-    let quests_in_progress = if quests_in_progress > 0 {
-        json!(quests_in_progress)
-    } else {
-        Value::Null
-    };
-
     // The definition facet, stringified for the wire (null drops the
     // key under exclude-none). The idle branch re-validates the
     // configured selection against an ACTIVE definition, so one deleted
@@ -1673,6 +1367,20 @@ pub(crate) async fn build_snapshot_value(
             .await
             .map_err(ApiError::internal("snapshot definition selection"))?;
     let idle_definition_id = idle_selection.as_ref().map(|(id, _)| *id);
+
+    // The Activities control's strip-level readout: whether the control
+    // appears at all, how many rows a tap could start, and what is
+    // standing. Computed by the same function the control's own menu
+    // reads, so the chip's cue and the menu's rows cannot disagree.
+    let picture = crate::activities::activity_picture(
+        db,
+        definitions,
+        readout.active.as_ref(),
+        idle_definition_id,
+        now,
+    )
+    .await?;
+    let activities = json!(ActivitySummary::from(&picture));
 
     let value = match &readout.active {
         None => {
@@ -1693,7 +1401,7 @@ pub(crate) async fn build_snapshot_value(
                 "sessionDefinitionId": definition_value(idle_definition_id),
                 "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
-                "questsInProgress": quests_in_progress,
+                "activities": activities,
                 "recentEvents": [],
             })
         }
@@ -1763,13 +1471,11 @@ pub(crate) async fn build_snapshot_value(
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
                 "currentActivity": current_activity,
-                "questNames": quest_names,
-                "questsInProgress": quests_in_progress,
+                "activities": activities,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "sessionDefinitionId": definition_value(active.definition_id),
                 "skillBoostPercent": boost_value(active.skill_boost_percent),
-                "segmentName": name_value(active.segment_name.as_deref()),
                 "currentMob": active.current_mob.clone(),
                 "recentEvents": recent_events,
                 "warnings": warnings,

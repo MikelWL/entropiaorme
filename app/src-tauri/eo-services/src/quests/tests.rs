@@ -1717,11 +1717,11 @@ fn truthiness_matches_python_bool() {
     assert!(json_truthy(Some(&json!({"k": 1}))));
 }
 
-/// A completion reports the quest to the interval layer so a focused
+/// A completion reports the quest to the interval layer so a declared
 /// stretch of it closes at the completion moment; a start reports
 /// NOTHING, because the mission log only witnesses pickup (bulk pickup
 /// separates it from the play that advances the quest), and which
-/// stretch of play is toward a quest is the user's focus declaration.
+/// stretch of play is toward a quest is the user's own declaration.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn only_a_completion_reports_to_the_interval_layer() {
     let dir = tempfile::tempdir().unwrap();
@@ -1729,7 +1729,7 @@ async fn only_a_completion_reports_to_the_interval_layer() {
 
     let reported = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = reported.clone();
-    svc.set_focus_closer(Arc::new(move |quest_id| {
+    svc.set_stretch_closer(Arc::new(move |quest_id| {
         sink.lock().unwrap().push(quest_id);
         Box::pin(async {})
     }));
@@ -1743,7 +1743,7 @@ async fn only_a_completion_reports_to_the_interval_layer() {
     svc.start_quest(quest).await.unwrap();
     assert!(
         reported.lock().unwrap().is_empty(),
-        "a start opens no stretch: focus is the user's declaration"
+        "a start opens no stretch: the stretch is the user's declaration"
     );
 
     svc.complete_quest(quest).await.unwrap();
@@ -1762,8 +1762,8 @@ fn marker(item_name: &str, quantity: i64) -> SignalLoot {
 
 /// The signal path end to end at the service: an in-progress signal
 /// quest completes when its item arrives (case-insensitively, trimmed),
-/// records the completion, reports the focus close, and clears the
-/// in-progress state so the run is over until the next focus.
+/// records the completion, reports the stretch close, and clears the
+/// in-progress state so the run is over until the next declaration.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     let dir = tempfile::tempdir().unwrap();
@@ -1771,7 +1771,7 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
 
     let closed = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = closed.clone();
-    svc.set_focus_closer(Arc::new(move |quest_id| {
+    svc.set_stretch_closer(Arc::new(move |quest_id| {
         sink.lock().unwrap().push(quest_id);
         Box::pin(async {})
     }));
@@ -1804,7 +1804,7 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
 
 /// A signal quest that is NOT in progress ignores its marker: an
 /// undeclared run stays unrecorded rather than being invented from
-/// loot (the same honesty rule as the focus system's).
+/// loot (the same honesty rule the Activities control follows).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_signal_without_a_declared_run_completes_nothing() {
     let dir = tempfile::tempdir().unwrap();

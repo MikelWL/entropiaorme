@@ -26,6 +26,7 @@ use crate::event_bus::{EventBus, Registration, Topic};
 use crate::loot_filter::normalize_blacklist;
 use crate::tracking_models::TrackingSession;
 
+use super::intervals::{ActiveActivity, ActivityKey, ActivityRef};
 use super::mob::DeclaredMob;
 use super::providers::Providers;
 use super::session::{SessionAggregate, SessionFacets};
@@ -62,39 +63,21 @@ pub(super) enum TrackerMsg {
         maturity: String,
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
-    /// The user focused a quest: open its effort stretch on the running
-    /// session. Exclusive over quests by default (the one-tap switch);
-    /// additive joins the standing focus instead. The reply carries the
-    /// focused names now in force, newest first.
-    FocusQuest {
-        quest_id: i64,
-        name: String,
+    /// The user declared an activity: open the stretch of play advancing
+    /// a quest, or a player-named segment. Exclusive across both kinds
+    /// by default (the one-tap switch); additive co-activates instead.
+    /// The reply carries the standing set, in declaration order.
+    ActivateActivity {
+        activity: ActivityRef,
         additive: bool,
-        reply: oneshot::Sender<Result<Vec<String>, TrackerCommandError>>,
+        reply: oneshot::Sender<Result<Vec<ActiveActivity>, TrackerCommandError>>,
     },
-    /// A quest's focus ended (the user's toggle-off, or its completion
-    /// closing the stretch), leaving any sibling quest's focus open.
-    /// The reply carries the focused names still in force.
-    UnfocusQuest {
-        quest_id: i64,
-        reply: oneshot::Sender<Result<Vec<String>, TrackerCommandError>>,
-    },
-    /// The user drew a segment boundary: open a segment, closing any
-    /// standing one (segments are sequential, not stacking). A None or
-    /// blank label auto-numbers it "Segment N"; the reply carries the
-    /// name now in force.
-    OpenSegment {
-        label: Option<String>,
-        reply: oneshot::Sender<Result<Option<String>, TrackerCommandError>>,
-    },
-    /// Close the open segment (a no-op when none is open).
-    CloseSegment {
-        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
-    },
-    /// Rename the open segment in place, live.
-    RenameSegment {
-        label: String,
-        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+    /// One standing activity ended (the user's toggle-off, or a quest's
+    /// completion closing its stretch), leaving the others open. The
+    /// reply carries the set still in force.
+    DeactivateActivity {
+        target: ActivityKey,
+        reply: oneshot::Sender<Result<Vec<ActiveActivity>, TrackerCommandError>>,
     },
     ReleaseMob(oneshot::Sender<Option<String>>),
     PrimeDemo {
@@ -226,25 +209,15 @@ impl TrackerActor {
             TrackerMsg::SetSkillBoost(percent, reply) => {
                 let _ = reply.send(self.set_skill_boost(percent).await);
             }
-            TrackerMsg::FocusQuest {
-                quest_id,
-                name,
+            TrackerMsg::ActivateActivity {
+                activity,
                 additive,
                 reply,
             } => {
-                let _ = reply.send(self.focus_quest(quest_id, name, additive).await);
+                let _ = reply.send(self.activate_activity(activity, additive).await);
             }
-            TrackerMsg::UnfocusQuest { quest_id, reply } => {
-                let _ = reply.send(self.unfocus_quest(quest_id).await);
-            }
-            TrackerMsg::OpenSegment { label, reply } => {
-                let _ = reply.send(self.open_segment(label).await);
-            }
-            TrackerMsg::CloseSegment { reply } => {
-                let _ = reply.send(self.close_segment().await);
-            }
-            TrackerMsg::RenameSegment { label, reply } => {
-                let _ = reply.send(self.rename_segment(label).await);
+            TrackerMsg::DeactivateActivity { target, reply } => {
+                let _ = reply.send(self.deactivate_activity(target).await);
             }
             TrackerMsg::SetDeclaredMob {
                 name,

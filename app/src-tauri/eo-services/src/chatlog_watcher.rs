@@ -84,7 +84,7 @@ pub struct MissionCompletion {
 /// The mission-completion probe, invoked strictly AFTER a tick's
 /// publishes: by then the tick's loot (the final objective kill and
 /// the payout) has dispatched to the consumers, so the completion
-/// (and the focused-stretch close it carries) is ordered after the
+/// (and the declared-stretch close it carries) is ordered after the
 /// tick's own attribution stamping. Fire-and-forget by contract, like
 /// the signal probe.
 pub type MissionCompleteProbe = Arc<dyn Fn(Vec<MissionCompletion>) + Send + Sync>;
@@ -647,7 +647,7 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
     // carries the line's quantity: a stacked line (quantity 2) is two
     // markers, so the probe's one-marker-one-run budget sees both.
     // Collected here, but PROBED only after every publish below: the
-    // completion closes the focused stretch, and the clump that pays
+    // completion closes the declared stretch, and the clump that pays
     // for the run must stamp into that stretch before anything can
     // close it.
     let signal_loot: Option<Vec<SignalLoot>> = if completes.is_empty() && !loot_events.is_empty() {
@@ -744,7 +744,7 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
     // Completions fire strictly after every publish, one rule for
     // both quest kinds: by now the tick's loot (the final objective
     // kill, the payout, a boss's clump) has dispatched into the
-    // consumers' inboxes, so the completion (and the focused-stretch
+    // consumers' inboxes, so the completion (and the declared-stretch
     // close it carries) is ordered after the tick's own attribution
     // stamping. The suppression filter already answered pre-publish,
     // so a suppressed reward echo never reached anyone.
@@ -1219,7 +1219,7 @@ mod tests {
     /// a tick that carries one: a mission tick is the mission
     /// machinery's, so a daily's marker item cannot masquerade as an
     /// instance boss's. The probe fires strictly AFTER the tick's loot
-    /// publish: the completion it triggers closes the focused stretch,
+    /// publish: the completion it triggers closes the declared stretch,
     /// and the clump that pays for the run must be dispatched for
     /// attribution stamping before anything can close it.
     #[test]
@@ -1301,7 +1301,7 @@ mod tests {
     /// tick's publishes, one ordering rule for both quest kinds: the
     /// tick's own loot (the final objective kill, the payout) is
     /// dispatched for attribution stamping before the completion can
-    /// close the focused stretch. Each entry carries the loot and
+    /// close the declared stretch. Each entry carries the loot and
     /// skill picture the suppression filter saw for its line.
     #[test]
     fn the_mission_probe_fires_after_the_ticks_publishes() {

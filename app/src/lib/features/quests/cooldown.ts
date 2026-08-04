@@ -80,6 +80,13 @@ export function getFamilyCooldownRemaining(
 	return formatRemaining(expiry - now);
 }
 
+/** The time left until an instant given in epoch SECONDS (the shape the
+ * Activities offerings carry their gate in), in the same wording every
+ * quest surface uses; null once it has passed. */
+export function formatTimeUntil(atEpochSeconds: number, now: number): string | null {
+	return formatRemaining(atEpochSeconds * 1000 - now);
+}
+
 function formatRemaining(remainMs: number): string | null {
 	if (remainMs <= 0) return null;
 	const totalSec = Math.floor(remainMs / 1000);

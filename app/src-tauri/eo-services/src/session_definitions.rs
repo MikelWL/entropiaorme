@@ -301,6 +301,68 @@ impl SessionDefinitionService {
         self.get(definition_id).await
     }
 
+    /// Append a segment named during play to a definition's roster, so
+    /// it is a one-tap chip next time.
+    ///
+    /// The one roster write that is not authoring: a name typed into the
+    /// Activities control is a declaration as deliberate as one seeded
+    /// in the editor, and promoting it is what makes self-named segments
+    /// worth switching on. Deduplicated case-insensitively against every
+    /// entry's display name (a family's name included), because a second
+    /// chip reading the same as an existing one is noise whatever kind
+    /// it is. Refuses to resurrect a soft-deleted definition, exactly as
+    /// [`update`](Self::update) does. Returns whether a row was added.
+    pub async fn promote_segment(
+        &self,
+        definition_id: i64,
+        label: &str,
+    ) -> Result<bool, SessionDefinitionError> {
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            return Ok(false);
+        }
+        match self.get(definition_id).await? {
+            Some(existing) if existing.is_active => {
+                if existing.roster.iter().any(|entry| {
+                    entry
+                        .display_name
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&label))
+                }) {
+                    return Ok(false);
+                }
+            }
+            _ => return Ok(false),
+        }
+        let now = self.now_epoch();
+        Ok(self
+            .db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                // The position is read inside the transaction: two
+                // promotions racing must not land on one position.
+                let next_position: i64 = tx.query_row(
+                    "SELECT COALESCE(MAX(position), -1) + 1 \
+                     FROM session_definition_roster WHERE definition_id = ?",
+                    rusqlite::params![definition_id],
+                    |row| row.get(0),
+                )?;
+                let added = tx.execute(
+                    "INSERT INTO session_definition_roster \
+                     (definition_id, position, kind, ref_id, label) \
+                     VALUES (?, ?, 'segment', NULL, ?)",
+                    rusqlite::params![definition_id, next_position, label],
+                )?;
+                tx.execute(
+                    "UPDATE session_definitions SET updated_at = ? WHERE id = ?",
+                    rusqlite::params![now, definition_id],
+                )?;
+                tx.commit()?;
+                Ok(added > 0)
+            })
+            .await?)
+    }
+
     /// Soft-delete a definition and clear its roster in one
     /// transaction. Sessions keep their stamped `definition_id`: the
     /// stamp is recorded history, and the id stays addressable for a

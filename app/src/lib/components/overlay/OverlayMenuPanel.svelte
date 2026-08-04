@@ -1,86 +1,138 @@
 <script lang="ts">
+	import { formatTimeUntil } from '$lib/features/quests/cooldown';
+	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
+	import type { ActivityOption } from '$lib/api';
 	import type { OverlayMenuSelection, OverlayMenuState } from '$lib/windows/overlayMenu';
 
 	let {
-		state,
+		menuState,
 		onSelect,
-		onFocusSelect
+		onActivitySelect
 	}: {
-		state: OverlayMenuState;
-		/** A pick that closes the menu (every kind but a focus quest toggle). */
+		menuState: OverlayMenuState;
+		/** A pick that closes the menu (every kind but an Activities action). */
 		onSelect: (selection: OverlayMenuSelection) => void;
-		/** A focus quest toggle, which keeps the picker open (the overlay
-		 * re-shows it with the refreshed focused states), so joining a second
-		 * daily is not a close-and-reopen. */
-		onFocusSelect: (selection: OverlayMenuSelection) => void;
+		/** An Activities action, which keeps the control open (the overlay
+		 * re-shows it with the refreshed rows), so declaring one thing after
+		 * another is not a close-and-reopen. */
+		onActivitySelect: (selection: OverlayMenuSelection) => void;
 	} = $props();
+
+	// The gate countdowns tick while the control is open, so a row that
+	// becomes available says so without the user reopening it.
+	let now = $state(Date.now());
+	$effect(() =>
+		useVisiblePoll(() => {
+			now = Date.now();
+		}, { intervalMs: 1000 })
+	);
+
+	// A view of the model's buffer, not a second copy of it: each
+	// presentation restores what was typed, so a refused declaration
+	// hands the name back rather than eating it.
+	let segmentDraft = $state('');
+	$effect(() => {
+		if (menuState.kind !== 'activities') return;
+		segmentDraft = menuState.segmentDraft;
+	});
+
+	/** What a row says about itself on its right: the standing state, or
+	 * why it cannot be declared (with the gate counted down where there
+	 * is one). An available row says nothing: the name is the point, and
+	 * how a quest completes is the record's business, not the player's
+	 * at the moment of choosing. */
+	function rowBadge(option: ActivityOption): string | null {
+		if (option.active) return 'Recording';
+		if (option.available) return null;
+		const left = option.availableFrom === null ? null : formatTimeUntil(option.availableFrom, now);
+		if (!option.unavailableReason) return left;
+		return left ? `${option.unavailableReason} · ${left}` : option.unavailableReason;
+	}
+
+	function rowTitle(option: ActivityOption, idle: boolean): string {
+		if (option.active) return 'Recording this; tap to stop recording it';
+		if (!option.available) return option.unavailableReason ?? '';
+		if (idle) return 'Start tracking to record this';
+		return 'What you do next counts toward this';
+	}
+
+	function declareTyped() {
+		const label = segmentDraft.trim();
+		if (!label) return;
+		// Cleared by the re-presentation when the write lands, and
+		// restored by it when the write is refused.
+		onActivitySelect({ kind: 'activities', action: 'declare', label });
+	}
 </script>
 
 <div class="menu-panel">
-	{#if state.kind === 'focus'}
-		{#if state.quests.length === 0 && state.presets.length === 0}
-			<div class="menu-empty">No quests to focus</div>
+	{#if menuState.kind === 'activities'}
+		{#if menuState.options.length === 0 && !menuState.adHocSegments}
+			<div class="menu-empty">Nothing to declare</div>
 		{:else}
-			{@const anyFocused = state.quests.some((quest) => quest.focused)}
-			{#each state.quests as quest (quest.questId)}
+			{@const anyActive = menuState.options.some((option) => option.active)}
+			{@const idle = menuState.idle}
+			{#each menuState.options as option (option.key)}
+				{@const badge = rowBadge(option)}
 				<div class="menu-row">
 					<button
 						type="button"
-						class="menu-option {quest.focused ? 'menu-option-active' : ''}"
-						title={quest.focused
-							? 'Unfocus (the stretch ends here)'
-							: quest.signalQuest
-								? 'Start a run: play counts toward it until its signal loot drops'
-								: 'Focus: play from now on counts toward this quest'}
-						onclick={() =>
-							onFocusSelect(
-								quest.focused
-									? { kind: 'focus', action: 'questUnfocus', questId: quest.questId }
-									: { kind: 'focus', action: 'questFocus', questId: quest.questId, additive: false }
-							)}
+						class="menu-option {option.active ? 'menu-option-active' : ''}"
+						disabled={idle || (!option.available && !option.active)}
+						title={rowTitle(option, idle)}
+						onclick={() => onActivitySelect({ kind: 'activities', action: 'toggle', key: option.key })}
 					>
-						<span class="menu-option-name">{quest.name}</span>
-						{#if quest.focused}
-							<span class="menu-option-badge">Focused</span>
-						{:else if quest.signalQuest}
-							<!-- The standing, repeatable chip: focusing starts a
-								 run; the signal loot ends it. -->
-							<span class="menu-option-badge menu-option-badge-muted">Run</span>
+						<span class="menu-option-name">{option.name}</span>
+						{#if badge}
+							<span
+								class="menu-option-badge {option.active ? '' : 'menu-option-badge-muted'}"
+							>{badge}</span>
 						{/if}
 					</button>
-					{#if !quest.focused && anyFocused}
+					<!-- Co-activation is deliberate, never ambient: the affordance
+						 appears only once something is standing for the row to join. -->
+					{#if !idle && !option.active && option.available && anyActive}
 						<button
 							type="button"
 							class="menu-join-btn"
-							aria-label={`Also focus ${quest.name}`}
-							title="Also focus: the play ahead advances this quest too"
+							aria-label={`Also record ${option.name}`}
+							title="Also record this, alongside what is already running"
 							onclick={() =>
-								onFocusSelect({
-									kind: 'focus',
-									action: 'questFocus',
-									questId: quest.questId,
-									additive: true
-								})}
+								onActivitySelect({ kind: 'activities', action: 'coActivate', key: option.key })}
 						>+</button>
 					{/if}
 				</div>
 			{/each}
-			{#if state.presets.length > 0}
-				<div class="menu-heading">Recent segments</div>
-				{#each state.presets as label (label)}
+			{#if menuState.adHocSegments}
+				<!-- Naming as you play: this session declared it has structure
+					 it invents on the spot, and a name typed here becomes one of
+					 its rows next time. -->
+				<div class="menu-row menu-entry">
+					<input
+						class="menu-input"
+						bind:value={segmentDraft}
+						placeholder={idle ? 'Start tracking to name one' : 'Name what you are doing...'}
+						aria-label="Name this activity"
+						disabled={idle}
+						onkeydown={(event) => {
+							if (event.key !== 'Enter') return;
+							event.preventDefault();
+							declareTyped();
+						}}
+					/>
 					<button
 						type="button"
-						class="menu-option"
-						title="Start a segment with this name (closes the current one)"
-						onclick={() => onSelect({ kind: 'focus', action: 'preset', label })}
-					>
-						<span class="menu-option-name">{label}</span>
-					</button>
-				{/each}
+						class="menu-join-btn"
+						aria-label="Record under this name"
+						title="Record what you do next under this name"
+						disabled={idle || !segmentDraft.trim()}
+						onclick={declareTyped}
+					>&rarr;</button>
+				</div>
 			{/if}
 		{/if}
-	{:else if state.kind === 'trifecta'}
-		{#each state.options as option}
+	{:else if menuState.kind === 'trifecta'}
+		{#each menuState.options as option}
 			<button
 				type="button"
 				class="menu-option {option.active ? 'menu-option-active' : ''}"
@@ -92,11 +144,11 @@
 				{/if}
 			</button>
 		{/each}
-	{:else if state.kind === 'definition'}
-		{#if state.definitions.length === 0}
+	{:else if menuState.kind === 'definition'}
+		{#if menuState.definitions.length === 0}
 			<div class="menu-empty">Sessions unavailable; open the dashboard</div>
 		{:else}
-			{#each state.definitions as definition (definition.id)}
+			{#each menuState.definitions as definition (definition.id)}
 				<button
 					type="button"
 					class="menu-option {definition.selected ? 'menu-option-active' : ''}"
@@ -117,15 +169,15 @@
 				</button>
 			{/each}
 		{/if}
-	{:else if state.loading}
+	{:else if menuState.loading}
 		<div class="menu-empty">Searching...</div>
-	{:else if state.error}
-		<div class="menu-empty">{state.error}</div>
-	{:else if state.kind === 'mob'}
-		{#if state.mobSuggestions.length === 0}
+	{:else if menuState.error}
+		<div class="menu-empty">{menuState.error}</div>
+	{:else if menuState.kind === 'mob'}
+		{#if menuState.mobSuggestions.length === 0}
 			<div class="menu-empty">No matches</div>
 		{:else}
-			{#each state.mobSuggestions as option}
+			{#each menuState.mobSuggestions as option}
 				<button
 					type="button"
 					class="menu-option"
@@ -184,6 +236,15 @@
 	.menu-option-active {
 		background: rgba(56, 189, 248, 0.14);
 		color: rgba(186, 230, 253, 0.98);
+	}
+
+	.menu-option:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+	.menu-option:disabled:hover {
+		background: transparent;
+		color: rgba(255, 255, 255, 0.82);
 	}
 
 	.menu-option-name {
@@ -249,12 +310,43 @@
 		outline: none;
 	}
 
-	.menu-heading {
-		padding: 8px 8px 3px;
-		font-size: 9px;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
+	.menu-join-btn:disabled {
+		opacity: 0.3;
+		cursor: default;
+	}
+	.menu-join-btn:disabled:hover {
+		background: rgba(255, 255, 255, 0.05);
+		border-color: rgba(255, 255, 255, 0.15);
+		color: rgba(255, 255, 255, 0.5);
+	}
+
+	/* The free-text row sits under the offerings, separated by a hairline
+	   so it reads as a different gesture from picking one. */
+	.menu-entry {
+		margin-top: 4px;
+		padding-top: 6px;
+		border-top: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.menu-input {
+		flex: 1;
+		min-width: 0;
+		padding: 5px 8px;
+		border-radius: 6px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.04);
+		color: rgba(255, 255, 255, 0.9);
+		font-size: 12px;
+		outline: none;
+		transition:
+			border-color 140ms ease,
+			background-color 140ms ease;
+	}
+	.menu-input::placeholder {
 		color: rgba(255, 255, 255, 0.3);
+	}
+	.menu-input:focus {
+		border-color: rgba(56, 189, 248, 0.45);
+		background: rgba(255, 255, 255, 0.07);
 	}
 </style>

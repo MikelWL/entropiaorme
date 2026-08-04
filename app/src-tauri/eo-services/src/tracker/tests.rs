@@ -1669,28 +1669,50 @@ fn a_session_started_under_a_declared_zero_opens_its_baseline() {
     assert_eq!(row, ("modifier".to_string(), Some(0.0)));
 }
 
-/// An additive focus STACKS: one hunt can genuinely advance two quests
-/// at once, and finishing one must leave the other running. This is the
+/// The two activity declarations, as the tests spell them.
+fn quest_activity(quest_id: i64, name: &str) -> ActivityRef {
+    ActivityRef::Quest {
+        quest_id,
+        name: name.to_string(),
+    }
+}
+
+fn segment_activity(name: &str) -> ActivityRef {
+    ActivityRef::Segment {
+        name: name.to_string(),
+    }
+}
+
+/// The standing set's names, in declaration order.
+fn names(standing: &[ActiveActivity]) -> Vec<&str> {
+    standing
+        .iter()
+        .map(|activity| activity.name.as_str())
+        .collect()
+}
+
+/// Co-activating quests STACKS: one hunt can genuinely advance two at
+/// once, and finishing one must leave the other running. This is the
 /// case a per-axis column on the event row could not express, and the
 /// reason attribution is one context naming a set rather than one
 /// column each.
 #[test]
-fn additive_focus_stacks_and_closes_one_at_a_time() {
+fn co_activating_quests_stacks_and_closes_one_at_a_time() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
 
-    let names = rig
-        .wait(tracker.focus_quest(11, "Daily: Carabok", false))
+    let standing = rig
+        .wait(tracker.activate_activity(quest_activity(11, "Daily: Carabok"), false))
         .unwrap();
-    assert_eq!(names, vec!["Daily: Carabok"]);
-    let names = rig
-        .wait(tracker.focus_quest(22, "Daily: Monura", true))
+    assert_eq!(names(&standing), vec!["Daily: Carabok"]);
+    let standing = rig
+        .wait(tracker.activate_activity(quest_activity(22, "Daily: Monura"), true))
         .unwrap();
     assert_eq!(
-        names,
-        vec!["Daily: Monura", "Daily: Carabok"],
-        "newest first, both focused"
+        names(&standing),
+        vec!["Daily: Carabok", "Daily: Monura"],
+        "declaration order, both standing"
     );
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
@@ -1705,8 +1727,10 @@ fn additive_focus_stacks_and_closes_one_at_a_time() {
     });
 
     // One finishes; the other keeps running.
-    let names = rig.wait(tracker.unfocus_quest(11)).unwrap();
-    assert_eq!(names, vec!["Daily: Monura"]);
+    let standing = rig
+        .wait(tracker.deactivate_activity(ActivityKey::Quest(11)))
+        .unwrap();
+    assert_eq!(names(&standing), vec!["Daily: Monura"]);
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
         assert!(
@@ -1747,21 +1771,21 @@ fn additive_focus_stacks_and_closes_one_at_a_time() {
     assert!(rows[1].1.is_none(), "the running stretch has no end yet");
 }
 
-/// Re-focusing an already-focused quest must not grow a second stretch
-/// (the record would double-count the same quest's time): the additive
-/// re-focus is a no-op, and the exclusive re-focus closes only its
-/// siblings, never splitting the target's own continuous stretch.
+/// Re-declaring a standing quest must not grow a second stretch (the
+/// record would double-count the same quest's time): the additive
+/// re-declaration is a no-op, and the exclusive one seals only the
+/// others, never splitting the target's own continuous stretch.
 #[test]
-fn refocusing_a_focused_quest_never_splits_its_stretch() {
+fn redeclaring_a_standing_quest_never_splits_its_stretch() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
 
-    rig.wait(tracker.focus_quest(7, "Daily: Repeat", false))
+    rig.wait(tracker.activate_activity(quest_activity(7, "Daily: Repeat"), false))
         .unwrap();
-    rig.wait(tracker.focus_quest(7, "Daily: Repeat", true))
+    rig.wait(tracker.activate_activity(quest_activity(7, "Daily: Repeat"), true))
         .unwrap();
-    rig.wait(tracker.focus_quest(7, "Daily: Repeat", false))
+    rig.wait(tracker.activate_activity(quest_activity(7, "Daily: Repeat"), false))
         .unwrap();
 
     let count: i64 = rig
@@ -1776,22 +1800,26 @@ fn refocusing_a_focused_quest_never_splits_its_stretch() {
     assert_eq!(count, 1, "one stretch, not two");
 }
 
-/// The default focus is the one-tap switch: focusing the next daily
-/// closes the standing quest stretch in the same motion. An already
-/// standing sibling of an exclusive re-focus closes too, while the
+/// The default declaration is the one-tap switch: declaring the next
+/// daily seals the standing quest stretch in the same motion. An already
+/// standing sibling of an exclusive re-declaration closes too, while the
 /// target's own stretch survives unsplit.
 #[test]
-fn exclusive_focus_switches_between_quests_in_one_motion() {
+fn the_switch_moves_between_quests_in_one_motion() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
 
-    rig.wait(tracker.focus_quest(11, "Daily: Carabok", false))
+    rig.wait(tracker.activate_activity(quest_activity(11, "Daily: Carabok"), false))
         .unwrap();
-    let names = rig
-        .wait(tracker.focus_quest(22, "Daily: Monura", false))
+    let standing = rig
+        .wait(tracker.activate_activity(quest_activity(22, "Daily: Monura"), false))
         .unwrap();
-    assert_eq!(names, vec!["Daily: Monura"], "the switch closed the first");
+    assert_eq!(
+        names(&standing),
+        vec!["Daily: Monura"],
+        "the switch closed the first"
+    );
 
     let rows: Vec<(i64, Option<f64>)> = rig
         .wait(rig.db.with_reader(move |conn| {
@@ -1814,21 +1842,59 @@ fn exclusive_focus_switches_between_quests_in_one_motion() {
     assert!(rows[1].1.is_none(), "the switched-to stretch runs");
 }
 
-/// Segments and quest focus are independent axes: an exclusive quest
-/// switch never touches the open segment (a segment can be drawn INSIDE
-/// a long quest focus, and the context names both).
+/// One control offers both kinds, so a tap seals whatever was standing
+/// whichever kind it is: switching to a quest ends the open segment, and
+/// switching to a segment ends the quest stretch. The primitive still
+/// supports overlap (the next test), but the tap does not.
 #[test]
-fn a_quest_switch_leaves_the_open_segment_running() {
+fn the_switch_seals_the_standing_activity_of_either_kind() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     rig.wait(tracker.start_session()).unwrap();
 
-    rig.wait(tracker.open_segment(Some("Rotation 1".into())))
+    rig.wait(tracker.activate_activity(segment_activity("Rotation 1"), false))
         .unwrap();
-    rig.wait(tracker.focus_quest(11, "Daily: Carabok", false))
+    let standing = rig
+        .wait(tracker.activate_activity(quest_activity(11, "Daily: Carabok"), false))
         .unwrap();
-    rig.wait(tracker.focus_quest(22, "Daily: Monura", false))
+    assert_eq!(
+        names(&standing),
+        vec!["Daily: Carabok"],
+        "the segment was sealed by the switch onto a quest"
+    );
+
+    let standing = rig
+        .wait(tracker.activate_activity(segment_activity("Rotation 2"), false))
         .unwrap();
+    assert_eq!(
+        names(&standing),
+        vec!["Rotation 2"],
+        "and the quest stretch by the switch back onto a segment"
+    );
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert!(active
+            .intervals
+            .open_of_ref(IntervalKind::Quest, 11)
+            .is_none());
+    });
+}
+
+/// Co-activation is the deliberate gesture that keeps a segment running
+/// inside a quest stretch: an event recorded while both hold sits inside
+/// BOTH, which the context expresses natively.
+#[test]
+fn co_activation_keeps_a_segment_running_inside_a_quest() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.wait(tracker.activate_activity(quest_activity(11, "Daily: Carabok"), false))
+        .unwrap();
+    let standing = rig
+        .wait(tracker.activate_activity(segment_activity("Rotation 1"), true))
+        .unwrap();
+    assert_eq!(names(&standing), vec!["Daily: Carabok", "Rotation 1"]);
 
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
@@ -1837,19 +1903,19 @@ fn a_quest_switch_leaves_the_open_segment_running() {
                 .intervals
                 .open_of_kind(IntervalKind::Segment)
                 .and_then(|interval| interval.label.as_deref()),
-            Some("Rotation 1"),
-            "the segment axis is untouched by the quest switch"
+            Some("Rotation 1")
         );
         assert!(active
             .intervals
-            .open_of_ref(IntervalKind::Quest, 22)
+            .open_of_ref(IntervalKind::Quest, 11)
             .is_some());
     });
 }
 
 /// A quest stretch and a boost overlap, and an event recorded while both
 /// hold sits inside BOTH. That is the whole reason attribution is a
-/// context naming a set.
+/// context naming a set. The boost is not an activity, so the Activities
+/// switch never touches it.
 #[test]
 fn a_context_can_name_a_quest_and_a_modifier_at_once() {
     let rig = rig();
@@ -1857,7 +1923,7 @@ fn a_context_can_name_a_quest_and_a_modifier_at_once() {
     rig.wait(tracker.start_session()).unwrap();
 
     rig.wait(tracker.set_skill_boost(Some(50))).unwrap();
-    rig.wait(tracker.focus_quest(3, "Daily: Overlap", false))
+    rig.wait(tracker.activate_activity(quest_activity(3, "Daily: Overlap"), false))
         .unwrap();
 
     rig.probe(&tracker, |actor| {
@@ -1873,11 +1939,11 @@ fn a_context_can_name_a_quest_and_a_modifier_at_once() {
 /// Stopping the session ends every stretch still open, so no interval
 /// outlives the session that owns it.
 #[test]
-fn stopping_the_session_closes_a_focused_stretch() {
+fn stopping_the_session_closes_a_standing_stretch() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
-    rig.wait(tracker.focus_quest(5, "Daily: Unfinished", false))
+    rig.wait(tracker.activate_activity(quest_activity(5, "Daily: Unfinished"), false))
         .unwrap();
     rig.wait(tracker.stop_session()).unwrap();
 
@@ -1894,15 +1960,15 @@ fn stopping_the_session_closes_a_focused_stretch() {
     assert_eq!(open, 0);
 }
 
-/// With no session running there is nothing to focus. The signal is
-/// refused rather than inventing a session or writing an orphan row.
+/// With no session running there is nothing to declare into. The signal
+/// is refused rather than inventing a session or writing an orphan row.
 #[test]
-fn focusing_outside_a_session_records_nothing() {
+fn declaring_outside_a_session_records_nothing() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
 
     assert!(rig
-        .wait(tracker.focus_quest(1, "Daily: Idle", false))
+        .wait(tracker.activate_activity(quest_activity(1, "Daily: Idle"), false))
         .is_err());
 
     let count: i64 = rig
@@ -1917,18 +1983,20 @@ fn focusing_outside_a_session_records_nothing() {
     assert_eq!(count, 0);
 }
 
-/// Segments are sequential, not stacking: opening one closes the
-/// standing one in the same motion, and an omitted name is
-/// auto-numbered "Segment N" so the boundary declaration is a single
-/// action mid-play.
+/// Segments stay sequential under co-activation: the gesture that lets a
+/// quest and a segment overlap must not let two segments overlap, since
+/// a player-drawn slice is a cut of the run rather than a state. Names
+/// are kept verbatim, trimmed.
 #[test]
-fn a_segment_open_is_auto_numbered_and_closes_the_standing_one() {
+fn a_segment_declaration_seals_the_standing_segment_even_co_activated() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
 
-    rig.wait(tracker.open_segment(None)).unwrap();
-    rig.wait(tracker.open_segment(None)).unwrap();
+    rig.wait(tracker.activate_activity(segment_activity("  Boss: Kreltin  "), false))
+        .unwrap();
+    rig.wait(tracker.activate_activity(segment_activity("Boss: Feffoid"), true))
+        .unwrap();
 
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
@@ -1936,7 +2004,7 @@ fn a_segment_open_is_auto_numbered_and_closes_the_standing_one() {
             .intervals
             .open_of_kind(IntervalKind::Segment)
             .expect("one segment open");
-        assert_eq!(open.label.as_deref(), Some("Segment 2"));
+        assert_eq!(open.label.as_deref(), Some("Boss: Feffoid"));
     });
 
     let rows: Vec<(Option<String>, Option<f64>)> = rig
@@ -1954,141 +2022,70 @@ fn a_segment_open_is_auto_numbered_and_closes_the_standing_one() {
         }))
         .unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].0.as_deref(), Some("Segment 1"));
+    assert_eq!(
+        rows[0].0.as_deref(),
+        Some("Boss: Kreltin"),
+        "the name is kept verbatim, trimmed"
+    );
     assert!(
         rows[0].1.is_some(),
-        "the first segment closed on the second's open"
+        "the first segment closed on the second's declaration"
     );
-    assert_eq!(rows[1].0.as_deref(), Some("Segment 2"));
+    assert_eq!(rows[1].0.as_deref(), Some("Boss: Feffoid"));
     assert!(rows[1].1.is_none(), "the standing segment has no end yet");
 }
 
-/// A custom name is kept verbatim (trimmed), and the auto-number keeps
-/// counting opens regardless: naming "Boss 1" by hand does not make the
-/// next unnamed segment "Segment 1".
+/// A segment is ended by name, because a name is all a player-drawn
+/// slice has. Ending one that is not standing is a no-op: every
+/// Activities verb is idempotent over the standing set, so a stale
+/// control cannot fail the user.
 #[test]
-fn a_custom_segment_name_is_kept_and_numbering_still_advances() {
-    let rig = rig();
-    let tracker = rig.tracker(Providers::default());
-    let session = rig.wait(tracker.start_session()).unwrap();
-
-    rig.wait(tracker.open_segment(Some("  Boss: Kreltin  ".into())))
-        .unwrap();
-    rig.wait(tracker.open_segment(Some("   ".into()))).unwrap();
-
-    let labels: Vec<Option<String>> = rig
-        .wait(rig.db.with_reader(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT label FROM session_intervals \
-                 WHERE session_id = ? AND kind = 'segment' ORDER BY id",
-            )?;
-            let rows = stmt
-                .query_map(rusqlite::params![session.id], |row| row.get(0))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        }))
-        .unwrap();
-    assert_eq!(
-        labels,
-        vec![
-            Some("Boss: Kreltin".to_string()),
-            Some("Segment 2".to_string())
-        ],
-        "trimmed custom name; a blank name auto-numbers by open count"
-    );
-}
-
-/// Renaming the open segment moves only its label: same row, same
-/// bounds, and no context is minted (attribution names interval ids,
-/// not labels, so events already stamped are untouched).
-#[test]
-fn renaming_the_open_segment_moves_only_its_label() {
-    let rig = rig();
-    let tracker = rig.tracker(Providers::default());
-    let session = rig.wait(tracker.start_session()).unwrap();
-    rig.wait(tracker.open_segment(None)).unwrap();
-
-    let session_id = session.id.clone();
-    let contexts_before: i64 = rig
-        .wait(rig.db.with_reader(move |conn| {
-            Ok(conn.query_row(
-                "SELECT COUNT(*) FROM session_contexts WHERE session_id = ?",
-                rusqlite::params![session_id],
-                |row| row.get(0),
-            )?)
-        }))
-        .unwrap();
-
-    rig.wait(tracker.rename_segment("Boss 3")).unwrap();
-
-    rig.probe(&tracker, |actor| {
-        let active = actor.session.active().unwrap();
-        let open = active
-            .intervals
-            .open_of_kind(IntervalKind::Segment)
-            .expect("still open");
-        assert_eq!(open.label.as_deref(), Some("Boss 3"));
-    });
-
-    let session_id = session.id.clone();
-    let (label, contexts_after): (Option<String>, i64) = rig
-        .wait(rig.db.with_reader(move |conn| {
-            let label = conn.query_row(
-                "SELECT label FROM session_intervals \
-                 WHERE session_id = ? AND kind = 'segment'",
-                rusqlite::params![session_id.clone()],
-                |row| row.get(0),
-            )?;
-            let contexts = conn.query_row(
-                "SELECT COUNT(*) FROM session_contexts WHERE session_id = ?",
-                rusqlite::params![session_id],
-                |row| row.get(0),
-            )?;
-            Ok((label, contexts))
-        }))
-        .unwrap();
-    assert_eq!(label.as_deref(), Some("Boss 3"));
-    assert_eq!(
-        contexts_after, contexts_before,
-        "a rename mints no context; attribution is untouched"
-    );
-}
-
-/// Renaming with no open segment is refused loudly: the control should
-/// not be offered, and a race (segment closed under the edit) must
-/// surface rather than silently rename nothing.
-#[test]
-fn renaming_without_an_open_segment_is_refused() {
+fn ending_a_segment_matches_it_by_name_and_is_idempotent() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     rig.wait(tracker.start_session()).unwrap();
 
+    rig.wait(tracker.activate_activity(segment_activity("Rotation 1"), false))
+        .unwrap();
+    let standing = rig
+        .wait(tracker.deactivate_activity(ActivityKey::Segment("Nothing here".into())))
+        .unwrap();
     assert_eq!(
-        rig.wait(tracker.rename_segment("Boss 1")),
-        Err(TrackerCommandError::NoOpenSegment)
+        names(&standing),
+        vec!["Rotation 1"],
+        "a name nothing is standing under changes nothing"
     );
 
-    rig.wait(tracker.open_segment(None)).unwrap();
-    rig.wait(tracker.close_segment()).unwrap();
-    assert_eq!(
-        rig.wait(tracker.rename_segment("Boss 1")),
-        Err(TrackerCommandError::NoOpenSegment)
+    let standing = rig
+        .wait(tracker.deactivate_activity(ActivityKey::Segment("rotation 1".into())))
+        .unwrap();
+    assert!(
+        standing.is_empty(),
+        "matched case-insensitively, as the control renders it"
     );
+    let standing = rig
+        .wait(tracker.deactivate_activity(ActivityKey::Segment("Rotation 1".into())))
+        .unwrap();
+    assert!(standing.is_empty(), "and ending it again is a no-op");
 }
 
 /// Stopping the session ends the open segment like every other
-/// interval, and the segment commands refuse an idle tracker.
+/// interval, and the Activities verbs refuse an idle tracker.
 #[test]
 fn segments_are_session_scoped() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
 
-    assert!(rig.wait(tracker.open_segment(None)).is_err());
-    assert!(rig.wait(tracker.close_segment()).is_err());
-    assert!(rig.wait(tracker.rename_segment("Idle")).is_err());
+    assert!(rig
+        .wait(tracker.activate_activity(segment_activity("Idle"), false))
+        .is_err());
+    assert!(rig
+        .wait(tracker.deactivate_activity(ActivityKey::Segment("Idle".into())))
+        .is_err());
 
     let session = rig.wait(tracker.start_session()).unwrap();
-    rig.wait(tracker.open_segment(None)).unwrap();
+    rig.wait(tracker.activate_activity(segment_activity("Rotation 1"), false))
+        .unwrap();
     rig.wait(tracker.stop_session()).unwrap();
 
     let open: i64 = rig

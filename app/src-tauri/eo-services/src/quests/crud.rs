@@ -6,6 +6,7 @@ use serde_json::{json, Map, Value};
 use crate::db::DbError;
 use crate::time::to_iso_utc;
 
+use super::families::cooldown_lift;
 use super::payload::{json_truthy, value_to_sql};
 use super::{QuestError, QuestService};
 
@@ -523,10 +524,7 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
         "pickup" => last_started,
         _ => last_completed,
     };
-    let expires = match (own_anchor_instant, cooldown_hours) {
-        (Some(last), Some(hours)) if hours > 0.0 => Some(to_iso_utc(last + hours * 3600.0)),
-        _ => None,
-    };
+    let expires = cooldown_lift(own_anchor_instant, cooldown_hours).map(to_iso_utc);
     quest.insert("cooldown_expires_at".into(), json!(expires));
 
     // The FAMILY's cooldown expiry, from the family's anchor over the
@@ -537,10 +535,8 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
         Some(_) => row.get_unwrap::<_, Option<f64>>("family_last_completed_at"),
         None => None,
     };
-    let family_expires = match (family_anchor_instant, family_cooldown_hours) {
-        (Some(last), Some(hours)) if hours > 0.0 => Some(to_iso_utc(last + hours * 3600.0)),
-        _ => None,
-    };
+    let family_expires =
+        cooldown_lift(family_anchor_instant, family_cooldown_hours).map(to_iso_utc);
     quest.insert("family_cooldown_expires_at".into(), json!(family_expires));
     quest
 }

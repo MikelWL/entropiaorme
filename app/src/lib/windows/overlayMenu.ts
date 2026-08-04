@@ -1,6 +1,6 @@
 import type {
-	FocusOptionsResult,
-	FocusQuestOption,
+	ActivityOption,
+	ActivityOptionsResult,
 	ManualMobSuggestion,
 	SessionDefinition,
 } from '$lib/api';
@@ -13,13 +13,13 @@ export const OVERLAY_MENU_SELECT_EVENT = 'overlay-menu:select';
 export const OVERLAY_MENU_CLOSED_EVENT = 'overlay-menu:closed';
 export const OVERLAY_MENU_INTERACT_EVENT = 'overlay-menu:interact';
 
-export type OverlayMenuKind = 'definition' | 'mob' | 'trifecta' | 'focus';
+export type OverlayMenuKind = 'definition' | 'mob' | 'trifecta' | 'activities';
 
 export type OverlayMenuState =
 	| OverlayTrifectaMenuState
 	| OverlayDefinitionMenuState
 	| OverlayMobMenuState
-	| OverlayFocusMenuState;
+	| OverlayActivitiesMenuState;
 
 export interface OverlayTrifectaMenuState {
 	kind: 'trifecta';
@@ -54,23 +54,33 @@ export interface OverlayMobMenuState {
 	mobSuggestions: ManualMobSuggestion[];
 }
 
-/** The focus picker: the in-progress quests (tap to switch focus, tap
- * again to unfocus, `+` to join the standing focus additively) and the
- * segment-name presets recalled for the current session name. */
-export interface OverlayFocusMenuState {
-	kind: 'focus';
+/** The Activities control: the session's roster resolved against what
+ * is in play, plus the facts nobody rostered. A tap switches (sealing
+ * whatever was standing, whichever kind it was), a tap on a standing row
+ * ends it, and the `+` co-activates. The free-text row appears only
+ * where the definition opts into naming segments in play. */
+export interface OverlayActivitiesMenuState {
+	kind: 'activities';
 	width: number;
-	quests: FocusQuestOption[];
-	presets: string[];
+	options: ActivityOption[];
+	adHocSegments: boolean;
+	/** No session is running, so the rows show what this session WILL
+	 * offer and none of them can be declared yet. */
+	idle: boolean;
+	/** The name typed but not yet recorded, so a re-presented menu
+	 * restores it. The model owns the buffer; the panel's input is a
+	 * view of it, or a refused declaration would silently eat what was
+	 * typed. */
+	segmentDraft: string;
 }
 
 export type OverlayMenuSelection =
 	| { kind: 'trifecta'; presetId: string }
 	| { kind: 'definition'; definitionId: string; selected: boolean }
 	| { kind: 'mob'; species: string; maturity: string }
-	| { kind: 'focus'; action: 'questFocus'; questId: number; additive: boolean }
-	| { kind: 'focus'; action: 'questUnfocus'; questId: number }
-	| { kind: 'focus'; action: 'preset'; label: string };
+	| { kind: 'activities'; action: 'toggle'; key: string }
+	| { kind: 'activities'; action: 'coActivate'; key: string }
+	| { kind: 'activities'; action: 'declare'; label: string };
 
 /** The widest label's rendered width in the overlay menus' font, for
  * sizing a satellite menu to its content. Falls back to a character
@@ -114,14 +124,15 @@ export function computeMenuHeight(rows: number): number {
  * (the overlay sizes the window from this and the popup route sizes its
  * panel from the same count). Every kind falls back to one row: the
  * loading, error, and empty states each occupy exactly one line. The
- * focus picker counts its section heading as a row when presets follow
- * the quests. */
+ * Activities menu counts its free-text row as one more. */
 export function menuRowCount(state: OverlayMenuState): number {
 	if (state.kind === 'trifecta') return Math.max(1, state.options.length);
 	if (state.kind === 'definition') return Math.max(1, state.definitions.length);
-	if (state.kind === 'focus') {
-		const headings = state.presets.length > 0 ? 1 : 0;
-		return Math.max(1, state.quests.length + state.presets.length + headings);
+	if (state.kind === 'activities') {
+		// The free-text row is one more line, and the empty state is one
+		// line of its own.
+		const entry = state.adHocSegments ? 1 : 0;
+		return Math.max(1, state.options.length + entry);
 	}
 	if (state.loading || state.error) return 1;
 	return Math.max(1, state.mobSuggestions.length);
@@ -149,26 +160,22 @@ export function buildDefinitionMenuState(
 	};
 }
 
-/** The focus picker's menu state over the fetched focus options. The
- * extra width padding leaves room for the Focused badge and the
- * additive join button beside a row's name. */
-export function buildFocusMenuState(
+/** The Activities menu's state over the fetched offerings. The extra
+ * width padding leaves room for a row's status badge and the
+ * co-activate button beside its name. */
+export function buildActivitiesMenuState(
 	anchorWidth: number,
-	options: FocusOptionsResult,
-): OverlayFocusMenuState {
-	const labels = [
-		...options.quests.map((quest) => quest.name),
-		...options.segmentPresets,
-		...(options.segmentPresets.length > 0 ? ['Recent segments'] : []),
-	];
+	options: ActivityOptionsResult,
+	idle: boolean,
+	segmentDraft: string,
+): OverlayActivitiesMenuState {
+	const labels = options.options.map((option) => option.name);
 	return {
-		kind: 'focus',
-		width: computeMenuWidth(
-			anchorWidth,
-			labels.length > 0 ? labels : ['No quests in progress'],
-			96,
-		),
-		quests: options.quests,
-		presets: options.segmentPresets,
+		kind: 'activities',
+		width: computeMenuWidth(anchorWidth, labels.length > 0 ? labels : ['Nothing to declare'], 108),
+		options: options.options,
+		adHocSegments: options.adHocSegments,
+		idle,
+		segmentDraft,
 	};
 }

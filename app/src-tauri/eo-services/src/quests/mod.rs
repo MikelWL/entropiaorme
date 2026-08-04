@@ -31,6 +31,7 @@ mod families;
 mod lifecycle;
 mod linking;
 mod missions;
+mod offers;
 mod payload;
 mod playlists;
 #[cfg(test)]
@@ -38,12 +39,13 @@ mod tests;
 
 pub use families::CooldownAnchor;
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
+pub use offers::{read_quest_offers, QuestOffer};
 
 /// The sink a quest completion reports through, so a completed quest's
-/// focused stretch (when the user declared one on the running session)
+/// declared stretch (when the user declared one on the running session)
 /// closes at the completion moment. Completion is the lifecycle's only
 /// interval-layer report: which stretches of play advance a quest is
-/// the user's declaration (the focus control), not something the
+/// the user's declaration (the Activities control), not something the
 /// mission log can witness, so starting a quest opens nothing.
 ///
 /// Injected after construction rather than taken as a constructor
@@ -51,7 +53,7 @@ pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
 /// tracker that owns the interval state. Deliberately NOT a bus topic:
 /// the corpus fingerprints capture the published event stream, and the
 /// banked port-equivalence captures cannot move.
-pub type QuestFocusCloser = Arc<
+pub type QuestStretchCloser = Arc<
     dyn Fn(i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
 pub use playlists::{PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_LONG_HORIZON};
@@ -103,7 +105,7 @@ pub struct QuestService {
     /// Where quest completions are reported to the interval layer, once
     /// composition has wired it. Absent in every test and composition
     /// that has no tracker, which is why every report is best-effort.
-    focus_closer: OnceLock<QuestFocusCloser>,
+    stretch_closer: OnceLock<QuestStretchCloser>,
 }
 
 impl QuestService {
@@ -139,7 +141,7 @@ impl QuestService {
             id_source,
             session: session_rx,
             pump: pump.clone(),
-            focus_closer: OnceLock::new(),
+            stretch_closer: OnceLock::new(),
         });
         let subscriptions = actor::subscribe_handlers(bus, &pump);
         runtime.spawn(actor::run(
@@ -174,19 +176,19 @@ impl QuestService {
 
     /// Wire the interval-layer sink. Composition calls this once, after
     /// the tracker exists; a second call is ignored.
-    pub fn set_focus_closer(&self, closer: QuestFocusCloser) {
-        let _ = self.focus_closer.set(closer);
+    pub fn set_stretch_closer(&self, closer: QuestStretchCloser) {
+        let _ = self.stretch_closer.set(closer);
     }
 
     /// Report a quest's completion to the interval layer, if anything
-    /// is listening, so a focused stretch of it closes.
+    /// is listening, so a declared stretch of it closes.
     ///
     /// Best-effort by design, and never on the caller's error path: an
     /// interval write that cannot land must not fail the quest action
     /// that prompted it. The quest's own state is the durable record;
-    /// the focused stretch is the session's view of it.
-    pub(super) async fn report_focus_closed(&self, quest_id: i64) {
-        if let Some(closer) = self.focus_closer.get() {
+    /// the declared stretch is the session's view of it.
+    pub(super) async fn report_stretch_closed(&self, quest_id: i64) {
+        if let Some(closer) = self.stretch_closer.get() {
             closer(quest_id).await;
         }
     }

@@ -1,0 +1,101 @@
+//! What the quest catalogue can offer the overlay's Activities control
+//! right now: a lean projection, deliberately not the enriched CRUD read.
+//!
+//! The Activities control refreshes on every tracking frame, so this
+//! read carries only what a chip needs (identity, the two lifecycle
+//! facts, and the instant the availability gate lifts) and skips the
+//! per-quest mob and playlist round trips the management surface wants.
+//! The cooldown arithmetic is the shared [`cooldown_lift`], so an
+//! offering can never disagree with the quest row about when a gate
+//! lifts.
+
+use crate::db::{Db, DbError};
+
+use super::families::cooldown_lift;
+
+/// The lean projection: the same SELECT shape the enriched read uses,
+/// narrowed to the availability picture.
+const OFFER_SELECT: &str = "\
+    SELECT q.id, q.name, q.started_at, q.signal_loot_item, q.family_id, \
+           q.cooldown_hours, q.cooldown_anchor, q.last_started_at, \
+           f.cooldown_hours AS family_cooldown_hours, \
+           f.cooldown_anchor AS family_cooldown_anchor, \
+           (SELECT MAX(completed_at) FROM session_quest_completions \
+            WHERE quest_id = q.id) AS last_completed_at, \
+           (SELECT MAX(m.last_started_at) FROM quests m \
+            WHERE m.family_id = q.family_id) AS family_last_started_at, \
+           (SELECT MAX(c.completed_at) \
+            FROM session_quest_completions c \
+            JOIN quests m ON m.id = c.quest_id \
+            WHERE m.family_id = q.family_id) AS family_last_completed_at \
+    FROM quests q \
+    LEFT JOIN quest_families f ON f.id = q.family_id AND f.is_active = 1 \
+    WHERE q.is_active = 1 \
+    ORDER BY q.created_at ASC, q.id ASC";
+
+/// One quest as the Activities control needs it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuestOffer {
+    pub id: i64,
+    pub name: String,
+    /// The mission log carries it, or a signal run is open on it: the
+    /// administrative fact a chip surfaces regardless of any roster.
+    pub in_progress: bool,
+    /// A signal-completed quest: a standing, repeatable run that
+    /// declaring starts and its signal loot ends.
+    pub signal_quest: bool,
+    pub family_id: Option<i64>,
+    /// When the gate on starting this quest lifts (epoch seconds), the
+    /// LATER of its own and its family's cooldown: in game the family is
+    /// one slot, so whichever timer runs longer is the one that binds.
+    /// None when nothing gates it.
+    pub available_from: Option<f64>,
+}
+
+impl super::QuestService {
+    /// Every active quest as an offering. One statement, no per-quest
+    /// round trips.
+    pub async fn quest_offers(&self) -> Result<Vec<QuestOffer>, DbError> {
+        read_quest_offers(&self.db).await
+    }
+}
+
+/// The offerings read against a database handle, so a caller holding
+/// only the shared handle (the tracking snapshot) needs no service.
+pub async fn read_quest_offers(db: &Db) -> Result<Vec<QuestOffer>, DbError> {
+    db.with_reader(|conn| {
+        let mut stmt = conn.prepare(OFFER_SELECT)?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let own_anchor = row.get::<_, String>("cooldown_anchor")?;
+            let own_instant = match own_anchor.as_str() {
+                "pickup" => row.get::<_, Option<f64>>("last_started_at")?,
+                _ => row.get::<_, Option<f64>>("last_completed_at")?,
+            };
+            let family_anchor = row.get::<_, Option<String>>("family_cooldown_anchor")?;
+            let family_instant = match family_anchor.as_deref() {
+                Some("pickup") => row.get::<_, Option<f64>>("family_last_started_at")?,
+                Some(_) => row.get::<_, Option<f64>>("family_last_completed_at")?,
+                None => None,
+            };
+            let own_lift = cooldown_lift(own_instant, row.get("cooldown_hours")?);
+            let family_lift = cooldown_lift(family_instant, row.get("family_cooldown_hours")?);
+            out.push(QuestOffer {
+                id: row.get("id")?,
+                name: row.get("name")?,
+                in_progress: row.get::<_, Option<f64>>("started_at")?.is_some(),
+                signal_quest: row
+                    .get::<_, Option<String>>("signal_loot_item")?
+                    .is_some_and(|item| !item.trim().is_empty()),
+                family_id: row.get("family_id")?,
+                available_from: match (own_lift, family_lift) {
+                    (Some(own), Some(family)) => Some(own.max(family)),
+                    (lift, None) | (None, lift) => lift,
+                },
+            });
+        }
+        Ok(out)
+    })
+    .await
+}

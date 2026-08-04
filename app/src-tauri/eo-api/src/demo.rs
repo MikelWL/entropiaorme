@@ -331,7 +331,18 @@ impl DemoState {
             .map_err(ApiError::internal("demo config"))?;
         // hotbar_active is fixed `true` (the demo reports the listener as
         // running); the snapshot assembly is the live one, reused verbatim.
-        let value = build_snapshot_value(&self.db, &self.tracker, &config, true).await?;
+        // No definition service: the demo database predates session
+        // definitions, so its primed session is an instance of none and
+        // the Activities control has nothing at all to offer.
+        let value = build_snapshot_value(
+            &self.db,
+            &self.tracker,
+            &config,
+            true,
+            None,
+            self.now_epoch(),
+        )
+        .await?;
         serde_json::from_value(value).map_err(ApiError::internal("demo snapshot shaping"))
     }
 
