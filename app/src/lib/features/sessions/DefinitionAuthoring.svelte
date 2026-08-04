@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { quintOut } from 'svelte/easing';
-	import { Button, ErrorNotice, SearchInput, Toggle } from '$lib/components';
+	import { Button, ErrorNotice, SearchInput, Select, Toggle } from '$lib/components';
 	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import type { DefinitionsModel, RosterDraftEntry } from './definitionsModel.svelte';
@@ -15,17 +16,39 @@
 	let sourceFilter = $state('');
 	let segmentDraft = $state('');
 
+	// Activities are progressive disclosure: a session is worth saving on
+	// its name alone, so the roster stays folded away until asked for.
+	// Inside it the catalogue is reached through its planet, which is how
+	// the Quests page scopes the same content.
+	let activitiesOpen = $state(false);
+	let planet = $state<string | null>(null);
+
 	const editing = $derived(model.mode === 'edit');
 
+	/** The planets that actually have something to offer, so choosing one
+	 * can never lead to an empty list. */
+	const activityPlanets = $derived(
+		[
+			...new Set([
+				...model.families.map((family) => family.planet),
+				...model.quests.map((quest) => quest.planet)
+			])
+		].sort()
+	);
+
+	function matchesFilter(name: string): boolean {
+		return name.toLowerCase().includes(sourceFilter.trim().toLowerCase());
+	}
+
 	const filteredFamilies = $derived(
-		model.families.filter((family) =>
-			family.name.toLowerCase().includes(sourceFilter.trim().toLowerCase())
-		)
+		planet === null
+			? []
+			: model.families.filter((family) => family.planet === planet && matchesFilter(family.name))
 	);
 	const filteredQuests = $derived(
-		model.quests.filter((quest) =>
-			quest.name.toLowerCase().includes(sourceFilter.trim().toLowerCase())
-		)
+		planet === null
+			? []
+			: model.quests.filter((quest) => quest.planet === planet && matchesFilter(quest.name))
 	);
 
 	function inRoster(kind: 'quest_family' | 'quest', refId: string): boolean {
@@ -66,9 +89,17 @@
 	}
 
 	// On open: remember the opener and move focus to the name field; on
-	// close hand focus back.
+	// close hand focus back. The disclosure starts open only when there is
+	// something authored to see, and the planet choice starts fresh
+	// (untracked: neither should move again while the editor is open).
 	$effect(() => {
 		if (model.mode === 'closed') return;
+		void model.editingId;
+		untrack(() => {
+			activitiesOpen = model.roster.length > 0 || model.adHocSegments;
+			planet = null;
+			sourceFilter = '';
+		});
 		const previouslyFocused =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		nameInput?.focus();
@@ -123,158 +154,205 @@
 				disabled={model.saving}
 			/>
 
-			<!-- Roster + ad-hoc preference: authored and saved now, consumed
-				 by the overlay's roster-fed activity picker once that control
-				 lands. Registered in-development: hidden on the stable
-				 channel, marked everywhere else. -->
+			<!-- Activities: the roster and its on-the-fly option, folded away
+				 behind one disclosure. Authored and saved now, consumed by the
+				 overlay's roster-fed activity picker once that control lands.
+				 Registered in-development: hidden on the stable channel, marked
+				 everywhere else. -->
 			{#if inDevelopment.visible}
-			<section class="panel p-4 flex flex-col gap-3">
-				<div class="flex items-baseline justify-between gap-2">
-					<span class="eyebrow-strong">Roster</span>
+			<section class="panel flex flex-col">
+				<div class="flex items-center gap-2 pr-4">
+					<button
+						type="button"
+						class="flex flex-1 items-center gap-2.5 px-4 py-3 text-left cursor-pointer
+							transition-colors duration-[var(--duration-base)] hover:bg-surface-hover/40"
+						aria-expanded={activitiesOpen}
+						aria-controls="session-activities"
+						onclick={() => (activitiesOpen = !activitiesOpen)}
+					>
+						<svg
+							class="h-3.5 w-3.5 shrink-0 text-text-secondary transition-transform
+								{activitiesOpen ? '' : '-rotate-90'}"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+							aria-hidden="true"
+						>
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+						</svg>
+						<span class="text-sm font-semibold text-text">Activities</span>
+						{#if model.roster.length > 0}
+							<span class="text-sm text-text-secondary tabular-nums">{model.roster.length}</span>
+						{/if}
+					</button>
 					<InDevelopmentMark id="session-definition-roster" />
 				</div>
 
-				{#if model.roster.length === 0}
-					<p class="text-sm text-text-secondary px-1 py-2">
-						No activities yet. Add quest families, quests, or segment labels below.
-					</p>
-				{:else}
-					<ul class="flex flex-col gap-1">
-						{#each model.roster as entry, i (`${entry.kind}:${entry.refId ?? entry.label}:${i}`)}
-							<li
-								class="flex items-center gap-2 rounded-md border border-border/60 bg-base/40 px-3 py-2"
-							>
-								<span class="eyebrow-strong w-[4.5rem] shrink-0">{kindLabel(entry)}</span>
-								{#if entry.missing}
-									<span class="text-sm text-warning truncate flex-1" title="The referenced item was deleted; this entry is dropped on save">
-										{entry.displayName} (removed)
-									</span>
-								{:else}
-									<span class="text-sm text-text truncate flex-1">{entry.displayName}</span>
-								{/if}
-								<div class="flex items-center gap-0.5 shrink-0">
-									<button
-										type="button"
-										class="p-1 text-text-secondary cursor-pointer transition-colors
-											duration-[var(--duration-base)] hover:text-text
-											disabled:opacity-40 disabled:cursor-not-allowed"
-										aria-label="Move up"
-										title="Move up"
-										disabled={i === 0 || model.saving}
-										onclick={() => model.moveEntry(i, -1)}
-									>&uarr;</button>
-									<button
-										type="button"
-										class="p-1 text-text-secondary cursor-pointer transition-colors
-											duration-[var(--duration-base)] hover:text-text
-											disabled:opacity-40 disabled:cursor-not-allowed"
-										aria-label="Move down"
-										title="Move down"
-										disabled={i === model.roster.length - 1 || model.saving}
-										onclick={() => model.moveEntry(i, 1)}
-									>&darr;</button>
-									<button
-										type="button"
-										class="icon-button-row p-1"
-										aria-label="Remove from roster"
-										title="Remove"
-										disabled={model.saving}
-										onclick={() => model.removeEntry(i)}
-									>&times;</button>
+				{#if activitiesOpen}
+					<div id="session-activities" class="flex flex-col gap-3 border-t border-border/50 p-4">
+						{#if model.roster.length > 0}
+							<ul class="flex flex-col gap-1">
+								{#each model.roster as entry, i (`${entry.kind}:${entry.refId ?? entry.label}:${i}`)}
+									<li
+										class="flex items-center gap-2 rounded-md border border-border/60 bg-base/40 px-3 py-2"
+									>
+										<span class="eyebrow-strong w-[4.5rem] shrink-0">{kindLabel(entry)}</span>
+										{#if entry.missing}
+											<span class="text-sm text-warning truncate flex-1" title="The referenced item was deleted; this entry is dropped on save">
+												{entry.displayName} (removed)
+											</span>
+										{:else}
+											<span class="text-sm text-text truncate flex-1">{entry.displayName}</span>
+										{/if}
+										<div class="flex items-center gap-0.5 shrink-0">
+											<button
+												type="button"
+												class="p-1 text-text-secondary cursor-pointer transition-colors
+													duration-[var(--duration-base)] hover:text-text
+													disabled:opacity-40 disabled:cursor-not-allowed"
+												aria-label="Move up"
+												title="Move up"
+												disabled={i === 0 || model.saving}
+												onclick={() => model.moveEntry(i, -1)}
+											>&uarr;</button>
+											<button
+												type="button"
+												class="p-1 text-text-secondary cursor-pointer transition-colors
+													duration-[var(--duration-base)] hover:text-text
+													disabled:opacity-40 disabled:cursor-not-allowed"
+												aria-label="Move down"
+												title="Move down"
+												disabled={i === model.roster.length - 1 || model.saving}
+												onclick={() => model.moveEntry(i, 1)}
+											>&darr;</button>
+											<button
+												type="button"
+												class="icon-button-row p-1"
+												aria-label="Remove from the session"
+												title="Remove"
+												disabled={model.saving}
+												onclick={() => model.removeEntry(i)}
+											>&times;</button>
+										</div>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+
+						<!-- The catalogue, reached through its planet: pick one, then
+							 what that planet offers appears. -->
+						{#if activityPlanets.length > 0}
+							<div class="flex items-center gap-2">
+								<label for="session-activity-planet" class="eyebrow-strong shrink-0">Planet</label>
+								<Select
+									id="session-activity-planet"
+									class="max-w-[14rem]"
+									bind:value={planet}
+									disabled={model.saving}
+								>
+									<option value={null}>Choose a planet</option>
+									{#each activityPlanets as option (option)}
+										<option value={option}>{option}</option>
+									{/each}
+								</Select>
+							</div>
+						{:else if !model.sourcesLoading}
+							<p class="text-sm text-text-secondary px-1">
+								No quests or quest families yet; they are authored on the Quests page.
+							</p>
+						{/if}
+
+						{#if planet !== null}
+							<SearchInput
+								bind:value={sourceFilter}
+								placeholder="Filter {planet}..."
+								loading={model.sourcesLoading}
+							/>
+							{#if filteredFamilies.length > 0}
+								<div class="flex flex-col gap-1.5">
+									<span class="eyebrow-strong">Quest families</span>
+									<div class="flex flex-wrap gap-1.5">
+										{#each filteredFamilies as fam (fam.id)}
+											<button
+												class="filter-chip"
+												disabled={inRoster('quest_family', fam.id) || model.saving}
+												title={inRoster('quest_family', fam.id)
+													? 'Already in this session'
+													: 'Add to this session'}
+												onclick={() => model.addFamily(fam)}
+											>
+												{fam.name}
+											</button>
+										{/each}
+									</div>
 								</div>
-							</li>
-						{/each}
-					</ul>
-				{/if}
+							{/if}
+							{#if filteredQuests.length > 0}
+								<div class="flex flex-col gap-1.5">
+									<span class="eyebrow-strong">Quests</span>
+									<div class="flex flex-wrap gap-1.5">
+										{#each filteredQuests as quest (quest.id)}
+											<button
+												class="filter-chip"
+												disabled={inRoster('quest', quest.id) || model.saving}
+												title={inRoster('quest', quest.id)
+													? 'Already in this session'
+													: 'Add to this session'}
+												onclick={() => model.addQuest(quest)}
+											>
+												{quest.name}
+											</button>
+										{/each}
+									</div>
+								</div>
+							{/if}
+							{#if !model.sourcesLoading && filteredFamilies.length === 0 && filteredQuests.length === 0}
+								<p class="text-sm text-text-secondary px-1">
+									{sourceFilter.trim()
+										? 'Nothing matches the filter.'
+										: `Nothing on ${planet} yet; quests are authored on the Quests page.`}
+								</p>
+							{/if}
+						{/if}
 
-				<!-- Add sources: the authored catalogue, filtered -->
-				<div class="flex flex-col gap-2 border-t border-border/50 pt-3">
-					<SearchInput
-						bind:value={sourceFilter}
-						placeholder="Filter quest families and quests..."
-						loading={model.sourcesLoading}
-					/>
-					{#if filteredFamilies.length > 0}
-						<div class="flex flex-col gap-1.5">
-							<span class="eyebrow-strong">Quest families</span>
-							<div class="flex flex-wrap gap-1.5">
-								{#each filteredFamilies as fam (fam.id)}
-									<button
-										class="filter-chip"
-										disabled={inRoster('quest_family', fam.id) || model.saving}
-										title={inRoster('quest_family', fam.id)
-											? 'Already on the roster'
-											: 'Add to the roster'}
-										onclick={() => model.addFamily(fam)}
-									>
-										{fam.name}
-									</button>
-								{/each}
-							</div>
+						<!-- A segment is the activity the player names themselves. -->
+						<div class="flex items-center gap-2 border-t border-border/50 pt-3">
+							<input
+								bind:value={segmentDraft}
+								class="flex-1 h-9 px-3 text-sm bg-surface/70 text-text rounded-md border border-border
+									outline-none transition-colors focus:border-accent/60
+									placeholder:text-text-tertiary"
+								placeholder="Add a segment of your own (e.g. Warm-up)..."
+								aria-label="New segment name"
+								disabled={model.saving}
+								onkeydown={(e) => {
+									if (e.key === 'Enter') {
+										e.preventDefault();
+										addSegmentDraft();
+									}
+								}}
+							/>
+							<Button size="sm" variant="secondary" disabled={model.saving || !segmentDraft.trim()} onclick={addSegmentDraft}>
+								{#snippet children()}Add segment{/snippet}
+							</Button>
 						</div>
-					{/if}
-					{#if filteredQuests.length > 0}
-						<div class="flex flex-col gap-1.5">
-							<span class="eyebrow-strong">Quests</span>
-							<div class="flex flex-wrap gap-1.5">
-								{#each filteredQuests as quest (quest.id)}
-									<button
-										class="filter-chip"
-										disabled={inRoster('quest', quest.id) || model.saving}
-										title={inRoster('quest', quest.id) ? 'Already on the roster' : 'Add to the roster'}
-										onclick={() => model.addQuest(quest)}
-									>
-										{quest.name}
-									</button>
-								{/each}
+
+						<div class="flex items-center justify-between gap-4 border-t border-border/50 pt-3">
+							<div class="flex flex-col gap-0.5">
+								<span class="text-sm text-text">Name segments on the fly</span>
+								<span class="text-sm text-text-secondary leading-relaxed max-w-sm">
+									Type a segment name while you play, instead of only picking from this list.
+								</span>
 							</div>
+							<Toggle
+								checked={model.adHocSegments}
+								disabled={model.saving}
+								label="Name segments on the fly"
+								onchange={(checked) => (model.adHocSegments = checked)}
+							/>
 						</div>
-					{/if}
-					{#if !model.sourcesLoading && filteredFamilies.length === 0 && filteredQuests.length === 0}
-						<p class="text-sm text-text-secondary px-1">
-							{sourceFilter.trim()
-								? 'Nothing matches the filter.'
-								: 'No quest families or quests yet; they are authored on the Quests page.'}
-						</p>
-					{/if}
-					<div class="flex items-center gap-2 pt-1">
-						<input
-							bind:value={segmentDraft}
-							class="flex-1 h-9 px-3 text-sm bg-surface/70 text-text rounded-md border border-border
-								outline-none transition-colors focus:border-accent/60
-								placeholder:text-text-tertiary"
-							placeholder="Add a segment label (e.g. Warm-up)..."
-							aria-label="New segment label"
-							disabled={model.saving}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') {
-									e.preventDefault();
-									addSegmentDraft();
-								}
-							}}
-						/>
-						<Button size="sm" variant="secondary" disabled={model.saving || !segmentDraft.trim()} onclick={addSegmentDraft}>
-							{#snippet children()}Add segment{/snippet}
-						</Button>
 					</div>
-				</div>
-			</section>
-
-			<!-- Options -->
-			<section class="panel p-4 flex items-center justify-between gap-4">
-				<div class="flex flex-col gap-0.5">
-					<span class="text-sm text-text">Ad-hoc segments</span>
-					<span class="text-sm text-text-secondary leading-relaxed max-w-sm">
-						Allow improvised free-text segment names for this session; off, it relies on
-						its roster's authored labels.
-					</span>
-				</div>
-				<Toggle
-					checked={model.adHocSegments}
-					disabled={model.saving}
-					label="Ad-hoc segments"
-					onchange={(checked) => (model.adHocSegments = checked)}
-				/>
+				{/if}
 			</section>
 			{/if}
 
