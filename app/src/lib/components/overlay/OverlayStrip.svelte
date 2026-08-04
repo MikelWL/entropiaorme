@@ -16,8 +16,8 @@
 		toggling = false,
 		releasing = false,
 		selectingMob = false,
-		savingName = false,
-		nameEditable = true,
+		savingDefinition = false,
+		definitionEditable = true,
 		savingBoost = false,
 		savingSegment = false,
 		savingFocus = false,
@@ -29,15 +29,13 @@
 		armourCostError = null,
 		armourSessionId = null,
 		mobMenuOpen = false,
-		nameMenuOpen = false,
+		definitionMenuOpen = false,
 		trifectaMenuOpen = false,
 		overlayMenuLaunchError = null,
 		lastSessionId = null,
 		lastSessionStats = null,
 		mobQuery = $bindable(''),
 		mobInput = $bindable(null),
-		nameQuery = $bindable(''),
-		nameInput = $bindable(null),
 		boostDraft = $bindable(''),
 		segmentDraft = $bindable(''),
 		postSessionArmourButton = $bindable(null),
@@ -51,10 +49,8 @@
 		onMobFocus = noop,
 		onMobBlur = noop,
 		onMobKeydown = noop,
-		onNameFocus = noop,
-		onNameBlur = noop,
-		onNameKeydown = noop,
-		onClearName = noop,
+		onDefinitionTrigger = noop,
+		onClearDefinition = noop,
 		onBoostCommit = noop,
 		onSegmentCommit = noop,
 		onSegmentBlur = noop,
@@ -69,8 +65,8 @@
 		toggling?: boolean;
 		releasing?: boolean;
 		selectingMob?: boolean;
-		savingName?: boolean;
-		nameEditable?: boolean;
+		savingDefinition?: boolean;
+		definitionEditable?: boolean;
 		savingBoost?: boolean;
 		savingSegment?: boolean;
 		savingFocus?: boolean;
@@ -82,15 +78,13 @@
 		armourCostError?: string | null;
 		armourSessionId?: string | null;
 		mobMenuOpen?: boolean;
-		nameMenuOpen?: boolean;
+		definitionMenuOpen?: boolean;
 		trifectaMenuOpen?: boolean;
 		overlayMenuLaunchError?: string | null;
 		lastSessionId?: string | null;
 		lastSessionStats?: LastSessionStats | null;
 		mobQuery?: string;
 		mobInput?: HTMLInputElement | null;
-		nameQuery?: string;
-		nameInput?: HTMLInputElement | null;
 		boostDraft?: string;
 		segmentDraft?: string;
 		postSessionArmourButton?: HTMLButtonElement | null;
@@ -104,10 +98,8 @@
 		onMobFocus?: () => void;
 		onMobBlur?: () => void;
 		onMobKeydown?: (event: KeyboardEvent) => void | Promise<void>;
-		onNameFocus?: () => void;
-		onNameBlur?: () => void;
-		onNameKeydown?: (event: KeyboardEvent) => void | Promise<void>;
-		onClearName?: () => void | Promise<void>;
+		onDefinitionTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
+		onClearDefinition?: () => void | Promise<void>;
 		onBoostCommit?: () => void | Promise<void>;
 		onSegmentCommit?: () => void | Promise<void>;
 		onSegmentBlur?: () => void | Promise<void>;
@@ -126,13 +118,10 @@
 	const showManualInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	// The name is session-grain, so it is declared before a session and
-	// corrected afterwards on the session record; the input shows only
-	// while none is set. (The boost is the other way round: it stamps each
+	// The session type (and the name it writes) is session-grain: picked
+	// before a session, fixed while one runs, corrected afterwards on the
+	// session record. (The boost is the other way round: it stamps each
 	// skill gain, so it stays editable throughout.)
-	const showNameInput = $derived(
-		(data.status === 'active' || data.status === 'idle') && !data.sessionName
-	);
 	// The quest facet's readout: auto-recorded open stretches, never
 	// declared here (the quest lifecycle owns the writes).
 	const questNames = $derived(data.questNames ?? null);
@@ -237,44 +226,46 @@
 		>
 			<div class="w-32 flex flex-col shrink-0">
 				<span class="facet-label">Session</span>
-				<div class="flex items-center gap-1">
-					{#if showNameInput}
-						<input
-							bind:this={nameInput}
-							class="w-full bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 transition-colors"
-							bind:value={nameQuery}
-							placeholder="Name..."
-							title={nameEditable
-								? 'Name the next session'
-								: 'The name is fixed while a session runs; set it before starting, or rename from the session record'}
-							disabled={savingName || !nameEditable}
-							onfocus={onNameFocus}
-							onblur={onNameBlur}
-							onkeydown={onNameKeydown}
-						/>
-					{:else if data.sessionName}
+				<div class="flex items-center gap-1" data-testid="definition-facet">
+					{#if isActive && data.sessionName}
 						<div
 							class="text-sm font-medium text-white/90 truncate px-1 min-w-0 flex-1"
-							title={isActive
-								? `${data.sessionName} (fixed for this session; rename it from the session record once it ends)`
-								: data.sessionName}
+							title={`${data.sessionName} (fixed for this session; correct it from the session record once it ends)`}
 						>
 							{data.sessionName}
 						</div>
-						{#if !isActive}
+					{:else}
+						<button
+							type="button"
+							class="facet-chip min-w-0 flex-1 {data.sessionName ? 'facet-chip-open' : ''}"
+							disabled={savingDefinition || !definitionEditable}
+							aria-haspopup="menu"
+							aria-expanded={definitionMenuOpen}
+							title={!definitionEditable
+								? 'The session type is fixed while a session runs'
+								: data.sessionName
+									? `${data.sessionName}; pick the session type for the next session`
+									: 'Pick the session type for the next session'}
+							onclick={(event) => onDefinitionTrigger(event.currentTarget as HTMLButtonElement)}
+						>
+							{#if data.sessionName}
+								<span class="truncate">{data.sessionName}</span>
+							{:else}
+								<span class="text-white/40">Pick...</span>
+							{/if}
+						</button>
+						{#if data.sessionName}
 							<button
 								type="button"
 								class="release-btn shrink-0"
-								aria-label="Clear session name"
-								disabled={savingName}
-								onclick={onClearName}
-								title="Clear session name"
+								aria-label="Clear session type"
+								disabled={savingDefinition || !definitionEditable}
+								onclick={onClearDefinition}
+								title="Clear session type"
 							>
-								{savingName ? '...' : 'x'}
+								{savingDefinition ? '...' : 'x'}
 							</button>
 						{/if}
-					{:else}
-						<div class="text-sm font-medium text-white/20 px-1">{NO_DATA}</div>
 					{/if}
 				</div>
 			</div>

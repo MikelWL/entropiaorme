@@ -1,4 +1,9 @@
-import type { FocusOptionsResult, FocusQuestOption, ManualMobSuggestion } from '$lib/api';
+import type {
+	FocusOptionsResult,
+	FocusQuestOption,
+	ManualMobSuggestion,
+	SessionDefinition,
+} from '$lib/api';
 
 export const OVERLAY_MENU_WINDOW_LABEL = 'overlay-menu';
 export const OVERLAY_MENU_READY_EVENT = 'overlay-menu:ready';
@@ -8,11 +13,11 @@ export const OVERLAY_MENU_SELECT_EVENT = 'overlay-menu:select';
 export const OVERLAY_MENU_CLOSED_EVENT = 'overlay-menu:closed';
 export const OVERLAY_MENU_INTERACT_EVENT = 'overlay-menu:interact';
 
-export type OverlayMenuKind = 'name' | 'mob' | 'trifecta' | 'focus';
+export type OverlayMenuKind = 'definition' | 'mob' | 'trifecta' | 'focus';
 
 export type OverlayMenuState =
 	| OverlayTrifectaMenuState
-	| OverlayNameMenuState
+	| OverlayDefinitionMenuState
 	| OverlayMobMenuState
 	| OverlayFocusMenuState;
 
@@ -26,14 +31,17 @@ export interface OverlayTrifectaMenuState {
 	}[];
 }
 
-/** The session-name suggestion menu: prior names typed ahead. */
-export interface OverlayNameMenuState {
-	kind: 'name';
+/** The session-type picker: the authored definitions with the current
+ * selection marked. Tapping the selected row clears the selection;
+ * tapping another switches to it. */
+export interface OverlayDefinitionMenuState {
+	kind: 'definition';
 	width: number;
-	query: string;
-	loading: boolean;
-	error: string | null;
-	suggestions: string[];
+	definitions: {
+		id: string;
+		name: string;
+		selected: boolean;
+	}[];
 }
 
 /** The declared-mob suggestion menu: catalogue mobs typed ahead. */
@@ -58,7 +66,7 @@ export interface OverlayFocusMenuState {
 
 export type OverlayMenuSelection =
 	| { kind: 'trifecta'; presetId: string }
-	| { kind: 'name'; name: string }
+	| { kind: 'definition'; definitionId: string; selected: boolean }
 	| { kind: 'mob'; species: string; maturity: string }
 	| { kind: 'focus'; action: 'questFocus'; questId: number; additive: boolean }
 	| { kind: 'focus'; action: 'questUnfocus'; questId: number }
@@ -110,13 +118,35 @@ export function computeMenuHeight(rows: number): number {
  * the quests. */
 export function menuRowCount(state: OverlayMenuState): number {
 	if (state.kind === 'trifecta') return Math.max(1, state.options.length);
+	if (state.kind === 'definition') return Math.max(1, state.definitions.length);
 	if (state.kind === 'focus') {
 		const headings = state.presets.length > 0 ? 1 : 0;
 		return Math.max(1, state.quests.length + state.presets.length + headings);
 	}
 	if (state.loading || state.error) return 1;
-	if (state.kind === 'name') return Math.max(1, state.suggestions.length);
 	return Math.max(1, state.mobSuggestions.length);
+}
+
+/** The session-type picker's menu state over the fetched definitions.
+ * The width padding leaves room for the Selected badge beside a name. */
+export function buildDefinitionMenuState(
+	anchorWidth: number,
+	definitions: SessionDefinition[],
+	selectedId: string | null,
+): OverlayDefinitionMenuState {
+	const labels =
+		definitions.length > 0
+			? definitions.map((definition) => definition.name)
+			: ['No session types yet'];
+	return {
+		kind: 'definition',
+		width: computeMenuWidth(anchorWidth, labels, 96),
+		definitions: definitions.map((definition) => ({
+			id: definition.id,
+			name: definition.name,
+			selected: definition.id === selectedId,
+		})),
+	};
 }
 
 /** The focus picker's menu state over the fetched focus options. The

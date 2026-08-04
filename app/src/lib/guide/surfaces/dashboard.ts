@@ -306,11 +306,11 @@ export const dashboardSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'Declare the mob you are hunting and every kill records it, alongside the other session details: a reusable session name, the skill boost in force, and player-drawn segments; quests record their own stretches as you start and complete them.',
+						text: 'Declare the mob you are hunting and every kill records it, alongside the other session details: the session type picked for the session, the skill boost in force, and player-drawn segments; quests record their own stretches as you start and complete them.',
 					},
 					{
 						kind: 'p',
-						text: 'Each detail is independent, so a named session keeps its per-mob record, and the declared mob can change mid-session when you move between spawns.',
+						text: 'Each detail is independent, so a session keeps its per-mob record under its type, and the declared mob can change mid-session when you move between spawns.',
 					},
 				],
 				note: 'Note: the mob is declared by hand for now; kills record it the moment it is set.',

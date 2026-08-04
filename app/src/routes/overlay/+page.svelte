@@ -7,7 +7,8 @@
 		releaseMob,
 		getOverlayPosition,
 		saveOverlayPosition,
-		getSessionNameSuggestions,
+		getSessionDefinitions,
+		selectDefinition,
 		setSessionConfig,
 		getManualMobSuggestions,
 		lockManualMob,
@@ -45,6 +46,7 @@
 		OVERLAY_MENU_SHOW_EVENT,
 		OVERLAY_MENU_WINDOW_LABEL,
 		OVERLAY_MENU_MIN_WIDTH,
+		buildDefinitionMenuState,
 		buildFocusMenuState,
 		computeMenuHeight,
 		computeMenuWidth,
@@ -173,27 +175,25 @@
 	});
 	const toggling = $derived(starting || flow.stopping);
 
-	// The session facets (name, boost, segment): state, lookups, and
-	// writes live in the feature model; this route owns only the popup
-	// plumbing the model calls back into. (The quest facet auto-records
-	// itself and only displays.)
+	// The session facets (type/name, boost, segment): state and writes
+	// live in the feature model; this route owns only the popup plumbing.
+	// (The quest facet auto-records itself and only displays.)
 	const facets = createSessionFacets({
 		readFacets: () => ({
 			name: data.sessionName ?? null,
+			definitionId: data.sessionDefinitionId ?? null,
 			boost: data.skillBoostPercent ?? null,
 			segment: data.segmentName ?? null
 		}),
 		isSessionActive: () => data.status === 'active',
 		refresh: () => snapshot.hydrate(),
-		searchNames: getSessionNameSuggestions,
 		setSessionConfig,
+		selectDefinition: (id) => selectDefinition(id),
 		openSegment: openSessionSegment,
 		closeSegment: closeSessionSegment,
 		renameSegment: renameSessionSegment,
 		focusQuest: (questId, additive) => focusSessionQuest(questId, additive),
-		unfocusQuest: (questId) => unfocusSessionQuest(questId),
-		openNameMenu: () => openNameMenu(),
-		closeNameMenu: () => closeNameMenu()
+		unfocusQuest: (questId) => unfocusSessionQuest(questId)
 	});
 
 	async function handleDrag(e: MouseEvent) {
@@ -258,30 +258,6 @@
 		};
 	}
 
-	function buildNameMenuState(anchorWidth: number): OverlayMenuState | null {
-		const trimmedQuery = facets.nameQuery.trim();
-		const shouldShow =
-			facets.nameLoading || !!facets.nameError || facets.nameSuggestions.length > 0 || !!trimmedQuery;
-		if (!shouldShow) return null;
-
-		const labels = facets.nameLoading
-			? ['Searching...']
-			: facets.nameError
-				? [facets.nameError]
-				: (facets.nameSuggestions.length > 0
-					? facets.nameSuggestions
-					: [`Press Enter to name it "${trimmedQuery}"`]);
-
-		return {
-			kind: 'name',
-			width: computeMenuWidth(anchorWidth, labels, 28),
-			query: trimmedQuery,
-			loading: facets.nameLoading,
-			error: facets.nameError,
-			suggestions: facets.nameSuggestions
-		};
-	}
-
 	function buildTrifectaMenuState(anchorWidth: number): OverlayMenuState | null {
 		const trifecta = data.trifectaAttribution;
 		if (!trifecta || trifecta.presets.length === 0) return null;
@@ -342,9 +318,6 @@
 		if (overlayMenuKind === 'mob') {
 			clearMobCloseTimer();
 		}
-		if (overlayMenuKind === 'name') {
-			facets.clearNameCloseTimer();
-		}
 		overlayMenuKind = null;
 		await menuWindow.hide();
 	}
@@ -363,18 +336,33 @@
 		await hideOverlayMenu();
 	}
 
-	async function openNameMenu() {
-		if (!facets.nameInput) return;
-		const state = buildNameMenuState(facets.nameInput.getBoundingClientRect().width);
-		if (!state) return;
-		overlayMenuLaunchError = null;
-		await showOverlayMenu('name', facets.nameInput, state);
+	/** Open the session-type picker off its chip: fetch the authored
+	 * definitions fresh (the dashboard authors them; the overlay must
+	 * never present a stale catalogue) and present them with the
+	 * current selection marked. */
+	async function openDefinitionMenu(anchor: HTMLButtonElement) {
+		let definitions;
+		try {
+			definitions = await getSessionDefinitions();
+		} catch (error) {
+			facets.facetError = describeOverlayMenuError(error);
+			return;
+		}
+		facets.facetError = null;
+		const state = buildDefinitionMenuState(
+			anchor.getBoundingClientRect().width,
+			definitions,
+			data.sessionDefinitionId ?? null
+		);
+		await showOverlayMenu('definition', anchor, state, { focusPopup: true });
 	}
 
-	async function closeNameMenu() {
-		facets.clearNameCloseTimer();
-		if (overlayMenuKind !== 'name') return;
-		await hideOverlayMenu();
+	async function toggleDefinitionMenu(anchor: HTMLButtonElement) {
+		if (overlayMenuKind === 'definition') {
+			await hideOverlayMenu();
+			return;
+		}
+		await openDefinitionMenu(anchor);
 	}
 
 	async function toggleTrifectaMenu(anchor: HTMLButtonElement) {
@@ -674,9 +662,12 @@
 					return;
 				}
 
-				if (event.payload.kind === 'name') {
+				if (event.payload.kind === 'definition') {
 					overlayMenuKind = null;
-					await facets.applyName(event.payload.name);
+					// Tapping the selected row clears; tapping another switches.
+					await facets.selectDefinition(
+						event.payload.selected ? null : event.payload.definitionId
+					);
 					return;
 				}
 
@@ -709,13 +700,11 @@
 				if (disposed) return;
 				overlayMenuKind = null;
 				clearMobCloseTimer();
-				facets.clearNameCloseTimer();
 			});
 
 			unlistenInteract = await listen(OVERLAY_MENU_INTERACT_EVENT, async () => {
 				if (disposed) return;
 				if (overlayMenuKind === 'mob') clearMobCloseTimer();
-				if (overlayMenuKind === 'name') facets.clearNameCloseTimer();
 			});
 		})();
 
@@ -770,6 +759,7 @@
 			repairOcrEnabled: snap.repairOcrEnabled,
 			endOfSessionArmourReminderEnabled: snap.endOfSessionArmourReminderEnabled,
 			sessionName: snap.sessionName,
+			sessionDefinitionId: snap.sessionDefinitionId,
 			skillBoostPercent: snap.skillBoostPercent,
 			segmentName: snap.segmentName,
 			currentMob: snap.currentMob,
@@ -796,16 +786,10 @@
 	const showManualInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	// The name is session-grain, so it takes input only while idle: once a
-	// session runs, changing it could only rewrite the whole session's
-	// history, and the correction path is the session record.
-	const showNameInput = $derived(data.status === 'idle' && !data.sessionName);
-
-	// Two independent debounced typeaheads, one per free-text facet: the
-	// declared mob over the catalogue, the session name over the names
-	// already in the history. They no longer share an endpoint because the
-	// facets no longer exclude one another. Search failures are mapped to
-	// the overlay's established wording before the typeahead records them.
+	// The declared-mob typeahead (the one remaining free-text facet; the
+	// session type is picked from the authored definitions instead).
+	// Search failures are mapped to the overlay's established wording
+	// before the typeahead records them.
 	const mobTypeahead = createTypeahead<ManualMobSuggestion>({
 		search: async (query) => {
 			try {
@@ -842,11 +826,6 @@
 		mobTypeahead.refresh();
 	});
 
-	$effect(() => {
-		void facets.nameQuery;
-		facets.syncNameQuery(showNameInput);
-	});
-
 	// Present the search lifecycle in the menu window: mirror the typeahead's
 	// settled error into the shared channel and re-sync the menu at each
 	// transition (the loading flip, a results publication, an error) while the
@@ -866,15 +845,8 @@
 	});
 
 	$effect(() => {
-		void facets.nameLoading;
-		void facets.nameSuggestions;
-		untrack(() => facets.presentNameMenu(showNameInput, overlayMenuKind === 'name'));
-	});
-
-	$effect(() => {
 		return () => {
 			mobTypeahead.destroy();
-			facets.destroy();
 		};
 	});
 
@@ -985,11 +957,11 @@
 		{armourCostError}
 		{armourSessionId}
 		mobMenuOpen={overlayMenuKind === 'mob'}
-		nameMenuOpen={overlayMenuKind === 'name'}
+		definitionMenuOpen={overlayMenuKind === 'definition'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
 		{overlayMenuLaunchError}
-		savingName={facets.savingName}
-		nameEditable={facets.nameEditable}
+		savingDefinition={facets.savingDefinition}
+		definitionEditable={facets.definitionEditable}
 		savingBoost={facets.savingBoost}
 		savingSegment={facets.savingSegment}
 		savingFocus={facets.savingFocus}
@@ -999,8 +971,6 @@
 		lastSessionStats={flow.lastSessionStats}
 		bind:mobQuery
 		bind:mobInput
-		bind:nameQuery={facets.nameQuery}
-		bind:nameInput={facets.nameInput}
 		bind:boostDraft={facets.boostDraft}
 		bind:segmentDraft={facets.segmentDraft}
 		bind:postSessionArmourButton
@@ -1014,10 +984,8 @@
 		onMobFocus={handleMobFocus}
 		onMobBlur={handleMobBlur}
 		onMobKeydown={handleMobKeydown}
-		onNameFocus={facets.handleNameFocus}
-		onNameBlur={facets.handleNameBlur}
-		onNameKeydown={facets.handleNameKeydown}
-		onClearName={facets.clearName}
+		onDefinitionTrigger={toggleDefinitionMenu}
+		onClearDefinition={() => facets.selectDefinition(null)}
 		onBoostCommit={facets.commitBoost}
 		onSegmentCommit={facets.commitSegment}
 		onSegmentBlur={facets.handleSegmentBlur}

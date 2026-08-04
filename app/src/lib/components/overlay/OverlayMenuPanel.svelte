@@ -92,31 +92,35 @@
 				{/if}
 			</button>
 		{/each}
+	{:else if state.kind === 'definition'}
+		{#if state.definitions.length === 0}
+			<div class="menu-empty">No session types yet; create one on the dashboard</div>
+		{:else}
+			{#each state.definitions as definition (definition.id)}
+				<button
+					type="button"
+					class="menu-option {definition.selected ? 'menu-option-active' : ''}"
+					title={definition.selected
+						? 'Selected for the next session; pick to clear'
+						: 'Start the next session as an instance of this type'}
+					onclick={() =>
+						onSelect({
+							kind: 'definition',
+							definitionId: definition.id,
+							selected: definition.selected
+						})}
+				>
+					<span class="menu-option-name">{definition.name}</span>
+					{#if definition.selected}
+						<span class="menu-option-badge">Selected</span>
+					{/if}
+				</button>
+			{/each}
+		{/if}
 	{:else if state.loading}
 		<div class="menu-empty">Searching...</div>
 	{:else if state.error}
 		<div class="menu-empty">{state.error}</div>
-	{:else if state.kind === 'name'}
-		{#if state.suggestions.length === 0}
-			{@const typed = state.query.trim()}
-			<button
-				type="button"
-				class="menu-option"
-				onclick={() => onSelect({ kind: 'name', name: typed })}
-			>
-				<span class="menu-option-name">Press Enter to name it "{typed}"</span>
-			</button>
-		{:else}
-			{#each state.suggestions as option}
-				<button
-					type="button"
-					class="menu-option"
-					onclick={() => onSelect({ kind: 'name', name: option })}
-				>
-					<span class="menu-option-name">{option}</span>
-				</button>
-			{/each}
-		{/if}
 	{:else if state.kind === 'mob'}
 		{#if state.mobSuggestions.length === 0}
 			<div class="menu-empty">No matches</div>

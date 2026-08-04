@@ -47,17 +47,16 @@ pub struct SessionRosterEntryInput {
     pub label: Option<String>,
 }
 
-/// What a roster entry references, in the stored snake_case vocabulary.
+/// What a roster entry references, in the stored snake_case
+/// vocabulary: `quest_family` stands for whichever variant the family
+/// serves today, `quest` is a single quest (a signal-completed boss or
+/// a standalone mission-log quest outside any family), and `segment`
+/// is a plain authored label with no reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionRosterEntryKind {
-    /// A quest family: the entry stands for whichever variant the
-    /// family serves today.
     QuestFamily,
-    /// A single quest: a signal-completed boss or a standalone
-    /// mission-log quest outside any family.
     Quest,
-    /// A plain authored segment label; no reference.
     Segment,
 }
 

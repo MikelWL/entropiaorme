@@ -2243,10 +2243,13 @@ export interface SessionRosterEntryInput {
 }
 
 /**
- * What a roster entry references, in the stored snake_case vocabulary.
+ * What a roster entry references, in the stored snake_case
+ * vocabulary: `quest_family` stands for whichever variant the family
+ * serves today, `quest` is a single quest (a signal-completed boss or
+ * a standalone mission-log quest outside any family), and `segment`
+ * is a plain authored label with no reference.
  */
-export interface SessionRosterEntryKind {
-}
+export type SessionRosterEntryKind = 'quest_family' | 'quest' | 'segment';
 
 /**
  * The session-detail headline summary.

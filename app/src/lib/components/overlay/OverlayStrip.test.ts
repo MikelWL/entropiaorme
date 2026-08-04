@@ -135,43 +135,53 @@ describe('attribution warning', () => {
 });
 
 describe('session facets and declared mob', () => {
-	it('disables the name input during an unnamed active session: the name is session-grain', () => {
+	it('disables the session-type chip during an unnamed active session: the type is session-grain', () => {
 		render(OverlayStrip, {
-			props: { data: liveData({ status: 'active', sessionName: null }), nameEditable: false },
+			props: { data: liveData({ status: 'active', sessionName: null }), definitionEditable: false },
 		});
-		const input = screen.getByPlaceholderText('Name...') as HTMLInputElement;
-		expect(input.disabled).toBe(true);
-		expect(input.title).toContain('fixed while a session runs');
+		const chip = screen.getByTitle(
+			'The session type is fixed while a session runs',
+		) as HTMLButtonElement;
+		expect(chip.disabled).toBe(true);
 	});
 
-	it('takes the session name while idle', () => {
-		render(OverlayStrip, { props: { data: liveData({ status: 'idle', sessionName: null }) } });
-		expect(screen.getByPlaceholderText('Name...')).toBeTruthy();
+	it('offers the session-type picker chip while idle', () => {
+		const onDefinitionTrigger = vi.fn();
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'idle', sessionName: null }), onDefinitionTrigger },
+		});
+		const chip = screen.getByTitle('Pick the session type for the next session');
+		chip.click();
+		expect(onDefinitionTrigger).toHaveBeenCalledTimes(1);
 	});
 
-	// The name is session-grain: editing it live could only rewrite the
-	// whole session's history, so a running session offers no control at
-	// all (not even a clear), and the record is where it gets corrected.
-	it('offers no name control at all during an active session', () => {
+	// The session type is session-grain: editing it live could only
+	// rewrite the whole session's history, so a running session offers no
+	// control at all (not even a clear), and the record is where it gets
+	// corrected.
+	it('offers no session-type control at all during an active session', () => {
 		render(OverlayStrip, {
 			props: { data: liveData({ status: 'active', sessionName: 'ARIS Dailies' }) },
 		});
 		expect(screen.getByText('ARIS Dailies')).toBeTruthy();
-		expect(screen.queryByPlaceholderText('Name...')).toBeNull();
-		expect(screen.queryByLabelText('Clear session name')).toBeNull();
+		expect(screen.queryByText('Pick...')).toBeNull();
+		expect(screen.queryByLabelText('Clear session type')).toBeNull();
 	});
 
-	it('shows the set session name with a clear control instead of the input', () => {
-		const onClearName = vi.fn();
+	it('shows the selected type with a clear control beside the picker chip', () => {
+		const onClearDefinition = vi.fn();
 		render(OverlayStrip, {
-			props: { data: liveData({ sessionName: 'ARIS Dailies' }), onClearName },
+			props: {
+				data: liveData({ sessionName: 'ARIS Dailies', sessionDefinitionId: '1' }),
+				onClearDefinition,
+			},
 		});
 
 		expect(screen.getByText('ARIS Dailies')).toBeTruthy();
-		expect(screen.queryByPlaceholderText('Name...')).toBeNull();
+		expect(screen.queryByText('Pick...')).toBeNull();
 
-		screen.getByLabelText('Clear session name').click();
-		expect(onClearName).toHaveBeenCalledTimes(1);
+		screen.getByLabelText('Clear session type').click();
+		expect(onClearDefinition).toHaveBeenCalledTimes(1);
 	});
 
 	it('edits the skill boost while idle', () => {
