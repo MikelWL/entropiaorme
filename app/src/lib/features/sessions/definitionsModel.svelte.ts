@@ -11,7 +11,17 @@
  */
 
 import type { SessionDefinition, SessionDefinitionInput, SessionRosterEntryKind } from '$lib/api';
-import { ApiError } from '$lib/api';
+import {
+	ApiError,
+	createSessionDefinition,
+	deleteSessionDefinition,
+	getQuestFamilies,
+	getQuests,
+	getSessionDefinitions,
+	selectDefinition,
+	updateSessionDefinition,
+} from '$lib/api';
+import { hydrate } from '$lib/stores/trackingStore.svelte';
 import type { Quest, QuestFamily } from '$lib/types';
 import { describeError } from '$lib/view/errorState';
 
@@ -341,3 +351,21 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 }
 
 export type DefinitionsModel = ReturnType<typeof createDefinitionsModel>;
+
+/** The model wired to the live API and the tracking store, with the
+ * definition list loading immediately: the app's composition (the
+ * deps-injected factory above is the testable seam). */
+export function createLiveDefinitionsModel(): DefinitionsModel {
+	const model = createDefinitionsModel({
+		listDefinitions: getSessionDefinitions,
+		createDefinition: createSessionDefinition,
+		updateDefinition: updateSessionDefinition,
+		deleteDefinition: deleteSessionDefinition,
+		selectDefinition: (id) => selectDefinition(id),
+		refreshTracking: () => hydrate(),
+		listFamilies: getQuestFamilies,
+		listQuests: getQuests,
+	});
+	void model.loadDefinitions();
+	return model;
+}

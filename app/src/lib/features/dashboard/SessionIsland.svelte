@@ -1,22 +1,11 @@
 <script lang="ts">
 	import { flip } from 'svelte/animate';
 	import { quintOut } from 'svelte/easing';
-	import {
-		createSessionDefinition,
-		deleteSessionDefinition,
-		getQuestFamilies,
-		getQuests,
-		getSessionDefinitions,
-		selectDefinition,
-		startTracking,
-		toggleOverlay,
-		updateSessionDefinition
-	} from '$lib/api';
+	import { startTracking, toggleOverlay } from '$lib/api';
 	import type { TrackingSnapshot } from '$lib/api';
 	import { Button, ErrorNotice } from '$lib/components';
-	import DefinitionAuthoring from '$lib/features/sessions/DefinitionAuthoring.svelte';
 	import DefinitionPicker from '$lib/features/sessions/DefinitionPicker.svelte';
-	import { createDefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
+	import type { DefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 	import { hydrate } from '$lib/stores/trackingStore.svelte';
@@ -26,36 +15,19 @@
 
 	let {
 		status,
-		statsGrid
+		statsGrid,
+		definitions
 	}: {
 		status: TrackingSnapshot | null;
 		statsGrid: StatsGridModel;
+		/** The session-type model; the route hosts it (and the authoring
+		 * environment) so the surface can replace the whole dashboard. */
+		definitions: DefinitionsModel;
 	} = $props();
 
 	let elapsedSeconds = $state(0);
 
-	// The session-type surface: the picker (which definition the next
-	// session starts under) and the full-screen authoring environment.
-	const definitions = createDefinitionsModel({
-		listDefinitions: getSessionDefinitions,
-		createDefinition: createSessionDefinition,
-		updateDefinition: updateSessionDefinition,
-		deleteDefinition: deleteSessionDefinition,
-		selectDefinition: (id) => selectDefinition(id),
-		refreshTracking: () => hydrate(),
-		listFamilies: getQuestFamilies,
-		listQuests: getQuests
-	});
-	$effect(() => {
-		void definitions.loadDefinitions();
-	});
-
-	/** The morph origin: the rect of whichever control opened the
-	 * authoring environment. */
-	let authoringFrom = $state<DOMRect | null>(null);
-
-	function openAuthoring(rect: DOMRect, definitionId: string | null) {
-		authoringFrom = rect;
+	function openAuthoring(definitionId: string | null) {
 		const editing =
 			definitionId === null
 				? null
@@ -197,8 +169,6 @@
 			</div>
 		{/each}
 	</div>
-
-	<DefinitionAuthoring model={definitions} from={authoringFrom} />
 
 	{#if status?.status === 'active'}
 		{#if status.weaponAttribution === 'hotbar' && status.hotbarListenerActive === false}

@@ -5,6 +5,8 @@
 	import GuideOverlayDemo from '$lib/features/dashboard/GuideOverlayDemo.svelte';
 	import SessionIsland from '$lib/features/dashboard/SessionIsland.svelte';
 	import { createStatsGridModel } from '$lib/features/dashboard/statsGridModel.svelte';
+	import AuthoringStage from '$lib/features/sessions/AuthoringStage.svelte';
+	import { createLiveDefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
 	import {
 		formatMinutes,
 		getCooldownRemaining,
@@ -33,6 +35,10 @@
 	const questsModel = createQuestsModel();
 	const statsGrid = createStatsGridModel();
 	const guideDemo = createGuideDemoModel(statsGrid);
+
+	// The session-type surface: the island renders the picker; the stage
+	// hosts the authoring environment that replaces the dashboard while open.
+	const definitions = createLiveDefinitionsModel();
 
 	// The pre-guide playlist selection, snapshotted so it survives the tour.
 	// Undefined sentinel means "no snapshot held"; null is a valid snapshot.
@@ -191,7 +197,11 @@
 	});
 </script>
 
-<div class="px-6 pb-6 flex flex-col gap-4 h-full" data-guide-anchor="dashboard-area">
+<AuthoringStage
+	model={definitions}
+	class="px-6 pb-6 flex flex-col gap-4 h-full"
+	data-guide-anchor="dashboard-area"
+>
 
 	<!-- Page header -->
 	<div class="flex items-center justify-between flex-shrink-0">
@@ -222,7 +232,7 @@
 		</div>
 	</div>
 
-	<SessionIsland {status} {statsGrid} />
+	<SessionIsland {status} {statsGrid} {definitions} />
 
 	{#if !(guideState.isActive && guideDemo.demoOverlayVisible)}
 		<!-- ═══ Island: Recent Events ═══ -->
@@ -287,4 +297,4 @@
 		armourPopupTop={guideDemo.armourPopupTop}
 		armourPopupLeft={guideDemo.armourPopupLeft}
 	/>
-</div>
+</AuthoringStage>

@@ -14,14 +14,10 @@
 		/** While a session runs the selection is fixed: the chips render
 		 * the fact without offering the switch. */
 		locked?: boolean;
-		/** Open the authoring environment; the trigger's rect feeds the
-		 * morph, and a definition means edit-in-place. */
-		onOpenAuthoring: (rect: DOMRect, definitionId: string | null) => void;
+		/** Open the authoring environment; a definition id means
+		 * edit-in-place, null means create. */
+		onOpenAuthoring: (definitionId: string | null) => void;
 	} = $props();
-
-	function triggerRect(event: MouseEvent): DOMRect {
-		return (event.currentTarget as HTMLElement).getBoundingClientRect();
-	}
 </script>
 
 <div class="flex flex-col gap-1.5" data-guide-anchor="dashboard-session-types">
@@ -58,7 +54,7 @@
 						aria-label={`Edit ${definition.name}`}
 						title="Edit this session type"
 						disabled={model.selecting}
-						onclick={(event) => onOpenAuthoring(triggerRect(event), definition.id)}
+						onclick={() => onOpenAuthoring(definition.id)}
 					>
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3">
 							<path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
@@ -73,7 +69,7 @@
 				class="filter-chip"
 				title="Create a session type"
 				disabled={model.selecting}
-				onclick={(event) => onOpenAuthoring(triggerRect(event), null)}
+				onclick={() => onOpenAuthoring(null)}
 			>
 				+ New
 			</button>

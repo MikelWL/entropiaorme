@@ -6,14 +6,9 @@
 	import type { DefinitionsModel, RosterDraftEntry } from './definitionsModel.svelte';
 
 	let {
-		model,
-		from = null
+		model
 	}: {
 		model: DefinitionsModel;
-		/** The trigger's screen rect: the environment expands out of it
-		 * and contracts back into it. Null (no rect captured) falls back
-		 * to a plain fade-scale. */
-		from?: DOMRect | null;
 	} = $props();
 
 	let panelEl = $state<HTMLDivElement | null>(null);
@@ -47,31 +42,19 @@
 		segmentDraft = '';
 	}
 
-	/** The morph: the environment grows out of the trigger's rect into
-	 * the full screen (and contracts back on close). Reduced motion and
-	 * the e2e freeze collapse it to an instant settle. */
-	function morph(_node: HTMLElement, { rect }: { rect: DOMRect | null }) {
+	/** The surface's entrance: it arrives AFTER the dashboard content has
+	 * animated away (the route sequences that with a matching delay on
+	 * its content wrapper), fading in with a slight upward settle; on
+	 * close it leaves first, undelayed, and the dashboard returns behind
+	 * it. Reduced motion and the e2e freeze collapse both to an instant
+	 * settle. */
+	function surface(_node: HTMLElement, { entering }: { entering: boolean }) {
 		if (shouldSettleInstantly()) return { duration: 0 };
-		if (!rect) {
-			return {
-				duration: 200,
-				easing: quintOut,
-				css: (t: number) => `opacity: ${t}; transform: scale(${0.97 + 0.03 * t});`
-			};
-		}
-		const vw = window.innerWidth || 1;
-		const vh = window.innerHeight || 1;
-		const sx = Math.max(rect.width / vw, 0.02);
-		const sy = Math.max(rect.height / vh, 0.02);
-		const dx = rect.left + rect.width / 2 - vw / 2;
-		const dy = rect.top + rect.height / 2 - vh / 2;
 		return {
-			duration: 340,
+			duration: entering ? 260 : 170,
+			delay: entering ? 160 : 0,
 			easing: quintOut,
-			css: (t: number, u: number) =>
-				`transform: translate(${dx * u}px, ${dy * u}px) ` +
-				`scale(${sx + (1 - sx) * t}, ${sy + (1 - sy) * t}); ` +
-				`border-radius: ${24 * u}px; opacity: ${Math.min(1, 0.35 + 0.65 * t)};`
+			css: (t: number, u: number) => `opacity: ${t}; transform: translateY(${12 * u}px);`
 		};
 	}
 
@@ -135,7 +118,8 @@
 		aria-modal="true"
 		aria-label={editing ? 'Edit session type' : 'New session type'}
 		tabindex="-1"
-		transition:morph={{ rect: from }}
+		in:surface={{ entering: true }}
+		out:surface={{ entering: false }}
 	>
 		<div class="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-6 px-6 py-10">
 			<!-- Header: identity + the exits -->
