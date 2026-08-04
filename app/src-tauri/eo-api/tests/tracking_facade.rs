@@ -224,13 +224,16 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
     // its own null bindings on the wire. The session facets are present
     // even with nothing configured: an unconfigured install resolves to
     // the protected default, so the readout shows what a start would
-    // stamp.
+    // stamp, and the Activities block rides idle too: the seeded default
+    // rosters nothing, so it reports no surface.
     let snapshot = api.tracking_snapshot().await.unwrap();
     assert_eq!(
         serde_json::to_string(&snapshot).unwrap(),
         "{\"status\":\"idle\",\"hotbarListenerActive\":false,\"weaponAttribution\":\"trifecta\",\
          \"repairOcrEnabled\":false,\"endOfSessionArmourReminderEnabled\":false,\
          \"sessionName\":\"Default Tracking\",\"sessionDefinitionId\":\"1\",\
+         \"activities\":{\"visible\":false,\"adHocSegments\":false,\"readyCount\":0,\
+         \"active\":[]},\
          \"trifectaAttribution\":{\"activePresetId\":\"default\",\
          \"presetName\":\"Default\",\"presets\":[{\"id\":\"default\",\"name\":\"Default\"}],\
          \"smallWeapon\":null,\"bigWeapon\":null,\"healTool\":null},\"recentEvents\":[]}"
@@ -617,9 +620,14 @@ async fn the_session_intervals_read_demonstrates_the_live_contract() {
     let session_id = started.session_id.clone();
 
     api.tracking_session_config(None, Some(50)).await.unwrap();
-    api.tracking_activity_activate(ActivityTargetKind::Segment, None, None, None)
-        .await
-        .unwrap();
+    api.tracking_activity_activate(
+        ActivityTargetKind::Segment,
+        None,
+        Some("Rotation 1".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
 
     let read = api
         .tracking_session_intervals(session_id.clone())
@@ -633,7 +641,7 @@ async fn the_session_intervals_read_demonstrates_the_live_contract() {
     assert_eq!(rows[0]["magnitude"], 50.0);
     assert_eq!(rows[0]["endedAt"], serde_json::Value::Null);
     assert_eq!(rows[1]["kind"], "segment");
-    assert_eq!(rows[1]["label"], "Segment 1");
+    assert_eq!(rows[1]["label"], "Rotation 1");
     assert_eq!(rows[1]["endedAt"], serde_json::Value::Null);
 
     api.tracking_stop().await.unwrap();
@@ -853,12 +861,12 @@ async fn activities_declare_switch_and_co_activate() {
     assert_eq!(value["activities"]["active"], serde_json::json!([]));
 }
 
-/// A nameless segment declaration is auto-numbered and the acknowledgement
-/// echoes the applied name, so the control renders without a re-read; the
-/// next declaration seals the standing one, and the auto-number counts
-/// declarations rather than surviving names.
+/// A segment declaration carries the name the player gave it, trimmed,
+/// and the acknowledgement echoes it so the control renders without a
+/// re-read; the next declaration seals the standing one, because a
+/// player-drawn slice is a sequential cut of the run.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_segment_declaration_is_auto_numbered_and_echoed() {
+async fn a_segment_declaration_is_named_trimmed_and_echoed() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(
         dir.path(),
@@ -869,15 +877,6 @@ async fn a_segment_declaration_is_auto_numbered_and_echoed() {
     api.tracking_start().await.unwrap();
 
     let opened = api
-        .tracking_activity_activate(ActivityTargetKind::Segment, None, None, None)
-        .await
-        .unwrap();
-    assert_eq!(activity_names(&opened.active), vec!["Segment 1"]);
-    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
-    assert_eq!(value["activities"]["active"][0]["name"], "Segment 1");
-    assert_eq!(value["activities"]["active"][0]["kind"], "segment");
-
-    let named = api
         .tracking_activity_activate(
             ActivityTargetKind::Segment,
             None,
@@ -886,20 +885,24 @@ async fn a_segment_declaration_is_auto_numbered_and_echoed() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        activity_names(&named.active),
-        vec!["Boss: Kreltin"],
-        "trimmed, and the standing segment was sealed"
-    );
+    assert_eq!(activity_names(&opened.active), vec!["Boss: Kreltin"]);
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["activities"]["active"][0]["name"], "Boss: Kreltin");
+    assert_eq!(value["activities"]["active"][0]["kind"], "segment");
 
-    let renumbered = api
-        .tracking_activity_activate(ActivityTargetKind::Segment, None, None, None)
+    let next = api
+        .tracking_activity_activate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("Boss: Feffoid".to_string()),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(
-        activity_names(&renumbered.active),
-        vec!["Segment 3"],
-        "the auto-number counts declarations, not surviving names"
+        activity_names(&next.active),
+        vec!["Boss: Feffoid"],
+        "the standing slice was sealed by the next one"
     );
 }
 
@@ -918,7 +921,12 @@ async fn the_activity_commands_refuse_an_idle_tracker_and_incomplete_targets() {
     .await;
 
     let idle = api
-        .tracking_activity_activate(ActivityTargetKind::Segment, None, None, None)
+        .tracking_activity_activate(
+            ActivityTargetKind::Segment,
+            None,
+            Some("Boss lap".to_string()),
+            None,
+        )
         .await
         .unwrap_err();
     assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
@@ -1117,10 +1125,12 @@ async fn seed_definition(
         .session_definition_create(serde_json::from_value(input).expect("definition input shape"))
         .await
         .unwrap();
-    selection.store(
-        definition.id.parse().expect("numeric definition id"),
-        std::sync::atomic::Ordering::SeqCst,
-    );
+    let id: i64 = definition.id.parse().expect("numeric definition id");
+    selection.store(id, std::sync::atomic::Ordering::SeqCst);
+    // The scripted provider is what a session start snapshots; the
+    // stored selection is what the idle read resolves through. The app
+    // moves both with one verb, so the harness does too.
+    api.tracking_definition_select(Some(id)).await.unwrap();
     definition.id
 }
 
@@ -1236,7 +1246,7 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
     );
 
     // A name typed in play is declared AND promoted, so it is a chip
-    // next time; the auto-numbered shape is not, since it names nothing.
+    // next time.
     api.tracking_activity_activate(
         ActivityTargetKind::Segment,
         None,
@@ -1245,9 +1255,6 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
     )
     .await
     .unwrap();
-    api.tracking_activity_activate(ActivityTargetKind::Segment, None, None, None)
-        .await
-        .unwrap();
 
     let entries = stored_roster(&api, &definition_id).await;
     let names: Vec<&str> = entries
@@ -1257,7 +1264,7 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
     assert_eq!(
         names,
         vec!["ARIS - Daily Hunting 1", "Warm-up", "Boss lap"],
-        "the typed name was appended; the auto-number was not"
+        "the typed name was appended to the authored roster"
     );
 
     // Declaring it again does not duplicate the chip.
@@ -1398,11 +1405,13 @@ async fn a_rostered_signal_quest_declares_from_cold_and_survives_session_boundar
     )
     .await;
 
-    // Idle: the control is absent entirely, because there is no now to
-    // declare into. A standing chip is a running session's business.
+    // Idle: the session is picked but not running, and the control
+    // already shows what it will offer. Nothing is standing, because
+    // nothing can be until a session does.
     let options = api.tracking_activity_options().await.unwrap();
-    assert!(!options.visible);
-    assert!(options.options.is_empty());
+    assert!(options.visible, "picking a session shows what it offers");
+    assert_eq!(options.options.len(), 1);
+    assert!(options.active.is_empty());
 
     // Running: the roster offers it even though nothing has started it,
     // which is what makes a repeatable run reachable at all.
@@ -1410,7 +1419,6 @@ async fn a_rostered_signal_quest_declares_from_cold_and_survives_session_boundar
     let options = api.tracking_activity_options().await.unwrap();
     assert!(options.visible);
     assert_eq!(options.options.len(), 1);
-    assert!(options.options[0].signal_quest);
     assert!(options.options[0].available);
     assert!(!options.options[0].active);
     assert_eq!(options.ready_count, 1);

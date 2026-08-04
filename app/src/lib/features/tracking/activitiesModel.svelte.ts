@@ -23,9 +23,9 @@ export interface ActivitiesModelDeps {
 	readOptions: () => Promise<ActivityOptionsResult>;
 	/** Declare a quest's stretch: exclusive switch unless additive. */
 	activateQuest: (questId: number, additive: boolean) => Promise<unknown>;
-	/** Declare a named slice; a blank label is auto-numbered by the
-	 * backend, and a typed one is promoted into the session's roster. */
-	activateSegment: (label: string | null, additive: boolean) => Promise<unknown>;
+	/** Declare a named slice; the name is promoted into the session's
+	 * roster, so it is a row of its own next time. */
+	activateSegment: (label: string, additive: boolean) => Promise<unknown>;
 	/** End one standing quest stretch. */
 	deactivateQuest: (questId: number) => Promise<unknown>;
 	/** End one standing segment, matched by its name. */
@@ -111,13 +111,14 @@ export function createActivitiesModel(deps: ActivitiesModelDeps) {
 		return write(() => deps.activateQuest(questId, additive), 'Failed to declare the activity');
 	}
 
-	/** Declare the typed name. A blank draft is the one-click boundary:
-	 * the backend auto-numbers it, so drawing a new slice never requires
-	 * typing mid-play. */
+	/** Declare the typed name. There is no unnamed slice: a stretch worth
+	 * recording is worth saying what it is, so a blank draft declares
+	 * nothing rather than opening an auto-numbered one. */
 	async function declareTyped(additive = false): Promise<boolean> {
 		const label = segmentDraft.trim();
+		if (!label) return false;
 		const applied = await write(
-			() => deps.activateSegment(label || null, additive),
+			() => deps.activateSegment(label, additive),
 			'Failed to declare the activity',
 		);
 		if (applied) segmentDraft = '';

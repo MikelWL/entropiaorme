@@ -103,15 +103,6 @@ const SNAPSHOT_FIELDS: [&str; 43] = [
 /// The repair-scan response-model field order (`exclude_unset`).
 const REPAIR_FIELDS: [&str; 4] = ["cost_ped", "raw_text", "confidence", "error"];
 
-/// Whether a segment label is an auto-numbered "Segment N": promotion
-/// into a roster excludes them, because an auto-number names nothing
-/// worth offering again.
-pub(crate) fn is_auto_numbered_segment(label: &str) -> bool {
-    label
-        .strip_prefix("Segment ")
-        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
 /// A tracker-command precondition surfaced at the facade: a state
 /// conflict ("No active session"), mapped to 409 with the error's own
 /// message.
@@ -1357,14 +1348,6 @@ pub(crate) async fn build_snapshot_value(
         None => Value::Null,
     };
 
-    // The Activities control's strip-level readout: whether the control
-    // appears at all, how many rows a tap could start, and what is
-    // standing. Computed by the same function the control's own menu
-    // reads, so the chip's cue and the menu's rows cannot disagree.
-    let picture =
-        crate::activities::activity_picture(db, definitions, readout.active.as_ref(), now).await?;
-    let activities = json!(ActivitySummary::from(&picture));
-
     // The definition facet, stringified for the wire (null drops the
     // key under exclude-none). The idle branch re-validates the
     // configured selection against an ACTIVE definition, so one deleted
@@ -1382,6 +1365,20 @@ pub(crate) async fn build_snapshot_value(
             .await
             .map_err(ApiError::internal("snapshot definition selection"))?;
     let idle_definition_id = idle_selection.as_ref().map(|(id, _)| *id);
+
+    // The Activities control's strip-level readout: whether the control
+    // appears at all, how many rows a tap could start, and what is
+    // standing. Computed by the same function the control's own menu
+    // reads, so the chip's cue and the menu's rows cannot disagree.
+    let picture = crate::activities::activity_picture(
+        db,
+        definitions,
+        readout.active.as_ref(),
+        idle_definition_id,
+        now,
+    )
+    .await?;
+    let activities = json!(ActivitySummary::from(&picture));
 
     let value = match &readout.active {
         None => {
@@ -1402,6 +1399,7 @@ pub(crate) async fn build_snapshot_value(
                 "sessionDefinitionId": definition_value(idle_definition_id),
                 "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
+                "activities": activities,
                 "recentEvents": [],
             })
         }

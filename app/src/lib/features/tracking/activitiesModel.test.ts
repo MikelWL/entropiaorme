@@ -13,7 +13,6 @@ function option(overrides: Partial<ActivityOption> = {}): ActivityOption {
 		available: true,
 		unavailableReason: null,
 		availableFrom: null,
-		signalQuest: false,
 		offRoster: false,
 		...overrides,
 	};
@@ -152,12 +151,11 @@ describe('naming an activity in play', () => {
 		expect(model.segmentDraft).toBe('');
 	});
 
-	it('leaves a blank draft to the backend, so a boundary never requires typing', async () => {
+	it('declares nothing from a blank draft: there is no unnamed slice', async () => {
 		const { model, deps } = harness();
 
-		await model.declareTyped();
-
-		expect(deps.activateSegment).toHaveBeenCalledWith(null, false);
+		expect(await model.declareTyped()).toBe(false);
+		expect(deps.activateSegment).not.toHaveBeenCalled();
 	});
 
 	it('keeps the typed name when the write is refused, so it is not lost', async () => {

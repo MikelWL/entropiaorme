@@ -114,8 +114,6 @@ export interface ActivityOption {
 	unavailableReason: string | null;
 	/** When the gate lifts (fractional epoch seconds), so the control can count down; null when nothing gates the row. */
 	availableFrom: number | null;
-	/** A repeatable run rather than a mission-log quest: declaring it starts it, and its signal loot ends it. */
-	signalQuest: boolean;
 	/** Surfaced as a fact rather than offered by the roster. */
 	offRoster: boolean;
 }

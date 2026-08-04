@@ -65,7 +65,7 @@ pub const ACTIVITY_KINDS: [IntervalKind; 2] = [IntervalKind::Quest, IntervalKind
 /// A declaration of what the play from now on is. A quest stretch is
 /// identified by the quest it advances and labelled with its name; a
 /// segment is identified by the name the player gave it, which is all
-/// such a slice has (blank auto-numbers it "Segment N").
+/// such a slice has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivityRef {
     Quest { quest_id: i64, name: String },

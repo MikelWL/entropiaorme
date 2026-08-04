@@ -1985,18 +1985,17 @@ fn declaring_outside_a_session_records_nothing() {
 
 /// Segments stay sequential under co-activation: the gesture that lets a
 /// quest and a segment overlap must not let two segments overlap, since
-/// a player-drawn slice is a cut of the run rather than a state. An
-/// omitted name is auto-numbered "Segment N" so a boundary declaration
-/// is a single action mid-play.
+/// a player-drawn slice is a cut of the run rather than a state. Names
+/// are kept verbatim, trimmed.
 #[test]
-fn a_segment_declaration_is_auto_numbered_and_seals_the_standing_segment() {
+fn a_segment_declaration_seals_the_standing_segment_even_co_activated() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
 
-    rig.wait(tracker.activate_activity(segment_activity(""), false))
+    rig.wait(tracker.activate_activity(segment_activity("  Boss: Kreltin  "), false))
         .unwrap();
-    rig.wait(tracker.activate_activity(segment_activity(""), true))
+    rig.wait(tracker.activate_activity(segment_activity("Boss: Feffoid"), true))
         .unwrap();
 
     rig.probe(&tracker, |actor| {
@@ -2005,7 +2004,7 @@ fn a_segment_declaration_is_auto_numbered_and_seals_the_standing_segment() {
             .intervals
             .open_of_kind(IntervalKind::Segment)
             .expect("one segment open");
-        assert_eq!(open.label.as_deref(), Some("Segment 2"));
+        assert_eq!(open.label.as_deref(), Some("Boss: Feffoid"));
     });
 
     let rows: Vec<(Option<String>, Option<f64>)> = rig
@@ -2023,49 +2022,17 @@ fn a_segment_declaration_is_auto_numbered_and_seals_the_standing_segment() {
         }))
         .unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].0.as_deref(), Some("Segment 1"));
+    assert_eq!(
+        rows[0].0.as_deref(),
+        Some("Boss: Kreltin"),
+        "the name is kept verbatim, trimmed"
+    );
     assert!(
         rows[0].1.is_some(),
         "the first segment closed on the second's declaration"
     );
-    assert_eq!(rows[1].0.as_deref(), Some("Segment 2"));
+    assert_eq!(rows[1].0.as_deref(), Some("Boss: Feffoid"));
     assert!(rows[1].1.is_none(), "the standing segment has no end yet");
-}
-
-/// A custom name is kept verbatim (trimmed), and the auto-number keeps
-/// counting declarations regardless: naming "Boss 1" by hand does not
-/// make the next unnamed segment "Segment 1".
-#[test]
-fn a_custom_segment_name_is_kept_and_numbering_still_advances() {
-    let rig = rig();
-    let tracker = rig.tracker(Providers::default());
-    let session = rig.wait(tracker.start_session()).unwrap();
-
-    rig.wait(tracker.activate_activity(segment_activity("  Boss: Kreltin  "), false))
-        .unwrap();
-    rig.wait(tracker.activate_activity(segment_activity("   "), false))
-        .unwrap();
-
-    let labels: Vec<Option<String>> = rig
-        .wait(rig.db.with_reader(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT label FROM session_intervals \
-                 WHERE session_id = ? AND kind = 'segment' ORDER BY id",
-            )?;
-            let rows = stmt
-                .query_map(rusqlite::params![session.id], |row| row.get(0))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        }))
-        .unwrap();
-    assert_eq!(
-        labels,
-        vec![
-            Some("Boss: Kreltin".to_string()),
-            Some("Segment 2".to_string())
-        ],
-        "trimmed custom name; a blank name auto-numbers by declaration count"
-    );
 }
 
 /// A segment is ended by name, because a name is all a player-drawn
@@ -2110,14 +2077,14 @@ fn segments_are_session_scoped() {
     let tracker = rig.tracker(Providers::default());
 
     assert!(rig
-        .wait(tracker.activate_activity(segment_activity(""), false))
+        .wait(tracker.activate_activity(segment_activity("Idle"), false))
         .is_err());
     assert!(rig
         .wait(tracker.deactivate_activity(ActivityKey::Segment("Idle".into())))
         .is_err());
 
     let session = rig.wait(tracker.start_session()).unwrap();
-    rig.wait(tracker.activate_activity(segment_activity(""), false))
+    rig.wait(tracker.activate_activity(segment_activity("Rotation 1"), false))
         .unwrap();
     rig.wait(tracker.stop_session()).unwrap();
 

@@ -7,7 +7,9 @@
  *
  * A definition's roster is authored data replaced wholesale on save
  * (the playlist-items precedent), so the draft here is a plain array
- * the editor mutates freely; nothing persists until Save.
+ * the editor mutates freely; nothing persists until Save. Segment
+ * entries are never drafted here: they arrive by being named in the
+ * overlay while playing, and the editor only prunes and reorders them.
  */
 
 import type { SessionDefinition, SessionDefinitionInput, SessionRosterEntryKind } from '$lib/api';
@@ -275,22 +277,6 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		];
 	}
 
-	function addSegment(label: string) {
-		const trimmed = label.trim();
-		if (!trimmed) return;
-		roster = [
-			...roster,
-			{
-				key: rosterKey(),
-				kind: 'segment',
-				refId: null,
-				label: trimmed,
-				displayName: trimmed,
-				missing: false,
-			},
-		];
-	}
-
 	/** Add every quest in a category in one go; the per-quest guard makes
 	 * the ones already rostered no-ops. */
 	function addQuests(toAdd: Quest[]) {
@@ -487,7 +473,6 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		addFamily,
 		addQuest,
 		addQuests,
-		addSegment,
 		removeEntry,
 		moveEntry,
 		save,

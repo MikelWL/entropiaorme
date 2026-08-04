@@ -111,28 +111,21 @@ describe('createDefinitionsModel', () => {
 		model.addFamily(family('3', 'Daily Hunting 1'));
 		model.addFamily(family('3', 'Daily Hunting 1'));
 		model.addQuest({ id: '9', name: 'The Ultimate Threat' } as Quest);
-		model.addSegment('  Warm-up  ');
-		model.addSegment('   ');
 		expect(model.roster.map((entry) => entry.displayName)).toEqual([
 			'Daily Hunting 1',
 			'The Ultimate Threat',
-			'Warm-up',
 		]);
 
-		model.moveEntry(2, -1);
+		model.moveEntry(1, -1);
 		expect(model.roster.map((entry) => entry.displayName)).toEqual([
-			'Daily Hunting 1',
-			'Warm-up',
 			'The Ultimate Threat',
+			'Daily Hunting 1',
 		]);
 		model.moveEntry(0, -1);
-		expect(model.roster[0].displayName).toBe('Daily Hunting 1');
+		expect(model.roster[0].displayName).toBe('The Ultimate Threat');
 
-		model.removeEntry(1);
-		expect(model.roster.map((entry) => entry.displayName)).toEqual([
-			'Daily Hunting 1',
-			'The Ultimate Threat',
-		]);
+		model.removeEntry(0);
+		expect(model.roster.map((entry) => entry.displayName)).toEqual(['Daily Hunting 1']);
 	});
 
 	it('saves a create, selects the new definition, and closes', async () => {
@@ -140,12 +133,12 @@ describe('createDefinitionsModel', () => {
 		const model = createDefinitionsModel(deps);
 		model.openCreate();
 		model.name = '  General Hunting  ';
-		model.addSegment('Grind');
+		model.addQuest({ id: '9', name: 'The Ultimate Threat' } as Quest);
 		expect(await model.save()).toBe(true);
 		expect(deps.createDefinition).toHaveBeenCalledWith({
 			name: 'General Hunting',
 			ad_hoc_segments: false,
-			roster: [{ kind: 'segment', ref_id: null, label: 'Grind' }],
+			roster: [{ kind: 'quest', ref_id: 9, label: null }],
 		});
 		expect(deps.selectDefinition).toHaveBeenCalledWith(7);
 		expect(model.mode).toBe('closed');

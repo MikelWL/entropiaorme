@@ -64,6 +64,9 @@ export interface OverlayActivitiesMenuState {
 	width: number;
 	options: ActivityOption[];
 	adHocSegments: boolean;
+	/** No session is running, so the rows show what this session WILL
+	 * offer and none of them can be declared yet. */
+	idle: boolean;
 }
 
 export type OverlayMenuSelection =
@@ -158,6 +161,7 @@ export function buildDefinitionMenuState(
 export function buildActivitiesMenuState(
 	anchorWidth: number,
 	options: ActivityOptionsResult,
+	idle: boolean,
 ): OverlayActivitiesMenuState {
 	const labels = options.options.map((option) => option.name);
 	return {
@@ -165,5 +169,6 @@ export function buildActivitiesMenuState(
 		width: computeMenuWidth(anchorWidth, labels.length > 0 ? labels : ['Nothing to declare'], 108),
 		options: options.options,
 		adHocSegments: options.adHocSegments,
+		idle,
 	};
 }

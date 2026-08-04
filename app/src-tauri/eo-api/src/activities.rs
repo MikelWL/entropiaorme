@@ -128,9 +128,6 @@ pub struct ActivityOption {
     /// When the gate lifts (fractional epoch seconds), so the control
     /// can count down; null when nothing gates the row.
     pub available_from: Nullable<f64>,
-    /// A repeatable run rather than a mission-log quest: declaring it
-    /// starts it, and its signal loot ends it.
-    pub signal_quest: bool,
     /// Surfaced as a fact rather than offered by the roster.
     pub off_roster: bool,
 }
@@ -167,6 +164,16 @@ fn quest_key(quest_id: i64) -> String {
 
 fn segment_key(label: &str) -> String {
     format!("segment:{label}")
+}
+
+/// A segment's name, trimmed and required. There is no unnamed slice:
+/// an auto-numbered one names nothing, and a stretch worth recording is
+/// worth saying what it is.
+fn require_segment_label(label: Option<String>) -> Result<String, ApiError> {
+    match label.map(|label| label.trim().to_string()) {
+        Some(label) if !label.is_empty() => Ok(label),
+        _ => Err(ApiError::bad_request("A segment activity needs a label")),
+    }
 }
 
 /// Whether a gate is still running at `now`.
@@ -248,30 +255,27 @@ fn active_views(standing: &[ActiveActivity]) -> Vec<ActiveActivityView> {
 /// assembles the same snapshot over its own database and tracker, with
 /// no definition service of its own (`definitions: None`, which reads
 /// as a session outside any definition).
+///
+/// Answers while IDLE too, over the definition a start would stamp:
+/// picking a session should show what it will offer, rather than making
+/// the surface appear only once tracking is flipped on. Nothing is
+/// standing then and nothing can be declared; that is the caller's to
+/// render, not this read's to hide.
 pub(crate) async fn activity_picture(
     db: &Db,
     definitions: Option<&SessionDefinitionService>,
     active: Option<&ActiveSessionView>,
+    idle_definition_id: Option<i64>,
     now: f64,
 ) -> Result<ActivityOptionsResult, ApiError> {
-    let empty = ActivityOptionsResult {
-        visible: false,
-        ad_hoc_segments: false,
-        ready_count: 0,
-        options: Vec::new(),
-        active: Vec::new(),
+    // The session's stamped definition while one runs (an instance is of
+    // what it started as, so a selection changed underneath must not
+    // move its roster), otherwise the one a start would stamp.
+    let definition_id = match active {
+        Some(active) => active.definition_id,
+        None => idle_definition_id,
     };
-    // Absent while idle: every declaration here is "from now on", and
-    // there is no now to declare into without a session.
-    let Some(active) = active else {
-        return Ok(empty);
-    };
-
-    // The session's stamped definition, not the current selection: a
-    // running session is an instance of what it started as, and the
-    // roster it offers must be that one. A definition deleted
-    // mid-session resolves to none, leaving only the facts.
-    let definition = match (definitions, active.definition_id) {
+    let definition = match (definitions, definition_id) {
         (Some(service), Some(id)) => service
             .get_active(id)
             .await
@@ -285,15 +289,20 @@ pub(crate) async fn activity_picture(
     let offers = read_quest_offers(db)
         .await
         .map_err(ApiError::internal("activity options offers"))?;
-    let standing = active_views(&active.active_activities);
-    let standing_quests: Vec<i64> = active
-        .active_activities
+    // Nothing is standing while idle, so every "is this recording" read
+    // answers false without a special case.
+    let running: &[ActiveActivity] = match active {
+        Some(active) => &active.active_activities,
+        None => &[],
+    };
+    let standing = active_views(running);
+    let standing_quests: Vec<i64> = running
         .iter()
         .filter_map(|activity| activity.quest_id)
         .collect();
     let is_standing_quest = |quest_id: i64| standing_quests.contains(&quest_id);
     let is_standing_segment = |label: &str| {
-        active.active_activities.iter().any(|activity| {
+        running.iter().any(|activity| {
             activity.kind == IntervalKind::Segment && activity.name.eq_ignore_ascii_case(label)
         })
     };
@@ -325,7 +334,6 @@ pub(crate) async fn activity_picture(
                     available: true,
                     unavailable_reason: None.into(),
                     available_from: None.into(),
-                    signal_quest: false,
                     off_roster: false,
                 });
             }
@@ -351,7 +359,6 @@ pub(crate) async fn activity_picture(
                     available,
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: offer.available_from.into(),
-                    signal_quest: offer.signal_quest,
                     off_roster: false,
                 });
             }
@@ -390,7 +397,6 @@ pub(crate) async fn activity_picture(
                     available,
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: available_from.into(),
-                    signal_quest: serving.is_some_and(|offer| offer.signal_quest),
                     off_roster: false,
                 });
             }
@@ -419,11 +425,10 @@ pub(crate) async fn activity_picture(
             available: true,
             unavailable_reason: None.into(),
             available_from: offer.available_from.into(),
-            signal_quest: offer.signal_quest,
             off_roster: true,
         });
     }
-    for activity in &active.active_activities {
+    for activity in running {
         if activity.kind != IntervalKind::Segment {
             continue;
         }
@@ -442,10 +447,19 @@ pub(crate) async fn activity_picture(
             available: true,
             unavailable_reason: None.into(),
             available_from: None.into(),
-            signal_quest: false,
             off_roster: true,
         });
     }
+
+    // Alphabetical, not authored order: the control is a list to find
+    // something in mid-play, and a stable A-Z is the only order a
+    // player can predict without remembering how they typed it up.
+    options.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.key.cmp(&right.key))
+    });
 
     let ready_count = options
         .iter()
@@ -466,18 +480,36 @@ pub(crate) async fn activity_picture(
 // ── Facade methods ──────────────────────────────────────────────────
 
 impl Api {
-    /// What the Activities control offers right now.
+    /// What the Activities control offers right now. Answers while idle
+    /// too, over the session a start would run as, so picking one shows
+    /// what it will offer rather than making the surface appear only
+    /// once tracking begins.
     pub async fn tracking_activity_options(&self) -> Result<ActivityOptionsResult, ApiError> {
         let readout = self
             .tracker
             .snapshot()
             .await
             .map_err(ApiError::internal("activity options readout"))?;
+        let idle_definition_id = match readout.active {
+            Some(_) => None,
+            None => {
+                let config = eo_services::config_service::load_config_readonly(&self.data_dir)
+                    .map_err(ApiError::internal("activity options config"))?;
+                eo_services::session_definitions::resolve_selection(
+                    &self.db,
+                    config.session_definition_id,
+                )
+                .await
+                .map_err(ApiError::internal("activity options selection"))?
+                .map(|(id, _)| id)
+            }
+        };
         let now = eo_services::time::naive_to_epoch(self.clock.now());
         activity_picture(
             &self.db,
             Some(&self.session_definitions),
             readout.active.as_ref(),
+            idle_definition_id,
             now,
         )
         .await
@@ -494,10 +526,10 @@ impl Api {
     /// A signal quest starts in the same motion (its in-progress state
     /// IS the declaration); a mission-log quest the log does not carry
     /// is a 400, because play cannot be toward a mission you have not
-    /// been given. A segment with a blank name is auto-numbered, and one
-    /// named in play is promoted into the session's roster when the
-    /// definition opts into self-named segments. 409 when no session is
-    /// active.
+    /// been given. A segment needs a name (a slice worth recording is
+    /// worth saying what it is), and one named in play is promoted into
+    /// the session's roster when the definition opts into self-named
+    /// segments. 409 when no session is active.
     pub async fn tracking_activity_activate(
         &self,
         kind: ActivityTargetKind,
@@ -516,11 +548,11 @@ impl Api {
                 }
             }
             ActivityTargetKind::Segment => ActivityRef::Segment {
-                name: label.as_deref().unwrap_or_default().trim().to_string(),
+                name: require_segment_label(label)?,
             },
         };
         let promoting = match &activity {
-            ActivityRef::Segment { name } if !name.is_empty() => Some(name.clone()),
+            ActivityRef::Segment { name } => Some(name.clone()),
             _ => None,
         };
 
@@ -557,15 +589,7 @@ impl Api {
                 };
                 ActivityKey::Quest(quest_id)
             }
-            ActivityTargetKind::Segment => {
-                let Some(label) = label
-                    .map(|label| label.trim().to_string())
-                    .filter(|label| !label.is_empty())
-                else {
-                    return Err(ApiError::bad_request("A segment activity needs a label"));
-                };
-                ActivityKey::Segment(label)
-            }
+            ActivityTargetKind::Segment => ActivityKey::Segment(require_segment_label(label)?),
         };
         let standing = self
             .tracker
@@ -609,14 +633,10 @@ impl Api {
     }
 
     /// Append a segment named in play to the running session's roster,
-    /// when that definition opts into self-named segments. Auto-numbered
-    /// shapes are skipped: "Segment 3" names nothing worth offering
-    /// again. Silent when the definition does not opt in, or when the
-    /// name is already a chip.
+    /// when that definition opts into self-named segments. Silent when
+    /// the definition does not opt in, or when the name is already a
+    /// chip.
     async fn promote_named_segment(&self, name: &str) -> Result<(), ApiError> {
-        if crate::tracking::is_auto_numbered_segment(name) {
-            return Ok(());
-        }
         let readout = self
             .tracker
             .snapshot()

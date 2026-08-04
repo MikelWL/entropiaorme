@@ -17,7 +17,6 @@
 
 	let nameInput = $state<HTMLInputElement | null>(null);
 	let sourceFilter = $state('');
-	let segmentDraft = $state('');
 
 	// Activities are progressive disclosure, and so is the catalogue
 	// inside them: a planet narrows it, categories fold their quests away
@@ -51,11 +50,6 @@
 
 	function kindLabel(entry: RosterDraftEntry): string {
 		return entry.kind === 'quest_family' ? 'Family' : entry.kind === 'quest' ? 'Quest' : 'Segment';
-	}
-
-	function addSegmentDraft() {
-		model.addSegment(segmentDraft);
-		segmentDraft = '';
 	}
 
 	/** The surface's entrance: it arrives AFTER the page content has
@@ -385,13 +379,16 @@
 
 						<!-- Segments are the activities the player names themselves, so
 							 they are one capability with one switch: off, the session has
-							 no segment concept at all; on, names can be seeded here as
-							 well as typed during play. -->
+							 no segment concept at all; on, they are named in the overlay as
+							 they happen and join this list from there. Nothing is
+							 pre-ordered here: a slice you have not played yet is not one
+							 you know the name of. -->
 						<div class="flex items-center justify-between gap-4 border-t border-border/50 pt-3">
 							<div class="flex flex-col gap-0.5">
 								<span class="text-sm text-text">Name segments on the fly</span>
 								<span class="text-sm text-text-secondary leading-relaxed max-w-sm">
-									Type a segment name while you play, instead of only picking from this list.
+									Name what you are doing as you play; each name you use joins this
+									list for next time.
 								</span>
 							</div>
 							<Toggle
@@ -401,29 +398,6 @@
 								onchange={(checked) => (model.adHocSegments = checked)}
 							/>
 						</div>
-
-						{#if model.adHocSegments}
-							<div class="flex items-center gap-2">
-								<input
-									bind:value={segmentDraft}
-									class="flex-1 h-9 px-3 text-sm bg-surface/70 text-text rounded-md border border-border
-										outline-none transition-colors focus:border-accent/60
-										placeholder:text-text-tertiary"
-									placeholder="Name one now if you already know it (e.g. Warm-up)..."
-									aria-label="New segment name"
-									disabled={model.saving}
-									onkeydown={(e) => {
-										if (e.key === 'Enter') {
-											e.preventDefault();
-											addSegmentDraft();
-										}
-									}}
-								/>
-								<Button size="sm" variant="secondary" disabled={model.saving || !segmentDraft.trim()} onclick={addSegmentDraft}>
-									{#snippet children()}Add segment{/snippet}
-								</Button>
-							</div>
-						{/if}
 					</div>
 				{/if}
 			</section>

@@ -77,11 +77,6 @@ pub(super) struct ActiveSession {
     /// every event written right now stamps. Session-scoped by
     /// construction, so no interval can outlive its session.
     pub(super) intervals: IntervalState,
-    /// How many segments this session has opened, custom-named or not:
-    /// the sequence an omitted segment name is auto-numbered from
-    /// ("Segment N" counts opens, so the numbering never repeats within
-    /// a session even after renames).
-    pub(super) segments_opened: i64,
     pub(super) last_heal_time: Option<DateTime<Utc>>,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
@@ -111,7 +106,6 @@ impl ActiveSession {
             declared_mob: None,
             facets,
             intervals: IntervalState::default(),
-            segments_opened: 0,
             last_heal_time: None,
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
@@ -477,9 +471,9 @@ impl TrackerActor {
     /// only the others (closing and reopening the target would split one
     /// continuous stretch into two).
     ///
-    /// A segment declared with a blank name is auto-numbered "Segment
-    /// N", counting this session's opens from 1, so a boundary never
-    /// requires typing mid-play.
+    /// A segment carries the name the player gave it; there is no
+    /// unnamed boundary, because an auto-numbered slice names nothing
+    /// and a slice worth recording is worth saying what it is.
     ///
     /// Contained like the other interval writes: a write that cannot
     /// land leaves the declaration unrecorded, and the returned set
@@ -496,19 +490,12 @@ impl TrackerActor {
         };
         let session_id = active.session.id.clone();
 
-        // The segment's name is settled first, because the auto-number
-        // both identifies the target and labels the stretch.
-        let (kind, ref_id, label, next_segment) = match &activity {
+        let (kind, ref_id, label) = match &activity {
             ActivityRef::Quest { quest_id, name } => {
-                (IntervalKind::Quest, Some(*quest_id), name.clone(), None)
+                (IntervalKind::Quest, Some(*quest_id), name.clone())
             }
             ActivityRef::Segment { name } => {
-                let candidate = active.segments_opened + 1;
-                let label = match name.trim() {
-                    "" => format!("Segment {candidate}"),
-                    named => named.to_string(),
-                };
-                (IntervalKind::Segment, None, label, Some(candidate))
+                (IntervalKind::Segment, None, name.trim().to_string())
             }
         };
 
@@ -543,15 +530,10 @@ impl TrackerActor {
         } else {
             spec.closes(CloseScope::Kinds(ACTIVITY_KINDS.to_vec()))
         };
-        let outcome = active
+        let _ = active
             .intervals
             .open_interval(&db, &session_id, now, spec)
             .await;
-        if outcome.is_ok() {
-            if let Some(candidate) = next_segment {
-                active.segments_opened = candidate;
-            }
-        }
         Ok(active_activities(active))
     }
 

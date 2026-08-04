@@ -91,10 +91,14 @@
 		onMobKeydown?: (event: KeyboardEvent) => void | Promise<void>;
 		onDefinitionTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onBoostCommit?: () => void | Promise<void>;
-		onActivitiesTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
+		onActivitiesTrigger?: (anchor: HTMLElement) => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onArmourCostToggle?: (event: MouseEvent) => void | Promise<void>;
 	} = $props();
+
+	// The Activities menu's anchor: the section, which survives the chip
+	// churn a declaration causes (see the markup below).
+	let activitiesSection = $state<HTMLDivElement | null>(null);
 
 	const isTrifectaAttribution = $derived(data.weaponAttribution === 'trifecta');
 	const isActive = $derived(data.status === 'active');
@@ -288,7 +292,15 @@
 				 session has nothing to offer: a deliberately simple session
 				 gets no activity surface at all. -->
 			{#if activities?.visible}
-				<div class="flex flex-col shrink-0" data-testid="activities-facet">
+				<!-- The section element is the menu's anchor, not the chip
+					 clicked: declaring something swaps the ready-count button
+					 for chips, so a button anchor would be destroyed by the
+					 very action that needs to re-present the menu over it. -->
+				<div
+					class="flex flex-col shrink-0"
+					data-testid="activities-facet"
+					bind:this={activitiesSection}
+				>
 					<span class="facet-label">Activities</span>
 					<div class="flex items-center gap-1">
 						{#if standing.length > 0}
@@ -300,7 +312,7 @@
 									aria-haspopup="menu"
 									aria-expanded={activitiesMenuOpen}
 									title={`Recording ${activity.name}; open the activities`}
-									onclick={(event) => onActivitiesTrigger(event.currentTarget as HTMLButtonElement)}
+									onclick={() => activitiesSection && onActivitiesTrigger(activitiesSection)}
 								>
 									<span class="truncate">{activity.name}</span>
 								</button>
@@ -313,7 +325,7 @@
 								aria-haspopup="menu"
 								aria-expanded={activitiesMenuOpen}
 								title="Declare what the play from now on counts toward"
-								onclick={(event) => onActivitiesTrigger(event.currentTarget as HTMLButtonElement)}
+								onclick={() => activitiesSection && onActivitiesTrigger(activitiesSection)}
 							>
 								{#if readyCount > 0}
 									<span class="whitespace-nowrap">{readyCount} ready</span>

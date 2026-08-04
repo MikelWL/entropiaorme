@@ -29,23 +29,22 @@
 
 	let segmentDraft = $state('');
 
-	/** What a row says about itself on its right: the standing state, why
-	 * it cannot be declared (with the gate counted down where there is
-	 * one), or the repeatable-run cue. */
+	/** What a row says about itself on its right: the standing state, or
+	 * why it cannot be declared (with the gate counted down where there
+	 * is one). An available row says nothing: the name is the point, and
+	 * how a quest completes is the record's business, not the player's
+	 * at the moment of choosing. */
 	function rowBadge(option: ActivityOption): string | null {
 		if (option.active) return 'Recording';
-		if (!option.available) {
-			const left = option.availableFrom === null ? null : formatTimeUntil(option.availableFrom, now);
-			return left ? `${option.unavailableReason} · ${left}` : option.unavailableReason;
-		}
-		return option.signalQuest ? 'Run' : null;
+		if (option.available) return null;
+		const left = option.availableFrom === null ? null : formatTimeUntil(option.availableFrom, now);
+		return left ? `${option.unavailableReason} · ${left}` : option.unavailableReason;
 	}
 
-	function rowTitle(option: ActivityOption): string {
+	function rowTitle(option: ActivityOption, idle: boolean): string {
 		if (option.active) return 'Recording this; tap to stop recording it';
 		if (!option.available) return option.unavailableReason ?? '';
-		if (option.kind === 'segment') return 'Record what you do next under this name';
-		if (option.signalQuest) return 'Start a run: what you do next counts toward it until its loot drops';
+		if (idle) return 'Start tracking to record this';
 		return 'What you do next counts toward this';
 	}
 
@@ -63,14 +62,15 @@
 			<div class="menu-empty">Nothing to declare</div>
 		{:else}
 			{@const anyActive = menuState.options.some((option) => option.active)}
+			{@const idle = menuState.idle}
 			{#each menuState.options as option (option.key)}
 				{@const badge = rowBadge(option)}
 				<div class="menu-row">
 					<button
 						type="button"
 						class="menu-option {option.active ? 'menu-option-active' : ''}"
-						disabled={!option.available && !option.active}
-						title={rowTitle(option)}
+						disabled={idle || (!option.available && !option.active)}
+						title={rowTitle(option, idle)}
 						onclick={() => onActivitySelect({ kind: 'activities', action: 'toggle', key: option.key })}
 					>
 						<span class="menu-option-name">{option.name}</span>
@@ -82,7 +82,7 @@
 					</button>
 					<!-- Co-activation is deliberate, never ambient: the affordance
 						 appears only once something is standing for the row to join. -->
-					{#if !option.active && option.available && anyActive}
+					{#if !idle && !option.active && option.available && anyActive}
 						<button
 							type="button"
 							class="menu-join-btn"
@@ -102,8 +102,9 @@
 					<input
 						class="menu-input"
 						bind:value={segmentDraft}
-						placeholder="Name what you are doing..."
+						placeholder={idle ? 'Start tracking to name one' : 'Name what you are doing...'}
 						aria-label="Name this activity"
+						disabled={idle}
 						onkeydown={(event) => {
 							if (event.key !== 'Enter') return;
 							event.preventDefault();
@@ -115,7 +116,7 @@
 						class="menu-join-btn"
 						aria-label="Record under this name"
 						title="Record what you do next under this name"
-						disabled={!segmentDraft.trim()}
+						disabled={idle || !segmentDraft.trim()}
 						onclick={declareTyped}
 					>&rarr;</button>
 				</div>

@@ -383,10 +383,12 @@
 	}
 
 	// The Activities control's anchor, kept so an action can re-present
-	// the still-open menu with the refreshed rows.
-	let activitiesAnchor: HTMLButtonElement | null = null;
+	// the still-open menu with the refreshed rows. It is the section
+	// element rather than the chip clicked, because a declaration swaps
+	// the chips out from under the gesture that caused it.
+	let activitiesAnchor: HTMLElement | null = null;
 
-	async function openActivitiesMenu(anchor: HTMLButtonElement) {
+	async function openActivitiesMenu(anchor: HTMLElement) {
 		const options = await activities.load();
 		if (!options) {
 			facets.facetError = activities.error;
@@ -394,12 +396,16 @@
 		}
 		// A successful open clears a prior open's failure message.
 		facets.facetError = null;
-		const state = buildActivitiesMenuState(anchor.getBoundingClientRect().width, options);
+		const state = buildActivitiesMenuState(
+			anchor.getBoundingClientRect().width,
+			options,
+			data.status !== 'active',
+		);
 		activitiesAnchor = anchor;
 		await showOverlayMenu('activities', anchor, state, { focusPopup: true });
 	}
 
-	async function toggleActivitiesMenu(anchor: HTMLButtonElement) {
+	async function toggleActivitiesMenu(anchor: HTMLElement) {
 		if (overlayMenuKind === 'activities') {
 			await hideOverlayMenu();
 			return;
