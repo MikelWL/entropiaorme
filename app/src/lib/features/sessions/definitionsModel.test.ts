@@ -31,6 +31,38 @@ function family(id: string, name: string): QuestFamily {
 	};
 }
 
+function quest(overrides: Partial<Quest> = {}): Quest {
+	return {
+		id: '1',
+		name: 'Hunt Caboria',
+		category: null,
+		targetMobs: ['Caboria'],
+		planet: 'ARIS',
+		waypoint: null,
+		cooldownDurationHours: 21,
+		cooldownExpiresAt: null,
+		reward: null,
+		rewardIsSkill: false,
+		expectedRewardMarkupPercent: null,
+		rewardDescription: '',
+		notes: '',
+		chainName: null,
+		chainPosition: null,
+		chainTotal: null,
+		playlistIds: [],
+		startedAt: null,
+		signalLootItem: null,
+		cooldownAnchor: 'completion',
+		lastStartedAt: null,
+		familyId: null,
+		familyName: null,
+		familyCooldownDurationHours: null,
+		familyCooldownAnchor: null,
+		familyCooldownExpiresAt: null,
+		...overrides,
+	};
+}
+
 function makeDeps(overrides: Partial<DefinitionsModelDeps> = {}): DefinitionsModelDeps {
 	return {
 		listDefinitions: vi.fn(async () => [definition()]),
@@ -172,5 +204,39 @@ describe('createDefinitionsModel', () => {
 		expect(await model.deleteEditing()).toBe(true);
 		expect(deps.deleteDefinition).toHaveBeenCalledWith('2');
 		expect(model.mode).toBe('closed');
+	});
+});
+
+describe('the offered catalogue', () => {
+	it('drops the quests a family already stands for, and keeps the rest', async () => {
+		const model = createDefinitionsModel(
+			makeDeps({
+				listFamilies: vi.fn(async () => [family('3', 'ARIS Daily Hunting')]),
+				listQuests: vi.fn(async () => [
+					quest({ id: '1', name: 'Hunt Caboria', familyId: '3' }),
+					quest({ id: '2', name: 'Hunt Molisk', familyId: '3' }),
+					quest({ id: '5', name: 'Codex Sweep' }),
+				]),
+			}),
+		);
+		model.openCreate();
+		await vi.waitFor(() => expect(model.quests).toHaveLength(3));
+
+		expect(model.standaloneQuests.map((q) => q.name)).toEqual(['Codex Sweep']);
+	});
+
+	// Nothing else would represent it, so a member outliving its family
+	// stays offerable rather than vanishing from the catalogue.
+	it('keeps offering a quest whose family is gone', async () => {
+		const model = createDefinitionsModel(
+			makeDeps({
+				listFamilies: vi.fn(async () => []),
+				listQuests: vi.fn(async () => [quest({ id: '1', familyId: '3' })]),
+			}),
+		);
+		model.openCreate();
+		await vi.waitFor(() => expect(model.quests).toHaveLength(1));
+
+		expect(model.standaloneQuests.map((q) => q.id)).toEqual(['1']);
 	});
 });

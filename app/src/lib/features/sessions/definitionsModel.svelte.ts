@@ -73,6 +73,16 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	let quests = $state<Quest[]>([]);
 	let sourcesLoading = $state(false);
 
+	// A family entry matches whichever variant the day serves, so its own
+	// members are never offered beside it: rostering one variant would
+	// silently miss the rest, and nobody wants the variant without the
+	// family. A member whose family has gone stays offerable, because
+	// nothing else would represent it.
+	const familyIds = $derived(new Set(families.map((family) => family.id)));
+	const standaloneQuests = $derived(
+		quests.filter((quest) => quest.familyId === null || !familyIds.has(quest.familyId)),
+	);
+
 	async function loadDefinitions() {
 		loading = true;
 		try {
@@ -330,6 +340,10 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		},
 		get quests() {
 			return quests;
+		},
+		/** The quests to offer alongside the families (see above). */
+		get standaloneQuests() {
+			return standaloneQuests;
 		},
 		get sourcesLoading() {
 			return sourcesLoading;

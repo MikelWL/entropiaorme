@@ -26,12 +26,13 @@
 	const editing = $derived(model.mode === 'edit');
 
 	/** The planets that actually have something to offer, so choosing one
-	 * can never lead to an empty list. */
+	 * can never lead to an empty list. The quests counted are the ones a
+	 * family does not already stand for (the model owns that rule). */
 	const activityPlanets = $derived(
 		[
 			...new Set([
 				...model.families.map((family) => family.planet),
-				...model.quests.map((quest) => quest.planet)
+				...model.standaloneQuests.map((quest) => quest.planet)
 			])
 		].sort()
 	);
@@ -48,7 +49,9 @@
 	const filteredQuests = $derived(
 		planet === null
 			? []
-			: model.quests.filter((quest) => quest.planet === planet && matchesFilter(quest.name))
+			: model.standaloneQuests.filter(
+					(quest) => quest.planet === planet && matchesFilter(quest.name)
+				)
 	);
 
 	function inRoster(kind: 'quest_family' | 'quest', refId: string): boolean {
