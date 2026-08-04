@@ -310,7 +310,7 @@ export const dashboardSurface: GuideSurface = {
 					},
 					{
 						kind: 'p',
-						text: 'Each detail is independent, so a session keeps its per-mob record under its type, and the declared mob can change mid-session when you move between spawns.',
+						text: 'Each detail is independent, so a session keeps its per-mob record under the session it runs as, and the declared mob can change mid-session when you move between spawns.',
 					},
 				],
 				note: 'Note: the mob is declared by hand for now; kills record it the moment it is set.',

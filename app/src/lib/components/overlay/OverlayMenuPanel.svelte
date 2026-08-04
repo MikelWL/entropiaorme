@@ -101,8 +101,8 @@
 					type="button"
 					class="menu-option {definition.selected ? 'menu-option-active' : ''}"
 					title={definition.selected
-						? 'Selected for the next session; pick to clear'
-						: 'Start the next session as an instance of this type'}
+						? 'Already selected for the next session'
+						: 'Record the next session under this one'}
 					onclick={() =>
 						onSelect({
 							kind: 'definition',

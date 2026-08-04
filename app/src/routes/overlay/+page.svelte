@@ -664,10 +664,12 @@
 
 				if (event.payload.kind === 'definition') {
 					overlayMenuKind = null;
-					// Tapping the selected row clears; tapping another switches.
-					await facets.selectDefinition(
-						event.payload.selected ? null : event.payload.definitionId
-					);
+					// Tapping another row switches; tapping the selected one just
+					// closes. A session always runs under one, so there is no
+					// clear here any more than there is on the chip.
+					if (!event.payload.selected) {
+						await facets.selectDefinition(event.payload.definitionId);
+					}
 					return;
 				}
 

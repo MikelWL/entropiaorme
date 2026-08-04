@@ -112,8 +112,8 @@ async fn the_list_answers_the_fresh_database_with_the_protected_default() {
     assert!(listed[0].is_protected);
     // The seeded default declares nothing: no roster and no self-named
     // segments. A session that has neither is the one with no activity
-    // structure at all, which is what lets the overlay show no activity
-    // surface for it rather than empty controls.
+    // structure at all, so once the overlay gains its activity control
+    // there is nothing for it to show here rather than empty controls.
     assert!(!listed[0].ad_hoc_segments);
     assert!(listed[0].roster.is_empty());
 
