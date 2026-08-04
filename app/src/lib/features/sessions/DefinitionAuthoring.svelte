@@ -4,7 +4,11 @@
 	import { Button, ErrorNotice, SearchInput, Select, Toggle } from '$lib/components';
 	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
-	import type { DefinitionsModel, RosterDraftEntry } from './definitionsModel.svelte';
+	import type {
+		DefinitionsModel,
+		QuestCategoryGroup,
+		RosterDraftEntry
+	} from './definitionsModel.svelte';
 
 	let {
 		model
@@ -16,46 +20,34 @@
 	let sourceFilter = $state('');
 	let segmentDraft = $state('');
 
-	// Activities are progressive disclosure: a session is worth saving on
-	// its name alone, so the roster stays folded away until asked for.
-	// Inside it the catalogue is reached through its planet, which is how
-	// the Quests page scopes the same content.
+	// Activities are progressive disclosure, and so is the catalogue
+	// inside them: a planet narrows it, categories fold their quests away
+	// until asked for. Which categories are unfolded is pure view state;
+	// the catalogue itself (planet, filter, grouping) belongs to the model.
 	let activitiesOpen = $state(false);
-	let planet = $state<string | null>(null);
+	let unfolded = $state<Set<string>>(new Set());
 
 	const editing = $derived(model.mode === 'edit');
 
-	/** The planets that actually have something to offer, so choosing one
-	 * can never lead to an empty list. The quests counted are the ones a
-	 * family does not already stand for (the model owns that rule). */
-	const activityPlanets = $derived(
-		[
-			...new Set([
-				...model.families.map((family) => family.planet),
-				...model.standaloneQuests.map((quest) => quest.planet)
-			])
-		].sort()
-	);
+	// A filter is a search: it unfolds everything it matched, because a
+	// hit hidden inside a folded category reads as no hit at all.
+	const filtering = $derived(model.catalogFilter.trim().length > 0);
 
-	function matchesFilter(name: string): boolean {
-		return name.toLowerCase().includes(sourceFilter.trim().toLowerCase());
+	function isUnfolded(category: string): boolean {
+		return filtering || unfolded.has(category);
 	}
 
-	const filteredFamilies = $derived(
-		planet === null
-			? []
-			: model.families.filter((family) => family.planet === planet && matchesFilter(family.name))
-	);
-	const filteredQuests = $derived(
-		planet === null
-			? []
-			: model.standaloneQuests.filter(
-					(quest) => quest.planet === planet && matchesFilter(quest.name)
-				)
-	);
+	// Null is the uncategorised tail, which has no fold of its own.
+	function toggleCategory(category: string | null) {
+		if (category === null) return;
+		const next = new Set(unfolded);
+		if (next.has(category)) next.delete(category);
+		else next.add(category);
+		unfolded = next;
+	}
 
-	function inRoster(kind: 'quest_family' | 'quest', refId: string): boolean {
-		return model.roster.some((entry) => entry.kind === kind && entry.refId === refId);
+	function categoryFullyAdded(group: QuestCategoryGroup): boolean {
+		return group.quests.every((quest) => model.hasRosterRef('quest', quest.id));
 	}
 
 	function kindLabel(entry: RosterDraftEntry): string {
@@ -100,8 +92,7 @@
 		void model.editingId;
 		untrack(() => {
 			activitiesOpen = model.roster.length > 0 || model.adHocSegments;
-			planet = null;
-			sourceFilter = '';
+			unfolded = new Set();
 		});
 		const previouslyFocused =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -243,18 +234,20 @@
 						{/if}
 
 						<!-- The catalogue, reached through its planet: pick one, then
-							 what that planet offers appears. -->
-						{#if activityPlanets.length > 0}
+							 what that planet offers appears, as a list rather than a
+							 field of chips. Depth is carried by indentation, weight and
+							 hairlines; nothing here is boxed. -->
+						{#if model.catalogPlanets.length > 0}
 							<div class="flex items-center gap-2">
 								<label for="session-activity-planet" class="eyebrow-strong shrink-0">Planet</label>
 								<Select
 									id="session-activity-planet"
 									class="max-w-[14rem]"
-									bind:value={planet}
+									bind:value={model.catalogPlanet}
 									disabled={model.saving}
 								>
 									<option value={null}>Choose a planet</option>
-									{#each activityPlanets as option (option)}
+									{#each model.catalogPlanets as option (option)}
 										<option value={option}>{option}</option>
 									{/each}
 								</Select>
@@ -265,55 +258,121 @@
 							</p>
 						{/if}
 
-						{#if planet !== null}
+						{#if model.catalogPlanet !== null}
 							<SearchInput
-								bind:value={sourceFilter}
-								placeholder="Filter {planet}..."
+								bind:value={model.catalogFilter}
+								placeholder="Filter {model.catalogPlanet}..."
 								loading={model.sourcesLoading}
 							/>
-							{#if filteredFamilies.length > 0}
-								<div class="flex flex-col gap-1.5">
-									<span class="eyebrow-strong">Quest families</span>
-									<div class="flex flex-wrap gap-1.5">
-										{#each filteredFamilies as fam (fam.id)}
-											<button
-												class="filter-chip"
-												disabled={inRoster('quest_family', fam.id) || model.saving}
-												title={inRoster('quest_family', fam.id)
-													? 'Already in this session'
-													: 'Add to this session'}
-												onclick={() => model.addFamily(fam)}
-											>
+
+							{#if model.catalogFamilies.length > 0}
+								<div class="flex flex-col">
+									<span class="eyebrow-strong py-1">Quest families</span>
+									{#each model.catalogFamilies as fam (fam.id)}
+										{@const added = model.hasRosterRef('quest_family', fam.id)}
+										<button
+											type="button"
+											class="catalogue-row"
+											disabled={added || model.saving}
+											title={added ? 'Already in this session' : 'Add to this session'}
+											onclick={() => model.addFamily(fam)}
+										>
+											<span class="flex-1 truncate text-sm {added ? 'text-text-tertiary' : 'text-text'}">
 												{fam.name}
-											</button>
-										{/each}
-									</div>
+											</span>
+											<span class="row-action">{added ? 'Added' : 'Add'}</span>
+										</button>
+									{/each}
 								</div>
 							{/if}
-							{#if filteredQuests.length > 0}
-								<div class="flex flex-col gap-1.5">
-									<span class="eyebrow-strong">Quests</span>
-									<div class="flex flex-wrap gap-1.5">
-										{#each filteredQuests as quest (quest.id)}
-											<button
-												class="filter-chip"
-												disabled={inRoster('quest', quest.id) || model.saving}
-												title={inRoster('quest', quest.id)
-													? 'Already in this session'
-													: 'Add to this session'}
-												onclick={() => model.addQuest(quest)}
-											>
-												{quest.name}
-											</button>
-										{/each}
-									</div>
+
+							{#if model.catalogCategories.length > 0}
+								<div class="flex flex-col">
+									<span class="eyebrow-strong py-1">Quests</span>
+									{#each model.catalogCategories as group (group.category ?? '\u0000loose')}
+										{#if group.category === null}
+											{#each group.quests as quest (quest.id)}
+												{@const added = model.hasRosterRef('quest', quest.id)}
+												<button
+													type="button"
+													class="catalogue-row"
+													disabled={added || model.saving}
+													title={added ? 'Already in this session' : 'Add to this session'}
+													onclick={() => model.addQuest(quest)}
+												>
+													<span class="flex-1 truncate text-sm {added ? 'text-text-tertiary' : 'text-text'}">
+														{quest.name}
+													</span>
+													<span class="row-action">{added ? 'Added' : 'Add'}</span>
+												</button>
+											{/each}
+										{:else}
+											{@const open = isUnfolded(group.category)}
+											{@const allAdded = categoryFullyAdded(group)}
+											<div class="flex items-center gap-2 border-b border-border/40">
+												<button
+													type="button"
+													class="flex flex-1 items-center gap-2 py-2 text-left cursor-pointer min-w-0
+														transition-colors duration-[var(--duration-base)]
+														hover:text-text"
+													aria-expanded={open}
+													disabled={filtering}
+													onclick={() => toggleCategory(group.category)}
+												>
+													<svg
+														class="h-3 w-3 shrink-0 text-text-secondary transition-transform
+															{open ? '' : '-rotate-90'}"
+														fill="none"
+														stroke="currentColor"
+														viewBox="0 0 24 24"
+														aria-hidden="true"
+													>
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+													</svg>
+													<span class="truncate text-sm font-medium {allAdded ? 'text-text-tertiary' : 'text-text'}">
+														{group.category}
+													</span>
+													<span class="text-sm text-text-secondary tabular-nums">{group.quests.length}</span>
+												</button>
+												<button
+													type="button"
+													class="row-action shrink-0"
+													disabled={allAdded || model.saving}
+													title={allAdded
+														? 'Every quest here is already in this session'
+														: `Add all ${group.quests.length} to this session`}
+													onclick={() => model.addQuests(group.quests)}
+												>
+													{allAdded ? 'Added' : 'Add all'}
+												</button>
+											</div>
+											{#if open}
+												{#each group.quests as quest (quest.id)}
+													{@const added = model.hasRosterRef('quest', quest.id)}
+													<button
+														type="button"
+														class="catalogue-row pl-5"
+														disabled={added || model.saving}
+														title={added ? 'Already in this session' : 'Add to this session'}
+														onclick={() => model.addQuest(quest)}
+													>
+														<span class="flex-1 truncate text-sm {added ? 'text-text-tertiary' : 'text-text-secondary'}">
+															{quest.name}
+														</span>
+														<span class="row-action">{added ? 'Added' : 'Add'}</span>
+													</button>
+												{/each}
+											{/if}
+										{/if}
+									{/each}
 								</div>
 							{/if}
-							{#if !model.sourcesLoading && filteredFamilies.length === 0 && filteredQuests.length === 0}
+
+							{#if !model.sourcesLoading && model.catalogFamilies.length === 0 && model.catalogCategories.length === 0}
 								<p class="text-sm text-text-secondary px-1">
-									{sourceFilter.trim()
+									{filtering
 										? 'Nothing matches the filter.'
-										: `Nothing on ${planet} yet; quests are authored on the Quests page.`}
+										: `Nothing on ${model.catalogPlanet} yet; quests are authored on the Quests page.`}
 								</p>
 							{/if}
 						{/if}
@@ -394,3 +453,39 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	/* A catalogue line: full-width, hairline-separated, no border box.
+	   Hierarchy comes from indentation, weight and tone. */
+	.catalogue-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		width: 100%;
+		padding: 0.5rem 0.25rem 0.5rem 0;
+		text-align: left;
+		cursor: pointer;
+		border-bottom: 1px solid color-mix(in oklab, var(--color-border) 40%, transparent);
+		transition: background-color var(--duration-base) var(--ease-out);
+	}
+	.catalogue-row:hover:not(:disabled) {
+		background: color-mix(in oklab, var(--color-surface-hover) 30%, transparent);
+	}
+	.catalogue-row:disabled {
+		cursor: default;
+	}
+	.row-action {
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--color-accent);
+		padding: 0.25rem 0.5rem;
+		cursor: pointer;
+		background: transparent;
+		transition: color var(--duration-base) var(--ease-out);
+	}
+	.catalogue-row:disabled .row-action,
+	.row-action:disabled {
+		color: var(--color-text-tertiary);
+		cursor: default;
+	}
+</style>

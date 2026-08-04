@@ -240,3 +240,65 @@ describe('the offered catalogue', () => {
 		expect(model.standaloneQuests.map((q) => q.id)).toEqual(['1']);
 	});
 });
+
+describe('the catalogue', () => {
+	async function openOn(planet: string, quests: Quest[], families: QuestFamily[] = []) {
+		const model = createDefinitionsModel(
+			makeDeps({
+				listFamilies: vi.fn(async () => families),
+				listQuests: vi.fn(async () => quests),
+			}),
+		);
+		model.openCreate();
+		await vi.waitFor(() => expect(model.quests).toHaveLength(quests.length));
+		model.catalogPlanet = planet;
+		return model;
+	}
+
+	it('groups the offered quests by category, alphabetically, uncategorised last', async () => {
+		const model = await openOn('ARIS', [
+			quest({ id: '1', name: 'Zeta sweep', category: 'Weeklies' }),
+			quest({ id: '2', name: 'Loose end' }),
+			quest({ id: '3', name: 'Alpha run', category: 'Codex' }),
+			quest({ id: '4', name: 'Beta run', category: 'Codex' }),
+			quest({ id: '5', name: 'Elsewhere', category: 'Codex', planet: 'Calypso' }),
+		]);
+
+		expect(
+			model.catalogCategories.map((group) => [group.category, group.quests.map((q) => q.name)]),
+		).toEqual([
+			['Codex', ['Alpha run', 'Beta run']],
+			['Weeklies', ['Zeta sweep']],
+			[null, ['Loose end']],
+		]);
+	});
+
+	it('narrows to the filter, and offers no catalogue before a planet is chosen', async () => {
+		const model = await openOn('ARIS', [
+			quest({ id: '1', name: 'Alpha run', category: 'Codex' }),
+			quest({ id: '2', name: 'Beta run', category: 'Codex' }),
+		]);
+
+		model.catalogFilter = 'beta';
+		expect(model.catalogCategories.map((group) => group.quests.map((q) => q.name))).toEqual([
+			['Beta run'],
+		]);
+
+		model.catalogPlanet = null;
+		expect(model.catalogCategories).toEqual([]);
+	});
+
+	it('adds a whole category in one go, without duplicating what is already rostered', async () => {
+		const model = await openOn('ARIS', [
+			quest({ id: '1', name: 'Alpha run', category: 'Codex' }),
+			quest({ id: '2', name: 'Beta run', category: 'Codex' }),
+		]);
+		model.addQuest(quest({ id: '1', name: 'Alpha run', category: 'Codex' }));
+
+		model.addQuests(model.catalogCategories[0].quests);
+
+		expect(model.roster.map((entry) => entry.refId)).toEqual(['1', '2']);
+		expect(model.hasRosterRef('quest', '2')).toBe(true);
+		expect(model.hasRosterRef('quest_family', '2')).toBe(false);
+	});
+});

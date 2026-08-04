@@ -35,6 +35,13 @@ export interface RosterDraftEntry {
 	missing: boolean;
 }
 
+/** A catalogue group: one quest category, or the uncategorised tail
+ * (`category: null`). */
+export interface QuestCategoryGroup {
+	category: string | null;
+	quests: Quest[];
+}
+
 export interface DefinitionsModelDeps {
 	listDefinitions(): Promise<SessionDefinition[]>;
 	createDefinition(data: SessionDefinitionInput): Promise<SessionDefinition>;
@@ -83,6 +90,62 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		quests.filter((quest) => quest.familyId === null || !familyIds.has(quest.familyId)),
 	);
 
+	// ── The catalogue: what the editor offers, and how it is narrowed ──
+	// Reached through its planet (how the Quests page scopes the same
+	// content), then read as a list grouped by the quests' own categories.
+	let catalogPlanet = $state<string | null>(null);
+	let catalogFilter = $state('');
+
+	/** The planets with something to offer, so a choice can never lead to
+	 * an empty catalogue. */
+	const catalogPlanets = $derived(
+		[
+			...new Set([
+				...families.map((family) => family.planet),
+				...standaloneQuests.map((quest) => quest.planet),
+			]),
+		].sort(),
+	);
+
+	function matchesFilter(value: string): boolean {
+		return value.toLowerCase().includes(catalogFilter.trim().toLowerCase());
+	}
+
+	const catalogFamilies = $derived(
+		catalogPlanet === null
+			? []
+			: families.filter((family) => family.planet === catalogPlanet && matchesFilter(family.name)),
+	);
+
+	/** The offered quests grouped by their own category, alphabetically,
+	 * with the uncategorised ones last (they are just quests, and get no
+	 * heading of their own). */
+	const catalogCategories = $derived.by((): QuestCategoryGroup[] => {
+		if (catalogPlanet === null) return [];
+		const grouped = new Map<string | null, Quest[]>();
+		for (const quest of standaloneQuests) {
+			if (quest.planet !== catalogPlanet || !matchesFilter(quest.name)) continue;
+			const key = quest.category?.trim() ? quest.category : null;
+			const bucket = grouped.get(key);
+			if (bucket) bucket.push(quest);
+			else grouped.set(key, [quest]);
+		}
+		const byName = (a: Quest, b: Quest) => a.name.localeCompare(b.name);
+		const named = [...grouped.entries()]
+			.filter((entry): entry is [string, Quest[]] => entry[0] !== null)
+			.sort((a, b) => a[0].localeCompare(b[0]))
+			.map(([category, group]) => ({ category, quests: [...group].sort(byName) }));
+		const loose = grouped.get(null) ?? [];
+		return loose.length > 0
+			? [...named, { category: null, quests: [...loose].sort(byName) }]
+			: named;
+	});
+
+	/** Whether the draft roster already references this target. */
+	function hasRosterRef(kind: SessionRosterEntryKind, refId: string): boolean {
+		return roster.some((entry) => entry.kind === kind && entry.refId === refId);
+	}
+
 	async function loadDefinitions() {
 		loading = true;
 		try {
@@ -129,6 +192,8 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		roster = [];
 		authoringError = null;
 		deleteArmed = false;
+		catalogPlanet = null;
+		catalogFilter = '';
 		void loadSources();
 	}
 
@@ -146,6 +211,8 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		}));
 		authoringError = null;
 		deleteArmed = false;
+		catalogPlanet = null;
+		catalogFilter = '';
 		void loadSources();
 	}
 
@@ -190,6 +257,12 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 			...roster,
 			{ kind: 'segment', refId: null, label: trimmed, displayName: trimmed, missing: false },
 		];
+	}
+
+	/** Add every quest in a category in one go; the per-quest guard makes
+	 * the ones already rostered no-ops. */
+	function addQuests(toAdd: Quest[]) {
+		for (const quest of toAdd) addQuest(quest);
 	}
 
 	function removeEntry(index: number) {
@@ -345,6 +418,27 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		get standaloneQuests() {
 			return standaloneQuests;
 		},
+		get catalogPlanet() {
+			return catalogPlanet;
+		},
+		set catalogPlanet(value: string | null) {
+			catalogPlanet = value;
+		},
+		get catalogFilter() {
+			return catalogFilter;
+		},
+		set catalogFilter(value: string) {
+			catalogFilter = value;
+		},
+		get catalogPlanets() {
+			return catalogPlanets;
+		},
+		get catalogFamilies() {
+			return catalogFamilies;
+		},
+		get catalogCategories() {
+			return catalogCategories;
+		},
 		get sourcesLoading() {
 			return sourcesLoading;
 		},
@@ -354,8 +448,10 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		openCreate,
 		openEdit,
 		close,
+		hasRosterRef,
 		addFamily,
 		addQuest,
+		addQuests,
 		addSegment,
 		removeEntry,
 		moveEntry,
