@@ -100,7 +100,8 @@
 		</Menu>
 	{/if}
 
-	<!-- With nothing authored yet this takes the name's place. -->
+	<!-- Before the list has loaded there is no name to sit beside, so
+		 this takes its place. -->
 	<button
 		type="button"
 		class="filter-chip shrink-0"

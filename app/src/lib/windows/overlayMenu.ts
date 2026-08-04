@@ -135,7 +135,9 @@ export function buildDefinitionMenuState(
 	selectedId: string | null,
 ): OverlayDefinitionMenuState {
 	const labels =
-		definitions.length > 0 ? definitions.map((definition) => definition.name) : ['No sessions yet'];
+		definitions.length > 0
+			? definitions.map((definition) => definition.name)
+			: ['Sessions unavailable'];
 	return {
 		kind: 'definition',
 		width: computeMenuWidth(anchorWidth, labels, 96),

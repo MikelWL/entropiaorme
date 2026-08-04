@@ -94,7 +94,7 @@
 		{/each}
 	{:else if state.kind === 'definition'}
 		{#if state.definitions.length === 0}
-			<div class="menu-empty">No sessions yet; create one on the dashboard</div>
+			<div class="menu-empty">Sessions unavailable; open the dashboard</div>
 		{:else}
 			{#each state.definitions as definition (definition.id)}
 				<button

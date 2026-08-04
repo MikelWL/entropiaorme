@@ -95,7 +95,10 @@ pub struct RosterEntry {
 }
 
 /// A session definition as read: the authored fields plus the derived
-/// instance count (how many tracked sessions reference it).
+/// instance count (how many tracked sessions reference it). The count is
+/// the aggregation key's own evidence: a lifetime-over-all-instances
+/// readout is computed against it, so it stays on the read model rather
+/// than costing that readout a second round trip.
 #[derive(Debug, Clone)]
 pub struct SessionDefinition {
     pub id: i64,
@@ -364,7 +367,7 @@ impl SessionDefinitionService {
             .await?;
         if taken > 0 {
             return Err(SessionDefinitionError::Invalid(format!(
-                "A definition named '{name}' already exists"
+                "A session named '{name}' already exists"
             )));
         }
         Ok(())
@@ -563,7 +566,7 @@ fn validated_name(name: &str) -> Result<String, SessionDefinitionError> {
     let name = name.trim();
     if name.is_empty() {
         return Err(SessionDefinitionError::Invalid(
-            "A definition needs a non-empty name".to_string(),
+            "A session needs a name".to_string(),
         ));
     }
     Ok(name.to_string())

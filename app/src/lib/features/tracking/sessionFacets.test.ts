@@ -14,9 +14,9 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 	});
 	// Mirrors the backend verb: selecting writes the definition AND the
 	// name facet together.
-	const selectDefinition = vi.fn(async (id: number | null) => {
-		facetState.definitionId = id === null ? null : String(id);
-		facetState.name = id === null ? null : `Definition ${id}`;
+	const selectDefinition = vi.fn(async (id: number) => {
+		facetState.definitionId = String(id);
+		facetState.name = `Definition ${id}`;
 	});
 	// Mirrors the backend's auto-numbering: a null name is numbered by
 	// open count, every open replaces the standing segment, and the
