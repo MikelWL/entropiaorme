@@ -8,19 +8,22 @@
 //!
 //! Three rules from the model shape every read here.
 //!
-//! **The roster filters offerings, never facts.** An authored roster
-//! decides what is worth offering; it never decides what is true. A
-//! mission the log carries surfaces its chip whether or not anyone
-//! rostered it, because an in-progress mission is an administrative
-//! fact, and so does a quest whose stretch is already standing.
+//! **The roster is the whole offering.** A session offers what it was
+//! authored to offer and nothing else. Whatever the mission log happens
+//! to carry right now is not this session's business: an arbitrary
+//! assortment of open quests is not a coherent thing to put in front of
+//! a player who did not ask for it. The one addition is what is
+//! actually RECORDING, which shows whether or not a row still speaks
+//! for it, because the control must never hide what it is recording.
 //!
-//! **The control appears only when it has something to offer**, and is
-//! absent otherwise: not disabled, not an empty state. Configuration
-//! alone produces no chrome (an empty roster with self-named segments
-//! off is a deliberately simple session, and gets no activity surface);
-//! facts always do. It is likewise absent while idle, because every
-//! declaration here is "from now on" and there is no now to declare
-//! into until a session runs.
+//! **The control appears only when the session has something to
+//! offer**, and is absent otherwise: not disabled, not an empty state.
+//! Declaring no activities and leaving self-named segments off IS the
+//! choice of a simple session, and it is honoured with no activity
+//! surface at all: the seeded default is exactly that, so a new player
+//! meets no options they have no use for yet. It is likewise absent
+//! while idle, because every declaration here is "from now on" and
+//! there is no now to declare into until a session runs.
 //!
 //! **A family stands for whichever variant the day serves.** A family
 //! roster entry resolves to its in-progress member and acts on that
@@ -395,33 +398,31 @@ pub(crate) async fn activity_picture(
     }
     let rostered = options.len();
 
-    // ── The facts, whatever the roster says ──
-    // An in-progress mission or a standing stretch is true of this
-    // session; hiding it because nobody rostered it would make the
-    // control lie about what is being recorded.
+    // ── What is standing but unrostered ──
+    // Only what is actually RECORDING is added to the roster's own
+    // rows. The control must never hide what it is recording, so a
+    // stretch whose row has gone (a roster edited mid-session, a
+    // segment named before its promotion landed) still shows. What is
+    // merely available does NOT: the mission log's other business is
+    // not this session's, and a session that rostered nothing asked
+    // for exactly that.
     for offer in &offers {
-        if represented.contains(&offer.id) {
+        if represented.contains(&offer.id) || !is_standing_quest(offer.id) {
             continue;
         }
-        if !offer.in_progress && !is_standing_quest(offer.id) {
-            continue;
-        }
-        let (available, reason) = quest_availability(offer, now);
         options.push(ActivityOption {
             key: quest_key(offer.id),
             kind: SessionRosterEntryKind::Quest,
             name: offer.name.clone(),
             quest_id: Some(offer.id).into(),
-            active: is_standing_quest(offer.id),
-            available,
-            unavailable_reason: reason.map(str::to_string).into(),
+            active: true,
+            available: true,
+            unavailable_reason: None.into(),
             available_from: offer.available_from.into(),
             signal_quest: offer.signal_quest,
             off_roster: true,
         });
     }
-    // A segment named in play before its promotion landed (or on a
-    // definition that never opted in) still shows while it runs.
     for activity in &active.active_activities {
         if activity.kind != IntervalKind::Segment {
             continue;
@@ -451,7 +452,9 @@ pub(crate) async fn activity_picture(
         .filter(|option| option.available && !option.active)
         .count() as i64;
     Ok(ActivityOptionsResult {
-        // Configuration produces no chrome; facts always do.
+        // A session that offers nothing gets no surface. The only thing
+        // that overrides that is a stretch already recording, which the
+        // control cannot honestly hide.
         visible: rostered > 0 || ad_hoc_segments || options.len() > rostered,
         ad_hoc_segments,
         ready_count,

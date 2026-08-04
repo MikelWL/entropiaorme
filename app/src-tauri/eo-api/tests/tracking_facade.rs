@@ -768,18 +768,25 @@ fn activity_names(standing: &[eo_api::activities::ActiveActivityView]) -> Vec<&s
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn activities_declare_switch_and_co_activate() {
     let dir = tempfile::tempdir().unwrap();
-    let api = make_api(
-        dir.path(),
-        false,
-        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
-    )
-    .await;
+    let (api, selection) = make_api_with_selection(dir.path(), "Dailies").await;
     let carabok = seed_quest(&api, "Daily: Carabok", true).await;
     let monura = seed_quest(&api, "Daily: Monura", true).await;
+    seed_definition(
+        &api,
+        &selection,
+        serde_json::json!({
+            "name": "Dailies",
+            "ad_hoc_segments": true,
+            "roster": [
+                { "kind": "quest", "ref_id": carabok },
+                { "kind": "quest", "ref_id": monura },
+            ],
+        }),
+    )
+    .await;
     api.tracking_start().await.unwrap();
 
-    // Nothing standing: the two received missions are facts, so the
-    // control is visible and both count as ready.
+    // Nothing standing: both rostered dailies are offered and ready.
     let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
     assert_eq!(value["activities"]["visible"], true);
     assert_eq!(value["activities"]["readyCount"], 2);
@@ -1155,11 +1162,12 @@ async fn seed_family(api: &Api, name: &str, cooldown_hours: f64) -> i64 {
 /// authored definition.
 ///
 /// A family entry resolves to the variant in play and acts on that
-/// quest; a segment entry is always declarable; a quest the mission log
-/// carries but nobody rostered surfaces anyway, marked off-roster,
-/// because the roster filters offerings and never facts. The ready cue
-/// counts the family once. A name typed in play is promoted into the
-/// roster, so it is a one-tap chip next time.
+/// quest, and a segment entry is always declarable. A quest the mission
+/// log happens to carry is NOT offered unless the session rostered it:
+/// the roster is the whole offering, and an arbitrary assortment of open
+/// quests is not this session's business. The ready cue counts the
+/// family once. A name typed in play is promoted into the roster, so it
+/// is a one-tap chip next time.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
     let dir = tempfile::tempdir().unwrap();
@@ -1181,7 +1189,7 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
         Some(family_id),
     )
     .await;
-    // And an unrostered daily the mission log carries: a fact.
+    // And a daily the mission log carries that nobody rostered.
     seed_quest(&api, "ARIS - Daily Samples", true).await;
 
     let definition_id = seed_definition(
@@ -1214,9 +1222,8 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
             // what a tap records.
             ("ARIS - Daily Hunting 1: Weak Mortirex", true, false),
             ("Warm-up", true, false),
-            ("ARIS - Daily Samples", true, true),
         ],
-        "roster order first, then the facts nobody rostered"
+        "the roster, in the order it was authored, and nothing else"
     );
     assert_eq!(
         options.options[0].quest_id,
@@ -1224,7 +1231,7 @@ async fn the_roster_feeds_the_control_and_a_named_segment_is_promoted() {
         "the family acts on its serving variant"
     );
     assert_eq!(
-        options.ready_count, 3,
+        options.ready_count, 2,
         "the family counts once, not once per variant"
     );
 
@@ -1325,13 +1332,13 @@ async fn a_family_with_no_variant_in_play_is_offered_but_not_available() {
     );
 }
 
-/// With no definition there is no roster and no flag, so the control has
-/// only facts to show: a session outside any definition is deliberately
-/// simple and gets no activity surface until the mission log gives it
-/// one. This is the honest consequence of the visibility rule, and the
-/// reason segments are a reason to define a session.
+/// A session that offers nothing gets no surface at all, whatever the
+/// mission log happens to carry. Declaring no activities and leaving
+/// self-named segments off IS the choice of a simple session (the
+/// seeded default is exactly that), so honouring it is the point: a new
+/// player meets no options they have no use for yet.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_outside_any_definition_shows_only_facts() {
+async fn a_session_that_offers_nothing_gets_no_surface() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(
         dir.path(),
@@ -1342,34 +1349,33 @@ async fn a_session_outside_any_definition_shows_only_facts() {
     api.tracking_start().await.unwrap();
 
     let options = api.tracking_activity_options().await.unwrap();
-    assert!(!options.visible, "configuration alone produces no chrome");
+    assert!(!options.visible);
     assert!(!options.ad_hoc_segments);
     assert!(options.options.is_empty());
 
-    // A received mission is a fact, so it surfaces regardless.
-    seed_quest(&api, "ARIS - Daily Samples", true).await;
+    // Three received missions later: still nothing, because none of
+    // them is what this session said it was for.
+    for name in ["ARIS - Daily Samples", "Pluck the Wing", "Poison the Hive"] {
+        seed_quest(&api, name, true).await;
+    }
     let options = api.tracking_activity_options().await.unwrap();
-    assert!(options.visible, "facts always produce chrome");
-    assert_eq!(options.options.len(), 1);
-    assert!(options.options[0].off_roster);
+    assert!(!options.visible, "an open mission log is not an offering");
+    assert!(options.options.is_empty());
+    assert_eq!(options.ready_count, 0);
 }
 
-/// A signal quest is a standing, repeatable chip whose in-progress
-/// state survives session boundaries: it lists in the control before
-/// any start, declaring it from cold starts it in the same motion (no
-/// mission log to mirror), and stopping the tracking session ends the
-/// stretch but NOT the run, so the next session lists it again and can
-/// re-declare without a restart. This is the collect-now-finish-later
-/// flow pinned end to end.
+/// A signal quest rostered on the session is a standing, repeatable row
+/// whose in-progress state survives session boundaries: it is offered
+/// before any start, declaring it from cold starts it in the same motion
+/// (there is no mission log to mirror), and stopping the tracking
+/// session ends the stretch but NOT the run, so the next session offers
+/// it again and can re-declare without a restart. This is the
+/// collect-now-finish-later flow pinned end to end, on the roster entry
+/// that names a single quest rather than a family.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_signal_quest_declares_from_cold_and_survives_session_boundaries() {
+async fn a_rostered_signal_quest_declares_from_cold_and_survives_session_boundaries() {
     let dir = tempfile::tempdir().unwrap();
-    let api = make_api(
-        dir.path(),
-        false,
-        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
-    )
-    .await;
+    let (api, selection) = make_api_with_selection(dir.path(), "Boss runs").await;
 
     let input = serde_json::from_value(serde_json::json!({
         "name": "Hyperion Boss 1",
@@ -1382,18 +1388,34 @@ async fn a_signal_quest_declares_from_cold_and_survives_session_boundaries() {
         .expect("quest id")
         .parse()
         .expect("numeric quest id");
+    seed_definition(
+        &api,
+        &selection,
+        serde_json::json!({
+            "name": "Boss runs",
+            "roster": [{ "kind": "quest", "ref_id": boss_id }],
+        }),
+    )
+    .await;
 
     // Idle: the control is absent entirely, because there is no now to
-    // declare into. The standing chip is a running session's business.
+    // declare into. A standing chip is a running session's business.
     let options = api.tracking_activity_options().await.unwrap();
     assert!(!options.visible);
     assert!(options.options.is_empty());
 
-    // Declaring from cold starts the run and opens the stretch. The
-    // never-started signal quest is not itself a fact, so it reaches the
-    // control only because it is rostered; here it is declared directly,
-    // which is what the roster row's tap does.
+    // Running: the roster offers it even though nothing has started it,
+    // which is what makes a repeatable run reachable at all.
     api.tracking_start().await.unwrap();
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.visible);
+    assert_eq!(options.options.len(), 1);
+    assert!(options.options[0].signal_quest);
+    assert!(options.options[0].available);
+    assert!(!options.options[0].active);
+    assert_eq!(options.ready_count, 1);
+
+    // Declaring from cold starts the run and opens the stretch.
     let standing = api
         .tracking_activity_activate(ActivityTargetKind::Quest, Some(boss_id), None, None)
         .await
@@ -1404,14 +1426,7 @@ async fn a_signal_quest_declares_from_cold_and_survives_session_boundaries() {
         !serde_json::to_value(&quest).unwrap()["startedAt"].is_null(),
         "declaring a cold signal quest started it"
     );
-
-    // The run is now an administrative fact, so the control surfaces it
-    // off-roster and reports it standing.
     let options = api.tracking_activity_options().await.unwrap();
-    assert!(options.visible);
-    assert_eq!(options.options.len(), 1);
-    assert!(options.options[0].signal_quest);
-    assert!(options.options[0].off_roster);
     assert!(options.options[0].active);
     assert_eq!(options.ready_count, 0, "what is standing is not also ready");
 
@@ -1423,8 +1438,7 @@ async fn a_signal_quest_declares_from_cold_and_survives_session_boundaries() {
         "the run itself is still going"
     );
 
-    // The next session lists it as a still-running fact, unstanding, and
-    // re-declares it directly.
+    // The next session offers it again, unstanding, and re-declares it.
     api.tracking_start().await.unwrap();
     let options = api.tracking_activity_options().await.unwrap();
     assert!(
