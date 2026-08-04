@@ -81,13 +81,14 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	let authoringError = $state<string | null>(null);
 	let deleteArmed = $state(false);
 
-	// The roster's offer sources, loaded when the authoring opens so the
-	// editor never presents a stale catalogue.
-	// Monotonic within one editing session; the roster is replaced
-	// wholesale on save, so these never reach the database.
+	// Roster-entry identity, monotonic within one editing session; the
+	// roster is replaced wholesale on save, so these never reach the
+	// database.
 	let nextRosterKey = 0;
 	const rosterKey = () => nextRosterKey++;
 
+	// The roster's offer sources, loaded when the authoring opens so the
+	// editor never presents a stale catalogue.
 	let families = $state<QuestFamily[]>([]);
 	let quests = $state<Quest[]>([]);
 	let sourcesLoading = $state(false);
