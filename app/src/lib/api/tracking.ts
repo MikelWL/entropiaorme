@@ -42,6 +42,10 @@ export interface TrackingLive {
 	repairOcrEnabled?: boolean | null;
 	endOfSessionArmourReminderEnabled?: boolean | null;
 	sessionName?: string | null;
+	/** The selected session definition (stringified id): the active
+	 * session's stamped reference when tracking, the configured
+	 * selection when idle. */
+	sessionDefinitionId?: string | null;
 	skillBoostPercent?: number | null;
 	/** The open segment's name (a segment exists only while active). */
 	segmentName?: string | null;
@@ -82,6 +86,13 @@ export const restoreSessionMob = commands.trackingRestoreMob;
  * attempted change; correct it post-hoc via `renameSession`); the boost
  * stays editable throughout. */
 export const setSessionConfig = commands.trackingSessionConfig;
+/** Select the session definition the next session starts as an instance
+ * of; writes the session-name facet with the definition's name in the
+ * same motion. Fixed while a session runs (the backend answers 409 on an
+ * attempted change). A null id is the wire's "nothing chosen", which the
+ * backend reads back as the protected default rather than as no session;
+ * the app never sends one. */
+export const selectDefinition = commands.trackingDefinitionSelect;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
 /** Open a player-drawn segment on the running session, closing any
@@ -114,13 +125,6 @@ export const getTrackingSnapshot = guideSwapped(
 	commands.trackingSnapshot,
 	commands.demoTrackingSnapshot,
 );
-
-/** Prior session names matching the query, most-used first: reusing a
- * name is what keeps the designated analytics axis grouping cleanly. */
-export async function getSessionNameSuggestions(query: string): Promise<string[]> {
-	if (!query.trim()) return [];
-	return commands.trackingSessionNameSuggestions(query.trim(), null);
-}
 
 export async function getManualMobSuggestions(query: string) {
 	if (!query.trim()) return [];

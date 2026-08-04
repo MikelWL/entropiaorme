@@ -78,6 +78,11 @@ pub trait TrackingConfig: Send + Sync {
     /// snapshots at start; empty is "not declared").
     fn session_name(&self) -> String;
 
+    /// The selected session definition the next session starts as an
+    /// instance of; `None` is "no definition". The start path
+    /// re-validates the id against the database before stamping it.
+    fn session_definition_id(&self) -> Option<i64>;
+
     /// The declared skill-boost facet the next session opens under:
     /// `None` claims nothing, `Some(0)` declares deliberately-unboosted
     /// play, `Some(n)` declares a magnitude.
@@ -141,6 +146,10 @@ pub struct DefaultTrackingConfig;
 impl TrackingConfig for DefaultTrackingConfig {
     fn session_name(&self) -> String {
         String::new()
+    }
+
+    fn session_definition_id(&self) -> Option<i64> {
+        None
     }
 
     fn declared_skill_boost_percent(&self) -> Option<i64> {

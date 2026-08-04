@@ -50,12 +50,14 @@ use crate::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
     UndoResult,
 };
+use crate::session_definitions::{SessionDefinition, SessionDefinitionInput};
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
-    ArmourCostResult, FocusOptionsResult, LootItemEditResult, ManualMobLockResult,
-    ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult, RepairScanResult,
-    SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals, SessionPage,
-    SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
+    ArmourCostResult, DefinitionSelectResult, FocusOptionsResult, LootItemEditResult,
+    ManualMobLockResult, ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult,
+    RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals,
+    SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -522,6 +524,49 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: None,
         },
         CommandSpec {
+            name: "session_definitions_list",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<SessionDefinition>))),
+        },
+        CommandSpec {
+            name: "session_definition_create",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(SessionDefinitionInput)),
+            }],
+            returns: Some(schema(schema_for!(SessionDefinition))),
+        },
+        CommandSpec {
+            name: "session_definition_update",
+            args: vec![
+                ArgSpec {
+                    name: "definition_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "input",
+                    schema: schema(schema_for!(SessionDefinitionInput)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionDefinition))),
+        },
+        CommandSpec {
+            name: "session_definition_delete",
+            args: vec![ArgSpec {
+                name: "definition_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "tracking_definition_select",
+            args: vec![ArgSpec {
+                name: "definition_id",
+                schema: schema(schema_for!(Option<i64>)),
+            }],
+            returns: Some(schema(schema_for!(DefinitionSelectResult))),
+        },
+        CommandSpec {
             name: "analytics_overview",
             args: vec![ArgSpec {
                 name: "period",
@@ -869,20 +914,6 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(String)),
             }],
             returns: Some(schema(schema_for!(SessionIntervals))),
-        },
-        CommandSpec {
-            name: "tracking_session_name_suggestions",
-            args: vec![
-                ArgSpec {
-                    name: "q",
-                    schema: schema(schema_for!(String)),
-                },
-                ArgSpec {
-                    name: "limit",
-                    schema: schema(schema_for!(Option<i64>)),
-                },
-            ],
-            returns: Some(schema(schema_for!(Vec<String>))),
         },
         CommandSpec {
             name: "tracking_manual_mob_suggestions",

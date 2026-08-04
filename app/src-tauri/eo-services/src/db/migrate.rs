@@ -143,6 +143,16 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "quest families",
         sql: include_str!("../../migrations/0021_quest_families.sql"),
     },
+    Migration {
+        version: 22,
+        description: "session definitions",
+        sql: include_str!("../../migrations/0022_session_definitions.sql"),
+    },
+    Migration {
+        version: 23,
+        description: "default session definition",
+        sql: include_str!("../../migrations/0023_default_session_definition.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -172,6 +182,8 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "147A07C1055FDD09810E13259D24FEBB4E078C2EA9D8C0FF6631943038D8900AC8031AFCD56F17A22C56F00FEEE46799",
     "321911B525CF5B0EFFB1F763563CC3F982F20930DA7B8B4754E5AD777394EDE6F15A7D1419E41BF8058CB70634BED329",
     "E1754050167F73A9B97809EC1399B88C016A5F71422B8684225FD7B834546545A2766FCF0C072BE7089B5DEEA855A41C",
+    "EF1309FFA7D79EDEDD0AA4AB9106066C7E6B2CB9856DDE380DB348A5FE9D105C8ADA28D4405594EE3F2988B7E114D3A5",
+    "708CB017C278DF637B27B2B8E787A6DC26722B951872932E99C4F50E7974995C14C3065403FD940BF31559D5ED21F3AA",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

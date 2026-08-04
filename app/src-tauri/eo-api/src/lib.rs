@@ -53,6 +53,7 @@ pub mod market;
 mod nullable;
 pub mod quests;
 pub mod scan;
+pub mod session_definitions;
 pub mod settings;
 pub mod tracking;
 
@@ -108,6 +109,10 @@ pub struct Api {
     /// over the facade's shared db and clock. An informational layer
     /// only: nothing here feeds the ledger or any realised P&L figure.
     market: MarketService,
+    /// The session-definition service (definition + roster CRUD), built
+    /// over the facade's shared db and clock; the tracking family's
+    /// selection verb validates against it.
+    session_definitions: Arc<eo_services::session_definitions::SessionDefinitionService>,
     /// The cartography-pin service (pin CRUD), built over the facade's
     /// shared db and clock; the facade adds the map-bounds gate on top.
     map_pins: eo_services::map_pins::MapPinsService,
@@ -161,6 +166,10 @@ impl Api {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
         let market = MarketService::new(db.clone(), clock.clone());
+        let session_definitions = eo_services::session_definitions::SessionDefinitionService::new(
+            db.clone(),
+            clock.clone(),
+        );
         let map_pins = eo_services::map_pins::MapPinsService::new(db.clone(), clock.clone());
         let pin_configs =
             eo_services::pin_configs::PinConfigsService::new(db.clone(), clock.clone());
@@ -181,6 +190,7 @@ impl Api {
             quests,
             analytics,
             market,
+            session_definitions,
             map_pins,
             pin_configs,
             planet_maps,

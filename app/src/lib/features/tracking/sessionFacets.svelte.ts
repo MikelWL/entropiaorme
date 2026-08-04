@@ -1,39 +1,46 @@
 /**
  * The session-facet view model: the independent, co-recorded attributions
- * a tracking session carries (designated name, skill boost, player-drawn
- * segment, quest focus) and the writes that move them. The quest facet is
- * user-declared: the picker focuses and unfocuses in-progress quests
- * (completion closes a focused stretch by itself, backend-side).
+ * a tracking session carries (the session played + its designated name, skill
+ * boost, player-drawn segment, quest focus) and the writes that move
+ * them. The quest facet is user-declared: the picker focuses and
+ * unfocuses in-progress quests (completion closes a focused stretch by
+ * itself, backend-side).
  *
  * The facets are independent by construction, so each control writes only
  * its own value and carries the others through unchanged. Each facet may
  * be edited live only where its stamp grain is finer than the session:
  * the boost stamps each skill gain and a segment is a slice of the
- * session, so both float; the name is session-grain, so the backend
- * fixes it once a session runs (409) and correction is a post-hoc
- * rename. The model respects these rather than duplicating them.
+ * session, so both float; the session (and the name it writes) is
+ * session-grain, so the backend fixes it once a session runs (409) and
+ * correction is a post-hoc move. The model respects these rather than
+ * duplicating them.
  *
  * The satellite-window plumbing (anchors, popup lifecycle) stays with the
- * overlay route; this model owns the state, the lookups, and the writes,
- * and calls back into the route to present or dismiss the name menu.
+ * overlay route; this model owns the state and the writes.
  */
 
 import { ApiError } from '$lib/api';
-import { createTypeahead } from '$lib/view/typeahead.svelte';
 
 export interface SessionFacetsDeps {
 	/** The facets currently in force, as the snapshot reports them.
 	 * `segment` is the open segment's name (null: none open; a segment
-	 * exists only while its session runs). */
-	readFacets: () => { name: string | null; boost: number | null; segment: string | null };
-	/** Whether a session is running (gates the name lock). */
+	 * exists only while its session runs); `definitionId` is the
+	 * selected session (stringified id). */
+	readFacets: () => {
+		name: string | null;
+		definitionId: string | null;
+		boost: number | null;
+		segment: string | null;
+	};
+	/** Whether a session is running (gates the session lock). */
 	isSessionActive: () => boolean;
 	/** Re-read the snapshot after a successful write. */
 	refresh: () => Promise<unknown>;
-	/** Prior session names matching a query, most-used first. */
-	searchNames: (query: string) => Promise<string[]>;
 	/** Full-state facet write: a null clears its facet. */
 	setSessionConfig: (name: string | null, boost: number | null) => Promise<unknown>;
+	/** Select the session the next run starts under; the backend
+	 * writes the name facet with it. */
+	selectDefinition: (id: number) => Promise<unknown>;
 	/** Open a segment on the running session, closing any standing one; a
 	 * null name is auto-numbered ("Segment N") by the backend, and the
 	 * acknowledgement echoes the name now in force so the control can
@@ -47,9 +54,6 @@ export interface SessionFacetsDeps {
 	focusQuest: (questId: number, additive: boolean) => Promise<unknown>;
 	/** End one quest's focus, leaving siblings running. */
 	unfocusQuest: (questId: number) => Promise<unknown>;
-	/** Present or dismiss the name-suggestion menu (route-owned). */
-	openNameMenu: () => void | Promise<void>;
-	closeNameMenu: () => void | Promise<void>;
 }
 
 function describe(error: unknown, fallback: string): string {
@@ -57,12 +61,9 @@ function describe(error: unknown, fallback: string): string {
 }
 
 export function createSessionFacets(deps: SessionFacetsDeps) {
-	let nameQuery = $state('');
-	let nameInput: HTMLInputElement | null = $state(null);
-	let nameInputFocused = $state(false);
-	let nameCloseTimer: ReturnType<typeof setTimeout> | undefined;
-	let nameError = $state<string | null>(null);
-	let savingName = $state(false);
+	// The session selection's in-flight guard (the chip disables
+	// while a selection write lands).
+	let savingDefinition = $state(false);
 
 	// The boost's edit buffer. The boost edits live: a pill expiring is a
 	// genuine change worth recording, and the session keeps the latest
@@ -86,24 +87,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 	// beside the controls rather than swallowed.
 	let facetError = $state<string | null>(null);
 
-	const nameTypeahead = createTypeahead<string>({
-		search: async (query) => {
-			try {
-				return await deps.searchNames(query);
-			} catch (error) {
-				throw new Error(describe(error, 'Name lookup failed'));
-			}
-		},
-		debounceMs: 120,
-		minLength: 1,
-	});
-
-	function clearNameCloseTimer() {
-		if (!nameCloseTimer) return;
-		clearTimeout(nameCloseTimer);
-		nameCloseTimer = undefined;
-	}
-
 	/** The boost currently in force, as a write wants it. Reading the
 	 * snapshot (not the draft) keeps a name write from moving the boost as
 	 * a side effect. Three-state: null withdraws the declaration, 0
@@ -119,34 +102,19 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		await deps.refresh();
 	}
 
-	async function applyName(name: string) {
-		if (!name) return;
-		clearNameCloseTimer();
-		savingName = true;
+	/** Select the session for the next run; the backend writes the name
+	 * facet with it. There is no withdrawal: a run always records under
+	 * a session, so the picker only ever switches between them. */
+	async function selectDefinition(id: string) {
+		savingDefinition = true;
 		facetError = null;
 		try {
-			await write(name, currentBoost());
-			nameQuery = '';
-			nameTypeahead.cancel();
-			await deps.closeNameMenu();
+			await deps.selectDefinition(Number(id));
+			await deps.refresh();
 		} catch (error) {
-			facetError = describe(error, 'Failed to set session name');
+			facetError = describe(error, 'Failed to select the session');
 		}
-		savingName = false;
-	}
-
-	async function clearName() {
-		savingName = true;
-		facetError = null;
-		try {
-			await write(null, currentBoost());
-			nameQuery = '';
-			nameTypeahead.cancel();
-			await deps.closeNameMenu();
-		} catch (error) {
-			facetError = describe(error, 'Failed to clear session name');
-		}
-		savingName = false;
+		savingDefinition = false;
 	}
 
 	async function commitBoost() {
@@ -302,32 +270,8 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 	}
 
 	return {
-		get nameQuery() {
-			return nameQuery;
-		},
-		set nameQuery(value: string) {
-			nameQuery = value;
-		},
-		get nameInput() {
-			return nameInput;
-		},
-		set nameInput(value: HTMLInputElement | null) {
-			nameInput = value;
-		},
-		get nameInputFocused() {
-			return nameInputFocused;
-		},
-		get nameSuggestions() {
-			return nameTypeahead.results;
-		},
-		get nameLoading() {
-			return nameTypeahead.loading;
-		},
-		get nameError() {
-			return nameError;
-		},
-		get savingName() {
-			return savingName;
+		get savingDefinition() {
+			return savingDefinition;
 		},
 		get boostDraft() {
 			return boostDraft;
@@ -338,12 +282,13 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		get savingBoost() {
 			return savingBoost;
 		},
-		/** Whether the name may still be set. The name is session-grain, so
-		 * a live edit could only rewrite the whole session's history: it is
-		 * fixed once a session runs, and correcting it is a post-hoc move on
-		 * the session record. The boost has no such flag because its grain
-		 * is finer than the session, so it always edits. */
-		get nameEditable() {
+		/** Whether the session (and the name it writes) may still be
+		 * set. Both are session-grain, so a live edit could only rewrite
+		 * the whole session's history: they are fixed once a session runs,
+		 * and correction is a post-hoc move on the session record. The
+		 * boost has no such flag because its grain is finer than the
+		 * session, so it always edits. */
+		get definitionEditable() {
 			return !deps.isSessionActive();
 		},
 		get segmentDraft() {
@@ -363,32 +308,6 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		},
 		set facetError(value: string | null) {
 			facetError = value;
-		},
-
-		/** Drive the lookup from the input state: an emptied query (or a
-		 * hidden input) suspends the search and dismisses the menu while
-		 * keeping the typed text. */
-		syncNameQuery(visible: boolean) {
-			if (!visible) {
-				nameTypeahead.cancel();
-				void deps.closeNameMenu();
-				return;
-			}
-			nameTypeahead.query = nameQuery;
-			if (!nameQuery.trim()) {
-				nameTypeahead.cancel();
-				void deps.closeNameMenu();
-				return;
-			}
-			nameTypeahead.refresh();
-		},
-
-		/** Mirror the settled lookup error and re-present the menu at each
-		 * lifecycle transition while the input is focused or it is open. */
-		presentNameMenu(visible: boolean, menuOpen: boolean) {
-			nameError = nameTypeahead.error;
-			if (!visible || !nameQuery.trim()) return;
-			if (nameInputFocused || menuOpen) void deps.openNameMenu();
 		},
 
 		/** Keep the boost buffer in step with the persisted value while the
@@ -418,38 +337,7 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 			if (currentSegment() !== null) await commitSegment();
 		},
 
-		handleNameFocus() {
-			clearNameCloseTimer();
-			nameInputFocused = true;
-			if (
-				nameQuery.trim() &&
-				(nameTypeahead.results.length > 0 || nameTypeahead.loading || !!nameError)
-			) {
-				void deps.openNameMenu();
-			}
-		},
-
-		handleNameBlur() {
-			nameInputFocused = false;
-			clearNameCloseTimer();
-			nameCloseTimer = setTimeout(() => {
-				void deps.closeNameMenu();
-			}, 120);
-		},
-
-		async handleNameKeydown(event: KeyboardEvent) {
-			if (event.key === 'Escape') {
-				await deps.closeNameMenu();
-				return;
-			}
-			if (event.key !== 'Enter') return;
-			event.preventDefault();
-			await applyName(nameQuery.trim());
-		},
-
-		clearNameCloseTimer,
-		applyName,
-		clearName,
+		selectDefinition,
 		commitBoost,
 		commitSegment,
 		nextSegment,
@@ -457,9 +345,5 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		focusQuest,
 		unfocusQuest,
 		applySegmentPreset,
-		destroy() {
-			clearNameCloseTimer();
-			nameTypeahead.destroy();
-		},
 	};
 }

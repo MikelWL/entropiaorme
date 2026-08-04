@@ -61,6 +61,7 @@ impl EquipmentLibrary for ScriptedEquipment {
 #[derive(Default)]
 struct ScriptedConfig {
     session_name: Option<String>,
+    session_definition_id: Option<i64>,
     skill_boost_percent: Option<i64>,
     manual_mob: Option<ManualMobScript>,
     trifecta_mode: bool,
@@ -70,6 +71,10 @@ struct ScriptedConfig {
 impl TrackingConfig for ScriptedConfig {
     fn session_name(&self) -> String {
         self.session_name.clone().unwrap_or_default()
+    }
+
+    fn session_definition_id(&self) -> Option<i64> {
+        self.session_definition_id
     }
 
     fn declared_skill_boost_percent(&self) -> Option<i64> {
@@ -1047,7 +1052,9 @@ fn snapshot_aggregates_and_rounds_the_readout() {
     assert_eq!(active.multiplier_history, vec![33.3333, 0.6]);
     assert_eq!(active.cumulative_net_history, vec![4.82, 4.79]);
     assert_eq!(active.current_mob, None);
-    assert_eq!(active.session_name, None);
+    // Undeclared: the session is an instance of the protected default
+    // and reads with its name.
+    assert_eq!(active.session_name.as_deref(), Some("Default Tracking"));
     assert_eq!(active.skill_boost_percent, None);
     assert_eq!(active.notable_event_rows.len(), 1);
     let row = &active.notable_event_rows[0];
@@ -2297,13 +2304,16 @@ fn session_facet_and_declared_mob_rules() {
     assert_eq!(opened, (Some("Team Hunt".to_string()), None));
     rig.wait(facets.stop_session()).unwrap();
 
-    // An undeclared session carries neither facet: absent is recorded as
-    // NULL, never as a guessed default.
+    // An undeclared session still guesses nothing about the boost or
+    // the mob: absent is recorded as NULL. The name is the exception,
+    // and not a guess: every session is an instance of a definition, so
+    // an undeclared one is an instance of the protected default and
+    // carries its name.
     let bare = rig.tracker(Providers::default());
     let bare_session = rig.wait(bare.start_session()).unwrap();
     rig.probe(&bare, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.facets.name, None);
+        assert_eq!(active.facets.name.as_deref(), Some("Default Tracking"));
         assert_eq!(active.facets.skill_boost_percent, None);
         assert_eq!(active.stamped_mob_name(), None);
     });
@@ -2323,7 +2333,7 @@ fn session_facet_and_declared_mob_rules() {
         }))
         .unwrap()
     };
-    assert_eq!(bare_row, (None, None));
+    assert_eq!(bare_row, (Some("Default Tracking".to_string()), None));
     rig.wait(bare.stop_session()).unwrap();
 
     // A maturity-less declaration displays the bare species.
@@ -3008,7 +3018,7 @@ fn reload_config_resyncs_the_declared_mob_from_the_live_config() {
 }
 
 #[test]
-fn a_blank_configured_name_records_as_no_declaration() {
+fn a_blank_configured_name_takes_the_resolved_definition_name() {
     // "Not declared" must stay distinguishable from "declared as empty":
     // a whitespace-only configured name is no name at all, and no
     // configured mob is no declaration, never a guessed default. The
@@ -3026,7 +3036,9 @@ fn a_blank_configured_name_records_as_no_declaration() {
     rig.wait(blank.start_session()).unwrap();
     rig.probe(&blank, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(active.facets.name, None);
+        // A blank declaration is no longer nameless history: with
+        // nothing configured, the resolved definition names the session.
+        assert_eq!(active.facets.name.as_deref(), Some("Default Tracking"));
         assert_eq!(active.facets.skill_boost_percent, None);
         assert_eq!(active.stamped_mob_name(), None);
         assert!(active.declared_mob.is_none());
@@ -4362,4 +4374,81 @@ fn a_weapon_equip_clears_the_harvest_hand_even_in_trifecta_mode() {
             source: Some("hotbar:1".into()),
         }));
     rig.probe(&tracker, |actor| assert!(!actor.hand_is_harvest));
+}
+
+#[test]
+fn a_selected_definition_stamps_the_session_row_at_start() {
+    let rig = rig();
+    rig.execute("INSERT INTO session_definitions (id, name) VALUES (7, 'ARIS Dailies')");
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            session_name: Some("ARIS Dailies".into()),
+            session_definition_id: Some(7),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT definition_id FROM tracking_sessions WHERE id = ?",
+            &[&session.id],
+        ),
+        7
+    );
+
+    // The stamped reference rides the live readout for the session's life.
+    let readout = rig.wait(tracker.snapshot()).unwrap();
+    let active = readout.active.unwrap();
+    assert_eq!(active.definition_id, Some(7));
+    assert_eq!(active.session_name.as_deref(), Some("ARIS Dailies"));
+}
+
+#[test]
+fn a_stale_definition_selection_falls_through_to_the_default_and_keeps_the_name() {
+    let rig = rig();
+    // A definition selected and then soft-deleted while idle: the dead
+    // id must not stamp, and rather than recording an instance of
+    // nothing the session becomes one of the protected default. The
+    // name facet remains an honest declaration of its own.
+    rig.execute(
+        "INSERT INTO session_definitions (id, name, is_active) VALUES (7, 'ARIS Dailies', 0)",
+    );
+    let default_id: i64 = rig
+        .wait(rig.db.with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT id FROM session_definitions WHERE is_protected = 1 AND is_active = 1",
+                [],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap();
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            session_name: Some("ARIS Dailies".into()),
+            session_definition_id: Some(7),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let stamped: Option<i64> = {
+        let id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT definition_id FROM tracking_sessions WHERE id = ?",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap()
+    };
+    assert_eq!(stamped, Some(default_id));
+
+    let readout = rig.wait(tracker.snapshot()).unwrap();
+    let active = readout.active.unwrap();
+    assert_eq!(active.definition_id, Some(default_id));
+    assert_eq!(active.session_name.as_deref(), Some("ARIS Dailies"));
 }

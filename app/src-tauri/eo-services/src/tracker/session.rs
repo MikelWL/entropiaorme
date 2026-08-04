@@ -40,6 +40,10 @@ pub struct SessionFacets {
     /// The user-designated session name (the designated analytics
     /// axis; successor of the free-text tag).
     pub name: Option<String>,
+    /// The session definition this session is an instance of,
+    /// validated against an ACTIVE definition at start and immutable
+    /// for the session's life (it rides the name facet's selection).
+    pub definition_id: Option<i64>,
     /// The skill-boost configuration the session runs under, as the
     /// pill's labelled percentage.
     pub skill_boost_percent: Option<i64>,
@@ -165,6 +169,7 @@ pub(super) struct SessionAggregate {
     pub(super) cumulative_net: Vec<f64>,
     pub(super) mob_name: Option<String>,
     pub(super) session_name: Option<String>,
+    pub(super) definition_id: Option<i64>,
     pub(super) skill_boost_percent: Option<i64>,
     pub(super) segment_name: Option<String>,
     pub(super) quest_names: Vec<String>,
@@ -324,6 +329,7 @@ impl TrackerActor {
             cumulative_net,
             mob_name: active.stamped_mob_name().map(str::to_string),
             session_name: active.facets.name.clone(),
+            definition_id: active.facets.definition_id,
             // Read from the interval state, not the row mirror: the row's
             // scalar cannot hold a declared zero (0019's `> 0 OR NULL`),
             // and the readout is what the overlay renders the facet from.
@@ -688,15 +694,32 @@ impl TrackerActor {
             .config
             .declared_skill_boost_percent()
             .filter(|percent| *percent >= 0);
+        // The definition resolves against the database at the stamping
+        // moment: a selection deleted after being picked falls through
+        // to the protected default rather than stamping a dead id, and
+        // an install that never picked one starts under that default
+        // too, so every session is an instance of something.
+        // The two facets are coupled (a selection writes both), so they
+        // are read together BEFORE the resolving await: reading the name
+        // afterwards could pair one selection's id with another's name.
+        let configured_selection = self.providers.config.session_definition_id();
+        // The configured name is the user's own declaration and wins;
+        // only when there is none does the resolved definition name the
+        // session, which is what keeps a never-touched install from
+        // recording nameless history.
+        let configured_name = self
+            .providers
+            .config
+            .session_name()
+            .trim_matches(python_whitespace)
+            .to_string();
+        let resolved =
+            crate::session_definitions::resolve_selection(&self.db, configured_selection).await?;
         let facets = SessionFacets {
-            name: Some(
-                self.providers
-                    .config
-                    .session_name()
-                    .trim_matches(python_whitespace)
-                    .to_string(),
-            )
-            .filter(|name| !name.is_empty()),
+            name: Some(configured_name)
+                .filter(|name| !name.is_empty())
+                .or_else(|| resolved.as_ref().map(|(_, name)| name.clone())),
+            definition_id: resolved.map(|(id, _)| id),
             skill_boost_percent: declared_boost.filter(|percent| *percent > 0),
         };
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -731,15 +754,23 @@ impl TrackerActor {
         // records nothing about a facet-era session.)
         let insert_id = session_id.clone();
         let insert_name = facets.name.clone();
+        let insert_definition = facets.definition_id;
         let insert_boost = facets.skill_boost_percent;
         let opening_boost = declared_boost;
         self.db
             .with_writer(move |conn| {
                 conn.execute(
                     "INSERT INTO tracking_sessions \
-                     (id, started_at, is_active, session_name, skill_boost_percent) \
-                     VALUES (?, ?, 1, ?, ?)",
-                    rusqlite::params![insert_id, start_ts, insert_name, insert_boost],
+                     (id, started_at, is_active, session_name, definition_id, \
+                      skill_boost_percent) \
+                     VALUES (?, ?, 1, ?, ?, ?)",
+                    rusqlite::params![
+                        insert_id,
+                        start_ts,
+                        insert_name,
+                        insert_definition,
+                        insert_boost
+                    ],
                 )?;
                 Ok(())
             })
@@ -1062,6 +1093,7 @@ impl HuntTracker {
             cumulative_net_history: aggregated.cumulative_net,
             current_mob: aggregated.mob_name.clone(),
             session_name: aggregated.session_name.clone(),
+            definition_id: aggregated.definition_id,
             skill_boost_percent: aggregated.skill_boost_percent,
             segment_name: aggregated.segment_name.clone(),
             quest_names: aggregated.quest_names.clone(),

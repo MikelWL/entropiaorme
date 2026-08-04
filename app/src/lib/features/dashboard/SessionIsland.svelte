@@ -1,23 +1,59 @@
 <script lang="ts">
 	import { flip } from 'svelte/animate';
 	import { quintOut } from 'svelte/easing';
-	import { toggleOverlay } from '$lib/api';
+	import { startTracking, toggleOverlay } from '$lib/api';
 	import type { TrackingSnapshot } from '$lib/api';
-	import { Button } from '$lib/components';
+	import { Button, ErrorNotice } from '$lib/components';
+	import DefinitionPicker from '$lib/features/sessions/DefinitionPicker.svelte';
+	import type { DefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
+	import { hydrate } from '$lib/stores/trackingStore.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
+	import { describeError } from '$lib/view/errorState';
 	import type { StatsGridModel } from './statsGridModel.svelte';
 
 	let {
 		status,
-		statsGrid
+		statsGrid,
+		definitions
 	}: {
 		status: TrackingSnapshot | null;
 		statsGrid: StatsGridModel;
+		/** The sessions model; the route hosts it (and the authoring
+		 * environment) so the surface can replace the whole dashboard. */
+		definitions: DefinitionsModel;
 	} = $props();
 
 	let elapsedSeconds = $state(0);
+
+	function openAuthoring(definitionId: string | null) {
+		const editing =
+			definitionId === null
+				? null
+				: definitions.definitions.find((definition) => definition.id === definitionId);
+		if (editing) definitions.openEdit(editing);
+		else definitions.openCreate();
+	}
+
+	const isActive = $derived(status?.status === 'active');
+	const selectedDefinitionId = $derived(status?.sessionDefinitionId ?? null);
+
+	let starting = $state(false);
+	let startError = $state<string | null>(null);
+
+	async function handleStart() {
+		starting = true;
+		startError = null;
+		try {
+			await startTracking();
+			await hydrate();
+		} catch (e) {
+			startError = describeError(e, 'Failed to start the session');
+		} finally {
+			starting = false;
+		}
+	}
 
 	// Elapsed timer when tracking is active
 	$effect(() => {
@@ -44,9 +80,17 @@
 	<!-- Session strip -->
 	<div class="relative flex items-center justify-between">
 		{#if status?.status === 'active'}
-			<div class="flex items-center gap-3">
+			<div class="flex items-center gap-3 min-w-0">
 				<span class="signal-dot positive animate-pulse"></span>
 				<span class="text-sm font-medium text-text tracking-tight">Tracking active</span>
+				{#if status.sessionName}
+					<span
+						class="text-xs text-text-secondary truncate"
+						title="{status.sessionName} (fixed for this session)"
+					>
+						{status.sessionName}
+					</span>
+				{/if}
 				<span
 					class="text-xs text-text-tertiary tabular-nums tracking-wider"
 					data-testid="session-elapsed"
@@ -55,20 +99,36 @@
 				</span>
 			</div>
 		{:else}
-			<div class="flex items-center gap-3">
-				<span class="signal-dot idle"></span>
-				<span class="text-sm text-text-secondary">No active session</span>
-			</div>
+			<!-- At rest the island is titled by the session it will run as;
+				 the stats below already read @Rest, so nothing states it twice. -->
+			<DefinitionPicker
+				model={definitions}
+				selectedId={selectedDefinitionId}
+				onOpenAuthoring={openAuthoring}
+			/>
 		{/if}
 
 		<div class="flex items-center gap-2">
+			{#if !isActive}
+				<Button size="sm" disabled={starting} onclick={handleStart}>
+					{#snippet children()}{starting ? 'Starting...' : 'Start'}{/snippet}
+				</Button>
+			{/if}
 			<span class="inline-flex" data-guide-anchor="dashboard-overlay-btn">
-				<Button size="sm" onclick={() => toggleOverlay().catch(() => {})}>
+				<Button size="sm" variant={isActive ? 'primary' : 'secondary'} onclick={() => toggleOverlay().catch(() => {})}>
 					{#snippet children()}Overlay{/snippet}
 				</Button>
 			</span>
 		</div>
 	</div>
+
+	<ErrorNotice
+		message={startError ?? definitions.error}
+		onDismiss={() => {
+			startError = null;
+			definitions.error = null;
+		}}
+	/>
 
 	<!-- Session stats -->
 	<div

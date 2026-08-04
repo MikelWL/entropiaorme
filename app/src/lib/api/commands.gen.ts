@@ -524,6 +524,15 @@ export interface CycledBreakdown {
 }
 
 /**
+ * The definition-selection acknowledgement: the selection now in
+ * force (stringified id) and the session name it wrote (null: none).
+ */
+export interface DefinitionSelectResult {
+	sessionDefinitionId: string | null;
+	sessionName: string | null;
+}
+
+/**
  * One configured component of a stored weapon setup.
  */
 export interface EquipmentComponent {
@@ -2091,6 +2100,35 @@ export interface SessionConfigResult {
 }
 
 /**
+ * A session definition in the wire shape: the authored fields plus
+ * the derived instance count (how many tracked sessions reference it).
+ */
+export interface SessionDefinition {
+	id: string;
+	name: string;
+	adHocSegments: boolean;
+	/** A session that cannot be deleted, because tracking always needs one to run under. It renames and takes a roster like any other. */
+	isProtected: boolean;
+	instanceCount: number;
+	/** Authored instant (fractional epoch seconds). */
+	createdAt: number;
+	updatedAt: number | null;
+	roster: SessionRosterEntry[];
+}
+
+/**
+ * A definition create or update payload, in the frontend's snake_case
+ * field casing. One DTO serves both operations; the roster always
+ * binds in full and replaces the stored roster wholesale on update
+ * (the playlist-items precedent).
+ */
+export interface SessionDefinitionInput {
+	name: string;
+	ad_hoc_segments?: boolean;
+	roster?: SessionRosterEntryInput[];
+}
+
+/**
  * The full session detail.
  */
 export interface SessionDetail {
@@ -2179,6 +2217,41 @@ export interface SessionRenameResult {
 	sessionId: string;
 	sessionName: string | null;
 }
+
+/**
+ * A roster entry in the wire shape: the stored fact plus the resolved
+ * display name of its target. Entry order is the roster order.
+ */
+export interface SessionRosterEntry {
+	id: string;
+	kind: SessionRosterEntryKind;
+	/** The referenced target's id (stringified); null for a segment. */
+	refId: string | null;
+	/** The authored segment label; null for the referencing kinds. */
+	label: string | null;
+	/** The referenced target's current name (or the segment label); null when the target has since been deleted, so the authoring surface can show and repair the hole instead of hiding it. */
+	displayName: string | null;
+}
+
+/**
+ * One authored roster entry: what kind of activity it references and
+ * the kind-appropriate payload (`ref_id` for the referencing kinds,
+ * `label` for a plain segment).
+ */
+export interface SessionRosterEntryInput {
+	kind: SessionRosterEntryKind;
+	ref_id?: number | null;
+	label?: string | null;
+}
+
+/**
+ * What a roster entry references, in the stored snake_case
+ * vocabulary: `quest_family` stands for whichever variant the family
+ * serves today, `quest` is a single quest (a signal-completed boss or
+ * a standalone mission-log quest outside any family), and `segment`
+ * is a plain authored label with no reference.
+ */
+export type SessionRosterEntryKind = 'quest_family' | 'quest' | 'segment';
 
 /**
  * The session-detail headline summary.
@@ -2386,6 +2459,8 @@ export interface TrackingSnapshot {
 	endOfSessionArmourReminderEnabled?: boolean | null;
 	/** The session-name facet: the active session's when tracking, the configured next-session value when idle. */
 	sessionName?: string | null;
+	/** The selected session definition (stringified id): the active session's stamped reference when tracking, the configured selection (re-validated against an active definition) when idle. Absent when no definition is in force. */
+	sessionDefinitionId?: string | null;
 	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
 	skillBoostPercent?: number | null;
 	/** The open segment's name. Active-only by nature: a segment exists exactly while its session runs, so the idle branch never carries the key and an active session without a segment drops it too. */
@@ -2745,6 +2820,26 @@ export async function questFamilyDelete(familyId: number): Promise<void> {
 	return invokeCommand('quest_family_delete', { family_id: familyId });
 }
 
+export async function sessionDefinitionsList(): Promise<SessionDefinition[]> {
+	return invokeCommand('session_definitions_list', {});
+}
+
+export async function sessionDefinitionCreate(input: SessionDefinitionInput): Promise<SessionDefinition> {
+	return invokeCommand('session_definition_create', { input });
+}
+
+export async function sessionDefinitionUpdate(definitionId: number, input: SessionDefinitionInput): Promise<SessionDefinition> {
+	return invokeCommand('session_definition_update', { definition_id: definitionId, input });
+}
+
+export async function sessionDefinitionDelete(definitionId: number): Promise<void> {
+	return invokeCommand('session_definition_delete', { definition_id: definitionId });
+}
+
+export async function trackingDefinitionSelect(definitionId: number | null): Promise<DefinitionSelectResult> {
+	return invokeCommand('tracking_definition_select', { definition_id: definitionId });
+}
+
 export async function analyticsOverview(period: string): Promise<AnalyticsOverview> {
 	return invokeCommand('analytics_overview', { period });
 }
@@ -2931,10 +3026,6 @@ export async function trackingSessionDetail(sessionId: string): Promise<SessionD
 
 export async function trackingSessionIntervals(sessionId: string): Promise<SessionIntervals> {
 	return invokeCommand('tracking_session_intervals', { session_id: sessionId });
-}
-
-export async function trackingSessionNameSuggestions(q: string, limit: number | null): Promise<string[]> {
-	return invokeCommand('tracking_session_name_suggestions', { q, limit });
 }
 
 export async function trackingManualMobSuggestions(q: string, limit: number | null): Promise<ManualMobSuggestion[]> {

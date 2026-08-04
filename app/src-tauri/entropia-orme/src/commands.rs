@@ -48,12 +48,14 @@ use eo_api::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
     UndoResult,
 };
+use eo_api::session_definitions::{SessionDefinition, SessionDefinitionInput};
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
-    ArmourCostResult, FocusOptionsResult, LootItemEditResult, ManualMobLockResult,
-    ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult, RepairScanResult,
-    SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals, SessionPage,
-    SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
+    ArmourCostResult, DefinitionSelectResult, FocusOptionsResult, LootItemEditResult,
+    ManualMobLockResult, ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult,
+    RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals,
+    SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -452,6 +454,50 @@ pub async fn quest_family_update(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn quest_family_delete(app: tauri::AppHandle, family_id: i64) -> Result<(), ApiError> {
     facade(&app)?.quest_family_delete(family_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn session_definitions_list(
+    app: tauri::AppHandle,
+) -> Result<Vec<SessionDefinition>, ApiError> {
+    facade(&app)?.session_definitions_list().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn session_definition_create(
+    app: tauri::AppHandle,
+    input: SessionDefinitionInput,
+) -> Result<SessionDefinition, ApiError> {
+    facade(&app)?.session_definition_create(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn session_definition_update(
+    app: tauri::AppHandle,
+    definition_id: i64,
+    input: SessionDefinitionInput,
+) -> Result<SessionDefinition, ApiError> {
+    facade(&app)?
+        .session_definition_update(definition_id, input)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn session_definition_delete(
+    app: tauri::AppHandle,
+    definition_id: i64,
+) -> Result<(), ApiError> {
+    facade(&app)?.session_definition_delete(definition_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn tracking_definition_select(
+    app: tauri::AppHandle,
+    definition_id: Option<i64>,
+) -> Result<DefinitionSelectResult, ApiError> {
+    facade(&app)?
+        .tracking_definition_select(definition_id)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -878,17 +924,6 @@ pub async fn tracking_session_intervals(
     session_id: String,
 ) -> Result<SessionIntervals, ApiError> {
     facade(&app)?.tracking_session_intervals(session_id).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_session_name_suggestions(
-    app: tauri::AppHandle,
-    q: String,
-    limit: Option<i64>,
-) -> Result<Vec<String>, ApiError> {
-    facade(&app)?
-        .tracking_session_name_suggestions(q, limit)
-        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1516,6 +1551,11 @@ mod tests {
         "quest_family_create",
         "quest_family_update",
         "quest_family_delete",
+        "session_definitions_list",
+        "session_definition_create",
+        "session_definition_update",
+        "session_definition_delete",
+        "tracking_definition_select",
         "analytics_overview",
         "analytics_hunting",
         "analytics_harvest",
@@ -1563,7 +1603,6 @@ mod tests {
         "tracking_sessions",
         "tracking_session_detail",
         "tracking_session_intervals",
-        "tracking_session_name_suggestions",
         "tracking_manual_mob_suggestions",
         "tracking_snapshot",
         "tracking_quest_link_suggestion",

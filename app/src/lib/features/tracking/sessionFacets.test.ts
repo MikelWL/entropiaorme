@@ -4,12 +4,19 @@ import { createSessionFacets, type SessionFacetsDeps } from './sessionFacets.sve
 function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 	const facetState = {
 		name: null as string | null,
+		definitionId: null as string | null,
 		boost: null as number | null,
 		segment: null as string | null,
 	};
 	const setSessionConfig = vi.fn(async (name: string | null, boost: number | null) => {
 		facetState.name = name;
 		facetState.boost = boost;
+	});
+	// Mirrors the backend verb: selecting writes the definition AND the
+	// name facet together.
+	const selectDefinition = vi.fn(async (id: number) => {
+		facetState.definitionId = String(id);
+		facetState.name = `Definition ${id}`;
 	});
 	// Mirrors the backend's auto-numbering: a null name is numbered by
 	// open count, every open replaces the standing segment, and the
@@ -32,15 +39,13 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 		readFacets: () => ({ ...facetState }),
 		isSessionActive: () => true,
 		refresh: vi.fn(async () => {}),
-		searchNames: vi.fn(async () => []),
 		setSessionConfig,
+		selectDefinition,
 		openSegment,
 		closeSegment,
 		renameSegment,
 		focusQuest,
 		unfocusQuest,
-		openNameMenu: vi.fn(),
-		closeNameMenu: vi.fn(),
 		...overrides,
 	};
 	return {
@@ -48,6 +53,7 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 		deps,
 		facetState,
 		setSessionConfig,
+		selectDefinition,
 		openSegment,
 		closeSegment,
 		renameSegment,
@@ -56,45 +62,29 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 	};
 }
 
-describe('name facet', () => {
-	it('writes the name and carries the boost through untouched', async () => {
-		const { facets, facetState, setSessionConfig } = harness();
-		facetState.boost = 50;
+describe('session facet', () => {
+	it('shapes the selection write (numeric id) and refreshes', async () => {
+		const { facets, facetState, selectDefinition, deps } = harness();
 
-		await facets.applyName('ARIS Dailies');
+		await facets.selectDefinition('4');
 
-		expect(setSessionConfig).toHaveBeenCalledWith('ARIS Dailies', 50);
-		expect(facetState).toEqual({ name: 'ARIS Dailies', boost: 50, segment: null });
+		expect(selectDefinition).toHaveBeenCalledWith(4);
+		expect(deps.refresh).toHaveBeenCalled();
+		expect(facetState.definitionId).toBe('4');
+		expect(facetState.name).toBe('Definition 4');
 	});
 
-	it('clears the name without disturbing the boost', async () => {
-		const { facets, facetState, setSessionConfig } = harness();
-		facetState.name = 'ARIS Dailies';
-		facetState.boost = 50;
-
-		await facets.clearName();
-
-		expect(setSessionConfig).toHaveBeenCalledWith(null, 50);
-		expect(facetState.boost).toBe(50);
-	});
-
-	it('ignores an empty name rather than writing a blank one', async () => {
-		const { facets, setSessionConfig } = harness();
-		await facets.applyName('   '.trim());
-		expect(setSessionConfig).not.toHaveBeenCalled();
-	});
-
-	it('surfaces a write failure instead of swallowing it', async () => {
+	it('surfaces a selection refusal instead of swallowing it', async () => {
 		const { facets } = harness({
-			setSessionConfig: vi.fn(async () => {
+			selectDefinition: vi.fn(async () => {
 				throw new Error('backend said no');
 			}),
 		});
 
-		await facets.applyName('ARIS Dailies');
+		await facets.selectDefinition('4');
 
 		expect(facets.facetError).toBe('backend said no');
-		expect(facets.savingName).toBe(false);
+		expect(facets.savingDefinition).toBe(false);
 	});
 });
 

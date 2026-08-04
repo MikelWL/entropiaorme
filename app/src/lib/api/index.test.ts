@@ -531,17 +531,6 @@ describe('quests wrappers dispatch typed commands', () => {
 });
 
 describe('suggestion lookups', () => {
-	it('getSessionNameSuggestions short-circuits on blank input and trims the query', async () => {
-		await expect(api.getSessionNameSuggestions('   ')).resolves.toEqual([]);
-		expect(tauriInvoke).not.toHaveBeenCalled();
-
-		await api.getSessionNameSuggestions('  aris ');
-		expect(tauriInvoke).toHaveBeenCalledWith('tracking_session_name_suggestions', {
-			q: 'aris',
-			limit: null,
-		});
-	});
-
 	it('getManualMobSuggestions short-circuits on blank input and trims the query', async () => {
 		await expect(api.getManualMobSuggestions('')).resolves.toEqual([]);
 		expect(tauriInvoke).not.toHaveBeenCalled();

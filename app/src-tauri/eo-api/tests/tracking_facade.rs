@@ -220,27 +220,20 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
     // projection drops the present-null mob / tool fields (the ratified
     // movement), while the trifecta summary (a fixed-shape nested object,
     // present because the default config ships a `default` preset) keeps
-    // its own null bindings on the wire.
+    // its own null bindings on the wire. The session facets are present
+    // even with nothing configured: an unconfigured install resolves to
+    // the protected default, so the readout shows what a start would
+    // stamp.
     let snapshot = api.tracking_snapshot().await.unwrap();
     assert_eq!(
         serde_json::to_string(&snapshot).unwrap(),
         "{\"status\":\"idle\",\"hotbarListenerActive\":false,\"weaponAttribution\":\"trifecta\",\
          \"repairOcrEnabled\":false,\"endOfSessionArmourReminderEnabled\":false,\
+         \"sessionName\":\"Default Tracking\",\"sessionDefinitionId\":\"1\",\
          \"trifectaAttribution\":{\"activePresetId\":\"default\",\
          \"presetName\":\"Default\",\"presets\":[{\"id\":\"default\",\"name\":\"Default\"}],\
          \"smallWeapon\":null,\"bigWeapon\":null,\"healTool\":null},\"recentEvents\":[]}"
     );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn empty_session_name_suggestions_serialise_to_the_empty_array() {
-    let dir = tempfile::tempdir().unwrap();
-    let api = make_api(dir.path(), false, None).await;
-    let suggestions = api
-        .tracking_session_name_suggestions(String::new(), None)
-        .await
-        .unwrap();
-    assert_eq!(serde_json::to_string(&suggestions).unwrap(), "[]");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -553,11 +546,13 @@ async fn the_idle_snapshot_carries_the_declared_facets() {
     let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
     assert_eq!(value["skillBoostPercent"], 0);
 
-    // Withdrawn: the key drops out of the projection entirely.
+    // Withdrawn: the boost key drops out of the projection entirely.
+    // The name does not, because a withdrawn declaration falls through
+    // to the protected default rather than to nothing.
     api.tracking_session_config(None, None).await.unwrap();
     let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
     assert!(value.get("skillBoostPercent").is_none());
-    assert!(value.get("sessionName").is_none());
+    assert_eq!(value["sessionName"], "Default Tracking");
 }
 
 /// The ACTIVE branch's boost, which has a different source from the
@@ -924,6 +919,9 @@ struct NamedSessionConfig(&'static str);
 impl eo_services::tracker::TrackingConfig for NamedSessionConfig {
     fn session_name(&self) -> String {
         self.0.to_string()
+    }
+    fn session_definition_id(&self) -> Option<i64> {
+        None
     }
     fn declared_skill_boost_percent(&self) -> Option<i64> {
         None
