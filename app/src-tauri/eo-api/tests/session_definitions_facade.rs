@@ -110,7 +110,19 @@ async fn the_list_answers_the_fresh_database_with_the_protected_default() {
     assert_eq!(listed[0].id, "1");
     assert_eq!(listed[0].name, "Default Tracking");
     assert!(listed[0].is_protected);
+    // The seeded default declares nothing: no roster and no self-named
+    // segments. A session that has neither is the one with no activity
+    // structure at all, which is what lets the overlay show no activity
+    // surface for it rather than empty controls.
     assert!(!listed[0].ad_hoc_segments);
+    assert!(listed[0].roster.is_empty());
+
+    // Selecting it and starting is the untouched-install path: the
+    // session records under it, still declaring nothing.
+    api.tracking_definition_select(Some(1)).await.unwrap();
+    let snapshot = api.tracking_snapshot().await.unwrap();
+    assert_eq!(snapshot.session_definition_id, Some("1".to_string()));
+    assert_eq!(snapshot.session_name, Some("Default Tracking".to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
