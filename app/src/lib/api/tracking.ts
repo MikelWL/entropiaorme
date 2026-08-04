@@ -124,13 +124,6 @@ export const getTrackingSnapshot = guideSwapped(
 	commands.demoTrackingSnapshot,
 );
 
-/** Prior session names matching the query, most-used first: reusing a
- * name is what keeps the designated analytics axis grouping cleanly. */
-export async function getSessionNameSuggestions(query: string): Promise<string[]> {
-	if (!query.trim()) return [];
-	return commands.trackingSessionNameSuggestions(query.trim(), null);
-}
-
 export async function getManualMobSuggestions(query: string) {
 	if (!query.trim()) return [];
 	return commands.trackingManualMobSuggestions(query.trim(), null);
