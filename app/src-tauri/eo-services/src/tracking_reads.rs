@@ -2588,7 +2588,6 @@ mod tests {
         assert!(!session_exists(&db, "absent").await.unwrap());
     }
 
-
     // ── Async read impls over the real core ─────────────────────────
 
     #[tokio::test]

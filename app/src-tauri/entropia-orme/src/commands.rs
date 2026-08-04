@@ -495,7 +495,9 @@ pub async fn tracking_definition_select(
     app: tauri::AppHandle,
     definition_id: Option<i64>,
 ) -> Result<DefinitionSelectResult, ApiError> {
-    facade(&app)?.tracking_definition_select(definition_id).await
+    facade(&app)?
+        .tracking_definition_select(definition_id)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]

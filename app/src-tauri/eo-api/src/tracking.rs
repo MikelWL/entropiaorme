@@ -1667,12 +1667,10 @@ pub(crate) async fn build_snapshot_value(
     // Idle resolves through the same rule session start stamps with, so
     // the readout shows exactly what starting now would record: the
     // selection while it is active, otherwise the protected default.
-    let idle_selection = eo_services::session_definitions::resolve_selection(
-        db,
-        config.session_definition_id,
-    )
-    .await
-    .map_err(ApiError::internal("snapshot definition selection"))?;
+    let idle_selection =
+        eo_services::session_definitions::resolve_selection(db, config.session_definition_id)
+            .await
+            .map_err(ApiError::internal("snapshot definition selection"))?;
     let idle_definition_id = idle_selection.as_ref().map(|(id, _)| *id);
 
     let value = match &readout.active {
