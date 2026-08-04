@@ -175,7 +175,7 @@
 	});
 	const toggling = $derived(starting || flow.stopping);
 
-	// The session facets (type/name, boost, segment): state and writes
+	// The session facets (the session and its name, boost, segment): state and writes
 	// live in the feature model; this route owns only the popup plumbing.
 	// (The quest facet auto-records itself and only displays.)
 	const facets = createSessionFacets({

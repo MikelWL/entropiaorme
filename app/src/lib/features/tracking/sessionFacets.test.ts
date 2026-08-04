@@ -13,7 +13,7 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 		facetState.boost = boost;
 	});
 	// Mirrors the backend verb: selecting writes the definition AND the
-	// name facet together; null withdraws both.
+	// name facet together.
 	const selectDefinition = vi.fn(async (id: number | null) => {
 		facetState.definitionId = id === null ? null : String(id);
 		facetState.name = id === null ? null : `Definition ${id}`;
@@ -72,18 +72,6 @@ describe('session facet', () => {
 		expect(deps.refresh).toHaveBeenCalled();
 		expect(facetState.definitionId).toBe('4');
 		expect(facetState.name).toBe('Definition 4');
-	});
-
-	it('withdraws the selection (and the name it wrote) with null', async () => {
-		const { facets, facetState, selectDefinition } = harness();
-		facetState.definitionId = '4';
-		facetState.name = 'Definition 4';
-
-		await facets.selectDefinition(null);
-
-		expect(selectDefinition).toHaveBeenCalledWith(null);
-		expect(facetState.definitionId).toBeNull();
-		expect(facetState.name).toBeNull();
 	});
 
 	it('surfaces a selection refusal instead of swallowing it', async () => {

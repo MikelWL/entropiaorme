@@ -97,14 +97,12 @@ describe('createDefinitionsModel', () => {
 		expect(failing.error).toBe('boom');
 	});
 
-	it('shapes the selection write (numeric id, null withdraws) and refreshes', async () => {
+	it('shapes the selection write as a numeric id and refreshes', async () => {
 		const deps = makeDeps();
 		const model = createDefinitionsModel(deps);
 		await model.select('4');
 		expect(deps.selectDefinition).toHaveBeenCalledWith(4);
-		await model.select(null);
-		expect(deps.selectDefinition).toHaveBeenCalledWith(null);
-		expect(deps.refreshTracking).toHaveBeenCalledTimes(2);
+		expect(deps.refreshTracking).toHaveBeenCalledTimes(1);
 	});
 
 	it('drafts a roster with dedupe, ordering moves, and removal', () => {

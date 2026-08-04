@@ -38,9 +38,9 @@ export interface SessionFacetsDeps {
 	refresh: () => Promise<unknown>;
 	/** Full-state facet write: a null clears its facet. */
 	setSessionConfig: (name: string | null, boost: number | null) => Promise<unknown>;
-	/** Select the session the next run starts under (null
-	 * withdraws); the backend writes the name facet with it. */
-	selectDefinition: (id: number | null) => Promise<unknown>;
+	/** Select the session the next run starts under; the backend
+	 * writes the name facet with it. */
+	selectDefinition: (id: number) => Promise<unknown>;
 	/** Open a segment on the running session, closing any standing one; a
 	 * null name is auto-numbered ("Segment N") by the backend, and the
 	 * acknowledgement echoes the name now in force so the control can
@@ -102,20 +102,17 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		await deps.refresh();
 	}
 
-	/** Select the session for the next run (null withdraws both
-	 * the selection and the name it wrote). The route's picker menu
-	 * passes toggle semantics down to this single write. */
-	async function selectDefinition(id: string | null) {
+	/** Select the session for the next run; the backend writes the name
+	 * facet with it. There is no withdrawal: a run always records under
+	 * a session, so the picker only ever switches between them. */
+	async function selectDefinition(id: string) {
 		savingDefinition = true;
 		facetError = null;
 		try {
-			await deps.selectDefinition(id === null ? null : Number(id));
+			await deps.selectDefinition(Number(id));
 			await deps.refresh();
 		} catch (error) {
-			facetError = describe(
-				error,
-				id === null ? 'Failed to clear the session' : 'Failed to select the session',
-			);
+			facetError = describe(error, 'Failed to select the session');
 		}
 		savingDefinition = false;
 	}

@@ -32,8 +32,8 @@ export interface OverlayTrifectaMenuState {
 }
 
 /** The session picker: the authored definitions with the current
- * selection marked. Tapping the selected row clears the selection;
- * tapping another switches to it. */
+ * selection marked. Tapping another row switches to it; the selected
+ * row is inert, because a session always runs under one. */
 export interface OverlayDefinitionMenuState {
 	kind: 'definition';
 	width: number;

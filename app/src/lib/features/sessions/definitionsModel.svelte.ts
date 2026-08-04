@@ -47,8 +47,8 @@ export interface DefinitionsModelDeps {
 	createDefinition(data: SessionDefinitionInput): Promise<SessionDefinition>;
 	updateDefinition(id: string, data: SessionDefinitionInput): Promise<SessionDefinition>;
 	deleteDefinition(id: string): Promise<void>;
-	/** The tracking-family selection verb (null withdraws). */
-	selectDefinition(id: number | null): Promise<unknown>;
+	/** The tracking-family selection verb. */
+	selectDefinition(id: number): Promise<unknown>;
 	/** Re-read the tracking snapshot after a selection write. */
 	refreshTracking(): Promise<unknown>;
 	/** The roster's offer sources (loaded when the authoring opens). */
@@ -161,12 +161,13 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		}
 	}
 
-	/** Select the definition the next session starts under (null: none).
-	 * The backend writes the name facet with it in the same motion. */
-	async function select(id: string | null) {
+	/** Select the definition the next session starts under; the backend
+	 * writes the name facet with it in the same motion. A session always
+	 * runs under one, so there is nothing to withdraw to. */
+	async function select(id: string) {
 		selecting = true;
 		try {
-			await deps.selectDefinition(id === null ? null : Number(id));
+			await deps.selectDefinition(Number(id));
 			error = null;
 			await deps.refreshTracking();
 		} catch (e) {

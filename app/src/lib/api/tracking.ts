@@ -88,8 +88,10 @@ export const restoreSessionMob = commands.trackingRestoreMob;
 export const setSessionConfig = commands.trackingSessionConfig;
 /** Select the session definition the next session starts as an instance
  * of; writes the session-name facet with the definition's name in the
- * same motion, and null withdraws both. Fixed while a session runs (the
- * backend answers 409 on an attempted change). */
+ * same motion. Fixed while a session runs (the backend answers 409 on an
+ * attempted change). A null id is the wire's "nothing chosen", which the
+ * backend reads back as the protected default rather than as no session;
+ * the app never sends one. */
 export const selectDefinition = commands.trackingDefinitionSelect;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
