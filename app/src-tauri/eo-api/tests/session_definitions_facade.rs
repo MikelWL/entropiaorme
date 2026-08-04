@@ -13,6 +13,7 @@ use eo_api::quests::QuestFamilyInput;
 use eo_api::session_definitions::{
     SessionDefinitionInput, SessionRosterEntryInput, SessionRosterEntryKind,
 };
+use eo_api::settings::SettingsPatch;
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -368,6 +369,37 @@ async fn selection_writes_the_config_and_the_snapshot_reports_it() {
     api.session_definition_delete(2).await.unwrap();
     let stale = api.tracking_snapshot().await.unwrap();
     assert_eq!(stale.session_definition_id, Some("1".to_string()));
+}
+
+/// The selection is what writes the name facet, so a name arriving by
+/// any other route is a free-text declaration and disavows it. The
+/// settings patch is the other route.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_name_written_through_settings_disavows_the_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, _db) = definitions_api(dir.path()).await;
+
+    api.session_definition_create(definition("ARIS Dailies", vec![]))
+        .await
+        .unwrap();
+    api.tracking_definition_select(Some(2)).await.unwrap();
+    assert_eq!(
+        api.tracking_snapshot().await.unwrap().session_definition_id,
+        Some("2".to_string())
+    );
+
+    api.settings_update(SettingsPatch {
+        session_name: Some("Something Else".to_string()),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    // Disavowed, and resolving to the protected default rather than to
+    // nothing; the typed name stays the user's own declaration.
+    let snapshot = api.tracking_snapshot().await.unwrap();
+    assert_eq!(snapshot.session_definition_id, Some("1".to_string()));
+    assert_eq!(snapshot.session_name, Some("Something Else".to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

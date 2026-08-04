@@ -28,6 +28,10 @@ import { describeError } from '$lib/view/errorState';
 /** One roster row as the editor drafts it (ids stringified for the UI;
  * `missing` marks a stored reference whose target has been deleted). */
 export interface RosterDraftEntry {
+	/** Identity for the list, stable across reordering: without it the
+	 * moved rows are destroyed and recreated, and the button the user is
+	 * pressing goes with them. */
+	key: number;
 	kind: SessionRosterEntryKind;
 	refId: string | null;
 	label: string | null;
@@ -79,6 +83,11 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 
 	// The roster's offer sources, loaded when the authoring opens so the
 	// editor never presents a stale catalogue.
+	// Monotonic within one editing session; the roster is replaced
+	// wholesale on save, so these never reach the database.
+	let nextRosterKey = 0;
+	const rosterKey = () => nextRosterKey++;
+
 	let families = $state<QuestFamily[]>([]);
 	let quests = $state<Quest[]>([]);
 	let sourcesLoading = $state(false);
@@ -209,10 +218,11 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		name = definition.name;
 		adHocSegments = definition.adHocSegments;
 		roster = definition.roster.map((entry) => ({
+			key: rosterKey(),
 			kind: entry.kind,
 			refId: entry.refId,
 			label: entry.label,
-			displayName: entry.displayName ?? entry.label ?? '(removed)',
+			displayName: entry.displayName ?? entry.label ?? '',
 			missing: entry.displayName === null,
 		}));
 		authoringError = null;
@@ -239,6 +249,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		roster = [
 			...roster,
 			{
+				key: rosterKey(),
 				kind: 'quest_family',
 				refId: family.id,
 				label: null,
@@ -252,7 +263,14 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		if (hasReference('quest', quest.id)) return;
 		roster = [
 			...roster,
-			{ kind: 'quest', refId: quest.id, label: null, displayName: quest.name, missing: false },
+			{
+				key: rosterKey(),
+				kind: 'quest',
+				refId: quest.id,
+				label: null,
+				displayName: quest.name,
+				missing: false,
+			},
 		];
 	}
 
@@ -261,7 +279,14 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		if (!trimmed) return;
 		roster = [
 			...roster,
-			{ kind: 'segment', refId: null, label: trimmed, displayName: trimmed, missing: false },
+			{
+				key: rosterKey(),
+				kind: 'segment',
+				refId: null,
+				label: trimmed,
+				displayName: trimmed,
+				missing: false,
+			},
 		];
 	}
 

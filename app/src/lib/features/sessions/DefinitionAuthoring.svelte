@@ -186,7 +186,7 @@
 					<div id="session-activities" class="flex flex-col gap-3 border-t border-border/50 p-4">
 						{#if model.roster.length > 0}
 							<ul class="flex flex-col gap-1">
-								{#each model.roster as entry, i (`${entry.kind}:${entry.refId ?? entry.label}:${i}`)}
+								{#each model.roster as entry, i (entry.key)}
 									<li
 										class="flex items-center gap-2 rounded-md border border-border/60 bg-base/40 px-3 py-2"
 									>

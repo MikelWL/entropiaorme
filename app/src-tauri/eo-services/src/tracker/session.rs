@@ -699,11 +699,10 @@ impl TrackerActor {
         // to the protected default rather than stamping a dead id, and
         // an install that never picked one starts under that default
         // too, so every session is an instance of something.
-        let resolved = crate::session_definitions::resolve_selection(
-            &self.db,
-            self.providers.config.session_definition_id(),
-        )
-        .await?;
+        // The two facets are coupled (a selection writes both), so they
+        // are read together BEFORE the resolving await: reading the name
+        // afterwards could pair one selection's id with another's name.
+        let configured_selection = self.providers.config.session_definition_id();
         // The configured name is the user's own declaration and wins;
         // only when there is none does the resolved definition name the
         // session, which is what keeps a never-touched install from
@@ -714,6 +713,8 @@ impl TrackerActor {
             .session_name()
             .trim_matches(python_whitespace)
             .to_string();
+        let resolved =
+            crate::session_definitions::resolve_selection(&self.db, configured_selection).await?;
         let facets = SessionFacets {
             name: Some(configured_name)
                 .filter(|name| !name.is_empty())

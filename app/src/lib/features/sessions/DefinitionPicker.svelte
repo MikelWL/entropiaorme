@@ -51,6 +51,7 @@
 			{#snippet children({ close })}
 				{#each model.definitions as definition (definition.id)}
 					<div
+						role="none"
 						class="mt-0.5 flex items-center gap-1 rounded {selectedId === definition.id
 							? 'bg-accent/10'
 							: ''}"

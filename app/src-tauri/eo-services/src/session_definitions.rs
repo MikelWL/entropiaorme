@@ -353,7 +353,11 @@ impl SessionDefinitionService {
         name: &str,
         exclude_id: Option<i64>,
     ) -> Result<(), SessionDefinitionError> {
-        let candidate = name.to_lowercase();
+        // ASCII folding on both sides: SQLite's `lower()` maps only
+        // A-Z, so folding the candidate any wider would compare two
+        // different rules and let a non-ASCII case variant through as
+        // "unique" against a query that never saw it that way.
+        let candidate = name.to_ascii_lowercase();
         let taken = self
             .db
             .with_reader(move |conn| {

@@ -72,7 +72,7 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 | Market | paste `preview` and `commit`; `overview`; item `history`; `break-even`; mob `ranking` |
 | Tracking (reads) | `sessions` (paged); session read; `session-intervals`; `focus-options`; `snapshot` |
 | Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `session-config`, `definition-select`; segment `open`, `close`, `rename`; quest `focus`, `unfocus` |
-| Session definitions | definitions list/create/update/delete: the sessions tracked runs are recorded as instances of, each with its authored activity roster |
+| Session definitions | definitions list/create/update/delete: each definition carries an authored activity roster, and every tracked run is recorded as an instance of one |
 | Tracking (session edits) | session `rename`, `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `repair-scan`, session delete; `quest-link-suggestion` (legacy read) |
 | Scan | skills `status`; `start`, `capture`, `cancel`, `undo`, `process`, `accept`, `reject`; skills capture read by page; skills `pending`; `spacebar-capture` |
 | Maps | planet-map catalogue and coordinate scan; pin list/viewport/nearby/create/update/delete; named map list/create/rename/delete; coordinate calibration start/cancel/status; navigation snapshot/start/update/mark-visited/skip/resolve-harvest/undo/end; radar calibration start/cancel/status/geometry |

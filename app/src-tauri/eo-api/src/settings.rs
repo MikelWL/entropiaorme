@@ -228,6 +228,12 @@ impl SettingsPatch {
         }
         if let Some(value) = self.session_name {
             updates.insert("session_name".into(), Value::String(value));
+            // The selection is what writes this facet, so a name arriving
+            // by any other route is a free-text declaration and disavows
+            // it, the same rule `tracking_session_config` applies. The
+            // withdrawal reads back as the protected default, never as no
+            // session at all.
+            updates.insert("session_definition_id".into(), Value::Null);
         }
         if let Some(value) = self.declared_skill_boost_percent {
             updates.insert(
