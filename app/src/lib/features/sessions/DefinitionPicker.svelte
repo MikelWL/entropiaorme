@@ -44,7 +44,7 @@
 					onclick={toggle}
 				>
 					<span class="truncate">{selected ? selected.name : 'Choose'}</span>
-					<span class="text-text-tertiary" aria-hidden="true">&#x2304;</span>
+					<span class="text-text-secondary" aria-hidden="true">&#x2304;</span>
 				</button>
 			{/snippet}
 
@@ -58,7 +58,7 @@
 						<button
 							type="button"
 							role="menuitem"
-							class="min-w-0 flex-1 truncate px-2 py-1.5 text-left text-xs cursor-pointer
+							class="min-w-0 flex-1 truncate px-2 py-1.5 text-left text-sm cursor-pointer
 								{selectedId === definition.id
 								? 'text-accent'
 								: 'text-text-secondary hover:text-text'}"
@@ -72,7 +72,7 @@
 						<button
 							type="button"
 							role="menuitem"
-							class="h-7 w-7 shrink-0 rounded text-xs cursor-pointer text-text-tertiary
+							class="h-7 w-7 shrink-0 rounded cursor-pointer text-text-secondary
 								hover:bg-surface-hover hover:text-text"
 							aria-label={`Edit ${definition.name}`}
 							title="Edit"
@@ -100,8 +100,8 @@
 					<button
 						type="button"
 						role="menuitem"
-						class="mt-1 w-full rounded border-t border-border/50 px-2 py-2 text-left text-xs
-							cursor-pointer text-text-tertiary hover:bg-surface-hover hover:text-text"
+						class="mt-1 w-full rounded border-t border-border/50 px-2 py-2 text-left text-sm
+							cursor-pointer text-text-secondary hover:bg-surface-hover hover:text-text"
 						onclick={() => {
 							void model.select(null);
 							close();

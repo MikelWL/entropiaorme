@@ -113,7 +113,7 @@
 {#if model.mode !== 'closed'}
 	<div
 		bind:this={panelEl}
-		class="fixed inset-0 z-50 overflow-y-auto bg-base bg-grid focus:outline-hidden"
+		class="fixed inset-0 z-50 overflow-y-auto bg-base focus:outline-hidden"
 		role="dialog"
 		aria-modal="true"
 		aria-label={editing ? 'Edit session' : 'New session'}
@@ -124,11 +124,11 @@
 		<div class="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-6 px-6 py-10">
 			<!-- Header: identity + the exits -->
 			<div class="flex items-start justify-between gap-4">
-				<div class="flex flex-col gap-1">
-					<span class="eyebrow-strong">{editing ? 'Edit session' : 'New session'}</span>
-				</div>
+				<h2 class="text-2xl font-semibold tracking-tight text-text">
+					{editing ? 'Edit session' : 'New session'}
+				</h2>
 				<button
-					class="h-8 w-8 flex items-center justify-center rounded-md text-text-tertiary
+					class="h-8 w-8 flex items-center justify-center rounded-md text-text-secondary
 						cursor-pointer transition-colors duration-[var(--duration-fast)]
 						hover:text-text hover:bg-surface-hover shrink-0"
 					onclick={() => model.close()}
@@ -147,9 +147,9 @@
 			<input
 				bind:this={nameInput}
 				bind:value={model.name}
-				class="w-full bg-transparent border-b border-border focus:border-accent text-2xl
+				class="w-full bg-transparent border-b border-border focus:border-accent text-xl
 					font-semibold tracking-tight text-text px-1 py-2 outline-none
-					placeholder:text-text-tertiary/50 transition-colors"
+					placeholder:text-text-tertiary transition-colors"
 				placeholder="Name this session..."
 				aria-label="Session name"
 				disabled={model.saving}
@@ -162,12 +162,12 @@
 			{#if inDevelopment.visible}
 			<section class="panel p-4 flex flex-col gap-3">
 				<div class="flex items-baseline justify-between gap-2">
-					<span class="eyebrow">Roster</span>
+					<span class="eyebrow-strong">Roster</span>
 					<InDevelopmentMark id="session-definition-roster" />
 				</div>
 
 				{#if model.roster.length === 0}
-					<p class="text-sm text-text-tertiary px-1 py-2">
+					<p class="text-sm text-text-secondary px-1 py-2">
 						No activities yet. Add quest families, quests, or segment labels below.
 					</p>
 				{:else}
@@ -176,7 +176,7 @@
 							<li
 								class="flex items-center gap-2 rounded-md border border-border/60 bg-base/40 px-3 py-2"
 							>
-								<span class="eyebrow w-14 shrink-0">{kindLabel(entry)}</span>
+								<span class="eyebrow-strong w-[4.5rem] shrink-0">{kindLabel(entry)}</span>
 								{#if entry.missing}
 									<span class="text-sm text-warning truncate flex-1" title="The referenced item was deleted; this entry is dropped on save">
 										{entry.displayName} (removed)
@@ -187,9 +187,9 @@
 								<div class="flex items-center gap-0.5 shrink-0">
 									<button
 										type="button"
-										class="p-1 text-text-tertiary cursor-pointer transition-colors
+										class="p-1 text-text-secondary cursor-pointer transition-colors
 											duration-[var(--duration-base)] hover:text-text
-											disabled:opacity-30 disabled:cursor-not-allowed"
+											disabled:opacity-40 disabled:cursor-not-allowed"
 										aria-label="Move up"
 										title="Move up"
 										disabled={i === 0 || model.saving}
@@ -197,9 +197,9 @@
 									>&uarr;</button>
 									<button
 										type="button"
-										class="p-1 text-text-tertiary cursor-pointer transition-colors
+										class="p-1 text-text-secondary cursor-pointer transition-colors
 											duration-[var(--duration-base)] hover:text-text
-											disabled:opacity-30 disabled:cursor-not-allowed"
+											disabled:opacity-40 disabled:cursor-not-allowed"
 										aria-label="Move down"
 										title="Move down"
 										disabled={i === model.roster.length - 1 || model.saving}
@@ -228,7 +228,7 @@
 					/>
 					{#if filteredFamilies.length > 0}
 						<div class="flex flex-col gap-1.5">
-							<span class="eyebrow">Quest families</span>
+							<span class="eyebrow-strong">Quest families</span>
 							<div class="flex flex-wrap gap-1.5">
 								{#each filteredFamilies as fam (fam.id)}
 									<button
@@ -247,7 +247,7 @@
 					{/if}
 					{#if filteredQuests.length > 0}
 						<div class="flex flex-col gap-1.5">
-							<span class="eyebrow">Quests</span>
+							<span class="eyebrow-strong">Quests</span>
 							<div class="flex flex-wrap gap-1.5">
 								{#each filteredQuests as quest (quest.id)}
 									<button
@@ -263,7 +263,7 @@
 						</div>
 					{/if}
 					{#if !model.sourcesLoading && filteredFamilies.length === 0 && filteredQuests.length === 0}
-						<p class="text-xs text-text-tertiary px-1">
+						<p class="text-sm text-text-secondary px-1">
 							{sourceFilter.trim()
 								? 'Nothing matches the filter.'
 								: 'No quest families or quests yet; they are authored on the Quests page.'}
@@ -274,7 +274,7 @@
 							bind:value={segmentDraft}
 							class="flex-1 h-9 px-3 text-sm bg-surface/70 text-text rounded-md border border-border
 								outline-none transition-colors focus:border-accent/60
-								placeholder:text-text-tertiary/60"
+								placeholder:text-text-tertiary"
 							placeholder="Add a segment label (e.g. Warm-up)..."
 							aria-label="New segment label"
 							disabled={model.saving}
@@ -296,7 +296,7 @@
 			<section class="panel p-4 flex items-center justify-between gap-4">
 				<div class="flex flex-col gap-0.5">
 					<span class="text-sm text-text">Ad-hoc segments</span>
-					<span class="text-xs text-text-tertiary leading-relaxed max-w-sm">
+					<span class="text-sm text-text-secondary leading-relaxed max-w-sm">
 						Allow improvised free-text segment names for this session; off, it relies on
 						its roster's authored labels.
 					</span>
