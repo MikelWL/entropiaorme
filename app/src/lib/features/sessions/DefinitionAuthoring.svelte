@@ -309,7 +309,11 @@
 										{:else}
 											{@const open = isUnfolded(group.category)}
 											{@const allAdded = categoryFullyAdded(group)}
-											<div class="flex items-center gap-2 border-b border-border/40">
+											<div
+												class="flex items-center gap-2 {open
+													? 'category-head-open'
+													: 'border-b border-border/40'}"
+											>
 												<button
 													type="button"
 													class="flex flex-1 items-center gap-2 py-2 text-left cursor-pointer min-w-0
@@ -320,8 +324,9 @@
 													onclick={() => toggleCategory(group.category)}
 												>
 													<svg
-														class="h-3 w-3 shrink-0 text-text-secondary transition-transform
-															{open ? '' : '-rotate-90'}"
+														class="h-3 w-3 shrink-0 transition-[transform,color]
+															duration-[var(--duration-base)]
+															{open ? 'text-accent' : '-rotate-90 text-text-secondary'}"
 														fill="none"
 														stroke="currentColor"
 														viewBox="0 0 24 24"
@@ -329,10 +334,12 @@
 													>
 														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 													</svg>
-													<span class="truncate text-sm font-medium {allAdded ? 'text-text-tertiary' : 'text-text'}">
+													<span class="truncate text-sm font-semibold tracking-tight {allAdded
+														? 'text-text-tertiary'
+														: 'text-text'}">
 														{group.category}
 													</span>
-													<span class="text-sm text-text-secondary tabular-nums">{group.quests.length}</span>
+													<span class="text-xs text-text-tertiary tabular-nums">{group.quests.length}</span>
 												</button>
 												<button
 													type="button"
@@ -347,21 +354,25 @@
 												</button>
 											</div>
 											{#if open}
+												<div class="category-children">
 												{#each group.quests as quest (quest.id)}
 													{@const added = model.hasRosterRef('quest', quest.id)}
 													<button
 														type="button"
-														class="catalogue-row pl-5"
+														class="catalogue-row catalogue-row-child"
 														disabled={added || model.saving}
 														title={added ? 'Already in this session' : 'Add to this session'}
 														onclick={() => model.addQuest(quest)}
 													>
-														<span class="flex-1 truncate text-sm {added ? 'text-text-tertiary' : 'text-text-secondary'}">
+														<span class="flex-1 truncate text-[13px] {added
+															? 'text-text-tertiary'
+															: 'text-text-secondary'}">
 															{quest.name}
 														</span>
 														<span class="row-action">{added ? 'Added' : 'Add'}</span>
 													</button>
 												{/each}
+												</div>
 											{/if}
 										{/if}
 									{/each}
@@ -474,6 +485,41 @@
 	.catalogue-row:disabled {
 		cursor: default;
 	}
+	/* Containment without a container: an open category grows a rail from
+	   under its own chevron, each child reaches it with a short elbow, and
+	   the rail stops at the last child, closing the group in an L. Child
+	   rules are inset to the rail, so the separator rhythm itself says
+	   "these belong to the row above". */
+	.category-head-open {
+		border-bottom: 1px solid transparent;
+	}
+	.category-children {
+		position: relative;
+		padding-left: 1.5rem;
+	}
+	.category-children::before {
+		content: '';
+		position: absolute;
+		left: 0.375rem;
+		top: 0;
+		/* Half a row: the rail lands on the last elbow, not past it. */
+		bottom: 1.15rem;
+		width: 1px;
+		background: color-mix(in oklab, var(--color-border-bright) 55%, transparent);
+	}
+	.catalogue-row-child {
+		position: relative;
+	}
+	.catalogue-row-child::before {
+		content: '';
+		position: absolute;
+		left: -1.125rem;
+		top: 50%;
+		width: 0.75rem;
+		height: 1px;
+		background: color-mix(in oklab, var(--color-border-bright) 45%, transparent);
+	}
+
 	.row-action {
 		font-size: 0.75rem;
 		font-weight: 500;
