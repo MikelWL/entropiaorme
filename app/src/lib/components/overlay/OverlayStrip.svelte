@@ -118,7 +118,7 @@
 	const showManualInput = $derived(
 		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
-	// The session type (and the name it writes) is session-grain: picked
+	// The session (and the name it writes) is session-grain: picked
 	// before a session, fixed while one runs, corrected afterwards on the
 	// session record. (The boost is the other way round: it stamps each
 	// skill gain, so it stays editable throughout.)
@@ -242,10 +242,10 @@
 							aria-haspopup="menu"
 							aria-expanded={definitionMenuOpen}
 							title={!definitionEditable
-								? 'The session type is fixed while a session runs'
+								? 'The session is fixed while one runs'
 								: data.sessionName
-									? `${data.sessionName}; pick the session type for the next session`
-									: 'Pick the session type for the next session'}
+									? `${data.sessionName}; pick the session for the next run`
+									: 'Pick the session for the next run'}
 							onclick={(event) => onDefinitionTrigger(event.currentTarget as HTMLButtonElement)}
 						>
 							{#if data.sessionName}
@@ -258,10 +258,10 @@
 							<button
 								type="button"
 								class="release-btn shrink-0"
-								aria-label="Clear session type"
+								aria-label="Clear session"
 								disabled={savingDefinition || !definitionEditable}
 								onclick={onClearDefinition}
-								title="Clear session type"
+								title="Clear session"
 							>
 								{savingDefinition ? '...' : 'x'}
 							</button>

@@ -138,7 +138,7 @@ describe('createDefinitionsModel', () => {
 		model.openCreate();
 		model.name = '   ';
 		expect(await model.save()).toBe(false);
-		expect(model.authoringError).toBe('A session type needs a name');
+		expect(model.authoringError).toBe('A session needs a name');
 	});
 
 	it('drops a dead reference from the saved roster and updates in place', async () => {

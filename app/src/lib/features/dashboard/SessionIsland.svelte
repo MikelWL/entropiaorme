@@ -20,7 +20,7 @@
 	}: {
 		status: TrackingSnapshot | null;
 		statsGrid: StatsGridModel;
-		/** The session-type model; the route hosts it (and the authoring
+		/** The sessions model; the route hosts it (and the authoring
 		 * environment) so the surface can replace the whole dashboard. */
 		definitions: DefinitionsModel;
 	} = $props();
@@ -99,10 +99,13 @@
 				</span>
 			</div>
 		{:else}
-			<div class="flex items-center gap-3">
-				<span class="signal-dot idle"></span>
-				<span class="text-sm text-text-secondary">No active session</span>
-			</div>
+			<!-- At rest the island is titled by the session it will run as;
+				 the stats below already read @Rest, so nothing states it twice. -->
+			<DefinitionPicker
+				model={definitions}
+				selectedId={selectedDefinitionId}
+				onOpenAuthoring={openAuthoring}
+			/>
 		{/if}
 
 		<div class="flex items-center gap-2">
@@ -119,15 +122,6 @@
 		</div>
 	</div>
 
-	<!-- Session-type picker: which definition the next session starts as
-		 an instance of. Fixed while a session runs (the chips then just
-		 state the fact). -->
-	<DefinitionPicker
-		model={definitions}
-		selectedId={selectedDefinitionId}
-		locked={isActive}
-		onOpenAuthoring={openAuthoring}
-	/>
 	<ErrorNotice
 		message={startError ?? definitions.error}
 		onDismiss={() => {

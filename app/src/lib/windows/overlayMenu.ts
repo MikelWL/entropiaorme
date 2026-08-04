@@ -31,7 +31,7 @@ export interface OverlayTrifectaMenuState {
 	}[];
 }
 
-/** The session-type picker: the authored definitions with the current
+/** The session picker: the authored definitions with the current
  * selection marked. Tapping the selected row clears the selection;
  * tapping another switches to it. */
 export interface OverlayDefinitionMenuState {
@@ -127,7 +127,7 @@ export function menuRowCount(state: OverlayMenuState): number {
 	return Math.max(1, state.mobSuggestions.length);
 }
 
-/** The session-type picker's menu state over the fetched definitions.
+/** The session picker's menu state over the fetched definitions.
  * The width padding leaves room for the Selected badge beside a name. */
 export function buildDefinitionMenuState(
 	anchorWidth: number,
@@ -135,9 +135,7 @@ export function buildDefinitionMenuState(
 	selectedId: string | null,
 ): OverlayDefinitionMenuState {
 	const labels =
-		definitions.length > 0
-			? definitions.map((definition) => definition.name)
-			: ['No session types yet'];
+		definitions.length > 0 ? definitions.map((definition) => definition.name) : ['No sessions yet'];
 	return {
 		kind: 'definition',
 		width: computeMenuWidth(anchorWidth, labels, 96),

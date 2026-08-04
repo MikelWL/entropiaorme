@@ -36,7 +36,7 @@
 	const statsGrid = createStatsGridModel();
 	const guideDemo = createGuideDemoModel(statsGrid);
 
-	// The session-type surface: the island renders the picker; the stage
+	// The sessions surface: the island renders the picker; the stage
 	// hosts the authoring environment that replaces the dashboard while open.
 	const definitions = createLiveDefinitionsModel();
 

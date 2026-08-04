@@ -116,7 +116,7 @@
 		class="fixed inset-0 z-50 overflow-y-auto bg-base bg-grid focus:outline-hidden"
 		role="dialog"
 		aria-modal="true"
-		aria-label={editing ? 'Edit session type' : 'New session type'}
+		aria-label={editing ? 'Edit session' : 'New session'}
 		tabindex="-1"
 		in:surface={{ entering: true }}
 		out:surface={{ entering: false }}
@@ -125,11 +125,7 @@
 			<!-- Header: identity + the exits -->
 			<div class="flex items-start justify-between gap-4">
 				<div class="flex flex-col gap-1">
-					<span class="eyebrow-strong">{editing ? 'Edit session type' : 'New session type'}</span>
-					<p class="text-xs text-text-tertiary max-w-md leading-relaxed">
-						A session type is a reusable family of play: pick it before starting and the
-						sessions recorded under it group together.
-					</p>
+					<span class="eyebrow-strong">{editing ? 'Edit session' : 'New session'}</span>
 				</div>
 				<button
 					class="h-8 w-8 flex items-center justify-center rounded-md text-text-tertiary
@@ -147,15 +143,15 @@
 				</button>
 			</div>
 
-			<!-- Name: the type's identity, so it gets the headline slot -->
+			<!-- Name: the session's identity, so it gets the headline slot -->
 			<input
 				bind:this={nameInput}
 				bind:value={model.name}
 				class="w-full bg-transparent border-b border-border focus:border-accent text-2xl
 					font-semibold tracking-tight text-text px-1 py-2 outline-none
 					placeholder:text-text-tertiary/50 transition-colors"
-				placeholder="Name this session type..."
-				aria-label="Session type name"
+				placeholder="Name this session..."
+				aria-label="Session name"
 				disabled={model.saving}
 			/>
 
@@ -301,7 +297,7 @@
 				<div class="flex flex-col gap-0.5">
 					<span class="text-sm text-text">Ad-hoc segments</span>
 					<span class="text-xs text-text-tertiary leading-relaxed max-w-sm">
-						Allow improvised free-text segment names for this type; off, it relies on
+						Allow improvised free-text segment names for this session; off, it relies on
 						its roster's authored labels.
 					</span>
 				</div>

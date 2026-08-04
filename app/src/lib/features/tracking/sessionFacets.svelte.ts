@@ -1,6 +1,6 @@
 /**
  * The session-facet view model: the independent, co-recorded attributions
- * a tracking session carries (session type + designated name, skill
+ * a tracking session carries (the session played + its designated name, skill
  * boost, player-drawn segment, quest focus) and the writes that move
  * them. The quest facet is user-declared: the picker focuses and
  * unfocuses in-progress quests (completion closes a focused stretch by
@@ -10,7 +10,7 @@
  * its own value and carries the others through unchanged. Each facet may
  * be edited live only where its stamp grain is finer than the session:
  * the boost stamps each skill gain and a segment is a slice of the
- * session, so both float; the session type (and the name it writes) is
+ * session, so both float; the session (and the name it writes) is
  * session-grain, so the backend fixes it once a session runs (409) and
  * correction is a post-hoc move. The model respects these rather than
  * duplicating them.
@@ -25,20 +25,20 @@ export interface SessionFacetsDeps {
 	/** The facets currently in force, as the snapshot reports them.
 	 * `segment` is the open segment's name (null: none open; a segment
 	 * exists only while its session runs); `definitionId` is the
-	 * selected session type (stringified id). */
+	 * selected session (stringified id). */
 	readFacets: () => {
 		name: string | null;
 		definitionId: string | null;
 		boost: number | null;
 		segment: string | null;
 	};
-	/** Whether a session is running (gates the session-type lock). */
+	/** Whether a session is running (gates the session lock). */
 	isSessionActive: () => boolean;
 	/** Re-read the snapshot after a successful write. */
 	refresh: () => Promise<unknown>;
 	/** Full-state facet write: a null clears its facet. */
 	setSessionConfig: (name: string | null, boost: number | null) => Promise<unknown>;
-	/** Select the session type the next session starts under (null
+	/** Select the session the next run starts under (null
 	 * withdraws); the backend writes the name facet with it. */
 	selectDefinition: (id: number | null) => Promise<unknown>;
 	/** Open a segment on the running session, closing any standing one; a
@@ -61,7 +61,7 @@ function describe(error: unknown, fallback: string): string {
 }
 
 export function createSessionFacets(deps: SessionFacetsDeps) {
-	// The session-type selection's in-flight guard (the chip disables
+	// The session selection's in-flight guard (the chip disables
 	// while a selection write lands).
 	let savingDefinition = $state(false);
 
@@ -102,7 +102,7 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		await deps.refresh();
 	}
 
-	/** Select the session type for the next session (null withdraws both
+	/** Select the session for the next run (null withdraws both
 	 * the selection and the name it wrote). The route's picker menu
 	 * passes toggle semantics down to this single write. */
 	async function selectDefinition(id: string | null) {
@@ -114,7 +114,7 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		} catch (error) {
 			facetError = describe(
 				error,
-				id === null ? 'Failed to clear session type' : 'Failed to select session type',
+				id === null ? 'Failed to clear the session' : 'Failed to select the session',
 			);
 		}
 		savingDefinition = false;
@@ -285,7 +285,7 @@ export function createSessionFacets(deps: SessionFacetsDeps) {
 		get savingBoost() {
 			return savingBoost;
 		},
-		/** Whether the session type (and the name it writes) may still be
+		/** Whether the session (and the name it writes) may still be
 		 * set. Both are session-grain, so a live edit could only rewrite
 		 * the whole session's history: they are fixed once a session runs,
 		 * and correction is a post-hoc move on the session record. The

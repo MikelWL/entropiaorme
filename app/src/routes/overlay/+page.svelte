@@ -336,7 +336,7 @@
 		await hideOverlayMenu();
 	}
 
-	/** Open the session-type picker off its chip: fetch the authored
+	/** Open the session picker off its chip: fetch the authored
 	 * definitions fresh (the dashboard authors them; the overlay must
 	 * never present a stale catalogue) and present them with the
 	 * current selection marked. */
@@ -787,7 +787,7 @@
 		(data.status === 'active' || data.status === 'idle') && !data.currentMob
 	);
 	// The declared-mob typeahead (the one remaining free-text facet; the
-	// session type is picked from the authored definitions instead).
+	// session is picked from the authored definitions instead).
 	// Search failures are mapped to the overlay's established wording
 	// before the typeahead records them.
 	const mobTypeahead = createTypeahead<ManualMobSuggestion>({

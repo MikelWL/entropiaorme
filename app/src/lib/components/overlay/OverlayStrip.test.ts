@@ -135,37 +135,35 @@ describe('attribution warning', () => {
 });
 
 describe('session facets and declared mob', () => {
-	it('disables the session-type chip during an unnamed active session: the type is session-grain', () => {
+	it('disables the session chip during an unnamed active session: the session is session-grain', () => {
 		render(OverlayStrip, {
 			props: { data: liveData({ status: 'active', sessionName: null }), definitionEditable: false },
 		});
-		const chip = screen.getByTitle(
-			'The session type is fixed while a session runs',
-		) as HTMLButtonElement;
+		const chip = screen.getByTitle('The session is fixed while one runs') as HTMLButtonElement;
 		expect(chip.disabled).toBe(true);
 	});
 
-	it('offers the session-type picker chip while idle', () => {
+	it('offers the session picker chip while idle', () => {
 		const onDefinitionTrigger = vi.fn();
 		render(OverlayStrip, {
 			props: { data: liveData({ status: 'idle', sessionName: null }), onDefinitionTrigger },
 		});
-		const chip = screen.getByTitle('Pick the session type for the next session');
+		const chip = screen.getByTitle('Pick the session for the next run');
 		chip.click();
 		expect(onDefinitionTrigger).toHaveBeenCalledTimes(1);
 	});
 
-	// The session type is session-grain: editing it live could only
+	// The session is session-grain: editing it live could only
 	// rewrite the whole session's history, so a running session offers no
 	// control at all (not even a clear), and the record is where it gets
 	// corrected.
-	it('offers no session-type control at all during an active session', () => {
+	it('offers no session control at all during an active session', () => {
 		render(OverlayStrip, {
 			props: { data: liveData({ status: 'active', sessionName: 'ARIS Dailies' }) },
 		});
 		expect(screen.getByText('ARIS Dailies')).toBeTruthy();
 		expect(screen.queryByText('Pick...')).toBeNull();
-		expect(screen.queryByLabelText('Clear session type')).toBeNull();
+		expect(screen.queryByLabelText('Clear session')).toBeNull();
 	});
 
 	it('shows the selected type with a clear control beside the picker chip', () => {
@@ -180,7 +178,7 @@ describe('session facets and declared mob', () => {
 		expect(screen.getByText('ARIS Dailies')).toBeTruthy();
 		expect(screen.queryByText('Pick...')).toBeNull();
 
-		screen.getByLabelText('Clear session type').click();
+		screen.getByLabelText('Clear session').click();
 		expect(onClearDefinition).toHaveBeenCalledTimes(1);
 	});
 

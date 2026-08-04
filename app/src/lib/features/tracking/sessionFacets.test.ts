@@ -62,7 +62,7 @@ function harness(overrides: Partial<SessionFacetsDeps> = {}) {
 	};
 }
 
-describe('session-type facet', () => {
+describe('session facet', () => {
 	it('shapes the selection write (numeric id) and refreshes', async () => {
 		const { facets, facetState, selectDefinition, deps } = harness();
 

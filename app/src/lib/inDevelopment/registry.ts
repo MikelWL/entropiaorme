@@ -25,7 +25,7 @@ export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
 	{
 		id: 'session-definition-roster',
 		summary:
-			'A session type saves its activity roster and ad-hoc segment preference, but the overlay control that offers the roster while tracking is not built yet; segments stay free-text for every session meanwhile.',
+			'A session saves its activity roster and ad-hoc segment preference, but the overlay control that offers the roster while tracking is not built yet; segments stay free-text for every session meanwhile.',
 		graduates:
 			'Works once the overlay gains its roster-fed activity picker, which will offer these entries and honour the ad-hoc preference.',
 	},

@@ -79,7 +79,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 			definitions = await deps.listDefinitions();
 			error = null;
 		} catch (e) {
-			error = describeError(e, 'Failed to load session types');
+			error = describeError(e, 'Failed to load sessions');
 		} finally {
 			loading = false;
 		}
@@ -94,7 +94,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 			error = null;
 			await deps.refreshTracking();
 		} catch (e) {
-			error = describeError(e, 'Failed to select session type');
+			error = describeError(e, 'Failed to select the session');
 		} finally {
 			selecting = false;
 		}
@@ -220,7 +220,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	 * 409 there leaves the save intact and quiet. */
 	async function save(): Promise<boolean> {
 		if (!name.trim()) {
-			authoringError = 'A session type needs a name';
+			authoringError = 'A session needs a name';
 			return false;
 		}
 		saving = true;
@@ -241,7 +241,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 			close();
 			return true;
 		} catch (e) {
-			authoringError = describeError(e, 'Failed to save session type');
+			authoringError = describeError(e, 'Failed to save the session');
 			return false;
 		} finally {
 			saving = false;
@@ -266,7 +266,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 			close();
 			return true;
 		} catch (e) {
-			authoringError = describeError(e, 'Failed to delete session type');
+			authoringError = describeError(e, 'Failed to delete the session');
 			return false;
 		} finally {
 			saving = false;
