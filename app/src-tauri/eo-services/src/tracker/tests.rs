@@ -61,6 +61,7 @@ impl EquipmentLibrary for ScriptedEquipment {
 #[derive(Default)]
 struct ScriptedConfig {
     session_name: Option<String>,
+    session_definition_id: Option<i64>,
     skill_boost_percent: Option<i64>,
     manual_mob: Option<ManualMobScript>,
     trifecta_mode: bool,
@@ -70,6 +71,10 @@ struct ScriptedConfig {
 impl TrackingConfig for ScriptedConfig {
     fn session_name(&self) -> String {
         self.session_name.clone().unwrap_or_default()
+    }
+
+    fn session_definition_id(&self) -> Option<i64> {
+        self.session_definition_id
     }
 
     fn declared_skill_boost_percent(&self) -> Option<i64> {
@@ -4362,4 +4367,71 @@ fn a_weapon_equip_clears_the_harvest_hand_even_in_trifecta_mode() {
             source: Some("hotbar:1".into()),
         }));
     rig.probe(&tracker, |actor| assert!(!actor.hand_is_harvest));
+}
+
+#[test]
+fn a_selected_definition_stamps_the_session_row_at_start() {
+    let rig = rig();
+    rig.execute("INSERT INTO session_definitions (id, name) VALUES (7, 'ARIS Dailies')");
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            session_name: Some("ARIS Dailies".into()),
+            session_definition_id: Some(7),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT definition_id FROM tracking_sessions WHERE id = ?",
+            &[&session.id],
+        ),
+        7
+    );
+
+    // The stamped reference rides the live readout for the session's life.
+    let readout = rig.wait(tracker.snapshot()).unwrap();
+    let active = readout.active.unwrap();
+    assert_eq!(active.definition_id, Some(7));
+    assert_eq!(active.session_name.as_deref(), Some("ARIS Dailies"));
+}
+
+#[test]
+fn a_stale_definition_selection_stamps_null_and_keeps_the_name() {
+    let rig = rig();
+    // A definition selected and then soft-deleted while idle: the id
+    // must not stamp (it names nothing offerable), while the name
+    // facet remains an honest declaration of its own.
+    rig.execute(
+        "INSERT INTO session_definitions (id, name, is_active) VALUES (7, 'ARIS Dailies', 0)",
+    );
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            session_name: Some("ARIS Dailies".into()),
+            session_definition_id: Some(7),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let stamped: Option<i64> = {
+        let id = session.id.clone();
+        rig.wait(rig.db.with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT definition_id FROM tracking_sessions WHERE id = ?",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap()
+    };
+    assert_eq!(stamped, None);
+
+    let readout = rig.wait(tracker.snapshot()).unwrap();
+    let active = readout.active.unwrap();
+    assert_eq!(active.definition_id, None);
+    assert_eq!(active.session_name.as_deref(), Some("ARIS Dailies"));
 }

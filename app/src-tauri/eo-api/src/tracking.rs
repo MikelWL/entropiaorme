@@ -52,13 +52,14 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 44] = [
+const SNAPSHOT_FIELDS: [&str; 45] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
     "repairOcrEnabled",
     "endOfSessionArmourReminderEnabled",
     "sessionName",
+    "sessionDefinitionId",
     "skillBoostPercent",
     "segmentName",
     "currentMob",
@@ -493,6 +494,12 @@ pub struct TrackingSnapshot {
     /// configured next-session value when idle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_name: Option<String>,
+    /// The selected session definition (stringified id): the active
+    /// session's stamped reference when tracking, the configured
+    /// selection (re-validated against an active definition) when
+    /// idle. Absent when no definition is in force.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_definition_id: Option<String>,
     /// The skill-boost facet (labelled percent), same idle/active
     /// sourcing as the session name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -649,6 +656,15 @@ pub struct ManualMobLockResult {
 pub struct SessionConfigResult {
     pub session_name: Nullable<String>,
     pub skill_boost_percent: Nullable<i64>,
+}
+
+/// The definition-selection acknowledgement: the selection now in
+/// force (stringified id) and the session name it wrote (null: none).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DefinitionSelectResult {
+    pub session_definition_id: Nullable<String>,
+    pub session_name: Nullable<String>,
 }
 
 /// The segment acknowledgement: the segment name now in force on the
@@ -1162,6 +1178,13 @@ impl Api {
             }
             let mut updates = Map::new();
             updates.insert("session_name".into(), json!(name.as_deref().unwrap_or("")));
+            // A name write that CHANGES the name disavows the definition
+            // selection (selection is what writes the name, so a
+            // diverging name is a free-text declaration); an unchanged
+            // name (a boost-only write) leaves the selection standing.
+            if name.as_deref().unwrap_or("") != guard.get().session_name.trim() {
+                updates.insert("session_definition_id".into(), Value::Null);
+            }
             updates.insert("declared_skill_boost_percent".into(), json!(boost));
             guard
                 .update(&updates)
@@ -1173,6 +1196,58 @@ impl Api {
         Ok(SessionConfigResult {
             session_name: name.into(),
             skill_boost_percent: boost.into(),
+        })
+    }
+
+    /// Select the session definition the next session starts as an
+    /// instance of, writing the session-name facet with the
+    /// definition's name in the same motion; null withdraws the
+    /// selection and clears the name. 404 for an id naming no active
+    /// definition; 409 when a session is running and the selection
+    /// would change (the facet snapshots at start and never moves for
+    /// the session's life).
+    pub async fn tracking_definition_select(
+        &self,
+        definition_id: Option<i64>,
+    ) -> Result<DefinitionSelectResult, ApiError> {
+        let selected = match definition_id {
+            Some(id) => Some(
+                self.session_definitions
+                    .get_active(id)
+                    .await
+                    .map_err(crate::session_definitions::definition_error(
+                        "definition select",
+                    ))?
+                    .ok_or_else(|| ApiError::not_found("Session definition not found"))?,
+            ),
+            None => None,
+        };
+        let selected_id = selected.as_ref().map(|definition| definition.id);
+        let selected_name = selected.as_ref().map(|definition| definition.name.clone());
+        {
+            let Ok(mut guard) = self.config_service.lock() else {
+                return Err(ApiError::invalid_state(
+                    "definition select: poisoned config lock",
+                ));
+            };
+            if self.tracker.is_tracking() && guard.get().session_definition_id != selected_id {
+                return Err(ApiError::conflict(
+                    "Session definition is fixed for the active session; a new selection applies from the next session",
+                ));
+            }
+            let mut updates = Map::new();
+            updates.insert("session_definition_id".into(), json!(selected_id));
+            updates.insert(
+                "session_name".into(),
+                json!(selected_name.as_deref().unwrap_or("")),
+            );
+            guard
+                .update(&updates)
+                .map_err(ApiError::internal("definition select"))?;
+        }
+        Ok(DefinitionSelectResult {
+            session_definition_id: selected_id.map(|id| id.to_string()).into(),
+            session_name: selected_name.into(),
         })
     }
 
@@ -1591,6 +1666,31 @@ pub(crate) async fn build_snapshot_value(
         Value::Null
     };
 
+    // The definition facet, stringified for the wire (null drops the
+    // key under exclude-none). The idle branch re-validates the
+    // configured selection against an ACTIVE definition, so one deleted
+    // while idle stops reading as selected; the active branch trusts
+    // the id stamped (and validated) at session start.
+    let definition_value = |id: Option<i64>| match id {
+        Some(id) => json!(id.to_string()),
+        None => Value::Null,
+    };
+    let idle_definition_id = match config.session_definition_id {
+        Some(configured) => db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM session_definitions \
+                     WHERE id = ? AND is_active = 1",
+                    rusqlite::params![configured],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .map(|found| (found > 0).then_some(configured))
+            .map_err(ApiError::internal("snapshot definition selection"))?,
+        None => None,
+    };
+
     let value = match &readout.active {
         None => {
             json!({
@@ -1603,6 +1703,7 @@ pub(crate) async fn build_snapshot_value(
                 "currentActivity": current_activity,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(Some(config.session_name.trim())),
+                "sessionDefinitionId": definition_value(idle_definition_id),
                 "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
                 "questsInProgress": quests_in_progress,
@@ -1679,6 +1780,7 @@ pub(crate) async fn build_snapshot_value(
                 "questsInProgress": quests_in_progress,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
+                "sessionDefinitionId": definition_value(active.definition_id),
                 "skillBoostPercent": boost_value(active.skill_boost_percent),
                 "segmentName": name_value(active.segment_name.as_deref()),
                 "currentMob": active.current_mob.clone(),

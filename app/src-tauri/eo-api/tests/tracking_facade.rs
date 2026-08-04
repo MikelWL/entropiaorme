@@ -925,6 +925,9 @@ impl eo_services::tracker::TrackingConfig for NamedSessionConfig {
     fn session_name(&self) -> String {
         self.0.to_string()
     }
+    fn session_definition_id(&self) -> Option<i64> {
+        None
+    }
     fn declared_skill_boost_percent(&self) -> Option<i64> {
         None
     }

@@ -1519,6 +1519,10 @@ impl TrackingConfig for LiveTrackingConfig {
         self.reader.current().session_name.clone()
     }
 
+    fn session_definition_id(&self) -> Option<i64> {
+        self.reader.current().session_definition_id
+    }
+
     fn declared_skill_boost_percent(&self) -> Option<i64> {
         self.reader.current().declared_skill_boost_percent
     }

@@ -83,6 +83,11 @@ pub struct AppConfig {
     pub manual_mob_maturity: String,
     /// The designated session-name facet the next session snapshots.
     pub session_name: String,
+    /// The selected session definition the next session starts as an
+    /// instance of; `None` is "no definition". Selection also writes
+    /// `session_name` (the definition's name), so the two move
+    /// together; a free-text rename of the name facet clears this.
+    pub session_definition_id: Option<i64>,
     /// The skill-boost facet the next session opens under, three-state:
     /// `None` claims nothing, `Some(0)` declares deliberately-unboosted
     /// play (the baseline an effect is measured against), and `Some(n)`
@@ -125,6 +130,7 @@ impl Default for AppConfig {
             manual_mob_species: String::new(),
             manual_mob_maturity: String::new(),
             session_name: String::new(),
+            session_definition_id: None,
             declared_skill_boost_percent: None,
             hotbar,
             trifecta_presets: vec![TrifectaPresetConfig::default_preset()],
@@ -400,6 +406,13 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
         } else {
             String::new()
         },
+        // A missing key, an explicit null, or a hand-edited non-positive
+        // id all read as "no definition selected" rather than failing
+        // the whole config load.
+        session_definition_id: data
+            .get("session_definition_id")
+            .and_then(Value::as_i64)
+            .filter(|id| *id > 0),
         // A missing key, an explicit null, and a hand-edited negative all
         // read as "not declared" rather than failing the whole config load
         // (the same tolerance the other fields carry). A stored 0 is a
@@ -446,7 +459,7 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
 // facet splits into "not declared" and "declared zero". Reading it
 // forward would turn every existing store's default into a claim the
 // user never made, so it stays unknown and carries through untouched.
-const KNOWN_KEYS: [&str; 18] = [
+const KNOWN_KEYS: [&str; 19] = [
     "chatlog_path",
     "player_name",
     "hotbar_hooks_enabled",
@@ -456,6 +469,7 @@ const KNOWN_KEYS: [&str; 18] = [
     "manual_mob_species",
     "manual_mob_maturity",
     "session_name",
+    "session_definition_id",
     "declared_skill_boost_percent",
     "hotbar",
     "trifecta_presets",
@@ -607,6 +621,11 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
             "manual_mob_species" => assign_string(&mut config.manual_mob_species, value),
             "manual_mob_maturity" => assign_string(&mut config.manual_mob_maturity, value),
             "session_name" => assign_string(&mut config.session_name, value),
+            // An explicit null withdraws the selection; a non-positive
+            // id is nonsense and reads as a withdrawal too.
+            "session_definition_id" => {
+                config.session_definition_id = value.as_i64().filter(|id| *id > 0);
+            }
             // Stored as given: the settings boundary refuses a negative
             // outright rather than silently coercing it to "no boost".
             // An explicit null withdraws the declaration, which is a

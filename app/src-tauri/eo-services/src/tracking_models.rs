@@ -161,6 +161,9 @@ pub struct ActiveSessionView {
     pub current_mob: Option<String>,
     /// The session's designated name facet, when one was set.
     pub session_name: Option<String>,
+    /// The session definition this session is an instance of, as
+    /// stamped at start; None for a session outside any definition.
+    pub definition_id: Option<i64>,
     /// The skill-boost facet the session runs under (percent), when set.
     pub skill_boost_percent: Option<i64>,
     /// The open segment's name; None whenever no segment is open (a
