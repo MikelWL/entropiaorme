@@ -9,7 +9,12 @@
  * (the playlist-items precedent), so the draft here is a plain array
  * the editor mutates freely; nothing persists until Save. Segment
  * entries are never drafted here: they arrive by being named in the
- * overlay while playing, and the editor only prunes and reorders them.
+ * overlay while playing, and the editor only prunes them.
+ *
+ * The draft is kept in display order (by kind, then alphabetically),
+ * which is also the order it saves in and the order the overlay offers
+ * it. Nothing is hand-ordered: a roster is a set of things this session
+ * is for, and a predictable A-Z beats remembering how it was typed up.
  */
 
 import type { SessionDefinition, SessionDefinitionInput, SessionRosterEntryKind } from '$lib/api';
@@ -39,6 +44,21 @@ export interface RosterDraftEntry {
 	label: string | null;
 	displayName: string;
 	missing: boolean;
+}
+
+/** Roster kinds in reading order, most general first; entries sort by
+ * this and then by name. */
+const KIND_ORDER: Record<SessionRosterEntryKind, number> = {
+	quest_family: 0,
+	quest: 1,
+	segment: 2,
+};
+
+function byKindThenName(a: RosterDraftEntry, b: RosterDraftEntry): number {
+	return (
+		KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+		a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })
+	);
 }
 
 /** A catalogue group: one quest category, or the uncategorised tail
@@ -129,7 +149,9 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	const catalogFamilies = $derived(
 		catalogPlanet === null
 			? []
-			: families.filter((family) => family.planet === catalogPlanet && matchesFilter(family.name)),
+			: families
+					.filter((family) => family.planet === catalogPlanet && matchesFilter(family.name))
+					.toSorted((a, b) => a.name.localeCompare(b.name)),
 	);
 
 	/** The offered quests grouped by their own category, alphabetically,
@@ -220,14 +242,16 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		editingProtected = definition.isProtected;
 		name = definition.name;
 		adHocSegments = definition.adHocSegments;
-		roster = definition.roster.map((entry) => ({
-			key: rosterKey(),
-			kind: entry.kind,
-			refId: entry.refId,
-			label: entry.label,
-			displayName: entry.displayName ?? entry.label ?? '',
-			missing: entry.displayName === null,
-		}));
+		roster = definition.roster
+			.map((entry) => ({
+				key: rosterKey(),
+				kind: entry.kind,
+				refId: entry.refId,
+				label: entry.label,
+				displayName: entry.displayName ?? entry.label ?? '',
+				missing: entry.displayName === null,
+			}))
+			.sort(byKindThenName);
 		authoringError = null;
 		deleteArmed = false;
 		catalogPlanet = null;
@@ -249,32 +273,28 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 
 	function addFamily(family: QuestFamily) {
 		if (hasReference('quest_family', family.id)) return;
-		roster = [
-			...roster,
-			{
-				key: rosterKey(),
-				kind: 'quest_family',
-				refId: family.id,
-				label: null,
-				displayName: family.name,
-				missing: false,
-			},
-		];
+		const entry: RosterDraftEntry = {
+			key: rosterKey(),
+			kind: 'quest_family',
+			refId: family.id,
+			label: null,
+			displayName: family.name,
+			missing: false,
+		};
+		roster = [...roster, entry].sort(byKindThenName);
 	}
 
 	function addQuest(quest: Quest) {
 		if (hasReference('quest', quest.id)) return;
-		roster = [
-			...roster,
-			{
-				key: rosterKey(),
-				kind: 'quest',
-				refId: quest.id,
-				label: null,
-				displayName: quest.name,
-				missing: false,
-			},
-		];
+		const entry: RosterDraftEntry = {
+			key: rosterKey(),
+			kind: 'quest',
+			refId: quest.id,
+			label: null,
+			displayName: quest.name,
+			missing: false,
+		};
+		roster = [...roster, entry].sort(byKindThenName);
 	}
 
 	/** Add every quest in a category in one go; the per-quest guard makes
@@ -285,15 +305,6 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 
 	function removeEntry(index: number) {
 		roster = roster.filter((_, i) => i !== index);
-	}
-
-	function moveEntry(index: number, delta: -1 | 1) {
-		const target = index + delta;
-		if (target < 0 || target >= roster.length) return;
-		const next = [...roster];
-		const [entry] = next.splice(index, 1);
-		next.splice(target, 0, entry);
-		roster = next;
 	}
 
 	// ── Persistence ──
@@ -474,7 +485,6 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		addQuest,
 		addQuests,
 		removeEntry,
-		moveEntry,
 		save,
 		deleteEditing,
 	};

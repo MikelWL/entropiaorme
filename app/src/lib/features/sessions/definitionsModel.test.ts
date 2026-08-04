@@ -105,27 +105,29 @@ describe('createDefinitionsModel', () => {
 		expect(deps.refreshTracking).toHaveBeenCalledTimes(1);
 	});
 
-	it('drafts a roster with dedupe, ordering moves, and removal', () => {
+	it('drafts a roster with dedupe and removal, ordered by kind then name', () => {
 		const model = createDefinitionsModel(makeDeps());
 		model.openCreate();
-		model.addFamily(family('3', 'Daily Hunting 1'));
-		model.addFamily(family('3', 'Daily Hunting 1'));
 		model.addQuest({ id: '9', name: 'The Ultimate Threat' } as Quest);
+		model.addFamily(family('3', 'Daily Hunting 2'));
+		model.addQuest({ id: '4', name: 'Aakas Ambush' } as Quest);
+		model.addFamily(family('1', 'Daily Hunting 1'));
+		model.addFamily(family('1', 'Daily Hunting 1'));
+		// Families first, then quests, each alphabetically: nothing is
+		// hand-ordered, so the list reads the same however it was built.
 		expect(model.roster.map((entry) => entry.displayName)).toEqual([
 			'Daily Hunting 1',
+			'Daily Hunting 2',
+			'Aakas Ambush',
 			'The Ultimate Threat',
 		]);
 
-		model.moveEntry(1, -1);
+		model.removeEntry(1);
 		expect(model.roster.map((entry) => entry.displayName)).toEqual([
-			'The Ultimate Threat',
 			'Daily Hunting 1',
+			'Aakas Ambush',
+			'The Ultimate Threat',
 		]);
-		model.moveEntry(0, -1);
-		expect(model.roster[0].displayName).toBe('The Ultimate Threat');
-
-		model.removeEntry(0);
-		expect(model.roster.map((entry) => entry.displayName)).toEqual(['Daily Hunting 1']);
 	});
 
 	it('saves a create, selects the new definition, and closes', async () => {

@@ -187,36 +187,14 @@
 										{:else}
 											<span class="text-sm text-text truncate flex-1">{entry.displayName}</span>
 										{/if}
-										<div class="flex items-center gap-0.5 shrink-0">
-											<button
-												type="button"
-												class="p-1 text-text-secondary cursor-pointer transition-colors
-													duration-[var(--duration-base)] hover:text-text
-													disabled:opacity-40 disabled:cursor-not-allowed"
-												aria-label="Move up"
-												title="Move up"
-												disabled={i === 0 || model.saving}
-												onclick={() => model.moveEntry(i, -1)}
-											>&uarr;</button>
-											<button
-												type="button"
-												class="p-1 text-text-secondary cursor-pointer transition-colors
-													duration-[var(--duration-base)] hover:text-text
-													disabled:opacity-40 disabled:cursor-not-allowed"
-												aria-label="Move down"
-												title="Move down"
-												disabled={i === model.roster.length - 1 || model.saving}
-												onclick={() => model.moveEntry(i, 1)}
-											>&darr;</button>
-											<button
-												type="button"
-												class="icon-button-row p-1"
-												aria-label="Remove from the session"
-												title="Remove"
-												disabled={model.saving}
-												onclick={() => model.removeEntry(i)}
-											>&times;</button>
-										</div>
+										<button
+											type="button"
+											class="icon-button-row p-1 shrink-0"
+											aria-label="Remove from the session"
+											title="Remove"
+											disabled={model.saving}
+											onclick={() => model.removeEntry(i)}
+										>&times;</button>
 									</li>
 								{/each}
 							</ul>
