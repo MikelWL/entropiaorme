@@ -2,7 +2,6 @@
 	import { untrack } from 'svelte';
 	import { quintOut } from 'svelte/easing';
 	import { Button, ErrorNotice, SearchInput, Select, Toggle } from '$lib/components';
-	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import type {
 		DefinitionsModel,
@@ -149,11 +148,8 @@
 			/>
 
 			<!-- Activities: the roster and its on-the-fly option, folded away
-				 behind one disclosure. Authored and saved now, consumed by the
-				 overlay's roster-fed activity picker once that control lands.
-				 Registered in-development: hidden on the stable channel, marked
-				 everywhere else. -->
-			{#if inDevelopment.visible}
+				 behind one disclosure. What is authored here is what the
+				 overlay's Activities control offers while the session runs. -->
 			<section class="panel flex flex-col">
 				<div class="flex items-center gap-2 pr-4">
 					<button
@@ -179,7 +175,6 @@
 							<span class="text-sm text-text-secondary tabular-nums">{model.roster.length}</span>
 						{/if}
 					</button>
-					<InDevelopmentMark id="session-definition-roster" />
 				</div>
 
 				{#if activitiesOpen}
@@ -432,7 +427,6 @@
 					</div>
 				{/if}
 			</section>
-			{/if}
 
 			{#if model.authoringError}
 				<ErrorNotice message={model.authoringError} />

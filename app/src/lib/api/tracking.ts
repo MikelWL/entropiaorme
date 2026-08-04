@@ -7,6 +7,7 @@
  */
 
 import type {
+	ActivitySummary,
 	HarvestGuardrailAlert,
 	NotableEventCategory,
 	NotableEventType,
@@ -47,18 +48,14 @@ export interface TrackingLive {
 	 * selection when idle. */
 	sessionDefinitionId?: string | null;
 	skillBoostPercent?: number | null;
-	/** The open segment's name (a segment exists only while active). */
-	segmentName?: string | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
 	/** What the held tool implies the next action records as. */
 	currentActivity?: ToolActivity | null;
-	/** The focused quests' names, newest first: the effort stretches the
-	 * user declared (several can stack via additive focus). */
-	questNames?: string[] | null;
-	/** How many quests the mission log carries right now (the focus
-	 * picker's chip supply). */
-	questsInProgress?: number | null;
+	/** The Activities control's strip-level readout: whether the control
+	 * appears at all, the ready cue, and the standing set. Active-only
+	 * (an activity exists exactly while its session runs). */
+	activities?: ActivitySummary | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
 	recentEvents?: {
@@ -95,20 +92,17 @@ export const setSessionConfig = commands.trackingSessionConfig;
 export const selectDefinition = commands.trackingDefinitionSelect;
 export const scanRepairCost = commands.trackingRepairScan;
 export const saveArmourCost = commands.trackingArmourCost;
-/** Open a player-drawn segment on the running session, closing any
- * standing one; a null name is auto-numbered ("Segment N"). */
-export const openSessionSegment = commands.trackingSegmentOpen;
-export const closeSessionSegment = commands.trackingSegmentClose;
-/** Rename the open segment live (its grain is finer than the session). */
-export const renameSessionSegment = commands.trackingSegmentRename;
-/** Focus a quest: the one-tap switch (exclusive over quests) unless
- * additive, which joins the standing focus instead. */
-export const focusSessionQuest = commands.trackingQuestFocus;
-/** End one quest's focus, leaving siblings running. Idempotent. */
-export const unfocusSessionQuest = commands.trackingQuestUnfocus;
-/** The focus picker's options: in-progress quests (with focused state)
- * and recalled segment-name presets for the current session name. */
-export const getFocusOptions = commands.trackingFocusOptions;
+/** What the Activities control offers right now: the session
+ * definition's roster resolved against what is actually in play, plus
+ * the facts nobody rostered. Absent (`visible: false`) when the control
+ * has nothing to offer. */
+export const getActivityOptions = commands.trackingActivityOptions;
+/** Declare an activity: the one-tap switch (exclusive across quests AND
+ * segments) unless additive, which co-activates instead. A blank segment
+ * label is auto-numbered; a typed one is promoted into the roster. */
+export const activateActivity = commands.trackingActivityActivate;
+/** End one standing activity, leaving the others running. Idempotent. */
+export const deactivateActivity = commands.trackingActivityDeactivate;
 
 const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
 

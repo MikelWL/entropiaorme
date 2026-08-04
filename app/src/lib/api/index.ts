@@ -19,6 +19,11 @@ export * from './codex';
 // and `HarvestData` are the consumer-facing names of the analytics
 // aggregates.
 export type {
+	ActiveActivityView,
+	ActivityOption,
+	ActivityOptionsResult,
+	ActivitySummary,
+	ActivityTargetKind,
 	AnalyticsHarvest as HarvestData,
 	AnalyticsHunting as HuntingData,
 	ApiErrorKind,
@@ -26,8 +31,6 @@ export type {
 	AuctionExpireInput,
 	AuctionListing,
 	AuctionListingInput,
-	FocusOptionsResult,
-	FocusQuestOption,
 	ManualMobSuggestion,
 	MarketBreakEven,
 	MarketBreakEvenCell,

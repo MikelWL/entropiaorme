@@ -35,11 +35,11 @@
 		await requestClose();
 	}
 
-	/** A focus quest toggle keeps the picker open (the overlay re-shows it
-	 * with the refreshed focused states), so joining a second daily is not
-	 * a close-and-reopen; presets still close on selection, like every
-	 * other menu pick. */
-	async function handleFocusQuestSelection(selection: OverlayMenuSelection) {
+	/** An Activities action keeps the control open (the overlay re-shows
+	 * it with the refreshed rows), so declaring one thing after another
+	 * is not a close-and-reopen, and the switch's effect is visible where
+	 * it happened. */
+	async function handleActivitySelection(selection: OverlayMenuSelection) {
 		suppressBlurCloseUntil = Date.now() + 400;
 		await currentWindow.emitTo('overlay', OVERLAY_MENU_SELECT_EVENT, selection).catch(() => {});
 	}
@@ -107,9 +107,9 @@
 		onwheel={signalInteraction}
 	>
 		<OverlayMenuPanel
-			state={menuState}
+			{menuState}
 			onSelect={handleSelection}
-			onFocusSelect={handleFocusQuestSelection}
+			onActivitySelect={handleActivitySelection}
 		/>
 	</div>
 {/if}

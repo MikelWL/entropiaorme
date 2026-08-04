@@ -19,9 +19,8 @@
 		savingDefinition = false,
 		definitionEditable = true,
 		savingBoost = false,
-		savingSegment = false,
-		savingFocus = false,
-		focusMenuOpen = false,
+		savingActivity = false,
+		activitiesMenuOpen = false,
 		facetError = null,
 		trifectaSaving = false,
 		trifectaError = null,
@@ -37,7 +36,6 @@
 		mobQuery = $bindable(''),
 		mobInput = $bindable(null),
 		boostDraft = $bindable(''),
-		segmentDraft = $bindable(''),
 		postSessionArmourButton = $bindable(null),
 		awaitingArmourTrackDecision = false,
 		attributionWarning = null,
@@ -51,11 +49,7 @@
 		onMobKeydown = noop,
 		onDefinitionTrigger = noop,
 		onBoostCommit = noop,
-		onSegmentCommit = noop,
-		onSegmentBlur = noop,
-		onSegmentNext = noop,
-		onSegmentClose = noop,
-		onFocusTrigger = noop,
+		onActivitiesTrigger = noop,
 		onTrifectaTrigger = noop,
 		onArmourCostToggle = noop
 	}: {
@@ -67,9 +61,8 @@
 		savingDefinition?: boolean;
 		definitionEditable?: boolean;
 		savingBoost?: boolean;
-		savingSegment?: boolean;
-		savingFocus?: boolean;
-		focusMenuOpen?: boolean;
+		savingActivity?: boolean;
+		activitiesMenuOpen?: boolean;
 		facetError?: string | null;
 		trifectaSaving?: boolean;
 		trifectaError?: string | null;
@@ -85,7 +78,6 @@
 		mobQuery?: string;
 		mobInput?: HTMLInputElement | null;
 		boostDraft?: string;
-		segmentDraft?: string;
 		postSessionArmourButton?: HTMLButtonElement | null;
 		awaitingArmourTrackDecision?: boolean;
 		attributionWarning?: string | null;
@@ -99,11 +91,7 @@
 		onMobKeydown?: (event: KeyboardEvent) => void | Promise<void>;
 		onDefinitionTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onBoostCommit?: () => void | Promise<void>;
-		onSegmentCommit?: () => void | Promise<void>;
-		onSegmentBlur?: () => void | Promise<void>;
-		onSegmentNext?: () => void | Promise<void>;
-		onSegmentClose?: () => void | Promise<void>;
-		onFocusTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
+		onActivitiesTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onArmourCostToggle?: (event: MouseEvent) => void | Promise<void>;
 	} = $props();
@@ -120,9 +108,12 @@
 	// before a session, fixed while one runs, corrected afterwards on the
 	// session record. (The boost is the other way round: it stamps each
 	// skill gain, so it stays editable throughout.)
-	// The quest facet's readout: auto-recorded open stretches, never
-	// declared here (the quest lifecycle owns the writes).
-	const questNames = $derived(data.questNames ?? null);
+	// The Activities readout, straight off the tracking frame: whether
+	// the control appears at all, what is standing, and how many rows a
+	// tap could start. The menu's own rows are fetched when it opens.
+	const activities = $derived(data.activities ?? null);
+	const standing = $derived(activities?.active ?? []);
+	const readyCount = $derived(activities?.readyCount ?? 0);
 	// What the held tool implies the next action records as. Derived from
 	// evidence, never declared, so it is shown as feedback and never asked.
 	const activityLabel = $derived(
@@ -290,93 +281,50 @@
 				</div>
 			</div>
 
-			<!-- Quest: the focus declaration. The mission log only witnesses
-				 pickup and hand-in, so which stretch of play advances a quest
-				 is declared here: the picker lists the in-progress quests
-				 (one tap switches, + joins additively) and recalls segment
-				 presets for this session name. A completion closes its
-				 focused stretch by itself. -->
-			<div class="flex flex-col shrink-0">
-				<span class="facet-label">Quest</span>
-				<div class="flex items-center" data-testid="quest-facet">
-					<button
-						type="button"
-						class="facet-chip {questNames && questNames.length > 0 ? 'facet-chip-open' : ''}"
-						disabled={!isActive || savingFocus}
-						aria-haspopup="menu"
-						aria-expanded={focusMenuOpen}
-						title={!isActive
-							? 'Start a session to declare which quest the play is toward'
-							: questNames && questNames.length > 0
-								? `Focused: ${questNames.join(', ')}`
-								: 'Declare which quest the play from now on is toward'}
-						onclick={(event) => onFocusTrigger(event.currentTarget as HTMLButtonElement)}
-					>
-						{#if questNames && questNames.length > 0}
-							<span class="truncate max-w-[110px]"
-								>{questNames[0]}{questNames.length > 1 ? ` +${questNames.length - 1}` : ''}</span
-							>
-						{:else if data.questsInProgress}
-							<span class="whitespace-nowrap"
-								>{data.questsInProgress} ready</span
-							>
+			<!-- Activities: what the play from now on counts toward. One
+				 control over the session's authored roster and whatever the
+				 mission log actually carries, so switching from one boss to
+				 the next is a single tap. Absent, not disabled, when the
+				 session has nothing to offer: a deliberately simple session
+				 gets no activity surface at all. -->
+			{#if activities?.visible}
+				<div class="flex flex-col shrink-0" data-testid="activities-facet">
+					<span class="facet-label">Activities</span>
+					<div class="flex items-center gap-1">
+						{#if standing.length > 0}
+							{#each standing as activity (activity.key)}
+								<button
+									type="button"
+									class="facet-chip facet-chip-open max-w-[140px]"
+									disabled={savingActivity}
+									aria-haspopup="menu"
+									aria-expanded={activitiesMenuOpen}
+									title={`Recording ${activity.name}; open the activities`}
+									onclick={(event) => onActivitiesTrigger(event.currentTarget as HTMLButtonElement)}
+								>
+									<span class="truncate">{activity.name}</span>
+								</button>
+							{/each}
 						{:else}
-							<span>{NO_DATA}</span>
+							<button
+								type="button"
+								class="facet-chip"
+								disabled={savingActivity}
+								aria-haspopup="menu"
+								aria-expanded={activitiesMenuOpen}
+								title="Declare what the play from now on counts toward"
+								onclick={(event) => onActivitiesTrigger(event.currentTarget as HTMLButtonElement)}
+							>
+								{#if readyCount > 0}
+									<span class="whitespace-nowrap">{readyCount} ready</span>
+								{:else}
+									<span>{NO_DATA}</span>
+								{/if}
+							</button>
 						{/if}
-					</button>
+					</div>
 				</div>
-			</div>
-
-			<!-- Segment: the player-drawn slice of the session (one instance
-				 run, one rotation of a daily). Finer-grained than the session,
-				 so it edits live: the field renames the open segment in place,
-				 and the + button draws the next boundary in one click, closing
-				 the standing segment (segments are sequential). A blank name
-				 is auto-numbered by open count. -->
-			<div class="flex flex-col shrink-0">
-				<span class="facet-label">Segment</span>
-				<div class="flex items-center gap-1">
-					<input
-						class="w-24 bg-transparent border-b border-white/10 focus:border-accent text-sm text-white/90 px-1 py-0.5 outline-none placeholder:text-white/20 transition-colors"
-						bind:value={segmentDraft}
-						placeholder={isActive ? 'Segment...' : NO_DATA}
-						aria-label="Segment name"
-						title={!isActive
-							? 'Start a session to draw segments'
-							: data.segmentName
-								? 'Rename the open segment'
-								: 'Name the next segment; leave blank to auto-number'}
-						disabled={!isActive || savingSegment}
-						onblur={onSegmentBlur}
-						onkeydown={(event) => {
-							if (event.key === 'Enter') {
-								event.preventDefault();
-								void onSegmentCommit();
-							}
-						}}
-					/>
-					<button
-						type="button"
-						class="release-btn shrink-0"
-						aria-label={data.segmentName ? 'Start next segment' : 'Start segment'}
-						disabled={!isActive || savingSegment}
-						onclick={onSegmentNext}
-						title={data.segmentName
-							? 'Start the next segment (closes the current one)'
-							: 'Start a segment'}
-					>+</button>
-					{#if data.segmentName && isActive}
-						<button
-							type="button"
-							class="release-btn shrink-0"
-							aria-label="Close segment"
-							disabled={savingSegment}
-							onclick={onSegmentClose}
-							title="Close the open segment"
-						>x</button>
-					{/if}
-				</div>
-			</div>
+			{/if}
 		</div>
 
 		<!-- Declared mob: the source of each kill's mob stamp, changeable

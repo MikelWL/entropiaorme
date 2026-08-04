@@ -206,32 +206,6 @@ describe('session facets and declared mob', () => {
 		expect(input.disabled).toBe(false);
 	});
 
-	it('reads out the auto-recorded quest stretches, stacking as a count', () => {
-		const { unmount } = render(OverlayStrip, {
-			props: { data: liveData({ status: 'active', questNames: ['Daily: Carabok'] }) },
-		});
-		expect(screen.getByText('Daily: Carabok')).toBeTruthy();
-		unmount();
-
-		// Three dailies at once: the newest shows, the rest fold into a
-		// count (the full set rides the title).
-		render(OverlayStrip, {
-			props: {
-				data: liveData({
-					status: 'active',
-					questNames: ['Daily: Carabok', 'Daily: Monura', 'Daily: Atrox'],
-				}),
-			},
-		});
-		expect(screen.getByText('Daily: Carabok +2')).toBeTruthy();
-	});
-
-	it('shows no quest claim when nothing is recorded', () => {
-		render(OverlayStrip, { props: { data: liveData({ status: 'active' }) } });
-		const facet = screen.getByTestId('quest-facet');
-		expect(facet.textContent?.trim()).toBe('\u2014');
-	});
-
 	it('shows the mob input when no mob is declared', () => {
 		render(OverlayStrip, { props: { data: liveData({ currentMob: null }) } });
 		expect(screen.getByPlaceholderText('Mob...')).toBeTruthy();
@@ -512,67 +486,76 @@ describe('post-session bar', () => {
 	});
 });
 
-describe('segment control', () => {
-	it('disables the whole control while idle: a segment exists only during a session', () => {
-		render(OverlayStrip, { props: { data: liveData() } });
+describe('activities control', () => {
+	/** The strip-level readout, as the tracking frame carries it. */
+	function activities(overrides: Partial<NonNullable<TrackingLive['activities']>> = {}) {
+		return {
+			visible: true,
+			adHocSegments: false,
+			readyCount: 0,
+			active: [],
+			...overrides,
+		};
+	}
 
-		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
-		expect(input.disabled).toBe(true);
-		expect(input.title).toBe('Start a session to draw segments');
-		expect((screen.getByLabelText('Start segment') as HTMLButtonElement).disabled).toBe(true);
-	});
-
-	it('offers the name field and start button while active with no segment open', async () => {
-		const onSegmentNext = vi.fn();
+	it('is absent, not disabled, when the session has nothing to offer', () => {
 		render(OverlayStrip, {
-			props: { data: liveData({ status: 'active' }), onSegmentNext },
+			props: { data: liveData({ status: 'active', activities: activities({ visible: false }) }) },
 		});
-
-		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
-		expect(input.disabled).toBe(false);
-		expect(input.title).toBe('Name the next segment; leave blank to auto-number');
-
-		screen.getByLabelText('Start segment').click();
-		expect(onSegmentNext).toHaveBeenCalledTimes(1);
-		// No segment open: nothing to close.
-		expect(screen.queryByLabelText('Close segment')).toBeNull();
+		expect(screen.queryByTestId('activities-facet')).toBeNull();
 	});
 
-	it('offers next and close controls while a segment is open', async () => {
-		const onSegmentNext = vi.fn();
-		const onSegmentClose = vi.fn();
+	it('is absent while idle: there is no now to declare into', () => {
+		render(OverlayStrip, { props: { data: liveData({ status: 'idle' }) } });
+		expect(screen.queryByTestId('activities-facet')).toBeNull();
+	});
+
+	it('shows how many rows a tap could start when nothing is recording', () => {
 		render(OverlayStrip, {
-			props: {
-				data: liveData({ status: 'active', segmentName: 'Boss 1' }),
-				onSegmentNext,
-				onSegmentClose,
-			},
+			props: { data: liveData({ status: 'active', activities: activities({ readyCount: 3 }) }) },
 		});
-
-		expect((screen.getByLabelText('Segment name') as HTMLInputElement).title).toBe(
-			'Rename the open segment',
-		);
-		screen.getByLabelText('Start next segment').click();
-		expect(onSegmentNext).toHaveBeenCalledTimes(1);
-		screen.getByLabelText('Close segment').click();
-		expect(onSegmentClose).toHaveBeenCalledTimes(1);
+		expect(screen.getByText('3 ready')).toBeTruthy();
 	});
 
-	it('commits on Enter and forwards blur to its handler', async () => {
-		const onSegmentCommit = vi.fn();
-		const onSegmentBlur = vi.fn();
+	it('says nothing rather than promising a count it cannot honour', () => {
+		render(OverlayStrip, {
+			props: { data: liveData({ status: 'active', activities: activities() }) },
+		});
+		expect(screen.getByTestId('activities-facet').textContent).toContain('\u2014');
+	});
+
+	it('shows every standing activity as its own chip, whichever kind it is', () => {
 		render(OverlayStrip, {
 			props: {
-				data: liveData({ status: 'active', segmentName: 'Boss 1' }),
-				onSegmentCommit,
-				onSegmentBlur,
+				data: liveData({
+					status: 'active',
+					activities: activities({
+						active: [
+							{ key: 'quest:11', kind: 'quest', name: 'Daily: Carabok', questId: 11 },
+							{ key: 'segment:Boss lap', kind: 'segment', name: 'Boss lap', questId: null },
+						],
+					}),
+				}),
 			},
 		});
+		expect(screen.getByText('Daily: Carabok')).toBeTruthy();
+		expect(screen.getByText('Boss lap')).toBeTruthy();
+	});
 
-		const input = screen.getByLabelText('Segment name') as HTMLInputElement;
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-		expect(onSegmentCommit).toHaveBeenCalledTimes(1);
-		input.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
-		expect(onSegmentBlur).toHaveBeenCalledTimes(1);
+	it('opens the control from any of its chips', () => {
+		const onActivitiesTrigger = vi.fn();
+		render(OverlayStrip, {
+			props: {
+				data: liveData({
+					status: 'active',
+					activities: activities({
+						active: [{ key: 'quest:11', kind: 'quest', name: 'Daily: Carabok', questId: 11 }],
+					}),
+				}),
+				onActivitiesTrigger,
+			},
+		});
+		(screen.getByText('Daily: Carabok').closest('button') as HTMLButtonElement).click();
+		expect(onActivitiesTrigger).toHaveBeenCalledTimes(1);
 	});
 });
