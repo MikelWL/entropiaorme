@@ -13,6 +13,7 @@
 use schemars::schema_for;
 use serde_json::Value;
 
+use crate::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTargetKind};
 use crate::analytics::{
     ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
     AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
@@ -53,11 +54,10 @@ use crate::scan::{
 use crate::session_definitions::{SessionDefinition, SessionDefinitionInput};
 use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
-    ArmourCostResult, DefinitionSelectResult, FocusOptionsResult, LootItemEditResult,
-    ManualMobLockResult, ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult,
-    RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals,
-    SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult,
-    TrackingSnapshot,
+    ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
+    ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
+    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult,
+    StartResult, StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -986,52 +986,49 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(SessionConfigResult))),
         },
         CommandSpec {
-            name: "tracking_segment_open",
-            args: vec![ArgSpec {
-                name: "segment_name",
-                schema: schema(schema_for!(Option<String>)),
-            }],
-            returns: Some(schema(schema_for!(SegmentStateResult))),
-        },
-        CommandSpec {
-            name: "tracking_segment_close",
+            name: "tracking_activity_options",
             args: vec![],
-            returns: Some(schema(schema_for!(SegmentStateResult))),
+            returns: Some(schema(schema_for!(ActivityOptionsResult))),
         },
         CommandSpec {
-            name: "tracking_segment_rename",
-            args: vec![ArgSpec {
-                name: "segment_name",
-                schema: schema(schema_for!(String)),
-            }],
-            returns: Some(schema(schema_for!(SegmentStateResult))),
-        },
-        CommandSpec {
-            name: "tracking_quest_focus",
+            name: "tracking_activity_activate",
             args: vec![
                 ArgSpec {
+                    name: "kind",
+                    schema: schema(schema_for!(ActivityTargetKind)),
+                },
+                ArgSpec {
                     name: "quest_id",
-                    schema: schema(schema_for!(i64)),
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+                ArgSpec {
+                    name: "label",
+                    schema: schema(schema_for!(Option<String>)),
                 },
                 ArgSpec {
                     name: "additive",
                     schema: schema(schema_for!(Option<bool>)),
                 },
             ],
-            returns: Some(schema(schema_for!(QuestFocusResult))),
+            returns: Some(schema(schema_for!(ActivityStateResult))),
         },
         CommandSpec {
-            name: "tracking_quest_unfocus",
-            args: vec![ArgSpec {
-                name: "quest_id",
-                schema: schema(schema_for!(i64)),
-            }],
-            returns: Some(schema(schema_for!(QuestFocusResult))),
-        },
-        CommandSpec {
-            name: "tracking_focus_options",
-            args: vec![],
-            returns: Some(schema(schema_for!(FocusOptionsResult))),
+            name: "tracking_activity_deactivate",
+            args: vec![
+                ArgSpec {
+                    name: "kind",
+                    schema: schema(schema_for!(ActivityTargetKind)),
+                },
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+                ArgSpec {
+                    name: "label",
+                    schema: schema(schema_for!(Option<String>)),
+                },
+            ],
+            returns: Some(schema(schema_for!(ActivityStateResult))),
         },
         CommandSpec {
             name: "tracking_rename_session",

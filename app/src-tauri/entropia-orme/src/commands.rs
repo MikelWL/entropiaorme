@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use eo_api::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTargetKind};
 use eo_api::analytics::{
     ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
     AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
@@ -51,11 +52,10 @@ use eo_api::scan::{
 use eo_api::session_definitions::{SessionDefinition, SessionDefinitionInput};
 use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
-    ArmourCostResult, DefinitionSelectResult, FocusOptionsResult, LootItemEditResult,
-    ManualMobLockResult, ManualMobSuggestion, MobEditResult, QuestFocusResult, ReleaseResult,
-    RepairScanResult, SegmentStateResult, SessionConfigResult, SessionDetail, SessionIntervals,
-    SessionPage, SessionQuestLinkSuggestion, SessionRenameResult, StartResult, StopResult,
-    TrackingSnapshot,
+    ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
+    ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
+    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult,
+    StartResult, StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -998,46 +998,35 @@ pub async fn tracking_session_config(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_segment_open(
+pub async fn tracking_activity_options(
     app: tauri::AppHandle,
-    segment_name: Option<String>,
-) -> Result<SegmentStateResult, ApiError> {
-    facade(&app)?.tracking_segment_open(segment_name).await
+) -> Result<ActivityOptionsResult, ApiError> {
+    facade(&app)?.tracking_activity_options().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_segment_close(app: tauri::AppHandle) -> Result<SegmentStateResult, ApiError> {
-    facade(&app)?.tracking_segment_close().await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_segment_rename(
+pub async fn tracking_activity_activate(
     app: tauri::AppHandle,
-    segment_name: String,
-) -> Result<SegmentStateResult, ApiError> {
-    facade(&app)?.tracking_segment_rename(segment_name).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_quest_focus(
-    app: tauri::AppHandle,
-    quest_id: i64,
+    kind: ActivityTargetKind,
+    quest_id: Option<i64>,
+    label: Option<String>,
     additive: Option<bool>,
-) -> Result<QuestFocusResult, ApiError> {
-    facade(&app)?.tracking_quest_focus(quest_id, additive).await
+) -> Result<ActivityStateResult, ApiError> {
+    facade(&app)?
+        .tracking_activity_activate(kind, quest_id, label, additive)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_quest_unfocus(
+pub async fn tracking_activity_deactivate(
     app: tauri::AppHandle,
-    quest_id: i64,
-) -> Result<QuestFocusResult, ApiError> {
-    facade(&app)?.tracking_quest_unfocus(quest_id).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_focus_options(app: tauri::AppHandle) -> Result<FocusOptionsResult, ApiError> {
-    facade(&app)?.tracking_focus_options().await
+    kind: ActivityTargetKind,
+    quest_id: Option<i64>,
+    label: Option<String>,
+) -> Result<ActivityStateResult, ApiError> {
+    facade(&app)?
+        .tracking_activity_deactivate(kind, quest_id, label)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1611,12 +1600,9 @@ mod tests {
         "tracking_release_mob",
         "tracking_manual_mob_lock",
         "tracking_session_config",
-        "tracking_segment_open",
-        "tracking_segment_close",
-        "tracking_segment_rename",
-        "tracking_quest_focus",
-        "tracking_quest_unfocus",
-        "tracking_focus_options",
+        "tracking_activity_options",
+        "tracking_activity_activate",
+        "tracking_activity_deactivate",
         "tracking_rename_session",
         "tracking_rename_mob",
         "tracking_restore_mob",

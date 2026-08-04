@@ -31,6 +31,7 @@ mod families;
 mod lifecycle;
 mod linking;
 mod missions;
+mod offers;
 mod payload;
 mod playlists;
 #[cfg(test)]
@@ -38,6 +39,7 @@ mod tests;
 
 pub use families::CooldownAnchor;
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
+pub use offers::{read_quest_offers, QuestOffer};
 
 /// The sink a quest completion reports through, so a completed quest's
 /// focused stretch (when the user declared one on the running session)

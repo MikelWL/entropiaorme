@@ -95,8 +95,8 @@ use eo_services::skill_tracker::SkillTracker;
 pub use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
 use eo_services::time::naive_to_epoch;
 use eo_services::tracker::{
-    EquipmentLibrary, EquipmentProfile, GuardrailTool, HarvestGuardrailTools, HuntTracker,
-    Providers, TrackingConfig,
+    ActivityKey, EquipmentLibrary, EquipmentProfile, GuardrailTool, HarvestGuardrailTools,
+    HuntTracker, Providers, TrackingConfig,
 };
 use eo_services::trifecta_service::{describe_trifecta, TrifectaPreset};
 use eo_wire::bus::DomainBus;
@@ -1251,9 +1251,11 @@ fn compose_producers(
             let tracker = tracker_sink.clone();
             Box::pin(async move {
                 // Errors are swallowed on purpose: with no session
-                // running (or no focus declared) there is nothing to
+                // running (or no stretch declared) there is nothing to
                 // close, and that is not a failure of the completion.
-                let _ = tracker.unfocus_quest(quest_id).await;
+                let _ = tracker
+                    .deactivate_activity(ActivityKey::Quest(quest_id))
+                    .await;
             })
         }));
     }

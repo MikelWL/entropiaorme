@@ -56,6 +56,72 @@ impl IntervalKind {
     }
 }
 
+/// The two interval kinds the Activities control declares, and the set
+/// an exclusive switch seals: one control offers both, so a tap moving
+/// from a quest to a segment must end the quest's stretch as surely as
+/// a tap from one quest to another does.
+pub const ACTIVITY_KINDS: [IntervalKind; 2] = [IntervalKind::Quest, IntervalKind::Segment];
+
+/// A declaration of what the play from now on is. A quest stretch is
+/// identified by the quest it advances and labelled with its name; a
+/// segment is identified by the name the player gave it, which is all
+/// such a slice has (blank auto-numbers it "Segment N").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivityRef {
+    Quest { quest_id: i64, name: String },
+    Segment { name: String },
+}
+
+/// Which standing activity a deactivation ends. A quest needs only its
+/// id, which is why this is not the declaration type above: the
+/// completion bridge closing a stretch has no name to hand over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivityKey {
+    Quest(i64),
+    Segment(String),
+}
+
+/// One standing activity, as the Activities control renders it. The
+/// quest id is what a chip matches its roster row on; a segment carries
+/// none, so its name is its identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveActivity {
+    pub kind: IntervalKind,
+    pub name: String,
+    pub quest_id: Option<i64>,
+}
+
+/// Which standing intervals an open seals in the same transaction.
+///
+/// The scope is a property of the gesture, not of the kind: the same
+/// Segment interval is opened sequentially by a boundary declaration
+/// (which seals the previous slice and nothing else) and exclusively by
+/// the Activities control's tap (which seals whatever activity was
+/// standing, whichever kind it was).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloseScope {
+    /// Stack: nothing standing is sealed.
+    Nothing,
+    /// Seal the standing intervals of the opening kind, for the kinds
+    /// that admit one at a time (a modifier declaration replaces the
+    /// standing one; a segment boundary seals the previous slice).
+    SameKind,
+    /// Seal the standing intervals of any of these kinds, for a switch
+    /// whose target may be of a different kind than what it replaces.
+    Kinds(Vec<IntervalKind>),
+}
+
+impl CloseScope {
+    /// Whether an open interval falls in scope for an open of `opening`.
+    fn seals(&self, opening: IntervalKind, standing: IntervalKind) -> bool {
+        match self {
+            CloseScope::Nothing => false,
+            CloseScope::SameKind => standing == opening,
+            CloseScope::Kinds(kinds) => kinds.contains(&standing),
+        }
+    }
+}
+
 /// What to open, as one value rather than a run of positional
 /// arguments whose order would be easy to transpose at a call site.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,10 +130,9 @@ pub struct IntervalSpec {
     pub label: Option<String>,
     pub ref_id: Option<i64>,
     pub magnitude: Option<f64>,
-    /// Close any already-open interval of the same kind first. True for
-    /// the kinds that admit one at a time (a modifier declaration
-    /// replaces the standing one rather than silently stacking).
-    pub exclusive: bool,
+    /// What this open seals first; same-kind by default, which is the
+    /// rule for every kind that admits one at a time.
+    pub closes: CloseScope,
 }
 
 impl IntervalSpec {
@@ -77,7 +142,7 @@ impl IntervalSpec {
             label: None,
             ref_id: None,
             magnitude: None,
-            exclusive: true,
+            closes: CloseScope::SameKind,
         }
     }
 
@@ -97,7 +162,14 @@ impl IntervalSpec {
     }
 
     pub fn stacking(mut self) -> Self {
-        self.exclusive = false;
+        self.closes = CloseScope::Nothing;
+        self
+    }
+
+    /// Seal the standing intervals of these kinds instead of only the
+    /// opening kind's: the Activities control's exclusive switch.
+    pub fn closes(mut self, scope: CloseScope) -> Self {
+        self.closes = scope;
         self
     }
 }
@@ -135,17 +207,18 @@ impl IntervalState {
         self.open.iter().find(|interval| interval.kind == kind)
     }
 
-    /// Every open interval of a kind, oldest first: the whole standing
-    /// set of a stacking kind (three dailies at once), where
-    /// [`open_of_kind`](Self::open_of_kind) answers for the exclusive
-    /// kinds that admit one.
-    pub fn open_of_kind_all(
+    /// Every open interval of any of these kinds, in the order it was
+    /// opened: the standing set an exclusive switch seals, and the
+    /// order the Activities readout lists (opening order keeps a chip
+    /// from jumping when another activity joins it).
+    pub fn open_of_kinds(
         &self,
-        kind: IntervalKind,
+        kinds: &[IntervalKind],
     ) -> impl DoubleEndedIterator<Item = &OpenInterval> + '_ {
+        let kinds = kinds.to_vec();
         self.open
             .iter()
-            .filter(move |interval| interval.kind == kind)
+            .filter(move |interval| kinds.contains(&interval.kind))
     }
 
     /// The open interval of a stacking kind that points at `ref_id`.
@@ -153,6 +226,20 @@ impl IntervalState {
         self.open
             .iter()
             .find(|interval| interval.kind == kind && interval.ref_id == Some(ref_id))
+    }
+
+    /// The open interval of a kind carrying this label, compared
+    /// case-insensitively: how a segment activity is identified, since
+    /// a segment carries no reference of its own and its name is what
+    /// the player typed.
+    pub fn open_of_label(&self, kind: IntervalKind, label: &str) -> Option<&OpenInterval> {
+        self.open.iter().find(|interval| {
+            interval.kind == kind
+                && interval
+                    .label
+                    .as_deref()
+                    .is_some_and(|open| open.eq_ignore_ascii_case(label))
+        })
     }
 
     /// The modifier magnitude in force, as the denormalised per-row
@@ -235,9 +322,10 @@ impl IntervalState {
 
     /// Open an interval and adopt the context that includes it.
     ///
-    /// `exclusive` kinds close any already-open interval of the same
-    /// kind first, in the same motion: declaring a new modifier replaces
-    /// the standing one rather than stacking a second silently.
+    /// The spec's [`CloseScope`] seals the standing intervals it names
+    /// first, in the same motion: declaring a new modifier replaces the
+    /// standing one rather than stacking a second silently, and the
+    /// Activities switch seals whatever activity was standing.
     ///
     /// The whole transition is one transaction (the closes, the insert,
     /// the fresh context and its membership), and memory adopts the new
@@ -256,17 +344,14 @@ impl IntervalState {
             label,
             ref_id,
             magnitude,
-            exclusive,
+            closes,
         } = spec;
-        let closing: Vec<i64> = if exclusive {
-            self.open
-                .iter()
-                .filter(|interval| interval.kind == kind)
-                .map(|interval| interval.id)
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let closing: Vec<i64> = self
+            .open
+            .iter()
+            .filter(|interval| closes.seals(kind, interval.kind))
+            .map(|interval| interval.id)
+            .collect();
         let survivors: Vec<i64> = self
             .open
             .iter()
@@ -355,50 +440,40 @@ impl IntervalState {
         .await
     }
 
-    /// Close every open interval of a kind EXCEPT the one pointing at
-    /// `keep_ref`, and adopt the narrower context: the exclusive switch
-    /// of a stacking kind. The kept interval survives with its stretch
-    /// intact, because closing and reopening it would split one
-    /// continuous stretch into two.
-    pub async fn close_kind_except_ref(
+    /// Close specific open intervals by id, and adopt the narrower
+    /// context: how a kind without a reference of its own (a segment,
+    /// identified by its name) ends exactly the one the user named.
+    pub async fn close_ids(
         &mut self,
         db: &Db,
         session_id: &str,
         now: f64,
-        kind: IntervalKind,
-        keep_ref: i64,
+        ids: &[i64],
     ) -> Result<Vec<OpenInterval>, DbError> {
-        self.close_matching(db, session_id, now, |interval| {
-            interval.kind == kind && interval.ref_id != Some(keep_ref)
+        let ids = ids.to_vec();
+        self.close_matching(db, session_id, now, move |interval| {
+            ids.contains(&interval.id)
         })
         .await
     }
 
-    /// Relabel the open interval of a kind, in place. A label is not
-    /// part of attribution (context membership is by interval id), so
-    /// no context is minted and events already stamped are unaffected.
-    /// Returns whether an open interval of the kind existed.
-    pub async fn relabel_kind(
+    /// Close every open interval of these kinds EXCEPT the one with
+    /// `keep_id`, and adopt the narrower context: the exclusive switch
+    /// onto an activity that is already standing. The kept interval
+    /// survives with its stretch intact, because closing and reopening
+    /// it would split one continuous stretch into two.
+    pub async fn close_kinds_except_id(
         &mut self,
         db: &Db,
-        kind: IntervalKind,
-        label: String,
-    ) -> Result<bool, DbError> {
-        let Some(index) = self.open.iter().position(|interval| interval.kind == kind) else {
-            return Ok(false);
-        };
-        let id = self.open[index].id;
-        let value = label.clone();
-        db.with_writer(move |conn| {
-            conn.execute(
-                "UPDATE session_intervals SET label = ? WHERE id = ?",
-                rusqlite::params![value, id],
-            )?;
-            Ok(())
+        session_id: &str,
+        now: f64,
+        kinds: &[IntervalKind],
+        keep_id: i64,
+    ) -> Result<Vec<OpenInterval>, DbError> {
+        self.close_matching(db, session_id, now, |interval| {
+            kinds.contains(&interval.kind) && interval.id != keep_id
         })
-        .await?;
-        self.open[index].label = Some(label);
-        Ok(true)
+        .await
     }
 
     /// The shared close transition: end the matching rows and mint the

@@ -40,6 +40,7 @@ use eo_services::skill_tracker::SkillTracker;
 use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
 use eo_services::tracker::HuntTracker;
 
+pub mod activities;
 pub mod analytics;
 pub mod character;
 pub mod codex;

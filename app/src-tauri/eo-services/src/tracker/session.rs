@@ -6,7 +6,10 @@ use chrono::{DateTime, Utc};
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 use eo_wire::normalizer::round_half_even;
 
-use super::intervals::{IntervalKind, IntervalSpec, IntervalState};
+use super::intervals::{
+    ActiveActivity, ActivityKey, ActivityRef, CloseScope, IntervalKind, IntervalSpec,
+    IntervalState, ACTIVITY_KINDS,
+};
 use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::DbError;
 use crate::mob_lookup_service::python_whitespace;
@@ -130,15 +133,21 @@ impl ActiveSession {
     }
 }
 
-/// The focused quests' names, newest first (the latest-focused quest is
-/// the most relevant readout when several stack): the ack every focus
-/// transition echoes, matching the snapshot's ordering.
-fn focused_quest_names(active: &ActiveSession) -> Vec<String> {
+/// The standing activities, in the order they were opened: the ack
+/// every Activities transition echoes, matching the snapshot's own
+/// ordering. Opening order rather than recency, because these render as
+/// a row of chips and a chip must not jump when another joins it.
+fn active_activities(active: &ActiveSession) -> Vec<ActiveActivity> {
     active
         .intervals
-        .open_of_kind_all(IntervalKind::Quest)
-        .filter_map(|interval| interval.label.clone())
-        .rev()
+        .open_of_kinds(&ACTIVITY_KINDS)
+        .filter_map(|interval| {
+            Some(ActiveActivity {
+                kind: interval.kind,
+                name: interval.label.clone()?,
+                quest_id: interval.ref_id,
+            })
+        })
         .collect()
 }
 
@@ -171,8 +180,7 @@ pub(super) struct SessionAggregate {
     pub(super) session_name: Option<String>,
     pub(super) definition_id: Option<i64>,
     pub(super) skill_boost_percent: Option<i64>,
-    pub(super) segment_name: Option<String>,
-    pub(super) quest_names: Vec<String>,
+    pub(super) active_activities: Vec<ActiveActivity>,
     pub(super) harvest_swings: i64,
     pub(super) harvest_successes: i64,
     pub(super) harvest_loot: Ped,
@@ -337,22 +345,10 @@ impl TrackerActor {
                 .intervals
                 .modifier_magnitude()
                 .map(|magnitude| magnitude as i64),
-            // The interval state is the only source: a segment exists
+            // The interval state is the only source: an activity exists
             // exactly while its session runs, so there is no idle or
             // row-mirror fallback to disagree with it.
-            segment_name: active
-                .intervals
-                .open_of_kind(IntervalKind::Segment)
-                .and_then(|interval| interval.label.clone()),
-            // Same source of truth for the quest facet: the open quest
-            // slices, newest first (the latest-started quest is the
-            // most relevant readout when several dailies stack).
-            quest_names: active
-                .intervals
-                .open_of_kind_all(IntervalKind::Quest)
-                .filter_map(|interval| interval.label.clone())
-                .rev()
-                .collect(),
+            active_activities: active_activities(active),
             harvest_swings: harvests.len() as i64,
             harvest_successes: harvests.iter().filter(|harvest| harvest.success).count() as i64,
             harvest_loot,
@@ -460,177 +456,141 @@ impl TrackerActor {
         Ok(())
     }
 
-    /// Focus a quest: open its effort stretch on the running session.
+    /// Declare an activity: open its stretch on the running session.
     ///
-    /// The default is the one-tap switch: exclusive over quests, so
-    /// focusing the next daily closes the standing quest stretches in
-    /// the same motion (segments are an independent axis and are never
-    /// touched). `additive` joins the standing focus instead, for the
-    /// hunt that genuinely advances two quests at once; an event
-    /// recorded while two stretches overlap sits inside both, which the
-    /// context expresses natively and a per-axis column could not.
+    /// The default is the one-tap switch, exclusive across BOTH activity
+    /// kinds: declaring the next boss seals the standing quest stretch
+    /// and any standing segment in the same motion, because one control
+    /// offers them and a tap means "this is what I am doing now". The
+    /// interval primitive still supports overlap; only the gesture
+    /// insists on one at a time.
     ///
-    /// An already-focused quest never grows a duplicate stretch: the
-    /// additive re-focus is a no-op, and the exclusive re-focus closes
-    /// only its siblings (closing and reopening the target would split
-    /// one continuous stretch into two).
+    /// `additive` is the deliberate co-activation, and there each kind
+    /// keeps its own standing rule: quests stack (a hunt genuinely
+    /// advancing two dailies records inside both, which the context
+    /// expresses natively and a per-axis column could not), while a
+    /// segment still seals the previous segment, because a player-drawn
+    /// slice is a sequential cut of the run rather than a state.
+    ///
+    /// An already-standing activity never grows a duplicate stretch: the
+    /// additive re-declaration is a no-op, and the exclusive one seals
+    /// only the others (closing and reopening the target would split one
+    /// continuous stretch into two).
+    ///
+    /// A segment declared with a blank name is auto-numbered "Segment
+    /// N", counting this session's opens from 1, so a boundary never
+    /// requires typing mid-play.
     ///
     /// Contained like the other interval writes: a write that cannot
-    /// land leaves the declaration unrecorded, and the returned names
-    /// echo the state actually in force.
-    pub(super) async fn focus_quest(
+    /// land leaves the declaration unrecorded, and the returned set
+    /// echoes the state actually in force.
+    pub(super) async fn activate_activity(
         &mut self,
-        quest_id: i64,
-        name: String,
+        activity: ActivityRef,
         additive: bool,
-    ) -> Result<Vec<String>, TrackerCommandError> {
+    ) -> Result<Vec<ActiveActivity>, TrackerCommandError> {
         let now = instant_to_epoch(resolve_local(self.clock.now()));
         let db = self.db.clone();
         let Some(active) = self.session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
         let session_id = active.session.id.clone();
-        if active
-            .intervals
-            .open_of_ref(IntervalKind::Quest, quest_id)
-            .is_some()
-        {
+
+        // The segment's name is settled first, because the auto-number
+        // both identifies the target and labels the stretch.
+        let (kind, ref_id, label, next_segment) = match &activity {
+            ActivityRef::Quest { quest_id, name } => {
+                (IntervalKind::Quest, Some(*quest_id), name.clone(), None)
+            }
+            ActivityRef::Segment { name } => {
+                let candidate = active.segments_opened + 1;
+                let label = match name.trim() {
+                    "" => format!("Segment {candidate}"),
+                    named => named.to_string(),
+                };
+                (IntervalKind::Segment, None, label, Some(candidate))
+            }
+        };
+
+        let standing = match kind {
+            IntervalKind::Quest => active
+                .intervals
+                .open_of_ref(IntervalKind::Quest, ref_id.unwrap_or_default()),
+            _ => active
+                .intervals
+                .open_of_label(IntervalKind::Segment, &label),
+        }
+        .map(|interval| interval.id);
+
+        if let Some(keep_id) = standing {
             if !additive {
                 let _ = active
                     .intervals
-                    .close_kind_except_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
+                    .close_kinds_except_id(&db, &session_id, now, &ACTIVITY_KINDS, keep_id)
                     .await;
             }
-            return Ok(focused_quest_names(active));
+            return Ok(active_activities(active));
         }
-        let spec = IntervalSpec::new(IntervalKind::Quest)
-            .label(Some(name))
-            .ref_id(Some(quest_id));
-        let spec = if additive { spec.stacking() } else { spec };
-        let _ = active
+
+        let spec = IntervalSpec::new(kind).label(Some(label)).ref_id(ref_id);
+        // Co-activation keeps each kind's own standing rule; the switch
+        // seals every activity, whichever kind it is.
+        let spec = if additive {
+            match kind {
+                IntervalKind::Quest => spec.stacking(),
+                _ => spec,
+            }
+        } else {
+            spec.closes(CloseScope::Kinds(ACTIVITY_KINDS.to_vec()))
+        };
+        let outcome = active
             .intervals
             .open_interval(&db, &session_id, now, spec)
             .await;
-        Ok(focused_quest_names(active))
+        if outcome.is_ok() {
+            if let Some(candidate) = next_segment {
+                active.segments_opened = candidate;
+            }
+        }
+        Ok(active_activities(active))
     }
 
-    /// Unfocus one quest (the user's toggle-off, or its completion
-    /// closing the stretch), leaving any sibling quest's focus running.
-    /// Idempotent: unfocusing a quest with no open stretch is a no-op.
-    /// Returns the focused names still in force.
-    pub(super) async fn unfocus_quest(
+    /// End one standing activity (the user's toggle-off, or a quest's
+    /// completion closing its stretch), leaving the others running.
+    /// Idempotent: ending one that is not standing is a no-op, so a
+    /// stale control cannot fail the user. Returns the set still in
+    /// force.
+    pub(super) async fn deactivate_activity(
         &mut self,
-        quest_id: i64,
-    ) -> Result<Vec<String>, TrackerCommandError> {
+        target: ActivityKey,
+    ) -> Result<Vec<ActiveActivity>, TrackerCommandError> {
         let now = instant_to_epoch(resolve_local(self.clock.now()));
         let db = self.db.clone();
         let Some(active) = self.session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
         let session_id = active.session.id.clone();
-        let _ = active
-            .intervals
-            .close_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
-            .await;
-        Ok(focused_quest_names(active))
-    }
-
-    /// Open a segment: the player-drawn slice of the session (one
-    /// instance run, one rotation of a daily). Exclusive, because a run
-    /// is sequential: opening a segment closes the standing one in the
-    /// same motion, so the boundary declaration is a single action.
-    ///
-    /// An omitted or blank name is auto-numbered "Segment N", counting
-    /// this session's opens from 1. The declaration therefore never
-    /// requires typing mid-play; the name can move afterwards (live via
-    /// [`rename_segment`](Self::rename_segment), since a segment's grain
-    /// is finer than the session).
-    ///
-    /// Contained like the other interval writes: a write that cannot
-    /// land leaves the record without the segment, and the snapshot
-    /// (which reads the interval state) tells the truth about it.
-    ///
-    /// Returns the name now in force: the applied label on success,
-    /// None when the contained write failed and no segment opened.
-    pub(super) async fn open_segment(
-        &mut self,
-        label: Option<String>,
-    ) -> Result<Option<String>, TrackerCommandError> {
-        let now = instant_to_epoch(resolve_local(self.clock.now()));
-        let db = self.db.clone();
-        let Some(active) = self.session.active_mut() else {
-            return Err(TrackerCommandError::NoActiveSession);
-        };
-        let session_id = active.session.id.clone();
-        let candidate = active.segments_opened + 1;
-        let label = label
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("Segment {candidate}"));
-        let outcome = active
-            .intervals
-            .open_interval(
-                &db,
-                &session_id,
-                now,
-                IntervalSpec::new(IntervalKind::Segment).label(Some(label.clone())),
-            )
-            .await;
-        if outcome.is_err() {
-            return Ok(None);
+        match target {
+            ActivityKey::Quest(quest_id) => {
+                let _ = active
+                    .intervals
+                    .close_ref(&db, &session_id, now, IntervalKind::Quest, quest_id)
+                    .await;
+            }
+            ActivityKey::Segment(name) => {
+                if let Some(id) = active
+                    .intervals
+                    .open_of_label(IntervalKind::Segment, &name)
+                    .map(|interval| interval.id)
+                {
+                    let _ = active
+                        .intervals
+                        .close_ids(&db, &session_id, now, &[id])
+                        .await;
+                }
+            }
         }
-        active.segments_opened = candidate;
-        Ok(Some(label))
-    }
-
-    /// Close the open segment, leaving the session running unsegmented
-    /// from here. Idempotent: closing with no segment open is a no-op,
-    /// like the quest close, so a stale control cannot fail the user.
-    pub(super) async fn close_segment(&mut self) -> Result<(), TrackerCommandError> {
-        let now = instant_to_epoch(resolve_local(self.clock.now()));
-        let db = self.db.clone();
-        let Some(active) = self.session.active_mut() else {
-            return Err(TrackerCommandError::NoActiveSession);
-        };
-        let session_id = active.session.id.clone();
-        let _ = active
-            .intervals
-            .close_kind(&db, &session_id, now, IntervalKind::Segment)
-            .await;
-        Ok(())
-    }
-
-    /// Rename the OPEN segment in place: the live half of the segment's
-    /// correction path (a segment is finer than the session, so its
-    /// label may move while the session runs). Bounds and attribution
-    /// are untouched; only the display name moves.
-    pub(super) async fn rename_segment(
-        &mut self,
-        label: String,
-    ) -> Result<(), TrackerCommandError> {
-        let db = self.db.clone();
-        let Some(active) = self.session.active_mut() else {
-            return Err(TrackerCommandError::NoActiveSession);
-        };
-        let label = label.trim().to_string();
-        if label.is_empty() {
-            // A blank rename is a no-op, not an erasure: an open segment
-            // always carries a name (the auto-number guarantees one).
-            return Ok(());
-        }
-        match active
-            .intervals
-            .relabel_kind(&db, IntervalKind::Segment, label)
-            .await
-        {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(TrackerCommandError::NoOpenSegment),
-            // Contained like the other interval writes; the snapshot
-            // still shows the previous name, which is the truth.
-            Err(_) => Ok(()),
-        }
+        Ok(active_activities(active))
     }
 
     /// Refresh trifecta-attribution state after config changes. The
@@ -1095,8 +1055,7 @@ impl HuntTracker {
             session_name: aggregated.session_name.clone(),
             definition_id: aggregated.definition_id,
             skill_boost_percent: aggregated.skill_boost_percent,
-            segment_name: aggregated.segment_name.clone(),
-            quest_names: aggregated.quest_names.clone(),
+            active_activities: aggregated.active_activities.clone(),
             harvest_swings: aggregated.harvest_swings,
             harvest_successes: aggregated.harvest_successes,
             // + 0.0 normalises the sign: an empty f64 sum is -0.0 (the

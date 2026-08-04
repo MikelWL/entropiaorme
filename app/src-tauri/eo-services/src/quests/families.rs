@@ -32,6 +32,18 @@ pub enum CooldownAnchor {
     Completion,
 }
 
+/// When a cooldown anchored at `instant` and running for `hours` lifts
+/// (epoch seconds); None when either half is absent or the window is
+/// not positive, which is how "groups without gating" is stored. The
+/// one place the window arithmetic lives, so the quest row, the family
+/// row and the Activities offerings cannot drift apart on it.
+pub(crate) fn cooldown_lift(instant: Option<f64>, hours: Option<f64>) -> Option<f64> {
+    match (instant, hours) {
+        (Some(instant), Some(hours)) if hours > 0.0 => Some(instant + hours * 3600.0),
+        _ => None,
+    }
+}
+
 impl CooldownAnchor {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -393,10 +405,7 @@ fn row_to_family(row: &rusqlite::Row) -> Map<String, Value> {
         "pickup" => last_started,
         _ => last_completed,
     };
-    let expires = match (anchor_instant, cooldown_hours) {
-        (Some(instant), Some(hours)) if hours > 0.0 => Some(to_iso_utc(instant + hours * 3600.0)),
-        _ => None,
-    };
+    let expires = cooldown_lift(anchor_instant, cooldown_hours).map(to_iso_utc);
     family.insert("cooldown_expires_at".into(), json!(expires));
     family
 }

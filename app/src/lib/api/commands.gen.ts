@@ -51,6 +51,18 @@ export interface AcceptResult {
 }
 
 /**
+ * One standing activity, as the control renders its chip.
+ */
+export interface ActiveActivityView {
+	/** Row identity, shared with the offering it came from. */
+	key: string;
+	kind: ActivityTargetKind;
+	name: string;
+	/** The quest whose stretch is standing; null for a segment, whose name is its only identity. */
+	questId: number | null;
+}
+
+/**
  * One thing an activity did to its stock: a listing across its whole
  * lifecycle, or a conversion into another item.
  * 
@@ -84,6 +96,45 @@ export interface ActivityHistoryEntry {
 }
 
 /**
+ * One row the control offers.
+ */
+export interface ActivityOption {
+	/** Stable identity across refreshes: the kind and what it points at. */
+	key: string;
+	/** How the row was reached, in the roster's own vocabulary; a `quest_family` row acts on the variant it resolved to. */
+	kind: SessionRosterEntryKind;
+	name: string;
+	/** The quest a declaration acts on: the family's serving variant, the quest itself, or null for a segment row and for a family with nothing to serve. */
+	questId: number | null;
+	/** Whether a stretch of this row is standing on the running session. */
+	active: boolean;
+	/** Whether declaring it would do anything right now. */
+	available: boolean;
+	/** Why it would not, in the user's words; null when it would. */
+	unavailableReason: string | null;
+	/** When the gate lifts (fractional epoch seconds), so the control can count down; null when nothing gates the row. */
+	availableFrom: number | null;
+	/** A repeatable run rather than a mission-log quest: declaring it starts it, and its signal loot ends it. */
+	signalQuest: boolean;
+	/** Surfaced as a fact rather than offered by the roster. */
+	offRoster: boolean;
+}
+
+/**
+ * What the Activities control shows.
+ */
+export interface ActivityOptionsResult {
+	/** Whether the control appears at all. */
+	visible: boolean;
+	/** Whether this session's definition opts into naming segments in play: the free-text row, and promotion into the roster. */
+	adHocSegments: boolean;
+	/** How many rows could be declared right now, counting a family once and never counting a cooling or unreceived one: the ready cue, stated so it cannot promise more than the roster can do. */
+	readyCount: number;
+	options: ActivityOption[];
+	active: ActiveActivityView[];
+}
+
+/**
  * The activity-recommender query. `professions` carries the target
  * profession name(s) for a `profession` target (one name, or several
  * for a family) and is ignored for `hp`.
@@ -106,6 +157,36 @@ export interface ActivityRecommenderResult {
 	direct: RecommenderActivity | null;
 	candidates: RecommenderActivity[];
 }
+
+/**
+ * The acknowledgement both verbs echo: the standing set now in force,
+ * in declaration order.
+ */
+export interface ActivityStateResult {
+	active: ActiveActivityView[];
+}
+
+/**
+ * The Activities control's strip-level readout, carried on every
+ * tracking frame so the chip renders without a round trip of its own:
+ * whether the control appears, the ready cue, and the standing set.
+ * The menu's rows come from the fuller read below, computed the same
+ * way, so the two cannot disagree.
+ */
+export interface ActivitySummary {
+	visible: boolean;
+	adHocSegments: boolean;
+	readyCount: number;
+	active: ActiveActivityView[];
+}
+
+/**
+ * What an Activities verb acts on. Narrower than a roster entry's kind
+ * on purpose: a family is a way of OFFERING a quest, so the control
+ * resolves it to the variant in play and the verb only ever declares
+ * the two things a session interval can record.
+ */
+export type ActivityTargetKind = 'quest' | 'segment';
 
 /**
  * An undo payload: the history entry to take back.
@@ -626,30 +707,6 @@ export interface ExcludedSkill {
 	name: string;
 	weight: number;
 	reason: string;
-}
-
-/**
- * What the focus picker offers: the in-progress quests with their
- * focused state, and the segment-name presets recalled from history
- * under the current session's name (most recent first, auto-numbered
- * names excluded).
- */
-export interface FocusOptionsResult {
-	quests: FocusQuestOption[];
-	segmentPresets: string[];
-}
-
-/**
- * One quest the focus picker can offer: an in-progress quest (or a
- * standing signal quest), and whether an effort stretch of it is open
- * on the running session.
- */
-export interface FocusQuestOption {
-	questId: number;
-	name: string;
-	focused: boolean;
-	/** Whether this is a signal-completed quest: a standing, repeatable chip (focusing starts it; its signal loot completes it), as opposed to a mission-log quest that lists only while in progress. */
-	signalQuest: boolean;
 }
 
 /**
@@ -1867,14 +1924,6 @@ export interface QuestFamilyInput {
 }
 
 /**
- * The quest-focus acknowledgement: the focused quests' names now in
- * force on the running session, newest first (empty: none focused).
- */
-export interface QuestFocusResult {
-	questNames: string[];
-}
-
-/**
  * A quest create or update payload. One DTO serves both operations, in
  * the frontend's snake_case field casing: the sole client sends the
  * full field set for both create and update (nulls explicit), so every
@@ -2081,14 +2130,6 @@ export interface ScanStatus {
  * class is unrepresentable rather than handled.
  */
 export type SearchKind = 'weapon' | 'amp' | 'healer' | 'scope' | 'absorber' | 'consumable' | 'tool' | 'implant';
-
-/**
- * The segment acknowledgement: the segment name now in force on the
- * running session (null: no segment open).
- */
-export interface SegmentStateResult {
-	segmentName: string | null;
-}
 
 /**
  * The session-config acknowledgement: the facet values now in force
@@ -2463,16 +2504,12 @@ export interface TrackingSnapshot {
 	sessionDefinitionId?: string | null;
 	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
 	skillBoostPercent?: number | null;
-	/** The open segment's name. Active-only by nature: a segment exists exactly while its session runs, so the idle branch never carries the key and an active session without a segment drops it too. */
-	segmentName?: string | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
 	/** What the held tool implies the next action is recorded as. */
 	currentActivity?: ToolActivity | null;
-	/** The focused quests' names, newest first: the effort stretches the user declared on the running session (several can stack via additive focus). Absent when none are focused, so the readout never claims effort that was not declared. */
-	questNames?: string[] | null;
-	/** How many quests the focus picker can offer (in-progress mission-log quests plus standing signal quests), surfaced as a passive cue. Present idle and active alike; absent only at zero. */
-	questsInProgress?: number | null;
+	/** The Activities control's strip-level readout: whether it appears at all, the ready cue, and the standing set. Active-only by nature (an activity exists exactly while its session runs), so the idle branch never carries the key. */
+	activities?: ActivitySummary | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
 	session_id?: string | null;
@@ -3060,28 +3097,16 @@ export async function trackingSessionConfig(sessionName: string | null, skillBoo
 	return invokeCommand('tracking_session_config', { session_name: sessionName, skill_boost_percent: skillBoostPercent });
 }
 
-export async function trackingSegmentOpen(segmentName: string | null): Promise<SegmentStateResult> {
-	return invokeCommand('tracking_segment_open', { segment_name: segmentName });
+export async function trackingActivityOptions(): Promise<ActivityOptionsResult> {
+	return invokeCommand('tracking_activity_options', {});
 }
 
-export async function trackingSegmentClose(): Promise<SegmentStateResult> {
-	return invokeCommand('tracking_segment_close', {});
+export async function trackingActivityActivate(kind: ActivityTargetKind, questId: number | null, label: string | null, additive: boolean | null): Promise<ActivityStateResult> {
+	return invokeCommand('tracking_activity_activate', { kind, quest_id: questId, label, additive });
 }
 
-export async function trackingSegmentRename(segmentName: string): Promise<SegmentStateResult> {
-	return invokeCommand('tracking_segment_rename', { segment_name: segmentName });
-}
-
-export async function trackingQuestFocus(questId: number, additive: boolean | null): Promise<QuestFocusResult> {
-	return invokeCommand('tracking_quest_focus', { quest_id: questId, additive });
-}
-
-export async function trackingQuestUnfocus(questId: number): Promise<QuestFocusResult> {
-	return invokeCommand('tracking_quest_unfocus', { quest_id: questId });
-}
-
-export async function trackingFocusOptions(): Promise<FocusOptionsResult> {
-	return invokeCommand('tracking_focus_options', {});
+export async function trackingActivityDeactivate(kind: ActivityTargetKind, questId: number | null, label: string | null): Promise<ActivityStateResult> {
+	return invokeCommand('tracking_activity_deactivate', { kind, quest_id: questId, label });
 }
 
 export async function trackingRenameSession(sessionId: string, sessionName: string | null): Promise<SessionRenameResult> {

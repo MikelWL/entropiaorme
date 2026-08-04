@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 
 use crate::harvest_yield::{HarvestYieldSource, HarvestYieldTier};
 use crate::ped::Ped;
+use crate::tracker::ActiveActivity;
 
 /// A single item received from a loot drop. Serialises to its wire
 /// field names directly: the loot-group bus payload carries these
@@ -166,12 +167,11 @@ pub struct ActiveSessionView {
     pub definition_id: Option<i64>,
     /// The skill-boost facet the session runs under (percent), when set.
     pub skill_boost_percent: Option<i64>,
-    /// The open segment's name; None whenever no segment is open (a
-    /// segment exists only while its session runs).
-    pub segment_name: Option<String>,
-    /// The focused quests' names, newest first: the quest facet as
-    /// the user declared it (several dailies can stack).
-    pub quest_names: Vec<String>,
+    /// The activities standing on the session, in the order they were
+    /// declared: the quest stretches and player-named segments the
+    /// Activities control renders as chips. Empty whenever nothing is
+    /// declared; an activity exists only while its session runs.
+    pub active_activities: Vec<ActiveActivity>,
     /// Harvesting swings this session (successes + explicit fails).
     pub harvest_swings: i64,
     pub harvest_successes: i64,
