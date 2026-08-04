@@ -11,7 +11,6 @@
 		model: DefinitionsModel;
 	} = $props();
 
-	let panelEl = $state<HTMLDivElement | null>(null);
 	let nameInput = $state<HTMLInputElement | null>(null);
 	let sourceFilter = $state('');
 	let segmentDraft = $state('');
@@ -42,11 +41,11 @@
 		segmentDraft = '';
 	}
 
-	/** The surface's entrance: it arrives AFTER the dashboard content has
-	 * animated away (the route sequences that with a matching delay on
+	/** The surface's entrance: it arrives AFTER the page content has
+	 * animated away (the stage sequences that with a matching delay on
 	 * its content wrapper), fading in with a slight upward settle; on
-	 * close it leaves first, undelayed, and the dashboard returns behind
-	 * it. Reduced motion and the e2e freeze collapse both to an instant
+	 * close it leaves first, undelayed, and the page returns behind it.
+	 * Reduced motion and the e2e freeze collapse both to an instant
 	 * settle. */
 	function surface(_node: HTMLElement, { entering }: { entering: boolean }) {
 		if (shouldSettleInstantly()) return { duration: 0 };
@@ -58,41 +57,12 @@
 		};
 	}
 
-	const FOCUSABLE_SELECTOR =
-		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
+	// Escape leaves without saving. Tab is deliberately NOT trapped: the
+	// environment takes over the page's own region, not the window, so the
+	// sidebar and titlebar stay reachable and navigating away is a valid
+	// way out of it.
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			model.close();
-		} else if (e.key === 'Tab') {
-			trapTab(e);
-		}
-	}
-
-	// Keep Tab cycling within the environment while it is open (the
-	// Modal idiom; this surface covers the whole viewport, so focus
-	// escaping it would land on controls that cannot be seen).
-	function trapTab(e: KeyboardEvent) {
-		if (!panelEl || e.defaultPrevented) return;
-		const focusables = Array.from(panelEl.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-		if (focusables.length === 0) {
-			e.preventDefault();
-			panelEl.focus();
-			return;
-		}
-		const first = focusables[0];
-		const last = focusables[focusables.length - 1];
-		const active = document.activeElement;
-		const inside = active instanceof HTMLElement && panelEl.contains(active);
-		if (e.shiftKey) {
-			if (!inside || active === first || active === panelEl) {
-				e.preventDefault();
-				last.focus();
-			}
-		} else if (!inside || active === last) {
-			e.preventDefault();
-			first.focus();
-		}
+		if (e.key === 'Escape') model.close();
 	}
 
 	// On open: remember the opener and move focus to the name field; on
@@ -112,10 +82,8 @@
 
 {#if model.mode !== 'closed'}
 	<div
-		bind:this={panelEl}
-		class="fixed inset-0 z-50 overflow-y-auto bg-base focus:outline-hidden"
-		role="dialog"
-		aria-modal="true"
+		class="absolute inset-0 z-30 overflow-y-auto bg-base focus:outline-hidden"
+		role="region"
 		aria-label={editing ? 'Edit session' : 'New session'}
 		tabindex="-1"
 		in:surface={{ entering: true }}
