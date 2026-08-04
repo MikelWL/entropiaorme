@@ -925,17 +925,6 @@ pub async fn tracking_session_intervals(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_session_name_suggestions(
-    app: tauri::AppHandle,
-    q: String,
-    limit: Option<i64>,
-) -> Result<Vec<String>, ApiError> {
-    facade(&app)?
-        .tracking_session_name_suggestions(q, limit)
-        .await
-}
-
-#[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_manual_mob_suggestions(
     app: tauri::AppHandle,
     q: String,
@@ -1612,7 +1601,6 @@ mod tests {
         "tracking_sessions",
         "tracking_session_detail",
         "tracking_session_intervals",
-        "tracking_session_name_suggestions",
         "tracking_manual_mob_suggestions",
         "tracking_snapshot",
         "tracking_quest_link_suggestion",

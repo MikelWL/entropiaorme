@@ -3028,10 +3028,6 @@ export async function trackingSessionIntervals(sessionId: string): Promise<Sessi
 	return invokeCommand('tracking_session_intervals', { session_id: sessionId });
 }
 
-export async function trackingSessionNameSuggestions(q: string, limit: number | null): Promise<string[]> {
-	return invokeCommand('tracking_session_name_suggestions', { q, limit });
-}
-
 export async function trackingManualMobSuggestions(q: string, limit: number | null): Promise<ManualMobSuggestion[]> {
 	return invokeCommand('tracking_manual_mob_suggestions', { q, limit });
 }

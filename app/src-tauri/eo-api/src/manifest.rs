@@ -916,20 +916,6 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(SessionIntervals))),
         },
         CommandSpec {
-            name: "tracking_session_name_suggestions",
-            args: vec![
-                ArgSpec {
-                    name: "q",
-                    schema: schema(schema_for!(String)),
-                },
-                ArgSpec {
-                    name: "limit",
-                    schema: schema(schema_for!(Option<i64>)),
-                },
-            ],
-            returns: Some(schema(schema_for!(Vec<String>))),
-        },
-        CommandSpec {
             name: "tracking_manual_mob_suggestions",
             args: vec![
                 ArgSpec {

@@ -237,17 +237,6 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn empty_session_name_suggestions_serialise_to_the_empty_array() {
-    let dir = tempfile::tempdir().unwrap();
-    let api = make_api(dir.path(), false, None).await;
-    let suggestions = api
-        .tracking_session_name_suggestions(String::new(), None)
-        .await
-        .unwrap();
-    assert_eq!(serde_json::to_string(&suggestions).unwrap(), "[]");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_missing_session_detail_is_not_found() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), false, None).await;

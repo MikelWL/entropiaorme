@@ -808,17 +808,6 @@ impl Api {
         }
     }
 
-    /// Session-name autocomplete over the names already in the history.
-    pub async fn tracking_session_name_suggestions(
-        &self,
-        q: String,
-        limit: Option<i64>,
-    ) -> Result<Vec<String>, ApiError> {
-        session_name_suggestions_impl(&self.db, &q, limit.unwrap_or(10))
-            .await
-            .map_err(ApiError::internal("tracking session name suggestions"))
-    }
-
     /// Catalogue mob-name autocomplete for the declared-mob typeahead.
     pub async fn tracking_manual_mob_suggestions(
         &self,
