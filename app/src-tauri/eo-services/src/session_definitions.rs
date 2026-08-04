@@ -96,9 +96,9 @@ pub struct RosterEntry {
 
 /// A session definition as read: the authored fields plus the derived
 /// instance count (how many tracked sessions reference it). The count is
-/// the aggregation key's own evidence: a lifetime-over-all-instances
-/// readout is computed against it, so it stays on the read model rather
-/// than costing that readout a second round trip.
+/// the aggregation key's own evidence: it is what a
+/// lifetime-over-all-instances readout can be computed against without a
+/// second round trip, which is why the read model carries it.
 #[derive(Debug, Clone)]
 pub struct SessionDefinition {
     pub id: i64,

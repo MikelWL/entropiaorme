@@ -1191,7 +1191,8 @@ impl Api {
     /// Select the session definition the next session starts as an
     /// instance of, writing the session-name facet with the
     /// definition's name in the same motion; null withdraws the
-    /// selection and clears the name. 404 for an id naming no active
+    /// selection and clears the name, which reads back as the protected
+    /// default rather than as no session. 404 for an id naming no active
     /// definition; 409 when a session is running and the selection
     /// would change (the facet snapshots at start and never moves for
     /// the session's life).

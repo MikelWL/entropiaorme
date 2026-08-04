@@ -100,8 +100,7 @@
 		</Menu>
 	{/if}
 
-	<!-- Before the list has loaded there is no name to sit beside, so
-		 this takes its place. -->
+	<!-- Sits beside the name, and stands alone before the list loads. -->
 	<button
 		type="button"
 		class="filter-chip shrink-0"
