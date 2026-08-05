@@ -70,10 +70,10 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 | Codex | `species`; species `ranks`; `recommend`; `calibrate`; `claim`; meta `claim`; meta `attributes` |
 | Analytics | period-scoped `overview`; `hunting`; period-scoped tier-first `harvest`; harvest stock positions and realised markup; the auction lifecycle (listings list, create, confirm, expire) and stock `convert`; activity `history` with its undos (sale revert, listing, conversion); the ledger (paged list, whole-ledger `summary`, create, entry delete), presets (list, create, delete), and inventory (list, create, item patch/delete, item `sell`) |
 | Market | paste `preview` and `commit`; `overview`; item `history`; `break-even`; mob `ranking` |
-| Tracking (reads) | `sessions` (paged); session read; `session-intervals`; `activity-options`; `snapshot` |
+| Tracking (reads) | `sessions` (paged across the whole history or scoped to one definition); session read; `session-intervals`; `activity-options`; `snapshot` |
 | Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `session-config`, `definition-select`; activity `activate`, `deactivate` (one pair over quest stretches and player-named segments alike) |
-| Session definitions | definitions list/create/update/delete: each definition carries an authored activity roster the overlay's Activities control offers, and every tracked run is recorded as an instance of one |
-| Tracking (session edits) | session `rename`, `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `repair-scan`, session delete; `quest-link-suggestion` (legacy read) |
+| Session definitions | definitions list (active only or including retired definitions), create, update, and delete: each definition carries an authored activity roster the overlay's Activities control offers, and every tracked run is recorded as an instance of one |
+| Tracking (session edits) | session `reassign` between active definitions, `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `repair-scan`, and session delete; `quest-link-suggestion` (legacy read) |
 | Scan | skills `status`; `start`, `capture`, `cancel`, `undo`, `process`, `accept`, `reject`; skills capture read by page; skills `pending`; `spacebar-capture` |
 | Maps | planet-map catalogue and coordinate scan; pin list/viewport/nearby/create/update/delete; named map list/create/rename/delete; coordinate calibration start/cancel/status; navigation snapshot/start/update/mark-visited/skip/resolve-harvest/undo/end; radar calibration start/cancel/status/geometry |
 | Settings | settings read/patch; overlay-position read/update |
