@@ -204,7 +204,7 @@
 									}}
 								>
 									<td class="border-b border-border/50 px-4 py-3 tabular-nums">
-										{session.startTime ? formatDate(session.startTime) : '—'}
+										{session.startTime ? formatDate(session.startTime) : '\u2014'}
 									</td>
 									<td class="border-b border-border/50 px-4 py-3 text-text-secondary">
 										{formatDuration(session.duration)}
@@ -370,7 +370,7 @@
 				{#if instances.totalPages > 1}
 					<div class="flex items-center justify-between px-2">
 						<span class="text-xs tabular-nums text-text-tertiary">
-							Showing {table.page * PAGE_SIZE + 1}{'–'}{Math.min(
+							Showing {table.page * PAGE_SIZE + 1}{'\u2013'}{Math.min(
 								(table.page + 1) * PAGE_SIZE,
 								instances.total
 							)} of {instances.total}

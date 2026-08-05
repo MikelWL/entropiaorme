@@ -128,6 +128,22 @@
 	}
 </script>
 
+{#snippet reviewChip()}
+	<!-- Sits with the authoring affordances rather than the run controls:
+		 reviewing what was recorded is management of the session list, not
+		 an action on the session about to run. -->
+	<span class="h-4 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
+	<button
+		type="button"
+		class="filter-chip shrink-0"
+		title="Review recorded sessions"
+		onclick={() => onReview(selectedDefinitionId)}
+		data-testid="dashboard-review"
+	>
+		Review
+	</button>
+{/snippet}
+
 <!-- Island: Session -->
 <section class="panel p-4 flex flex-col gap-3 flex-shrink-0">
 	<!-- Session strip -->
@@ -158,6 +174,7 @@
 						{spanLabel}
 					</span>
 				{/if}
+				{@render reviewChip()}
 			</div>
 		{:else}
 			<!-- At rest the island is titled by the session it will run as;
@@ -168,6 +185,7 @@
 					selectedId={selectedDefinitionId}
 					onOpenAuthoring={openAuthoring}
 				/>
+				{@render reviewChip()}
 				{#if showingLifetime && lifetime}
 					<!-- Duration is a figure like any other, so it reads only
 						 once there are instances behind it; below that the
@@ -223,25 +241,16 @@
 					</div>
 				</div>
 			{/if}
-			<!-- Review opens on the session this island is sitting on. The
-				 reason to come here is almost always that a figure from the
-				 session just played looked wrong, so it is one press away in
-				 both states rather than something to go and find. -->
-			<Button
-				size="sm"
-				variant="secondary"
-				onclick={() => onReview(selectedDefinitionId)}
-				data-testid="dashboard-review"
-			>
-				{#snippet children()}Review{/snippet}
-			</Button>
+			<!-- The overlay is the surface play actually happens on, so it
+				 carries the emphasis; starting is the once-per-session act
+				 beside it. -->
 			{#if !isActive}
-				<Button size="sm" disabled={starting} onclick={handleStart}>
-					{#snippet children()}{starting ? 'Starting...' : 'Start'}{/snippet}
+				<Button size="sm" variant="secondary" disabled={starting} onclick={handleStart}>
+					{#snippet children()}{starting ? 'Starting...' : 'Start tracking'}{/snippet}
 				</Button>
 			{/if}
 			<span class="inline-flex" data-guide-anchor="dashboard-overlay-btn">
-				<Button size="sm" variant={isActive ? 'primary' : 'secondary'} onclick={() => toggleOverlay().catch(() => {})}>
+				<Button size="sm" variant="primary" onclick={() => toggleOverlay().catch(() => {})}>
 					{#snippet children()}Overlay{/snippet}
 				</Button>
 			</span>
