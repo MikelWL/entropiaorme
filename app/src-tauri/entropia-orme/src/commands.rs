@@ -486,11 +486,23 @@ pub async fn session_definition_update(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn session_definition_delete(
+pub async fn session_definition_archive(
     app: tauri::AppHandle,
     definition_id: i64,
-) -> Result<(), ApiError> {
-    facade(&app)?.session_definition_delete(definition_id).await
+) -> Result<SessionDefinition, ApiError> {
+    facade(&app)?
+        .session_definition_archive(definition_id)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn session_definition_restore(
+    app: tauri::AppHandle,
+    definition_id: i64,
+) -> Result<SessionDefinition, ApiError> {
+    facade(&app)?
+        .session_definition_restore(definition_id)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1554,7 +1566,8 @@ mod tests {
         "session_definitions_list",
         "session_definition_create",
         "session_definition_update",
-        "session_definition_delete",
+        "session_definition_archive",
+        "session_definition_restore",
         "tracking_definition_select",
         "analytics_overview",
         "analytics_hunting",

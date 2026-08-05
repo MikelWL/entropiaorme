@@ -10,19 +10,29 @@
  * deleted. Comparison, ranking, and per-instance economics belong to the
  * analytics surfaces and deliberately do not appear here.
  *
- * The definitions offered include the soft-deleted ones. Their instances
+ * The definitions offered include the archived ones. Their instances
  * are real recorded play, and a definition that stopped being offered
  * would otherwise take its whole history out of reach; they are shown
  * apart, and cannot receive a re-filed instance.
  */
 
-import { getAllSessionDefinitions, type SessionDefinition } from '$lib/api';
+import {
+	getAllSessionDefinitions,
+	restoreSessionDefinition,
+	type SessionDefinition,
+} from '$lib/api';
 import { describeError } from '$lib/view/errorState';
+import { sortDefinitions } from './definitionCatalogue';
 import { createInstancesModel, type InstancesModel } from './instancesModel.svelte';
 
 export interface ReviewModelDeps {
-	/** Every definition, soft-deleted ones included. */
+	/** Every definition, archived ones included. */
 	listAllDefinitions(): Promise<SessionDefinition[]>;
+	restoreDefinition(id: string): Promise<SessionDefinition>;
+	/** Refresh the dashboard's separately owned play catalogue after a
+	 * restore. That model owns its own error state and keeps its existing
+	 * selection while reloading the definitions on offer. */
+	refreshPlayableDefinitions(): Promise<void>;
 	/** The scoped instance list; injected so tests compose the surface
 	 * without reaching the backend. */
 	createInstances(definitionId: () => string | null): InstancesModel;
@@ -33,11 +43,12 @@ export function createReviewModel(deps: ReviewModelDeps) {
 	let definitionId = $state<string | null>(null);
 	let definitions = $state<SessionDefinition[]>([]);
 	let loadingDefinitions = $state(false);
+	let restoring = $state(false);
 	let error = $state<string | null>(null);
 
 	const instances = deps.createInstances(() => definitionId);
 
-	/** The definition under review, which may be a soft-deleted one. */
+	/** The definition under review, which may be an archived one. */
 	const definition = $derived(definitions.find((entry) => entry.id === definitionId) ?? null);
 
 	/** The definitions that can still take a re-filed instance:
@@ -46,17 +57,15 @@ export function createReviewModel(deps: ReviewModelDeps) {
 		definitions.filter((entry) => entry.isActive && entry.id !== definitionId),
 	);
 
-	/** Retired definitions are listed apart, after the offered ones, so
+	/** Archived definitions are listed apart, after the offered ones, so
 	 * the switcher never implies they can be played again. */
 	const activeDefinitions = $derived(definitions.filter((entry) => entry.isActive));
-	const retiredDefinitions = $derived(
-		definitions.filter((entry) => !entry.isActive && entry.instanceCount > 0),
-	);
+	const archivedDefinitions = $derived(definitions.filter((entry) => !entry.isActive));
 
 	async function loadDefinitions() {
 		loadingDefinitions = true;
 		try {
-			definitions = await deps.listAllDefinitions();
+			definitions = sortDefinitions(await deps.listAllDefinitions());
 			error = null;
 		} catch (e) {
 			error = describeError(e, 'Failed to load sessions');
@@ -110,6 +119,24 @@ export function createReviewModel(deps: ReviewModelDeps) {
 		await loadDefinitions();
 	}
 
+	/** Restore the archived definition under review without changing the
+	 * dashboard's current play selection. */
+	async function restoreCurrent(): Promise<boolean> {
+		if (definition === null || definition.isActive) return false;
+		restoring = true;
+		error = null;
+		try {
+			await deps.restoreDefinition(definition.id);
+			await Promise.all([loadDefinitions(), deps.refreshPlayableDefinitions()]);
+			return true;
+		} catch (cause) {
+			error = describeError(cause, 'Failed to restore the session');
+			return false;
+		} finally {
+			restoring = false;
+		}
+	}
+
 	return {
 		instances,
 
@@ -128,14 +155,17 @@ export function createReviewModel(deps: ReviewModelDeps) {
 		get activeDefinitions() {
 			return activeDefinitions;
 		},
-		get retiredDefinitions() {
-			return retiredDefinitions;
+		get archivedDefinitions() {
+			return archivedDefinitions;
 		},
 		get moveTargets() {
 			return moveTargets;
 		},
 		get loadingDefinitions() {
 			return loadingDefinitions;
+		},
+		get restoring() {
+			return restoring;
 		},
 		get error() {
 			return error;
@@ -149,6 +179,7 @@ export function createReviewModel(deps: ReviewModelDeps) {
 		close,
 		reassign,
 		remove,
+		restoreCurrent,
 		loadDefinitions,
 	};
 }
@@ -157,9 +188,13 @@ export type ReviewModel = ReturnType<typeof createReviewModel>;
 
 /** The model wired to the live API: the app's composition (the
  * deps-injected factory above is the testable seam). */
-export function createLiveReviewModel(): ReviewModel {
+export function createLiveReviewModel(
+	refreshPlayableDefinitions: () => Promise<void>,
+): ReviewModel {
 	return createReviewModel({
 		listAllDefinitions: getAllSessionDefinitions,
+		restoreDefinition: restoreSessionDefinition,
+		refreshPlayableDefinitions,
 		createInstances: (definitionId) => createInstancesModel({ definitionId }),
 	});
 }

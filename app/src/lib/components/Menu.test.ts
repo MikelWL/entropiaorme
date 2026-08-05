@@ -123,8 +123,8 @@ describe('dismissal and activation', () => {
 // A panel laid out inside a scrollable ancestor is clipped by it, and
 // grows that ancestor's scroll extent to fit: the list appears to be
 // squashed to make room rather than the menu floating over it. The
-// overlay mode positions against the viewport to escape that, so what
-// matters is that it stops taking part in the ancestor's layout.
+// overlay mode portals into the document layer and positions against the
+// viewport, so it escapes both clipping and ancestor stacking contexts.
 describe('overlay positioning', () => {
 	it('lays the default panel out in flow, absolutely positioned to the trigger', async () => {
 		render(Menu, { props: { ariaLabel: 'Quest actions', items: threeItems() } });
@@ -143,6 +143,8 @@ describe('overlay positioning', () => {
 
 		const panel = screen.getByRole('menu');
 		expect(panel.className).toContain('fixed');
+		expect(panel.parentElement).toBe(document.body);
+		expect(panel.className).toContain('z-50');
 		// The trigger-relative offsets go with it: an overlay panel is
 		// placed by measurement, not by utility classes.
 		expect(panel.className).not.toContain('absolute');

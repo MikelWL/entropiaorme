@@ -9,6 +9,7 @@ vi.mock('$lib/api', () => ({
 	deleteSession: vi.fn(),
 	reassignSession: vi.fn(),
 	getAllSessionDefinitions: vi.fn(),
+	restoreSessionDefinition: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -32,10 +33,15 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 
 /** The review model over the real instances model, with the API mocked:
  * the composition under test is the surface plus its scoped list. */
-function reviewModel(definitions: SessionDefinition[]) {
+function reviewModel(
+	definitions: SessionDefinition[],
+	refreshPlayableDefinitions = vi.fn(async () => {}),
+) {
 	mocked.getAllSessionDefinitions.mockResolvedValue(definitions);
 	return createReviewModel({
 		listAllDefinitions: () => api.getAllSessionDefinitions(),
+		restoreDefinition: (id) => api.restoreSessionDefinition(id),
+		refreshPlayableDefinitions,
 		createInstances: (definitionId) => createInstancesModel({ definitionId }),
 	});
 }
@@ -90,34 +96,32 @@ describe('openReview', () => {
 });
 
 describe('the definitions it offers', () => {
-	it('lists retired definitions apart, and only those with recorded history', async () => {
+	it('lists every archived definition apart so even an empty one can be restored', async () => {
 		const model = reviewModel([
 			definition(),
-			definition({ id: '2', name: 'Retired With History', isActive: false, instanceCount: 4 }),
-			definition({ id: '3', name: 'Retired Empty', isActive: false, instanceCount: 0 }),
+			definition({ id: '2', name: 'Archived With History', isActive: false, instanceCount: 4 }),
+			definition({ id: '3', name: 'Archived Empty', isActive: false, instanceCount: 0 }),
 		]);
 		await model.openReview('1');
 
 		expect(model.activeDefinitions.map((d) => d.id)).toEqual(['1']);
-		// A retired definition with no instances has nothing to review, so it
-		// is not offered at all rather than offered and empty.
-		expect(model.retiredDefinitions.map((d) => d.id)).toEqual(['2']);
+		expect(model.archivedDefinitions.map((d) => d.id)).toEqual(['3', '2']);
 	});
 
 	it('offers only active definitions as move targets, never the one under review', async () => {
 		const model = reviewModel([
 			definition(),
 			definition({ id: '2', name: 'ARIS Dailies' }),
-			definition({ id: '3', name: 'Retired', isActive: false, instanceCount: 2 }),
+			definition({ id: '3', name: 'Archived', isActive: false, instanceCount: 2 }),
 		]);
 		await model.openReview('1');
 
 		expect(model.moveTargets.map((d) => d.id)).toEqual(['2']);
 	});
 
-	it('offers no move target while reviewing a retired definition with nothing else on offer', async () => {
+	it('offers no move target while reviewing an archived definition with nothing else on offer', async () => {
 		const model = reviewModel([
-			definition({ id: '3', name: 'Retired', isActive: false, instanceCount: 2 }),
+			definition({ id: '3', name: 'Archived', isActive: false, instanceCount: 2 }),
 		]);
 		await model.openReview('3');
 
@@ -164,6 +168,37 @@ describe('the writes', () => {
 		await model.remove('s1');
 		expect(mocked.deleteSession).toHaveBeenCalledWith('s1');
 		expect(mocked.getAllSessionDefinitions).toHaveBeenCalledTimes(1);
+	});
+
+	it('restores the archived definition under review without selecting it', async () => {
+		const archived = definition({ id: '3', name: 'Easter Mayhem 2026', isActive: false });
+		const restored = { ...archived, isActive: true };
+		const refreshPlayableDefinitions = vi.fn(async () => {});
+		const model = reviewModel([definition(), archived], refreshPlayableDefinitions);
+		mocked.restoreSessionDefinition.mockResolvedValue(restored);
+		await model.openReview('3');
+		mocked.getAllSessionDefinitions.mockResolvedValue([definition(), restored]);
+
+		expect(await model.restoreCurrent()).toBe(true);
+		expect(mocked.restoreSessionDefinition).toHaveBeenCalledWith('3');
+		expect(model.definition?.isActive).toBe(true);
+		expect(refreshPlayableDefinitions).toHaveBeenCalledTimes(1);
+		expect(model.restoring).toBe(false);
+	});
+
+	it('keeps a refused restore visible with an actionable error', async () => {
+		const archived = definition({ id: '3', name: 'Seasonal', isActive: false });
+		const refreshPlayableDefinitions = vi.fn(async () => {});
+		const model = reviewModel([archived], refreshPlayableDefinitions);
+		mocked.restoreSessionDefinition.mockRejectedValue(
+			new Error("A session named 'Seasonal' already exists"),
+		);
+		await model.openReview('3');
+
+		expect(await model.restoreCurrent()).toBe(false);
+		expect(model.error).toBe("A session named 'Seasonal' already exists");
+		expect(model.definition?.isActive).toBe(false);
+		expect(refreshPlayableDefinitions).not.toHaveBeenCalled();
 	});
 });
 

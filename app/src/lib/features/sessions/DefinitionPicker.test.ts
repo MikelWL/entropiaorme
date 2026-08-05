@@ -25,7 +25,7 @@ function makeDeps(definitions: SessionDefinition[]): DefinitionsModelDeps {
 		listDefinitions: vi.fn(async () => definitions),
 		createDefinition: vi.fn(async () => definitions[0]),
 		updateDefinition: vi.fn(async () => definitions[0]),
-		deleteDefinition: vi.fn(async () => {}),
+		archiveDefinition: vi.fn(async () => definitions[0]),
 		selectDefinition: vi.fn(async () => ({})),
 		refreshTracking: vi.fn(async () => ({})),
 		listFamilies: vi.fn(async () => []),
@@ -52,8 +52,12 @@ describe('DefinitionPicker', () => {
 		expect(screen.queryByRole('menu')).toBeNull();
 
 		await fireEvent.click(trigger);
-		expect(screen.getByRole('menu')).toBeTruthy();
+		const menu = screen.getByRole('menu');
+		expect(menu).toBeTruthy();
+		expect(menu.parentElement).toBe(document.body);
+		expect(menu.className).toContain('fixed');
 		expect(screen.getByText('General Hunting')).toBeTruthy();
+		expect(document.activeElement).toBe(screen.getByLabelText('Filter sessions'));
 	});
 
 	it('writes the selection when another session is picked', async () => {
@@ -82,13 +86,68 @@ describe('DefinitionPicker', () => {
 		const { onOpenAuthoring } = await mount([definition('1', 'ARIS Dailies')], '1');
 
 		await fireEvent.click(screen.getByLabelText('Switch session (currently ARIS Dailies)'));
-		await fireEvent.click(screen.getByLabelText('Edit ARIS Dailies'));
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'Edit current' }));
 
 		expect(onOpenAuthoring).toHaveBeenCalledWith('1');
 	});
 
+	it('filters a long alphabetical catalogue without moving its fixed controls', async () => {
+		await mount(
+			[
+				definition('4', 'Tree Cutting'),
+				definition('1', 'ARIS Dailies'),
+				definition('3', 'Cyrene Dailies'),
+				definition('2', 'Bank Robber Skilling'),
+			],
+			'1',
+		);
+		await fireEvent.click(screen.getByLabelText('Switch session (currently ARIS Dailies)'));
+
+		const results = screen.getByTestId('definition-results');
+		expect(results.className).toContain('overflow-y-auto');
+		expect(
+			Array.from(results.querySelectorAll('[role="menuitem"]')).map((entry) =>
+				entry.textContent?.trim(),
+			),
+		).toEqual(['ARIS Dailies', 'Bank Robber Skilling', 'Cyrene Dailies', 'Tree Cutting']);
+
+		const input = screen.getByLabelText('Filter sessions');
+		await fireEvent.input(input, { target: { value: 'tree' } });
+		expect(screen.getByRole('menuitem', { name: 'Tree Cutting' })).toBeTruthy();
+		expect(screen.queryByRole('menuitem', { name: 'ARIS Dailies' })).toBeNull();
+		expect(screen.getByRole('menuitem', { name: 'Edit current' })).toBeTruthy();
+		expect(screen.getByRole('menuitem', { name: '+ New session' })).toBeTruthy();
+	});
+
+	it('moves from search into results by keyboard and returns focus on Escape', async () => {
+		await mount([definition('1', 'ARIS Dailies'), definition('2', 'Tree Cutting')], '1');
+		const trigger = screen.getByLabelText('Switch session (currently ARIS Dailies)');
+		await fireEvent.click(trigger);
+		const input = screen.getByLabelText('Filter sessions');
+
+		await fireEvent.keyDown(input, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'ARIS Dailies' }));
+		await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+		expect(screen.queryByRole('menu')).toBeNull();
+		expect(document.activeElement).toBe(trigger);
+	});
+
+	it('clears a stale filter when ArrowDown reopens the catalogue', async () => {
+		await mount([definition('1', 'ARIS Dailies'), definition('2', 'Tree Cutting')], '1');
+		const trigger = screen.getByLabelText('Switch session (currently ARIS Dailies)');
+		await fireEvent.click(trigger);
+		const input = screen.getByLabelText('Filter sessions');
+		await fireEvent.input(input, { target: { value: 'tree' } });
+		await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+
+		await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+
+		expect(screen.getByLabelText('Filter sessions')).toHaveProperty('value', '');
+		expect(screen.getByRole('menuitem', { name: 'ARIS Dailies' })).toBeTruthy();
+	});
+
 	// The selection is a configuration facet, so an unselected picker is a
-	// real state (a session cleared, or one deleted since): it invites the
+	// real state (a session cleared, or one archived since): it invites the
 	// choice rather than rendering a stale name.
 	it('invites a choice when nothing is selected', async () => {
 		await mount([definition('1', 'ARIS Dailies')], null);
@@ -96,5 +155,9 @@ describe('DefinitionPicker', () => {
 		expect(screen.getByLabelText('Choose a session')).toBeTruthy();
 		await fireEvent.click(screen.getByLabelText('Choose a session'));
 		expect(screen.queryByText('None')).toBeNull();
+		const input = screen.getByLabelText('Filter sessions');
+		await fireEvent.input(input, { target: { value: 'no match' } });
+		await fireEvent.keyDown(input, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: '+ New session' }));
 	});
 });

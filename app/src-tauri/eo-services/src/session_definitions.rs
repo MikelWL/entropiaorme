@@ -8,7 +8,7 @@
 //! through a nullable id stamped at start, while the session's own
 //! `session_name` column is stamped with the definition's name at the
 //! moment of selection: the stamp is the durable per-session fact (a
-//! later rename or delete never rewrites history), the reference is
+//! later rename or archive never rewrites history), the reference is
 //! the instance-to-family identity aggregation reads.
 //!
 //! The roster is replaced wholesale on update (the playlist-items
@@ -24,11 +24,14 @@ use crate::clock::Clock;
 use crate::db::{Db, DbError};
 
 /// The service's error surface: `Invalid` is a caller error carrying
-/// the rejection message verbatim; `Db` is an infrastructure failure.
+/// the rejection message verbatim, `Conflict` protects live state, and
+/// `Db` is an infrastructure failure.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionDefinitionError {
     #[error("{0}")]
     Invalid(String),
+    #[error("{0}")]
+    Conflict(String),
     #[error(transparent)]
     Db(#[from] DbError),
 }
@@ -105,7 +108,7 @@ pub struct SessionDefinition {
     pub name: String,
     pub ad_hoc_segments: bool,
     pub is_active: bool,
-    /// A definition that must not be deleted: tracking always has one
+    /// A definition that must not be archived: tracking always has one
     /// to be an instance of, and this is the one that guarantees it.
     /// Protection is about existence, not identity: the row is renamed
     /// and rostered like any other.
@@ -114,6 +117,28 @@ pub struct SessionDefinition {
     pub updated_at: Option<f64>,
     pub instance_count: i64,
     pub roster: Vec<RosterEntry>,
+}
+
+/// The completed archive transition. The protected fallback is resolved
+/// inside the same database transaction that archives the definition, so
+/// callers can persist a new selection without racing a now-inactive row.
+#[derive(Debug, Clone)]
+pub struct DefinitionArchiveOutcome {
+    pub definition: SessionDefinition,
+    pub fallback: Option<(i64, String)>,
+}
+
+enum ArchiveTransition {
+    Archived(Option<(i64, String)>),
+    Missing,
+    Protected(String),
+    InUse,
+}
+
+enum RestoreTransition {
+    Restored,
+    Missing,
+    Conflict,
 }
 
 /// The lifetime aggregate over one definition's recorded instances:
@@ -157,9 +182,10 @@ pub struct SessionDefinitionInput {
     pub roster: Vec<RosterEntryInput>,
 }
 
-/// Session-definition CRUD over the shared DB seam. Pure request/reply
-/// state in SQLite; no actor loop and no bus traffic (the frontend
-/// refetches after its own mutations, the quest-families precedent).
+/// Session-definition lifecycle over the shared DB seam. Pure
+/// request/reply state in SQLite; no actor loop and no bus traffic (the
+/// frontend refetches after its own mutations, the quest-families
+/// precedent).
 pub struct SessionDefinitionService {
     db: Db,
     clock: Arc<dyn Clock>,
@@ -257,9 +283,9 @@ impl SessionDefinitionService {
             .await?)
     }
 
-    /// The ACTIVE definition by id; `None` when absent or deleted. The
+    /// The ACTIVE definition by id; `None` when absent or archived. The
     /// selection/start paths read through this so a stale reference
-    /// (a definition deleted after being picked) resolves to "none"
+    /// (a definition archived after being picked) resolves to "none"
     /// rather than stamping a dead id.
     pub async fn get_active(
         &self,
@@ -363,7 +389,7 @@ impl SessionDefinitionService {
     }
 
     /// Update a definition; the roster is replaced wholesale. `None`
-    /// when absent; a soft-deleted definition reads as absent (mutating
+    /// when absent; an archived definition reads as absent (mutating
     /// one would resurrect it into pickers that filter on active).
     pub async fn update(
         &self,
@@ -410,7 +436,7 @@ impl SessionDefinitionService {
     /// worth switching on. Deduplicated case-insensitively against every
     /// entry's display name (a family's name included), because a second
     /// chip reading the same as an existing one is noise whatever kind
-    /// it is. Refuses to resurrect a soft-deleted definition, exactly as
+    /// it is. Refuses to resurrect an archived definition, exactly as
     /// [`update`](Self::update) does. Returns whether a row was added.
     pub async fn promote_segment(
         &self,
@@ -463,48 +489,152 @@ impl SessionDefinitionService {
             .await?)
     }
 
-    /// Soft-delete a definition and clear its roster in one
-    /// transaction. Sessions keep their stamped `definition_id`: the
-    /// stamp is recorded history, and the id stays addressable for a
-    /// future read over an inactive definition.
-    pub async fn delete(&self, definition_id: i64) -> Result<bool, SessionDefinitionError> {
-        let protected = self
-            .db
-            .with_reader(move |conn| {
-                Ok(conn.query_row(
-                    "SELECT COUNT(*) FROM session_definitions \
-                     WHERE id = ? AND is_active = 1 AND is_protected = 1",
-                    rusqlite::params![definition_id],
-                    |row| row.get::<_, i64>(0),
-                )?)
-            })
-            .await?
-            > 0;
-        if protected {
-            return Err(SessionDefinitionError::Invalid(
-                "This session cannot be deleted; tracking always needs one to run under"
-                    .to_string(),
-            ));
-        }
-        Ok(self
+    /// Archive a definition without touching its roster or recorded
+    /// instances. The protected active fallback is resolved in the same
+    /// transaction, making the transition safe for a caller whose current
+    /// selection names the archived definition.
+    pub async fn archive(
+        &self,
+        definition_id: i64,
+    ) -> Result<Option<DefinitionArchiveOutcome>, SessionDefinitionError> {
+        let now = self.now_epoch();
+        let transition = self
             .db
             .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
                 let tx = conn.transaction()?;
-                let affected = tx.execute(
-                    "UPDATE session_definitions SET is_active = 0 \
-                     WHERE id = ? AND is_active = 1",
-                    rusqlite::params![definition_id],
-                )?;
-                if affected > 0 {
-                    tx.execute(
-                        "DELETE FROM session_definition_roster WHERE definition_id = ?",
+                let state = tx
+                    .query_row(
+                        "SELECT is_active, is_protected, name FROM session_definitions WHERE id = ?",
                         rusqlite::params![definition_id],
-                    )?;
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)? != 0,
+                                row.get::<_, i64>(1)? != 0,
+                                row.get::<_, String>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((is_active, is_protected, name)) = state else {
+                    return Ok(ArchiveTransition::Missing);
+                };
+                if !is_active {
+                    return Ok(ArchiveTransition::Missing);
                 }
+                if is_protected {
+                    return Ok(ArchiveTransition::Protected(name));
+                }
+                let in_use = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM tracking_sessions \
+                     WHERE is_active = 1 AND definition_id = ?)",
+                    rusqlite::params![definition_id],
+                    |row| row.get::<_, i64>(0),
+                )? != 0;
+                if in_use {
+                    return Ok(ArchiveTransition::InUse);
+                }
+
+                tx.execute(
+                    "UPDATE session_definitions SET is_active = 0, updated_at = ? \
+                     WHERE id = ?",
+                    rusqlite::params![now, definition_id],
+                )?;
+                let fallback = tx
+                    .query_row(
+                        "SELECT id, name FROM session_definitions \
+                         WHERE is_active = 1 AND is_protected = 1 \
+                         ORDER BY id ASC LIMIT 1",
+                        [],
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
                 tx.commit()?;
-                Ok(affected > 0)
+                Ok(ArchiveTransition::Archived(fallback))
             })
-            .await?)
+            .await?;
+        let fallback = match transition {
+            ArchiveTransition::Archived(fallback) => fallback,
+            ArchiveTransition::Missing => return Ok(None),
+            ArchiveTransition::Protected(name) => {
+                return Err(SessionDefinitionError::Invalid(format!(
+                    "{name} cannot be archived; tracking always needs one to run under"
+                )));
+            }
+            ArchiveTransition::InUse => {
+                return Err(SessionDefinitionError::Conflict(
+                    "The session in play cannot be archived until tracking ends".to_string(),
+                ));
+            }
+        };
+        let definition = self
+            .get(definition_id)
+            .await?
+            .expect("the archived definition remains addressable");
+        Ok(Some(DefinitionArchiveOutcome {
+            definition,
+            fallback,
+        }))
+    }
+
+    /// Restore an archived definition to the active catalogue. Its authored
+    /// roster and recorded instances have remained intact throughout. A name
+    /// that became occupied while it was archived must be resolved by the
+    /// user rather than silently splitting one definition's identity.
+    pub async fn restore(
+        &self,
+        definition_id: i64,
+    ) -> Result<Option<SessionDefinition>, SessionDefinitionError> {
+        let Some(existing) = self.get(definition_id).await? else {
+            return Ok(None);
+        };
+        if existing.is_active {
+            return Ok(None);
+        }
+
+        let now = self.now_epoch();
+        let name = existing.name;
+        let candidate = name.to_ascii_lowercase();
+        let transition = self
+            .db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let active = tx
+                    .query_row(
+                        "SELECT is_active FROM session_definitions WHERE id = ?",
+                        rusqlite::params![definition_id],
+                        |row| Ok(row.get::<_, i64>(0)? != 0),
+                    )
+                    .optional()?;
+                if active != Some(false) {
+                    return Ok(RestoreTransition::Missing);
+                }
+                let taken = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM session_definitions \
+                     WHERE is_active = 1 AND lower(name) = ? AND id != ?)",
+                    rusqlite::params![candidate, definition_id],
+                    |row| row.get::<_, i64>(0),
+                )? != 0;
+                if taken {
+                    return Ok(RestoreTransition::Conflict);
+                }
+                tx.execute(
+                    "UPDATE session_definitions SET is_active = 1, updated_at = ? \
+                     WHERE id = ? AND is_active = 0",
+                    rusqlite::params![now, definition_id],
+                )?;
+                tx.commit()?;
+                Ok(RestoreTransition::Restored)
+            })
+            .await?;
+        match transition {
+            RestoreTransition::Restored => self.get(definition_id).await,
+            RestoreTransition::Missing => Ok(None),
+            RestoreTransition::Conflict => Err(SessionDefinitionError::Invalid(format!(
+                "A session named '{name}' already exists"
+            ))),
+        }
     }
 
     /// Refuse a name already carried by another ACTIVE definition

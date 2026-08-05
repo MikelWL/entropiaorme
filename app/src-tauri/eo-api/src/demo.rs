@@ -176,8 +176,11 @@ impl DemoState {
     pub async fn build(demo_db_path: &Path, clock: Arc<dyn Clock>) -> Result<DemoState, DemoError> {
         let work = working_copy_path();
         // A stale copy from a prior run of the same pid (rare) must not be
-        // adopted; start from the bundled file each launch.
-        let _ = std::fs::remove_file(&work);
+        // adopted; start from the bundled file each launch. SQLite's WAL and
+        // shared-memory sidecars survive the main file unless removed
+        // explicitly. Leaving them behind lets a reused pid replay the prior
+        // process's demo session over the fresh copy.
+        clear_sqlite_work_files(&work)?;
         std::fs::copy(demo_db_path, &work)?;
         let db = Db::open(&work).await?;
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
@@ -614,6 +617,26 @@ fn working_copy_path() -> PathBuf {
     std::env::temp_dir().join(format!("entropiaorme-demo-{}.db", std::process::id()))
 }
 
+fn sqlite_work_files(database: &Path) -> [PathBuf; 3] {
+    let sidecar = |suffix: &str| {
+        let mut path = database.as_os_str().to_os_string();
+        path.push(suffix);
+        PathBuf::from(path)
+    };
+    [database.to_path_buf(), sidecar("-wal"), sidecar("-shm")]
+}
+
+fn clear_sqlite_work_files(database: &Path) -> std::io::Result<()> {
+    for path in sqlite_work_files(database) {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 // ── The typed demo commands (Api boundary) ──────────────────────────
 
 impl Api {
@@ -747,6 +770,44 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("resources/demo_goldens")
             .join(format!("{name}.txt"))
+    }
+
+    #[test]
+    fn demo_working_files_include_both_sqlite_sidecars() {
+        let database = Path::new("demo.db");
+        assert_eq!(
+            sqlite_work_files(database),
+            [
+                PathBuf::from("demo.db"),
+                PathBuf::from("demo.db-wal"),
+                PathBuf::from("demo.db-shm"),
+            ]
+        );
+    }
+
+    #[test]
+    fn demo_working_files_are_removed_and_absence_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("demo.db");
+        for path in sqlite_work_files(&database) {
+            std::fs::write(path, b"stale").unwrap();
+        }
+
+        clear_sqlite_work_files(&database).unwrap();
+        assert!(sqlite_work_files(&database)
+            .iter()
+            .all(|path| !path.exists()));
+        clear_sqlite_work_files(&database).unwrap();
+    }
+
+    #[test]
+    fn demo_working_file_cleanup_propagates_other_io_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("demo.db");
+        std::fs::create_dir(&database).unwrap();
+
+        let error = clear_sqlite_work_files(&database).unwrap_err();
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
     }
 
     fn to_json<T: Serialize>(value: &T) -> String {

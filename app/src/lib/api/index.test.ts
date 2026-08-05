@@ -125,6 +125,24 @@ describe('tracking wrappers dispatch typed commands', () => {
 	});
 });
 
+describe('session definition lifecycle wrappers dispatch typed commands', () => {
+	it.each([
+		[
+			'archiveSessionDefinition',
+			() => api.archiveSessionDefinition('7'),
+			'session_definition_archive',
+		],
+		[
+			'restoreSessionDefinition',
+			() => api.restoreSessionDefinition('7'),
+			'session_definition_restore',
+		],
+	] as const)('%s', async (_name, call, command) => {
+		await call();
+		expect(tauriInvoke).toHaveBeenCalledWith(command, { definition_id: 7 });
+	});
+});
+
 // The three tracking reads with a guide-mode surface: the live command and the
 // guide-mode demo command share their DTOs. Guide mode dispatches the `demo_*`
 // command with the identical args.

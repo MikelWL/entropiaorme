@@ -4405,7 +4405,7 @@ fn a_selected_definition_stamps_the_session_row_at_start() {
 #[test]
 fn a_stale_definition_selection_falls_through_to_the_default_and_keeps_the_name() {
     let rig = rig();
-    // A definition selected and then soft-deleted while idle: the dead
+    // A definition selected and then archived while idle: the inactive
     // id must not stamp, and rather than recording an instance of
     // nothing the session becomes one of the protected default. The
     // name facet remains an honest declaration of its own.

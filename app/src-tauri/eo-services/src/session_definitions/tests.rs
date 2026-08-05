@@ -168,30 +168,67 @@ async fn update_replaces_the_roster_wholesale() {
 }
 
 #[tokio::test]
-async fn delete_soft_deletes_and_reads_as_absent_on_update() {
+async fn archive_preserves_the_roster_and_restore_returns_it_to_play() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
 
-    let created = svc.create(input("ARIS Dailies", vec![])).await.unwrap();
-    assert!(svc.delete(created.id).await.unwrap());
-    // Idempotent: a second delete finds nothing active.
-    assert!(!svc.delete(created.id).await.unwrap());
+    let created = svc
+        .create(input("ARIS Dailies", vec![segment_entry("Warm-up")]))
+        .await
+        .unwrap();
+    let archived = svc.archive(created.id).await.unwrap().unwrap();
+    assert_eq!(
+        archived
+            .fallback
+            .as_ref()
+            .map(|fallback| fallback.1.as_str()),
+        Some("Default Tracking")
+    );
+    assert!(!archived.definition.is_active);
+    assert_eq!(archived.definition.roster.len(), 1);
+    assert_eq!(
+        archived.definition.roster[0].display_name.as_deref(),
+        Some("Warm-up")
+    );
+    // Idempotent: a second archive finds nothing active.
+    assert!(svc.archive(created.id).await.unwrap().is_none());
 
     // Gone from the active list (which keeps the protected default),
-    // still addressable by direct read.
+    // still addressable by direct read with its authored roster intact.
     let remaining = svc.list(true).await.unwrap();
     assert_eq!(remaining.len(), 1);
     assert!(remaining[0].is_protected);
     let inactive = svc.get(created.id).await.unwrap().unwrap();
     assert!(!inactive.is_active);
+    assert_eq!(inactive.roster.len(), 1);
     assert!(svc.get_active(created.id).await.unwrap().is_none());
 
-    // A soft-deleted definition reads as absent on update.
+    // An archived definition reads as absent on update.
     let result = svc
         .update(created.id, input("Renamed", vec![]))
         .await
         .unwrap();
     assert!(result.is_none());
+
+    let restored = svc.restore(created.id).await.unwrap().unwrap();
+    assert!(restored.is_active);
+    assert_eq!(restored.roster.len(), 1);
+    assert_eq!(restored.roster[0].display_name.as_deref(), Some("Warm-up"));
+    assert!(svc.restore(created.id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn restore_refuses_a_name_that_became_active_while_archived() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+
+    let first = svc.create(input("Seasonal", vec![])).await.unwrap();
+    svc.archive(first.id).await.unwrap().unwrap();
+    svc.create(input("seasonal", vec![])).await.unwrap();
+
+    let result = svc.restore(first.id).await;
+    assert!(matches!(result, Err(SessionDefinitionError::Invalid(_))));
+    assert!(!svc.get(first.id).await.unwrap().unwrap().is_active);
 }
 
 #[tokio::test]
@@ -215,8 +252,8 @@ async fn names_are_unique_among_active_definitions() {
     let clash = svc.update(second.id, input("ARIS Dailies", vec![])).await;
     assert!(matches!(clash, Err(SessionDefinitionError::Invalid(_))));
 
-    // Deleting frees the name.
-    assert!(svc.delete(first.id).await.unwrap());
+    // Archiving frees the active name.
+    assert!(svc.archive(first.id).await.unwrap().is_some());
     assert!(svc.create(input("ARIS Dailies", vec![])).await.is_ok());
 }
 
@@ -320,10 +357,10 @@ async fn instance_count_counts_referencing_sessions() {
 }
 
 /// Tracking always needs a definition to run under, so the seeded one
-/// refuses deletion while staying an ordinary definition in every other
+/// refuses archiving while staying an ordinary definition in every other
 /// respect, and "nothing chosen" resolves to it.
 #[tokio::test]
-async fn the_protected_default_cannot_be_deleted_and_backs_every_selection() {
+async fn the_protected_default_cannot_be_archived_and_backs_every_selection() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, db) = service(dir.path()).await;
 
@@ -332,18 +369,17 @@ async fn the_protected_default_cannot_be_deleted_and_backs_every_selection() {
     let default_id = seeded[0].id;
     assert_eq!(seeded[0].name, "Default Tracking");
 
-    assert!(matches!(
-        svc.delete(default_id).await,
-        Err(SessionDefinitionError::Invalid(_))
-    ));
-    assert!(svc.get_active(default_id).await.unwrap().is_some());
-
     // Renaming is allowed: protection guards existence, not identity.
     svc.update(default_id, input("General Play", vec![]))
         .await
         .unwrap();
+    assert_eq!(
+        svc.archive(default_id).await.unwrap_err().to_string(),
+        "General Play cannot be archived; tracking always needs one to run under"
+    );
+    assert!(svc.get_active(default_id).await.unwrap().is_some());
 
-    // Nothing chosen, an unknown id, and a deleted selection all resolve
+    // Nothing chosen, an unknown id, and an archived selection all resolve
     // to it; a live selection resolves to itself.
     let authored = svc.create(input("ARIS Dailies", vec![])).await.unwrap();
     for configured in [None, Some(9999), Some(default_id)] {
@@ -358,7 +394,7 @@ async fn the_protected_default_cannot_be_deleted_and_backs_every_selection() {
             .unwrap(),
         Some((authored.id, "ARIS Dailies".to_string()))
     );
-    svc.delete(authored.id).await.unwrap();
+    svc.archive(authored.id).await.unwrap();
     assert_eq!(
         super::resolve_selection(&db, Some(authored.id))
             .await

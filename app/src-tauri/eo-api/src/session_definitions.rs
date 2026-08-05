@@ -1,4 +1,4 @@
-//! The session-definitions family: CRUD over the deliberate activity
+//! The session-definitions family: lifecycle management over the deliberate activity
 //! families tracked sessions are instances of.
 //!
 //! A definition is authored data (name, opt-in ad-hoc segment flag,
@@ -16,6 +16,7 @@ use eo_services::session_definitions::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map};
 
 use crate::Nullable;
 use crate::{Api, ApiError};
@@ -123,10 +124,10 @@ pub struct SessionDefinition {
     pub id: String,
     pub name: String,
     pub ad_hoc_segments: bool,
-    /// A session that cannot be deleted, because tracking always needs
+    /// A session that cannot be archived, because tracking always needs
     /// one to run under. It renames and takes a roster like any other.
     pub is_protected: bool,
-    /// False for a soft-deleted definition: no longer offered for new
+    /// False for an archived definition: no longer offered for new
     /// sessions, but its recorded instances still reference it, so the
     /// review surface can still reach them. Only ever false in a listing
     /// that asked for the inactive ones.
@@ -174,6 +175,7 @@ pub(crate) fn definition_error(
 ) -> impl FnOnce(SessionDefinitionError) -> ApiError {
     move |error| match error {
         SessionDefinitionError::Invalid(message) => ApiError::bad_request(message),
+        SessionDefinitionError::Conflict(message) => ApiError::conflict(message),
         SessionDefinitionError::Db(_) => ApiError::internal(context)(error),
     }
 }
@@ -182,7 +184,7 @@ pub(crate) fn definition_error(
 
 impl Api {
     /// List the session definitions, oldest-authored first. Active only
-    /// by default: `include_inactive` adds the soft-deleted ones, which
+    /// by default: `include_inactive` adds the archived ones, which
     /// the review surface needs because their instances are still real
     /// recorded play and would otherwise be unreachable.
     pub async fn session_definitions_list(
@@ -214,7 +216,7 @@ impl Api {
     }
 
     /// Update a session definition; the roster is replaced wholesale.
-    /// A missing (or soft-deleted) definition is a 404.
+    /// A missing (or archived) definition is a 404.
     pub async fn session_definition_update(
         &self,
         definition_id: i64,
@@ -231,18 +233,56 @@ impl Api {
         }
     }
 
-    /// Soft-delete a session definition. Instances keep their stamped
-    /// reference (the stamp is recorded history); the definition just
-    /// stops being offered. A missing definition is a 404.
-    pub async fn session_definition_delete(&self, definition_id: i64) -> Result<(), ApiError> {
-        let deleted = self
+    /// Archive a session definition. Its roster and instances remain intact,
+    /// while active-play surfaces stop offering it. If it was selected for
+    /// the next run, move that selection to the protected fallback. A running
+    /// session keeps its definition fixed and therefore refuses this transition.
+    pub async fn session_definition_archive(
+        &self,
+        definition_id: i64,
+    ) -> Result<SessionDefinition, ApiError> {
+        let _transition = self.definition_transition.lock().await;
+        let outcome = self
             .session_definitions
-            .delete(definition_id)
+            .archive(definition_id)
             .await
-            .map_err(definition_error("session definition delete"))?;
-        if !deleted {
-            return Err(ApiError::not_found("Session definition not found"));
+            .map_err(definition_error("session definition archive"))?
+            .ok_or_else(|| ApiError::not_found("Active session definition not found"))?;
+
+        if let Some((fallback_id, fallback_name)) = outcome.fallback.as_ref() {
+            let Ok(mut guard) = self.config_service.lock() else {
+                return Err(ApiError::invalid_state(
+                    "session definition archive fallback: poisoned config lock",
+                ));
+            };
+            // Compare again after the database transition: another selection
+            // command must never be overwritten by an archive that began first.
+            if guard.get().session_definition_id == Some(definition_id) {
+                let mut updates = Map::new();
+                updates.insert("session_definition_id".into(), json!(fallback_id));
+                updates.insert("session_name".into(), json!(fallback_name));
+                guard
+                    .update(&updates)
+                    .map_err(ApiError::internal("session definition archive fallback"))?;
+            }
         }
-        Ok(())
+
+        Ok(SessionDefinition::from_service(&outcome.definition))
+    }
+
+    /// Restore an archived definition to the active catalogue without selecting
+    /// it. A missing or already-active definition is a 404; an active name
+    /// collision is a validation rejection the user can resolve deliberately.
+    pub async fn session_definition_restore(
+        &self,
+        definition_id: i64,
+    ) -> Result<SessionDefinition, ApiError> {
+        let restored = self
+            .session_definitions
+            .restore(definition_id)
+            .await
+            .map_err(definition_error("session definition restore"))?
+            .ok_or_else(|| ApiError::not_found("Archived session definition not found"))?;
+        Ok(SessionDefinition::from_service(&restored))
     }
 }

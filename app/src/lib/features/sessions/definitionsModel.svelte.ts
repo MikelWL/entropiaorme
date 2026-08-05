@@ -20,8 +20,8 @@
 import type { SessionDefinition, SessionDefinitionInput, SessionRosterEntryKind } from '$lib/api';
 import {
 	ApiError,
+	archiveSessionDefinition,
 	createSessionDefinition,
-	deleteSessionDefinition,
 	getQuestFamilies,
 	getQuests,
 	getSessionDefinitions,
@@ -31,6 +31,7 @@ import {
 import { hydrate } from '$lib/stores/trackingStore.svelte';
 import type { Quest, QuestFamily } from '$lib/types';
 import { describeError } from '$lib/view/errorState';
+import { sortDefinitions } from './definitionCatalogue';
 
 /** One roster row as the editor drafts it (ids stringified for the UI;
  * `missing` marks a stored reference whose target has been deleted). */
@@ -72,7 +73,7 @@ export interface DefinitionsModelDeps {
 	listDefinitions(): Promise<SessionDefinition[]>;
 	createDefinition(data: SessionDefinitionInput): Promise<SessionDefinition>;
 	updateDefinition(id: string, data: SessionDefinitionInput): Promise<SessionDefinition>;
-	deleteDefinition(id: string): Promise<void>;
+	archiveDefinition(id: string): Promise<SessionDefinition>;
 	/** The tracking-family selection verb. */
 	selectDefinition(id: number): Promise<unknown>;
 	/** Re-read the tracking snapshot after a selection write. */
@@ -93,7 +94,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	// ── The authoring environment ──
 	let mode = $state<AuthoringMode>('closed');
 	let editingId = $state<string | null>(null);
-	/** The definition being edited cannot be deleted (see the wire's
+	/** The definition being edited cannot be archived (see the wire's
 	 * `isProtected`): tracking always needs one to run under. */
 	let editingProtected = $state(false);
 	let name = $state('');
@@ -101,7 +102,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	let roster = $state<RosterDraftEntry[]>([]);
 	let saving = $state(false);
 	let authoringError = $state<string | null>(null);
-	let deleteArmed = $state(false);
+	let archiveArmed = $state(false);
 
 	// Roster-entry identity, monotonic within one editing session; the
 	// roster is replaced wholesale on save, so these never reach the
@@ -186,7 +187,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	async function loadDefinitions() {
 		loading = true;
 		try {
-			definitions = await deps.listDefinitions();
+			definitions = sortDefinitions(await deps.listDefinitions());
 			error = null;
 		} catch (e) {
 			error = describeError(e, 'Failed to load sessions');
@@ -230,7 +231,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		adHocSegments = false;
 		roster = [];
 		authoringError = null;
-		deleteArmed = false;
+		archiveArmed = false;
 		catalogPlanet = null;
 		catalogFilter = '';
 		void loadSources();
@@ -253,7 +254,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 			}))
 			.sort(byKindThenName);
 		authoringError = null;
-		deleteArmed = false;
+		archiveArmed = false;
 		catalogPlanet = null;
 		catalogFilter = '';
 		void loadSources();
@@ -262,7 +263,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 	function close() {
 		mode = 'closed';
 		editingId = null;
-		deleteArmed = false;
+		archiveArmed = false;
 	}
 
 	// ── Roster drafting ──
@@ -360,29 +361,35 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		}
 	}
 
-	/** Delete the definition being edited (two-step: arm, then confirm).
-	 * Instances keep their stamped reference; the type just stops being
-	 * offered. */
-	async function deleteEditing(): Promise<boolean> {
+	/** Archive the definition being edited (two-step: arm, then confirm).
+	 * Its roster and instances stay intact; it simply leaves active play. */
+	async function archiveEditing(): Promise<boolean> {
 		if (editingId === null) return false;
-		if (!deleteArmed) {
-			deleteArmed = true;
+		if (!archiveArmed) {
+			archiveArmed = true;
 			return false;
 		}
 		saving = true;
 		authoringError = null;
 		try {
-			await deps.deleteDefinition(editingId);
-			await loadDefinitions();
-			await deps.refreshTracking();
-			close();
-			return true;
+			await deps.archiveDefinition(editingId);
 		} catch (e) {
-			authoringError = describeError(e, 'Failed to delete the session');
-			return false;
-		} finally {
+			authoringError = describeError(e, 'Failed to archive the session');
 			saving = false;
+			return false;
 		}
+
+		// The archive has committed. Leave the editor immediately so a
+		// secondary refresh failure cannot offer a destructive retry.
+		close();
+		await loadDefinitions();
+		try {
+			await deps.refreshTracking();
+		} catch (e) {
+			error = describeError(e, 'Failed to refresh sessions');
+		}
+		saving = false;
+		return true;
 	}
 
 	return {
@@ -434,11 +441,11 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		set authoringError(value: string | null) {
 			authoringError = value;
 		},
-		get deleteArmed() {
-			return deleteArmed;
+		get archiveArmed() {
+			return archiveArmed;
 		},
-		set deleteArmed(value: boolean) {
-			deleteArmed = value;
+		set archiveArmed(value: boolean) {
+			archiveArmed = value;
 		},
 		get families() {
 			return families;
@@ -486,7 +493,7 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		addQuests,
 		removeEntry,
 		save,
-		deleteEditing,
+		archiveEditing,
 	};
 }
 
@@ -500,7 +507,7 @@ export function createLiveDefinitionsModel(): DefinitionsModel {
 		listDefinitions: getSessionDefinitions,
 		createDefinition: createSessionDefinition,
 		updateDefinition: updateSessionDefinition,
-		deleteDefinition: deleteSessionDefinition,
+		archiveDefinition: archiveSessionDefinition,
 		selectDefinition: (id) => selectDefinition(id),
 		refreshTracking: () => hydrate(),
 		listFamilies: getQuestFamilies,

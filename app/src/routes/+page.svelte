@@ -38,7 +38,7 @@
 	// entry; the stage hosts the two full-screen surfaces (authoring and
 	// review) that replace the dashboard while either is open.
 	const definitions = createLiveDefinitionsModel();
-	const review = createLiveReviewModel();
+	const review = createLiveReviewModel(definitions.loadDefinitions);
 	const playlist = createPlaylistSelection(questsModel, () => guideState.isActive);
 
 	async function refreshQuestState() {

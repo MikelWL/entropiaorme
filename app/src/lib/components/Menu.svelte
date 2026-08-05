@@ -15,7 +15,9 @@
 		class: className = '',
 		panelClass = '',
 		overlay = false,
-		align = 'right'
+		align = 'right',
+		initialFocus = 'first-item',
+		overlayOverflow = 'auto'
 	}: {
 		/** Accessible name for the default three-dot trigger. */
 		ariaLabel?: string;
@@ -26,7 +28,7 @@
 		 * button; the snippet is responsible for wiring `toggle` to a button
 		 * and carrying `aria-haspopup="menu"` / `aria-expanded`.
 		 */
-		trigger?: Snippet<[{ open: boolean; toggle: () => void }]>;
+		trigger?: Snippet<[{ open: boolean; toggle: () => void; keydown: (event: KeyboardEvent) => void }]>;
 		/**
 		 * Custom panel content, rendered after `items`. Elements marked
 		 * `role="menuitem"` participate in the keyboard roving focus.
@@ -52,6 +54,12 @@
 		overlay?: boolean;
 		/** Which trigger edge an overlay panel aligns to. */
 		align?: 'left' | 'right';
+		/** Where focus lands when the menu opens. Searchable catalogues start
+		 * in their text field; ordinary action menus keep the first item. */
+		initialFocus?: 'first-item' | 'first-input' | 'panel';
+		/** A catalogue can own an inner scroll region so its search and
+		 * footer remain fixed; ordinary overlay menus scroll as one panel. */
+		overlayOverflow?: 'auto' | 'hidden';
 	} = $props();
 
 	let open = $state(false);
@@ -68,6 +76,19 @@
 	 * viewport on both axes. */
 	const VIEWPORT_MARGIN = 8;
 	const TRIGGER_GAP = 4;
+
+	/** Overlay panels belong to the document layer, not the trigger's
+	 * stacking context. Moving the node to body is what makes `fixed`
+	 * genuinely viewport-relative even inside transformed dashboard
+	 * ancestors. */
+	function portal(node: HTMLElement, enabled: boolean) {
+		if (enabled) document.body.appendChild(node);
+		return {
+			destroy() {
+				if (enabled) node.remove();
+			}
+		};
+	}
 
 	function positionPanel() {
 		if (!overlay || !rootEl || !panelEl) return;
@@ -99,7 +120,13 @@
 	}
 
 	function menuItemEls(): HTMLElement[] {
-		return panelEl ? Array.from(panelEl.querySelectorAll<HTMLElement>('[role="menuitem"]')) : [];
+		return panelEl
+			? Array.from(
+					panelEl.querySelectorAll<HTMLElement>(
+						'[role="menuitem"]:not([disabled]):not([aria-disabled="true"])',
+					),
+				)
+			: [];
 	}
 
 	function focusItem(index: number) {
@@ -117,12 +144,31 @@
 		els[i].focus();
 	}
 
+	function focusInitialTarget() {
+		if (initialFocus === 'panel') {
+			panelEl?.focus();
+			return;
+		}
+		if (initialFocus === 'first-input') {
+			const input = panelEl?.querySelector<HTMLElement>(
+				'input:not([disabled]), textarea:not([disabled])'
+			);
+			if (input) {
+				input.focus();
+				return;
+			}
+		}
+		focusItem(0);
+	}
+
 	function toggle() {
 		if (open) {
 			open = false;
 		} else {
 			openedFrom =
-				triggerEl ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+				triggerEl ??
+				rootEl?.querySelector<HTMLElement>('[aria-haspopup="menu"]') ??
+				(document.activeElement instanceof HTMLElement ? document.activeElement : null);
 			open = true;
 		}
 	}
@@ -146,7 +192,14 @@
 
 	function handlePanelKeydown(e: KeyboardEvent) {
 		const textEntry = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-		if (textEntry && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+		if (textEntry) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				focusItem(e.key === 'ArrowDown' ? 0 : -1);
+			}
+			// Home and End retain their text-entry meaning.
+			if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+		}
 		const els = menuItemEls();
 		const current = els.indexOf(document.activeElement as HTMLElement);
 		switch (e.key) {
@@ -190,9 +243,14 @@
 	// the component (listener lives only for the open lifetime).
 	$effect(() => {
 		if (!open) return;
-		focusItem(0);
+		focusInitialTarget();
 		const onDocumentClick = (e: MouseEvent) => {
-			if (rootEl && e.target instanceof Node && !rootEl.contains(e.target)) {
+			if (
+				rootEl &&
+				e.target instanceof Node &&
+				!rootEl.contains(e.target) &&
+				!panelEl?.contains(e.target)
+			) {
 				close(false);
 			}
 		};
@@ -213,16 +271,19 @@
 		const reposition = () => positionPanel();
 		window.addEventListener('scroll', reposition, true);
 		window.addEventListener('resize', reposition);
+		const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(reposition);
+		if (panelEl) observer?.observe(panelEl);
 		return () => {
 			window.removeEventListener('scroll', reposition, true);
 			window.removeEventListener('resize', reposition);
+			observer?.disconnect();
 		};
 	});
 </script>
 
 <div class="relative {className}" bind:this={rootEl}>
 	{#if trigger}
-		{@render trigger({ open, toggle })}
+		{@render trigger({ open, toggle, keydown: handleTriggerKeydown })}
 	{:else}
 		<button
 			bind:this={triggerEl}
@@ -249,18 +310,19 @@
 
 	{#if open}
 		<div
+			use:portal={overlay}
 			bind:this={panelEl}
 			role="menu"
 			tabindex="-1"
-			class="z-20 bg-surface-raised border border-border rounded-md shadow-lg py-1
+			class="bg-surface-raised border border-border rounded-md shadow-lg py-1
 				min-w-[100px] focus:outline-none
-				{overlay ? 'fixed' : 'absolute right-0 top-8'} {panelClass}"
+				{overlay ? 'fixed z-50' : 'absolute right-0 top-8 z-20'} {panelClass}"
 			style={overlay
 				? // Hidden until measured: one frame at the unpositioned
 					// origin would read as the panel jumping into place.
 					`top: ${panelPos?.top ?? 0}px; left: ${panelPos?.left ?? 0}px; ` +
 					`max-width: calc(100vw - ${VIEWPORT_MARGIN * 2}px); ` +
-					`max-height: calc(100vh - ${VIEWPORT_MARGIN * 2}px); overflow: auto;` +
+					`max-height: calc(100vh - ${VIEWPORT_MARGIN * 2}px); overflow: ${overlayOverflow};` +
 					(panelPos ? '' : ' visibility: hidden;')
 				: undefined}
 			onkeydown={handlePanelKeydown}

@@ -1,6 +1,6 @@
 //! Behavioural pins for the session-definitions family over the typed
 //! facade: the empty-database read, the create / read-back / update
-//! (roster replaced wholesale) / delete ladder with its not-found and
+//! (roster replaced wholesale) / archive / restore ladder with its not-found and
 //! validation legs, the transport-invariance byte pin, and the
 //! tracking-family selection verb (config writeback, snapshot
 //! exposure, the free-text-rename disavow, and the fixed-while-active
@@ -198,7 +198,7 @@ async fn a_create_reads_back_the_wire_shape() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_update_and_delete_ladder_holds() {
+async fn the_update_archive_and_restore_ladder_holds() {
     let dir = tempfile::tempdir().unwrap();
     let (api, _db) = definitions_api(dir.path()).await;
 
@@ -228,8 +228,9 @@ async fn the_update_and_delete_ladder_holds() {
         .collect();
     assert_eq!(labels, vec!["Grind", "Wind-down"]);
 
-    // The not-found legs: an unknown id on update and delete, and both
-    // again after the soft delete (a deleted definition reads as absent).
+    // The not-found legs: an unknown id on update and archive, and both
+    // again after the archive (an archived definition reads as absent to
+    // active-only writes).
     assert_eq!(
         api.session_definition_update(99, definition("X", vec![]))
             .await
@@ -237,16 +238,18 @@ async fn the_update_and_delete_ladder_holds() {
         ApiError::not_found("Session definition not found")
     );
     assert_eq!(
-        api.session_definition_delete(99).await.unwrap_err(),
-        ApiError::not_found("Session definition not found")
+        api.session_definition_archive(99).await.unwrap_err(),
+        ApiError::not_found("Active session definition not found")
     );
-    api.session_definition_delete(2).await.unwrap();
+    let archived = api.session_definition_archive(2).await.unwrap();
+    assert!(!archived.is_active);
+    assert_eq!(archived.roster.len(), 2);
     let remaining = api.session_definitions_list(None).await.unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].name, "Default Tracking");
     assert_eq!(
-        api.session_definition_delete(2).await.unwrap_err(),
-        ApiError::not_found("Session definition not found")
+        api.session_definition_archive(2).await.unwrap_err(),
+        ApiError::not_found("Active session definition not found")
     );
     assert_eq!(
         api.session_definition_update(2, definition("X", vec![]))
@@ -255,19 +258,29 @@ async fn the_update_and_delete_ladder_holds() {
         ApiError::not_found("Session definition not found")
     );
 
-    // The protected default refuses deletion in the service, not merely
+    let restored = api.session_definition_restore(2).await.unwrap();
+    assert!(restored.is_active);
+    assert_eq!(restored.roster.len(), 2);
+    assert_eq!(
+        api.session_definition_restore(2).await.unwrap_err(),
+        ApiError::not_found("Archived session definition not found")
+    );
+
+    // The protected default refuses archiving in the service, not merely
     // in the UI: something must always be there to track under. It is
     // otherwise an ordinary definition, so a rename still lands.
-    assert!(matches!(
-        api.session_definition_delete(1).await.unwrap_err(),
-        ApiError::BadRequest { .. }
-    ));
     let renamed = api
         .session_definition_update(1, definition("General Play", vec![segment("Roam")]))
         .await
         .unwrap();
     assert_eq!(renamed.name, "General Play");
     assert!(renamed.is_protected);
+    assert_eq!(
+        api.session_definition_archive(1).await.unwrap_err(),
+        ApiError::bad_request(
+            "General Play cannot be archived; tracking always needs one to run under"
+        )
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -363,12 +376,40 @@ async fn selection_writes_the_config_and_the_snapshot_reports_it() {
     assert_eq!(cleared.session_definition_id, Some("1".to_string()));
     assert_eq!(cleared.session_name, Some("Default Tracking".to_string()));
 
-    // A selection whose definition is later deleted stops reading as
-    // selected and falls through to the default the same way.
+    // Archiving the selected definition writes the protected fallback in
+    // the same operation, so the readout and the next start agree.
     api.tracking_definition_select(Some(2)).await.unwrap();
-    api.session_definition_delete(2).await.unwrap();
-    let stale = api.tracking_snapshot().await.unwrap();
-    assert_eq!(stale.session_definition_id, Some("1".to_string()));
+    api.session_definition_archive(2).await.unwrap();
+    let fallback = api.tracking_snapshot().await.unwrap();
+    assert_eq!(fallback.session_definition_id, Some("1".to_string()));
+    assert_eq!(fallback.session_name, Some("Default Tracking".to_string()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn selection_and_archive_never_persist_an_archived_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, _db) = definitions_api(dir.path()).await;
+
+    api.session_definition_create(definition("ARIS Dailies", vec![]))
+        .await
+        .unwrap();
+
+    for _ in 0..32 {
+        api.tracking_definition_select(Some(1)).await.unwrap();
+        let (selection, archive) = tokio::join!(
+            api.tracking_definition_select(Some(2)),
+            api.session_definition_archive(2)
+        );
+        archive.unwrap();
+        match selection {
+            Ok(_) => {}
+            Err(error) => assert_eq!(error, ApiError::not_found("Session definition not found")),
+        }
+        let snapshot = api.tracking_snapshot().await.unwrap();
+        assert_eq!(snapshot.session_definition_id, Some("1".to_string()));
+        assert_eq!(snapshot.session_name, Some("Default Tracking".to_string()));
+        api.session_definition_restore(2).await.unwrap();
+    }
 }
 
 /// The selection is what writes the name facet, so a name arriving by
@@ -426,4 +467,47 @@ async fn the_selection_is_fixed_while_a_session_runs() {
 
     api.tracking_stop().await.unwrap();
     api.tracking_definition_select(Some(1)).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_definition_in_play_cannot_be_archived() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = definitions_api(dir.path()).await;
+
+    api.session_definition_create(definition("ARIS Dailies", vec![]))
+        .await
+        .unwrap();
+    // Session start persists this row before the tracker becomes active in
+    // memory. Seed that exact durable authority here: this facade harness's
+    // otherwise inert tracker provider deliberately does not read settings.
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions (id, started_at, is_active, definition_id) \
+             VALUES ('in-play', 1000, 1, 2)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let error = api.session_definition_archive(2).await.unwrap_err();
+    assert!(matches!(error, ApiError::Conflict { .. }), "{error:?}");
+    assert!(api
+        .session_definitions_list(None)
+        .await
+        .unwrap()
+        .iter()
+        .any(|definition| definition.id == "2"));
+
+    db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE tracking_sessions SET is_active = 0, ended_at = 1100 WHERE id = 'in-play'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(!api.session_definition_archive(2).await.unwrap().is_active);
 }
