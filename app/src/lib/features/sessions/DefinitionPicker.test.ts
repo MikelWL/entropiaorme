@@ -132,6 +132,20 @@ describe('DefinitionPicker', () => {
 		expect(document.activeElement).toBe(trigger);
 	});
 
+	it('clears a stale filter when ArrowDown reopens the catalogue', async () => {
+		await mount([definition('1', 'ARIS Dailies'), definition('2', 'Tree Cutting')], '1');
+		const trigger = screen.getByLabelText('Switch session (currently ARIS Dailies)');
+		await fireEvent.click(trigger);
+		const input = screen.getByLabelText('Filter sessions');
+		await fireEvent.input(input, { target: { value: 'tree' } });
+		await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+
+		await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+
+		expect(screen.getByLabelText('Filter sessions')).toHaveProperty('value', '');
+		expect(screen.getByRole('menuitem', { name: 'ARIS Dailies' })).toBeTruthy();
+	});
+
 	// The selection is a configuration facet, so an unselected picker is a
 	// real state (a session cleared, or one archived since): it invites the
 	// choice rather than rendering a stale name.

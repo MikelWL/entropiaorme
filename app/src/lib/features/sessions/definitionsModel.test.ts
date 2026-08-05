@@ -219,6 +219,41 @@ describe('createDefinitionsModel', () => {
 		expect(deps.archiveDefinition).toHaveBeenCalledWith('2');
 		expect(model.mode).toBe('closed');
 	});
+
+	it('does not offer an archive retry after a post-commit refresh fails', async () => {
+		const deps = makeDeps({
+			refreshTracking: vi.fn(async () => {
+				throw new Error('refresh failed');
+			}),
+		});
+		const model = createDefinitionsModel(deps);
+		model.openEdit(definition({ id: '2' }));
+
+		expect(await model.archiveEditing()).toBe(false);
+		expect(await model.archiveEditing()).toBe(true);
+
+		expect(deps.archiveDefinition).toHaveBeenCalledTimes(1);
+		expect(model.mode).toBe('closed');
+		expect(model.authoringError).toBeNull();
+		expect(model.error).toBe('refresh failed');
+	});
+
+	it('keeps the editor retryable when the archive itself fails', async () => {
+		const deps = makeDeps({
+			archiveDefinition: vi.fn(async () => {
+				throw new Error('archive failed');
+			}),
+		});
+		const model = createDefinitionsModel(deps);
+		model.openEdit(definition({ id: '2' }));
+
+		expect(await model.archiveEditing()).toBe(false);
+		expect(await model.archiveEditing()).toBe(false);
+
+		expect(model.mode).toBe('edit');
+		expect(model.saving).toBe(false);
+		expect(model.authoringError).toBe('archive failed');
+	});
 });
 
 describe('the offered catalogue', () => {

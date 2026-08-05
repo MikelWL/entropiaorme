@@ -373,16 +373,23 @@ export function createDefinitionsModel(deps: DefinitionsModelDeps) {
 		authoringError = null;
 		try {
 			await deps.archiveDefinition(editingId);
-			await loadDefinitions();
-			await deps.refreshTracking();
-			close();
-			return true;
 		} catch (e) {
 			authoringError = describeError(e, 'Failed to archive the session');
-			return false;
-		} finally {
 			saving = false;
+			return false;
 		}
+
+		// The archive has committed. Leave the editor immediately so a
+		// secondary refresh failure cannot offer a destructive retry.
+		close();
+		await loadDefinitions();
+		try {
+			await deps.refreshTracking();
+		} catch (e) {
+			error = describeError(e, 'Failed to refresh sessions');
+		}
+		saving = false;
+		return true;
 	}
 
 	return {

@@ -114,6 +114,9 @@ pub struct Api {
     /// over the facade's shared db and clock; the tracking family's
     /// selection verb validates against it.
     session_definitions: Arc<eo_services::session_definitions::SessionDefinitionService>,
+    /// Serialises selection with definition lifecycle transitions so a
+    /// selection validated as active cannot be written after Archive commits.
+    definition_transition: tokio::sync::Mutex<()>,
     /// The cartography-pin service (pin CRUD), built over the facade's
     /// shared db and clock; the facade adds the map-bounds gate on top.
     map_pins: eo_services::map_pins::MapPinsService,
@@ -192,6 +195,7 @@ impl Api {
             analytics,
             market,
             session_definitions,
+            definition_transition: tokio::sync::Mutex::new(()),
             map_pins,
             pin_configs,
             planet_maps,

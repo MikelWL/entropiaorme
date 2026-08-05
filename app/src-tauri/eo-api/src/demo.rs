@@ -180,9 +180,7 @@ impl DemoState {
         // shared-memory sidecars survive the main file unless removed
         // explicitly. Leaving them behind lets a reused pid replay the prior
         // process's demo session over the fresh copy.
-        for path in sqlite_work_files(&work) {
-            let _ = std::fs::remove_file(path);
-        }
+        clear_sqlite_work_files(&work)?;
         std::fs::copy(demo_db_path, &work)?;
         let db = Db::open(&work).await?;
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
@@ -628,6 +626,17 @@ fn sqlite_work_files(database: &Path) -> [PathBuf; 3] {
     [database.to_path_buf(), sidecar("-wal"), sidecar("-shm")]
 }
 
+fn clear_sqlite_work_files(database: &Path) -> std::io::Result<()> {
+    for path in sqlite_work_files(database) {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 // ── The typed demo commands (Api boundary) ──────────────────────────
 
 impl Api {
@@ -774,6 +783,31 @@ mod tests {
                 PathBuf::from("demo.db-shm"),
             ]
         );
+    }
+
+    #[test]
+    fn demo_working_files_are_removed_and_absence_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("demo.db");
+        for path in sqlite_work_files(&database) {
+            std::fs::write(path, b"stale").unwrap();
+        }
+
+        clear_sqlite_work_files(&database).unwrap();
+        assert!(sqlite_work_files(&database)
+            .iter()
+            .all(|path| !path.exists()));
+        clear_sqlite_work_files(&database).unwrap();
+    }
+
+    #[test]
+    fn demo_working_file_cleanup_propagates_other_io_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("demo.db");
+        std::fs::create_dir(&database).unwrap();
+
+        let error = clear_sqlite_work_files(&database).unwrap_err();
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
     }
 
     fn to_json<T: Serialize>(value: &T) -> String {

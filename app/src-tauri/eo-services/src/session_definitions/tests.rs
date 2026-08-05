@@ -369,16 +369,15 @@ async fn the_protected_default_cannot_be_archived_and_backs_every_selection() {
     let default_id = seeded[0].id;
     assert_eq!(seeded[0].name, "Default Tracking");
 
-    assert!(matches!(
-        svc.archive(default_id).await,
-        Err(SessionDefinitionError::Invalid(_))
-    ));
-    assert!(svc.get_active(default_id).await.unwrap().is_some());
-
     // Renaming is allowed: protection guards existence, not identity.
     svc.update(default_id, input("General Play", vec![]))
         .await
         .unwrap();
+    assert_eq!(
+        svc.archive(default_id).await.unwrap_err().to_string(),
+        "General Play cannot be archived; tracking always needs one to run under"
+    );
+    assert!(svc.get_active(default_id).await.unwrap().is_some());
 
     // Nothing chosen, an unknown id, and an archived selection all resolve
     // to it; a live selection resolves to itself.

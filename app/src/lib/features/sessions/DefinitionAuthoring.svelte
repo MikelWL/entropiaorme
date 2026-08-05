@@ -393,7 +393,6 @@
 				<ErrorNotice message={model.authoringError} />
 			{/if}
 
-			<!-- Footer: lifecycle on the left, the exits on the right -->
 			<div class="mt-auto flex items-center justify-between gap-3 pt-2">
 				<div>
 					<!-- A protected session is the one tracking always has to run

@@ -269,16 +269,18 @@ async fn the_update_archive_and_restore_ladder_holds() {
     // The protected default refuses archiving in the service, not merely
     // in the UI: something must always be there to track under. It is
     // otherwise an ordinary definition, so a rename still lands.
-    assert!(matches!(
-        api.session_definition_archive(1).await.unwrap_err(),
-        ApiError::BadRequest { .. }
-    ));
     let renamed = api
         .session_definition_update(1, definition("General Play", vec![segment("Roam")]))
         .await
         .unwrap();
     assert_eq!(renamed.name, "General Play");
     assert!(renamed.is_protected);
+    assert_eq!(
+        api.session_definition_archive(1).await.unwrap_err(),
+        ApiError::bad_request(
+            "General Play cannot be archived; tracking always needs one to run under"
+        )
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -381,6 +383,33 @@ async fn selection_writes_the_config_and_the_snapshot_reports_it() {
     let fallback = api.tracking_snapshot().await.unwrap();
     assert_eq!(fallback.session_definition_id, Some("1".to_string()));
     assert_eq!(fallback.session_name, Some("Default Tracking".to_string()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn selection_and_archive_never_persist_an_archived_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, _db) = definitions_api(dir.path()).await;
+
+    api.session_definition_create(definition("ARIS Dailies", vec![]))
+        .await
+        .unwrap();
+
+    for _ in 0..32 {
+        api.tracking_definition_select(Some(1)).await.unwrap();
+        let (selection, archive) = tokio::join!(
+            api.tracking_definition_select(Some(2)),
+            api.session_definition_archive(2)
+        );
+        archive.unwrap();
+        match selection {
+            Ok(_) => {}
+            Err(error) => assert_eq!(error, ApiError::not_found("Session definition not found")),
+        }
+        let snapshot = api.tracking_snapshot().await.unwrap();
+        assert_eq!(snapshot.session_definition_id, Some("1".to_string()));
+        assert_eq!(snapshot.session_name, Some("Default Tracking".to_string()));
+        api.session_definition_restore(2).await.unwrap();
+    }
 }
 
 /// The selection is what writes the name facet, so a name arriving by

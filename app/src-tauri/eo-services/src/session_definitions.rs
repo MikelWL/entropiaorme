@@ -131,7 +131,7 @@ pub struct DefinitionArchiveOutcome {
 enum ArchiveTransition {
     Archived(Option<(i64, String)>),
     Missing,
-    Protected,
+    Protected(String),
     InUse,
 }
 
@@ -505,19 +505,25 @@ impl SessionDefinitionService {
                 let tx = conn.transaction()?;
                 let state = tx
                     .query_row(
-                        "SELECT is_active, is_protected FROM session_definitions WHERE id = ?",
+                        "SELECT is_active, is_protected, name FROM session_definitions WHERE id = ?",
                         rusqlite::params![definition_id],
-                        |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0)),
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)? != 0,
+                                row.get::<_, i64>(1)? != 0,
+                                row.get::<_, String>(2)?,
+                            ))
+                        },
                     )
                     .optional()?;
-                let Some((is_active, is_protected)) = state else {
+                let Some((is_active, is_protected, name)) = state else {
                     return Ok(ArchiveTransition::Missing);
                 };
                 if !is_active {
                     return Ok(ArchiveTransition::Missing);
                 }
                 if is_protected {
-                    return Ok(ArchiveTransition::Protected);
+                    return Ok(ArchiveTransition::Protected(name));
                 }
                 let in_use = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM tracking_sessions \
@@ -550,11 +556,10 @@ impl SessionDefinitionService {
         let fallback = match transition {
             ArchiveTransition::Archived(fallback) => fallback,
             ArchiveTransition::Missing => return Ok(None),
-            ArchiveTransition::Protected => {
-                return Err(SessionDefinitionError::Invalid(
-                    "Default Tracking cannot be archived; tracking always needs one to run under"
-                        .to_string(),
-                ));
+            ArchiveTransition::Protected(name) => {
+                return Err(SessionDefinitionError::Invalid(format!(
+                    "{name} cannot be archived; tracking always needs one to run under"
+                )));
             }
             ArchiveTransition::InUse => {
                 return Err(SessionDefinitionError::Conflict(

@@ -241,6 +241,7 @@ impl Api {
         &self,
         definition_id: i64,
     ) -> Result<SessionDefinition, ApiError> {
+        let _transition = self.definition_transition.lock().await;
         let outcome = self
             .session_definitions
             .archive(definition_id)

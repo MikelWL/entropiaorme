@@ -1195,6 +1195,7 @@ impl Api {
         &self,
         definition_id: Option<i64>,
     ) -> Result<DefinitionSelectResult, ApiError> {
+        let _transition = self.definition_transition.lock().await;
         let selected = match definition_id {
             Some(id) => Some(
                 self.session_definitions

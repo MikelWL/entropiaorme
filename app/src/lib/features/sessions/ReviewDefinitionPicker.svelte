@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Menu from '$lib/components/Menu.svelte';
-	import SearchInput from '$lib/components/SearchInput.svelte';
+	import DefinitionCataloguePanel from './DefinitionCataloguePanel.svelte';
 	import { filterDefinitions } from './definitionCatalogue';
 	import type { ReviewModel } from './reviewModel.svelte';
 
@@ -35,7 +35,10 @@
 				if (!open) filter = '';
 				toggle();
 			}}
-			onkeydown={keydown}
+			onkeydown={(event) => {
+				if (!open && event.key === 'ArrowDown') filter = '';
+				keydown(event);
+			}}
 		>
 			<span class="truncate">{model.definition?.name ?? 'Choose a session'}</span>
 			<span class="text-text-secondary" aria-hidden="true">&#x2304;</span>
@@ -43,22 +46,14 @@
 	{/snippet}
 
 	{#snippet children({ close })}
-		<div class="flex max-h-[min(30rem,calc(100vh-1rem))] flex-col">
-			<div class="flex flex-col gap-2 border-b border-border/60 p-3">
-				<div class="flex items-baseline justify-between gap-3">
-					<span class="text-sm font-semibold text-text">Review session</span>
-					<span class="text-xs tabular-nums text-text-tertiary">{total}</span>
-				</div>
-				<SearchInput
-					bind:value={filter}
-					placeholder="Filter sessions..."
-					aria-label="Filter review sessions"
-					autocomplete="off"
-					spellcheck={false}
-				/>
-			</div>
-
-			<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
+		<DefinitionCataloguePanel
+			title="Review session"
+			count={total}
+			bind:filter
+			hasMatches={active.length > 0 || archived.length > 0}
+			filterLabel="Filter review sessions"
+		>
+			{#snippet results()}
 				{#if active.length > 0}
 					<p class="eyebrow px-2 pb-1 pt-1.5">Active</p>
 					{#each active as definition (definition.id)}
@@ -105,13 +100,7 @@
 						</button>
 					{/each}
 				{/if}
-
-				{#if active.length === 0 && archived.length === 0}
-					<p class="px-3 py-8 text-center text-sm text-text-tertiary">
-						No sessions match “{filter.trim()}”.
-					</p>
-				{/if}
-			</div>
-		</div>
+			{/snippet}
+		</DefinitionCataloguePanel>
 	{/snippet}
 </Menu>

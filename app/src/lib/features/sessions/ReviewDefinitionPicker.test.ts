@@ -92,4 +92,19 @@ describe('ReviewDefinitionPicker', () => {
 
 		expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Tree Cutting 0' }));
 	});
+
+	it('switches directly to an archived definition and closes the catalogue', async () => {
+		const model = await mount([
+			definition('1', 'Default Tracking', { isProtected: true }),
+			definition('3', 'Easter Mayhem 2026', { isActive: false, instanceCount: 35 }),
+		]);
+		await fireEvent.click(
+			screen.getByLabelText('Review another session (currently Default Tracking)'),
+		);
+
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'Easter Mayhem 2026 35' }));
+
+		expect(model.definitionId).toBe('3');
+		expect(screen.queryByRole('menu')).toBeNull();
+	});
 });
