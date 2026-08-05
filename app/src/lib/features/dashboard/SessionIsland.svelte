@@ -34,6 +34,26 @@
 	const lifetime = $derived(status?.lifetime ?? null);
 	const showingLifetime = $derived(statsGrid.scope === 'lifetime' && lifetime !== null);
 
+	/**
+	 * The radio-group keyboard contract the control's own role promises:
+	 * arrows move the selection, and only the selected option sits in
+	 * the tab order (the `tabindex` binding below). With two options an
+	 * arrow in any direction is a flip.
+	 */
+	function handleScopeKeydown(event: KeyboardEvent) {
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+		event.preventDefault();
+		const next = showingLifetime ? 'instance' : 'lifetime';
+		void setStatsScope(next).then(() => {
+			// Selection moves focus with it, or the roving tabindex would
+			// strand focus on an option that is no longer reachable by Tab.
+			const group = (event.currentTarget as HTMLElement | null)?.closest(
+				'[data-testid="stats-scope-toggle"]'
+			);
+			group?.querySelector<HTMLButtonElement>('[tabindex="0"]')?.focus();
+		});
+	}
+
 	const SCOPE_CHOICES = [
 		{
 			value: 'instance' as const,
@@ -177,8 +197,10 @@
 								type="button"
 								role="radio"
 								aria-checked={selected}
+								tabindex={selected ? 0 : -1}
 								title={choice.hint}
 								onclick={() => setStatsScope(choice.value)}
+								onkeydown={handleScopeKeydown}
 								class="text-xs px-2 py-1 rounded whitespace-nowrap
 									transition-colors duration-[var(--duration-base)]
 									{selected

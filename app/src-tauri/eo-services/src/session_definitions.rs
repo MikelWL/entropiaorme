@@ -284,18 +284,26 @@ impl SessionDefinitionService {
     /// Summaries converge lazily by design (readers heal what a
     /// version bump or a widened filter left missing), but this read
     /// sits behind the tracking snapshot, which polls. So the heal runs
-    /// at most once per process: enough to converge a database on the
-    /// first frame after an update, without putting a write on a hot
-    /// path.
+    /// once per process on success: enough to converge a database on
+    /// the first frame after an update, without putting a write on a
+    /// hot path.
+    ///
+    /// The flag is published only once the heal has actually landed. A
+    /// heal that fails must leave it clear, or one transient writer
+    /// error would silently aggregate over incomplete rows for the rest
+    /// of the process. Two callers racing the first heal is harmless by
+    /// comparison: `heal_summaries` is idempotent and the writer core
+    /// serialises them, so the loser finds nothing left to do.
     pub async fn lifetime_stats(
         &self,
         definition_id: i64,
     ) -> Result<DefinitionLifetimeStats, SessionDefinitionError> {
         use std::sync::atomic::Ordering;
-        if !self.summaries_healed.swap(true, Ordering::SeqCst) {
+        if !self.summaries_healed.load(Ordering::SeqCst) {
             self.db
                 .with_writer(|conn| crate::session_summary::heal_summaries(conn))
                 .await?;
+            self.summaries_healed.store(true, Ordering::SeqCst);
         }
         Ok(self
             .db

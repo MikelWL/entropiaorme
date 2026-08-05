@@ -21,21 +21,29 @@
 		void initStatsScope();
 		let unlisten: (() => void) | undefined;
 		let unlistenScope: (() => void) | undefined;
+		// Guards the unmount-before-resolve race on both registrations: if
+		// teardown already ran, detach immediately rather than leaking.
+		let unmounted = false;
 		void (async () => {
-			unlisten = await listen<StatPref[]>(OVERLAY_STATS_CHANGED_EVENT, (event) => {
+			const detach = await listen<StatPref[]>(OVERLAY_STATS_CHANGED_EVENT, (event) => {
 				if (Array.isArray(event.payload)) overlayStats.current = event.payload;
 			});
+			if (unmounted) detach();
+			else unlisten = detach;
 		})();
 		// The scope is shared, so a flip on the dashboard moves the
-		// overlay's figures with it (and the other way round).
+		// overlay's figures with it.
 		void (async () => {
-			unlistenScope = await listen<StatsScope>(STATS_SCOPE_CHANGED_EVENT, (event) => {
+			const detach = await listen<StatsScope>(STATS_SCOPE_CHANGED_EVENT, (event) => {
 				if (event.payload === 'instance' || event.payload === 'lifetime') {
 					statsScope.current = event.payload;
 				}
 			});
+			if (unmounted) detach();
+			else unlistenScope = detach;
 		})();
 		return () => {
+			unmounted = true;
 			unlisten?.();
 			unlistenScope?.();
 		};

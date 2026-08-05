@@ -43,14 +43,22 @@
 	// there moves this window's figures too.
 	onMount(() => {
 		let unlisten: (() => void) | undefined;
+		let unmounted = false;
 		void (async () => {
-			unlisten = await listen<StatsScope>(STATS_SCOPE_CHANGED_EVENT, (event) => {
+			const detach = await listen<StatsScope>(STATS_SCOPE_CHANGED_EVENT, (event) => {
 				if (event.payload === 'instance' || event.payload === 'lifetime') {
 					statsScope.current = event.payload;
 				}
 			});
+			// Guard the unmount-before-resolve race: if teardown already ran,
+			// detach immediately rather than leaking the listener.
+			if (unmounted) detach();
+			else unlisten = detach;
 		})();
-		return () => unlisten?.();
+		return () => {
+			unmounted = true;
+			unlisten?.();
+		};
 	});
 
 	let onboardingChecked = $state(false);
