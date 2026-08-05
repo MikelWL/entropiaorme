@@ -89,7 +89,7 @@ open only after the schema is current:
 | `synchronous` | `NORMAL` | Reduced fsync frequency, the standard companion to WAL: durable across application crashes, with a small exposure to a power-loss truncation of the most recent WAL frames. |
 | `busy_timeout` | `5000` | Wait up to 5000 ms for a contended lock before raising `SQLITE_BUSY`. |
 | `cache_size` | `-64000` | Negative value: a 64 MB page-cache ceiling per connection (SQLite reads a negative `cache_size` as a kibibyte budget rather than a page count). Pages are demand-allocated, so this is a limit rather than an upfront resident cost. |
-| `foreign_keys` | `OFF` | Referential enforcement is left off, so the schema's `REFERENCES` clauses are declarative; this matches the effective pragma surface the schema was authored against, where an overlay write for a session id with no surviving session row must be accepted. |
+| `foreign_keys` | `OFF` | Referential enforcement is disabled on the writer and all four readers, so the schema's `REFERENCES` clauses are declarative and services own integrity explicitly. This is the pragma surface the schema was authored against; one consequence is that an overlay write for a session id with no surviving session row must be accepted. |
 
 ### Synchronous writer and reader core
 
