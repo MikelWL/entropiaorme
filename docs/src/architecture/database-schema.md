@@ -35,16 +35,25 @@ with, recorded but not currently reported on), `0016_stock_opening_balance.sql` 
 proves was held but that was never recorded, rebuilding the movement table
 because SQLite cannot widen a CHECK constraint in place), and
 `0017_undone_entries.sql` (the marker that keeps an undone listing or
-conversion on file with its effects reversed). The
-`Db::open` path opens the database, configures its session pragmas, adopts or
-refuses any pre-existing schema, and then runs the migrator (`MIGRATOR` in
-`db.rs`).
+conversion on file with its effects reversed),
+`0018_session_facets.sql` (co-recordable session name and skill-boost facets,
+plus mob-stamp provenance), `0019_session_intervals.sql` (the interval and
+context spine for duration, cost, and event attribution),
+`0020_signal_quests.sql` (loot-signal completion for quests without a mission-log
+lifecycle), `0021_quest_families.sql` (variant families with shared,
+anchor-aware cooldown), `0022_session_definitions.sql` (authored session
+families, activity rosters, and instance references), and
+`0023_default_session_definition.sql` (the protected fallback definition). The
+`Db::open` path opens the write connection, configures its session pragmas,
+adopts or refuses any pre-existing schema, reconciles baseline-column drift,
+runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
+only then starts the reader connections.
 
 The column descriptions below reflect the schema after the full migration set,
-save for the stock and auction tables `0014` onward introduce, which are
-described by the migrations themselves. The canonical table set is otherwise
-the one the baseline defines; the later migrations add indexes and the
-`session_summaries` read columns noted in place.
+save for the stock and auction tables migrations `0014` onward introduce,
+which are described by the migrations themselves. The baseline establishes the
+version-33 table set; later migrations extend it with further tables, columns,
+indexes, and rebuildable read-model fields noted in place.
 
 ## Overview
 
@@ -55,12 +64,12 @@ the application data directory:
 | --- | --- | --- |
 | Application database | `entropia_orme.db` | Long-lived, user-owned data: equipment, calibrations, the ledger, codex and quest tracking, recorded hunting sessions, and the derived analytics caches. |
 
-The database runs in write-ahead-logging (WAL) mode. The rationale for that
-choice (concurrent reads alongside a single writer, with the database opened
-once and shared across the in-process request handlers and background worker
-threads) is covered in [ADR 0007: SQLite in WAL mode](../adr/0007-sqlite-wal.md). The
-services that own and query the database are catalogued in the
-[service map](service-map.md).
+The database runs in write-ahead-logging (WAL) mode. One shared `Db` core owns
+one write connection and four reader connections, allowing concurrent reads
+alongside the serial writer while the database is still opened exactly once by
+the composition root. The rationale is covered in
+[ADR 0007: SQLite in WAL mode](../adr/0007-sqlite-wal.md); the services that own
+and query the database are catalogued in the [service map](service-map.md).
 
 The game-fact data the application reasons over (weapons, mobs, skills,
 professions, and so on) is **not** stored in SQLite. It ships as a bundled,
@@ -69,36 +78,38 @@ read-only snapshot loaded from per-endpoint JSON files; see
 
 ## Storage configuration
 
-Every connection is configured identically by the connect options assembled in
-`Db::open` (`eo-services/src/db.rs`). The pragmas are applied as the connection
-is opened, before adoption and the migrator run:
+Every core connection is configured identically by `open_configured` in
+`eo-services/src/db/pool.rs`. The pragmas are applied as each connection opens;
+the write connection is configured before adoption and migration, and readers
+open only after the schema is current:
 
 | Pragma | Value | Effect |
 | --- | --- | --- |
 | `journal_mode` | `WAL` | Write-ahead logging: readers do not block the single writer and the writer does not block readers. |
 | `synchronous` | `NORMAL` | Reduced fsync frequency, the standard companion to WAL: durable across application crashes, with a small exposure to a power-loss truncation of the most recent WAL frames. |
 | `busy_timeout` | `5000` | Wait up to 5000 ms for a contended lock before raising `SQLITE_BUSY`. |
-| `cache_size` | `-8000` | Negative value: an 8 MB page cache (SQLite reads a negative `cache_size` as a kibibyte budget rather than a page count). |
-| `foreign_keys` | `OFF` | Referential enforcement is left off, so the schema's `REFERENCES` clauses are declarative; this matches the effective pragma surface the schema was authored against, where an overlay write for a session id with no surviving session row must be accepted. |
+| `cache_size` | `-64000` | Negative value: a 64 MB page-cache ceiling per connection (SQLite reads a negative `cache_size` as a kibibyte budget rather than a page count). Pages are demand-allocated, so this is a limit rather than an upfront resident cost. |
+| `foreign_keys` | `OFF` | Referential enforcement is disabled on the writer and all four readers, so the schema's `REFERENCES` clauses are declarative and services own integrity explicitly. This is the pragma surface the schema was authored against; one consequence is that an overlay write for a session id with no surviving session row must be accepted. |
 
-### Single-connection model
+### Synchronous writer and reader core
 
-The handle is a `SqlitePool` capped at a single connection
-(`max_connections(1)` in `Db::open`), so every statement serialises on one
-underlying connection. Cloning a `Db` shares that one pool rather than opening a
-second; the composition root opens the application database exactly once. The
-single-writer model is intentional, and relaxing to multiple reader connections
-would be a later, benchmark-justified change.
+`Db` is a narrow closure-based seam over one dedicated writer thread and four
+reader threads. Each thread owns its own `rusqlite::Connection`: every mutation
+submitted through `Db::with_writer` runs serially on the writer, while
+`Db::with_reader` sends a read to whichever reader is free. WAL lets those
+readers proceed concurrently with the writer. No raw connection, pool checkout,
+or lock ordering escapes the module.
 
-The data directory is created on demand: the connect options set
-`create_if_missing(true)`, and the composition root ensures the parent directory
-exists before opening.
+Cloning `Db` shares this one running core rather than opening another owner. The
+write connection is opened, adopted, reconciled, and migrated before the reader
+threads start, so no reader can observe a pre-migration schema. The composition
+root creates the data directory before opening the database.
 
 ## Application database tables
 
-All tables described here live in `entropia_orme.db`. The complete schema,
-including the tracking tables, is created in one shot by the baseline migration
-`0001_schema_baseline.sql`. Several `REAL` timestamp columns default to
+All tables described here live in `entropia_orme.db`. The version-33 base schema
+is created by `0001_schema_baseline.sql`; the forward migration tail extends it
+to the current surface. Several `REAL` timestamp columns default to
 `unixepoch('now')`; where a column is instead back-filled by an `AFTER INSERT`
 trigger when the caller leaves it `NULL`, that is noted.
 
@@ -222,6 +233,7 @@ PED.
 | `skill_name` | TEXT | Not null; indexed (`idx_skill_gains_skill`). |
 | `amount` | REAL | Not null. |
 | `ped_value` | REAL | Optional PED valuation of the gain. |
+| `context_id` | INTEGER | Optional reference to `session_contexts(id)` (migration `0019`; indexed `idx_skill_gains_context`). Null means the event predates context capture or was written outside one, not that no interval was active. |
 | `created_at` | REAL | Not null; defaults to `unixepoch('now')`. |
 
 ### Codex
@@ -273,11 +285,33 @@ Quest definitions, including rewards, chain position, and activation state.
 | `chain_position` | INTEGER | Optional. |
 | `chain_total` | INTEGER | Optional. |
 | `started_at` | REAL | Optional. |
+| `signal_loot_item` | TEXT | Optional (migration `0020`). Null uses the mission-log lifecycle; a value names the loot item whose arrival completes a signal-driven quest. |
+| `family_id` | INTEGER | Optional reference to `quest_families(id)` (migration `0021`; indexed `idx_quests_family`). Null leaves the quest standalone. |
+| `cooldown_anchor` | TEXT | Not null; defaults to `'completion'` (migration `0021`). Selects whether this quest's cooldown runs from pickup or completion. |
+| `last_started_at` | REAL | Optional durable pickup timestamp (migration `0021`), retained after `started_at` clears so pickup-anchored cooldown remains measurable. |
 | `is_active` | INTEGER | Not null; defaults to 1. |
 | `created_at` | REAL | Not null; defaults to `unixepoch('now')`. |
 | `category` | TEXT | Optional. |
 | `reward_description` | TEXT | Optional. |
 | `updated_at` | REAL | Back-filled by an `AFTER INSERT` trigger when left null. |
+
+#### `quest_families`
+
+Variant quests that occupy one shared repeatable slot (migration `0021`). A
+family groups the variants for availability while each member remains a
+separate quest for recording and analysis. Starting or completing one member,
+according to the family's cooldown anchor, cools the family as a unit.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `name` | TEXT | Not null. |
+| `planet` | TEXT | Not null; defaults to `'Calypso'`. |
+| `cooldown_hours` | REAL | Optional. Null groups variants without gating availability. |
+| `cooldown_anchor` | TEXT | Not null; defaults to `'pickup'`. The service accepts `pickup` or `completion`. |
+| `is_active` | INTEGER | Not null; defaults to 1. |
+| `created_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+| `updated_at` | REAL | Optional update timestamp. |
 
 #### `quest_mobs`
 
@@ -357,14 +391,52 @@ Keyed by session, so each session has at most one link.
 
 ### Tracking
 
-These tables are created by the baseline migration alongside the rest of the
-schema. They carry no separate creation step or version counter of their own:
-the single baseline reproduces the complete version-33 surface, the tracking
-tables included.
+The baseline creates the original session and event tables. Migrations `0018`
+through `0023` add co-recordable facets, stamped activity contexts, authored
+session definitions, and the definition roster.
+
+#### `session_definitions`
+
+Authored activity families that tracked sessions can be instances of
+(migrations `0022` and `0023`). Archive and Restore toggle `is_active`; they do
+not delete the definition, its roster, or its recorded instances. The seeded
+protected fallback guarantees an active choice without making historical
+`tracking_sessions.definition_id` non-null.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `name` | TEXT | Not null. Active names are enforced case-insensitively by the service. |
+| `ad_hoc_segments` | INTEGER | Not null; defaults to 0. Opts the definition into naming segments during play. |
+| `is_active` | INTEGER | Not null; defaults to 1. Archived definitions retain 0. |
+| `is_protected` | INTEGER | Not null; defaults to 0 (migration `0023`). Protected definitions cannot be archived. |
+| `created_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+| `updated_at` | REAL | Optional update timestamp. |
+
+Migration `0023` inserts `Default Tracking` when no active definition already
+has that name, then protects the active row that does. The settings file owns
+the current selection, so the migration does not backfill it into SQLite.
+
+#### `session_definition_roster`
+
+The ordered activities authored for one session definition (migration `0022`).
+The service replaces a definition's roster wholesale on update. `kind` selects
+how to interpret the nullable fields: `quest_family` and `quest` use `ref_id`;
+`segment` uses `label`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `definition_id` | INTEGER | Not null; references `session_definitions(id)`. Indexed with `idx_session_definition_roster_definition`. |
+| `position` | INTEGER | Not null; stable authored or promotion order. |
+| `kind` | TEXT | Not null; `quest_family`, `quest`, or `segment` in the service vocabulary. |
+| `ref_id` | INTEGER | Optional domain reference selected by `kind`. |
+| `label` | TEXT | Optional segment label. |
 
 #### `tracking_sessions`
 
-One row per recorded hunting session, with session-level cost buckets.
+One row per recorded session, with session-level cost buckets, its stamped
+facets, and an optional session-definition identity.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -376,7 +448,53 @@ One row per recorded hunting session, with session-level cost buckets.
 | `heal_cost` | REAL | Defaults to 0. |
 | `dangling_cost` | REAL | Defaults to 0. |
 | `mob_tracking_mode` | TEXT | Not null; defaults to `'mob'`. Records the attribution input mode (`'mob'` or `'tag'`); a presentation hint only, since the data semantics are identical. |
+| `session_name` | TEXT | Optional designated session-name stamp (migration `0018`). It remains the recorded name even if an attached definition is later renamed. |
+| `skill_boost_percent` | INTEGER | Optional positive boost declaration (migration `0018`). Null means not captured. |
+| `definition_id` | INTEGER | Optional reference to `session_definitions(id)` (migration `0022`; indexed `idx_tracking_sessions_definition`). Null is valid for legacy or deliberately unattached sessions. |
 | `updated_at` | REAL | Back-filled by an `AFTER INSERT` trigger when left null. |
+
+#### `session_intervals`
+
+The authoritative duration and cost stretches inside a session (migration
+`0019`). Quests, segments, modifiers, and future kinds share this open-vocabulary
+primitive. Interval timestamps are wall-clock bounds and are never compared to
+event timestamps for attribution.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed with `kind`; open intervals also have the partial `idx_session_intervals_open` index. |
+| `kind` | TEXT | Not null; intentionally open vocabulary interpreted by the service. |
+| `label` | TEXT | Optional display name. |
+| `ref_id` | INTEGER | Optional domain reference whose table is implied by `kind`. |
+| `magnitude` | REAL | Optional magnitude. Zero is meaningful; null means this interval kind carries none. |
+| `started_at` | REAL | Not null; wall-clock start. |
+| `ended_at` | REAL | Optional wall-clock end; null while open. |
+| `origin_device` | TEXT | Optional origin-device identifier. |
+
+#### `session_contexts`
+
+Immutable attribution snapshots minted whenever the set of active intervals
+changes (migration `0019`). Every economically relevant event stamps the current
+context when written, avoiding invalid comparisons between wall-clock interval
+bounds and the game's server-time event stamps.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed with `idx_session_contexts_session`. |
+| `created_at` | REAL | Not null; wall-clock creation time. |
+
+#### `session_context_intervals`
+
+The many-to-many membership of intervals in an attribution context (migration
+`0019`). A context with no rows records declared-none; an event with no
+`context_id` instead predates context capture or was written outside it.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `context_id` | INTEGER | Not null; references `session_contexts(id)`. Part of the composite primary key. |
+| `interval_id` | INTEGER | Not null; references `session_intervals(id)`. Part of the composite primary key and indexed with `idx_session_context_intervals_interval`. |
 
 #### `kills`
 
@@ -402,6 +520,8 @@ analytics queries can read the total directly.
 | `is_global` | INTEGER | Defaults to 0 (boolean flag). |
 | `is_hof` | INTEGER | Defaults to 0 (boolean flag). |
 | `original_mob_name` | TEXT | Null until the session's attributed mob is renamed; preserves the first pre-rename value so a rename can be reverted. |
+| `mob_stamp_source` | TEXT | Optional (migration `0018`); `declared` for the player's current mob choice, `detected` reserved for automatic detection. Null means the provenance was not captured. |
+| `context_id` | INTEGER | Optional reference to `session_contexts(id)` (migration `0019`; indexed `idx_kills_context`). Null is unknown or outside context capture, not declared-none. |
 
 #### `kill_tool_stats`
 
@@ -463,6 +583,7 @@ evidence remains explicitly unknown.
 | `yield_tier_source` | TEXT | Optional; `board` when the swing's own loot named the class, or `inferred` when it was taken from adjacent direct evidence under the bound above. Null when the tier remains unknown. |
 | `cost_ped` | REAL | Defaults to 0; the tool's per-use decay (markup-weighted) at swing time. |
 | `loot_total_ped` | REAL | Defaults to 0; denormalised per-swing loot total beside the per-item rows. |
+| `context_id` | INTEGER | Optional reference to `session_contexts(id)` (migration `0019`; indexed `idx_harvest_events_context`). Null is unknown or outside context capture, not declared-none. |
 
 #### `harvest_loot_items`
 
@@ -680,9 +801,9 @@ cache rather than a source of truth: a row is filled when a session ends and is
 lazily rebuilt on read when missing or below the current `summary_version`.
 
 The base columns are created by the baseline; the read columns below the
-`computed_at` row are added by migration `0003`, and the harvest columns by
-migration `0006`, each healed in by a version bump (the code's
-`SUMMARY_VERSION` is 3).
+`computed_at` row are added by migration `0003`, the harvest columns by
+migration `0006`, and the session facets by migration `0018`. Each extension
+is healed in by a version bump (the code's `SUMMARY_VERSION` is 4).
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -718,6 +839,8 @@ migration `0006`, each healed in by a version bump (the code's
 | `harvest_successes` | INTEGER | Defaults to 0 (migration `0006`). |
 | `harvest_loot_tt` | REAL | Defaults to 0 (migration `0006`). Wood loot TT; also included in `loot_tt`. |
 | `harvest_cost` | REAL | Defaults to 0 (migration `0006`). Swing decay; also included in `cycled_ped`. |
+| `session_name` | TEXT | Optional designated session-name stamp copied from `tracking_sessions` (migration `0018`). |
+| `skill_boost_percent` | INTEGER | Optional positive boost declaration copied from `tracking_sessions` (migration `0018`). |
 
 #### `daily_rollups`
 
@@ -795,7 +918,10 @@ migrations (`0002_analytical_indexes.sql`,
 `0010_navigation_runtime_fields.sql`, `0011_pin_configs.sql`,
 `0012_harvest_stock_removed.sql`, `0013_harvest_yield_tier.sql`,
 `0014_auction_sales.sql`, `0015_stock_movement_tool.sql`,
-`0016_stock_opening_balance.sql`, `0017_undone_entries.sql`); the runner
+`0016_stock_opening_balance.sql`, `0017_undone_entries.sql`,
+`0018_session_facets.sql`, `0019_session_intervals.sql`,
+`0020_signal_quests.sql`, `0021_quest_families.sql`,
+`0022_session_definitions.sql`, `0023_default_session_definition.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
@@ -817,8 +943,9 @@ The baseline is the schema as it stands at version 33, written out statement for
 statement. It creates every table, index, and timestamp-back-fill trigger in one
 migration and stamps the `db_metadata` version row to `33`. The version number
 is the cumulative result of the schema's earlier evolution; that incremental
-history is folded into the single baseline rather than replayed, so a freshly
-migrated database lands directly on the current surface.
+history is folded into the single baseline rather than replayed. A fresh
+database therefore lands directly on the version-33 surface before the forward
+migration tail brings it to the current schema.
 
 ### Open paths: fresh, adoption, and first-launch upgrade
 
