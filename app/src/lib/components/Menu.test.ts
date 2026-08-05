@@ -117,3 +117,48 @@ describe('dismissal and activation', () => {
 		expect(document.activeElement).toBe(trigger);
 	});
 });
+
+// A panel laid out inside a scrollable ancestor is clipped by it, and
+// grows that ancestor's scroll extent to fit: the list appears to be
+// squashed to make room rather than the menu floating over it. The
+// overlay mode positions against the viewport to escape that, so what
+// matters is that it stops taking part in the ancestor's layout.
+describe('overlay positioning', () => {
+	it('lays the default panel out in flow, absolutely positioned to the trigger', async () => {
+		render(Menu, { props: { ariaLabel: 'Quest actions', items: threeItems() } });
+		await openMenu();
+
+		const panel = screen.getByRole('menu');
+		expect(panel.className).toContain('absolute');
+		expect(panel.className).not.toContain('fixed');
+	});
+
+	it('takes the panel out of the ancestor scroll box when overlaid', async () => {
+		render(Menu, {
+			props: { ariaLabel: 'Quest actions', items: threeItems(), overlay: true },
+		});
+		await openMenu();
+
+		const panel = screen.getByRole('menu');
+		expect(panel.className).toContain('fixed');
+		// The trigger-relative offsets go with it: an overlay panel is
+		// placed by measurement, not by utility classes.
+		expect(panel.className).not.toContain('absolute');
+		expect(panel.className).not.toContain('top-8');
+		expect(panel.getAttribute('style')).toMatch(/top:\s*-?\d/);
+		expect(panel.getAttribute('style')).toMatch(/left:\s*-?\d/);
+	});
+
+	it('keeps the panel clear of the viewport edges', async () => {
+		render(Menu, {
+			props: { ariaLabel: 'Quest actions', items: threeItems(), overlay: true },
+		});
+		await openMenu();
+
+		const style = screen.getByRole('menu').getAttribute('style') ?? '';
+		const top = Number(/top:\s*(-?\d+(?:\.\d+)?)px/.exec(style)?.[1]);
+		const left = Number(/left:\s*(-?\d+(?:\.\d+)?)px/.exec(style)?.[1]);
+		expect(top).toBeGreaterThanOrEqual(0);
+		expect(left).toBeGreaterThanOrEqual(0);
+	});
+});

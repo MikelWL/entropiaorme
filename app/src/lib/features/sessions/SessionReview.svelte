@@ -260,9 +260,15 @@
 											{:else}
 												<!-- Move: the correction for a session recorded under
 													 whichever session the picker happened to hold. -->
+												<!-- The table scrolls, so this one floats over the
+													 viewport: laid out inside the scroll box it is
+													 clipped, and the box grows to fit it, which reads
+													 as the list being squashed to make room. -->
 												<Menu
+													overlay
+													align="right"
 													ariaLabel="Move to another session"
-													panelClass="right-0 left-auto top-8 w-56 p-1"
+													panelClass="w-56 p-1"
 												>
 													{#snippet trigger({ open, toggle })}
 														<button
