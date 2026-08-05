@@ -428,7 +428,6 @@ pub fn run() {
             commands::tracking_activity_activate,
             commands::tracking_activity_deactivate,
             commands::tracking_rename_mob,
-            commands::tracking_rename_session,
             commands::tracking_reassign_session,
             commands::tracking_restore_mob,
             commands::tracking_loot_item_activate,

@@ -57,7 +57,7 @@ use crate::tracking::{
     ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
     ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
     SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion,
-    SessionReassignResult, SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
+    SessionReassignResult, StartResult, StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -1036,20 +1036,6 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(ActivityStateResult))),
-        },
-        CommandSpec {
-            name: "tracking_rename_session",
-            args: vec![
-                ArgSpec {
-                    name: "session_id",
-                    schema: schema(schema_for!(String)),
-                },
-                ArgSpec {
-                    name: "session_name",
-                    schema: schema(schema_for!(Option<String>)),
-                },
-            ],
-            returns: Some(schema(schema_for!(SessionRenameResult))),
         },
         CommandSpec {
             name: "tracking_reassign_session",

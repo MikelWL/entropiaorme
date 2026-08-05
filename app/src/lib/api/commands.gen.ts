@@ -2290,14 +2290,6 @@ export interface SessionReassignResult {
 }
 
 /**
- * The post-hoc session-rename result.
- */
-export interface SessionRenameResult {
-	sessionId: string;
-	sessionName: string | null;
-}
-
-/**
  * A roster entry in the wire shape: the stored fact plus the resolved
  * display name of its target. Entry order is the roster order.
  */
@@ -3147,10 +3139,6 @@ export async function trackingActivityActivate(kind: ActivityTargetKind, questId
 
 export async function trackingActivityDeactivate(kind: ActivityTargetKind, questId: number | null, label: string | null): Promise<ActivityStateResult> {
 	return invokeCommand('tracking_activity_deactivate', { kind, quest_id: questId, label });
-}
-
-export async function trackingRenameSession(sessionId: string, sessionName: string | null): Promise<SessionRenameResult> {
-	return invokeCommand('tracking_rename_session', { session_id: sessionId, session_name: sessionName });
 }
 
 export async function trackingReassignSession(sessionId: string, definitionId: number): Promise<SessionReassignResult> {

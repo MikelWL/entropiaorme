@@ -175,7 +175,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_reassign_session",
     "tracking_release_mob",
     "tracking_rename_mob",
-    "tracking_rename_session",
     "tracking_repair_scan",
     "tracking_restore_mob",
     "tracking_session_config",

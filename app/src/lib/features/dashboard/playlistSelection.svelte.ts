@@ -29,7 +29,7 @@ export function createPlaylistSelection(quests: QuestsModel, isGuideActive: () =
 	let activePlaylistId = $state<string | null>(null);
 	let now = $state(Date.now());
 	// Undefined means "no snapshot held"; null is a valid snapshot.
-	let snapshot: string | null | undefined = undefined;
+	let snapshot: string | null | undefined;
 
 	const activePlaylist = $derived(
 		quests.playlists.find((playlist) => playlist.id === activePlaylistId) ?? null,

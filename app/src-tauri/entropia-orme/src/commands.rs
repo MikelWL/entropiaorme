@@ -55,7 +55,7 @@ use eo_api::tracking::{
     ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
     ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
     SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion,
-    SessionReassignResult, SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
+    SessionReassignResult, StartResult, StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -1036,17 +1036,6 @@ pub async fn tracking_activity_deactivate(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_rename_session(
-    app: tauri::AppHandle,
-    session_id: String,
-    session_name: Option<String>,
-) -> Result<SessionRenameResult, ApiError> {
-    facade(&app)?
-        .tracking_rename_session(session_id, session_name)
-        .await
-}
-
-#[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_reassign_session(
     app: tauri::AppHandle,
     session_id: String,
@@ -1623,7 +1612,6 @@ mod tests {
         "tracking_activity_options",
         "tracking_activity_activate",
         "tracking_activity_deactivate",
-        "tracking_rename_session",
         "tracking_reassign_session",
         "tracking_rename_mob",
         "tracking_restore_mob",

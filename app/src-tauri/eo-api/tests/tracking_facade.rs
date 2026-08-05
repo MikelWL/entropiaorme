@@ -1615,10 +1615,10 @@ async fn a_scoped_page_keeps_its_scope_across_the_cursor() {
     assert!(second.next_cursor.is_none());
 }
 
-/// Re-filing moves the reference, and carries the stamped name with it
-/// while that name is still the previous definition's auto-stamp.
+/// Re-filing moves the reference and carries the stamped name with it:
+/// the stamp is a copy of the definition's name, so it always follows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn re_filing_moves_the_instance_and_restamps_an_untouched_name() {
+async fn re_filing_moves_the_instance_and_restamps_its_name() {
     let dir = tempfile::tempdir().unwrap();
     let (api, db) = make_api_db(dir.path(), false, None).await;
     let target = api
@@ -1668,10 +1668,12 @@ async fn re_filing_moves_the_instance_and_restamps_an_untouched_name() {
     );
 }
 
-/// A name the user typed is a deliberate per-session fact: the move
-/// carries the reference and leaves the name alone.
+/// A free-text name from before definitions existed is replaced, not
+/// preserved: retiring the old naming scheme is the point of the move,
+/// and keeping the legacy string would carry the thing being retired
+/// into the family that replaced it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn re_filing_leaves_a_hand_typed_name_untouched() {
+async fn re_filing_replaces_a_legacy_free_text_name() {
     let dir = tempfile::tempdir().unwrap();
     let (api, db) = make_api_db(dir.path(), false, None).await;
     let target = api
@@ -1684,11 +1686,12 @@ async fn re_filing_leaves_a_hand_typed_name_untouched() {
         .unwrap();
     let target_id: i64 = target.id.parse().unwrap();
 
+    // A pre-definitions session: no reference, a hand-typed name.
     db.with_writer(|conn| {
         conn.execute(
             "INSERT INTO tracking_sessions \
              (id, started_at, ended_at, is_active, armour_cost, definition_id, session_name) \
-             VALUES ('named', 1000.0, 2000.0, 0, 0, 1, 'the night the ATH landed')",
+             VALUES ('legacy', 1000.0, 2000.0, 0, 0, NULL, 'carabok skilling run 3')",
             [],
         )?;
         Ok(())
@@ -1697,14 +1700,11 @@ async fn re_filing_leaves_a_hand_typed_name_untouched() {
     .unwrap();
 
     let result = api
-        .tracking_reassign_session("named".to_string(), target_id)
+        .tracking_reassign_session("legacy".to_string(), target_id)
         .await
         .unwrap();
     assert_eq!(result.definition_id, target.id);
-    assert_eq!(
-        result.session_name,
-        Some("the night the ATH landed".to_string())
-    );
+    assert_eq!(result.session_name, Some("Carabok Skilling".to_string()));
 }
 
 /// A soft-deleted definition takes no new instances: filing into a

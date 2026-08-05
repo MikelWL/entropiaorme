@@ -981,45 +981,6 @@ pub async fn build_loot_item_edit_response(
     }))
 }
 
-/// Rename an ended session's name facet: the post-hoc correction the
-/// overlay deliberately does not offer, because a live rename could
-/// only rewrite the whole session's history. Session-grain, so this
-/// simply restates the one value, and the summary cache is restated
-/// with it so the analytics axis and the record never disagree.
-pub async fn rename_session_impl(
-    db: &Db,
-    session_id: &str,
-    session_name: Option<&str>,
-) -> Result<Value, EditError> {
-    validate_session_exists(db, session_id).await?;
-    let name = session_name
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string);
-
-    let sid = session_id.to_string();
-    let write_name = name.clone();
-    db.with_writer(move |conn| {
-        let tx = conn.transaction()?;
-        tx.execute(
-            "UPDATE tracking_sessions SET session_name = ? WHERE id = ?",
-            rusqlite::params![write_name, sid],
-        )?;
-        // The summary cache carries the facet beside its aggregates; a
-        // rename that healed only on the next summary rebuild would
-        // leave the comparison axis reading the old bucket meanwhile.
-        tx.execute(
-            "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
-            rusqlite::params![write_name, sid],
-        )?;
-        tx.commit()?;
-        Ok(())
-    })
-    .await?;
-
-    Ok(json!({ "sessionId": session_id, "sessionName": name }))
-}
-
 /// Re-file an ended session under a different definition: the recorded
 /// correction for the session started while the picker still held
 /// yesterday's family, and the only post-hoc route between families.
@@ -1029,10 +990,10 @@ pub async fn rename_session_impl(
 /// is the one arrangement the review surface could not show honestly;
 /// filing *out* of one is exactly how such an instance is rescued.
 ///
-/// The stamped `session_name` follows the reference only when it is
-/// still the old definition's auto-stamp. A name the user typed is a
-/// deliberate per-session fact and survives the move untouched, matching
-/// the rule that a definition rename never rewrites recorded history.
+/// The stamped `session_name` always follows the reference. Identity
+/// comes from the definition, so the stamp is a copy of its name rather
+/// than a label of its own: there is nothing per-session to preserve,
+/// and a stamp left behind would read as the wrong family.
 pub async fn reassign_session_definition_impl(
     db: &Db,
     session_id: &str,
@@ -1060,64 +1021,19 @@ pub async fn reassign_session_definition_impl(
                 return Ok(None);
             };
 
-            // The name the previous definition would have stamped, so an
-            // untouched auto-stamp can be told from a hand-typed name.
-            let previous: Option<(Option<i64>, Option<String>)> = tx
-                .query_row(
-                    "SELECT definition_id, session_name FROM tracking_sessions WHERE id = ?",
-                    rusqlite::params![sid],
-                    |row| {
-                        Ok((
-                            row.get::<_, Option<i64>>(0)?,
-                            row.get::<_, Option<String>>(1)?,
-                        ))
-                    },
-                )
-                .optional()?;
-            let (previous_id, current_name) = previous.unwrap_or((None, None));
-            let previous_name: Option<String> = match previous_id {
-                Some(id) => tx
-                    .query_row(
-                        "SELECT name FROM session_definitions WHERE id = ?",
-                        rusqlite::params![id],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()?,
-                None => None,
-            };
-            // An unnamed session takes the new stamp too: there is no
-            // deliberate name to preserve.
-            let restamp = match (&current_name, &previous_name) {
-                (None, _) => true,
-                (Some(current), Some(previous)) => current == previous,
-                (Some(_), None) => false,
-            };
-
-            if restamp {
-                tx.execute(
-                    "UPDATE tracking_sessions SET definition_id = ?, session_name = ? WHERE id = ?",
-                    rusqlite::params![definition_id, target_name, sid],
-                )?;
-                // The summary cache carries the facet beside its
-                // aggregates (the rename precedent): leaving it to the
-                // next rebuild would let the comparison axis read the
-                // old bucket meanwhile.
-                tx.execute(
-                    "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
-                    rusqlite::params![target_name, sid],
-                )?;
-            } else {
-                tx.execute(
-                    "UPDATE tracking_sessions SET definition_id = ? WHERE id = ?",
-                    rusqlite::params![definition_id, sid],
-                )?;
-            }
+            tx.execute(
+                "UPDATE tracking_sessions SET definition_id = ?, session_name = ? WHERE id = ?",
+                rusqlite::params![definition_id, target_name, sid],
+            )?;
+            // The summary cache carries the facet beside its aggregates;
+            // leaving it to the next rebuild would let the comparison
+            // axis read the old family meanwhile.
+            tx.execute(
+                "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
+                rusqlite::params![target_name, sid],
+            )?;
             tx.commit()?;
-            Ok(Some(if restamp {
-                Some(target_name)
-            } else {
-                current_name
-            }))
+            Ok(Some(target_name))
         })
         .await?;
 

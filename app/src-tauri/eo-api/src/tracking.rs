@@ -2,8 +2,9 @@
 //! manual-mob suggestions, the quest-link suggestion), the live producer
 //! surface (start / stop / release-mob / manual-mob-lock / tag-lock / the
 //! consolidated dashboard snapshot), the post-hoc session edits (rename /
-//! restore mob, loot-item activate / deactivate, armour cost, quest-link
-//! decision), and the one-shot repair-cost OCR read.
+//! restore mob, loot-item activate / deactivate, re-file under another
+//! definition, armour cost, quest-link decision), and the one-shot
+//! repair-cost OCR read.
 //!
 //! Typed DTOs over the composed services. The family's SQL and its wire
 //! shaping live in `eo_services::tracking_reads`; this facade owns the
@@ -689,14 +690,6 @@ pub struct DefinitionSelectResult {
     pub session_name: Nullable<String>,
 }
 
-/// The post-hoc session-rename result.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionRenameResult {
-    pub session_id: String,
-    pub session_name: Nullable<String>,
-}
-
 /// The post-hoc re-file result: the definition the session now belongs
 /// to, and the name it carries afterwards (restamped with the new
 /// definition's, or the hand-typed one left as it was).
@@ -1240,19 +1233,6 @@ impl Api {
             session_definition_id: selected_id.map(|id| id.to_string()).into(),
             session_name: selected_name.into(),
         })
-    }
-
-    /// Rename an ended session: the post-hoc correction path for the
-    /// name facet, which the overlay fixes once a session starts.
-    pub async fn tracking_rename_session(
-        &self,
-        session_id: String,
-        session_name: Option<String>,
-    ) -> Result<SessionRenameResult, ApiError> {
-        let value = rename_session_impl(&self.db, &session_id, session_name.as_deref())
-            .await
-            .map_err(edit_error("tracking rename session"))?;
-        serde_json::from_value(value).map_err(ApiError::internal("tracking rename session shaping"))
     }
 
     /// Re-file an ended session under a different (active) definition:

@@ -4,7 +4,6 @@
 		activateLootItem,
 		deactivateLootItem,
 		getSessionDetail,
-		renameSession,
 		renameSessionMob,
 		restoreSessionMob,
 	} from '$lib/api';
@@ -160,45 +159,6 @@
 		};
 	}
 
-	// ── Session name edit ─────────────────────────────────────────────
-	// The name is session-grain, so the overlay fixes it once a session
-	// starts and this is where it gets corrected: the same post-hoc
-	// record-editing move as the mob attribution below.
-	let nameEditing = $state(false);
-	let nameDraft = $state('');
-	let nameBusy = $state(false);
-	let nameError = $state<string | null>(null);
-
-	function beginNameEdit() {
-		nameDraft = detail.sessionName ?? '';
-		nameError = null;
-		nameEditing = true;
-	}
-
-	function cancelNameEdit() {
-		nameEditing = false;
-		nameError = null;
-	}
-
-	async function confirmNameEdit() {
-		const next = nameDraft.trim();
-		if (next === (detail.sessionName ?? '')) {
-			cancelNameEdit();
-			return;
-		}
-		nameBusy = true;
-		nameError = null;
-		try {
-			await renameSession(detail.sessionId, next || null);
-			await refetchSessionDetail();
-			nameEditing = false;
-		} catch (e) {
-			nameError = errorMessage(e, 'Rename failed.');
-		} finally {
-			nameBusy = false;
-		}
-	}
-
 	// ── Mob attribution edit ──────────────────────────────────────────
 	const mobBreakdown = $derived(detail.mobBreakdown ?? []);
 	const isTagMode = $derived(detail.mobEntryMode === 'tag');
@@ -322,53 +282,15 @@
 </script>
 
 <div class="bg-surface/50 border border-border/50 rounded-b-md p-5 -mt-1 space-y-5">
-	<!-- 0. Session name (the post-hoc correction the overlay withholds) -->
+	<!-- 0. The session this instance was recorded under. A stamp of its
+		 definition's name, not a per-session label: identity comes from the
+		 definition, so this is corrected by moving the instance to another
+		 one, never by retyping it here. -->
 	<div class="flex flex-wrap items-center gap-2">
 		<span class="eyebrow">Session</span>
-		{#if nameEditing}
-			<input
-				type="text"
-				class="min-w-[200px] bg-surface border border-border rounded-sm px-2 py-1 text-sm text-text focus:outline-none focus:border-accent"
-				bind:value={nameDraft}
-				aria-label="Session name"
-				placeholder="Unnamed"
-				disabled={nameBusy}
-				onkeydown={(e) => {
-					if (e.key === 'Enter') confirmNameEdit();
-					if (e.key === 'Escape') cancelNameEdit();
-				}}
-			/>
-			<button
-				type="button"
-				class="text-xs text-accent hover:text-accent-hover px-2 py-0.5 rounded-sm cursor-pointer border border-accent/40 hover:border-accent font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-				disabled={nameBusy}
-				onclick={confirmNameEdit}
-			>
-				Save
-			</button>
-			<button
-				type="button"
-				class="text-xs text-text-tertiary hover:text-text px-2 py-0.5 rounded-sm cursor-pointer"
-				disabled={nameBusy}
-				onclick={cancelNameEdit}
-			>
-				Cancel
-			</button>
-		{:else}
-			<span class="text-sm {detail.sessionName ? 'text-text' : 'text-text-tertiary italic'}">
-				{detail.sessionName ?? 'Unnamed'}
-			</span>
-			<button
-				type="button"
-				class="text-xs text-text-tertiary hover:text-accent px-2 py-0.5 rounded-sm cursor-pointer"
-				onclick={beginNameEdit}
-			>
-				Rename
-			</button>
-		{/if}
-		{#if nameError}
-			<span class="text-xs text-negative">{nameError}</span>
-		{/if}
+		<span class="text-sm {detail.sessionName ? 'text-text' : 'text-text-tertiary italic'}">
+			{detail.sessionName ?? 'Unnamed'}
+		</span>
 	</div>
 
 	<!-- 1. Summary stats -->

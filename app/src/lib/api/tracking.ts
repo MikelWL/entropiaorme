@@ -76,7 +76,6 @@ export const releaseMob = commands.trackingReleaseMob;
 export const deleteSession = commands.trackingSessionDelete;
 export const deactivateLootItem = commands.trackingLootItemDeactivate;
 export const activateLootItem = commands.trackingLootItemActivate;
-export const renameSession = commands.trackingRenameSession;
 /** Re-file an ended session under a different (active) definition: the
  * correction for a session recorded against whichever family the picker
  * happened to be holding. The stamped name follows the move only when it
@@ -89,8 +88,9 @@ export const renameSessionMob = commands.trackingRenameMob;
 export const restoreSessionMob = commands.trackingRestoreMob;
 /** Set the session facets (full-state apply: null clears a facet). The
  * name is fixed while a session runs (the backend answers 409 on an
- * attempted change; correct it post-hoc via `renameSession`); the boost
- * stays editable throughout. */
+ * attempted change): it is a stamp of the definition's name, so a
+ * mis-recorded session is corrected by re-filing it, not by retyping.
+ * The boost stays editable throughout. */
 export const setSessionConfig = commands.trackingSessionConfig;
 /** Select the session definition the next session starts as an instance
  * of; writes the session-name facet with the definition's name in the
