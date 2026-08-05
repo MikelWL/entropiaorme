@@ -106,17 +106,27 @@ function reorderToMatch(target: StatPref[], referenceOrder: StatId[]): StatPref[
  * falls back to the headline figures rather than drawing an empty grid,
  * which would read as broken. The fallback keeps the user's own stat
  * ordering.
+ *
+ * `fallback` exists because that reasoning is the dashboard's, not the
+ * overlay's. The overlay renders no pill group at all for an empty
+ * selection, so switching every pill off is a supported resting state
+ * there; conjuring four back on a scope flip would override a choice
+ * the user made deliberately.
  */
-export function scopedStats(prefs: StatPref[], scope: StatsScope): StatPref[] {
+export function scopedStats(
+	prefs: StatPref[],
+	scope: StatsScope,
+	{ fallback = true }: { fallback?: boolean } = {},
+): StatPref[] {
 	const enabled = prefs.filter((pref) => pref.enabled);
 	if (scope === 'instance') return enabled;
 	const capable = enabled.filter((pref) => isLifetimeCapable(pref.id));
-	if (capable.length > 0) return capable;
-	const fallback = prefs
+	if (capable.length > 0 || !fallback) return capable;
+	const headline = prefs
 		.filter((pref) => HEADLINE_LIFETIME_STAT_IDS.includes(pref.id))
 		.map((pref) => ({ ...pref, enabled: true }));
-	return fallback.length > 0
-		? fallback
+	return headline.length > 0
+		? headline
 		: HEADLINE_LIFETIME_STAT_IDS.map((id) => ({ id, enabled: true }));
 }
 

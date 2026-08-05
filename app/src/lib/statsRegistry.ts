@@ -64,6 +64,20 @@ const isActive = (s: TrackingStatus | null): s is TrackingStatus => s?.status ==
 const PLAIN = 'text-text';
 const EMPTY: StatRender = { value: '—', color: PLAIN };
 
+/**
+ * Render a lifetime figure only when there are instances behind it.
+ *
+ * A family nobody has run yet aggregates to zero on every axis, and a
+ * rendered `0.00` claims a measurement that was never taken. An empty
+ * reading says so instead.
+ */
+function overSpan(
+	lifetime: LifetimeStats,
+	render: (lifetime: LifetimeStats) => StatRender,
+): StatRender {
+	return lifetime.instanceCount > 0 ? render(lifetime) : EMPTY;
+}
+
 /** A net figure reads the same either side of the flip: signed, and
  * coloured by which side of break-even it falls. */
 function signedNet(net: number): StatRender {
@@ -88,7 +102,8 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		defaultEnabled: true,
 		render: (status) =>
 			isActive(status) ? { value: formatPed(status.cost ?? 0), color: PLAIN } : EMPTY,
-		renderLifetime: (lifetime) => ({ value: formatPed(lifetime.cycled), color: PLAIN }),
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPed(l.cycled), color: PLAIN })),
 	},
 	loot_tt: {
 		id: 'loot_tt',
@@ -96,7 +111,8 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		defaultEnabled: true,
 		render: (status) =>
 			isActive(status) ? { value: formatPed(status.returns ?? 0), color: PLAIN } : EMPTY,
-		renderLifetime: (lifetime) => ({ value: formatPed(lifetime.lootTt), color: PLAIN }),
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPed(l.lootTt), color: PLAIN })),
 	},
 	net: {
 		id: 'net',
@@ -108,7 +124,7 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 			const net = (status.returns ?? 0) - (status.cost ?? 0);
 			return signedNet(net);
 		},
-		renderLifetime: (lifetime) => signedNet(lifetime.net),
+		renderLifetime: (lifetime) => overSpan(lifetime, (l) => signedNet(l.net)),
 	},
 	rate: {
 		id: 'rate',
@@ -118,10 +134,8 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 			isActive(status) ? { value: formatPercent(status.returnRate ?? 0), color: PLAIN } : EMPTY,
 		// Already the ratio of the summed parts, computed backend-side;
 		// never the mean of the per-instance rates.
-		renderLifetime: (lifetime) => ({
-			value: formatPercent(lifetime.returnRate),
-			color: PLAIN,
-		}),
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPercent(l.returnRate), color: PLAIN })),
 	},
 	pes: {
 		id: 'pes',
@@ -129,7 +143,8 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		defaultEnabled: false,
 		render: (status) =>
 			isActive(status) ? { value: formatPed(status.pes ?? 0), color: PLAIN } : EMPTY,
-		renderLifetime: (lifetime) => ({ value: formatPed(lifetime.pes), color: PLAIN }),
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPed(l.pes), color: PLAIN })),
 	},
 	pes_per_100: {
 		id: 'pes_per_100',
@@ -145,9 +160,9 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		// leaving it on the instance beside a lifetime PES and a
 		// lifetime Cycled would be the arbitrary choice.
 		renderLifetime: (lifetime) =>
-			lifetime.cycled > 0
-				? { value: ((lifetime.pes / lifetime.cycled) * 100).toFixed(2), color: PLAIN }
-				: EMPTY,
+			overSpan(lifetime, (l) =>
+				l.cycled > 0 ? { value: ((l.pes / l.cycled) * 100).toFixed(2), color: PLAIN } : EMPTY,
+			),
 	},
 	latest_kill_loot: {
 		id: 'latest_kill_loot',

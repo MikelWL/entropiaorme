@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALL_STAT_IDS, STAT_DEFS, type StatId } from './statsRegistry';
+import { NO_DATA } from './utils/format';
 
 // Mock the two side-effecting seams. These vi.fn()s are hoisted alongside the
 // vi.mock factory; we read/reset them per test. Because the module under test
@@ -419,5 +420,45 @@ describe('the lifetime-capable set', () => {
 		expect(STAT_DEFS.rate.renderLifetime?.(lifetime).value).toBe('68.6%');
 		expect(STAT_DEFS.net.renderLifetime?.(lifetime).value).toBe('-32.00');
 		expect(STAT_DEFS.cycled.renderLifetime?.(lifetime).value).toBe('102.00');
+	});
+});
+
+describe('the lifetime scope on a surface that tolerates an empty set', () => {
+	it('does not conjure the headline fallback back on', async () => {
+		const { scopedStats } = await loadModule();
+		// The overlay renders no pill group at all for an empty
+		// selection, so switching every pill off is a resting state
+		// there; a scope flip must not override that choice.
+		const selection = ALL_STAT_IDS.map((id) => ({ id, enabled: id === 'crit_rate' }));
+		expect(scopedStats(selection, 'lifetime', { fallback: false })).toEqual([]);
+		// The dashboard keeps the fallback: an empty grid reads as broken.
+		expect(ids(scopedStats(selection, 'lifetime'))).toEqual(['cycled', 'loot_tt', 'net', 'rate']);
+	});
+});
+
+describe('a family with no instances behind it', () => {
+	const empty = {
+		instanceCount: 0,
+		cycled: 0,
+		lootTt: 0,
+		net: 0,
+		returnRate: 0,
+		pes: 0,
+		durationSeconds: 0,
+	};
+
+	it('reads empty rather than as a measured zero', () => {
+		// Every axis aggregates to zero for a family nobody has run, and
+		// a rendered 0.00 would claim a measurement never taken.
+		for (const id of ['cycled', 'loot_tt', 'net', 'rate', 'pes', 'pes_per_100'] as StatId[]) {
+			expect(STAT_DEFS[id].renderLifetime?.(empty).value).toBe(NO_DATA);
+		}
+	});
+
+	it('still renders the figures once a single instance exists', () => {
+		const oneRun = { ...empty, instanceCount: 1, cycled: 10, lootTt: 9, net: -1, returnRate: 0.9 };
+		expect(STAT_DEFS.cycled.renderLifetime?.(oneRun).value).toBe('10.00');
+		expect(STAT_DEFS.rate.renderLifetime?.(oneRun).value).toBe('90.0%');
+		expect(STAT_DEFS.net.renderLifetime?.(oneRun).value).toBe('-1.00');
 	});
 });

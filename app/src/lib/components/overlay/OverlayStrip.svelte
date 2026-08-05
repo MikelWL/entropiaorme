@@ -495,7 +495,7 @@
 		<!-- Customisable stat pills (driven by the overlay stat prefs): treated as
 			 one unit, so the section separator sits at the unit boundary, not
 			 between individual pills. -->
-		{@const enabledPills = scopedStats(overlayStats.current, overlayScope)}
+		{@const enabledPills = scopedStats(overlayStats.current, overlayScope, { fallback: false })}
 		{#if enabledPills.length > 0}
 			<div class="flex items-center gap-4 shrink-0 border-l border-white/10 pl-3">
 				<!-- The strip carries no scope CONTROL of its own: it
