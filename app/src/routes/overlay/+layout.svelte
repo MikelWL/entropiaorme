@@ -7,19 +7,37 @@
 		OVERLAY_STATS_CHANGED_EVENT,
 		type StatPref,
 	} from '$lib/statsCustomisation.svelte';
+	import {
+		initStatsScope,
+		statsScope,
+		STATS_SCOPE_CHANGED_EVENT,
+		type StatsScope
+	} from '$lib/statsScope.svelte';
 
 	let { children } = $props();
 
 	onMount(() => {
 		void initStatsCustomisation();
+		void initStatsScope();
 		let unlisten: (() => void) | undefined;
+		let unlistenScope: (() => void) | undefined;
 		void (async () => {
 			unlisten = await listen<StatPref[]>(OVERLAY_STATS_CHANGED_EVENT, (event) => {
 				if (Array.isArray(event.payload)) overlayStats.current = event.payload;
 			});
 		})();
+		// The scope is shared, so a flip on the dashboard moves the
+		// overlay's figures with it (and the other way round).
+		void (async () => {
+			unlistenScope = await listen<StatsScope>(STATS_SCOPE_CHANGED_EVENT, (event) => {
+				if (event.payload === 'instance' || event.payload === 'lifetime') {
+					statsScope.current = event.payload;
+				}
+			});
+		})();
 		return () => {
 			unlisten?.();
+			unlistenScope?.();
 		};
 	});
 </script>

@@ -339,3 +339,85 @@ describe('setOverlayStats', () => {
 		expect(ov.find((p) => p.id === 'net')?.enabled).toBe(true);
 	});
 });
+
+describe('scopedStats', () => {
+	const prefs = (enabled: StatId[]): { id: StatId; enabled: boolean }[] =>
+		ALL_STAT_IDS.map((id) => ({ id, enabled: enabled.includes(id) }));
+
+	it('draws the whole selection under the instance scope', async () => {
+		const { scopedStats } = await loadModule();
+		const selection = prefs(['cycled', 'multiplier_last', 'net']);
+		expect(ids(scopedStats(selection, 'instance'))).toEqual(['cycled', 'net', 'multiplier_last']);
+	});
+
+	it('narrows to the lifetime-capable stats without touching the selection', async () => {
+		const { scopedStats } = await loadModule();
+		const selection = prefs(['cycled', 'multiplier_last', 'net', 'crit_rate']);
+		const before = structuredClone(selection);
+		expect(ids(scopedStats(selection, 'lifetime'))).toEqual(['cycled', 'net']);
+		// The flip is a view, never a deselection: the stored prefs are
+		// byte-identical afterwards, so flipping back restores everything.
+		expect(selection).toEqual(before);
+		expect(ids(scopedStats(selection, 'instance'))).toEqual(ids(scopedStats(before, 'instance')));
+	});
+
+	it('falls back to the headline figures rather than drawing an empty grid', async () => {
+		const { scopedStats } = await loadModule();
+		// A selection made entirely of instance-only stats: without the
+		// fallback the lifetime flip would render nothing and read broken.
+		const selection = prefs(['multiplier_last', 'crit_rate', 'latest_kill_loot']);
+		expect(ids(scopedStats(selection, 'lifetime'))).toEqual(['cycled', 'loot_tt', 'net', 'rate']);
+	});
+
+	it('keeps the user ordering in the headline fallback', async () => {
+		const { scopedStats } = await loadModule();
+		const reordered = [
+			{ id: 'net' as StatId, enabled: false },
+			{ id: 'rate' as StatId, enabled: false },
+			{ id: 'cycled' as StatId, enabled: false },
+			{ id: 'loot_tt' as StatId, enabled: false },
+			{ id: 'crit_rate' as StatId, enabled: true },
+		];
+		expect(ids(scopedStats(reordered, 'lifetime'))).toEqual(['net', 'rate', 'cycled', 'loot_tt']);
+	});
+});
+
+describe('isOwnSelection', () => {
+	it('is false only when the lifetime flip is showing the fallback', async () => {
+		const { isOwnSelection } = await loadModule();
+		const onlyInstanceStats = ALL_STAT_IDS.map((id) => ({ id, enabled: id === 'crit_rate' }));
+		const withALifetimeStat = ALL_STAT_IDS.map((id) => ({ id, enabled: id === 'net' }));
+		expect(isOwnSelection(onlyInstanceStats, 'instance')).toBe(true);
+		expect(isOwnSelection(onlyInstanceStats, 'lifetime')).toBe(false);
+		expect(isOwnSelection(withALifetimeStat, 'lifetime')).toBe(true);
+	});
+});
+
+describe('the lifetime-capable set', () => {
+	it('is exactly the stats that declare a lifetime render', async () => {
+		const { LIFETIME_STAT_IDS } = await import('./statsRegistry');
+		expect(LIFETIME_STAT_IDS).toEqual(['cycled', 'loot_tt', 'net', 'rate', 'pes', 'pes_per_100']);
+		// The declaration IS the capability, so the two cannot drift.
+		for (const id of ALL_STAT_IDS) {
+			expect(LIFETIME_STAT_IDS.includes(id)).toBe(STAT_DEFS[id].renderLifetime !== undefined);
+		}
+	});
+
+	it('renders a rate as the ratio of the sums it was handed', async () => {
+		// The backend computes the ratio; the registry must not re-derive
+		// it from anything else or average anything.
+		const lifetime = {
+			instanceCount: 2,
+			cycled: 102,
+			lootTt: 70,
+			net: -32,
+			returnRate: 0.6863,
+			pes: 5.5,
+			durationSeconds: 11_040,
+		};
+		// One decimal, exactly as the instance figure renders it.
+		expect(STAT_DEFS.rate.renderLifetime?.(lifetime).value).toBe('68.6%');
+		expect(STAT_DEFS.net.renderLifetime?.(lifetime).value).toBe('-32.00');
+		expect(STAT_DEFS.cycled.renderLifetime?.(lifetime).value).toBe('102.00');
+	});
+});

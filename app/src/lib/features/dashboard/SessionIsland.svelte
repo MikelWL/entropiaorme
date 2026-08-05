@@ -10,6 +10,7 @@
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 	import { hydrate } from '$lib/stores/trackingStore.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
+	import { setStatsScope } from '$lib/statsScope.svelte';
 	import { describeError } from '$lib/view/errorState';
 	import type { StatsGridModel } from './statsGridModel.svelte';
 
@@ -26,6 +27,24 @@
 	} = $props();
 
 	let elapsedSeconds = $state(0);
+
+	// The family behind the flip. Present on every frame, idle included,
+	// over the definition a start would stamp; absent means this session
+	// belongs to no family, and the control is not offered at all.
+	const lifetime = $derived(status?.lifetime ?? null);
+	const showingLifetime = $derived(statsGrid.scope === 'lifetime' && lifetime !== null);
+
+	async function toggleScope() {
+		await setStatsScope(showingLifetime ? 'instance' : 'lifetime');
+	}
+
+	/** The span the lifetime figures cover, stated so a thin aggregate
+	 * cannot read as a deep one. */
+	const spanLabel = $derived.by(() => {
+		const count = lifetime?.instanceCount ?? 0;
+		if (count === 0) return 'no sessions yet';
+		return count === 1 ? 'across 1 session' : `across ${count} sessions`;
+	});
 
 	function openAuthoring(definitionId: string | null) {
 		const editing =
@@ -91,24 +110,62 @@
 						{status.sessionName}
 					</span>
 				{/if}
+				<!-- Under the lifetime scope this reads the family's summed
+					 duration, so the time beside the figures is the time
+					 those figures cover. -->
 				<span
 					class="text-xs text-text-tertiary tabular-nums tracking-wider"
 					data-testid="session-elapsed"
 				>
-					{formatElapsed(elapsedSeconds)}
+					{formatElapsed(showingLifetime && lifetime ? lifetime.durationSeconds : elapsedSeconds)}
 				</span>
+				{#if showingLifetime}
+					<span class="text-xs text-text-tertiary truncate" data-testid="lifetime-span">
+						{spanLabel}
+					</span>
+				{/if}
 			</div>
 		{:else}
 			<!-- At rest the island is titled by the session it will run as;
 				 the stats below already read @Rest, so nothing states it twice. -->
-			<DefinitionPicker
-				model={definitions}
-				selectedId={selectedDefinitionId}
-				onOpenAuthoring={openAuthoring}
-			/>
+			<div class="flex items-center gap-3 min-w-0">
+				<DefinitionPicker
+					model={definitions}
+					selectedId={selectedDefinitionId}
+					onOpenAuthoring={openAuthoring}
+				/>
+				{#if showingLifetime && lifetime}
+					<span class="text-xs text-text-tertiary tabular-nums tracking-wider">
+						{formatElapsed(lifetime.durationSeconds)}
+					</span>
+					<span class="text-xs text-text-tertiary truncate" data-testid="lifetime-span">
+						{spanLabel}
+					</span>
+				{/if}
+			</div>
 		{/if}
 
 		<div class="flex items-center gap-2">
+			<!-- The instance/family flip. Offered only when there is a
+				 family to flip to: a session belonging to no definition
+				 gets no control rather than a dead one. -->
+			{#if lifetime}
+				<button
+					type="button"
+					onclick={toggleScope}
+					aria-pressed={showingLifetime}
+					title={showingLifetime
+						? `Lifetime figures for this session, ${spanLabel}. Click for this session only.`
+						: 'This session only. Click for the lifetime figures across every time you have run it.'}
+					data-testid="stats-scope-toggle"
+					class="text-xs px-2 py-1 rounded-md border transition-colors duration-[var(--duration-base)]
+						{showingLifetime
+						? 'border-accent/60 bg-accent/10 text-accent'
+						: 'border-border/60 text-text-secondary hover:text-text hover:border-border'}"
+				>
+					{showingLifetime ? 'Lifetime' : 'This session'}
+				</button>
+			{/if}
 			{#if !isActive}
 				<Button size="sm" disabled={starting} onclick={handleStart}>
 					{#snippet children()}{starting ? 'Starting...' : 'Start'}{/snippet}
@@ -137,7 +194,11 @@
 	>
 		{#each statsGrid.enabledStats as pref, i (pref.id)}
 			{@const def = getStatDef(pref.id)}
-			{@const r = def ? def.render(status) : { value: '\u2014', color: 'text-text-tertiary' }}
+			{@const r = def
+				? showingLifetime && def.renderLifetime && lifetime
+					? def.renderLifetime(lifetime)
+					: def.render(status)
+				: { value: '\u2014', color: 'text-text-tertiary' }}
 			{@const isDragged = statsGrid.dragFilteredIndex === i}
 			<div
 				animate:flip={{ duration: shouldSettleInstantly() ? 0 : 240, easing: quintOut }}
@@ -145,7 +206,8 @@
 				role="group"
 				aria-label={def?.label ?? pref.id}
 				class="relative rounded-md border border-border/60 bg-base/40 px-3 py-2.5 flex flex-col gap-1
-					min-w-0 cursor-grab select-none touch-none
+					min-w-0 select-none touch-none
+					{statsGrid.reorderable ? 'cursor-grab' : ''}
 					transition-[opacity,box-shadow,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
 					before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit]
 					before:[box-shadow:inset_0_1px_0_0_rgba(255,255,255,0.03)]

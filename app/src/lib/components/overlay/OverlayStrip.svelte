@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { TrackingLive, TrackingStatus } from '$lib/api';
-	import { overlayStats } from '$lib/statsCustomisation.svelte';
+	import { overlayStats, scopedStats } from '$lib/statsCustomisation.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
+	import { setStatsScope, statsScope } from '$lib/statsScope.svelte';
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 	import { NO_DATA } from '$lib/utils/format';
@@ -115,6 +116,13 @@
 	// The Activities readout, straight off the tracking frame: whether
 	// the control appears at all, what is standing, and how many rows a
 	// tap could start. The menu's own rows are fetched when it opens.
+	// The instance/family flip, sharing one scope with the dashboard.
+	// The lifetime block is absent when the session belongs to no
+	// definition, so the strip falls back to the instance and offers no
+	// control rather than a dead one.
+	const lifetime = $derived(status?.lifetime ?? null);
+	const showingLifetime = $derived(statsScope.current === 'lifetime' && lifetime !== null);
+	const overlayScope = $derived(showingLifetime ? 'lifetime' : 'instance');
 	const activities = $derived(data.activities ?? null);
 	const standing = $derived(activities?.active ?? []);
 	const readyCount = $derived(activities?.readyCount ?? 0);
@@ -200,7 +208,9 @@
 						<span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
 					</span>
 					<span class="text-sm font-semibold text-emerald-400 tabular-nums tracking-wider w-12 text-center">
-						{formatElapsed(data.elapsed ?? 0)}
+						{formatElapsed(
+							showingLifetime && lifetime ? lifetime.durationSeconds : (data.elapsed ?? 0)
+						)}
 					</span>
 				</div>
 			{/if}
@@ -482,13 +492,36 @@
 		<!-- Customisable stat pills (driven by the overlay stat prefs): treated as
 			 one unit, so the section separator sits at the unit boundary, not
 			 between individual pills. -->
-		{@const enabledPills = overlayStats.current.filter((p) => p.enabled)}
+		{@const enabledPills = scopedStats(overlayStats.current, overlayScope)}
 		{#if enabledPills.length > 0}
 			<div class="flex items-center gap-4 shrink-0 border-l border-white/10 pl-3">
+				<!-- The instance/family flip, shared with the dashboard.
+					 Present only when there is a family to flip to. -->
+				{#if lifetime}
+					<button
+						type="button"
+						onclick={() => setStatsScope(showingLifetime ? 'instance' : 'lifetime')}
+						aria-pressed={showingLifetime}
+						title={showingLifetime
+							? `Lifetime figures across ${lifetime.instanceCount} recorded ${lifetime.instanceCount === 1 ? 'session' : 'sessions'}. Click for this session only.`
+							: 'This session only. Click for the lifetime figures across every time you have run it.'}
+						data-testid="overlay-scope-toggle"
+						class="flex flex-col items-center justify-center gap-0.5 shrink-0 rounded px-1.5 py-1
+							transition-colors duration-[var(--duration-base)]
+							{showingLifetime ? 'bg-white/10' : 'hover:bg-white/5'}"
+					>
+						<span class="text-[10px] font-bold text-white/40 tracking-wider uppercase leading-none">Scope</span>
+						<span class="text-sm font-semibold leading-none {showingLifetime ? 'text-white/85' : 'text-white/50'}">
+							{showingLifetime ? 'Life' : 'This'}
+						</span>
+					</button>
+				{/if}
 				{#each enabledPills as pref (pref.id)}
 					{@const def = getStatDef(pref.id)}
 					{#if def}
-						{@const r = def.render(status)}
+						{@const r = showingLifetime && def.renderLifetime && lifetime
+							? def.renderLifetime(lifetime)
+							: def.render(status)}
 						{@const valueColor = r.value === '—'
 							? 'text-white/25'
 							: r.color === 'text-text'

@@ -10,6 +10,8 @@
 	import { isTosAccepted } from '$lib/tos';
 	import { theme, initTheme } from '$lib/theme.svelte';
 	import { initStatsCustomisation } from '$lib/statsCustomisation.svelte';
+	import { initStatsScope, statsScope, STATS_SCOPE_CHANGED_EVENT, type StatsScope } from '$lib/statsScope.svelte';
+	import { listen } from '@tauri-apps/api/event';
 	import { initActivityArchive } from '$lib/activityArchive.svelte';
 	import { initNews, newsOptIn, newsHasUnread, NEWS_PREFERENCE_KEYS } from '$lib/news.svelte';
 	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater.svelte';
@@ -37,6 +39,20 @@
 	// window inside the relay; the returned stopper runs on window teardown.
 	onMount(() => startEventRelay());
 
+	// The stats scope is shared with the overlay window, so a flip made
+	// there moves this window's figures too.
+	onMount(() => {
+		let unlisten: (() => void) | undefined;
+		void (async () => {
+			unlisten = await listen<StatsScope>(STATS_SCOPE_CHANGED_EVENT, (event) => {
+				if (event.payload === 'instance' || event.payload === 'lifetime') {
+					statsScope.current = event.payload;
+				}
+			});
+		})();
+		return () => unlisten?.();
+	});
+
 	let onboardingChecked = $state(false);
 	let welcomingIn = $state(false);
 
@@ -50,6 +66,7 @@
 		await Promise.all([
 			initTheme(),
 			initStatsCustomisation(),
+			initStatsScope(),
 			initActivityArchive(),
 			initNews(),
 			initUpdater(),
