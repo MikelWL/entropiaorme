@@ -126,6 +126,11 @@ pub struct SessionDefinition {
     /// A session that cannot be deleted, because tracking always needs
     /// one to run under. It renames and takes a roster like any other.
     pub is_protected: bool,
+    /// False for a soft-deleted definition: no longer offered for new
+    /// sessions, but its recorded instances still reference it, so the
+    /// review surface can still reach them. Only ever false in a listing
+    /// that asked for the inactive ones.
+    pub is_active: bool,
     pub instance_count: i64,
     /// Authored instant (fractional epoch seconds).
     pub created_at: f64,
@@ -142,6 +147,7 @@ impl SessionDefinition {
             name: definition.name.clone(),
             ad_hoc_segments: definition.ad_hoc_segments,
             is_protected: definition.is_protected,
+            is_active: definition.is_active,
             instance_count: definition.instance_count,
             created_at: definition.created_at,
             updated_at: definition.updated_at.into(),
@@ -175,11 +181,17 @@ pub(crate) fn definition_error(
 // ── Facade methods ──────────────────────────────────────────────────
 
 impl Api {
-    /// List the active session definitions, oldest-authored first.
-    pub async fn session_definitions_list(&self) -> Result<Vec<SessionDefinition>, ApiError> {
+    /// List the session definitions, oldest-authored first. Active only
+    /// by default: `include_inactive` adds the soft-deleted ones, which
+    /// the review surface needs because their instances are still real
+    /// recorded play and would otherwise be unreachable.
+    pub async fn session_definitions_list(
+        &self,
+        include_inactive: Option<bool>,
+    ) -> Result<Vec<SessionDefinition>, ApiError> {
         let definitions = self
             .session_definitions
-            .list(true)
+            .list(!include_inactive.unwrap_or(false))
             .await
             .map_err(definition_error("session definitions list"))?;
         Ok(definitions

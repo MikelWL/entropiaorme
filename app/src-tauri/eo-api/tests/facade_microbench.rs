@@ -231,7 +231,7 @@ fn facade_microbench() {
         // the session-scoped detail / quest-link reads need a persisted
         // session, so like the other families' path-parameter variants they
         // are left to the byte-parity suite rather than this dispatch harness.
-        bench!("tracking_sessions", api.tracking_sessions(None, None));
+        bench!("tracking_sessions", api.tracking_sessions(None, None, None));
         bench!("tracking_snapshot", api.tracking_snapshot());
     });
 

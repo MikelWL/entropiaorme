@@ -172,6 +172,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_manual_mob_lock",
     "tracking_manual_mob_suggestions",
     "tracking_quest_link_suggestion",
+    "tracking_reassign_session",
     "tracking_release_mob",
     "tracking_rename_mob",
     "tracking_rename_session",

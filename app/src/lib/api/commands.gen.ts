@@ -2175,6 +2175,8 @@ export interface SessionDefinition {
 	adHocSegments: boolean;
 	/** A session that cannot be deleted, because tracking always needs one to run under. It renames and takes a roster like any other. */
 	isProtected: boolean;
+	/** False for a soft-deleted definition: no longer offered for new sessions, but its recorded instances still reference it, so the review surface can still reach them. Only ever false in a listing that asked for the inactive ones. */
+	isActive: boolean;
 	instanceCount: number;
 	/** Authored instant (fractional epoch seconds). */
 	createdAt: number;
@@ -2274,6 +2276,17 @@ export interface SessionQuestLinkSuggestion {
 	questName: string | null;
 	playlistId: string | null;
 	playlistName: string | null;
+}
+
+/**
+ * The post-hoc re-file result: the definition the session now belongs
+ * to, and the name it carries afterwards (restamped with the new
+ * definition's, or the hand-typed one left as it was).
+ */
+export interface SessionReassignResult {
+	sessionId: string;
+	definitionId: string;
+	sessionName: string | null;
 }
 
 /**
@@ -2884,8 +2897,8 @@ export async function questFamilyDelete(familyId: number): Promise<void> {
 	return invokeCommand('quest_family_delete', { family_id: familyId });
 }
 
-export async function sessionDefinitionsList(): Promise<SessionDefinition[]> {
-	return invokeCommand('session_definitions_list', {});
+export async function sessionDefinitionsList(includeInactive: boolean | null): Promise<SessionDefinition[]> {
+	return invokeCommand('session_definitions_list', { include_inactive: includeInactive });
 }
 
 export async function sessionDefinitionCreate(input: SessionDefinitionInput): Promise<SessionDefinition> {
@@ -3080,8 +3093,8 @@ export async function scanSpacebarCapture(enabled: boolean): Promise<SpacebarRes
 	return invokeCommand('scan_spacebar_capture', { enabled });
 }
 
-export async function trackingSessions(cursor: string | null, limit: number | null): Promise<SessionPage> {
-	return invokeCommand('tracking_sessions', { cursor, limit });
+export async function trackingSessions(cursor: string | null, limit: number | null, definitionId: number | null): Promise<SessionPage> {
+	return invokeCommand('tracking_sessions', { cursor, limit, definition_id: definitionId });
 }
 
 export async function trackingSessionDetail(sessionId: string): Promise<SessionDetail> {
@@ -3140,6 +3153,10 @@ export async function trackingRenameSession(sessionId: string, sessionName: stri
 	return invokeCommand('tracking_rename_session', { session_id: sessionId, session_name: sessionName });
 }
 
+export async function trackingReassignSession(sessionId: string, definitionId: number): Promise<SessionReassignResult> {
+	return invokeCommand('tracking_reassign_session', { session_id: sessionId, definition_id: definitionId });
+}
+
 export async function trackingRenameMob(sessionId: string, fromMobName: string, toMobName: string): Promise<MobEditResult> {
 	return invokeCommand('tracking_rename_mob', { session_id: sessionId, from_mob_name: fromMobName, to_mob_name: toMobName });
 }
@@ -3196,8 +3213,8 @@ export async function demoInventoryList(): Promise<InventoryItem[]> {
 	return invokeCommand('demo_inventory_list', {});
 }
 
-export async function demoTrackingSessions(cursor: string | null, limit: number | null): Promise<SessionPage> {
-	return invokeCommand('demo_tracking_sessions', { cursor, limit });
+export async function demoTrackingSessions(cursor: string | null, limit: number | null, definitionId: number | null): Promise<SessionPage> {
+	return invokeCommand('demo_tracking_sessions', { cursor, limit, definition_id: definitionId });
 }
 
 export async function demoTrackingSessionDetail(sessionId: string): Promise<SessionDetail> {

@@ -106,7 +106,7 @@ async fn pin_timestamps(db: &Db, definition_id: i64) {
 async fn the_list_answers_the_fresh_database_with_the_protected_default() {
     let dir = tempfile::tempdir().unwrap();
     let (api, _db) = definitions_api(dir.path()).await;
-    let listed = api.session_definitions_list().await.unwrap();
+    let listed = api.session_definitions_list(None).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, "1");
     assert_eq!(listed[0].name, "Default Tracking");
@@ -181,12 +181,12 @@ async fn a_create_reads_back_the_wire_shape() {
     // between a pinned stamp and a real one.
     pin_timestamps(&db, 1).await;
     pin_timestamps(&db, 2).await;
-    let listed = api.session_definitions_list().await.unwrap();
+    let listed = api.session_definitions_list(None).await.unwrap();
     assert_eq!(listed.len(), 2);
     assert_eq!(
         serde_json::to_string(&listed[1]).unwrap(),
         "{\"id\":\"2\",\"name\":\"ARIS Dailies\",\"adHocSegments\":true,\
-         \"isProtected\":false,\
+         \"isProtected\":false,\"isActive\":true,\
          \"instanceCount\":0,\"createdAt\":2000.0,\"updatedAt\":null,\"roster\":[\
          {\"id\":\"1\",\"kind\":\"quest_family\",\"refId\":\"1\",\"label\":null,\
          \"displayName\":\"Daily Hunting 1\"},\
@@ -241,7 +241,7 @@ async fn the_update_and_delete_ladder_holds() {
         ApiError::not_found("Session definition not found")
     );
     api.session_definition_delete(2).await.unwrap();
-    let remaining = api.session_definitions_list().await.unwrap();
+    let remaining = api.session_definitions_list(None).await.unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].name, "Default Tracking");
     assert_eq!(

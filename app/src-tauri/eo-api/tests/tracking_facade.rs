@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use eo_api::activities::ActivityTargetKind;
-use eo_api::Api;
+use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
@@ -93,7 +93,7 @@ async fn seed_ended(db: &Db) {
 async fn the_empty_session_list_serialises_to_the_empty_page() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), false, None).await;
-    let page = api.tracking_sessions(None, None).await.unwrap();
+    let page = api.tracking_sessions(None, None, None).await.unwrap();
     assert_eq!(
         serde_json::to_string(&page).unwrap(),
         "{\"sessions\":[],\"nextCursor\":null,\"total\":0}"
@@ -105,7 +105,7 @@ async fn a_malformed_session_cursor_is_a_bad_request() {
     let dir = tempfile::tempdir().unwrap();
     let api = make_api(dir.path(), false, None).await;
     let error = api
-        .tracking_sessions(Some("not-a-cursor".to_string()), None)
+        .tracking_sessions(Some("not-a-cursor".to_string()), None, None)
         .await
         .unwrap_err();
     assert_eq!(serde_json::to_value(&error).unwrap()["kind"], "badRequest");
@@ -163,7 +163,7 @@ async fn a_harvest_session_nets_the_same_on_the_list_and_the_detail() {
 
     // The list row (served from the healed summary) and the detail read
     // must agree: net = harvest loot - harvest swing decay.
-    let page = api.tracking_sessions(None, None).await.unwrap();
+    let page = api.tracking_sessions(None, None, None).await.unwrap();
     assert_eq!(page.sessions.len(), 1);
     let row = &page.sessions[0];
     let detail = api
@@ -186,7 +186,7 @@ async fn the_session_keyset_walk_serves_every_session_exactly_once() {
 
     // First page: newest first, the whole-table count riding along, a
     // further page signalled by the cursor.
-    let first = api.tracking_sessions(None, Some(10)).await.unwrap();
+    let first = api.tracking_sessions(None, Some(10), None).await.unwrap();
     assert_eq!(first.sessions.len(), 10);
     assert_eq!(first.total, 25);
     assert_eq!(first.sessions[0].id, "s024");
@@ -197,7 +197,7 @@ async fn the_session_keyset_walk_serves_every_session_exactly_once() {
     let mut token = Some(cursor);
     while let Some(current) = token {
         let page = api
-            .tracking_sessions(Some(current), Some(10))
+            .tracking_sessions(Some(current), Some(10), None)
             .await
             .unwrap();
         seen.extend(page.sessions.iter().map(|s| s.id.clone()));
@@ -1144,7 +1144,7 @@ async fn stored_roster(
     api: &Api,
     definition_id: &str,
 ) -> Vec<eo_api::session_definitions::SessionRosterEntry> {
-    api.session_definitions_list()
+    api.session_definitions_list(None)
         .await
         .unwrap()
         .into_iter()
@@ -1535,4 +1535,253 @@ async fn the_lifetime_block_sums_the_family_and_folds_the_live_instance() {
     assert_eq!(value["status"], "active");
     assert_eq!(value["lifetime"]["instanceCount"], 3);
     assert_eq!(value["lifetime"]["cycled"], 102.0);
+}
+
+// ── The review surface: definition-scoped reads and re-filing ───────
+
+/// Seed `count` ended sessions under `definition_id` (or unattached when
+/// `None`), ids prefixed so each caller's rows are distinguishable.
+async fn seed_instances(db: &Db, prefix: &str, definition_id: Option<i64>, count: usize) {
+    for index in 0..count {
+        let id = format!("{prefix}-{index}");
+        let started = 1000.0 + (index as f64) * 100.0;
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, armour_cost, definition_id) \
+                 VALUES (?1, ?2, ?3, 0, 1.0, ?4)",
+                rusqlite::params![id, started, started + 60.0, definition_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+}
+
+/// The scope narrows the rows AND the count: a pager over one family
+/// must report that family's bounds, not the whole table's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_list_scopes_to_one_definitions_instances() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    let mine = api
+        .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
+            name: "Carabok Skilling".to_string(),
+            ad_hoc_segments: false,
+            roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let mine_id: i64 = mine.id.parse().unwrap();
+
+    seed_instances(&db, "mine", Some(mine_id), 3).await;
+    seed_instances(&db, "default", Some(1), 2).await;
+    seed_instances(&db, "loose", None, 4).await;
+
+    let scoped = api
+        .tracking_sessions(None, None, Some(mine_id))
+        .await
+        .unwrap();
+    assert_eq!(scoped.total, 3);
+    assert_eq!(scoped.sessions.len(), 3);
+    assert!(scoped.sessions.iter().all(|s| s.id.starts_with("mine-")));
+
+    // Unscoped stays the whole table, unchanged by the new argument.
+    let all = api.tracking_sessions(None, None, None).await.unwrap();
+    assert_eq!(all.total, 9);
+}
+
+/// The scope composes with the keyset cursor rather than being dropped
+/// by it: paging a family must not widen back to every session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scoped_page_keeps_its_scope_across_the_cursor() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    seed_instances(&db, "mine", Some(1), 3).await;
+    seed_instances(&db, "loose", None, 5).await;
+
+    let first = api.tracking_sessions(None, Some(2), Some(1)).await.unwrap();
+    assert_eq!(first.total, 3);
+    assert_eq!(first.sessions.len(), 2);
+    let cursor = first.next_cursor.0.clone().expect("a next page");
+
+    let second = api
+        .tracking_sessions(Some(cursor), Some(2), Some(1))
+        .await
+        .unwrap();
+    assert_eq!(second.sessions.len(), 1);
+    assert!(second.sessions.iter().all(|s| s.id.starts_with("mine-")));
+    assert!(second.next_cursor.is_none());
+}
+
+/// Re-filing moves the reference, and carries the stamped name with it
+/// while that name is still the previous definition's auto-stamp.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn re_filing_moves_the_instance_and_restamps_an_untouched_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    let target = api
+        .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
+            name: "Carabok Skilling".to_string(),
+            ad_hoc_segments: false,
+            roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let target_id: i64 = target.id.parse().unwrap();
+
+    // An instance of the protected default, carrying that definition's
+    // own name exactly as selection would have stamped it.
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions \
+             (id, started_at, ended_at, is_active, armour_cost, definition_id, session_name) \
+             VALUES ('misfiled', 1000.0, 2000.0, 0, 0, 1, 'Default Tracking')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let result = api
+        .tracking_reassign_session("misfiled".to_string(), target_id)
+        .await
+        .unwrap();
+    assert_eq!(result.definition_id, target.id);
+    assert_eq!(result.session_name, Some("Carabok Skilling".to_string()));
+
+    // The instance now reads under its new family, and only there.
+    let scoped = api
+        .tracking_sessions(None, None, Some(target_id))
+        .await
+        .unwrap();
+    assert_eq!(scoped.total, 1);
+    assert_eq!(scoped.sessions[0].id, "misfiled");
+    assert_eq!(
+        api.tracking_sessions(None, None, Some(1))
+            .await
+            .unwrap()
+            .total,
+        0
+    );
+}
+
+/// A name the user typed is a deliberate per-session fact: the move
+/// carries the reference and leaves the name alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn re_filing_leaves_a_hand_typed_name_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    let target = api
+        .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
+            name: "Carabok Skilling".to_string(),
+            ad_hoc_segments: false,
+            roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let target_id: i64 = target.id.parse().unwrap();
+
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions \
+             (id, started_at, ended_at, is_active, armour_cost, definition_id, session_name) \
+             VALUES ('named', 1000.0, 2000.0, 0, 0, 1, 'the night the ATH landed')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let result = api
+        .tracking_reassign_session("named".to_string(), target_id)
+        .await
+        .unwrap();
+    assert_eq!(result.definition_id, target.id);
+    assert_eq!(
+        result.session_name,
+        Some("the night the ATH landed".to_string())
+    );
+}
+
+/// A soft-deleted definition takes no new instances: filing into a
+/// family nothing offers any more is the one arrangement the review
+/// surface could not show honestly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn re_filing_refuses_a_soft_deleted_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    let retired = api
+        .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
+            name: "Retired".to_string(),
+            ad_hoc_segments: false,
+            roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let retired_id: i64 = retired.id.parse().unwrap();
+    seed_instances(&db, "instance", Some(1), 1).await;
+    api.session_definition_delete(retired_id).await.unwrap();
+
+    let error = api
+        .tracking_reassign_session("instance-0".to_string(), retired_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ApiError::NotFound { .. }), "{error:?}");
+
+    // An unknown definition is the same refusal, and an unknown session
+    // never reaches the definition guard at all.
+    let error = api
+        .tracking_reassign_session("instance-0".to_string(), 9999)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ApiError::NotFound { .. }), "{error:?}");
+    let error = api
+        .tracking_reassign_session("no-such-session".to_string(), 1)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ApiError::NotFound { .. }), "{error:?}");
+}
+
+/// The instances of a soft-deleted definition stay reachable: the
+/// listing that asks for the inactive ones is how the review surface
+/// finds recorded play whose family has been retired.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_soft_deleted_definition_keeps_its_instances_reachable() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    let retired = api
+        .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
+            name: "Retired".to_string(),
+            ad_hoc_segments: false,
+            roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let retired_id: i64 = retired.id.parse().unwrap();
+    seed_instances(&db, "kept", Some(retired_id), 2).await;
+    api.session_definition_delete(retired_id).await.unwrap();
+
+    // Absent from the offered list, present in the full one.
+    let offered = api.session_definitions_list(None).await.unwrap();
+    assert!(offered.iter().all(|d| d.id != retired.id));
+    assert!(offered.iter().all(|d| d.is_active));
+
+    let all = api.session_definitions_list(Some(true)).await.unwrap();
+    let found = all
+        .iter()
+        .find(|d| d.id == retired.id)
+        .expect("the retired definition");
+    assert!(!found.is_active);
+    assert_eq!(found.instance_count, 2);
+
+    // And its recorded instances still read.
+    let scoped = api
+        .tracking_sessions(None, None, Some(retired_id))
+        .await
+        .unwrap();
+    assert_eq!(scoped.total, 2);
 }

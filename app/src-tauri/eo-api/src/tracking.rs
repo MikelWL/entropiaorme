@@ -697,6 +697,17 @@ pub struct SessionRenameResult {
     pub session_name: Nullable<String>,
 }
 
+/// The post-hoc re-file result: the definition the session now belongs
+/// to, and the name it carries afterwards (restamped with the new
+/// definition's, or the hand-typed one left as it was).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionReassignResult {
+    pub session_id: String,
+    pub definition_id: String,
+    pub session_name: Nullable<String>,
+}
+
 /// The mob rename / restore result.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -746,10 +757,15 @@ impl Api {
     /// summary or raw tables. Heals ended-session summaries first (a write
     /// on the read path, preserved from the reference). A malformed cursor
     /// is a bad-request.
+    ///
+    /// `definition_id` narrows the page to one definition's instances,
+    /// which is how the review surface reads a family; omitted, the read
+    /// is the whole table exactly as before.
     pub async fn tracking_sessions(
         &self,
         cursor: Option<String>,
         limit: Option<i64>,
+        definition_id: Option<i64>,
     ) -> Result<SessionPage, ApiError> {
         let seek = match cursor.as_deref() {
             None => None,
@@ -759,7 +775,7 @@ impl Api {
             },
         };
         let now = naive_to_epoch(self.clock.now());
-        let page = list_sessions_impl(&self.db, now, seek, limit)
+        let page = list_sessions_impl(&self.db, now, seek, limit, definition_id)
             .await
             .map_err(ApiError::internal("tracking sessions"))?;
         let sessions: Vec<TrackingSession> = serde_json::from_value(page.sessions)
@@ -1237,6 +1253,22 @@ impl Api {
             .await
             .map_err(edit_error("tracking rename session"))?;
         serde_json::from_value(value).map_err(ApiError::internal("tracking rename session shaping"))
+    }
+
+    /// Re-file an ended session under a different (active) definition:
+    /// the correction for a session recorded against the family the
+    /// picker happened to be holding. The stamped name follows only when
+    /// it was still the previous definition's auto-stamp.
+    pub async fn tracking_reassign_session(
+        &self,
+        session_id: String,
+        definition_id: i64,
+    ) -> Result<SessionReassignResult, ApiError> {
+        let value = reassign_session_definition_impl(&self.db, &session_id, definition_id)
+            .await
+            .map_err(edit_error("tracking reassign session"))?;
+        serde_json::from_value(value)
+            .map_err(ApiError::internal("tracking reassign session shaping"))
     }
 
     /// Rename a mob across an ended session.

@@ -56,8 +56,8 @@ use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
     ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult,
-    StartResult, StopResult, TrackingSnapshot,
+    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion,
+    SessionReassignResult, SessionRenameResult, StartResult, StopResult, TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -525,7 +525,10 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "session_definitions_list",
-            args: Vec::new(),
+            args: vec![ArgSpec {
+                name: "include_inactive",
+                schema: schema(schema_for!(Option<bool>)),
+            }],
             returns: Some(schema(schema_for!(Vec<SessionDefinition>))),
         },
         CommandSpec {
@@ -896,6 +899,10 @@ pub fn manifest() -> Vec<CommandSpec> {
                     name: "limit",
                     schema: schema(schema_for!(Option<i64>)),
                 },
+                ArgSpec {
+                    name: "definition_id",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
             ],
             returns: Some(schema(schema_for!(SessionPage))),
         },
@@ -1043,6 +1050,20 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(SessionRenameResult))),
+        },
+        CommandSpec {
+            name: "tracking_reassign_session",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "definition_id",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(SessionReassignResult))),
         },
         CommandSpec {
             name: "tracking_rename_mob",
@@ -1198,6 +1219,10 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
                 ArgSpec {
                     name: "limit",
+                    schema: schema(schema_for!(Option<i64>)),
+                },
+                ArgSpec {
+                    name: "definition_id",
                     schema: schema(schema_for!(Option<i64>)),
                 },
             ],
