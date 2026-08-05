@@ -366,3 +366,115 @@ async fn the_protected_default_cannot_be_deleted_and_backs_every_selection() {
         Some((default_id, "General Play".to_string()))
     );
 }
+
+// ── Lifetime aggregate ──────────────────────────────────────────────
+
+/// One ended instance: a kill carrying loot, an armour cost standing in
+/// for cycled spend, and a skill gain. Written raw so the aggregate is
+/// exercised through the real summary pipeline rather than a hand-built
+/// summary row.
+#[allow(clippy::too_many_arguments)]
+async fn seed_instance(
+    db: &Db,
+    id: &str,
+    definition_id: Option<i64>,
+    started: f64,
+    ended: f64,
+    cost: f64,
+    loot: f64,
+    skill_ped: f64,
+) {
+    let id = id.to_string();
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions \
+             (id, started_at, ended_at, is_active, armour_cost, definition_id) \
+             VALUES (?1, ?2, ?3, 0, ?4, ?5)",
+            params![id, started, ended, cost, definition_id],
+        )?;
+        conn.execute(
+            "INSERT INTO kills (id, session_id, mob_name, timestamp, loot_total_ped) \
+             VALUES (?1, ?2, 'Atrox', ?3, ?4)",
+            params![format!("{id}-k1"), id, started + 1.0, loot],
+        )?;
+        conn.execute(
+            "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
+             VALUES (?1, ?2, 'Rifle', 1.0, ?3)",
+            params![id, started + 1.0, skill_ped],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn lifetime_stats_sum_the_definitions_instances() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let definition = svc.create(input("ARIS Dailies", vec![])).await.unwrap();
+
+    // Two instances of wildly different size. A three-hour grind that
+    // returned 60% and a four-minute run that returned 500%.
+    seed_instance(&db, "s1", Some(definition.id), 0.0, 10_800.0, 100.0, 60.0, 5.0).await;
+    seed_instance(&db, "s2", Some(definition.id), 20_000.0, 20_240.0, 2.0, 10.0, 0.5).await;
+
+    let stats = svc.lifetime_stats(definition.id).await.unwrap();
+    assert_eq!(stats.instance_count, 2);
+    assert!((stats.cycled - 102.0).abs() < 1e-9);
+    assert!((stats.loot_tt - 70.0).abs() < 1e-9);
+    assert!((stats.pes - 5.5).abs() < 1e-9);
+    assert!((stats.duration_seconds - 11_040.0).abs() < 1e-6);
+
+    // The whole point of summing the parts: the honest lifetime rate is
+    // 70/102 = ~69%, NOT the mean of the two instance rates (60% and
+    // 500%), which would read ~280% off four minutes of luck.
+    let ratio_of_sums = stats.loot_tt / stats.cycled;
+    assert!((ratio_of_sums - 0.686_274_5).abs() < 1e-6);
+    let mean_of_rates = (60.0 / 100.0 + 10.0 / 2.0) / 2.0;
+    assert!(mean_of_rates > 2.5, "the trap this aggregate avoids");
+}
+
+#[tokio::test]
+async fn lifetime_stats_count_only_what_they_sum() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let definition = svc.create(input("ARIS Dailies", vec![])).await.unwrap();
+
+    seed_instance(&db, "real", Some(definition.id), 0.0, 3600.0, 10.0, 8.0, 1.0).await;
+    // Started and abandoned: no cycled spend, so it never summarises and
+    // must not inflate the span the surface discloses.
+    seed_instance(&db, "cancelled", Some(definition.id), 5000.0, 5001.0, 0.0, 0.0, 0.0).await;
+
+    let stats = svc.lifetime_stats(definition.id).await.unwrap();
+    assert_eq!(stats.instance_count, 1);
+    assert!((stats.cycled - 10.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn lifetime_stats_ignore_other_definitions_and_unattached_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let mine = svc.create(input("ARIS Dailies", vec![])).await.unwrap();
+    let theirs = svc.create(input("General Hunting", vec![])).await.unwrap();
+
+    seed_instance(&db, "mine", Some(mine.id), 0.0, 3600.0, 10.0, 8.0, 1.0).await;
+    seed_instance(&db, "theirs", Some(theirs.id), 4000.0, 7600.0, 99.0, 99.0, 9.0).await;
+    // A legacy session, recorded before definitions existed.
+    seed_instance(&db, "legacy", None, 8000.0, 11_600.0, 55.0, 55.0, 5.0).await;
+
+    let stats = svc.lifetime_stats(mine.id).await.unwrap();
+    assert_eq!(stats.instance_count, 1);
+    assert!((stats.cycled - 10.0).abs() < 1e-9);
+    assert!((stats.loot_tt - 8.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn lifetime_stats_of_a_definition_never_run_are_all_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _db) = service(dir.path()).await;
+    let definition = svc.create(input("Fresh", vec![])).await.unwrap();
+
+    let stats = svc.lifetime_stats(definition.id).await.unwrap();
+    assert_eq!(stats, super::DefinitionLifetimeStats::default());
+}

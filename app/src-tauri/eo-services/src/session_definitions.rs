@@ -116,6 +116,38 @@ pub struct SessionDefinition {
     pub roster: Vec<RosterEntry>,
 }
 
+/// The lifetime aggregate over one definition's recorded instances:
+/// what the family has cost and returned across every session run
+/// under it, as opposed to the instance currently in play.
+///
+/// Every field is a plain sum of per-instance totals, which is what
+/// makes the aggregate mean what it says. Derived figures (net, return
+/// rate) are deliberately NOT stored here: they are computed from these
+/// sums at the point of display, because a rate is the ratio of the
+/// summed parts and never the mean of the per-instance rates. Averaging
+/// the rates would let a four-minute lucky run outweigh a three-hour
+/// grind.
+///
+/// `instance_count` counts exactly the instances these sums are taken
+/// over, so the span a surface discloses can never disagree with the
+/// figures beside it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DefinitionLifetimeStats {
+    pub instance_count: i64,
+    /// Summed cycled spend. Note this rides the summary's basis, which
+    /// includes the armour and dangling costs a session only acquires
+    /// once it has ended; an in-flight instance's own figure has not
+    /// picked those up yet, so the family total is legitimately the
+    /// more complete of the two.
+    pub cycled: f64,
+    pub loot_tt: f64,
+    /// Summed skill TT on the raw `SUM(ped_value)` basis, matching the
+    /// live readout's own PES figure rather than the summary's
+    /// positive-only per-skill total.
+    pub pes: f64,
+    pub duration_seconds: f64,
+}
+
 /// A definition create/update payload. The roster always binds in
 /// full: update replaces the stored roster wholesale.
 #[derive(Debug, Clone)]
@@ -131,6 +163,9 @@ pub struct SessionDefinitionInput {
 pub struct SessionDefinitionService {
     db: Db,
     clock: Arc<dyn Clock>,
+    /// Whether this process has already converged the summary rows the
+    /// lifetime read aggregates over. See [`Self::lifetime_stats`].
+    summaries_healed: std::sync::atomic::AtomicBool,
 }
 
 const DEFINITION_SELECT: &str = "\
@@ -160,7 +195,11 @@ const ROSTER_SELECT: &str = "\
 
 impl SessionDefinitionService {
     pub fn new(db: Db, clock: Arc<dyn Clock>) -> Arc<Self> {
-        Arc::new(Self { db, clock })
+        Arc::new(Self {
+            db,
+            clock,
+            summaries_healed: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     /// List definitions (active only by default), oldest-authored first.
@@ -230,6 +269,59 @@ impl SessionDefinitionService {
             .get(definition_id)
             .await?
             .filter(|definition| definition.is_active))
+    }
+
+    /// The lifetime aggregate over a definition's ENDED instances.
+    ///
+    /// Sums the materialised per-session summaries, which exist only
+    /// for ended sessions that cycled something over a non-zero
+    /// duration. A session started and immediately abandoned therefore
+    /// never reaches these totals, and neither does the instance
+    /// currently in play: the caller adds the live figures on top,
+    /// since only it knows whether the running session belongs to this
+    /// definition.
+    ///
+    /// Summaries converge lazily by design (readers heal what a
+    /// version bump or a widened filter left missing), but this read
+    /// sits behind the tracking snapshot, which polls. So the heal runs
+    /// at most once per process: enough to converge a database on the
+    /// first frame after an update, without putting a write on a hot
+    /// path.
+    pub async fn lifetime_stats(
+        &self,
+        definition_id: i64,
+    ) -> Result<DefinitionLifetimeStats, SessionDefinitionError> {
+        use std::sync::atomic::Ordering;
+        if !self.summaries_healed.swap(true, Ordering::SeqCst) {
+            self.db
+                .with_writer(|conn| crate::session_summary::heal_summaries(conn))
+                .await?;
+        }
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*), \
+                            COALESCE(SUM(ss.cycled_ped), 0), \
+                            COALESCE(SUM(ss.loot_tt), 0), \
+                            COALESCE(SUM(ss.activity_skill_tt), 0), \
+                            COALESCE(SUM(ss.duration_hours), 0) \
+                     FROM session_summaries ss \
+                     JOIN tracking_sessions s ON s.id = ss.session_id \
+                     WHERE s.definition_id = ?",
+                    rusqlite::params![definition_id],
+                    |row| {
+                        Ok(DefinitionLifetimeStats {
+                            instance_count: row.get(0)?,
+                            cycled: row.get(1)?,
+                            loot_tt: row.get(2)?,
+                            pes: row.get(3)?,
+                            duration_seconds: row.get::<_, f64>(4)? * 3600.0,
+                        })
+                    },
+                )?)
+            })
+            .await?)
     }
 
     /// Create a definition with its roster.
