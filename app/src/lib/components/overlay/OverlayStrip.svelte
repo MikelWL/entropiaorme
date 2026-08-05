@@ -496,25 +496,37 @@
 		{#if enabledPills.length > 0}
 			<div class="flex items-center gap-4 shrink-0 border-l border-white/10 pl-3">
 				<!-- The instance/family flip, shared with the dashboard.
+					 Both choices stay visible for the same reason they do
+					 there; the strip's width keeps the labels terse.
 					 Present only when there is a family to flip to. -->
 				{#if lifetime}
-					<button
-						type="button"
-						onclick={() => setStatsScope(showingLifetime ? 'instance' : 'lifetime')}
-						aria-pressed={showingLifetime}
-						title={showingLifetime
-							? `Lifetime figures across ${lifetime.instanceCount} recorded ${lifetime.instanceCount === 1 ? 'session' : 'sessions'}. Click for this session only.`
-							: 'This session only. Click for the lifetime figures across every time you have run it.'}
+					<div
+						role="radiogroup"
+						aria-label="Show stats for"
 						data-testid="overlay-scope-toggle"
-						class="flex flex-col items-center justify-center gap-0.5 shrink-0 rounded px-1.5 py-1
-							transition-colors duration-[var(--duration-base)]
-							{showingLifetime ? 'bg-white/10' : 'hover:bg-white/5'}"
+						class="flex flex-col items-start gap-0.5 shrink-0"
 					>
-						<span class="text-[10px] font-bold text-white/40 tracking-wider uppercase leading-none">Scope</span>
-						<span class="text-sm font-semibold leading-none {showingLifetime ? 'text-white/85' : 'text-white/50'}">
-							{showingLifetime ? 'Life' : 'This'}
-						</span>
-					</button>
+						<span class="text-[10px] font-bold text-white/40 tracking-wider uppercase leading-none">Stats for</span>
+						<div class="inline-flex items-center gap-0.5">
+							{#each [{ value: 'instance' as const, label: 'Session' }, { value: 'lifetime' as const, label: 'Lifetime' }] as choice (choice.value)}
+								{@const selected = showingLifetime === (choice.value === 'lifetime')}
+								<button
+									type="button"
+									role="radio"
+									aria-checked={selected}
+									title={choice.value === 'lifetime'
+										? `Every session recorded under this definition (${lifetime.instanceCount}), added together.`
+										: 'The session in play on its own.'}
+									onclick={() => setStatsScope(choice.value)}
+									class="text-xs font-semibold leading-none rounded px-1.5 py-0.5
+										transition-colors duration-[var(--duration-base)]
+										{selected ? 'bg-white/15 text-white/90' : 'text-white/40 hover:text-white/70'}"
+								>
+									{choice.label}
+								</button>
+							{/each}
+						</div>
+					</div>
 				{/if}
 				{#each enabledPills as pref (pref.id)}
 					{@const def = getStatDef(pref.id)}

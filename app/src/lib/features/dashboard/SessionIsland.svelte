@@ -34,9 +34,18 @@
 	const lifetime = $derived(status?.lifetime ?? null);
 	const showingLifetime = $derived(statsGrid.scope === 'lifetime' && lifetime !== null);
 
-	async function toggleScope() {
-		await setStatsScope(showingLifetime ? 'instance' : 'lifetime');
-	}
+	const SCOPE_CHOICES = [
+		{
+			value: 'instance' as const,
+			label: 'This session',
+			hint: 'The session in play on its own.'
+		},
+		{
+			value: 'lifetime' as const,
+			label: 'Lifetime',
+			hint: 'Every session recorded under this definition, added together.'
+		}
+	];
 
 	/** The span the lifetime figures cover, stated so a thin aggregate
 	 * cannot read as a deep one. */
@@ -146,25 +155,41 @@
 		{/if}
 
 		<div class="flex items-center gap-2">
-			<!-- The instance/family flip. Offered only when there is a
-				 family to flip to: a session belonging to no definition
-				 gets no control rather than a dead one. -->
+			<!-- The instance/family flip. Both choices stay on screen so
+				 the control reads as a choice rather than as a button
+				 whose label might be its state or its action. Offered
+				 only when there is a family to flip to: a session
+				 belonging to no definition gets no control at all. -->
 			{#if lifetime}
-				<button
-					type="button"
-					onclick={toggleScope}
-					aria-pressed={showingLifetime}
-					title={showingLifetime
-						? `Lifetime figures for this session, ${spanLabel}. Click for this session only.`
-						: 'This session only. Click for the lifetime figures across every time you have run it.'}
-					data-testid="stats-scope-toggle"
-					class="text-xs px-2 py-1 rounded-md border transition-colors duration-[var(--duration-base)]
-						{showingLifetime
-						? 'border-accent/60 bg-accent/10 text-accent'
-						: 'border-border/60 text-text-secondary hover:text-text hover:border-border'}"
-				>
-					{showingLifetime ? 'Lifetime' : 'This session'}
-				</button>
+				<div class="flex items-center gap-2">
+					<span class="text-xs text-text-secondary whitespace-nowrap" id="stats-scope-label">
+						Show stats for:
+					</span>
+					<div
+						role="radiogroup"
+						aria-labelledby="stats-scope-label"
+						data-testid="stats-scope-toggle"
+						class="inline-flex items-center rounded-md border border-border/60 p-0.5 gap-0.5"
+					>
+						{#each SCOPE_CHOICES as choice (choice.value)}
+							{@const selected = showingLifetime === (choice.value === 'lifetime')}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={selected}
+								title={choice.hint}
+								onclick={() => setStatsScope(choice.value)}
+								class="text-xs px-2 py-1 rounded whitespace-nowrap
+									transition-colors duration-[var(--duration-base)]
+									{selected
+									? 'bg-accent/10 text-accent font-medium'
+									: 'text-text-secondary hover:text-text hover:bg-base/60'}"
+							>
+								{choice.label}
+							</button>
+						{/each}
+					</div>
+				</div>
 			{/if}
 			{#if !isActive}
 				<Button size="sm" disabled={starting} onclick={handleStart}>
