@@ -13,7 +13,9 @@
 		trigger,
 		children,
 		class: className = '',
-		panelClass = ''
+		panelClass = '',
+		overlay = false,
+		align = 'right'
 	}: {
 		/** Accessible name for the default three-dot trigger. */
 		ariaLabel?: string;
@@ -32,6 +34,24 @@
 		children?: Snippet<[{ close: () => void }]>;
 		class?: string;
 		panelClass?: string;
+		/**
+		 * Escape an ancestor's overflow clipping by positioning the panel
+		 * against the viewport instead of the trigger.
+		 *
+		 * The default absolute panel is laid out inside whatever scroll
+		 * box contains it. A scrollable ancestor (a table wrapper with
+		 * `overflow-x-auto` is the usual one: CSS computes the other axis
+		 * to `auto` with it) therefore clips the panel and grows its own
+		 * scroll extent to fit, which reads as the list being squashed to
+		 * make room rather than the menu floating over it.
+		 *
+		 * Opt-in because `panelClass` carries the positioning utilities at
+		 * every other call site; with this set, pass only sizing there and
+		 * let `align` place it.
+		 */
+		overlay?: boolean;
+		/** Which trigger edge an overlay panel aligns to. */
+		align?: 'left' | 'right';
 	} = $props();
 
 	let open = $state(false);
@@ -39,6 +59,44 @@
 	let panelEl = $state<HTMLDivElement | null>(null);
 	let triggerEl = $state<HTMLButtonElement | null>(null);
 	let openedFrom: HTMLElement | null = null;
+	/** Viewport coordinates for an overlay panel, measured once it has
+	 * rendered (its own size decides the flip). */
+	let panelPos = $state<{ top: number; left: number } | null>(null);
+
+	/** Keep the panel wholly on screen: aligned to the trigger, flipped
+	 * above it when it would overhang the bottom, and clamped to the
+	 * viewport on both axes. */
+	const VIEWPORT_MARGIN = 8;
+	const TRIGGER_GAP = 4;
+
+	function positionPanel() {
+		if (!overlay || !rootEl || !panelEl) return;
+		const anchor = rootEl.getBoundingClientRect();
+		const width = Math.min(
+			panelEl.offsetWidth,
+			Math.max(0, window.innerWidth - VIEWPORT_MARGIN * 2),
+		);
+		const height = Math.min(
+			panelEl.offsetHeight,
+			Math.max(0, window.innerHeight - VIEWPORT_MARGIN * 2),
+		);
+
+		let left = align === 'right' ? anchor.right - width : anchor.left;
+		left = Math.max(
+			VIEWPORT_MARGIN,
+			Math.min(left, window.innerWidth - width - VIEWPORT_MARGIN),
+		);
+
+		let top = anchor.bottom + TRIGGER_GAP;
+		if (top + height > window.innerHeight - VIEWPORT_MARGIN) {
+			const above = anchor.top - height - TRIGGER_GAP;
+			// Flip only when there is genuinely more room above; otherwise
+			// clamp, so a panel taller than the viewport still starts at
+			// the top rather than disappearing off it.
+			top = above >= VIEWPORT_MARGIN ? above : VIEWPORT_MARGIN;
+		}
+		panelPos = { top, left };
+	}
 
 	function menuItemEls(): HTMLElement[] {
 		return panelEl ? Array.from(panelEl.querySelectorAll<HTMLElement>('[role="menuitem"]')) : [];
@@ -81,6 +139,7 @@
 			e.preventDefault();
 			toggle();
 		} else if (e.key === 'Escape' && open) {
+			e.stopPropagation();
 			close(true);
 		}
 	}
@@ -109,6 +168,10 @@
 				break;
 			case 'Escape':
 				e.preventDefault();
+				// The menu is the innermost layer: a surface listening on
+				// the window would otherwise close itself on the same
+				// press, dismissing far more than was asked for.
+				e.stopPropagation();
 				close(true);
 				break;
 			case 'Tab':
@@ -135,6 +198,25 @@
 		};
 		document.addEventListener('click', onDocumentClick, true);
 		return () => document.removeEventListener('click', onDocumentClick, true);
+	});
+
+	// An overlay panel is placed against the viewport, so anything that
+	// moves the trigger under it has to move it too. Scroll is captured
+	// so an inner scroll box (the one whose clipping this escapes) counts
+	// as well as the page.
+	$effect(() => {
+		if (!open || !overlay) {
+			panelPos = null;
+			return;
+		}
+		positionPanel();
+		const reposition = () => positionPanel();
+		window.addEventListener('scroll', reposition, true);
+		window.addEventListener('resize', reposition);
+		return () => {
+			window.removeEventListener('scroll', reposition, true);
+			window.removeEventListener('resize', reposition);
+		};
 	});
 </script>
 
@@ -170,7 +252,17 @@
 			bind:this={panelEl}
 			role="menu"
 			tabindex="-1"
-			class="absolute right-0 top-8 z-20 bg-surface-raised border border-border rounded-md shadow-lg py-1 min-w-[100px] focus:outline-none {panelClass}"
+			class="z-20 bg-surface-raised border border-border rounded-md shadow-lg py-1
+				min-w-[100px] focus:outline-none
+				{overlay ? 'fixed' : 'absolute right-0 top-8'} {panelClass}"
+			style={overlay
+				? // Hidden until measured: one frame at the unpositioned
+					// origin would read as the panel jumping into place.
+					`top: ${panelPos?.top ?? 0}px; left: ${panelPos?.left ?? 0}px; ` +
+					`max-width: calc(100vw - ${VIEWPORT_MARGIN * 2}px); ` +
+					`max-height: calc(100vh - ${VIEWPORT_MARGIN * 2}px); overflow: auto;` +
+					(panelPos ? '' : ' visibility: hidden;')
+				: undefined}
 			onkeydown={handlePanelKeydown}
 		>
 			{#each items ?? [] as item (item.label)}

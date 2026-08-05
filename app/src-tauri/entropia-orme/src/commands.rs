@@ -54,8 +54,8 @@ use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
     ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion, SessionRenameResult,
-    StartResult, StopResult, TrackingSnapshot,
+    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion,
+    SessionReassignResult, StartResult, StopResult, TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -459,8 +459,11 @@ pub async fn quest_family_delete(app: tauri::AppHandle, family_id: i64) -> Resul
 #[tauri::command(rename_all = "snake_case")]
 pub async fn session_definitions_list(
     app: tauri::AppHandle,
+    include_inactive: Option<bool>,
 ) -> Result<Vec<SessionDefinition>, ApiError> {
-    facade(&app)?.session_definitions_list().await
+    facade(&app)?
+        .session_definitions_list(include_inactive)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -885,11 +888,14 @@ pub async fn tracking_sessions(
     app: tauri::AppHandle,
     cursor: Option<String>,
     limit: Option<i64>,
+    definition_id: Option<i64>,
 ) -> Result<SessionPage, ApiError> {
     #[cfg(feature = "e2e-stub")]
     {
         let _ = (&app, &cursor, &limit);
-        let sessions: Vec<eo_api::tracking::TrackingSession> = e2e_analytics("sessions")?;
+        let sessions: Vec<eo_api::tracking::TrackingSession> =
+            serde_json::from_value(crate::e2e_stub::analytics_sessions_fixture(definition_id))
+                .map_err(ApiError::internal("e2e analytics fixture"))?;
         Ok(SessionPage {
             total: sessions.len() as i64,
             sessions,
@@ -898,7 +904,9 @@ pub async fn tracking_sessions(
     }
     #[cfg(not(feature = "e2e-stub"))]
     {
-        facade(&app)?.tracking_sessions(cursor, limit).await
+        facade(&app)?
+            .tracking_sessions(cursor, limit, definition_id)
+            .await
     }
 }
 
@@ -1030,13 +1038,13 @@ pub async fn tracking_activity_deactivate(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_rename_session(
+pub async fn tracking_reassign_session(
     app: tauri::AppHandle,
     session_id: String,
-    session_name: Option<String>,
-) -> Result<SessionRenameResult, ApiError> {
+    definition_id: i64,
+) -> Result<SessionReassignResult, ApiError> {
     facade(&app)?
-        .tracking_rename_session(session_id, session_name)
+        .tracking_reassign_session(session_id, definition_id)
         .await
 }
 
@@ -1174,8 +1182,11 @@ pub async fn demo_tracking_sessions(
     app: tauri::AppHandle,
     cursor: Option<String>,
     limit: Option<i64>,
+    definition_id: Option<i64>,
 ) -> Result<SessionPage, ApiError> {
-    facade(&app)?.demo_tracking_sessions(cursor, limit).await
+    facade(&app)?
+        .demo_tracking_sessions(cursor, limit, definition_id)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1603,7 +1614,7 @@ mod tests {
         "tracking_activity_options",
         "tracking_activity_activate",
         "tracking_activity_deactivate",
-        "tracking_rename_session",
+        "tracking_reassign_session",
         "tracking_rename_mob",
         "tracking_restore_mob",
         "tracking_loot_item_activate",

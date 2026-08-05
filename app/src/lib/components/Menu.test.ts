@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Menu from './Menu.svelte';
+
+afterEach(() => vi.restoreAllMocks());
 
 function threeItems(overrides: { onEdit?: () => void; onDelete?: () => void } = {}) {
 	return [
@@ -115,5 +117,84 @@ describe('dismissal and activation', () => {
 		expect(onEdit).toHaveBeenCalledTimes(1);
 		expect(screen.queryByRole('menu')).toBeNull();
 		expect(document.activeElement).toBe(trigger);
+	});
+});
+
+// A panel laid out inside a scrollable ancestor is clipped by it, and
+// grows that ancestor's scroll extent to fit: the list appears to be
+// squashed to make room rather than the menu floating over it. The
+// overlay mode positions against the viewport to escape that, so what
+// matters is that it stops taking part in the ancestor's layout.
+describe('overlay positioning', () => {
+	it('lays the default panel out in flow, absolutely positioned to the trigger', async () => {
+		render(Menu, { props: { ariaLabel: 'Quest actions', items: threeItems() } });
+		await openMenu();
+
+		const panel = screen.getByRole('menu');
+		expect(panel.className).toContain('absolute');
+		expect(panel.className).not.toContain('fixed');
+	});
+
+	it('takes the panel out of the ancestor scroll box when overlaid', async () => {
+		render(Menu, {
+			props: { ariaLabel: 'Quest actions', items: threeItems(), overlay: true },
+		});
+		await openMenu();
+
+		const panel = screen.getByRole('menu');
+		expect(panel.className).toContain('fixed');
+		// The trigger-relative offsets go with it: an overlay panel is
+		// placed by measurement, not by utility classes.
+		expect(panel.className).not.toContain('absolute');
+		expect(panel.className).not.toContain('top-8');
+		expect(panel.getAttribute('style')).toMatch(/top:\s*-?\d/);
+		expect(panel.getAttribute('style')).toMatch(/left:\s*-?\d/);
+	});
+
+	it('keeps the panel clear of the viewport edges', async () => {
+		render(Menu, {
+			props: { ariaLabel: 'Quest actions', items: threeItems(), overlay: true },
+		});
+		await openMenu();
+
+		const style = screen.getByRole('menu').getAttribute('style') ?? '';
+		const top = Number(/top:\s*(-?\d+(?:\.\d+)?)px/.exec(style)?.[1]);
+		const left = Number(/left:\s*(-?\d+(?:\.\d+)?)px/.exec(style)?.[1]);
+		expect(top).toBeGreaterThanOrEqual(0);
+		expect(left).toBeGreaterThanOrEqual(0);
+	});
+
+	it('keeps an oversized panel reachable inside the viewport', async () => {
+		vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(320);
+		vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(240);
+		vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1000);
+		vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800);
+		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+			x: 300,
+			y: 210,
+			left: 300,
+			top: 210,
+			right: 316,
+			bottom: 226,
+			width: 16,
+			height: 16,
+			toJSON: () => ({}),
+		});
+
+		render(Menu, {
+			props: { ariaLabel: 'Quest actions', items: threeItems(), overlay: true },
+		});
+		await openMenu();
+
+		const style = screen.getByRole('menu').getAttribute('style') ?? '';
+		const top = Number(/top:\s*(-?\d+(?:\.\d+)?)px/.exec(style)?.[1]);
+		const left = Number(/left:\s*(-?\d+(?:\.\d+)?)px/.exec(style)?.[1]);
+		const reachableWidth = window.innerWidth - 16;
+		const reachableHeight = window.innerHeight - 16;
+		expect(left + reachableWidth).toBeLessThanOrEqual(window.innerWidth - 8);
+		expect(top + reachableHeight).toBeLessThanOrEqual(window.innerHeight - 8);
+		expect(style).toContain('max-width: calc(100vw - 16px)');
+		expect(style).toContain('max-height: calc(100vh - 16px)');
+		expect(style).toContain('overflow: auto');
 	});
 });

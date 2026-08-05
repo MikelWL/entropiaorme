@@ -11,14 +11,9 @@ vi.mock('$lib/api', () => ({
 	activateLootItem: vi.fn(),
 	deactivateLootItem: vi.fn(),
 	getSessionDetail: vi.fn(),
-	renameSession: vi.fn(),
 	renameSessionMob: vi.fn(),
 	restoreSessionMob: vi.fn(),
 }));
-
-import * as api from '$lib/api';
-
-const mocked = vi.mocked(api);
 
 function detail(overrides: Partial<SessionDetailType> = {}): SessionDetailType {
 	return {
@@ -57,10 +52,11 @@ beforeEach(() => {
 	vi.clearAllMocks();
 });
 
-// The name is session-grain, so the overlay withholds it once a session
-// runs. That is only honest if the record can still correct it, which is
-// what this affordance is for.
-describe('session name correction', () => {
+// The name is a stamp of the session definition's name, not a label of
+// this instance: identity comes from the definition, so the record shows
+// what was recorded and offers no way to retype it. A mis-recorded
+// session is corrected by moving it to another definition.
+describe('the recorded session name', () => {
 	it('shows the recorded name, and Unnamed when there is none', () => {
 		const { unmount } = render(SessionDetail, {
 			props: { detail: detail({ sessionName: 'Ark Monura Instance' }) },
@@ -72,50 +68,9 @@ describe('session name correction', () => {
 		expect(screen.getByText('Unnamed')).toBeTruthy();
 	});
 
-	it('renames through the record and refetches', async () => {
-		mocked.renameSession.mockResolvedValue({
-			sessionId: 's1',
-			sessionName: 'Ark Carabok Instance',
-		} as Awaited<ReturnType<typeof api.renameSession>>);
-		mocked.getSessionDetail.mockResolvedValue(
-			detail({ sessionName: 'Ark Carabok Instance' }) as Awaited<
-				ReturnType<typeof api.getSessionDetail>
-			>,
-		);
-
+	it('offers no rename affordance', () => {
 		render(SessionDetail, { props: { detail: detail({ sessionName: 'Wrong Name' }) } });
-		screen.getByText('Rename').click();
-
-		const input = (await screen.findByLabelText('Session name')) as HTMLInputElement;
-		expect(input.value).toBe('Wrong Name');
-		input.value = 'Ark Carabok Instance';
-		input.dispatchEvent(new Event('input', { bubbles: true }));
-
-		screen.getByText('Save').click();
-		await vi.waitFor(() =>
-			expect(mocked.renameSession).toHaveBeenCalledWith('s1', 'Ark Carabok Instance'),
-		);
-	});
-
-	// Clearing the field records "no name", never an empty string that
-	// would mint its own bucket on the comparison axis.
-	it('sends a cleared name as null', async () => {
-		mocked.renameSession.mockResolvedValue({
-			sessionId: 's1',
-			sessionName: null,
-		} as Awaited<ReturnType<typeof api.renameSession>>);
-		mocked.getSessionDetail.mockResolvedValue(
-			detail() as Awaited<ReturnType<typeof api.getSessionDetail>>,
-		);
-
-		render(SessionDetail, { props: { detail: detail({ sessionName: 'Wrong Name' }) } });
-		screen.getByText('Rename').click();
-
-		const input = (await screen.findByLabelText('Session name')) as HTMLInputElement;
-		input.value = '   ';
-		input.dispatchEvent(new Event('input', { bubbles: true }));
-
-		screen.getByText('Save').click();
-		await vi.waitFor(() => expect(mocked.renameSession).toHaveBeenCalledWith('s1', null));
+		expect(screen.queryByText('Rename')).toBeNull();
+		expect(screen.queryByLabelText('Session name')).toBeNull();
 	});
 });

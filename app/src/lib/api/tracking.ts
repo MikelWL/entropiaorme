@@ -76,13 +76,20 @@ export const releaseMob = commands.trackingReleaseMob;
 export const deleteSession = commands.trackingSessionDelete;
 export const deactivateLootItem = commands.trackingLootItemDeactivate;
 export const activateLootItem = commands.trackingLootItemActivate;
-export const renameSession = commands.trackingRenameSession;
+/** Re-file an ended session under a different (active) definition: the
+ * correction for a session recorded against whichever one the picker
+ * happened to be holding. The stamped name always follows the move: it
+ * is a copy of the definition's name, not a label of its own. */
+export async function reassignSession(sessionId: string, definitionId: string) {
+	return commands.trackingReassignSession(sessionId, Number(definitionId));
+}
 export const renameSessionMob = commands.trackingRenameMob;
 export const restoreSessionMob = commands.trackingRestoreMob;
 /** Set the session facets (full-state apply: null clears a facet). The
  * name is fixed while a session runs (the backend answers 409 on an
- * attempted change; correct it post-hoc via `renameSession`); the boost
- * stays editable throughout. */
+ * attempted change): it is a stamp of the definition's name, so a
+ * mis-recorded session is corrected by re-filing it, not by retyping.
+ * The boost stays editable throughout. */
 export const setSessionConfig = commands.trackingSessionConfig;
 /** Select the session definition the next session starts as an instance
  * of; writes the session-name facet with the definition's name in the
@@ -110,9 +117,15 @@ export const deactivateActivity = commands.trackingActivityDeactivate;
 const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTrackingSessions);
 
 /** One keyset page of sessions plus the cursor for the next page (null on
- * the last page). */
-export async function getTrackingSessions(cursor?: string, limit?: number) {
-	return readSessionsPage(cursor ?? null, limit ?? null);
+ * the last page). `definitionId` narrows the page to one definition's
+ * instances, which is how the review surface reads one; omitted, the
+ * page is the whole history. */
+export async function getTrackingSessions(cursor?: string, limit?: number, definitionId?: string) {
+	return readSessionsPage(
+		cursor ?? null,
+		limit ?? null,
+		definitionId === undefined ? null : Number(definitionId),
+	);
 }
 export const getSessionDetail = guideSwapped(
 	commands.trackingSessionDetail,

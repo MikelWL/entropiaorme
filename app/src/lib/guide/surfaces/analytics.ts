@@ -3,7 +3,7 @@ import type { GuideSurface } from '../types';
 
 /** Analytics-surface demoApi method names (declared here for documentation). */
 type AnalyticsDemoApi = {
-	setTab(tab: 'overview' | 'ledger' | 'hunting' | 'treecutting' | 'sessions'): void;
+	setTab(tab: 'overview' | 'ledger' | 'hunting' | 'treecutting'): void;
 };
 
 /** Sub-API registered by LedgerTab.svelte on mount for guide-driven modal control. */
@@ -16,22 +16,12 @@ type LedgerDemoApi = {
 	clearDemoSaleEntry(): void;
 };
 
-/** Sub-API registered by SessionsTab.svelte on mount for guide-driven row expand/collapse. */
-type SessionsDemoApi = {
-	collapseAllSessions(): void;
-	expandSessionAtIndex(idx: number): void;
-};
-
 function analyticsApi(): Partial<AnalyticsDemoApi> {
 	return getDemoApi('analytics') as Partial<AnalyticsDemoApi>;
 }
 
 function ledgerApi(): Partial<LedgerDemoApi> {
 	return getDemoApi('analytics-ledger') as Partial<LedgerDemoApi>;
-}
-
-function sessionsApi(): Partial<SessionsDemoApi> {
-	return getDemoApi('analytics-sessions') as Partial<SessionsDemoApi>;
 }
 
 /** Sleep in 200ms chunks so loop iterations can break promptly on Next / Back / Close. */
@@ -331,77 +321,6 @@ export const analyticsSurface: GuideSurface = {
 			},
 			resetDemo() {
 				analyticsApi().setTab?.('ledger');
-			},
-		},
-		{
-			id: 'sessions-intro',
-			anchor: () =>
-				document.querySelector<HTMLElement>('[data-guide-anchor="analytics-sessions-area"]'),
-			placement: 'top-centre',
-			placementOffset: { x: 100 },
-			prose: {
-				title: 'Sessions',
-				body: 'Review individual hunts from the Sessions tab.',
-			},
-			async play({ cursor, demoApi, wait }) {
-				const stepIdx = guideState.currentStepIndex;
-				const stillActive = () => guideState.isActive && guideState.currentStepIndex === stepIdx;
-
-				const aapi = demoApi as Partial<AnalyticsDemoApi>;
-				aapi.setTab?.('sessions');
-				await wait(500);
-				if (!stillActive()) return;
-
-				// SessionsTab registers its sub-API on mount; poll briefly for it.
-				for (let i = 0; i < 40; i++) {
-					if (sessionsApi().expandSessionAtIndex) break;
-					await wait(50);
-					if (!stillActive()) return;
-				}
-
-				const TARGET_INDEX = 1; // second row (0-indexed)
-
-				while (stillActive()) {
-					// === Phase A: ensure collapsed start, cursor → 3rd row chevron ===
-					sessionsApi().collapseAllSessions?.();
-					if (!(await abortableWait(300, stillActive))) break;
-
-					const chevron = document.querySelector<HTMLElement>(
-						`[data-guide-anchor="sessions-row-chevron"][data-session-index="${TARGET_INDEX}"]`,
-					);
-					if (!chevron) {
-						if (!(await abortableWait(200, stillActive))) return;
-						continue;
-					}
-					const chevronRect = chevron.getBoundingClientRect();
-					const startX = Math.max(40, chevronRect.left - 320);
-					const startY = chevronRect.top + chevronRect.height / 2;
-					const startRect = new DOMRect(startX, startY, 0, 0);
-					await cursor.moveTo(startRect, { duration: 0 });
-					cursor.show();
-					if (!stillActive()) break;
-					await cursor.moveTo(chevron, { duration: 900, from: { x: startX, y: startY } });
-					if (!stillActive()) break;
-					await cursor.clickRipple();
-					cursor.hide();
-					if (!stillActive()) break;
-
-					// === Phase B: expand the row, dwell with detail visible ===
-					sessionsApi().expandSessionAtIndex?.(TARGET_INDEX);
-					if (!(await abortableWait(5000, stillActive))) break;
-
-					// === Phase R: collapse + gap, loop ===
-					sessionsApi().collapseAllSessions?.();
-					if (!(await abortableWait(700, stillActive))) break;
-				}
-
-				// Cleanup: collapsed + cursor hidden on step exit.
-				sessionsApi().collapseAllSessions?.();
-				cursor.hide();
-			},
-			resetDemo() {
-				sessionsApi().collapseAllSessions?.();
-				analyticsApi().setTab?.('hunting');
 			},
 		},
 	],

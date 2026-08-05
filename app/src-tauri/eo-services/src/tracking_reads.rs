@@ -168,13 +168,14 @@ pub async fn list_sessions_impl(
     now: f64,
     seek: Option<(f64, String)>,
     limit: Option<i64>,
+    definition_id: Option<i64>,
 ) -> Result<SessionListPage, DbError> {
     // Heal so ended sessions carry current summaries (a write on the read
     // path, preserved), then read each page session's row as one
     // synchronous unit on a reader-core connection.
     db.with_writer(|conn| crate::session_summary::heal_summaries(conn))
         .await?;
-    db.with_reader(move |conn| list_sessions_read(conn, now, seek.as_ref(), limit))
+    db.with_reader(move |conn| list_sessions_read(conn, now, seek.as_ref(), limit, definition_id))
         .await
 }
 
@@ -183,23 +184,54 @@ pub async fn list_sessions_impl(
 /// summary (ended) or the raw tables. One synchronous pass over a
 /// reader-core connection; one extra row is fetched to detect a further
 /// page.
+///
+/// `definition_id` narrows the read to one definition's instances (the
+/// review surface's scope). It narrows the count as well as the rows, so
+/// a scoped pager reports the scope's own bounds rather than the whole
+/// table's.
 pub fn list_sessions_read(
     conn: &rusqlite::Connection,
     now: f64,
     seek: Option<&(f64, String)>,
     limit: Option<i64>,
+    definition_id: Option<i64>,
 ) -> Result<SessionListPage, DbError> {
     let page = limit
         .unwrap_or(SESSION_PAGE_DEFAULT)
         .clamp(1, SESSION_PAGE_MAX);
-    let total: i64 = conn.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
-        row.get(0)
-    })?;
+    let total: i64 = match definition_id {
+        Some(id) => conn.query_row(
+            "SELECT COUNT(*) FROM tracking_sessions WHERE definition_id = ?",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )?,
+        None => conn.query_row("SELECT COUNT(*) FROM tracking_sessions", [], |row| {
+            row.get(0)
+        })?,
+    };
+
+    // Both predicates are optional and compose, so the seek's own `OR`
+    // is parenthesised: unwrapped it would bind looser than the AND and
+    // silently widen a scoped page back to the whole table.
     let mut sql = String::from("SELECT id, started_at, ended_at, is_active FROM tracking_sessions");
-    if seek.is_some() {
-        sql.push_str(" WHERE started_at < ? OR (started_at = ? AND id < ?)");
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut clauses: Vec<&str> = Vec::new();
+    if let Some(id) = definition_id {
+        clauses.push("definition_id = ?");
+        params.push(Box::new(id));
+    }
+    if let Some((started_at, id)) = seek {
+        clauses.push("(started_at < ? OR (started_at = ? AND id < ?))");
+        params.push(Box::new(*started_at));
+        params.push(Box::new(*started_at));
+        params.push(Box::new(id.clone()));
+    }
+    if !clauses.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&clauses.join(" AND "));
     }
     sql.push_str(" ORDER BY started_at DESC, id DESC LIMIT ?");
+    params.push(Box::new(page + 1));
 
     let meta: Vec<(String, Option<f64>, Option<f64>, bool)> = {
         let mut stmt = conn.prepare(&sql)?;
@@ -211,17 +243,9 @@ pub fn list_sessions_read(
                 row.get::<_, i64>(3)? != 0,
             ))
         };
-        let rows = match seek {
-            Some((started_at, id)) => stmt
-                .query_map(
-                    rusqlite::params![started_at, started_at, id, page + 1],
-                    map_row,
-                )?
-                .collect::<rusqlite::Result<Vec<_>>>()?,
-            None => stmt
-                .query_map(rusqlite::params![page + 1], map_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?,
-        };
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), map_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
 
@@ -957,43 +981,95 @@ pub async fn build_loot_item_edit_response(
     }))
 }
 
-/// Rename an ended session's name facet: the post-hoc correction the
-/// overlay deliberately does not offer, because a live rename could
-/// only rewrite the whole session's history. Session-grain, so this
-/// simply restates the one value, and the summary cache is restated
-/// with it so the analytics axis and the record never disagree.
-pub async fn rename_session_impl(
+/// Re-file an ended session under a different definition: the recorded
+/// correction for the session started while the picker still held
+/// yesterday's definition, and the only post-hoc route between them.
+///
+/// The target must be an ACTIVE definition. Filing into a soft-deleted
+/// one would put an instance under a definition nothing offers any more,
+/// which is the one arrangement the review surface could not show
+/// honestly; filing *out* of one is how such an instance is rescued.
+///
+/// The stamped `session_name` always follows the reference. Identity
+/// comes from the definition, so the stamp is a copy of its name rather
+/// than a label of its own: there is nothing per-session to preserve,
+/// and a stamp left behind would name the wrong definition.
+pub async fn reassign_session_definition_impl(
     db: &Db,
     session_id: &str,
-    session_name: Option<&str>,
+    definition_id: i64,
 ) -> Result<Value, EditError> {
-    validate_session_exists(db, session_id).await?;
-    let name = session_name
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string);
+    enum Outcome {
+        SessionNotFound,
+        SessionActive,
+        DefinitionNotFound,
+        Updated(String),
+    }
 
     let sid = session_id.to_string();
-    let write_name = name.clone();
-    db.with_writer(move |conn| {
-        let tx = conn.transaction()?;
-        tx.execute(
-            "UPDATE tracking_sessions SET session_name = ? WHERE id = ?",
-            rusqlite::params![write_name, sid],
-        )?;
-        // The summary cache carries the facet beside its aggregates; a
-        // rename that healed only on the next summary rebuild would
-        // leave the comparison axis reading the old bucket meanwhile.
-        tx.execute(
-            "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
-            rusqlite::params![write_name, sid],
-        )?;
-        tx.commit()?;
-        Ok(())
-    })
-    .await?;
+    let outcome = db
+        .with_writer(move |conn| {
+            use rusqlite::OptionalExtension as _;
+            let tx = conn.transaction()?;
 
-    Ok(json!({ "sessionId": session_id, "sessionName": name }))
+            let is_active: Option<i64> = tx
+                .query_row(
+                    "SELECT is_active FROM tracking_sessions WHERE id = ?",
+                    rusqlite::params![sid],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(is_active) = is_active else {
+                return Ok(Outcome::SessionNotFound);
+            };
+            if is_active != 0 {
+                return Ok(Outcome::SessionActive);
+            }
+
+            // Resolve the target inside the transaction, so the
+            // active-definition guard and the write cannot straddle a
+            // concurrent soft-delete.
+            let target: Option<String> = tx
+                .query_row(
+                    "SELECT name FROM session_definitions WHERE id = ? AND is_active = 1",
+                    rusqlite::params![definition_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let Some(target_name) = target else {
+                return Ok(Outcome::DefinitionNotFound);
+            };
+
+            tx.execute(
+                "UPDATE tracking_sessions SET definition_id = ?, session_name = ? WHERE id = ?",
+                rusqlite::params![definition_id, target_name, sid],
+            )?;
+            // The summary cache carries the facet beside its aggregates;
+            // leaving it to the next rebuild would let the comparison
+            // axis read the old definition meanwhile.
+            tx.execute(
+                "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
+                rusqlite::params![target_name, sid],
+            )?;
+            tx.commit()?;
+            Ok(Outcome::Updated(target_name))
+        })
+        .await?;
+
+    match outcome {
+        Outcome::SessionNotFound => Err(EditError::NotFound("Session not found".to_string())),
+        Outcome::SessionActive => Err(EditError::Conflict(
+            "Session record edits are only available after the session has ended".to_string(),
+        )),
+        Outcome::DefinitionNotFound => Err(EditError::NotFound(
+            "Session definition not found".to_string(),
+        )),
+        Outcome::Updated(session_name) => Ok(json!({
+            "sessionId": session_id,
+            "definitionId": definition_id.to_string(),
+            "sessionName": session_name,
+        })),
+    }
 }
 
 pub async fn rename_session_mob_impl(
@@ -2181,7 +2257,7 @@ mod tests {
         .unwrap();
 
         let page = db
-            .with_reader(|conn| list_sessions_read(conn, 5000.0, None, None))
+            .with_reader(|conn| list_sessions_read(conn, 5000.0, None, None, None))
             .await
             .unwrap();
         let rows = page.sessions.as_array().unwrap();
@@ -2608,7 +2684,9 @@ mod tests {
         })
         .await
         .unwrap();
-        let page = list_sessions_impl(&db, 5000.0, None, None).await.unwrap();
+        let page = list_sessions_impl(&db, 5000.0, None, None, None)
+            .await
+            .unwrap();
         let rows = page.sessions.as_array().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["id"], json!("s1"));

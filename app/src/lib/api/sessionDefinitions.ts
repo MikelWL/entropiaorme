@@ -18,7 +18,19 @@ export type {
 } from './commands.gen';
 export type { SessionDefinition, SessionDefinitionInput };
 
-export const getSessionDefinitions = commands.sessionDefinitionsList;
+/** The definitions on offer: active only, which is everything the
+ * picker and the authoring surface deal in. */
+export async function getSessionDefinitions(): Promise<SessionDefinition[]> {
+	return commands.sessionDefinitionsList(false);
+}
+
+/** Every definition including the soft-deleted ones, whose instances are
+ * still real recorded play. Only the review surface asks for these, and
+ * it shows them apart: they cannot take new sessions. */
+export async function getAllSessionDefinitions(): Promise<SessionDefinition[]> {
+	return commands.sessionDefinitionsList(true);
+}
+
 export const createSessionDefinition = commands.sessionDefinitionCreate;
 
 export async function updateSessionDefinition(

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionDetail, TrackingSession } from '$lib/types/tracking';
-import { createSessionsModel, PAGE_SIZE } from './sessionsModel.svelte';
+import { createInstancesModel, PAGE_SIZE } from './instancesModel.svelte';
 
 vi.mock('$lib/api', () => ({
 	getTrackingSessions: vi.fn(),
 	getSessionDetail: vi.fn(),
 	deleteSession: vi.fn(),
+	reassignSession: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -44,7 +45,7 @@ beforeEach(() => {
 describe('loadSessions', () => {
 	it('loads the session list and clears the loading flag', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session()]));
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		expect(model.sessions).toHaveLength(1);
@@ -54,7 +55,7 @@ describe('loadSessions', () => {
 
 	it('surfaces a load failure and clears a stale error on entry', async () => {
 		mocked.getTrackingSessions.mockRejectedValueOnce(new Error('backend unreachable'));
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 		expect(model.error).toBe('backend unreachable');
 
@@ -69,7 +70,7 @@ describe('paging', () => {
 		mocked.getTrackingSessions.mockResolvedValue(
 			page(Array.from({ length: 23 }, (_, i) => session({ id: `s${i}` }))),
 		);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		expect(PAGE_SIZE).toBe(10);
@@ -87,7 +88,7 @@ describe('paging', () => {
 			page(Array.from({ length: 11 }, (_, i) => session({ id: `s${i}` }))),
 		);
 		mocked.deleteSession.mockResolvedValue(undefined);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		model.table.page = 1;
@@ -102,21 +103,21 @@ describe('loadMoreSessions', () => {
 		mocked.getTrackingSessions.mockResolvedValueOnce(
 			page([session({ id: 's1' }), session({ id: 's2' })], 'cursor-1'),
 		);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 		expect(model.nextCursor).toBe('cursor-1');
 
 		mocked.getTrackingSessions.mockResolvedValueOnce(page([session({ id: 's3' })], null));
 		await model.loadMoreSessions();
 
-		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith('cursor-1');
+		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith('cursor-1', undefined, undefined);
 		expect(model.sessions.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
 		expect(model.nextCursor).toBeNull();
 	});
 
 	it('is a no-op with no cursor and while a fetch is in flight', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session()]));
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		await model.loadMoreSessions();
@@ -125,7 +126,7 @@ describe('loadMoreSessions', () => {
 
 	it('surfaces a load-more failure and keeps the loaded window', async () => {
 		mocked.getTrackingSessions.mockResolvedValueOnce(page([session()], 'cursor-1'));
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		mocked.getTrackingSessions.mockRejectedValueOnce(new Error('backend unreachable'));
@@ -145,7 +146,7 @@ describe('on-demand paging', () => {
 				43,
 			),
 		);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		expect(model.total).toBe(43);
@@ -160,7 +161,7 @@ describe('on-demand paging', () => {
 				15,
 			),
 		);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		mocked.getTrackingSessions.mockResolvedValueOnce(
@@ -172,7 +173,7 @@ describe('on-demand paging', () => {
 		);
 		await model.nextPage();
 
-		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith('cursor-1');
+		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith('cursor-1', undefined, undefined);
 		expect(model.table.page).toBe(1);
 		expect(model.table.pageRows.map((s) => s.id)).toEqual(
 			Array.from({ length: 5 }, (_, i) => `s${10 + i}`),
@@ -187,7 +188,7 @@ describe('on-demand paging', () => {
 				30,
 			),
 		);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		await model.nextPage();
@@ -206,7 +207,7 @@ describe('on-demand paging', () => {
 				15,
 			),
 		);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		mocked.getTrackingSessions.mockRejectedValueOnce(new Error('backend unreachable'));
@@ -232,7 +233,7 @@ describe('toggleSession', () => {
 	it('expands a row with its detail and collapses on the second toggle', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session()]));
 		mocked.getSessionDetail.mockResolvedValue(detail());
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		await model.toggleSession('s1');
@@ -248,7 +249,7 @@ describe('toggleSession', () => {
 	it('keeps the row expanded with no detail when the detail fetch fails', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session()]));
 		mocked.getSessionDetail.mockRejectedValue(new Error('gone'));
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		await model.toggleSession('s1');
@@ -262,7 +263,7 @@ describe('handleDelete', () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session(), session({ id: 's2' })]));
 		mocked.getSessionDetail.mockResolvedValue(detail());
 		mocked.deleteSession.mockResolvedValue(undefined);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 		await model.toggleSession('s1');
 		model.confirmDeleteId = 's1';
@@ -282,7 +283,7 @@ describe('handleDelete', () => {
 					resolveDelete = res;
 				}),
 		);
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		const first = model.handleDelete('s1');
@@ -296,7 +297,7 @@ describe('handleDelete', () => {
 	it('surfaces a delete failure and keeps the row', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session()]));
 		mocked.deleteSession.mockRejectedValue(new Error('delete failed'));
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
 		await model.handleDelete('s1');
@@ -305,20 +306,151 @@ describe('handleDelete', () => {
 	});
 });
 
-describe('guide row control', () => {
-	it('expands the row at a page-local index and collapses all', async () => {
+describe('collapseAll', () => {
+	it('closes the open row and drops its loaded detail', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session(), session({ id: 's2' })]));
 		mocked.getSessionDetail.mockResolvedValue(detail());
-		const model = createSessionsModel();
+		const model = createInstancesModel();
 		await model.loadSessions();
 
-		model.expandAtIndex(1);
-		await vi.waitFor(() => expect(model.expandedSessionId).toBe('s2'));
+		await model.toggleSession('s2');
+		expect(model.expandedSessionId).toBe('s2');
 
 		model.collapseAll();
 		expect(model.expandedSessionId).toBeNull();
+		expect(model.expandedDetail).toBeNull();
+	});
+});
 
-		model.expandAtIndex(99);
+describe('the definition scope', () => {
+	it('passes the scope to every read, including the cursor page', async () => {
+		mocked.getTrackingSessions.mockResolvedValueOnce(page([session()], 'cursor-1', 2));
+		const model = createInstancesModel({ definitionId: () => '7' });
+		await model.loadSessions();
+		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith(undefined, undefined, '7');
+
+		mocked.getTrackingSessions.mockResolvedValueOnce(page([session({ id: 's2' })], null, 2));
+		await model.loadMoreSessions();
+		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith('cursor-1', undefined, '7');
+	});
+
+	it('reads the scope at fetch time, so switching definition reloads the new one', async () => {
+		let current = '7';
+		mocked.getTrackingSessions.mockResolvedValue(page([session()]));
+		const model = createInstancesModel({ definitionId: () => current });
+		await model.loadSessions();
+		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith(undefined, undefined, '7');
+
+		current = '9';
+		await model.loadSessions();
+		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith(undefined, undefined, '9');
+	});
+
+	it('resets the pager and any open row on reload, so a switch never lands mid-window', async () => {
+		mocked.getTrackingSessions.mockResolvedValue(
+			page(Array.from({ length: PAGE_SIZE + 1 }, (_, i) => session({ id: `s${i}` }))),
+		);
+		mocked.getSessionDetail.mockResolvedValue(detail());
+		const model = createInstancesModel({ definitionId: () => '7' });
+		await model.loadSessions();
+		await model.nextPage();
+		await model.toggleSession('s0');
+		expect(model.table.page).toBe(1);
+		expect(model.expandedSessionId).toBe('s0');
+
+		await model.loadSessions();
+		expect(model.table.page).toBe(0);
 		expect(model.expandedSessionId).toBeNull();
+		expect(model.expandedDetail).toBeNull();
+	});
+});
+
+describe('reassign', () => {
+	it('drops the moved instance from a scoped list and shrinks the total', async () => {
+		mocked.getTrackingSessions.mockResolvedValue(
+			page([session({ id: 's1' }), session({ id: 's2' })], null, 2),
+		);
+		mocked.reassignSession.mockResolvedValue({
+			sessionId: 's1',
+			definitionId: '9',
+			sessionName: 'Carabok Skilling',
+		});
+		const model = createInstancesModel({ definitionId: () => '7' });
+		await model.loadSessions();
+
+		expect(await model.reassign('s1', '9')).toBe(true);
+		expect(mocked.reassignSession).toHaveBeenCalledWith('s1', '9');
+		expect(model.sessions.map((s) => s.id)).toEqual(['s2']);
+		expect(model.total).toBe(1);
+	});
+
+	it('keeps the row in an unscoped list, where it still belongs', async () => {
+		mocked.getTrackingSessions.mockResolvedValue(page([session({ id: 's1' })], null, 1));
+		mocked.reassignSession.mockResolvedValue({
+			sessionId: 's1',
+			definitionId: '9',
+			sessionName: 'Carabok Skilling',
+		});
+		const model = createInstancesModel();
+		await model.loadSessions();
+
+		expect(await model.reassign('s1', '9')).toBe(true);
+		expect(model.sessions.map((s) => s.id)).toEqual(['s1']);
+		expect(model.total).toBe(1);
+	});
+
+	it('refreshes an open row after an unscoped move and keeps its last-good detail', async () => {
+		mocked.getTrackingSessions.mockResolvedValue(page([session({ id: 's1' })], null, 1));
+		mocked.getSessionDetail.mockResolvedValue(detail());
+		mocked.reassignSession.mockResolvedValue({
+			sessionId: 's1',
+			definitionId: '9',
+			sessionName: 'Carabok Skilling',
+		});
+		const model = createInstancesModel();
+		await model.loadSessions();
+		await model.toggleSession('s1');
+
+		mocked.getSessionDetail.mockClear();
+		expect(await model.reassign('s1', '9')).toBe(true);
+		expect(mocked.getSessionDetail).toHaveBeenCalledWith('s1');
+		const lastGood = model.expandedDetail;
+
+		mocked.getSessionDetail.mockRejectedValueOnce(new Error('detail unavailable'));
+		expect(await model.reassign('s1', '9')).toBe(true);
+		expect(model.expandedDetail).toBe(lastGood);
+	});
+
+	it('surfaces a refusal and leaves the list untouched', async () => {
+		mocked.getTrackingSessions.mockResolvedValue(page([session({ id: 's1' })], null, 1));
+		mocked.reassignSession.mockRejectedValueOnce(new Error('Session definition not found'));
+		const model = createInstancesModel({ definitionId: () => '7' });
+		await model.loadSessions();
+
+		expect(await model.reassign('s1', '9')).toBe(false);
+		expect(model.error).toBe('Session definition not found');
+		expect(model.sessions).toHaveLength(1);
+		expect(model.total).toBe(1);
+	});
+
+	it('refuses a second write while one is in flight', async () => {
+		mocked.getTrackingSessions.mockResolvedValue(
+			page([session({ id: 's1' }), session({ id: 's2' })], null, 2),
+		);
+		let release: (() => void) | undefined;
+		mocked.reassignSession.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					release = () => resolve({ sessionId: 's1', definitionId: '9', sessionName: null });
+				}),
+		);
+		const model = createInstancesModel({ definitionId: () => '7' });
+		await model.loadSessions();
+
+		const first = model.reassign('s1', '9');
+		expect(await model.reassign('s2', '9')).toBe(false);
+		release?.();
+		expect(await first).toBe(true);
+		expect(mocked.reassignSession).toHaveBeenCalledTimes(1);
 	});
 });

@@ -12,6 +12,7 @@ function definition(id: string, name: string): SessionDefinition {
 		name,
 		adHocSegments: false,
 		isProtected: false,
+		isActive: true,
 		instanceCount: 0,
 		createdAt: 1000,
 		updatedAt: null,

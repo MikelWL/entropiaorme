@@ -291,6 +291,7 @@ impl DemoState {
         &self,
         cursor: Option<String>,
         limit: Option<i64>,
+        definition_id: Option<i64>,
     ) -> Result<SessionPage, ApiError> {
         let seek = match cursor.as_deref() {
             None => None,
@@ -299,7 +300,11 @@ impl DemoState {
                 None => return Err(ApiError::bad_request("Invalid cursor")),
             },
         };
-        let page = list_sessions_impl(&self.db, self.now_epoch(), seek, limit)
+        // Scoping applies here exactly as it does live. The bundled
+        // demo's primed session is an instance of no definition, so a
+        // scoped read over the demo is legitimately empty rather than
+        // silently unscoped.
+        let page = list_sessions_impl(&self.db, self.now_epoch(), seek, limit, definition_id)
             .await
             .map_err(ApiError::internal("demo tracking sessions"))?;
         let sessions: Vec<TrackingSession> = serde_json::from_value(page.sessions)
@@ -691,10 +696,11 @@ impl Api {
         &self,
         cursor: Option<String>,
         limit: Option<i64>,
+        definition_id: Option<i64>,
     ) -> Result<SessionPage, ApiError> {
         self.ensure_demo()
             .await?
-            .tracking_sessions(cursor, limit)
+            .tracking_sessions(cursor, limit, definition_id)
             .await
     }
 
@@ -821,7 +827,12 @@ mod tests {
         demo.ensure_primed().await.expect("demo primes");
         assert_matches_golden(
             "tracking_sessions",
-            &to_json(&demo.tracking_sessions(None, None).await.expect("sessions")),
+            &to_json(
+                &demo
+                    .tracking_sessions(None, None, None)
+                    .await
+                    .expect("sessions"),
+            ),
         );
 
         let snapshot = to_json(&demo.tracking_snapshot().await.expect("snapshot"));

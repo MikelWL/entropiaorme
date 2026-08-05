@@ -2,8 +2,9 @@
 //! manual-mob suggestions, the quest-link suggestion), the live producer
 //! surface (start / stop / release-mob / manual-mob-lock / tag-lock / the
 //! consolidated dashboard snapshot), the post-hoc session edits (rename /
-//! restore mob, loot-item activate / deactivate, armour cost, quest-link
-//! decision), and the one-shot repair-cost OCR read.
+//! restore mob, loot-item activate / deactivate, re-file under another
+//! definition, armour cost, quest-link decision), and the one-shot
+//! repair-cost OCR read.
 //!
 //! Typed DTOs over the composed services. The family's SQL and its wire
 //! shaping live in `eo_services::tracking_reads`; this facade owns the
@@ -689,11 +690,14 @@ pub struct DefinitionSelectResult {
     pub session_name: Nullable<String>,
 }
 
-/// The post-hoc session-rename result.
+/// The post-hoc re-file result: the definition the session now belongs
+/// to, and the name it now carries, which is always the new
+/// definition's (the stamp follows the reference unconditionally).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionRenameResult {
+pub struct SessionReassignResult {
     pub session_id: String,
+    pub definition_id: String,
     pub session_name: Nullable<String>,
 }
 
@@ -746,10 +750,15 @@ impl Api {
     /// summary or raw tables. Heals ended-session summaries first (a write
     /// on the read path, preserved from the reference). A malformed cursor
     /// is a bad-request.
+    ///
+    /// `definition_id` narrows the page to one definition's instances,
+    /// which is how the review surface reads one; omitted, the read
+    /// is the whole table exactly as before.
     pub async fn tracking_sessions(
         &self,
         cursor: Option<String>,
         limit: Option<i64>,
+        definition_id: Option<i64>,
     ) -> Result<SessionPage, ApiError> {
         let seek = match cursor.as_deref() {
             None => None,
@@ -759,7 +768,7 @@ impl Api {
             },
         };
         let now = naive_to_epoch(self.clock.now());
-        let page = list_sessions_impl(&self.db, now, seek, limit)
+        let page = list_sessions_impl(&self.db, now, seek, limit, definition_id)
             .await
             .map_err(ApiError::internal("tracking sessions"))?;
         let sessions: Vec<TrackingSession> = serde_json::from_value(page.sessions)
@@ -1117,9 +1126,10 @@ impl Api {
     /// value records a magnitude. The session row mirrors only the
     /// positive case; the declared zero lives on the interval record.
     /// The name names the whole session, so a live edit could only
-    /// rewrite its history: it is fixed once a session runs (409), and
-    /// correcting it is a post-hoc move through
-    /// `tracking_rename_session`.
+    /// rewrite its history: it is fixed once a session runs (409). It is
+    /// a stamp of the definition's name rather than a label of its own,
+    /// so a mis-recorded session is corrected by moving it to another
+    /// definition (`tracking_reassign_session`), never by retyping.
     pub async fn tracking_session_config(
         &self,
         session_name: Option<String>,
@@ -1147,7 +1157,7 @@ impl Api {
                 && name.as_deref().unwrap_or("") != guard.get().session_name.trim()
             {
                 return Err(ApiError::conflict(
-                    "Session name is fixed for the active session; rename it from the session record once it ends",
+                    "Session name is fixed for the active session; move the session to another definition once it ends",
                 ));
             }
             let mut updates = Map::new();
@@ -1226,17 +1236,21 @@ impl Api {
         })
     }
 
-    /// Rename an ended session: the post-hoc correction path for the
-    /// name facet, which the overlay fixes once a session starts.
-    pub async fn tracking_rename_session(
+    /// Re-file an ended session under a different (active) definition:
+    /// the correction for a session recorded against whichever
+    /// definition the picker happened to be holding. The stamped name
+    /// always follows the reference, because it is a copy of the
+    /// definition's name rather than a label of its own.
+    pub async fn tracking_reassign_session(
         &self,
         session_id: String,
-        session_name: Option<String>,
-    ) -> Result<SessionRenameResult, ApiError> {
-        let value = rename_session_impl(&self.db, &session_id, session_name.as_deref())
+        definition_id: i64,
+    ) -> Result<SessionReassignResult, ApiError> {
+        let value = reassign_session_definition_impl(&self.db, &session_id, definition_id)
             .await
-            .map_err(edit_error("tracking rename session"))?;
-        serde_json::from_value(value).map_err(ApiError::internal("tracking rename session shaping"))
+            .map_err(edit_error("tracking reassign session"))?;
+        serde_json::from_value(value)
+            .map_err(ApiError::internal("tracking reassign session shaping"))
     }
 
     /// Rename a mob across an ended session.
