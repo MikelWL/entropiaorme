@@ -33,11 +33,15 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 
 /** The review model over the real instances model, with the API mocked:
  * the composition under test is the surface plus its scoped list. */
-function reviewModel(definitions: SessionDefinition[]) {
+function reviewModel(
+	definitions: SessionDefinition[],
+	refreshPlayableDefinitions = vi.fn(async () => {}),
+) {
 	mocked.getAllSessionDefinitions.mockResolvedValue(definitions);
 	return createReviewModel({
 		listAllDefinitions: () => api.getAllSessionDefinitions(),
 		restoreDefinition: (id) => api.restoreSessionDefinition(id),
+		refreshPlayableDefinitions,
 		createInstances: (definitionId) => createInstancesModel({ definitionId }),
 	});
 }
@@ -169,7 +173,8 @@ describe('the writes', () => {
 	it('restores the archived definition under review without selecting it', async () => {
 		const archived = definition({ id: '3', name: 'Easter Mayhem 2026', isActive: false });
 		const restored = { ...archived, isActive: true };
-		const model = reviewModel([definition(), archived]);
+		const refreshPlayableDefinitions = vi.fn(async () => {});
+		const model = reviewModel([definition(), archived], refreshPlayableDefinitions);
 		mocked.restoreSessionDefinition.mockResolvedValue(restored);
 		await model.openReview('3');
 		mocked.getAllSessionDefinitions.mockResolvedValue([definition(), restored]);
@@ -177,12 +182,14 @@ describe('the writes', () => {
 		expect(await model.restoreCurrent()).toBe(true);
 		expect(mocked.restoreSessionDefinition).toHaveBeenCalledWith('3');
 		expect(model.definition?.isActive).toBe(true);
+		expect(refreshPlayableDefinitions).toHaveBeenCalledTimes(1);
 		expect(model.restoring).toBe(false);
 	});
 
 	it('keeps a refused restore visible with an actionable error', async () => {
 		const archived = definition({ id: '3', name: 'Seasonal', isActive: false });
-		const model = reviewModel([archived]);
+		const refreshPlayableDefinitions = vi.fn(async () => {});
+		const model = reviewModel([archived], refreshPlayableDefinitions);
 		mocked.restoreSessionDefinition.mockRejectedValue(
 			new Error("A session named 'Seasonal' already exists"),
 		);
@@ -191,6 +198,7 @@ describe('the writes', () => {
 		expect(await model.restoreCurrent()).toBe(false);
 		expect(model.error).toBe("A session named 'Seasonal' already exists");
 		expect(model.definition?.isActive).toBe(false);
+		expect(refreshPlayableDefinitions).not.toHaveBeenCalled();
 	});
 });
 

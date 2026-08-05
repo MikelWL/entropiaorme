@@ -43,6 +43,7 @@ async function mount(definitions: SessionDefinition[]) {
 			if (!found) throw new Error('missing');
 			return { ...found, isActive: true };
 		}),
+		refreshPlayableDefinitions: vi.fn(async () => {}),
 		createInstances: (definitionId) => createInstancesModel({ definitionId }),
 	});
 	await model.openReview('1');

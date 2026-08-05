@@ -29,6 +29,10 @@ export interface ReviewModelDeps {
 	/** Every definition, archived ones included. */
 	listAllDefinitions(): Promise<SessionDefinition[]>;
 	restoreDefinition(id: string): Promise<SessionDefinition>;
+	/** Refresh the dashboard's separately owned play catalogue after a
+	 * restore. That model owns its own error state and keeps its existing
+	 * selection while reloading the definitions on offer. */
+	refreshPlayableDefinitions(): Promise<void>;
 	/** The scoped instance list; injected so tests compose the surface
 	 * without reaching the backend. */
 	createInstances(definitionId: () => string | null): InstancesModel;
@@ -123,7 +127,7 @@ export function createReviewModel(deps: ReviewModelDeps) {
 		error = null;
 		try {
 			await deps.restoreDefinition(definition.id);
-			await loadDefinitions();
+			await Promise.all([loadDefinitions(), deps.refreshPlayableDefinitions()]);
 			return true;
 		} catch (cause) {
 			error = describeError(cause, 'Failed to restore the session');
@@ -184,10 +188,13 @@ export type ReviewModel = ReturnType<typeof createReviewModel>;
 
 /** The model wired to the live API: the app's composition (the
  * deps-injected factory above is the testable seam). */
-export function createLiveReviewModel(): ReviewModel {
+export function createLiveReviewModel(
+	refreshPlayableDefinitions: () => Promise<void>,
+): ReviewModel {
 	return createReviewModel({
 		listAllDefinitions: getAllSessionDefinitions,
 		restoreDefinition: restoreSessionDefinition,
+		refreshPlayableDefinitions,
 		createInstances: (definitionId) => createInstancesModel({ definitionId }),
 	});
 }
