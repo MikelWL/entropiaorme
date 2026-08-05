@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { quintOut } from 'svelte/easing';
-	import { Button, ErrorNotice, SearchInput, Select, Toggle } from '$lib/components';
+	import Button from '$lib/components/Button.svelte';
+	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
+	import SearchInput from '$lib/components/SearchInput.svelte';
+	import Select from '$lib/components/Select.svelte';
+	import Toggle from '$lib/components/Toggle.svelte';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import type {
 		DefinitionsModel,
@@ -73,7 +77,12 @@
 	// sidebar and titlebar stay reachable and navigating away is a valid
 	// way out of it.
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') model.close();
+		if (e.key !== 'Escape') return;
+		if (model.archiveArmed) {
+			model.archiveArmed = false;
+			return;
+		}
+		model.close();
 	}
 
 	// On open: remember the opener and move focus to the name field; on
@@ -384,21 +393,62 @@
 				<ErrorNotice message={model.authoringError} />
 			{/if}
 
-			<!-- Footer: destructive on the left, the exits on the right -->
+			<!-- Footer: lifecycle on the left, the exits on the right -->
 			<div class="mt-auto flex items-center justify-between gap-3 pt-2">
 				<div>
 					<!-- A protected session is the one tracking always has to run
-						 under, so it offers no delete; everything else about it is
-						 editable. The service refuses the delete too. -->
+						 under, so it offers no archive; everything else about it is
+						 editable. The service refuses the archive too. -->
 					{#if editing && !model.editingProtected}
-						<Button
-							size="sm"
-							variant="danger"
-							disabled={model.saving}
-							onclick={() => model.deleteEditing()}
-						>
-							{#snippet children()}{model.deleteArmed ? 'Really delete?' : 'Delete'}{/snippet}
-						</Button>
+						{#if model.archiveArmed}
+							<div class="flex items-center gap-2">
+								<span class="max-w-56 text-xs leading-snug text-text-secondary">
+									Remove from play choices? History and activities stay intact.
+								</span>
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={model.saving}
+									onclick={() => (model.archiveArmed = false)}
+								>
+									{#snippet children()}Cancel{/snippet}
+								</Button>
+								<Button
+									size="sm"
+									variant="danger"
+									disabled={model.saving}
+									onclick={() => model.archiveEditing()}
+								>
+									{#snippet children()}Archive{/snippet}
+								</Button>
+							</div>
+						{:else}
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={model.saving}
+								onclick={() => model.archiveEditing()}
+							>
+								{#snippet children()}
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke-width="1.5"
+										stroke="currentColor"
+										class="h-3.5 w-3.5"
+										aria-hidden="true"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
+										/>
+									</svg>
+									Archive
+								{/snippet}
+							</Button>
+						{/if}
 					{/if}
 				</div>
 				<div class="flex items-center gap-2">

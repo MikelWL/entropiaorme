@@ -5,6 +5,7 @@
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import { formatDate, formatDuration, formatPed } from '$lib/utils/format';
 	import { PAGE_SIZE } from './instancesModel.svelte';
+	import ReviewDefinitionPicker from './ReviewDefinitionPicker.svelte';
 	import type { ReviewModel } from './reviewModel.svelte';
 
 	let {
@@ -45,7 +46,7 @@
 		model.close();
 	}
 
-	const retired = $derived(model.definition !== null && !model.definition.isActive);
+	const archived = $derived(model.definition !== null && !model.definition.isActive);
 </script>
 
 <svelte:window onkeydown={model.open ? handleKeydown : undefined} />
@@ -66,75 +67,35 @@
 				<div class="flex min-w-0 flex-col gap-1.5">
 					<h2 class="text-2xl font-semibold tracking-tight text-text">Review sessions</h2>
 					<div class="flex items-center gap-2 min-w-0">
-						<Menu ariaLabel="Review another session" panelClass="left-0 right-auto top-9 w-64 p-1">
-							{#snippet trigger({ open, toggle })}
-								<button
-									type="button"
-									class="inline-flex max-w-[20rem] items-center gap-1 rounded-md px-1.5 py-0.5
-										cursor-pointer text-sm font-semibold tracking-tight text-accent
-										transition-colors duration-[var(--duration-fast)] hover:bg-surface-hover"
-									aria-haspopup="menu"
-									aria-expanded={open}
-									aria-label={model.definition
-										? `Review another session (currently ${model.definition.name})`
-										: 'Choose a session to review'}
-									onclick={toggle}
-								>
-									<span class="truncate">{model.definition?.name ?? 'Choose a session'}</span>
-									<span class="text-text-secondary" aria-hidden="true">&#x2304;</span>
-								</button>
-							{/snippet}
+						<ReviewDefinitionPicker {model} />
 
-							{#snippet children({ close })}
-								{#each model.activeDefinitions as definition (definition.id)}
-									<button
-										type="button"
-										role="menuitem"
-										class="mt-0.5 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left
-											text-sm cursor-pointer
-											{definition.id === model.definitionId
-											? 'bg-accent/10 text-accent'
-											: 'text-text-secondary hover:text-text hover:bg-surface-hover'}"
-										onclick={() => {
-											close();
-											void model.reviewDefinition(definition.id);
-										}}
+						{#if archived}
+							<span class="text-xs text-text-tertiary">Archived</span>
+							<Button
+								size="sm"
+								variant="secondary"
+								loading={model.restoring}
+								onclick={() => model.restoreCurrent()}
+							>
+								{#snippet children()}
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke-width="1.5"
+										stroke="currentColor"
+										class="h-3.5 w-3.5"
+										aria-hidden="true"
 									>
-										<span class="min-w-0 flex-1 truncate">{definition.name}</span>
-										<span class="shrink-0 text-xs text-text-tertiary tabular-nums">
-											{definition.instanceCount}
-										</span>
-									</button>
-								{/each}
-
-								{#if model.retiredDefinitions.length > 0}
-									<!-- Retired sessions keep their recorded history reachable,
-										 listed apart so the switcher never implies they can be
-										 played again. -->
-									<p class="eyebrow mt-2 border-t border-border/50 px-2 pt-2">No longer played</p>
-									{#each model.retiredDefinitions as definition (definition.id)}
-										<button
-											type="button"
-											role="menuitem"
-											class="mt-0.5 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left
-												text-sm cursor-pointer text-text-tertiary
-												hover:text-text-secondary hover:bg-surface-hover
-												{definition.id === model.definitionId ? 'bg-surface-hover' : ''}"
-											onclick={() => {
-												close();
-												void model.reviewDefinition(definition.id);
-											}}
-										>
-											<span class="min-w-0 flex-1 truncate">{definition.name}</span>
-											<span class="shrink-0 text-xs tabular-nums">{definition.instanceCount}</span>
-										</button>
-									{/each}
-								{/if}
-							{/snippet}
-						</Menu>
-
-						{#if retired}
-							<span class="text-xs text-text-tertiary">No longer played</span>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3.75l2.25 2.25m0-2.25l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
+										/>
+									</svg>
+									Restore
+								{/snippet}
+							</Button>
 						{/if}
 					</div>
 				</div>

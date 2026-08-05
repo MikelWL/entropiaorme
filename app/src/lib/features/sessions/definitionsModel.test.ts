@@ -70,7 +70,7 @@ function makeDeps(overrides: Partial<DefinitionsModelDeps> = {}): DefinitionsMod
 		listDefinitions: vi.fn(async () => [definition()]),
 		createDefinition: vi.fn(async () => definition({ id: '7' })),
 		updateDefinition: vi.fn(async () => definition()),
-		deleteDefinition: vi.fn(async () => {}),
+		archiveDefinition: vi.fn(async () => definition({ isActive: false })),
 		selectDefinition: vi.fn(async () => ({})),
 		refreshTracking: vi.fn(async () => ({})),
 		listFamilies: vi.fn(async () => [family('3', 'Daily Hunting 1')]),
@@ -96,6 +96,25 @@ describe('createDefinitionsModel', () => {
 		);
 		await failing.loadDefinitions();
 		expect(failing.error).toBe('boom');
+	});
+
+	it('keeps the active catalogue in stable alphabetical order', async () => {
+		const model = createDefinitionsModel(
+			makeDeps({
+				listDefinitions: vi.fn(async () => [
+					definition({ id: '3', name: 'Tree Cutting' }),
+					definition({ id: '2', name: 'ARIS Dailies' }),
+					definition({ id: '4', name: 'Bank Robber Skilling' }),
+				]),
+			}),
+		);
+		await model.loadDefinitions();
+
+		expect(model.definitions.map((entry) => entry.name)).toEqual([
+			'ARIS Dailies',
+			'Bank Robber Skilling',
+			'Tree Cutting',
+		]);
 	});
 
 	it('shapes the selection write as a numeric id and refreshes', async () => {
@@ -189,15 +208,15 @@ describe('createDefinitionsModel', () => {
 		});
 	});
 
-	it('deletes only on the armed second step', async () => {
+	it('archives only on the armed second step', async () => {
 		const deps = makeDeps();
 		const model = createDefinitionsModel(deps);
 		model.openEdit(definition({ id: '2' }));
-		expect(await model.deleteEditing()).toBe(false);
-		expect(deps.deleteDefinition).not.toHaveBeenCalled();
-		expect(model.deleteArmed).toBe(true);
-		expect(await model.deleteEditing()).toBe(true);
-		expect(deps.deleteDefinition).toHaveBeenCalledWith('2');
+		expect(await model.archiveEditing()).toBe(false);
+		expect(deps.archiveDefinition).not.toHaveBeenCalled();
+		expect(model.archiveArmed).toBe(true);
+		expect(await model.archiveEditing()).toBe(true);
+		expect(deps.archiveDefinition).toHaveBeenCalledWith('2');
 		expect(model.mode).toBe('closed');
 	});
 });

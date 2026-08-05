@@ -1470,7 +1470,7 @@ pub(crate) async fn build_snapshot_value(
 
     // The definition facet, stringified for the wire (null drops the
     // key under exclude-none). The idle branch re-validates the
-    // configured selection against an ACTIVE definition, so one deleted
+    // configured selection against an ACTIVE definition, so one archived
     // while idle stops reading as selected; the active branch trusts
     // the id stamped (and validated) at session start.
     let definition_value = |id: Option<i64>| match id {

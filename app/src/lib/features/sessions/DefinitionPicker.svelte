@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Menu from '$lib/components/Menu.svelte';
+	import SearchInput from '$lib/components/SearchInput.svelte';
+	import { filterDefinitions } from './definitionCatalogue';
 	import type { DefinitionsModel } from './definitionsModel.svelte';
 
 	let {
@@ -17,9 +19,11 @@
 		onOpenAuthoring: (definitionId: string | null) => void;
 	} = $props();
 
+	let filter = $state('');
 	const selected = $derived(
 		model.definitions.find((definition) => definition.id === selectedId) ?? null
 	);
+	const matchingDefinitions = $derived(filterDefinitions(model.definitions, filter));
 </script>
 
 <!-- The island's title: the session it runs as, switched in place. -->
@@ -27,8 +31,15 @@
 	<h2 class="text-[15px] font-semibold text-text tracking-tight shrink-0">Session:</h2>
 
 	{#if model.definitions.length > 0}
-		<Menu ariaLabel="Switch session" panelClass="left-0 right-auto top-9 w-60 p-1">
-			{#snippet trigger({ open, toggle })}
+		<Menu
+			ariaLabel="Switch session"
+			overlay
+			align="left"
+			initialFocus="first-input"
+			overlayOverflow="hidden"
+			panelClass="w-[min(24rem,calc(100vw-1rem))] p-0"
+		>
+			{#snippet trigger({ open, toggle, keydown })}
 				<button
 					type="button"
 					class="inline-flex max-w-[18rem] items-center gap-1 rounded-md px-1.5 py-0.5 cursor-pointer
@@ -41,7 +52,11 @@
 					aria-label={selected ? `Switch session (currently ${selected.name})` : 'Choose a session'}
 					title="Switch session"
 					disabled={model.selecting}
-					onclick={toggle}
+					onclick={() => {
+						if (!open) filter = '';
+						toggle();
+					}}
+					onkeydown={keydown}
 				>
 					<span class="truncate">{selected ? selected.name : 'Choose'}</span>
 					<span class="text-text-secondary" aria-hidden="true">&#x2304;</span>
@@ -49,66 +64,101 @@
 			{/snippet}
 
 			{#snippet children({ close })}
-				{#each model.definitions as definition (definition.id)}
-					<div
-						role="none"
-						class="mt-0.5 flex items-center gap-1 rounded {selectedId === definition.id
-							? 'bg-accent/10'
-							: ''}"
-					>
+				<div class="flex max-h-[min(30rem,calc(100vh-1rem))] flex-col">
+					<div class="flex flex-col gap-2 border-b border-border/60 p-3">
+						<div class="flex items-baseline justify-between gap-3">
+							<span class="text-sm font-semibold text-text">Choose session</span>
+							<span class="text-xs tabular-nums text-text-tertiary">
+								{model.definitions.length}
+							</span>
+						</div>
+						<SearchInput
+							bind:value={filter}
+							placeholder="Filter sessions..."
+							aria-label="Filter sessions"
+							autocomplete="off"
+							spellcheck={false}
+						/>
+					</div>
+
+					<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1" data-testid="definition-results">
+						{#if matchingDefinitions.length > 0}
+							{#each matchingDefinitions as definition (definition.id)}
+								{@const current = selectedId === definition.id}
+								<button
+									type="button"
+									role="menuitem"
+									aria-current={current ? 'true' : undefined}
+									class="mt-0.5 flex w-full items-center gap-2 rounded px-2.5 py-2 text-left
+										text-sm cursor-pointer transition-colors duration-[var(--duration-fast)]
+										{current
+										? 'bg-accent/10 text-accent'
+										: 'text-text-secondary hover:bg-surface-hover hover:text-text'}"
+									onclick={() => {
+										if (!current) void model.select(definition.id);
+										close();
+									}}
+								>
+									<span class="min-w-0 flex-1 truncate">{definition.name}</span>
+									{#if current}
+										<svg
+											class="h-4 w-4 shrink-0"
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											aria-hidden="true"
+										>
+											<path fill-rule="evenodd" d="M16.704 5.29a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.296-7.296a1 1 0 011.408 0z" clip-rule="evenodd" />
+										</svg>
+									{/if}
+								</button>
+							{/each}
+						{:else}
+							<p class="px-3 py-8 text-center text-sm text-text-tertiary">
+								No sessions match “{filter.trim()}”.
+							</p>
+						{/if}
+					</div>
+
+					<div class="flex items-center justify-between gap-2 border-t border-border/60 p-2">
 						<button
 							type="button"
 							role="menuitem"
-							class="min-w-0 flex-1 truncate px-2 py-1.5 text-left text-sm cursor-pointer
-								{selectedId === definition.id
-								? 'text-accent'
-								: 'text-text-secondary hover:text-text'}"
+							class="rounded px-2 py-1.5 text-xs text-text-secondary transition-colors
+								hover:bg-surface-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+							disabled={!selected}
 							onclick={() => {
-								if (selectedId !== definition.id) void model.select(definition.id);
+								if (!selected) return;
 								close();
+								onOpenAuthoring(selected.id);
 							}}
 						>
-							{definition.name}
+							Edit current
 						</button>
 						<button
 							type="button"
 							role="menuitem"
-							class="h-7 w-7 shrink-0 rounded cursor-pointer text-text-secondary
-								hover:bg-surface-hover hover:text-text"
-							aria-label={`Edit ${definition.name}`}
-							title="Edit"
+							class="rounded px-2 py-1.5 text-xs font-medium text-accent transition-colors
+								hover:bg-accent/10 hover:text-accent-hover"
 							onclick={() => {
 								close();
-								onOpenAuthoring(definition.id);
+								onOpenAuthoring(null);
 							}}
 						>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								viewBox="0 0 20 20"
-								fill="currentColor"
-								class="h-3 w-3 mx-auto"
-								aria-hidden="true"
-							>
-								<path
-									d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"
-								/>
-							</svg>
+							+ New session
 						</button>
 					</div>
-				{/each}
-
+				</div>
 			{/snippet}
 		</Menu>
+	{:else}
+		<button
+			type="button"
+			class="filter-chip shrink-0"
+			title="Create a session"
+			disabled={model.selecting}
+			onclick={() => onOpenAuthoring(null)}
+		>
+			+ New
+		</button>
 	{/if}
-
-	<!-- Sits beside the name, and stands alone before the list loads. -->
-	<button
-		type="button"
-		class="filter-chip shrink-0"
-		title="Create a session"
-		disabled={model.selecting}
-		onclick={() => onOpenAuthoring(null)}
-	>
-		+ New
-	</button>
 </div>

@@ -110,7 +110,7 @@ pub struct Api {
     /// over the facade's shared db and clock. An informational layer
     /// only: nothing here feeds the ledger or any realised P&L figure.
     market: MarketService,
-    /// The session-definition service (definition + roster CRUD), built
+    /// The session-definition service (definition + roster lifecycle), built
     /// over the facade's shared db and clock; the tracking family's
     /// selection verb validates against it.
     session_definitions: Arc<eo_services::session_definitions::SessionDefinitionService>,

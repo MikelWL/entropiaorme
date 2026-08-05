@@ -985,7 +985,7 @@ pub async fn build_loot_item_edit_response(
 /// correction for the session started while the picker still held
 /// yesterday's definition, and the only post-hoc route between them.
 ///
-/// The target must be an ACTIVE definition. Filing into a soft-deleted
+/// The target must be an ACTIVE definition. Filing into an archived
 /// one would put an instance under a definition nothing offers any more,
 /// which is the one arrangement the review surface could not show
 /// honestly; filing *out* of one is how such an instance is rescued.

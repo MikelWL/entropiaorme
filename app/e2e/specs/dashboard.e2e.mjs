@@ -38,6 +38,65 @@ describe('dashboard (native Tauri shell)', () => {
 		});
 	});
 
+	it('floats the session catalogue above the widget grid and keeps it in the viewport', async () => {
+		const trigger = await $('[data-guide-anchor="dashboard-session"] button[aria-haspopup="menu"]');
+		await trigger.waitForClickable({ timeout: 10000 });
+		await trigger.click();
+		await $('[role="menu"]').waitForDisplayed({ timeout: 10000 });
+
+		const geometry = await browser.execute(() => {
+			const panel = document.querySelector('body > [role="menu"]');
+			const grid = document.querySelector('[data-guide-anchor="dashboard-stats-grid"]');
+			const results = panel?.querySelector('[data-testid="definition-results"]');
+			if (!(panel instanceof HTMLElement) || !(grid instanceof HTMLElement)) return null;
+
+			const panelRect = panel.getBoundingClientRect();
+			const gridRect = grid.getBoundingClientRect();
+			const intersection = {
+				left: Math.max(panelRect.left, gridRect.left),
+				right: Math.min(panelRect.right, gridRect.right),
+				top: Math.max(panelRect.top, gridRect.top),
+				bottom: Math.min(panelRect.bottom, gridRect.bottom),
+			};
+			const overlaps =
+				intersection.left < intersection.right && intersection.top < intersection.bottom;
+			const frontmost = overlaps
+				? document.elementFromPoint(
+						(intersection.left + intersection.right) / 2,
+						(intersection.top + intersection.bottom) / 2,
+					)
+				: null;
+			const panelStyle = getComputedStyle(panel);
+
+			return {
+				position: panelStyle.position,
+				zIndex: Number(panelStyle.zIndex),
+				portalled: panel.parentElement === document.body,
+				overlaps,
+				frontmost: frontmost instanceof Node && panel.contains(frontmost),
+				bounded:
+					panelRect.left >= 0 &&
+					panelRect.top >= 0 &&
+					panelRect.right <= window.innerWidth &&
+					panelRect.bottom <= window.innerHeight,
+				resultsOverflow:
+					results instanceof HTMLElement ? getComputedStyle(results).overflowY : null,
+			};
+		});
+
+		expect(geometry).not.toBeNull();
+		expect(geometry.portalled).toBe(true);
+		expect(geometry.position).toBe('fixed');
+		expect(geometry.zIndex).toBeGreaterThan(0);
+		expect(geometry.overlaps).toBe(true);
+		expect(geometry.frontmost).toBe(true);
+		expect(geometry.bounded).toBe(true);
+		expect(geometry.resultsOverflow).toBe('auto');
+
+		await browser.keys(['Escape']);
+		await $('[role="menu"]').waitForExist({ reverse: true, timeout: 5000 });
+	});
+
 	it('exposes the Tauri IPC surface a browser cannot replicate', async () => {
 		// The structural fact the native-shell net exists to guard: the live IPC
 		// bridge is present. A browser-served e2e has no __TAURI_INTERNALS__, so it

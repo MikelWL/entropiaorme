@@ -1754,14 +1754,14 @@ async fn re_filing_refuses_an_active_session() {
     assert_eq!(unchanged, (1, "Default Tracking".to_string()));
 }
 
-/// A soft-deleted definition takes no new instances: filing into a
+/// An archived definition takes no new instances: filing into a
 /// definition nothing offers any more is the one arrangement the review
 /// surface could not show honestly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn re_filing_refuses_a_soft_deleted_definition() {
+async fn re_filing_refuses_an_archived_definition() {
     let dir = tempfile::tempdir().unwrap();
     let (api, db) = make_api_db(dir.path(), false, None).await;
-    let retired = api
+    let archived = api
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Retired".to_string(),
             ad_hoc_segments: false,
@@ -1769,12 +1769,12 @@ async fn re_filing_refuses_a_soft_deleted_definition() {
         })
         .await
         .unwrap();
-    let retired_id: i64 = retired.id.parse().unwrap();
+    let archived_id: i64 = archived.id.parse().unwrap();
     seed_instances(&db, "instance", Some(1), 1).await;
-    api.session_definition_delete(retired_id).await.unwrap();
+    api.session_definition_archive(archived_id).await.unwrap();
 
     let error = api
-        .tracking_reassign_session("instance-0".to_string(), retired_id)
+        .tracking_reassign_session("instance-0".to_string(), archived_id)
         .await
         .unwrap_err();
     assert!(matches!(error, ApiError::NotFound { .. }), "{error:?}");
@@ -1793,14 +1793,14 @@ async fn re_filing_refuses_a_soft_deleted_definition() {
     assert!(matches!(error, ApiError::NotFound { .. }), "{error:?}");
 }
 
-/// The instances of a soft-deleted definition stay reachable: the
+/// The instances of an archived definition stay reachable: the
 /// listing that asks for the inactive ones is how the review surface
-/// finds recorded play whose definition has been retired.
+/// finds recorded play whose definition has been archived.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_soft_deleted_definition_keeps_its_instances_reachable() {
+async fn an_archived_definition_keeps_its_instances_reachable() {
     let dir = tempfile::tempdir().unwrap();
     let (api, db) = make_api_db(dir.path(), false, None).await;
-    let retired = api
+    let archived = api
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Retired".to_string(),
             ad_hoc_segments: false,
@@ -1808,26 +1808,26 @@ async fn a_soft_deleted_definition_keeps_its_instances_reachable() {
         })
         .await
         .unwrap();
-    let retired_id: i64 = retired.id.parse().unwrap();
-    seed_instances(&db, "kept", Some(retired_id), 2).await;
-    api.session_definition_delete(retired_id).await.unwrap();
+    let archived_id: i64 = archived.id.parse().unwrap();
+    seed_instances(&db, "kept", Some(archived_id), 2).await;
+    api.session_definition_archive(archived_id).await.unwrap();
 
     // Absent from the offered list, present in the full one.
     let offered = api.session_definitions_list(None).await.unwrap();
-    assert!(offered.iter().all(|d| d.id != retired.id));
+    assert!(offered.iter().all(|d| d.id != archived.id));
     assert!(offered.iter().all(|d| d.is_active));
 
     let all = api.session_definitions_list(Some(true)).await.unwrap();
     let found = all
         .iter()
-        .find(|d| d.id == retired.id)
-        .expect("the retired definition");
+        .find(|d| d.id == archived.id)
+        .expect("the archived definition");
     assert!(!found.is_active);
     assert_eq!(found.instance_count, 2);
 
     // And its recorded instances still read.
     let scoped = api
-        .tracking_sessions(None, None, Some(retired_id))
+        .tracking_sessions(None, None, Some(archived_id))
         .await
         .unwrap();
     assert_eq!(scoped.total, 2);

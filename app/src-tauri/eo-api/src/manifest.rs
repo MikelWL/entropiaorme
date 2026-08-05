@@ -554,12 +554,20 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(SessionDefinition))),
         },
         CommandSpec {
-            name: "session_definition_delete",
+            name: "session_definition_archive",
             args: vec![ArgSpec {
                 name: "definition_id",
                 schema: schema(schema_for!(i64)),
             }],
-            returns: None,
+            returns: Some(schema(schema_for!(SessionDefinition))),
+        },
+        CommandSpec {
+            name: "session_definition_restore",
+            args: vec![ArgSpec {
+                name: "definition_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(SessionDefinition))),
         },
         CommandSpec {
             name: "tracking_definition_select",

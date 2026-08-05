@@ -1,5 +1,5 @@
 /**
- * The session-definitions family: CRUD over the deliberate activity
+ * The session-definitions family: lifecycle over the deliberate activity
  * families tracked sessions are instances of (name, opt-in ad-hoc
  * segment flag, ordered activity roster). Thin wrappers over the
  * generated typed commands; argument shaping (string ids onto numeric
@@ -24,7 +24,7 @@ export async function getSessionDefinitions(): Promise<SessionDefinition[]> {
 	return commands.sessionDefinitionsList(false);
 }
 
-/** Every definition including the soft-deleted ones, whose instances are
+/** Every definition including the archived ones, whose instances are
  * still real recorded play. Only the review surface asks for these, and
  * it shows them apart: they cannot take new sessions. */
 export async function getAllSessionDefinitions(): Promise<SessionDefinition[]> {
@@ -40,6 +40,10 @@ export async function updateSessionDefinition(
 	return commands.sessionDefinitionUpdate(Number(id), data);
 }
 
-export async function deleteSessionDefinition(id: string): Promise<void> {
-	await commands.sessionDefinitionDelete(Number(id));
+export async function archiveSessionDefinition(id: string): Promise<SessionDefinition> {
+	return commands.sessionDefinitionArchive(Number(id));
+}
+
+export async function restoreSessionDefinition(id: string): Promise<SessionDefinition> {
+	return commands.sessionDefinitionRestore(Number(id));
 }

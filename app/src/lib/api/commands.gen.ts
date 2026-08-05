@@ -2173,9 +2173,9 @@ export interface SessionDefinition {
 	id: string;
 	name: string;
 	adHocSegments: boolean;
-	/** A session that cannot be deleted, because tracking always needs one to run under. It renames and takes a roster like any other. */
+	/** A session that cannot be archived, because tracking always needs one to run under. It renames and takes a roster like any other. */
 	isProtected: boolean;
-	/** False for a soft-deleted definition: no longer offered for new sessions, but its recorded instances still reference it, so the review surface can still reach them. Only ever false in a listing that asked for the inactive ones. */
+	/** False for an archived definition: no longer offered for new sessions, but its recorded instances still reference it, so the review surface can still reach them. Only ever false in a listing that asked for the inactive ones. */
 	isActive: boolean;
 	instanceCount: number;
 	/** Authored instant (fractional epoch seconds). */
@@ -2901,8 +2901,12 @@ export async function sessionDefinitionUpdate(definitionId: number, input: Sessi
 	return invokeCommand('session_definition_update', { definition_id: definitionId, input });
 }
 
-export async function sessionDefinitionDelete(definitionId: number): Promise<void> {
-	return invokeCommand('session_definition_delete', { definition_id: definitionId });
+export async function sessionDefinitionArchive(definitionId: number): Promise<SessionDefinition> {
+	return invokeCommand('session_definition_archive', { definition_id: definitionId });
+}
+
+export async function sessionDefinitionRestore(definitionId: number): Promise<SessionDefinition> {
+	return invokeCommand('session_definition_restore', { definition_id: definitionId });
 }
 
 export async function trackingDefinitionSelect(definitionId: number | null): Promise<DefinitionSelectResult> {
