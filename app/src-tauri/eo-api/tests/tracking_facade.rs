@@ -1707,6 +1707,53 @@ async fn re_filing_replaces_a_legacy_free_text_name() {
     assert_eq!(result.session_name, Some("Carabok Skilling".to_string()));
 }
 
+/// Re-filing is a post-hoc correction. A running session keeps the
+/// definition it started under until the tracker has sealed it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn re_filing_refuses_an_active_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(dir.path(), false, None).await;
+    let target = api
+        .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
+            name: "Carabok Skilling".to_string(),
+            ad_hoc_segments: false,
+            roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let target_id: i64 = target.id.parse().unwrap();
+
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions \
+             (id, started_at, is_active, armour_cost, definition_id, session_name) \
+             VALUES ('active', 1000.0, 1, 0, 1, 'Default Tracking')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let error = api
+        .tracking_reassign_session("active".to_string(), target_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ApiError::Conflict { .. }), "{error:?}");
+
+    let unchanged: (i64, String) = db
+        .with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT definition_id, session_name FROM tracking_sessions WHERE id = 'active'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(unchanged, (1, "Default Tracking".to_string()));
+}
+
 /// A soft-deleted definition takes no new instances: filing into a
 /// definition nothing offers any more is the one arrangement the review
 /// surface could not show honestly.

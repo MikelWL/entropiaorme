@@ -399,6 +399,28 @@ describe('reassign', () => {
 		expect(model.total).toBe(1);
 	});
 
+	it('refreshes an open row after an unscoped move and keeps its last-good detail', async () => {
+		mocked.getTrackingSessions.mockResolvedValue(page([session({ id: 's1' })], null, 1));
+		mocked.getSessionDetail.mockResolvedValue(detail());
+		mocked.reassignSession.mockResolvedValue({
+			sessionId: 's1',
+			definitionId: '9',
+			sessionName: 'Carabok Skilling',
+		});
+		const model = createInstancesModel();
+		await model.loadSessions();
+		await model.toggleSession('s1');
+
+		mocked.getSessionDetail.mockClear();
+		expect(await model.reassign('s1', '9')).toBe(true);
+		expect(mocked.getSessionDetail).toHaveBeenCalledWith('s1');
+		const lastGood = model.expandedDetail;
+
+		mocked.getSessionDetail.mockRejectedValueOnce(new Error('detail unavailable'));
+		expect(await model.reassign('s1', '9')).toBe(true);
+		expect(model.expandedDetail).toBe(lastGood);
+	});
+
 	it('surfaces a refusal and leaves the list untouched', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session({ id: 's1' })], null, 1));
 		mocked.reassignSession.mockRejectedValueOnce(new Error('Session definition not found'));

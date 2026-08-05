@@ -1157,7 +1157,7 @@ impl Api {
                 && name.as_deref().unwrap_or("") != guard.get().session_name.trim()
             {
                 return Err(ApiError::conflict(
-                    "Session name is fixed for the active session; rename it from the session record once it ends",
+                    "Session name is fixed for the active session; move the session to another definition once it ends",
                 ));
             }
             let mut updates = Map::new();

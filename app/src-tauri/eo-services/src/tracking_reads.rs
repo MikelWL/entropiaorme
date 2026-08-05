@@ -999,13 +999,32 @@ pub async fn reassign_session_definition_impl(
     session_id: &str,
     definition_id: i64,
 ) -> Result<Value, EditError> {
-    validate_session_exists(db, session_id).await?;
+    enum Outcome {
+        SessionNotFound,
+        SessionActive,
+        DefinitionNotFound,
+        Updated(String),
+    }
 
     let sid = session_id.to_string();
     let outcome = db
         .with_writer(move |conn| {
             use rusqlite::OptionalExtension as _;
             let tx = conn.transaction()?;
+
+            let is_active: Option<i64> = tx
+                .query_row(
+                    "SELECT is_active FROM tracking_sessions WHERE id = ?",
+                    rusqlite::params![sid],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(is_active) = is_active else {
+                return Ok(Outcome::SessionNotFound);
+            };
+            if is_active != 0 {
+                return Ok(Outcome::SessionActive);
+            }
 
             // Resolve the target inside the transaction, so the
             // active-definition guard and the write cannot straddle a
@@ -1018,7 +1037,7 @@ pub async fn reassign_session_definition_impl(
                 )
                 .optional()?;
             let Some(target_name) = target else {
-                return Ok(None);
+                return Ok(Outcome::DefinitionNotFound);
             };
 
             tx.execute(
@@ -1033,15 +1052,19 @@ pub async fn reassign_session_definition_impl(
                 rusqlite::params![target_name, sid],
             )?;
             tx.commit()?;
-            Ok(Some(target_name))
+            Ok(Outcome::Updated(target_name))
         })
         .await?;
 
     match outcome {
-        None => Err(EditError::NotFound(
+        Outcome::SessionNotFound => Err(EditError::NotFound("Session not found".to_string())),
+        Outcome::SessionActive => Err(EditError::Conflict(
+            "Session record edits are only available after the session has ended".to_string(),
+        )),
+        Outcome::DefinitionNotFound => Err(EditError::NotFound(
             "Session definition not found".to_string(),
         )),
-        Some(session_name) => Ok(json!({
+        Outcome::Updated(session_name) => Ok(json!({
             "sessionId": session_id,
             "definitionId": definition_id.to_string(),
             "sessionName": session_name,

@@ -41,6 +41,35 @@ pub fn analytics_fixture(key: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// The session-list fixture, optionally narrowed to one definition in
+/// the same way as the live command. The definition reference is fixture
+/// metadata rather than part of the public list row DTO.
+pub fn analytics_sessions_fixture(definition_id: Option<i64>) -> Value {
+    let sessions = analytics_fixture("sessions");
+    let Some(definition_id) = definition_id else {
+        return sessions;
+    };
+    filter_sessions_fixture(sessions, definition_id)
+}
+
+fn filter_sessions_fixture(sessions: Value, definition_id: i64) -> Value {
+    let Value::Array(sessions) = sessions else {
+        return Value::Array(Vec::new());
+    };
+    Value::Array(
+        sessions
+            .into_iter()
+            .filter(|session| {
+                session.get("definitionId").is_some_and(|value| {
+                    value.as_i64() == Some(definition_id)
+                        || value.as_str().and_then(|value| value.parse::<i64>().ok())
+                            == Some(definition_id)
+                })
+            })
+            .collect(),
+    )
+}
+
 /// The dashboard fixture value under `key` (`snapshot` / `sessionDetail` /
 /// `quests` / `playlists`), for the typed tracking read commands. The e2e build
 /// serves the same committed dashboard fixture through those commands, keeping
@@ -97,5 +126,19 @@ mod tests {
             .expect("sessionDetail fixture matches SessionDetail");
         serde_json::from_value::<Vec<TrackingSession>>(super::analytics_fixture("sessions"))
             .expect("sessions fixture matches Vec<TrackingSession>");
+    }
+
+    #[test]
+    fn a_definition_scope_filters_session_fixture_metadata() {
+        let sessions = serde_json::json!([
+            { "id": "one", "definitionId": 1 },
+            { "id": "two", "definitionId": "2" },
+            { "id": "loose" }
+        ]);
+        let filtered = super::filter_sessions_fixture(sessions, 2);
+        assert_eq!(
+            filtered,
+            serde_json::json!([{ "id": "two", "definitionId": "2" }])
+        );
     }
 }

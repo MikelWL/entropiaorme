@@ -72,7 +72,14 @@
 	function positionPanel() {
 		if (!overlay || !rootEl || !panelEl) return;
 		const anchor = rootEl.getBoundingClientRect();
-		const { offsetWidth: width, offsetHeight: height } = panelEl;
+		const width = Math.min(
+			panelEl.offsetWidth,
+			Math.max(0, window.innerWidth - VIEWPORT_MARGIN * 2),
+		);
+		const height = Math.min(
+			panelEl.offsetHeight,
+			Math.max(0, window.innerHeight - VIEWPORT_MARGIN * 2),
+		);
 
 		let left = align === 'right' ? anchor.right - width : anchor.left;
 		left = Math.max(
@@ -251,7 +258,9 @@
 			style={overlay
 				? // Hidden until measured: one frame at the unpositioned
 					// origin would read as the panel jumping into place.
-					`top: ${panelPos?.top ?? 0}px; left: ${panelPos?.left ?? 0}px;` +
+					`top: ${panelPos?.top ?? 0}px; left: ${panelPos?.left ?? 0}px; ` +
+					`max-width: calc(100vw - ${VIEWPORT_MARGIN * 2}px); ` +
+					`max-height: calc(100vh - ${VIEWPORT_MARGIN * 2}px); overflow: auto;` +
 					(panelPos ? '' : ' visibility: hidden;')
 				: undefined}
 			onkeydown={handlePanelKeydown}

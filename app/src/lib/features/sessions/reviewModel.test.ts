@@ -27,7 +27,7 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 		updatedAt: null,
 		roster: [],
 		...overrides,
-	} as SessionDefinition;
+	};
 }
 
 /** The review model over the real instances model, with the API mocked:

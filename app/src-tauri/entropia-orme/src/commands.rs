@@ -892,8 +892,10 @@ pub async fn tracking_sessions(
 ) -> Result<SessionPage, ApiError> {
     #[cfg(feature = "e2e-stub")]
     {
-        let _ = (&app, &cursor, &limit, &definition_id);
-        let sessions: Vec<eo_api::tracking::TrackingSession> = e2e_analytics("sessions")?;
+        let _ = (&app, &cursor, &limit);
+        let sessions: Vec<eo_api::tracking::TrackingSession> =
+            serde_json::from_value(crate::e2e_stub::analytics_sessions_fixture(definition_id))
+                .map_err(ApiError::internal("e2e analytics fixture"))?;
         Ok(SessionPage {
             total: sessions.len() as i64,
             sessions,
