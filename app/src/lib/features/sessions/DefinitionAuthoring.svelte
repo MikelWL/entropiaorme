@@ -402,8 +402,9 @@
 					{#if editing && !model.editingProtected}
 						{#if model.archiveArmed}
 							<div class="flex items-center gap-2">
-								<span class="max-w-56 text-xs leading-snug text-text-secondary">
-									Remove from play choices? History and activities stay intact.
+								<span class="max-w-72 text-xs leading-snug text-text-secondary">
+									Remove from play choices? History and activities stay intact. Restore from the
+									session review menu.
 								</span>
 								<Button
 									size="sm"

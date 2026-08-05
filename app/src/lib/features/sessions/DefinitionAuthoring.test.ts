@@ -46,13 +46,17 @@ describe('DefinitionAuthoring lifecycle', () => {
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
 		expect(
-			screen.getByText('Remove from play choices? History and activities stay intact.'),
+			screen.getByText(
+				'Remove from play choices? History and activities stay intact. Restore from the session review menu.',
+			),
 		).toBeTruthy();
 		expect(deps.archiveDefinition).not.toHaveBeenCalled();
 
 		await fireEvent.keyDown(window, { key: 'Escape' });
 		expect(
-			screen.queryByText('Remove from play choices? History and activities stay intact.'),
+			screen.queryByText(
+				'Remove from play choices? History and activities stay intact. Restore from the session review menu.',
+			),
 		).toBeNull();
 		expect(model.mode).toBe('edit');
 	});
