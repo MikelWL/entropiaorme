@@ -8,11 +8,8 @@
 	import SessionStage from '$lib/features/sessions/SessionStage.svelte';
 	import { createLiveDefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
 	import { createLiveReviewModel } from '$lib/features/sessions/reviewModel.svelte';
-	import {
-		formatMinutes,
-		getCooldownRemaining,
-		getCooldownStatus
-	} from '$lib/features/quests/cooldown';
+	import { formatMinutes } from '$lib/features/quests/cooldown';
+	import { createPlaylistSelection } from '$lib/features/dashboard/playlistSelection.svelte';
 	import { createQuestsModel } from '$lib/features/quests/questsModel.svelte';
 	import { closeGuide, openGuide } from '$lib/guide/engine';
 	import { guideState, registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
@@ -42,75 +39,16 @@
 	// review) that replace the dashboard while either is open.
 	const definitions = createLiveDefinitionsModel();
 	const review = createLiveReviewModel();
-
-	// The pre-guide playlist selection, snapshotted so it survives the tour.
-	// Undefined sentinel means "no snapshot held"; null is a valid snapshot.
-	let snapshotActivePlaylistId: string | null | undefined = undefined;
-
-	// Playlist selection state
-	let activePlaylistId = $state<string | null>(null);
-	let now = $state(Date.now());
+	const playlist = createPlaylistSelection(questsModel, () => guideState.isActive);
 
 	async function refreshQuestState() {
 		await questsModel.refresh();
-		syncActivePlaylist(questsModel.playlists);
+		playlist.sync(questsModel.playlists);
 	}
-
-	function syncActivePlaylist(loadedPlaylists: QuestPlaylist[]) {
-		if (loadedPlaylists.length === 0) {
-			activePlaylistId = null;
-			return;
-		}
-		if (guideState.isActive) {
-			// Guide-mode: pin to first demo playlist regardless of prior selection
-			// so the Quests widget shows populated content on the dashboard-widgets
-			// card. snapshotActivePlaylistId holds the pre-guide selection across
-			// the guide lifecycle (see the guide-flip $effect below).
-			activePlaylistId = loadedPlaylists[0].id;
-			return;
-		}
-		if (activePlaylistId && !loadedPlaylists.some((playlist) => playlist.id === activePlaylistId)) {
-			activePlaylistId = null;
-		}
-	}
-
-	// ── Quest helpers ──
-	let activePlaylist = $derived(
-		questsModel.playlists.find((p) => p.id === activePlaylistId) ?? null
-	);
-
-	function playlistQuestItemsForGroup(
-		playlist: QuestPlaylist | null,
-		groupType?: 'immediate' | 'long_horizon'
-	) {
-		if (!playlist) return [];
-		const out: { quest: Quest; description: string | null; cd: CooldownStatus; inProgress: boolean }[] = [];
-		for (const item of playlist.items) {
-			if (groupType && item.groupType !== groupType) continue;
-			const quest = questsModel.quests.find((q) => q.id === item.questId);
-			if (!quest) continue;
-			out.push({
-				quest,
-				description: item.description,
-				cd: getCooldownStatus(quest, now),
-				inProgress: quest.startedAt != null,
-			});
-		}
-		return out;
-	}
-
-	let immediatePlaylistQuestItems = $derived.by(() =>
-		playlistQuestItemsForGroup(activePlaylist, 'immediate')
-	);
-
-	let longHorizonPlaylistQuestItems = $derived.by(() =>
-		playlistQuestItemsForGroup(activePlaylist, 'long_horizon')
-	);
 
 	// Playlist estimates keep their approx-prefixed display over the shared
 	// duration formatter.
 	const formatEstimatedMinutes = (m: number) => `~${formatMinutes(m)}`;
-	const cooldownRemaining = (quest: Quest) => getCooldownRemaining(quest, now);
 
 	// Poll quest state so chat.log auto-start/complete is reflected without
 	// route changes. Paused during a guide tour: the fixture load below owns
@@ -123,7 +61,7 @@
 
 	// Cooldown tick (1s)
 	$effect(() => {
-		return useVisiblePoll(() => { now = Date.now(); }, { intervalMs: 1000 });
+		return useVisiblePoll(playlist.tick, { intervalMs: 1000 });
 	});
 
 	// Guide
@@ -169,9 +107,7 @@
 		const active = guideState.isActive;
 		// Snapshot the active playlist selection on guide-open so the
 		// post-tour restore returns to the pre-guide state.
-		if (active && snapshotActivePlaylistId === undefined) {
-			snapshotActivePlaylistId = activePlaylistId;
-		}
+		if (active) playlist.snapshotForGuide();
 		// Stats: snapshot the live config on guide-open + apply the preselected
 		// demo configuration; restore on close. Owned by the stats-grid model.
 		statsGrid.syncGuideStats(active);
@@ -184,18 +120,9 @@
 		void guideDemo.refreshDemoTracking(active);
 		void (async () => {
 			await questsModel.loadData(active);
-			if (!active && snapshotActivePlaylistId !== undefined) {
-				// Restore on guide-close, even when the reload failed: a
-				// surviving snapshot would clobber the user's next selection
-				// on the following guide cycle. syncActivePlaylist (success
-				// path) then validates the restored id against the freshly
-				// loaded real playlists (and nulls it if the user deleted
-				// that playlist mid-tour).
-				activePlaylistId = snapshotActivePlaylistId;
-				snapshotActivePlaylistId = undefined;
-			}
+			if (!active) playlist.restoreFromGuide();
 			if (questsModel.error) return;
-			syncActivePlaylist(questsModel.playlists);
+			playlist.sync(questsModel.playlists);
 		})();
 	});
 </script>
@@ -279,20 +206,20 @@
 				multiplierHistory={status?.multiplierHistory ?? null}
 				cumulativeNetHistory={status?.cumulativeNetHistory ?? null}
 				playlists={questsModel.playlists}
-				{activePlaylistId}
-				{activePlaylist}
-				immediateItems={immediatePlaylistQuestItems}
-				longHorizonItems={longHorizonPlaylistQuestItems}
+				activePlaylistId={playlist.activePlaylistId}
+				activePlaylist={playlist.activePlaylist}
+				immediateItems={playlist.immediateItems}
+				longHorizonItems={playlist.longHorizonItems}
 				pendingCancelChoiceQuestId={questsModel.pendingCancelChoiceQuestId}
 				copiedWp={questsModel.copiedWp}
-				onPlaylistChange={(id) => (activePlaylistId = id)}
+				onPlaylistChange={(id) => (playlist.activePlaylistId = id)}
 				onQuestStart={questsModel.handleStart}
 				onQuestComplete={questsModel.handleComplete}
 				onQuestCancel={questsModel.handleCancel}
 				onToggleCancelChoice={questsModel.toggleCancelChoice}
 				onCopyWaypoint={questsModel.copyWaypoint}
 				formatMinutes={formatEstimatedMinutes}
-				getCooldownRemaining={cooldownRemaining}
+				getCooldownRemaining={playlist.cooldownRemaining}
 			/>
 	{/if}
 
