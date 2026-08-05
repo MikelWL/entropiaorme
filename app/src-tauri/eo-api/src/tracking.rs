@@ -691,8 +691,8 @@ pub struct DefinitionSelectResult {
 }
 
 /// The post-hoc re-file result: the definition the session now belongs
-/// to, and the name it carries afterwards (restamped with the new
-/// definition's, or the hand-typed one left as it was).
+/// to, and the name it now carries, which is always the new
+/// definition's (the stamp follows the reference unconditionally).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReassignResult {
@@ -752,7 +752,7 @@ impl Api {
     /// is a bad-request.
     ///
     /// `definition_id` narrows the page to one definition's instances,
-    /// which is how the review surface reads a family; omitted, the read
+    /// which is how the review surface reads one; omitted, the read
     /// is the whole table exactly as before.
     pub async fn tracking_sessions(
         &self,
@@ -1126,9 +1126,10 @@ impl Api {
     /// value records a magnitude. The session row mirrors only the
     /// positive case; the declared zero lives on the interval record.
     /// The name names the whole session, so a live edit could only
-    /// rewrite its history: it is fixed once a session runs (409), and
-    /// correcting it is a post-hoc move through
-    /// `tracking_rename_session`.
+    /// rewrite its history: it is fixed once a session runs (409). It is
+    /// a stamp of the definition's name rather than a label of its own,
+    /// so a mis-recorded session is corrected by moving it to another
+    /// definition (`tracking_reassign_session`), never by retyping.
     pub async fn tracking_session_config(
         &self,
         session_name: Option<String>,
@@ -1236,9 +1237,10 @@ impl Api {
     }
 
     /// Re-file an ended session under a different (active) definition:
-    /// the correction for a session recorded against the family the
-    /// picker happened to be holding. The stamped name follows only when
-    /// it was still the previous definition's auto-stamp.
+    /// the correction for a session recorded against whichever
+    /// definition the picker happened to be holding. The stamped name
+    /// always follows the reference, because it is a copy of the
+    /// definition's name rather than a label of its own.
     pub async fn tracking_reassign_session(
         &self,
         session_id: String,

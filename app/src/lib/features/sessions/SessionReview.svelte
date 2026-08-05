@@ -35,12 +35,9 @@
 	// not the window, so navigating away is itself a way out.
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key !== 'Escape') return;
-		// The chooser and the delete confirm are the inner layers: Escape
-		// closes those first, so it never discards more than was asked.
-		if (instances.reassignTargetId !== null) {
-			instances.reassignTargetId = null;
-			return;
-		}
+		// An armed delete is the inner layer: Escape disarms it first, so
+		// it never discards more than was asked. An open move menu is
+		// inner again and stops the press reaching here at all.
 		if (instances.confirmDeleteId !== null) {
 			instances.confirmDeleteId = null;
 			return;
@@ -64,7 +61,7 @@
 		out:surface={{ entering: false }}
 	>
 		<div class="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-6 px-6 py-10">
-			<!-- Header: which family, switchable in place, plus the exit -->
+			<!-- Header: which session, switchable in place, plus the exit -->
 			<div class="flex items-start justify-between gap-4">
 				<div class="flex min-w-0 flex-col gap-1.5">
 					<h2 class="text-2xl font-semibold tracking-tight text-text">Review sessions</h2>
@@ -111,7 +108,7 @@
 								{/each}
 
 								{#if model.retiredDefinitions.length > 0}
-									<!-- Retired families keep their recorded history reachable,
+									<!-- Retired sessions keep their recorded history reachable,
 										 listed apart so the switcher never implies they can be
 										 played again. -->
 									<p class="eyebrow mt-2 border-t border-border/50 px-2 pt-2">No longer played</p>
@@ -166,7 +163,13 @@
 				}}
 			/>
 
-			{#if instances.loading}
+			{#if model.definitionId === null}
+				<div class="panel p-6">
+					<p class="text-center text-sm text-text-tertiary">
+						Choose a session above to review what has been recorded under it.
+					</p>
+				</div>
+			{:else if instances.loading}
 				<p class="text-sm text-text-secondary">Loading sessions...</p>
 			{:else if instances.sessions.length === 0}
 				<div class="panel p-6">

@@ -5,9 +5,9 @@
  * composes over this state.
  *
  * Optionally scoped to one definition, which is how the review surface
- * reads a family: the scope narrows the server's count as well as its
- * rows, so the pager reports the family's own bounds. Unscoped, this is
- * the whole recorded history.
+ * reads it: the scope narrows the server's count as well as its rows, so
+ * the pager reports that definition's own bounds. Unscoped, this is the
+ * whole recorded history.
  *
  * Paging is two-layered by design (the ledger tab's shape): the server
  * side stays keyset (an opaque cursor grows the loaded window on demand
@@ -26,7 +26,7 @@ export const PAGE_SIZE = 10;
 export interface InstancesModelOptions {
 	/** The definition whose instances to read; null (or omitted) reads
 	 * the whole history. Read at fetch time, so a caller can switch the
-	 * family under review and reload. */
+	 * definition under review and reload. */
 	definitionId?: () => string | null;
 }
 
@@ -47,9 +47,8 @@ export function createInstancesModel(options: InstancesModelOptions = {}) {
 	let loadingDetail = $state(false);
 	let confirmDeleteId = $state<string | null>(null);
 	let deleting = $state(false);
-	// The row whose "move to another session" chooser is open, and the
-	// in-flight guard for the write itself.
-	let reassignTargetId = $state<string | null>(null);
+	// The in-flight guard for a re-file write. The chooser's own open
+	// state belongs to the menu that renders it.
 	let reassigning = $state(false);
 
 	// Pure pager over the loaded window: no search, category, or sort, so
@@ -62,7 +61,7 @@ export function createInstancesModel(options: InstancesModelOptions = {}) {
 	async function loadSessions() {
 		loading = true;
 		error = null;
-		// A reload is a fresh read of a possibly different family, so the
+		// A reload is a fresh read of a possibly different definition, so the
 		// pager and any open row go back to the top rather than pointing
 		// into the previous scope's window.
 		table.page = 0;
@@ -152,7 +151,7 @@ export function createInstancesModel(options: InstancesModelOptions = {}) {
 		confirmDeleteId = null;
 	}
 
-	/** Move an instance to another family. Under a scoped read the row
+	/** Move an instance to another definition. Under a scoped read the row
 	 * leaves this list, so it is dropped locally rather than refetched;
 	 * unscoped it stays, and only its stamped name may have moved, which
 	 * the reopened detail carries. */
@@ -178,19 +177,12 @@ export function createInstancesModel(options: InstancesModelOptions = {}) {
 			return false;
 		} finally {
 			reassigning = false;
-			reassignTargetId = null;
 		}
 	}
 
 	function collapseAll() {
 		expandedSessionId = null;
 		expandedDetail = null;
-	}
-
-	function expandAtIndex(idx: number) {
-		const target = table.pageRows[idx];
-		if (!target) return;
-		void toggleSession(target.id);
 	}
 
 	return {
@@ -244,12 +236,6 @@ export function createInstancesModel(options: InstancesModelOptions = {}) {
 		get deleting() {
 			return deleting;
 		},
-		get reassignTargetId() {
-			return reassignTargetId;
-		},
-		set reassignTargetId(value: string | null) {
-			reassignTargetId = value;
-		},
 		get reassigning() {
 			return reassigning;
 		},
@@ -262,7 +248,6 @@ export function createInstancesModel(options: InstancesModelOptions = {}) {
 		handleDelete,
 		reassign,
 		collapseAll,
-		expandAtIndex,
 	};
 }
 

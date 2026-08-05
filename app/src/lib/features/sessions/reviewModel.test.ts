@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 describe('openReview', () => {
-	it('opens on the given family and reads its instances, not the whole history', async () => {
+	it('opens on the given definition and reads its instances, not the whole history', async () => {
 		const model = reviewModel([definition(), definition({ id: '2', name: 'ARIS Dailies' })]);
 		await model.openReview('2');
 
@@ -56,7 +56,7 @@ describe('openReview', () => {
 		expect(mocked.getTrackingSessions).toHaveBeenCalledWith(undefined, undefined, '2');
 	});
 
-	it('switching family re-reads under the new scope', async () => {
+	it('switching definition re-reads under the new scope', async () => {
 		const model = reviewModel([definition(), definition({ id: '2', name: 'ARIS Dailies' })]);
 		await model.openReview('1');
 		await model.reviewDefinition('2');
@@ -65,7 +65,21 @@ describe('openReview', () => {
 		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith(undefined, undefined, '2');
 	});
 
-	it('re-selecting the family already under review does not re-read', async () => {
+	it('reads nothing at all when no definition is selected yet', async () => {
+		const model = reviewModel([definition()]);
+		await model.openReview(null);
+
+		expect(model.open).toBe(true);
+		expect(model.definitionId).toBeNull();
+		// Not "reads everything": an unscoped page would be the whole
+		// recorded history shown under one definition's heading, pager,
+		// and empty state.
+		expect(mocked.getTrackingSessions).not.toHaveBeenCalled();
+		// The switcher is still populated, so choosing one is the way out.
+		expect(model.activeDefinitions).toHaveLength(1);
+	});
+
+	it('re-selecting the definition already under review does not re-read', async () => {
 		const model = reviewModel([definition()]);
 		await model.openReview('1');
 		mocked.getTrackingSessions.mockClear();
@@ -75,8 +89,8 @@ describe('openReview', () => {
 	});
 });
 
-describe('the families it offers', () => {
-	it('lists retired families apart, and only those with recorded history', async () => {
+describe('the definitions it offers', () => {
+	it('lists retired definitions apart, and only those with recorded history', async () => {
 		const model = reviewModel([
 			definition(),
 			definition({ id: '2', name: 'Retired With History', isActive: false, instanceCount: 4 }),
@@ -85,12 +99,12 @@ describe('the families it offers', () => {
 		await model.openReview('1');
 
 		expect(model.activeDefinitions.map((d) => d.id)).toEqual(['1']);
-		// A retired family with no instances has nothing to review, so it
+		// A retired definition with no instances has nothing to review, so it
 		// is not offered at all rather than offered and empty.
 		expect(model.retiredDefinitions.map((d) => d.id)).toEqual(['2']);
 	});
 
-	it('offers only active families as move targets, never the one under review', async () => {
+	it('offers only active definitions as move targets, never the one under review', async () => {
 		const model = reviewModel([
 			definition(),
 			definition({ id: '2', name: 'ARIS Dailies' }),
@@ -101,7 +115,7 @@ describe('the families it offers', () => {
 		expect(model.moveTargets.map((d) => d.id)).toEqual(['2']);
 	});
 
-	it('offers no move target while reviewing a retired family with nothing else on offer', async () => {
+	it('offers no move target while reviewing a retired definition with nothing else on offer', async () => {
 		const model = reviewModel([
 			definition({ id: '3', name: 'Retired', isActive: false, instanceCount: 2 }),
 		]);
@@ -112,7 +126,7 @@ describe('the families it offers', () => {
 });
 
 describe('the writes', () => {
-	it('re-filing refreshes the family list, so both instance counts read true', async () => {
+	it('re-filing refreshes the definition list, so both instance counts read true', async () => {
 		const model = reviewModel([definition(), definition({ id: '2', name: 'ARIS Dailies' })]);
 		mocked.getTrackingSessions.mockResolvedValue({
 			sessions: [{ id: 's1' }],
@@ -131,7 +145,7 @@ describe('the writes', () => {
 		expect(mocked.getAllSessionDefinitions).toHaveBeenCalledTimes(1);
 	});
 
-	it('a refused re-file does not refresh the family list', async () => {
+	it('a refused re-file does not refresh the definition list', async () => {
 		const model = reviewModel([definition(), definition({ id: '2', name: 'ARIS Dailies' })]);
 		mocked.reassignSession.mockRejectedValueOnce(new Error('Session definition not found'));
 		await model.openReview('1');
@@ -141,7 +155,7 @@ describe('the writes', () => {
 		expect(mocked.getAllSessionDefinitions).not.toHaveBeenCalled();
 	});
 
-	it('deleting an instance refreshes the family list too', async () => {
+	it('deleting an instance refreshes the definition list too', async () => {
 		const model = reviewModel([definition()]);
 		mocked.deleteSession.mockResolvedValue(undefined);
 		await model.openReview('1');
@@ -158,12 +172,10 @@ describe('close', () => {
 		const model = reviewModel([definition()]);
 		await model.openReview('1');
 		model.instances.confirmDeleteId = 's1';
-		model.instances.reassignTargetId = 's1';
 
 		model.close();
 		expect(model.open).toBe(false);
 		expect(model.instances.confirmDeleteId).toBeNull();
-		expect(model.instances.reassignTargetId).toBeNull();
 		expect(model.instances.expandedSessionId).toBeNull();
 	});
 });

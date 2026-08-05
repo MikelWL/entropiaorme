@@ -1,8 +1,8 @@
 /**
- * The review surface's state: which family is under review, the families
- * it can switch between, and the morph lifecycle. The instance list
- * itself is the instances model, composed here with this surface's
- * definition as its scope.
+ * The review surface's state: which definition is under review, the
+ * definitions it can switch between, and the morph lifecycle. The
+ * instance list itself is the instances model, composed here with this
+ * surface's definition as its scope.
  *
  * Review is management, not analysis. Its purpose is the one the record
  * is actually consulted for: a figure from the session just played looks
@@ -10,7 +10,7 @@
  * deleted. Comparison, ranking, and per-instance economics belong to the
  * analytics surfaces and deliberately do not appear here.
  *
- * The families offered include the soft-deleted ones. Their instances
+ * The definitions offered include the soft-deleted ones. Their instances
  * are real recorded play, and a definition that stopped being offered
  * would otherwise take its whole history out of reach; they are shown
  * apart, and cannot receive a re-filed instance.
@@ -37,17 +37,17 @@ export function createReviewModel(deps: ReviewModelDeps) {
 
 	const instances = deps.createInstances(() => definitionId);
 
-	/** The family under review, which may be a soft-deleted one. */
+	/** The definition under review, which may be a soft-deleted one. */
 	const definition = $derived(definitions.find((entry) => entry.id === definitionId) ?? null);
 
-	/** The families that can still take a re-filed instance: everything
-	 * on offer except the one being reviewed. */
+	/** The definitions that can still take a re-filed instance:
+	 * everything on offer except the one being reviewed. */
 	const moveTargets = $derived(
 		definitions.filter((entry) => entry.isActive && entry.id !== definitionId),
 	);
 
-	/** Retired families are listed apart, after the offered ones, so the
-	 * switcher never implies they can be played again. */
+	/** Retired definitions are listed apart, after the offered ones, so
+	 * the switcher never implies they can be played again. */
 	const activeDefinitions = $derived(definitions.filter((entry) => entry.isActive));
 	const retiredDefinitions = $derived(
 		definitions.filter((entry) => !entry.isActive && entry.instanceCount > 0),
@@ -65,17 +65,25 @@ export function createReviewModel(deps: ReviewModelDeps) {
 		}
 	}
 
-	/** Open the surface on a family, defaulting to the one the dashboard
-	 * is already sitting on. The instance list loads with it: the whole
-	 * point of arriving here is that a session just played looked wrong,
-	 * so its family's instances are what should already be on screen. */
+	/** Open the surface on a definition, which is the one the dashboard is
+	 * already sitting on. Its instances load with it: the whole point of
+	 * arriving here is that a session just played looked wrong, so what
+	 * was recorded under it should already be on screen.
+	 *
+	 * A null id means the dashboard had no selection yet (the snapshot
+	 * has not landed). Nothing is read then: an unscoped read would put
+	 * the entire recorded history under a heading, a pager and an empty
+	 * state that all claim to describe one definition. The surface asks
+	 * for a choice instead, and its own switcher is the answer. */
 	async function openReview(initialDefinitionId: string | null) {
 		definitionId = initialDefinitionId;
 		open = true;
-		await Promise.all([loadDefinitions(), instances.loadSessions()]);
+		const reads = [loadDefinitions()];
+		if (initialDefinitionId !== null) reads.push(instances.loadSessions());
+		await Promise.all(reads);
 	}
 
-	/** Switch the family under review, reloading its instances. */
+	/** Switch the definition under review, reloading its instances. */
 	async function reviewDefinition(nextId: string) {
 		if (nextId === definitionId) return;
 		definitionId = nextId;
@@ -86,18 +94,17 @@ export function createReviewModel(deps: ReviewModelDeps) {
 		open = false;
 		instances.collapseAll();
 		instances.confirmDeleteId = null;
-		instances.reassignTargetId = null;
 	}
 
 	/** Re-file an instance, then refresh the definition list so both
-	 * families' instance counts read true. */
+	 * definitions' instance counts read true. */
 	async function reassign(sessionId: string, targetId: string) {
 		const moved = await instances.reassign(sessionId, targetId);
 		if (moved) await loadDefinitions();
 		return moved;
 	}
 
-	/** Deleting an instance changes its family's count too. */
+	/** Deleting an instance changes its definition's count too. */
 	async function remove(sessionId: string) {
 		await instances.handleDelete(sessionId);
 		await loadDefinitions();

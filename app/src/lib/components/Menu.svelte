@@ -132,6 +132,7 @@
 			e.preventDefault();
 			toggle();
 		} else if (e.key === 'Escape' && open) {
+			e.stopPropagation();
 			close(true);
 		}
 	}
@@ -160,6 +161,10 @@
 				break;
 			case 'Escape':
 				e.preventDefault();
+				// The menu is the innermost layer: a surface listening on
+				// the window would otherwise close itself on the same
+				// press, dismissing far more than was asked for.
+				e.stopPropagation();
 				close(true);
 				break;
 			case 'Tab':

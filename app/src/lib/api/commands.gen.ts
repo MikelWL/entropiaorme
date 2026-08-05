@@ -2280,8 +2280,8 @@ export interface SessionQuestLinkSuggestion {
 
 /**
  * The post-hoc re-file result: the definition the session now belongs
- * to, and the name it carries afterwards (restamped with the new
- * definition's, or the hand-typed one left as it was).
+ * to, and the name it now carries, which is always the new
+ * definition's (the stamp follows the reference unconditionally).
  */
 export interface SessionReassignResult {
 	sessionId: string;

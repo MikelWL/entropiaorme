@@ -306,21 +306,19 @@ describe('handleDelete', () => {
 	});
 });
 
-describe('guide row control', () => {
-	it('expands the row at a page-local index and collapses all', async () => {
+describe('collapseAll', () => {
+	it('closes the open row and drops its loaded detail', async () => {
 		mocked.getTrackingSessions.mockResolvedValue(page([session(), session({ id: 's2' })]));
 		mocked.getSessionDetail.mockResolvedValue(detail());
 		const model = createInstancesModel();
 		await model.loadSessions();
 
-		model.expandAtIndex(1);
-		await vi.waitFor(() => expect(model.expandedSessionId).toBe('s2'));
+		await model.toggleSession('s2');
+		expect(model.expandedSessionId).toBe('s2');
 
 		model.collapseAll();
 		expect(model.expandedSessionId).toBeNull();
-
-		model.expandAtIndex(99);
-		expect(model.expandedSessionId).toBeNull();
+		expect(model.expandedDetail).toBeNull();
 	});
 });
 
@@ -336,7 +334,7 @@ describe('the definition scope', () => {
 		expect(mocked.getTrackingSessions).toHaveBeenLastCalledWith('cursor-1', undefined, '7');
 	});
 
-	it('reads the scope at fetch time, so switching family reloads the new one', async () => {
+	it('reads the scope at fetch time, so switching definition reloads the new one', async () => {
 		let current = '7';
 		mocked.getTrackingSessions.mockResolvedValue(page([session()]));
 		const model = createInstancesModel({ definitionId: () => current });

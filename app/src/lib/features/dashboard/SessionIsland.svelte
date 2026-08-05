@@ -25,9 +25,9 @@
 		/** The sessions model; the route hosts it (and the authoring
 		 * environment) so the surface can replace the whole dashboard. */
 		definitions: DefinitionsModel;
-		/** Open the review surface on a definition. Null reviews whatever
-		 * the surface last had, which is only reachable before a
-		 * selection exists. */
+		/** Open the review surface on a definition. Null means no
+		 * selection has landed yet: the surface reads nothing and asks
+		 * for one rather than showing every session ever recorded. */
 		onReview: (definitionId: string | null) => void;
 	} = $props();
 

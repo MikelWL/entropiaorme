@@ -1559,8 +1559,8 @@ async fn seed_instances(db: &Db, prefix: &str, definition_id: Option<i64>, count
     }
 }
 
-/// The scope narrows the rows AND the count: a pager over one family
-/// must report that family's bounds, not the whole table's.
+/// The scope narrows the rows AND the count: a pager over one
+/// definition must report its bounds, not the whole table's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_session_list_scopes_to_one_definitions_instances() {
     let dir = tempfile::tempdir().unwrap();
@@ -1593,7 +1593,7 @@ async fn the_session_list_scopes_to_one_definitions_instances() {
 }
 
 /// The scope composes with the keyset cursor rather than being dropped
-/// by it: paging a family must not widen back to every session.
+/// by it: paging one definition must not widen back to every session.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_scoped_page_keeps_its_scope_across_the_cursor() {
     let dir = tempfile::tempdir().unwrap();
@@ -1652,7 +1652,7 @@ async fn re_filing_moves_the_instance_and_restamps_its_name() {
     assert_eq!(result.definition_id, target.id);
     assert_eq!(result.session_name, Some("Carabok Skilling".to_string()));
 
-    // The instance now reads under its new family, and only there.
+    // The instance now reads under its new definition, and only there.
     let scoped = api
         .tracking_sessions(None, None, Some(target_id))
         .await
@@ -1671,7 +1671,7 @@ async fn re_filing_moves_the_instance_and_restamps_its_name() {
 /// A free-text name from before definitions existed is replaced, not
 /// preserved: retiring the old naming scheme is the point of the move,
 /// and keeping the legacy string would carry the thing being retired
-/// into the family that replaced it.
+/// into the definition that replaced it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn re_filing_replaces_a_legacy_free_text_name() {
     let dir = tempfile::tempdir().unwrap();
@@ -1708,7 +1708,7 @@ async fn re_filing_replaces_a_legacy_free_text_name() {
 }
 
 /// A soft-deleted definition takes no new instances: filing into a
-/// family nothing offers any more is the one arrangement the review
+/// definition nothing offers any more is the one arrangement the review
 /// surface could not show honestly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn re_filing_refuses_a_soft_deleted_definition() {
@@ -1748,7 +1748,7 @@ async fn re_filing_refuses_a_soft_deleted_definition() {
 
 /// The instances of a soft-deleted definition stay reachable: the
 /// listing that asks for the inactive ones is how the review surface
-/// finds recorded play whose family has been retired.
+/// finds recorded play whose definition has been retired.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_soft_deleted_definition_keeps_its_instances_reachable() {
     let dir = tempfile::tempdir().unwrap();

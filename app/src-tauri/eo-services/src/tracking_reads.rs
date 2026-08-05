@@ -983,17 +983,17 @@ pub async fn build_loot_item_edit_response(
 
 /// Re-file an ended session under a different definition: the recorded
 /// correction for the session started while the picker still held
-/// yesterday's family, and the only post-hoc route between families.
+/// yesterday's definition, and the only post-hoc route between them.
 ///
 /// The target must be an ACTIVE definition. Filing into a soft-deleted
-/// one would put an instance in a family nothing offers any more, which
-/// is the one arrangement the review surface could not show honestly;
-/// filing *out* of one is exactly how such an instance is rescued.
+/// one would put an instance under a definition nothing offers any more,
+/// which is the one arrangement the review surface could not show
+/// honestly; filing *out* of one is how such an instance is rescued.
 ///
 /// The stamped `session_name` always follows the reference. Identity
 /// comes from the definition, so the stamp is a copy of its name rather
 /// than a label of its own: there is nothing per-session to preserve,
-/// and a stamp left behind would read as the wrong family.
+/// and a stamp left behind would name the wrong definition.
 pub async fn reassign_session_definition_impl(
     db: &Db,
     session_id: &str,
@@ -1027,7 +1027,7 @@ pub async fn reassign_session_definition_impl(
             )?;
             // The summary cache carries the facet beside its aggregates;
             // leaving it to the next rebuild would let the comparison
-            // axis read the old family meanwhile.
+            // axis read the old definition meanwhile.
             tx.execute(
                 "UPDATE session_summaries SET session_name = ? WHERE session_id = ?",
                 rusqlite::params![target_name, sid],

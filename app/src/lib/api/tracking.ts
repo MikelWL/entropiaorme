@@ -77,10 +77,9 @@ export const deleteSession = commands.trackingSessionDelete;
 export const deactivateLootItem = commands.trackingLootItemDeactivate;
 export const activateLootItem = commands.trackingLootItemActivate;
 /** Re-file an ended session under a different (active) definition: the
- * correction for a session recorded against whichever family the picker
- * happened to be holding. The stamped name follows the move only when it
- * was still the previous definition's auto-stamp, so a hand-typed name
- * survives. */
+ * correction for a session recorded against whichever one the picker
+ * happened to be holding. The stamped name always follows the move: it
+ * is a copy of the definition's name, not a label of its own. */
 export async function reassignSession(sessionId: string, definitionId: string) {
 	return commands.trackingReassignSession(sessionId, Number(definitionId));
 }
@@ -119,7 +118,7 @@ const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTr
 
 /** One keyset page of sessions plus the cursor for the next page (null on
  * the last page). `definitionId` narrows the page to one definition's
- * instances, which is how the review surface reads a family; omitted, the
+ * instances, which is how the review surface reads one; omitted, the
  * page is the whole history. */
 export async function getTrackingSessions(cursor?: string, limit?: number, definitionId?: string) {
 	return readSessionsPage(
