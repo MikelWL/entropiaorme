@@ -33,7 +33,7 @@
 	// the dashboard adds only its playlist-selection view over them. The stats
 	// grid and the guide-demo plumbing are dashboard feature models.
 	const questsModel = createQuestsModel();
-	const statsGrid = createStatsGridModel();
+	const statsGrid = createStatsGridModel(() => status?.lifetime != null);
 	const guideDemo = createGuideDemoModel(statsGrid);
 
 	// The sessions surface: the island renders the picker; the stage

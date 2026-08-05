@@ -977,6 +977,33 @@ export interface LedgerSummary {
 }
 
 /**
+ * One definition's lifetime figures: the aggregate over every ended
+ * instance recorded under it, plus the in-flight instance when one is
+ * running under that same definition. The counterpart to the headline
+ * figures of the session in play.
+ * 
+ * `net` and `return_rate` are derived here, from the summed parts, so
+ * the rate is the ratio of the totals and never the mean of the
+ * per-instance rates.
+ * 
+ * `cycled` rides the summary's basis, which includes the armour and
+ * dangling costs a session only acquires once it ends. An in-flight
+ * instance has not picked those up yet, so the family figure is
+ * legitimately the more complete of the two rather than inconsistent
+ * with it.
+ */
+export interface LifetimeStats {
+	/** How many instances these figures span, so a surface can disclose the span rather than let a thin aggregate read as a deep one. Counts exactly the sessions summed: one started and abandoned without cycling anything is in neither. */
+	instanceCount: number;
+	cycled: number;
+	lootTt: number;
+	net: number;
+	returnRate: number;
+	pes: number;
+	durationSeconds: number;
+}
+
+/**
  * One aggregated loot line.
  */
 export interface LootEntry {
@@ -2508,6 +2535,8 @@ export interface TrackingSnapshot {
 	currentActivity?: ToolActivity | null;
 	/** The Activities control's strip-level readout: whether it appears at all, the ready cue, and the standing set. Carried on every frame, idle included, over the definition a start would stamp, so picking a session shows what it will offer rather than making the surface appear only once tracking begins. The standing set is necessarily empty while idle. */
 	activities?: ActivitySummary | null;
+	/** The lifetime figures of the definition this session runs (or would run) under, for the instance-versus-family flip. Carried on every frame, idle included, over the definition a start would stamp, so the flip is available while picking a session rather than only once tracking begins. Absent when no definition is in force: a legacy or unattached session has no family to flip to, and the surfaces read that absence as "offer no control". */
+	lifetime?: LifetimeStats | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	recentEvents?: RecentEvent[] | null;
 	session_id?: string | null;

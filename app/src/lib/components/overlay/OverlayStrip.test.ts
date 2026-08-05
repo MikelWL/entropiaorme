@@ -12,15 +12,26 @@ import { NO_DATA } from '$lib/utils/format';
 // stub the tests assign before each render (vi.hoisted so the mock factory
 // can reference it before top-level imports initialise). The stats registry
 // is real: the pill assertions exercise the actual render functions.
-const { overlayStats } = vi.hoisted(() => {
+const { overlayStats, statsScope, setStatsScope } = vi.hoisted(() => {
 	type Pref = { id: string; enabled: boolean };
 	return {
 		overlayStats: { current: [] as Pref[] },
+		statsScope: { current: 'instance' as 'instance' | 'lifetime' },
+		setStatsScope: vi.fn(),
 	};
 });
 
-vi.mock('$lib/statsCustomisation.svelte', () => ({
+// Only the state seam is stubbed; `scopedStats` stays real so the pill
+// assertions exercise the actual instance/lifetime filter.
+vi.mock('$lib/statsCustomisation.svelte', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/statsCustomisation.svelte')>()),
 	overlayStats,
+}));
+
+// The scope module is the other Tauri-preference seam.
+vi.mock('$lib/statsScope.svelte', () => ({
+	statsScope,
+	setStatsScope,
 }));
 
 import type { TrackingLive, TrackingStatus } from '$lib/api';

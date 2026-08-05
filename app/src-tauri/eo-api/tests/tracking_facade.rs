@@ -225,7 +225,10 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
     // even with nothing configured: an unconfigured install resolves to
     // the protected default, so the readout shows what a start would
     // stamp, and the Activities block rides idle too: the seeded default
-    // rosters nothing, so it reports no surface.
+    // rosters nothing, so it reports no surface. The lifetime block rides
+    // idle for the same reason, reading all-zero over a definition that
+    // has never been run: a family with no history still HAS a family,
+    // so the flip is offered and honestly reports an empty span.
     let snapshot = api.tracking_snapshot().await.unwrap();
     assert_eq!(
         serde_json::to_string(&snapshot).unwrap(),
@@ -234,6 +237,8 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
          \"sessionName\":\"Default Tracking\",\"sessionDefinitionId\":\"1\",\
          \"activities\":{\"visible\":false,\"adHocSegments\":false,\"readyCount\":0,\
          \"active\":[]},\
+         \"lifetime\":{\"instanceCount\":0,\"cycled\":0.0,\"lootTt\":0.0,\"net\":0.0,\
+         \"returnRate\":0.0,\"pes\":0.0,\"durationSeconds\":0.0},\
          \"trifectaAttribution\":{\"activePresetId\":\"default\",\
          \"presetName\":\"Default\",\"presets\":[{\"id\":\"default\",\"name\":\"Default\"}],\
          \"smallWeapon\":null,\"bigWeapon\":null,\"healTool\":null},\"recentEvents\":[]}"
@@ -1471,4 +1476,63 @@ async fn a_rostered_signal_quest_declares_from_cold_and_survives_session_boundar
         .await
         .unwrap();
     assert_eq!(activity_names(&standing.active), vec!["Hyperion Boss 1"]);
+}
+
+/// The lifetime block: derived from the summed parts, folding the
+/// in-flight instance in, and absent entirely when no definition is in
+/// force.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_lifetime_block_sums_the_family_and_folds_the_live_instance() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = make_api_db(
+        dir.path(),
+        false,
+        Some("{\"hotbar_hooks_enabled\": true, \"hotbar\": {\"1\": 1}}"),
+    )
+    .await;
+
+    // Two ended instances of the seeded protected default (id 1), of
+    // very different sizes: 100 cycled returning 60, and 2 cycled
+    // returning 10.
+    for (id, started, ended, cost, loot) in [
+        ("past-1", 1000.0, 11_800.0, 100.0, 60.0),
+        ("past-2", 20_000.0, 20_240.0, 2.0, 10.0),
+    ] {
+        db.with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, armour_cost, definition_id) \
+                 VALUES (?1, ?2, ?3, 0, ?4, 1)",
+                rusqlite::params![id, started, ended, cost],
+            )?;
+            conn.execute(
+                "INSERT INTO kills (id, session_id, mob_name, timestamp, loot_total_ped) \
+                 VALUES (?1, ?2, 'Atrox', ?3, ?4)",
+                rusqlite::params![format!("{id}-k"), id, started + 1.0, loot],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    let lifetime = &value["lifetime"];
+    assert_eq!(lifetime["instanceCount"], 2);
+    assert_eq!(lifetime["cycled"], 102.0);
+    assert_eq!(lifetime["lootTt"], 70.0);
+    assert_eq!(lifetime["net"], -32.0);
+    // 70/102, the ratio of the sums. The mean of the two instance rates
+    // (0.6 and 5.0) would read 2.8: an accounting lie built out of four
+    // minutes of luck.
+    assert_eq!(lifetime["returnRate"], 0.6863);
+
+    // Starting a session folds the in-flight instance into the family:
+    // a lifetime that excluded the session being watched would be a
+    // trap. It has cycled nothing yet, so only the span moves.
+    api.tracking_start().await.unwrap();
+    let value = serde_json::to_value(api.tracking_snapshot().await.unwrap()).unwrap();
+    assert_eq!(value["status"], "active");
+    assert_eq!(value["lifetime"]["instanceCount"], 3);
+    assert_eq!(value["lifetime"]["cycled"], 102.0);
 }

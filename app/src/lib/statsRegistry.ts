@@ -1,4 +1,4 @@
-import type { TrackingStatus } from './api';
+import type { LifetimeStats, TrackingStatus } from './api';
 import { formatMultiplier, formatPed, formatPercent } from './utils/format';
 
 export type StatId =
@@ -42,12 +42,51 @@ export type StatDef = {
 	defaultEnabled: boolean;
 	defaultOverlayEnabled?: boolean;
 	render: (status: TrackingStatus | null) => StatRender;
+	/**
+	 * Render the stat over a session family's lifetime aggregate rather
+	 * than the instance in play.
+	 *
+	 * The presence of this function IS the declaration that the stat
+	 * has a lifetime form, which is why there is no separate list of
+	 * lifetime-capable ids to drift out of step with the registry. A
+	 * stat earns one only if it is a sum of per-instance totals or a
+	 * ratio of two such sums: that is what makes a lifetime figure mean
+	 * what it says. A "last" value (last loot, last multiplier) has no
+	 * lifetime form at all, and an average over per-event data we do
+	 * not aggregate per instance (crit rate, DPS, average multiplier)
+	 * cannot be rebuilt from the summed parts.
+	 */
+	renderLifetime?: (lifetime: LifetimeStats) => StatRender;
 };
 
 const isActive = (s: TrackingStatus | null): s is TrackingStatus => s?.status === 'active';
 
 const PLAIN = 'text-text';
 const EMPTY: StatRender = { value: '—', color: PLAIN };
+
+/**
+ * Render a lifetime figure only when there are instances behind it.
+ *
+ * A family nobody has run yet aggregates to zero on every axis, and a
+ * rendered `0.00` claims a measurement that was never taken. An empty
+ * reading says so instead.
+ */
+function overSpan(
+	lifetime: LifetimeStats,
+	render: (lifetime: LifetimeStats) => StatRender,
+): StatRender {
+	return lifetime.instanceCount > 0 ? render(lifetime) : EMPTY;
+}
+
+/** A net figure reads the same either side of the flip: signed, and
+ * coloured by which side of break-even it falls. */
+function signedNet(net: number): StatRender {
+	const sign = net >= 0 ? '+' : '';
+	return {
+		value: `${sign}${formatPed(net)}`,
+		color: net >= 0 ? 'text-positive' : 'text-negative',
+	};
+}
 
 function elapsedSeconds(status: TrackingStatus): number | null {
 	if (!status.started_at) return null;
@@ -63,6 +102,8 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		defaultEnabled: true,
 		render: (status) =>
 			isActive(status) ? { value: formatPed(status.cost ?? 0), color: PLAIN } : EMPTY,
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPed(l.cycled), color: PLAIN })),
 	},
 	loot_tt: {
 		id: 'loot_tt',
@@ -70,6 +111,8 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		defaultEnabled: true,
 		render: (status) =>
 			isActive(status) ? { value: formatPed(status.returns ?? 0), color: PLAIN } : EMPTY,
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPed(l.lootTt), color: PLAIN })),
 	},
 	net: {
 		id: 'net',
@@ -79,12 +122,9 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		render: (status) => {
 			if (!isActive(status)) return EMPTY;
 			const net = (status.returns ?? 0) - (status.cost ?? 0);
-			const sign = net >= 0 ? '+' : '';
-			return {
-				value: `${sign}${formatPed(net)}`,
-				color: net >= 0 ? 'text-positive' : 'text-negative',
-			};
+			return signedNet(net);
 		},
+		renderLifetime: (lifetime) => overSpan(lifetime, (l) => signedNet(l.net)),
 	},
 	rate: {
 		id: 'rate',
@@ -92,6 +132,10 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		defaultEnabled: true,
 		render: (status) =>
 			isActive(status) ? { value: formatPercent(status.returnRate ?? 0), color: PLAIN } : EMPTY,
+		// Already the ratio of the summed parts, computed backend-side;
+		// never the mean of the per-instance rates.
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPercent(l.returnRate), color: PLAIN })),
 	},
 	pes: {
 		id: 'pes',
@@ -99,6 +143,8 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		defaultEnabled: false,
 		render: (status) =>
 			isActive(status) ? { value: formatPed(status.pes ?? 0), color: PLAIN } : EMPTY,
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) => ({ value: formatPed(l.pes), color: PLAIN })),
 	},
 	pes_per_100: {
 		id: 'pes_per_100',
@@ -110,6 +156,13 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 			if (cost <= 0) return EMPTY;
 			return { value: (((status.pes ?? 0) / cost) * 100).toFixed(2), color: PLAIN };
 		},
+		// A ratio of two sums that both flip, so it flips with them:
+		// leaving it on the instance beside a lifetime PES and a
+		// lifetime Cycled would be the arbitrary choice.
+		renderLifetime: (lifetime) =>
+			overSpan(lifetime, (l) =>
+				l.cycled > 0 ? { value: ((l.pes / l.cycled) * 100).toFixed(2), color: PLAIN } : EMPTY,
+			),
 	},
 	latest_kill_loot: {
 		id: 'latest_kill_loot',
@@ -277,6 +330,33 @@ export const ALL_STAT_IDS: StatId[] = [
 	'hofs_count',
 	'uses_tree',
 ];
+
+/**
+ * The stats that have a lifetime form, derived from the registry itself
+ * so it cannot drift: a stat is lifetime-capable exactly when its
+ * definition declares a `renderLifetime`.
+ *
+ * Render paths ask `isLifetimeCapable` per stat rather than reading this
+ * list. It exists as the enumerable form of the same fact, which is what
+ * lets a test assert the capable set as a whole and catch a stat that
+ * gained or lost a lifetime render without anyone meaning it to.
+ */
+export const LIFETIME_STAT_IDS: StatId[] = ALL_STAT_IDS.filter(
+	(id) => STAT_DEFS[id].renderLifetime !== undefined,
+);
+
+/**
+ * What lifetime mode falls back to when a user's customised selection
+ * contains nothing with a lifetime form. Rendering an empty grid would
+ * read as broken, so the flip shows the four headline figures instead.
+ * Preferences are untouched either way: this is what gets DRAWN, never
+ * what gets stored.
+ */
+export const HEADLINE_LIFETIME_STAT_IDS: StatId[] = ['cycled', 'loot_tt', 'net', 'rate'];
+
+export function isLifetimeCapable(id: string): boolean {
+	return getStatDef(id)?.renderLifetime !== undefined;
+}
 
 export function getStatDef(id: string): StatDef | null {
 	// Own-property guard: without it, prototype-chain keys ('__proto__',

@@ -31,6 +31,7 @@ export type {
 	AuctionExpireInput,
 	AuctionListing,
 	AuctionListingInput,
+	LifetimeStats,
 	ManualMobSuggestion,
 	MarketBreakEven,
 	MarketBreakEvenCell,

@@ -10,6 +10,7 @@
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 	import { hydrate } from '$lib/stores/trackingStore.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
+	import { setStatsScope } from '$lib/statsScope.svelte';
 	import { describeError } from '$lib/view/errorState';
 	import type { StatsGridModel } from './statsGridModel.svelte';
 
@@ -26,6 +27,53 @@
 	} = $props();
 
 	let elapsedSeconds = $state(0);
+
+	// The family behind the flip. Present on every frame, idle included,
+	// over the definition a start would stamp; absent means this session
+	// belongs to no family, and the control is not offered at all.
+	const lifetime = $derived(status?.lifetime ?? null);
+	const showingLifetime = $derived(statsGrid.scope === 'lifetime' && lifetime !== null);
+
+	/**
+	 * The radio-group keyboard contract the control's own role promises:
+	 * arrows move the selection, and only the selected option sits in
+	 * the tab order (the `tabindex` binding below). With two options an
+	 * arrow in any direction is a flip.
+	 */
+	function handleScopeKeydown(event: KeyboardEvent) {
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+		event.preventDefault();
+		const next = showingLifetime ? 'instance' : 'lifetime';
+		void setStatsScope(next).then(() => {
+			// Selection moves focus with it, or the roving tabindex would
+			// strand focus on an option that is no longer reachable by Tab.
+			const group = (event.currentTarget as HTMLElement | null)?.closest(
+				'[data-testid="stats-scope-toggle"]'
+			);
+			group?.querySelector<HTMLButtonElement>('[tabindex="0"]')?.focus();
+		});
+	}
+
+	const SCOPE_CHOICES = [
+		{
+			value: 'instance' as const,
+			label: 'This session',
+			hint: 'The session in play on its own.'
+		},
+		{
+			value: 'lifetime' as const,
+			label: 'Lifetime',
+			hint: 'Every session recorded under this definition, added together.'
+		}
+	];
+
+	/** The span the lifetime figures cover, stated so a thin aggregate
+	 * cannot read as a deep one. */
+	const spanLabel = $derived.by(() => {
+		const count = lifetime?.instanceCount ?? 0;
+		if (count === 0) return 'no sessions yet';
+		return count === 1 ? 'across 1 session' : `across ${count} sessions`;
+	});
 
 	function openAuthoring(definitionId: string | null) {
 		const editing =
@@ -91,24 +139,85 @@
 						{status.sessionName}
 					</span>
 				{/if}
+				<!-- Under the lifetime scope this reads the family's summed
+					 duration, so the time beside the figures is the time
+					 those figures cover. -->
 				<span
 					class="text-xs text-text-tertiary tabular-nums tracking-wider"
 					data-testid="session-elapsed"
 				>
-					{formatElapsed(elapsedSeconds)}
+					{formatElapsed(showingLifetime && lifetime ? lifetime.durationSeconds : elapsedSeconds)}
 				</span>
+				{#if showingLifetime}
+					<span class="text-xs text-text-tertiary truncate" data-testid="lifetime-span">
+						{spanLabel}
+					</span>
+				{/if}
 			</div>
 		{:else}
 			<!-- At rest the island is titled by the session it will run as;
 				 the stats below already read @Rest, so nothing states it twice. -->
-			<DefinitionPicker
-				model={definitions}
-				selectedId={selectedDefinitionId}
-				onOpenAuthoring={openAuthoring}
-			/>
+			<div class="flex items-center gap-3 min-w-0">
+				<DefinitionPicker
+					model={definitions}
+					selectedId={selectedDefinitionId}
+					onOpenAuthoring={openAuthoring}
+				/>
+				{#if showingLifetime && lifetime}
+					<!-- Duration is a figure like any other, so it reads only
+						 once there are instances behind it; below that the
+						 span label carries the empty case on its own. -->
+					{#if lifetime.instanceCount > 0}
+						<span class="text-xs text-text-tertiary tabular-nums tracking-wider">
+							{formatElapsed(lifetime.durationSeconds)}
+						</span>
+					{/if}
+					<span class="text-xs text-text-tertiary truncate" data-testid="lifetime-span">
+						{spanLabel}
+					</span>
+				{/if}
+			</div>
 		{/if}
 
 		<div class="flex items-center gap-2">
+			<!-- The instance/family flip. Both choices stay on screen so
+				 the control reads as a choice rather than as a button
+				 whose label might be its state or its action. Offered
+				 only when there is a family to flip to: a session
+				 belonging to no definition gets no control at all. -->
+			{#if lifetime}
+				<div class="flex items-center gap-2">
+					<span class="text-xs text-text-secondary whitespace-nowrap" id="stats-scope-label">
+						Show stats for:
+					</span>
+					<div
+						role="radiogroup"
+						aria-labelledby="stats-scope-label"
+						data-testid="stats-scope-toggle"
+						class="inline-flex items-center rounded-md border border-border/60 p-0.5 gap-0.5"
+					>
+						{#each SCOPE_CHOICES as choice (choice.value)}
+							{@const selected = showingLifetime === (choice.value === 'lifetime')}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={selected}
+								tabindex={selected ? 0 : -1}
+								title={choice.hint}
+								onclick={() => setStatsScope(choice.value)}
+								onkeydown={handleScopeKeydown}
+								class="text-xs px-2 py-1 rounded whitespace-nowrap
+									transition-colors duration-[var(--duration-base)]
+									{selected
+									? 'bg-accent/10 text-accent font-medium'
+									: 'text-text-secondary hover:text-text hover:bg-base/60'}"
+							>
+								{choice.label}
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
 			{#if !isActive}
 				<Button size="sm" disabled={starting} onclick={handleStart}>
 					{#snippet children()}{starting ? 'Starting...' : 'Start'}{/snippet}
@@ -137,7 +246,11 @@
 	>
 		{#each statsGrid.enabledStats as pref, i (pref.id)}
 			{@const def = getStatDef(pref.id)}
-			{@const r = def ? def.render(status) : { value: '\u2014', color: 'text-text-tertiary' }}
+			{@const r = def
+				? showingLifetime && def.renderLifetime && lifetime
+					? def.renderLifetime(lifetime)
+					: def.render(status)
+				: { value: '\u2014', color: 'text-text-tertiary' }}
 			{@const isDragged = statsGrid.dragFilteredIndex === i}
 			<div
 				animate:flip={{ duration: shouldSettleInstantly() ? 0 : 240, easing: quintOut }}
@@ -145,7 +258,8 @@
 				role="group"
 				aria-label={def?.label ?? pref.id}
 				class="relative rounded-md border border-border/60 bg-base/40 px-3 py-2.5 flex flex-col gap-1
-					min-w-0 cursor-grab select-none touch-none
+					min-w-0 select-none touch-none
+					{statsGrid.reorderable ? 'cursor-grab' : ''}
 					transition-[opacity,box-shadow,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
 					before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit]
 					before:[box-shadow:inset_0_1px_0_0_rgba(255,255,255,0.03)]
