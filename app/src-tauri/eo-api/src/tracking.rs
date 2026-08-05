@@ -36,9 +36,11 @@ use eo_services::config_service::{active_trifecta_preset, load_config_readonly, 
 use eo_services::db::Db;
 use eo_services::mob_lookup_service::{python_whitespace, MobLookupService};
 use eo_services::session_definitions::SessionDefinitionService;
+use eo_services::tracking_models::ActiveSessionView;
 use eo_services::time::{local_isoformat, naive_to_epoch};
 use eo_services::tracker::{HuntTracker, TrackerCommandError};
 use eo_services::trifecta_service::{validate_trifecta, TrifectaPreset};
+use eo_wire::normalizer::round_half_even;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -54,7 +56,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 43] = [
+const SNAPSHOT_FIELDS: [&str; 44] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -67,6 +69,7 @@ const SNAPSHOT_FIELDS: [&str; 43] = [
     "currentTool",
     "currentActivity",
     "activities",
+    "lifetime",
     "trifectaAttribution",
     "recentEvents",
     "session_id",
@@ -461,6 +464,36 @@ pub struct Warning {
     pub value: f64,
 }
 
+/// One definition's lifetime figures: the aggregate over every ended
+/// instance recorded under it, plus the in-flight instance when one is
+/// running under that same definition. The counterpart to the headline
+/// figures of the session in play.
+///
+/// `net` and `return_rate` are derived here, from the summed parts, so
+/// the rate is the ratio of the totals and never the mean of the
+/// per-instance rates.
+///
+/// `cycled` rides the summary's basis, which includes the armour and
+/// dangling costs a session only acquires once it ends. An in-flight
+/// instance has not picked those up yet, so the family figure is
+/// legitimately the more complete of the two rather than inconsistent
+/// with it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LifetimeStats {
+    /// How many instances these figures span, so a surface can disclose
+    /// the span rather than let a thin aggregate read as a deep one.
+    /// Counts exactly the sessions summed: one started and abandoned
+    /// without cycling anything is in neither.
+    pub instance_count: i64,
+    pub cycled: f64,
+    pub loot_tt: f64,
+    pub net: f64,
+    pub return_rate: f64,
+    pub pes: f64,
+    pub duration_seconds: f64,
+}
+
 /// The consolidated dashboard hydration snapshot: the polymorphic idle /
 /// active shape, in the model's declaration order. Every field is optional
 /// and skipped when absent; under the ratified exclude-unset -> exclude-none
@@ -507,6 +540,15 @@ pub struct TrackingSnapshot {
     /// necessarily empty while idle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activities: Option<ActivitySummary>,
+    /// The lifetime figures of the definition this session runs (or
+    /// would run) under, for the instance-versus-family flip. Carried
+    /// on every frame, idle included, over the definition a start would
+    /// stamp, so the flip is available while picking a session rather
+    /// than only once tracking begins. Absent when no definition is in
+    /// force: a legacy or unattached session has no family to flip to,
+    /// and the surfaces read that absence as "offer no control".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifetime: Option<LifetimeStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trifecta_attribution: Option<TrifectaAttribution>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1296,6 +1338,68 @@ impl Api {
 
 // ── Snapshot assembly (shared by the live and demo snapshots) ────────
 
+/// The definition's lifetime figures for the instance-versus-family
+/// flip, or `None` when no definition is in force (a legacy or
+/// deliberately unattached session has no family, so the surfaces offer
+/// no control at all rather than an inert one).
+///
+/// Resolves the definition exactly as the Activities control does: the
+/// id stamped at start while a session runs, otherwise the one a start
+/// would stamp. The in-flight instance is folded in on top of the
+/// stored aggregate, because a "lifetime" that excluded the session the
+/// user is watching would be a trap; the summaries cover ended sessions
+/// only, so there is no double count.
+async fn lifetime_stats(
+    definitions: Option<&SessionDefinitionService>,
+    active: Option<&ActiveSessionView>,
+    idle_definition_id: Option<i64>,
+) -> Result<Option<LifetimeStats>, ApiError> {
+    let definition_id = match active {
+        Some(active) => active.definition_id,
+        None => idle_definition_id,
+    };
+    let (Some(service), Some(definition_id)) = (definitions, definition_id) else {
+        return Ok(None);
+    };
+    let stored = service
+        .lifetime_stats(definition_id)
+        .await
+        .map_err(ApiError::internal("snapshot lifetime stats"))?;
+
+    let mut instance_count = stored.instance_count;
+    let mut cycled = stored.cycled;
+    let mut loot_tt = stored.loot_tt;
+    let mut pes = stored.pes;
+    let mut duration_seconds = stored.duration_seconds;
+    // Only when the running session belongs to THIS definition: a
+    // selection changed while idle reads the newly-picked family's
+    // history, not the running instance's figures.
+    if let Some(active) = active.filter(|active| active.definition_id == Some(definition_id)) {
+        instance_count += 1;
+        cycled += active.cost;
+        loot_tt += active.returns;
+        pes += active.pes;
+        duration_seconds += active.elapsed as f64;
+    }
+
+    Ok(Some(LifetimeStats {
+        instance_count,
+        cycled: round_half_even(cycled, 2),
+        loot_tt: round_half_even(loot_tt, 2),
+        net: round_half_even(loot_tt - cycled, 2),
+        // The ratio of the summed parts, never the mean of the
+        // per-instance rates. Zero spend reads as zero, matching the
+        // instance figure's own rule.
+        return_rate: if cycled > 0.0 {
+            round_half_even(loot_tt / cycled, 4)
+        } else {
+            0.0
+        },
+        pes: round_half_even(pes, 2),
+        duration_seconds: round_half_even(duration_seconds, 0),
+    }))
+}
+
 /// Assemble the projected snapshot value from the tracker readout, the
 /// resolved config, and the hotbar listener's running state. A free
 /// function (rather than an `Api` method) so both the live snapshot and
@@ -1382,6 +1486,15 @@ pub(crate) async fn build_snapshot_value(
     .await?;
     let activities = json!(ActivitySummary::from(&picture));
 
+    // The family side of the instance-versus-family flip, resolved over
+    // the same definition the Activities control reads: the stamped one
+    // while tracking, otherwise the one a start would stamp.
+    let lifetime = lifetime_stats(definitions, readout.active.as_ref(), idle_definition_id).await?;
+    let lifetime = match lifetime {
+        Some(stats) => json!(stats),
+        None => Value::Null,
+    };
+
     let value = match &readout.active {
         None => {
             json!({
@@ -1402,6 +1515,7 @@ pub(crate) async fn build_snapshot_value(
                 "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
                 "activities": activities,
+                "lifetime": lifetime,
                 "recentEvents": [],
             })
         }
@@ -1472,6 +1586,7 @@ pub(crate) async fn build_snapshot_value(
                 "currentTool": current_tool,
                 "currentActivity": current_activity,
                 "activities": activities,
+                "lifetime": lifetime,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "sessionDefinitionId": definition_value(active.definition_id),
