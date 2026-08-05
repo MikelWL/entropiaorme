@@ -99,8 +99,8 @@ describe('the definitions it offers', () => {
 	it('lists every archived definition apart so even an empty one can be restored', async () => {
 		const model = reviewModel([
 			definition(),
-			definition({ id: '2', name: 'Retired With History', isActive: false, instanceCount: 4 }),
-			definition({ id: '3', name: 'Retired Empty', isActive: false, instanceCount: 0 }),
+			definition({ id: '2', name: 'Archived With History', isActive: false, instanceCount: 4 }),
+			definition({ id: '3', name: 'Archived Empty', isActive: false, instanceCount: 0 }),
 		]);
 		await model.openReview('1');
 
@@ -112,7 +112,7 @@ describe('the definitions it offers', () => {
 		const model = reviewModel([
 			definition(),
 			definition({ id: '2', name: 'ARIS Dailies' }),
-			definition({ id: '3', name: 'Retired', isActive: false, instanceCount: 2 }),
+			definition({ id: '3', name: 'Archived', isActive: false, instanceCount: 2 }),
 		]);
 		await model.openReview('1');
 
@@ -121,7 +121,7 @@ describe('the definitions it offers', () => {
 
 	it('offers no move target while reviewing an archived definition with nothing else on offer', async () => {
 		const model = reviewModel([
-			definition({ id: '3', name: 'Retired', isActive: false, instanceCount: 2 }),
+			definition({ id: '3', name: 'Archived', isActive: false, instanceCount: 2 }),
 		]);
 		await model.openReview('3');
 

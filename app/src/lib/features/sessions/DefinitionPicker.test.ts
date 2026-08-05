@@ -133,7 +133,7 @@ describe('DefinitionPicker', () => {
 	});
 
 	// The selection is a configuration facet, so an unselected picker is a
-	// real state (a session cleared, or one deleted since): it invites the
+	// real state (a session cleared, or one archived since): it invites the
 	// choice rather than rendering a stale name.
 	it('invites a choice when nothing is selected', async () => {
 		await mount([definition('1', 'ARIS Dailies')], null);
