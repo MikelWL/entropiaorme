@@ -35,8 +35,8 @@ pub const SUMMARY_VERSION: i64 = 4;
 pub const DOMINANCE_THRESHOLD: f64 = 0.6;
 
 /// The computed summary for one completed session, or None when the
-/// session is active, has no skill gains, or fails the qualifying
-/// filters (zero cycled value, zero duration, no gain totals).
+/// session is active or fails the economic filters (zero cycled value,
+/// zero duration). A session that gained no skill still summarises.
 #[allow(clippy::too_many_lines)]
 pub fn compute_session_summary(
     conn: &rusqlite::Connection,
@@ -75,6 +75,16 @@ pub fn compute_session_summary(
         return Ok(None);
     };
 
+    // A session that gained no skill is still a real session: a couple
+    // of kills that happened not to tick a skill still cycled PED and
+    // still belong in every total. So the gains probe no longer gates
+    // the summary; only the economic filters below (zero cycled value,
+    // zero duration) exclude a row.
+    //
+    // The gains table being absent entirely stays tolerated as the
+    // no-summary case, since every skill read below would fail on it.
+    // Any other failure propagates: a transient driver error must not
+    // read as "no gains" and let the write path clear a valid summary.
     let has_gains = conn
         .query_row(
             "SELECT 1 FROM skill_gains WHERE session_id = ? LIMIT 1",
@@ -82,13 +92,8 @@ pub fn compute_session_summary(
             |_| Ok(()),
         )
         .optional();
-    // The original tolerates the gains table being absent entirely
-    // (its operational-error catch). Any other failure propagates:
-    // a transient driver error must not read as "no gains" and let
-    // the write path clear a valid summary.
     match has_gains {
-        Ok(Some(())) => {}
-        Ok(None) => return Ok(None),
+        Ok(_) => {}
         Err(error) if is_missing_table(&error) => return Ok(None),
         Err(error) => return Err(error.into()),
     }
@@ -285,9 +290,6 @@ pub fn compute_session_summary(
     let attribute_levels_total: f64 = attribute_levels.values().filter_map(Value::as_f64).sum();
 
     if cycled_ped <= 0.0 || duration_hours <= 0.0 {
-        return Ok(None);
-    }
-    if regular_skill_tt <= 0.0 && attribute_levels_total <= 0.0 {
         return Ok(None);
     }
 
@@ -495,7 +497,6 @@ pub fn heal_summaries(conn: &rusqlite::Connection) -> Result<(), DbError> {
             "SELECT s.id FROM tracking_sessions s \
              LEFT JOIN session_summaries ss ON ss.session_id = s.id \
              WHERE s.ended_at IS NOT NULL \
-             AND EXISTS (SELECT 1 FROM skill_gains sg WHERE sg.session_id = s.id) \
              AND (ss.session_id IS NULL OR ss.summary_version < ?)",
         )?;
         let rows = stmt.query_map(rusqlite::params![SUMMARY_VERSION], |row| {
@@ -511,7 +512,9 @@ pub fn heal_summaries(conn: &rusqlite::Connection) -> Result<(), DbError> {
 
 /// All qualifying completed-session summaries, lazily rebuilding any
 /// missing or stale-version rows first so new installs converge on
-/// first read without a migration.
+/// first read without a migration. A summarised session may carry no
+/// skill gains at all, so consumers reading the skill maps must
+/// tolerate them being empty.
 pub async fn load_prospect_sessions(db: &Db) -> Result<Vec<Value>, DbError> {
     // Heal (a write) on the writer core; read the prospect rows in one
     // synchronous pass on a reader-core connection.
@@ -547,9 +550,9 @@ pub fn delete_session_summary(
 /// Drop and regenerate every session-summary row from the raw tracking
 /// tables: the proof the summaries are a pure function of those tables, and
 /// the maintenance reset behind the rebuild command. [`heal_summaries`]
-/// rewrites exactly the qualifying (ended, skill-bearing) sessions, so a
-/// full delete followed by a heal reproduces the incrementally-maintained
-/// set. Runs on the writer.
+/// rewrites exactly the qualifying (ended, economically non-empty)
+/// sessions, so a full delete followed by a heal reproduces the
+/// incrementally-maintained set. Runs on the writer.
 pub fn rebuild_summaries(conn: &rusqlite::Connection) -> Result<(), DbError> {
     conn.execute("DELETE FROM session_summaries", [])?;
     heal_summaries(conn)
@@ -894,7 +897,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_qualifying_filters_refuse_each_axis() {
+    async fn the_qualifying_filters_refuse_the_economic_axes_but_never_skill() {
         let (_dir, db) = env().await;
         seed_standard(&db).await;
 
@@ -919,8 +922,11 @@ mod tests {
         )
         .await;
 
-        // No positive gain totals refuses, but EITHER axis alone
-        // qualifies: attribute-only first, then regular-only.
+        // Skill gain does NOT gate the summary: a session that cycled
+        // PED still summarises on either axis alone, on neither, and
+        // with no gain rows at all. A couple of kills that happened not
+        // to tick a skill are still a real session whose costs belong
+        // in every total.
         run(
             &db,
             "UPDATE skill_gains SET ped_value = 0.0 WHERE skill_name = 'Rifle'",
@@ -930,7 +936,9 @@ mod tests {
         assert_eq!(summary["regularSkillTt"], Value::from(0.0));
         assert_eq!(summary["attributeLevelsTotal"], Value::from(0.75));
         run(&db, "DELETE FROM skill_gains WHERE skill_name = 'Agility'").await;
-        assert!(compute(&db, "s1").await.is_none());
+        let summary = compute(&db, "s1").await.unwrap();
+        assert_eq!(summary["regularSkillTt"], Value::from(0.0));
+        assert_eq!(summary["attributeLevelsTotal"], Value::from(0.0));
         run(
             &db,
             "UPDATE skill_gains SET ped_value = 0.5 WHERE skill_name = 'Rifle'",
@@ -938,10 +946,12 @@ mod tests {
         .await;
         assert!(compute(&db, "s1").await.is_some());
 
-        // No skill-gain rows at all refuses; so does the table
-        // being absent entirely (the original's tolerated case).
+        // No skill-gain rows at all still summarises; the table being
+        // absent entirely stays the tolerated no-summary case, since
+        // every skill read would fail on it.
         run(&db, "DELETE FROM skill_gains").await;
-        assert!(compute(&db, "s1").await.is_none());
+        let summary = compute(&db, "s1").await.unwrap();
+        assert_eq!(summary["regularSkillTt"], Value::from(0.0));
         run(&db, "ALTER TABLE skill_gains RENAME TO skill_gains_parked").await;
         assert!(compute(&db, "s1").await.is_none());
         run(&db, "ALTER TABLE skill_gains_parked RENAME TO skill_gains").await;
@@ -1197,6 +1207,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows, ["sess-full", "sess-manual"]);
+    }
+
+    /// A session that cycled PED but ticked no skill is a real session:
+    /// a couple of kills that happened not to gain skill still cost
+    /// what they cost. The heal path must pick it up unprompted, so it
+    /// reaches every total that reads the summaries.
+    #[tokio::test]
+    async fn a_session_that_gained_no_skill_still_summarises_and_heals_in() {
+        let (_dir, db) = env().await;
+        seed_standard(&db).await;
+        run(&db, "DELETE FROM skill_gains").await;
+        // Nothing has written a summary yet; the heal path is the only
+        // thing that can produce one.
+        db.with_writer(|conn| {
+            conn.execute("DELETE FROM session_summaries", [])?;
+            heal_summaries(conn)
+        })
+        .await
+        .unwrap();
+
+        let (present, cycled, kills): (i64, f64, i64) = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*), COALESCE(MAX(cycled_ped), 0), COALESCE(MAX(kills), 0) \
+                     FROM session_summaries WHERE session_id = 's1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(present, 1, "the zero-skill session must be summarised");
+        assert!(cycled > 0.0, "its cycled spend must survive into the row");
+        assert_eq!(kills, 5);
     }
 
     #[test]
