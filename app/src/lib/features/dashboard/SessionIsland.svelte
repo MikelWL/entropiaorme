@@ -17,13 +17,18 @@
 	let {
 		status,
 		statsGrid,
-		definitions
+		definitions,
+		onReview
 	}: {
 		status: TrackingSnapshot | null;
 		statsGrid: StatsGridModel;
 		/** The sessions model; the route hosts it (and the authoring
 		 * environment) so the surface can replace the whole dashboard. */
 		definitions: DefinitionsModel;
+		/** Open the review surface on a definition. Null reviews whatever
+		 * the surface last had, which is only reachable before a
+		 * selection exists. */
+		onReview: (definitionId: string | null) => void;
 	} = $props();
 
 	let elapsedSeconds = $state(0);
@@ -218,6 +223,18 @@
 					</div>
 				</div>
 			{/if}
+			<!-- Review opens on the session this island is sitting on. The
+				 reason to come here is almost always that a figure from the
+				 session just played looked wrong, so it is one press away in
+				 both states rather than something to go and find. -->
+			<Button
+				size="sm"
+				variant="secondary"
+				onclick={() => onReview(selectedDefinitionId)}
+				data-testid="dashboard-review"
+			>
+				{#snippet children()}Review{/snippet}
+			</Button>
 			{#if !isActive}
 				<Button size="sm" disabled={starting} onclick={handleStart}>
 					{#snippet children()}{starting ? 'Starting...' : 'Start'}{/snippet}

@@ -5,8 +5,9 @@
 	import GuideOverlayDemo from '$lib/features/dashboard/GuideOverlayDemo.svelte';
 	import SessionIsland from '$lib/features/dashboard/SessionIsland.svelte';
 	import { createStatsGridModel } from '$lib/features/dashboard/statsGridModel.svelte';
-	import AuthoringStage from '$lib/features/sessions/AuthoringStage.svelte';
+	import SessionStage from '$lib/features/sessions/SessionStage.svelte';
 	import { createLiveDefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
+	import { createLiveReviewModel } from '$lib/features/sessions/reviewModel.svelte';
 	import {
 		formatMinutes,
 		getCooldownRemaining,
@@ -36,9 +37,11 @@
 	const statsGrid = createStatsGridModel(() => status?.lifetime != null);
 	const guideDemo = createGuideDemoModel(statsGrid);
 
-	// The sessions surface: the island renders the picker; the stage
-	// hosts the authoring environment that replaces the dashboard while open.
+	// The sessions surface: the island renders the picker and the review
+	// entry; the stage hosts the two full-screen surfaces (authoring and
+	// review) that replace the dashboard while either is open.
 	const definitions = createLiveDefinitionsModel();
+	const review = createLiveReviewModel();
 
 	// The pre-guide playlist selection, snapshotted so it survives the tour.
 	// Undefined sentinel means "no snapshot held"; null is a valid snapshot.
@@ -197,8 +200,9 @@
 	});
 </script>
 
-<AuthoringStage
+<SessionStage
 	model={definitions}
+	{review}
 	class="px-6 pb-6 flex flex-col gap-4 h-full"
 	data-guide-anchor="dashboard-area"
 >
@@ -232,7 +236,12 @@
 		</div>
 	</div>
 
-	<SessionIsland {status} {statsGrid} {definitions} />
+	<SessionIsland
+		{status}
+		{statsGrid}
+		{definitions}
+		onReview={(definitionId) => void review.openReview(definitionId)}
+	/>
 
 	{#if !(guideState.isActive && guideDemo.demoOverlayVisible)}
 		<!-- ═══ Island: Recent Events ═══ -->
@@ -297,4 +306,4 @@
 		armourPopupTop={guideDemo.armourPopupTop}
 		armourPopupLeft={guideDemo.armourPopupLeft}
 	/>
-</AuthoringStage>
+</SessionStage>

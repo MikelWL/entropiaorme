@@ -121,11 +121,7 @@ const readSessionsPage = guideSwapped(commands.trackingSessions, commands.demoTr
  * the last page). `definitionId` narrows the page to one definition's
  * instances, which is how the review surface reads a family; omitted, the
  * page is the whole history. */
-export async function getTrackingSessions(
-	cursor?: string,
-	limit?: number,
-	definitionId?: string,
-) {
+export async function getTrackingSessions(cursor?: string, limit?: number, definitionId?: string) {
 	return readSessionsPage(
 		cursor ?? null,
 		limit ?? null,

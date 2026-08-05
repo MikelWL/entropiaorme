@@ -134,7 +134,7 @@ describe('guide-mode demo dispatch', () => {
 			'getTrackingSessions',
 			() => api.getTrackingSessions(),
 			'tracking_sessions',
-			{ cursor: null, limit: null },
+			{ cursor: null, limit: null, definition_id: null },
 			'demo_tracking_sessions',
 		],
 		[
