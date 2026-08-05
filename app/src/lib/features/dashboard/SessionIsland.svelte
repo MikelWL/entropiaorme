@@ -164,9 +164,14 @@
 					onOpenAuthoring={openAuthoring}
 				/>
 				{#if showingLifetime && lifetime}
-					<span class="text-xs text-text-tertiary tabular-nums tracking-wider">
-						{formatElapsed(lifetime.durationSeconds)}
-					</span>
+					<!-- Duration is a figure like any other, so it reads only
+						 once there are instances behind it; below that the
+						 span label carries the empty case on its own. -->
+					{#if lifetime.instanceCount > 0}
+						<span class="text-xs text-text-tertiary tabular-nums tracking-wider">
+							{formatElapsed(lifetime.durationSeconds)}
+						</span>
+					{/if}
 					<span class="text-xs text-text-tertiary truncate" data-testid="lifetime-span">
 						{spanLabel}
 					</span>
