@@ -416,8 +416,28 @@ async fn lifetime_stats_sum_the_definitions_instances() {
 
     // Two instances of wildly different size. A three-hour grind that
     // returned 60% and a four-minute run that returned 500%.
-    seed_instance(&db, "s1", Some(definition.id), 0.0, 10_800.0, 100.0, 60.0, 5.0).await;
-    seed_instance(&db, "s2", Some(definition.id), 20_000.0, 20_240.0, 2.0, 10.0, 0.5).await;
+    seed_instance(
+        &db,
+        "s1",
+        Some(definition.id),
+        0.0,
+        10_800.0,
+        100.0,
+        60.0,
+        5.0,
+    )
+    .await;
+    seed_instance(
+        &db,
+        "s2",
+        Some(definition.id),
+        20_000.0,
+        20_240.0,
+        2.0,
+        10.0,
+        0.5,
+    )
+    .await;
 
     let stats = svc.lifetime_stats(definition.id).await.unwrap();
     assert_eq!(stats.instance_count, 2);
@@ -441,10 +461,30 @@ async fn lifetime_stats_count_only_what_they_sum() {
     let (svc, db) = service(dir.path()).await;
     let definition = svc.create(input("ARIS Dailies", vec![])).await.unwrap();
 
-    seed_instance(&db, "real", Some(definition.id), 0.0, 3600.0, 10.0, 8.0, 1.0).await;
+    seed_instance(
+        &db,
+        "real",
+        Some(definition.id),
+        0.0,
+        3600.0,
+        10.0,
+        8.0,
+        1.0,
+    )
+    .await;
     // Started and abandoned: no cycled spend, so it never summarises and
     // must not inflate the span the surface discloses.
-    seed_instance(&db, "cancelled", Some(definition.id), 5000.0, 5001.0, 0.0, 0.0, 0.0).await;
+    seed_instance(
+        &db,
+        "cancelled",
+        Some(definition.id),
+        5000.0,
+        5001.0,
+        0.0,
+        0.0,
+        0.0,
+    )
+    .await;
 
     let stats = svc.lifetime_stats(definition.id).await.unwrap();
     assert_eq!(stats.instance_count, 1);
@@ -459,7 +499,17 @@ async fn lifetime_stats_ignore_other_definitions_and_unattached_sessions() {
     let theirs = svc.create(input("General Hunting", vec![])).await.unwrap();
 
     seed_instance(&db, "mine", Some(mine.id), 0.0, 3600.0, 10.0, 8.0, 1.0).await;
-    seed_instance(&db, "theirs", Some(theirs.id), 4000.0, 7600.0, 99.0, 99.0, 9.0).await;
+    seed_instance(
+        &db,
+        "theirs",
+        Some(theirs.id),
+        4000.0,
+        7600.0,
+        99.0,
+        99.0,
+        9.0,
+    )
+    .await;
     // A legacy session, recorded before definitions existed.
     seed_instance(&db, "legacy", None, 8000.0, 11_600.0, 55.0, 55.0, 5.0).await;
 
