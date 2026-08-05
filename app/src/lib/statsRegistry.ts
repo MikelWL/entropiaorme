@@ -320,6 +320,11 @@ export const ALL_STAT_IDS: StatId[] = [
  * The stats that have a lifetime form, derived from the registry itself
  * so it cannot drift: a stat is lifetime-capable exactly when its
  * definition declares a `renderLifetime`.
+ *
+ * Render paths ask `isLifetimeCapable` per stat rather than reading this
+ * list. It exists as the enumerable form of the same fact, which is what
+ * lets a test assert the capable set as a whole and catch a stat that
+ * gained or lost a lifetime render without anyone meaning it to.
  */
 export const LIFETIME_STAT_IDS: StatId[] = ALL_STAT_IDS.filter(
 	(id) => STAT_DEFS[id].renderLifetime !== undefined,

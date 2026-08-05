@@ -207,10 +207,13 @@
 						<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
 						<span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
 					</span>
+					<!-- Always the live session's own elapsed, whatever scope
+						 the pills read in: this readout sits under a pulsing
+						 live cue, so it must be the thing that is actually
+						 ticking. The family's summed duration is a figure,
+						 and figures live in the labelled pill group. -->
 					<span class="text-sm font-semibold text-emerald-400 tabular-nums tracking-wider w-12 text-center">
-						{formatElapsed(
-							showingLifetime && lifetime ? lifetime.durationSeconds : (data.elapsed ?? 0)
-						)}
+						{formatElapsed(data.elapsed ?? 0)}
 					</span>
 				</div>
 			{/if}
@@ -495,11 +498,24 @@
 		{@const enabledPills = scopedStats(overlayStats.current, overlayScope)}
 		{#if enabledPills.length > 0}
 			<div class="flex items-center gap-4 shrink-0 border-l border-white/10 pl-3">
-				<!-- The strip carries no scope control of its own: it
-					 FOLLOWS the dashboard's choice. The overlay sits over
-					 the game and stays lean, so the flip is a deliberate
-					 trip to the dashboard rather than another control
-					 competing for width here. -->
+				<!-- The strip carries no scope CONTROL of its own: it
+					 follows the dashboard's choice, so the flip is a
+					 deliberate trip there rather than another control
+					 competing for width here. It does carry a scope
+					 MARKER, because the pills below are labelled
+					 identically in either scope: without it, a family
+					 total would sit in the slot an instance figure
+					 usually occupies with nothing saying so. -->
+				{#if showingLifetime && lifetime}
+					<div
+						class="flex flex-col items-center justify-center gap-0.5 shrink-0"
+						data-testid="overlay-lifetime-marker"
+						title={`Lifetime figures across ${lifetime.instanceCount} recorded ${lifetime.instanceCount === 1 ? 'session' : 'sessions'}. Change this on the dashboard.`}
+					>
+						<span class="text-[10px] font-bold text-white/40 tracking-wider uppercase leading-none">Showing</span>
+						<span class="text-sm font-semibold leading-none text-amber-300/90">Lifetime</span>
+					</div>
+				{/if}
 				{#each enabledPills as pref (pref.id)}
 					{@const def = getStatDef(pref.id)}
 					{#if def}
