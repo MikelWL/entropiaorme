@@ -2,7 +2,7 @@
 	import type { TrackingLive, TrackingStatus } from '$lib/api';
 	import { overlayStats, scopedStats } from '$lib/statsCustomisation.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
-	import { setStatsScope, statsScope } from '$lib/statsScope.svelte';
+	import { statsScope } from '$lib/statsScope.svelte';
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 	import { NO_DATA } from '$lib/utils/format';
@@ -116,10 +116,10 @@
 	// The Activities readout, straight off the tracking frame: whether
 	// the control appears at all, what is standing, and how many rows a
 	// tap could start. The menu's own rows are fetched when it opens.
-	// The instance/family flip, sharing one scope with the dashboard.
-	// The lifetime block is absent when the session belongs to no
-	// definition, so the strip falls back to the instance and offers no
-	// control rather than a dead one.
+	// The instance/family scope, owned by the dashboard and followed
+	// here. The lifetime block is absent when the session belongs to no
+	// definition, so the strip falls back to the instance rather than
+	// drawing figures it has no family to fill.
 	const lifetime = $derived(status?.lifetime ?? null);
 	const showingLifetime = $derived(statsScope.current === 'lifetime' && lifetime !== null);
 	const overlayScope = $derived(showingLifetime ? 'lifetime' : 'instance');
@@ -495,39 +495,11 @@
 		{@const enabledPills = scopedStats(overlayStats.current, overlayScope)}
 		{#if enabledPills.length > 0}
 			<div class="flex items-center gap-4 shrink-0 border-l border-white/10 pl-3">
-				<!-- The instance/family flip, shared with the dashboard.
-					 Both choices stay visible for the same reason they do
-					 there; the strip's width keeps the labels terse.
-					 Present only when there is a family to flip to. -->
-				{#if lifetime}
-					<div
-						role="radiogroup"
-						aria-label="Show stats for"
-						data-testid="overlay-scope-toggle"
-						class="flex flex-col items-start gap-0.5 shrink-0"
-					>
-						<span class="text-[10px] font-bold text-white/40 tracking-wider uppercase leading-none">Stats for</span>
-						<div class="inline-flex items-center gap-0.5">
-							{#each [{ value: 'instance' as const, label: 'Session' }, { value: 'lifetime' as const, label: 'Lifetime' }] as choice (choice.value)}
-								{@const selected = showingLifetime === (choice.value === 'lifetime')}
-								<button
-									type="button"
-									role="radio"
-									aria-checked={selected}
-									title={choice.value === 'lifetime'
-										? `Every session recorded under this definition (${lifetime.instanceCount}), added together.`
-										: 'The session in play on its own.'}
-									onclick={() => setStatsScope(choice.value)}
-									class="text-xs font-semibold leading-none rounded px-1.5 py-0.5
-										transition-colors duration-[var(--duration-base)]
-										{selected ? 'bg-white/15 text-white/90' : 'text-white/40 hover:text-white/70'}"
-								>
-									{choice.label}
-								</button>
-							{/each}
-						</div>
-					</div>
-				{/if}
+				<!-- The strip carries no scope control of its own: it
+					 FOLLOWS the dashboard's choice. The overlay sits over
+					 the game and stays lean, so the flip is a deliberate
+					 trip to the dashboard rather than another control
+					 competing for width here. -->
 				{#each enabledPills as pref (pref.id)}
 					{@const def = getStatDef(pref.id)}
 					{#if def}
