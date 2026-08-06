@@ -117,7 +117,8 @@
 	id={tooltipId}
 	role="tooltip"
 	style="top: {pos.top}px; left: {pos.left}px;"
-	class="pointer-events-none fixed z-50 {width}
+	class:invisible={!open}
+	class="pointer-events-none fixed z-[60] {width}
 		transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-out)]
 		{open ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-0.5'}"
 >

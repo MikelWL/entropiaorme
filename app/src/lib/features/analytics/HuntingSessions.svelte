@@ -243,18 +243,17 @@
 					</span>
 				</button>
 			{/if}
+			<!-- The kind travels in the title rather than as an inline tag: the
+				chevron already marks a family and the indent a variant, and the
+				tag was the name column's single largest consumer at the app's
+				default window width. -->
 			<span
 				class="min-w-0 truncate text-sm font-medium tracking-tight
 					{isAmbient ? 'text-text-tertiary' : 'text-text'}"
-				title={row.label}
+				title={KIND_LABEL[row.kind] ? `${row.label} (${KIND_LABEL[row.kind]})` : row.label}
 			>
 				{row.label}
 			</span>
-			{#if KIND_LABEL[row.kind]}
-				<span class="shrink-0 text-[0.625rem] font-medium uppercase tracking-wide text-text-tertiary">
-					{KIND_LABEL[row.kind]}
-				</span>
-			{/if}
 			{#if isAmbient}
 				<InfoTip label="What the unscoped remainder is" width="w-80">
 					<p class="text-xs font-semibold leading-relaxed text-text">Play with nothing declared</p>
@@ -275,11 +274,8 @@
 			{/if}
 		</span>
 
-		<span class="w-10 shrink-0 text-right text-xs tabular-nums text-text-secondary">
-			{isAmbient ? NO_DATA : row.runs}
-		</span>
-		<span class="w-12 shrink-0 text-right text-xs tabular-nums text-text-secondary">
-			{row.kills}
+		<span class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums text-text-secondary">
+			{isAmbient ? NO_DATA : row.runs} · {row.kills}
 		</span>
 		<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text-secondary">
 			{row.cycled > 0 ? row.pesPer100Ped.toFixed(2) : NO_DATA}
@@ -292,10 +288,7 @@
 		</span>
 		<span class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium">
 			{#if rewarded !== null}
-				<span
-					class="border-b border-dotted border-border/70 text-text-secondary"
-					title="Estimated: assumes every recorded run completed"
-				>
+				<span class="text-text-secondary" title="Estimated: assumes every recorded run completed">
 					{signedPed(rewarded)}
 				</span>
 			{:else if rewardVaries}
@@ -485,11 +478,10 @@
 				{#if selected.activities.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">
 						<div
-							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
 						>
 							<span class="eyebrow flex-1 min-w-0">Activity</span>
-							<span class="eyebrow w-10 text-right shrink-0">Runs</span>
-							<span class="eyebrow w-12 text-right shrink-0">Kills</span>
+							<span class="eyebrow w-[4.5rem] text-right shrink-0">Runs · Kills</span>
 							<span class="eyebrow w-14 text-right shrink-0">PES/100</span>
 							<span class="eyebrow w-16 text-right shrink-0">Cycled</span>
 							<span class="eyebrow w-16 text-right shrink-0">TT Net</span>
@@ -507,7 +499,7 @@
 					{@const mobLootTotal = selected.mobs.reduce((sum, mob) => sum + mob.lootTt, 0)}
 					<div class="mt-5 border-t border-border/50 pt-4">
 						<div
-							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
 						>
 							<span class="eyebrow flex-1 min-w-0">Mob</span>
 							<span class="eyebrow w-16 text-right shrink-0">Kills</span>
@@ -547,7 +539,7 @@
 				{#if selected.instanceRows.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">
 						<div
-							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
 						>
 							<span class="eyebrow flex-1 min-w-0 flex items-center gap-2">
 								Recent instances

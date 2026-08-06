@@ -334,7 +334,7 @@
 					{#if selected.maturities.length > 1 || (selected.maturities.length === 1 && selected.maturities[0].maturity !== '')}
 						<div class="mt-5 border-t border-border/50 pt-4">
 							<div
-								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
 							>
 								<span class="eyebrow flex-1 min-w-0">Maturity</span>
 								<span class="eyebrow w-16 text-right shrink-0">Kills</span>
@@ -395,7 +395,7 @@
 					{#if selected.items.length > 0}
 						<div class="mt-5 border-t border-border/50 pt-4">
 							<div
-								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
 							>
 								<span class="eyebrow flex-1 min-w-0">Item</span>
 								<span class="eyebrow w-20 text-right shrink-0">TT</span>
