@@ -32,9 +32,14 @@
 			? stock
 			: stock.filter((item) => item.itemName.toLowerCase().includes(query.trim().toLowerCase())),
 	);
-	const emptiedCount = $derived(matches.filter((item) => item.heldQty <= 0).length);
+	// A live query overrides the emptied fold: a deliberate search is a
+	// deliberate request for that item, sold out or not. The fold's count
+	// reads against the whole list so the two can never disagree.
+	const emptiedCount = $derived(stock.filter((item) => item.heldQty <= 0).length);
 	const visibleStock = $derived(
-		longList && !showEmptied ? matches.filter((item) => item.heldQty > 0) : matches,
+		longList && !showEmptied && query.trim() === ''
+			? matches.filter((item) => item.heldQty > 0)
+			: matches,
 	);
 
 	function formatVolume(value: number): string {
@@ -341,7 +346,7 @@
 		{/if}
 	</ul>
 
-	{#if longList && emptiedCount > 0}
+	{#if longList && emptiedCount > 0 && query.trim() === ''}
 		<button
 			type="button"
 			class="mt-1 px-2.5 text-xs text-text-tertiary cursor-pointer

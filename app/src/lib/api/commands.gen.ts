@@ -947,6 +947,8 @@ export interface HuntingSignature {
 	cycled: number;
 	returns: number;
 	pes: number;
+	/** PES per 100 PED cycled, rounded like every sibling figure. */
+	pesPer100Ped: number;
 	/** Quest-shaped rows only: the configured liquid reward per completion, separate from tracked loot. */
 	rewardPed: number | null;
 	rewardIsSkill: boolean;

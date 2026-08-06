@@ -64,6 +64,11 @@
 			expandedFamilies = new Set();
 		}
 	});
+	let detailPane = $state<HTMLElement | null>(null);
+	$effect(() => {
+		void selected?.key;
+		if (detailPane) detailPane.scrollTop = 0;
+	});
 	const familyKey = (row: HuntingSignature) => `${row.kind}:${row.label}`;
 	function toggleFamily(row: HuntingSignature) {
 		const next = new Set(expandedFamilies);
@@ -114,8 +119,6 @@
 		if (row.rewardIsSkill || row.rewardPed == null || row.runs <= 0) return null;
 		return row.returns - row.cycled + row.rewardPed * row.runs;
 	}
-	const signaturePesPer100 = (row: HuntingSignature) =>
-		row.cycled > 0 ? ((row.pes / row.cycled) * 100).toFixed(2) : NO_DATA;
 
 	// The list's column widths, declared once because the header and the rows
 	// have to shrink identically or they stop lining up. Kept in step with the
@@ -175,6 +178,15 @@
 				? `, putting a completed run at ${signedPed(economics.netAfterRewardPerRun)} PED`
 				: ''}.
 		</p>
+		{@const rewardedTotal = afterReward(row)}
+		{#if rewardedTotal !== null}
+			<p class="mt-2 text-xs leading-relaxed text-text-secondary">
+				Across {row.runs}
+				{row.runs === 1 ? 'run' : 'runs'} that is {signedPed(rewardedTotal)} PED in total, the
+				figure in the + Reward column. It assumes every recorded run completed: a run counts a
+				declared focus stretch, so an abandoned attempt still counts here.
+			</p>
+		{/if}
 		{#if economics.voucherScenarioPerRun !== null && row.expectedRewardMarkupPercent != null}
 			<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
 				If the reward sold at its estimated {formatPercent(row.expectedRewardMarkupPercent / 100)}
@@ -201,6 +213,11 @@
 	{@const questShaped = row.kind === 'quest' || isFamily}
 	{@const net = row.returns - row.cycled}
 	{@const rewarded = afterReward(row)}
+	{@const rewardVaries =
+		row.kind === 'quest_family' &&
+		row.rewardPed == null &&
+		!row.rewardIsSkill &&
+		row.variants.some((variant) => variant.rewardPed != null)}
 	<li
 		class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
 			hover:bg-surface-hover/30 hover:border-border/40
@@ -261,8 +278,11 @@
 		<span class="w-10 shrink-0 text-right text-xs tabular-nums text-text-secondary">
 			{isAmbient ? NO_DATA : row.runs}
 		</span>
+		<span class="w-12 shrink-0 text-right text-xs tabular-nums text-text-secondary">
+			{row.kills}
+		</span>
 		<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text-secondary">
-			{signaturePesPer100(row)}
+			{row.cycled > 0 ? row.pesPer100Ped.toFixed(2) : NO_DATA}
 		</span>
 		<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
 			{formatPed(row.cycled)}
@@ -272,7 +292,16 @@
 		</span>
 		<span class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium">
 			{#if rewarded !== null}
-				<span class={netTone(rewarded)}>{signedPed(rewarded)}</span>
+				<span
+					class="border-b border-dotted border-border/70 text-text-secondary"
+					title="Estimated: assumes every recorded run completed"
+				>
+					{signedPed(rewarded)}
+				</span>
+			{:else if rewardVaries}
+				<span class="text-text-tertiary" title="The variants carry different rewards; expand the family">
+					Varies
+				</span>
 			{:else if row.rewardIsSkill}
 				<span class="text-text-tertiary" title="The reward is skill progress: PES, never liquid">
 					PES
@@ -402,8 +431,8 @@
 		{#if selected}
 			<!-- One scroll region bounded to the list pane's own height, so the
 				two sides of the hairline stay the same height and the pane never
-				stacks nested scrollers. -->
-			<div class="min-w-0 max-h-[32rem] overflow-y-auto p-5">
+				stacks nested scrollers. A new selection starts at the top. -->
+			<div bind:this={detailPane} class="min-w-0 max-h-[32rem] overflow-y-auto p-5">
 				{#if selected.isUnassigned}
 					<div class="mb-4 flex items-start gap-1.5 text-sm text-text-secondary">
 						<span>
@@ -455,13 +484,16 @@
 
 				{#if selected.activities.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">
-						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+						<div
+							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+						>
 							<span class="eyebrow flex-1 min-w-0">Activity</span>
 							<span class="eyebrow w-10 text-right shrink-0">Runs</span>
+							<span class="eyebrow w-12 text-right shrink-0">Kills</span>
 							<span class="eyebrow w-14 text-right shrink-0">PES/100</span>
 							<span class="eyebrow w-16 text-right shrink-0">Cycled</span>
 							<span class="eyebrow w-16 text-right shrink-0">TT Net</span>
-							<span class="eyebrow w-[4.5rem] text-right shrink-0">+ Reward</span>
+							<span class="eyebrow w-[4.5rem] text-right shrink-0" title="Estimated: assumes every recorded run completed">+ Reward est.</span>
 						</div>
 						<ul class="flex flex-col gap-1">
 							{#each selected.activities as row (row.kind + row.label)}
@@ -474,7 +506,9 @@
 				{#if selected.mobs.length > 0}
 					{@const mobLootTotal = selected.mobs.reduce((sum, mob) => sum + mob.lootTt, 0)}
 					<div class="mt-5 border-t border-border/50 pt-4">
-						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+						<div
+							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+						>
 							<span class="eyebrow flex-1 min-w-0">Mob</span>
 							<span class="eyebrow w-16 text-right shrink-0">Kills</span>
 							<span class="eyebrow w-20 text-right shrink-0">Loot TT</span>
@@ -512,7 +546,9 @@
 
 				{#if selected.instanceRows.length > 0}
 					<div class="mt-5 border-t border-border/50 pt-4">
-						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+						<div
+							class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+						>
 							<span class="eyebrow flex-1 min-w-0 flex items-center gap-2">
 								Recent instances
 								{#if selected.instances > selected.instanceRows.length}

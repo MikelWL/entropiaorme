@@ -424,6 +424,9 @@ pub struct HuntingSignatureRow {
     pub cycled: f64,
     pub returns: f64,
     pub pes: f64,
+    /// PES per 100 PED cycled, on the same rounding as every sibling
+    /// figure, so the same metric never renders on two rounding modes.
+    pub pes_per100_ped: f64,
     /// Quest-shaped rows only: the configured liquid reward per completion,
     /// kept apart from tracked loot.
     pub reward_ped: Option<f64>,
@@ -2802,6 +2805,11 @@ fn assemble_signatures(
         cycled: round2(agg.cycled),
         returns: round2(agg.loot_tt),
         pes: round4(agg.pes),
+        pes_per100_ped: if agg.cycled > 0.0 {
+            round2((agg.pes / agg.cycled) * 100.0)
+        } else {
+            0.0
+        },
         reward_ped: None,
         reward_is_skill: false,
         expected_reward_markup_percent: None,
@@ -2874,15 +2882,22 @@ fn assemble_signatures(
             .unwrap_or_else(|| format!("Family {family_id}"));
         // A single recorded variant still reports at family grain, because
         // the family is the repeatable slot the player decides on.
+        let family_cycled: f64 = variants.iter().map(|v| v.cycled).sum();
+        let family_pes: f64 = variants.iter().map(|v| v.pes).sum();
         let mut family_row = HuntingSignatureRow {
             kind: "quest_family".to_string(),
             label,
             runs: variants.iter().map(|v| v.runs).sum(),
             kills: variants.iter().map(|v| v.kills).sum(),
             duration_hours: round2(variants.iter().map(|v| v.duration_hours).sum()),
-            cycled: round2(variants.iter().map(|v| v.cycled).sum()),
+            cycled: round2(family_cycled),
             returns: round2(variants.iter().map(|v| v.returns).sum()),
-            pes: round4(variants.iter().map(|v| v.pes).sum()),
+            pes: round4(family_pes),
+            pes_per100_ped: if family_cycled > 0.0 {
+                round2((family_pes / family_cycled) * 100.0)
+            } else {
+                0.0
+            },
             // The family's reward columns hold only what every variant
             // agrees on; a mixed family reports per variant instead.
             reward_ped: uniform(variants.iter().map(|v| v.reward_ped)),

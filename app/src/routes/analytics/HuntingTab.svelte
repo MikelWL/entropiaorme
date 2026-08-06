@@ -13,6 +13,8 @@
 	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
 	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
 	import { createHuntingModel } from '$lib/features/analytics/huntingModel.svelte';
+	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
+	import { onMount } from 'svelte';
 	import type {
 		ConfidenceMode,
 		TreeCuttingStock as StockRow,
@@ -57,6 +59,17 @@
 
 	$effect(() => {
 		void model.loadData(model.period);
+	});
+
+	// The guide walks the four views it narrates rather than pointing at a
+	// static frame (the LedgerTab precedent).
+	onMount(() => {
+		registerDemoApi('analytics-hunting', {
+			setView: (view: string) => {
+				void showView(view as ActivityView);
+			},
+		});
+		return () => unregisterDemoApi('analytics-hunting');
 	});
 
 	const MODE_OPTIONS: { id: ConfidenceMode; label: string }[] = [

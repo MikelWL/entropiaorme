@@ -238,7 +238,8 @@
                 "rewardPed": 4.0,
                 "rewardIsSkill": false,
                 "expectedRewardMarkupPercent": 140.0,
-                "variants": []
+                "variants": [],
+                "pesPer100Ped": 8.06
               },
               {
                 "kind": "quest",
@@ -252,9 +253,11 @@
                 "rewardPed": 4.0,
                 "rewardIsSkill": false,
                 "expectedRewardMarkupPercent": 140.0,
-                "variants": []
+                "variants": [],
+                "pesPer100Ped": 8.03
               }
-            ]
+            ],
+            "pesPer100Ped": 8.05
           },
           {
             "kind": "segment",
@@ -268,7 +271,8 @@
             "rewardPed": null,
             "rewardIsSkill": false,
             "expectedRewardMarkupPercent": null,
-            "variants": []
+            "variants": [],
+            "pesPer100Ped": 8.45
           },
           {
             "kind": "ambient",
@@ -282,7 +286,8 @@
             "rewardPed": null,
             "rewardIsSkill": false,
             "expectedRewardMarkupPercent": null,
-            "variants": []
+            "variants": [],
+            "pesPer100Ped": 8.45
           }
         ],
         "mobs": [
@@ -343,7 +348,8 @@
             "rewardPed": null,
             "rewardIsSkill": false,
             "expectedRewardMarkupPercent": null,
-            "variants": []
+            "variants": [],
+            "pesPer100Ped": 7.45
           }
         ],
         "mobs": [

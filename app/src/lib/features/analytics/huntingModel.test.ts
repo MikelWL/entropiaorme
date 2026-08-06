@@ -43,6 +43,7 @@ function signature(over: Partial<HuntingSignature> = {}): HuntingSignature {
 		cycled: 400,
 		returns: 360,
 		pes: 30,
+		pesPer100Ped: 7.5,
 		rewardPed: 4,
 		rewardIsSkill: false,
 		expectedRewardMarkupPercent: 150,

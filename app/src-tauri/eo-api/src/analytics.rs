@@ -264,6 +264,8 @@ pub struct HuntingSignature {
     pub cycled: f64,
     pub returns: f64,
     pub pes: f64,
+    /// PES per 100 PED cycled, rounded like every sibling figure.
+    pub pes_per100_ped: f64,
     /// Quest-shaped rows only: the configured liquid reward per completion,
     /// separate from tracked loot.
     pub reward_ped: Nullable<f64>,
@@ -1252,6 +1254,7 @@ pub(crate) fn hunting_activity_dto(
             cycled: row.cycled,
             returns: row.returns,
             pes: row.pes,
+            pes_per100_ped: row.pes_per100_ped,
             reward_ped: row.reward_ped.into(),
             reward_is_skill: row.reward_is_skill,
             expected_reward_markup_percent: row.expected_reward_markup_percent.into(),

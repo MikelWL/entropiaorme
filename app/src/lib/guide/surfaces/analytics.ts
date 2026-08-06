@@ -24,6 +24,16 @@ function ledgerApi(): Partial<LedgerDemoApi> {
 	return getDemoApi('analytics-ledger') as Partial<LedgerDemoApi>;
 }
 
+/** Sub-API registered by HuntingTab.svelte on mount for guide-driven view
+ * switching. */
+type HuntingDemoApi = {
+	setView(view: 'sessions' | 'targets' | 'market' | 'history'): void;
+};
+
+function huntingApi(): Partial<HuntingDemoApi> {
+	return getDemoApi('analytics-hunting') as Partial<HuntingDemoApi>;
+}
+
 /** Sleep in 200ms chunks so loop iterations can break promptly on Next / Back / Close. */
 async function abortableWait(ms: number, stillActive: () => boolean): Promise<boolean> {
 	const end = Date.now() + ms;
@@ -318,11 +328,20 @@ export const analyticsSurface: GuideSurface = {
 				],
 			},
 			async play({ demoApi, wait }) {
+				const stepIdx = guideState.currentStepIndex;
+				const stillActive = () => guideState.isActive && guideState.currentStepIndex === stepIdx;
 				const api = demoApi as Partial<AnalyticsDemoApi>;
 				api.setTab?.('hunting');
-				await wait(500);
+				await wait(600);
+				// Walk the two comparison axes the prose describes, then come
+				// back to rest on Sessions.
+				if (!(await abortableWait(900, stillActive))) return;
+				huntingApi().setView?.('targets');
+				if (!(await abortableWait(1600, stillActive))) return;
+				huntingApi().setView?.('sessions');
 			},
 			resetDemo() {
+				huntingApi().setView?.('sessions');
 				analyticsApi().setTab?.('ledger');
 			},
 		},

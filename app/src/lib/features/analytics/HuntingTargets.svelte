@@ -54,6 +54,12 @@
 		];
 	});
 
+	let detailPane = $state<HTMLElement | null>(null);
+	$effect(() => {
+		void selected?.key;
+		if (detailPane) detailPane.scrollTop = 0;
+	});
+
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
 	const rateTone = (value: number) => netTone(value - 1);
@@ -202,8 +208,8 @@
 		{#if selected}
 			<!-- One scroll region bounded to the list pane's own height, so the
 				two sides of the hairline stay the same height and the pane never
-				stacks nested scrollers. -->
-			<div class="min-w-0 max-h-[32rem] overflow-y-auto p-5">
+				stacks nested scrollers. A new selection starts at the top. -->
+			<div bind:this={detailPane} class="min-w-0 max-h-[32rem] overflow-y-auto p-5">
 				{#if selected.isUnclassified}
 					<div class="flex min-h-28 items-center justify-center">
 						<div class="flex items-center gap-1.5 text-sm text-text-secondary">
@@ -327,7 +333,9 @@
 
 					{#if selected.maturities.length > 1 || (selected.maturities.length === 1 && selected.maturities[0].maturity !== '')}
 						<div class="mt-5 border-t border-border/50 pt-4">
-							<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+							<div
+								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+							>
 								<span class="eyebrow flex-1 min-w-0">Maturity</span>
 								<span class="eyebrow w-16 text-right shrink-0">Kills</span>
 								<span class="eyebrow w-20 text-right shrink-0">Cycled</span>
@@ -386,7 +394,9 @@
 
 					{#if selected.items.length > 0}
 						<div class="mt-5 border-t border-border/50 pt-4">
-							<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+							<div
+								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-surface px-[1.875rem] py-1 text-text-tertiary"
+							>
 								<span class="eyebrow flex-1 min-w-0">Item</span>
 								<span class="eyebrow w-20 text-right shrink-0">TT</span>
 								<span class="eyebrow w-14 text-right shrink-0">Share</span>

@@ -87,8 +87,8 @@
 		<!-- The evidence strip: how much play stands behind the figures. -->
 		<p class="mt-1.5 whitespace-nowrap text-xs tabular-nums text-text-tertiary">
 			{overall.sessions}
-			{overall.sessions === 1 ? 'session' : 'sessions'} · {overall.kills} kills ·
-			{formatHours(overall.durationHours)}
+			{overall.sessions === 1 ? 'session' : 'sessions'} · {overall.kills}
+			{overall.kills === 1 ? 'kill' : 'kills'} · {formatHours(overall.durationHours)}
 		</p>
 	</div>
 	<StatDisplay
@@ -132,6 +132,7 @@
 		value={formatPercent(overall.realisedRate)}
 		valueClass={netTone(overall.realisedRate - 1)}
 		emphasis="secondary"
+		labelSuffix={realisedTip}
 	/>
 
 	<StatDisplay label="PES" value={overall.pes.toFixed(2)} labelSuffix={pesTip} />
