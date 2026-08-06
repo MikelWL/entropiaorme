@@ -42,8 +42,12 @@ context spine for duration, cost, and event attribution),
 `0020_signal_quests.sql` (loot-signal completion for quests without a mission-log
 lifecycle), `0021_quest_families.sql` (variant families with shared,
 anchor-aware cooldown), `0022_session_definitions.sql` (authored session
-families, activity rosters, and instance references), and
-`0023_default_session_definition.sql` (the protected fallback definition). The
+families, activity rosters, and instance references),
+`0023_default_session_definition.sql` (the protected fallback definition), and
+`0024_hunting_stock_provenance.sql` (the mob-species provenance dimension on
+the stock-movement ledger, widening the source vocabulary to hunted loot and
+rebuilding the table because SQLite cannot widen a CHECK constraint in place,
+plus the activity-family stamp on stock conversions). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
