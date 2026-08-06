@@ -3591,6 +3591,9 @@ fn item_positions(
     Ok((positions, unit_tt))
 }
 
+/// One item's open positions per (provenance, tool) key, with its unit TT.
+type ItemPosition = (Vec<(PositionKey, f64)>, f64);
+
 /// Every item's open positions and unit TT in three whole-table passes:
 /// the batch sibling of [`item_positions`], byte-for-byte the same
 /// arithmetic, for readers that need the whole inventory at once. The
@@ -3600,7 +3603,7 @@ fn item_positions(
 /// this batch form exists to avoid.
 fn all_item_positions(
     conn: &rusqlite::Connection,
-) -> rusqlite::Result<std::collections::HashMap<String, (Vec<(PositionKey, f64)>, f64)>> {
+) -> rusqlite::Result<std::collections::HashMap<String, ItemPosition>> {
     use std::collections::{BTreeMap, HashMap};
     #[derive(Default)]
     struct ItemAcc {
@@ -7970,14 +7973,16 @@ mod tests {
         assert_eq!(raw_stock, settled_stock);
     }
 
+    /// A flattened `(item, [(tier, species, tool, quantity)], unit_tt)`
+    /// row of the whole-inventory position map.
+    type FlatPositionRow = (String, Vec<(String, String, String, f64)>, f64);
+
     /// The whole-inventory position map through the batch read, for the
     /// settlement-equivalence assertion above.
-    async fn all_positions_for_test(
-        db: &crate::db::Db,
-    ) -> Vec<(String, Vec<(String, String, String, f64)>, f64)> {
+    async fn all_positions_for_test(db: &crate::db::Db) -> Vec<FlatPositionRow> {
         db.with_reader(|conn| {
             let map = all_item_positions(conn)?;
-            let mut rows: Vec<(String, Vec<(String, String, String, f64)>, f64)> = map
+            let mut rows: Vec<FlatPositionRow> = map
                 .into_iter()
                 .map(|(item, (positions, unit_tt))| {
                     let keys = positions
