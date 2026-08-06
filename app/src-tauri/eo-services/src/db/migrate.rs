@@ -158,6 +158,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "hunting stock provenance",
         sql: include_str!("../../migrations/0024_hunting_stock_provenance.sql"),
     },
+    Migration {
+        version: 25,
+        description: "loot item name indexes",
+        sql: include_str!("../../migrations/0025_loot_item_name_indexes.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -190,6 +195,7 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "EF1309FFA7D79EDEDD0AA4AB9106066C7E6B2CB9856DDE380DB348A5FE9D105C8ADA28D4405594EE3F2988B7E114D3A5",
     "708CB017C278DF637B27B2B8E787A6DC26722B951872932E99C4F50E7974995C14C3065403FD940BF31559D5ED21F3AA",
     "7E02FF79CF14E66EA4F28EAF0D1EEE302BBBE2A14B0E869E237B0FC5A10E8C6AF2BC7FE59880DCF9324E66F70C210226",
+    "3EE610D8454477F0967F64E2E23A20451F63A1F598C63E2FD4DCA92B6B449CD2FED2BFC578D3A018F09539344E918A11",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

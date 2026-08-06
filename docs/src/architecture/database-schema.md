@@ -47,7 +47,10 @@ families, activity rosters, and instance references),
 `0024_hunting_stock_provenance.sql` (the mob-species provenance dimension on
 the stock-movement ledger, widening the source vocabulary to hunted loot and
 rebuilding the table because SQLite cannot widen a CHECK constraint in place,
-plus the activity-family stamp on stock conversions). The
+plus the activity-family stamp on stock conversions), and
+`0025_loot_item_name_indexes.sql` (partial item-name indexes over active loot
+rows on both loot tables, serving the per-item position arithmetic and the
+DISTINCT item universes without full-table scans). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -557,7 +560,7 @@ The individual loot items dropped by a kill.
 | --- | --- | --- |
 | `id` | INTEGER | Primary key, autoincrement. |
 | `kill_id` | TEXT | Not null; references `kills(id)`. Indexed (`idx_kill_loot_items_kill_id`). |
-| `item_name` | TEXT | Not null. |
+| `item_name` | TEXT | Not null. Partially indexed over active rows (`idx_kill_loot_items_item_active`, migration `0025`) for per-item position reads and the DISTINCT item universe. |
 | `quantity` | INTEGER | Defaults to 1. |
 | `value_ped` | REAL | Not null. |
 | `is_enhancer_shrapnel` | INTEGER | Not null; defaults to 0 (boolean flag). |
@@ -597,7 +600,7 @@ The individual wood items a successful swing dropped.
 | --- | --- | --- |
 | `id` | INTEGER | Primary key, autoincrement. |
 | `harvest_id` | TEXT | Not null; references `harvest_events(id)`. Indexed (`idx_harvest_loot_items_harvest`). |
-| `item_name` | TEXT | Not null. |
+| `item_name` | TEXT | Not null. Partially indexed over active rows (`idx_harvest_loot_items_item_active`, migration `0025`) for per-item position reads and the DISTINCT item universe. |
 | `quantity` | INTEGER | Defaults to 1. |
 | `value_ped` | REAL | Defaults to 0. |
 | `deactivated_at` | REAL | Null when active; mirrors `kill_loot_items` so the loot-edit flow can extend to harvest loot without a schema move. |

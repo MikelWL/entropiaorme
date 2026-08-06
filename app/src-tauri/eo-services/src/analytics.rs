@@ -2087,40 +2087,114 @@ async fn hunting_activity_impl(
 /// window. Summaries fill duration and PES where they exist (ended,
 /// non-degenerate sessions); a session without one still reports its
 /// kill-grain figures rather than vanishing.
+/// One (session, context, species, maturity) cell of the kill-grain pass.
+///
+/// This is the finest grain any Hunting consumer aggregates at, so a single
+/// pass over `kills` at this grain serves every downstream fold (per-session
+/// totals, species and maturity rows, per-context signature sums, the
+/// unstamped remainder) instead of each consumer re-scanning the table.
+struct HuntingKillGrainRow {
+    session_id: String,
+    context_id: Option<i64>,
+    mob_species: String,
+    mob_maturity: String,
+    kills: i64,
+    cycled: f64,
+    loot_tt: f64,
+}
+
+/// One (session, context) cell of the skill-gain pass; the PES sibling of
+/// [`HuntingKillGrainRow`].
+struct HuntingPesGrainRow {
+    session_id: String,
+    context_id: Option<i64>,
+    pes: f64,
+}
+
+/// The qualifying sessions with their per-session totals, plus the two
+/// grain passes every other Hunting fold derives from.
+#[allow(clippy::type_complexity)]
 fn hunting_sessions(
     conn: &rusqlite::Connection,
     epoch_start: Option<f64>,
-) -> Result<std::collections::HashMap<String, HuntingSessionAgg>, DbError> {
-    let mut sessions: std::collections::HashMap<String, HuntingSessionAgg> =
+) -> Result<
+    (
+        std::collections::HashMap<String, HuntingSessionAgg>,
+        Vec<HuntingKillGrainRow>,
+        Vec<HuntingPesGrainRow>,
+    ),
+    DbError,
+> {
+    // Session facts first, so the grain fold can stamp each session's
+    // definition without re-joining per consumer.
+    let mut meta: std::collections::HashMap<String, (Option<i64>, f64, Option<f64>)> =
         std::collections::HashMap::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT k.session_id, s.definition_id, s.started_at, s.ended_at, \
+            "SELECT id, definition_id, started_at, ended_at FROM tracking_sessions \
+             WHERE (?1 IS NULL OR started_at >= ?1)",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![epoch_start])?;
+        while let Some(row) = rows.next()? {
+            meta.insert(
+                row.get::<_, String>(0)?,
+                (
+                    row.get(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                    row.get(3)?,
+                ),
+            );
+        }
+    }
+
+    // The one kill-grain pass. The join keeps the standing semantics: a
+    // kill whose session the tracker never recorded stays out of Hunting.
+    let mut grain: Vec<HuntingKillGrainRow> = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT k.session_id, k.context_id, \
+                    COALESCE(k.mob_species, ''), COALESCE(k.mob_maturity, ''), \
                     COUNT(*), \
                     COALESCE(SUM(k.cost_ped + k.enhancer_cost), 0), \
                     COALESCE(SUM(k.loot_total_ped), 0) \
              FROM kills k \
              JOIN tracking_sessions s ON s.id = k.session_id \
              WHERE (?1 IS NULL OR s.started_at >= ?1) \
-             GROUP BY k.session_id",
+             GROUP BY 1, 2, 3, 4",
         )?;
         let mut rows = stmt.query(rusqlite::params![epoch_start])?;
         while let Some(row) = rows.next()? {
-            let id = row.get::<_, String>(0)?;
-            sessions.insert(
-                id,
-                HuntingSessionAgg {
-                    definition_id: row.get(1)?,
-                    started_at: row.get::<_, f64>(2).unwrap_or(0.0),
-                    ended_at: row.get(3)?,
-                    kills: row.get::<_, i64>(4).unwrap_or(0),
-                    cycled: as_float(row, 5),
-                    loot_tt: as_float(row, 6),
-                    ..HuntingSessionAgg::default()
-                },
-            );
+            grain.push(HuntingKillGrainRow {
+                session_id: row.get(0)?,
+                context_id: row.get(1)?,
+                mob_species: row.get(2)?,
+                mob_maturity: row.get(3)?,
+                kills: row.get::<_, i64>(4).unwrap_or(0),
+                cycled: as_float(row, 5),
+                loot_tt: as_float(row, 6),
+            });
         }
     }
+
+    let mut sessions: std::collections::HashMap<String, HuntingSessionAgg> =
+        std::collections::HashMap::new();
+    for cell in &grain {
+        let Some((definition_id, started_at, ended_at)) = meta.get(&cell.session_id) else {
+            continue;
+        };
+        let agg = sessions
+            .entry(cell.session_id.clone())
+            .or_insert_with(|| HuntingSessionAgg {
+                definition_id: *definition_id,
+                started_at: *started_at,
+                ended_at: *ended_at,
+                ..HuntingSessionAgg::default()
+            });
+        agg.kills += cell.kills;
+        agg.cycled += cell.cycled;
+        agg.loot_tt += cell.loot_tt;
+    }
+
     {
         let mut stmt = conn.prepare(
             "SELECT session_id, duration_hours FROM session_summaries",
@@ -2142,22 +2216,32 @@ fn hunting_sessions(
             }
         }
     }
-    // PES on the raw per-session basis, so the definition totals, the
-    // signature rows, and the ambient remainder all sum the same fact.
+
+    // The one skill-gain pass, (session, context) grain. PES stays on the
+    // raw per-session basis, so the definition totals, the signature rows,
+    // and the ambient remainder all sum the same fact.
+    let mut pes_grain: Vec<HuntingPesGrainRow> = Vec::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT session_id, COALESCE(SUM(ped_value), 0) FROM skill_gains \
-             WHERE ped_value IS NOT NULL GROUP BY session_id",
+            "SELECT session_id, context_id, COALESCE(SUM(ped_value), 0) FROM skill_gains \
+             WHERE ped_value IS NOT NULL GROUP BY 1, 2",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
-            let id = row.get::<_, String>(0)?;
-            if let Some(agg) = sessions.get_mut(&id) {
-                agg.pes = as_float(row, 1);
-            }
+            pes_grain.push(HuntingPesGrainRow {
+                session_id: row.get(0)?,
+                context_id: row.get(1)?,
+                pes: as_float(row, 2),
+            });
         }
     }
-    Ok(sessions)
+    for cell in &pes_grain {
+        if let Some(agg) = sessions.get_mut(&cell.session_id) {
+            agg.pes += cell.pes;
+        }
+    }
+
+    Ok((sessions, grain, pes_grain))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2167,7 +2251,7 @@ fn hunting_activity_read(
 ) -> Result<HuntingActivityData, DbError> {
     use std::collections::{BTreeMap, HashMap};
 
-    let sessions = hunting_sessions(conn, epoch_start)?;
+    let (sessions, kill_grain, pes_grain) = hunting_sessions(conn, epoch_start)?;
     let round2 = |value: f64| eo_wire::normalizer::round_half_even(value, 2);
     let round4 = |value: f64| eo_wire::normalizer::round_half_even(value, 4);
     let rate = |returns: f64, cycled: f64| {
@@ -2233,28 +2317,15 @@ fn hunting_activity_read(
         loot_tt: f64,
     }
     let mut species_maturity: BTreeMap<String, BTreeMap<String, MaturityAgg>> = BTreeMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT COALESCE(k.mob_species, ''), COALESCE(k.mob_maturity, ''), COUNT(*), \
-                    COALESCE(SUM(k.cost_ped + k.enhancer_cost), 0), \
-                    COALESCE(SUM(k.loot_total_ped), 0) \
-             FROM kills k \
-             JOIN hunting_session_scope scope ON scope.id = k.session_id \
-             GROUP BY 1, 2",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let species: String = row.get(0)?;
-            let maturity: String = row.get(1)?;
-            let entry = species_maturity
-                .entry(species)
-                .or_default()
-                .entry(maturity)
-                .or_default();
-            entry.kills += row.get::<_, i64>(2).unwrap_or(0);
-            entry.cycled += as_float(row, 3);
-            entry.loot_tt += as_float(row, 4);
-        }
+    for cell in &kill_grain {
+        let entry = species_maturity
+            .entry(cell.mob_species.clone())
+            .or_default()
+            .entry(cell.mob_maturity.clone())
+            .or_default();
+        entry.kills += cell.kills;
+        entry.cycled += cell.cycled;
+        entry.loot_tt += cell.loot_tt;
     }
 
     // Species loot composition (mob loot only: enhancer-shrapnel returns are
@@ -2300,19 +2371,18 @@ fn hunting_activity_read(
     // its kills dominated that session. Anything thinner stays unclaimed.
     let mut session_species_kills: HashMap<String, Vec<(String, i64)>> = HashMap::new();
     {
-        let mut stmt = conn.prepare(
-            "SELECT k.session_id, COALESCE(k.mob_species, ''), COUNT(*) \
-             FROM kills k \
-             JOIN hunting_session_scope scope ON scope.id = k.session_id \
-             GROUP BY k.session_id, 2",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let session: String = row.get(0)?;
-            session_species_kills
-                .entry(session)
+        // The grain is finer than (session, species), so fold to a map
+        // first; the dominance walk below wants one count per species.
+        let mut per_session: HashMap<String, BTreeMap<String, i64>> = HashMap::new();
+        for cell in &kill_grain {
+            *per_session
+                .entry(cell.session_id.clone())
                 .or_default()
-                .push((row.get(1)?, row.get::<_, i64>(2).unwrap_or(0)));
+                .entry(cell.mob_species.clone())
+                .or_insert(0) += cell.kills;
+        }
+        for (session, counts) in per_session {
+            session_species_kills.insert(session, counts.into_iter().collect());
         }
     }
     let mut species_pes: HashMap<String, (f64, f64, i64)> = HashMap::new();
@@ -2383,30 +2453,20 @@ fn hunting_activity_read(
 
     // Per-(session, species) loot for the definition mob composition.
     let mut definition_mobs: HashMap<Option<i64>, BTreeMap<String, (i64, f64)>> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT k.session_id, COALESCE(k.mob_species, ''), COUNT(*), \
-                    COALESCE(SUM(k.loot_total_ped), 0) \
-             FROM kills k \
-             JOIN hunting_session_scope scope ON scope.id = k.session_id \
-             WHERE COALESCE(k.mob_species, '') != '' \
-             GROUP BY k.session_id, 2",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let session: String = row.get(0)?;
-            let Some(agg) = sessions.get(&session) else {
-                continue;
-            };
-            let species: String = row.get(1)?;
-            let entry = definition_mobs
-                .entry(agg.definition_id)
-                .or_default()
-                .entry(species)
-                .or_insert((0, 0.0));
-            entry.0 += row.get::<_, i64>(2).unwrap_or(0);
-            entry.1 += as_float(row, 3);
+    for cell in &kill_grain {
+        if cell.mob_species.is_empty() {
+            continue;
         }
+        let Some(agg) = sessions.get(&cell.session_id) else {
+            continue;
+        };
+        let entry = definition_mobs
+            .entry(agg.definition_id)
+            .or_default()
+            .entry(cell.mob_species.clone())
+            .or_insert((0, 0.0));
+        entry.0 += cell.kills;
+        entry.1 += cell.loot_tt;
     }
 
     // The signature substrate: contexts, their quest/segment interval sets,
@@ -2496,80 +2556,46 @@ fn hunting_activity_read(
     }
     // Per-context event totals, by stamp.
     let mut context_kills: HashMap<i64, (i64, f64, f64)> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT k.context_id, COUNT(*), \
-                    COALESCE(SUM(k.cost_ped + k.enhancer_cost), 0), \
-                    COALESCE(SUM(k.loot_total_ped), 0) \
-             FROM kills k \
-             JOIN hunting_session_scope scope ON scope.id = k.session_id \
-             WHERE k.context_id IS NOT NULL \
-             GROUP BY k.context_id",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            context_kills.insert(
-                row.get(0)?,
-                (
-                    row.get::<_, i64>(1).unwrap_or(0),
-                    as_float(row, 2),
-                    as_float(row, 3),
-                ),
-            );
-        }
-    }
-    let mut context_pes: HashMap<i64, f64> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT sg.context_id, COALESCE(SUM(sg.ped_value), 0) \
-             FROM skill_gains sg \
-             JOIN hunting_session_scope scope ON scope.id = sg.session_id \
-             WHERE sg.context_id IS NOT NULL AND sg.ped_value IS NOT NULL \
-             GROUP BY sg.context_id",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            context_pes.insert(row.get(0)?, as_float(row, 1));
-        }
-    }
     // Events that never got a context stamp (legacy sessions and pre-model
     // rows), per session, so they can join their definition's ambient
     // remainder rather than silently dropping out of the breakdown.
     let mut legacy_kills_by_session: HashMap<String, (i64, f64, f64)> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT k.session_id, COUNT(*), \
-                    COALESCE(SUM(k.cost_ped + k.enhancer_cost), 0), \
-                    COALESCE(SUM(k.loot_total_ped), 0) \
-             FROM kills k \
-             JOIN hunting_session_scope scope ON scope.id = k.session_id \
-             WHERE k.context_id IS NULL \
-             GROUP BY k.session_id",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            legacy_kills_by_session.insert(
-                row.get(0)?,
-                (
-                    row.get::<_, i64>(1).unwrap_or(0),
-                    as_float(row, 2),
-                    as_float(row, 3),
-                ),
-            );
+    for cell in &kill_grain {
+        match cell.context_id {
+            Some(context) => {
+                let entry = context_kills.entry(context).or_insert((0, 0.0, 0.0));
+                entry.0 += cell.kills;
+                entry.1 += cell.cycled;
+                entry.2 += cell.loot_tt;
+            }
+            None => {
+                let entry = legacy_kills_by_session
+                    .entry(cell.session_id.clone())
+                    .or_insert((0, 0.0, 0.0));
+                entry.0 += cell.kills;
+                entry.1 += cell.cycled;
+                entry.2 += cell.loot_tt;
+            }
         }
     }
+    // The PES grain is session-unfiltered (its per-session totals serve
+    // every session), so the context folds re-scope to qualifying sessions
+    // exactly as the scope-joined queries did.
+    let mut context_pes: HashMap<i64, f64> = HashMap::new();
     let mut legacy_pes_by_session: HashMap<String, f64> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT sg.session_id, COALESCE(SUM(sg.ped_value), 0) \
-             FROM skill_gains sg \
-             JOIN hunting_session_scope scope ON scope.id = sg.session_id \
-             WHERE sg.context_id IS NULL AND sg.ped_value IS NOT NULL \
-             GROUP BY sg.session_id",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            legacy_pes_by_session.insert(row.get(0)?, as_float(row, 1));
+    for cell in &pes_grain {
+        if !sessions.contains_key(&cell.session_id) {
+            continue;
+        }
+        match cell.context_id {
+            Some(context) => {
+                *context_pes.entry(context).or_insert(0.0) += cell.pes;
+            }
+            None => {
+                *legacy_pes_by_session
+                    .entry(cell.session_id.clone())
+                    .or_insert(0.0) += cell.pes;
+            }
         }
     }
 
@@ -3507,6 +3533,134 @@ fn item_positions(
     Ok((positions, unit_tt))
 }
 
+/// Every item's open positions and unit TT in three whole-table passes:
+/// the batch sibling of [`item_positions`], byte-for-byte the same
+/// arithmetic, for readers that need the whole inventory at once. The
+/// per-item shape stays for the write paths, which touch one item inside
+/// a transaction; a list surface calling it in a loop would re-scan the
+/// loot tables once per item, which is exactly the O(items x rows) read
+/// this batch form exists to avoid.
+fn all_item_positions(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<std::collections::HashMap<String, (Vec<(PositionKey, f64)>, f64)>> {
+    use std::collections::{BTreeMap, HashMap};
+    #[derive(Default)]
+    struct ItemAcc {
+        by_source: BTreeMap<PositionKey, f64>,
+        base_qty: f64,
+        base_tt: f64,
+        produced_qty: f64,
+        produced_tt: f64,
+    }
+    let mut items: HashMap<String, ItemAcc> = HashMap::new();
+
+    {
+        let mut stmt = conn.prepare(
+            "SELECT l.item_name, e.yield_tier, e.tool_name, SUM(l.quantity), SUM(l.value_ped) \
+             FROM harvest_loot_items AS l \
+             JOIN harvest_events AS e ON e.id = l.harvest_id \
+             WHERE l.deactivated_at IS NULL \
+             GROUP BY l.item_name, e.yield_tier, e.tool_name",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let item: String = row.get(0)?;
+            let tier: Option<String> = row.get(1)?;
+            let tool: Option<String> = row.get(2)?;
+            let quantity: f64 = row.get(3)?;
+            let tt_value: f64 = row.get(4)?;
+            let acc = items.entry(item).or_default();
+            acc.base_qty += quantity;
+            acc.base_tt += tt_value;
+            *acc.by_source
+                .entry(PositionKey {
+                    tier: tier.unwrap_or_default(),
+                    species: String::new(),
+                    tool: tool.unwrap_or_default(),
+                })
+                .or_insert(0.0) += quantity;
+        }
+    }
+
+    {
+        let mut stmt = conn.prepare(
+            "SELECT li.item_name, \
+                    CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
+                    ELSE '' END AS species, \
+                    SUM(li.quantity), SUM(li.value_ped) \
+             FROM kill_loot_items AS li \
+             JOIN kills AS k ON k.id = li.kill_id \
+             WHERE li.deactivated_at IS NULL \
+             GROUP BY li.item_name, species",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let item: String = row.get(0)?;
+            let species: String = row.get(1)?;
+            let quantity: f64 = row.get(2)?;
+            let tt_value: f64 = row.get(3)?;
+            let acc = items.entry(item).or_default();
+            acc.base_qty += quantity;
+            acc.base_tt += tt_value;
+            *acc.by_source
+                .entry(PositionKey {
+                    tier: String::new(),
+                    species,
+                    tool: String::new(),
+                })
+                .or_insert(0.0) += quantity;
+        }
+    }
+
+    {
+        let mut stmt = conn.prepare(
+            "SELECT item_name, yield_tier, mob_species, tool_name, SUM(quantity), SUM(tt_value) \
+             FROM stock_movements \
+             GROUP BY item_name, yield_tier, mob_species, tool_name",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let item: String = row.get(0)?;
+            let tier: Option<String> = row.get(1)?;
+            let species: Option<String> = row.get(2)?;
+            let tool: Option<String> = row.get(3)?;
+            let quantity: f64 = row.get(4)?;
+            let tt_value: f64 = row.get(5)?;
+            let acc = items.entry(item).or_default();
+            if quantity > 0.0 {
+                acc.produced_qty += quantity;
+                acc.produced_tt += tt_value;
+            }
+            *acc.by_source
+                .entry(PositionKey {
+                    tier: tier.unwrap_or_default(),
+                    species: species.unwrap_or_default(),
+                    tool: tool.unwrap_or_default(),
+                })
+                .or_insert(0.0) += quantity;
+        }
+    }
+
+    Ok(items
+        .into_iter()
+        .map(|(item, acc)| {
+            let unit_tt = if acc.base_qty > STOCK_EPSILON {
+                acc.base_tt / acc.base_qty
+            } else if acc.produced_qty > STOCK_EPSILON {
+                acc.produced_tt / acc.produced_qty
+            } else {
+                0.0
+            };
+            let positions: Vec<(PositionKey, f64)> = acc
+                .by_source
+                .into_iter()
+                .filter(|(_, quantity)| *quantity > STOCK_EPSILON)
+                .collect();
+            (item, (positions, unit_tt))
+        })
+        .collect())
+}
+
 /// Borrow a position list into the allocation module's shape. A key
 /// carrying a tier resolves to harvest provenance and one carrying a
 /// species to hunt provenance; a key with neither is an unattributed pile.
@@ -3848,23 +4002,40 @@ impl AnalyticsService {
                     items.extend(names);
                 }
 
+                // The whole inventory in three passes, then per-item lookups:
+                // a per-item read here would re-scan the loot tables once per
+                // item, which is the O(items x rows) shape this list used to
+                // take its load time from.
+                let all_positions = all_item_positions(conn)?;
+                let listed_by_item: std::collections::HashMap<String, f64> = {
+                    let mut stmt = conn.prepare(
+                        "SELECT item_name, COALESCE(SUM(quantity), 0) FROM auction_listings \
+                         WHERE status = 'pending' AND undone_at IS NULL GROUP BY item_name",
+                    )?;
+                    let mut out = std::collections::HashMap::new();
+                    let mut listed = stmt.query([])?;
+                    while let Some(row) = listed.next()? {
+                        out.insert(row.get::<_, String>(0)?, row.get::<_, f64>(1)?);
+                    }
+                    out
+                };
                 let mut rows = Vec::new();
                 for item_name in items {
-                    let (positions, unit_tt) = item_positions(conn, &item_name)?;
-                    // `item_positions` already drops closed positions, so a
-                    // residual float tail is the only way this goes untidy.
-                    let quantity: f64 = positions
-                        .iter()
-                        .map(|(_, quantity)| quantity)
-                        .sum::<f64>()
-                        .max(0.0);
+                    // A universe item with no open position stays listed at
+                    // zero, exactly as the per-item read reported it.
+                    let (quantity, unit_tt) = all_positions
+                        .get(&item_name)
+                        .map(|(positions, unit_tt)| {
+                            let quantity: f64 = positions
+                                .iter()
+                                .map(|(_, quantity)| quantity)
+                                .sum::<f64>()
+                                .max(0.0);
+                            (quantity, *unit_tt)
+                        })
+                        .unwrap_or((0.0, 0.0));
                     let tt_value = quantity * unit_tt;
-                    let listed_quantity: f64 = conn.query_row(
-                        "SELECT COALESCE(SUM(quantity), 0) FROM auction_listings \
-                         WHERE item_name = ? AND status = 'pending' AND undone_at IS NULL",
-                        rusqlite::params![item_name],
-                        |row| row.get(0),
-                    )?;
+                    let listed_quantity = listed_by_item.get(&item_name).copied().unwrap_or(0.0);
                     rows.push(StockPositionRow {
                         item_name,
                         quantity,
