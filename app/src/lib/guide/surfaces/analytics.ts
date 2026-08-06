@@ -300,13 +300,16 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab lets you review aggregated stats by mob or by session name.',
+						text: 'The Hunting tab compares your play on two honest axes. Sessions ranks the routines you defined on the dashboard, with each routine opening onto the quests and segments played inside it. Targets ranks the species you hunted, with maturity as a drilldown.',
 					},
 					{
 						kind: 'p',
-						text: 'The currently most interesting stat is PES/100, showing which activity results in the most skilling per 100 PED cycled.',
+						text: 'Market and History carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and every action reversible from History. PES/100 remains the primary skilling comparison across both axes.',
 					},
-					{ kind: 'p', text: 'More hunting insights to come.' },
+					{
+						kind: 'p',
+						text: 'Figures here are direct hunting cost (weapon and enhancer at kill grain); heal and armour stay with the full session economics on the Dashboard and Overview.',
+					},
 				],
 				note: [
 					{ text: 'See ' },

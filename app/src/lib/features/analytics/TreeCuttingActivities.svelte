@@ -180,7 +180,10 @@
 		</div>
 
 		{#if selected}
-			<div class="min-w-0 p-5">
+			<!-- One scroll region bounded to the list pane's own height, so the
+				two sides of the hairline stay the same height; on this tab's
+				short content it simply never engages. -->
+			<div class="min-w-0 max-h-[32rem] overflow-y-auto p-5">
 				{#if selected.yieldTier === 'unknown'}
 					<div class="flex min-h-28 items-center justify-center">
 						<div class="flex items-center gap-1.5 text-sm text-text-secondary">

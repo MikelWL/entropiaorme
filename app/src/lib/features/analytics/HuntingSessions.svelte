@@ -7,19 +7,22 @@
 	 * declared while it was played (quest families with variant drilldown,
 	 * deliberate co-activation bundles as one joint-return unit, named
 	 * segments, and the unscoped remainder), its mob composition, and its
-	 * recorded instances with a trend read.
+	 * recent instances with a trend read.
 	 *
-	 * Quest-shaped rows carry the fixed-reward break-even readout: what a
-	 * run costs before its reward, against the configured liquid reward,
-	 * with the voucher-markup scenario kept informational. Skill rewards
-	 * are PES and never enter a liquid figure.
+	 * Quest-shaped rows carry the fixed-reward break-even readout as a
+	 * visible column, with the worked explanation behind an InfoTip. Skill
+	 * rewards are PES and never enter a liquid figure.
+	 *
+	 * The unassigned bucket is pinned last and unranked, but its figures
+	 * SHOW: unlike an unclassified kill, an unassigned session has complete,
+	 * honest numbers; it merely belongs to no routine yet.
 	 */
 	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import Input from '$lib/components/Input.svelte';
+	import SearchInput from '$lib/components/SearchInput.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { HuntingSignature } from '$lib/types/analytics';
-	import type { SortDir, SortKey } from '$lib/view/tableModel.svelte';
+	import type { TableModel } from '$lib/view/tableModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 	import {
 		type HuntingSessionSection,
@@ -28,77 +31,73 @@
 	} from './huntingModel.svelte';
 
 	let {
-		sections,
+		table,
 		selected,
 		onselect,
-		sortKey,
-		sortDir,
-		onsort,
 	}: {
-		sections: HuntingSessionSection[];
+		table: TableModel<HuntingSessionSection>;
 		selected: HuntingSessionSection | null;
 		onselect: (key: string) => void;
-		sortKey: SortKey<HuntingSessionSection> | undefined;
-		sortDir: SortDir;
-		onsort: (key: HuntingSessionSortKey) => void;
 	} = $props();
 
 	// Definitions accumulate over a playing career; the search appears once
-	// scanning stops being quicker than typing.
+	// scanning stops being quicker than typing, and stays visible while a
+	// query is live so a filter can always be seen and cleared.
 	const SEARCH_THRESHOLD = 8;
-	let query = $state('');
-	const searchable = $derived(sections.length > SEARCH_THRESHOLD);
-	const matches = $derived(
-		query.trim() === ''
-			? sections
-			: sections.filter((section) =>
-					section.name.toLowerCase().includes(query.trim().toLowerCase()),
-				),
-	);
+	const searchable = $derived(table.filtered.length > SEARCH_THRESHOLD || table.search !== '');
 
 	// The unassigned bucket is pinned after the deliberate definitions
-	// whatever the sort: a diagnostic bucket has no rank to take part in.
+	// whatever the sort: it is not a routine, so it holds no rank.
 	let displaySections = $derived([
-		...matches.filter((section) => !section.isUnassigned),
-		...matches.filter((section) => section.isUnassigned),
+		...table.filtered.filter((section) => !section.isUnassigned),
+		...table.filtered.filter((section) => section.isUnassigned),
 	]);
 
-	// Which family rows are expanded to their variants. Keyed by label:
-	// stable within one definition's activity list.
+	// Which family rows are expanded to their variants, keyed by kind and
+	// label so a segment sharing a family's name cannot collide; the set
+	// resets when the selected definition changes.
 	let expandedFamilies = $state<Set<string>>(new Set());
-	function toggleFamily(label: string) {
+	let expandedFor = $state<string | null>(null);
+	$effect(() => {
+		if (selected?.key !== expandedFor) {
+			expandedFor = selected?.key ?? null;
+			expandedFamilies = new Set();
+		}
+	});
+	const familyKey = (row: HuntingSignature) => `${row.kind}:${row.label}`;
+	function toggleFamily(row: HuntingSignature) {
 		const next = new Set(expandedFamilies);
-		if (next.has(label)) {
-			next.delete(label);
+		if (next.has(familyKey(row))) {
+			next.delete(familyKey(row));
 		} else {
-			next.add(label);
+			next.add(familyKey(row));
 		}
 		expandedFamilies = next;
 	}
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
-	const rateTone = (value: number) => netTone(value - 1);
 	const formatHours = (hours: number) => {
 		if (hours >= 10) return `${hours.toFixed(0)}h`;
 		if (hours >= 1) return `${hours.toFixed(1)}h`;
 		return `${Math.round(hours * 60)}m`;
 	};
-	const instanceDate = (startedAt: number) =>
-		new Date(startedAt * 1000).toLocaleDateString(undefined, {
-			day: 'numeric',
+	// The family's ledger-date voice ("Aug 5"), gaining a year once a row
+	// falls outside the current one: instances are read historically.
+	const instanceDate = (startedAt: number) => {
+		const date = new Date(startedAt * 1000);
+		const withYear = date.getFullYear() !== new Date().getFullYear();
+		return date.toLocaleDateString('en-US', {
 			month: 'short',
+			day: 'numeric',
+			...(withYear ? { year: 'numeric' } : {}),
 		});
+	};
 
 	const TREND_LABEL = {
-		improving: 'Improving',
-		declining: 'Declining',
-		stable: 'Stable',
-	} as const;
-	const TREND_TONE = {
-		improving: 'text-positive',
-		declining: 'text-negative',
-		stable: 'text-text-tertiary',
+		improving: 'Improving ↗',
+		declining: 'Declining ↘',
+		stable: 'Stable →',
 	} as const;
 
 	const KIND_LABEL: Record<string, string> = {
@@ -109,6 +108,15 @@
 		ambient: '',
 	};
 
+	/** The visible break-even column: net after the configured liquid
+	 * reward over the recorded runs. `null` renders as no-data. */
+	function afterReward(row: HuntingSignature): number | null {
+		if (row.rewardIsSkill || row.rewardPed == null || row.runs <= 0) return null;
+		return row.returns - row.cycled + row.rewardPed * row.runs;
+	}
+	const signaturePesPer100 = (row: HuntingSignature) =>
+		row.cycled > 0 ? ((row.pes / row.cycled) * 100).toFixed(2) : NO_DATA;
+
 	// The list's column widths, declared once because the header and the rows
 	// have to shrink identically or they stop lining up. Kept in step with the
 	// sibling panes so the toggle reads as one surface.
@@ -117,15 +125,27 @@
 	const COL_RATE = 'min-w-0 flex-[0_1_4rem]';
 	const COL_PES = 'min-w-0 flex-[0_1_7.5rem]';
 	const sortArrow = (key: HuntingSessionSortKey) =>
-		sortKey === key ? (sortDir === 'asc' ? '↑' : '↓') : '';
+		table.sortKey === key ? (table.sortDir === 'asc' ? '↑' : '↓') : '';
 	const sortDescription = (key: HuntingSessionSortKey, label: string) => {
-		if (sortKey !== key) return `Sort by ${label}`;
-		return `Sort by ${label}, currently ${sortDir === 'asc' ? 'ascending' : 'descending'}`;
+		if (table.sortKey !== key) return `Sort by ${label}`;
+		return `Sort by ${label}, currently ${table.sortDir === 'asc' ? 'ascending' : 'descending'}`;
 	};
 </script>
 
+{#snippet directCostTip()}
+	<InfoTip align="right" width="w-80" label="What direct figures cover">
+		<p class="text-xs font-semibold leading-relaxed text-text">Direct hunting cost only</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			Weapon and enhancer decay attributed to kills. Heal and armour are recorded per session,
+			not per kill, so a session's full sustainability reads on the Dashboard and Overview.
+		</p>
+	</InfoTip>
+{/snippet}
+
 {#snippet economicsTip(row: HuntingSignature)}
 	{@const economics = signatureEconomics(row)}
+	{@const variantsHaveRewards =
+		row.kind === 'quest_family' && row.variants.some((variant) => variant.rewardPed != null)}
 	<p class="text-xs font-semibold leading-relaxed text-text">
 		Fixed-reward break-even for {row.label}
 	</p>
@@ -162,6 +182,11 @@
 				an informational scenario only; nothing is realised until a sale confirms it.
 			</p>
 		{/if}
+	{:else if variantsHaveRewards}
+		<p class="mt-2 text-xs leading-relaxed text-text-secondary">
+			The variants in this family carry different rewards, so no single family figure would be
+			honest. Expand the family to read each variant's own break-even.
+		</p>
 	{:else}
 		<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
 			No liquid reward is configured for this quest. Set one on the Quests page to complete the
@@ -175,6 +200,7 @@
 	{@const isFamily = row.kind === 'quest_family'}
 	{@const questShaped = row.kind === 'quest' || isFamily}
 	{@const net = row.returns - row.cycled}
+	{@const rewarded = afterReward(row)}
 	<li
 		class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
 			hover:bg-surface-hover/30 hover:border-border/40
@@ -185,16 +211,16 @@
 			{#if isFamily}
 				<button
 					type="button"
-					class="shrink-0 cursor-pointer text-text-tertiary transition-colors duration-[var(--duration-fast)] hover:text-text"
-					aria-expanded={expandedFamilies.has(row.label)}
-					aria-label={expandedFamilies.has(row.label)
+					class="shrink-0 -m-1 p-1 cursor-pointer text-text-tertiary transition-colors duration-[var(--duration-fast)] hover:text-text"
+					aria-expanded={expandedFamilies.has(familyKey(row))}
+					aria-label={expandedFamilies.has(familyKey(row))
 						? `Collapse ${row.label} variants`
 						: `Expand ${row.label} variants`}
-					onclick={() => toggleFamily(row.label)}
+					onclick={() => toggleFamily(row)}
 				>
 					<span
 						class="inline-block text-[0.625rem] transition-transform duration-[var(--duration-fast)]
-							{expandedFamilies.has(row.label) ? 'rotate-90' : ''}"
+							{expandedFamilies.has(familyKey(row)) ? 'rotate-90' : ''}"
 					>
 						▶
 					</span>
@@ -232,20 +258,31 @@
 			{/if}
 		</span>
 
-		<span class="w-12 shrink-0 text-right text-xs tabular-nums text-text-secondary">
+		<span class="w-10 shrink-0 text-right text-xs tabular-nums text-text-secondary">
 			{isAmbient ? NO_DATA : row.runs}
 		</span>
-		<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text-secondary">
-			{row.kills}
+		<span class="w-14 shrink-0 text-right text-xs tabular-nums text-text-secondary">
+			{signaturePesPer100(row)}
 		</span>
-		<span class="w-20 shrink-0 text-right text-xs tabular-nums text-text">
+		<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
 			{formatPed(row.cycled)}
 		</span>
-		<span class="w-20 shrink-0 text-right text-xs tabular-nums font-medium {netTone(net)}">
+		<span class="w-16 shrink-0 text-right text-xs tabular-nums text-text">
 			{signedPed(net)}
 		</span>
+		<span class="w-[4.5rem] shrink-0 text-right text-xs tabular-nums font-medium">
+			{#if rewarded !== null}
+				<span class={netTone(rewarded)}>{signedPed(rewarded)}</span>
+			{:else if row.rewardIsSkill}
+				<span class="text-text-tertiary" title="The reward is skill progress: PES, never liquid">
+					PES
+				</span>
+			{:else}
+				<span class="text-text-tertiary">{NO_DATA}</span>
+			{/if}
+		</span>
 	</li>
-	{#if isFamily && expandedFamilies.has(row.label)}
+	{#if isFamily && expandedFamilies.has(familyKey(row))}
 		{#each row.variants as variant (variant.label)}
 			{@render signatureRow(variant, depth + 1)}
 		{/each}
@@ -266,7 +303,7 @@
 		>
 			<span
 				class="{COL_NAME} flex min-w-0 items-center gap-1.5 text-sm font-medium tracking-tight
-					{section.isUnassigned ? 'text-text-tertiary' : 'text-text'}"
+					{section.isUnassigned || section.isArchived ? 'text-text-tertiary' : 'text-text'}"
 			>
 				<span class="min-w-0 truncate" title={section.name}>{section.name}</span>
 				{#if section.isArchived}
@@ -278,26 +315,15 @@
 					</span>
 				{/if}
 			</span>
-			{#if section.isUnassigned}
-				<span class="sr-only">Session metrics not applicable</span>
-				<span class={COL_CYCLED} aria-hidden="true"></span>
-				<span class={COL_RATE} aria-hidden="true"></span>
-				<span class={COL_PES} aria-hidden="true"></span>
-			{:else}
-				<span class="{COL_CYCLED} truncate text-right text-xs tabular-nums text-text">
-					{formatPed(section.cycled)}
-				</span>
-				<span
-					class="{COL_RATE} truncate text-right text-xs tabular-nums font-medium {rateTone(
-						section.lootRate,
-					)}"
-				>
-					{formatPercent(section.lootRate)}
-				</span>
-				<span class="{COL_PES} truncate text-right text-xs tabular-nums text-text">
-					{section.pesPer100Ped.toFixed(2)}
-				</span>
-			{/if}
+			<span class="{COL_CYCLED} truncate text-right text-xs tabular-nums text-text">
+				{formatPed(section.cycled)}
+			</span>
+			<span class="{COL_RATE} truncate text-right text-xs tabular-nums text-text">
+				{formatPercent(section.lootRate)}
+			</span>
+			<span class="{COL_PES} truncate text-right text-xs tabular-nums font-medium text-text">
+				{section.pesPer100Ped.toFixed(2)}
+			</span>
 		</button>
 	</li>
 {/snippet}
@@ -311,11 +337,10 @@
 			<div class="px-2 pt-4">
 				{#if searchable}
 					<div class="px-3 pb-2">
-						<Input
-							type="search"
+						<SearchInput
+							bind:value={table.search}
 							placeholder="Find a session"
 							aria-label="Find a session"
-							bind:value={query}
 						/>
 					</div>
 				{/if}
@@ -326,37 +351,37 @@
 						type="button"
 						class="eyebrow {COL_NAME} flex cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('name', 'Session')}
-						onclick={() => onsort('name')}
+						onclick={() => table.setSort('name')}
 					>
 						Session
-						{#if sortKey === 'name'}<span class="text-accent">{sortArrow('name')}</span>{/if}
+						{#if table.sortKey === 'name'}<span class="text-accent">{sortArrow('name')}</span>{/if}
 					</button>
 					<button
 						type="button"
 						class="eyebrow {COL_CYCLED} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('cycled', 'Cycled')}
-						onclick={() => onsort('cycled')}
+						onclick={() => table.setSort('cycled')}
 					>
 						Cycled
-						{#if sortKey === 'cycled'}<span class="text-accent">{sortArrow('cycled')}</span>{/if}
+						{#if table.sortKey === 'cycled'}<span class="text-accent">{sortArrow('cycled')}</span>{/if}
 					</button>
 					<button
 						type="button"
 						class="eyebrow {COL_RATE} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('lootRate', 'TT Rate')}
-						onclick={() => onsort('lootRate')}
+						onclick={() => table.setSort('lootRate')}
 					>
 						TT Rate
-						{#if sortKey === 'lootRate'}<span class="text-accent">{sortArrow('lootRate')}</span>{/if}
+						{#if table.sortKey === 'lootRate'}<span class="text-accent">{sortArrow('lootRate')}</span>{/if}
 					</button>
 					<button
 						type="button"
 						class="eyebrow {COL_PES} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('pesPer100Ped', 'PES per 100 PED')}
-						onclick={() => onsort('pesPer100Ped')}
+						onclick={() => table.setSort('pesPer100Ped')}
 					>
 						PES/100
-						{#if sortKey === 'pesPer100Ped'}<span class="text-accent"
+						{#if table.sortKey === 'pesPer100Ped'}<span class="text-accent"
 								>{sortArrow('pesPer100Ped')}</span
 							>{/if}
 					</button>
@@ -375,7 +400,10 @@
 		</div>
 
 		{#if selected}
-			<div class="min-w-0 p-5">
+			<!-- One scroll region bounded to the list pane's own height, so the
+				two sides of the hairline stay the same height and the pane never
+				stacks nested scrollers. -->
+			<div class="min-w-0 max-h-[32rem] overflow-y-auto p-5">
 				{#if selected.isUnassigned}
 					<div class="mb-4 flex items-start gap-1.5 text-sm text-text-secondary">
 						<span>
@@ -389,7 +417,8 @@
 							</p>
 							<p class="mt-1 text-xs leading-relaxed text-text-secondary">
 								Sessions tracked before definitions existed, or deliberately started outside one.
-								Their kills and costs still count in Overall and Targets.
+								Their figures are complete and honest; they simply belong to no routine, so they
+								hold no rank in the comparison.
 							</p>
 							<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
 								An ended session can be moved into a definition from the dashboard's Review
@@ -400,12 +429,11 @@
 				{/if}
 
 				<div class="grid grid-cols-3 gap-x-5 gap-y-4">
-					<StatDisplay
-						label="TT Net"
-						value={signedPed(selected.ttNet)}
-						valueClass={netTone(selected.ttNet)}
-						unit="PED"
-					/>
+					<StatDisplay label="TT Net" value={signedPed(selected.ttNet)} unit="PED">
+						{#snippet labelSuffix()}
+							{@render directCostTip()}
+						{/snippet}
+					</StatDisplay>
 					<StatDisplay label="TT Rate" value={formatPercent(selected.lootRate)} />
 					<StatDisplay label="PES" value={selected.pes.toFixed(2)} />
 					<StatDisplay
@@ -429,12 +457,13 @@
 					<div class="mt-5 border-t border-border/50 pt-4">
 						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 							<span class="eyebrow flex-1 min-w-0">Activity</span>
-							<span class="eyebrow w-12 text-right shrink-0">Runs</span>
-							<span class="eyebrow w-16 text-right shrink-0">Kills</span>
-							<span class="eyebrow w-20 text-right shrink-0">Cycled</span>
-							<span class="eyebrow w-20 text-right shrink-0">TT Net</span>
+							<span class="eyebrow w-10 text-right shrink-0">Runs</span>
+							<span class="eyebrow w-14 text-right shrink-0">PES/100</span>
+							<span class="eyebrow w-16 text-right shrink-0">Cycled</span>
+							<span class="eyebrow w-16 text-right shrink-0">TT Net</span>
+							<span class="eyebrow w-[4.5rem] text-right shrink-0">+ Reward</span>
 						</div>
-						<ul class="flex max-h-[18rem] flex-col gap-1 overflow-y-auto">
+						<ul class="flex flex-col gap-1">
 							{#each selected.activities as row (row.kind + row.label)}
 								{@render signatureRow(row, 0)}
 							{/each}
@@ -451,14 +480,17 @@
 							<span class="eyebrow w-20 text-right shrink-0">Loot TT</span>
 							<span class="eyebrow w-14 text-right shrink-0">Share</span>
 						</div>
-						<ul class="flex max-h-[14rem] flex-col gap-1 overflow-y-auto">
+						<ul class="flex flex-col gap-1">
 							{#each selected.mobs as mob (mob.mobSpecies)}
 								<li
 									class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
 										hover:bg-surface-hover/30 hover:border-border/40
 										transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
 								>
-									<span class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text">
+									<span
+										class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text"
+										title={mob.mobSpecies}
+									>
 										{mob.mobSpecies}
 									</span>
 									<span class="w-16 shrink-0 text-right text-sm tabular-nums text-text">
@@ -482,11 +514,36 @@
 					<div class="mt-5 border-t border-border/50 pt-4">
 						<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 							<span class="eyebrow flex-1 min-w-0 flex items-center gap-2">
-								Instances
-								{#if selected.trend}
-									<span class="text-[0.625rem] font-medium uppercase tracking-wide {TREND_TONE[selected.trend]}">
-										{TREND_LABEL[selected.trend]}
+								Recent instances
+								{#if selected.instances > selected.instanceRows.length}
+									<span class="text-[0.625rem] font-normal normal-case tracking-normal">
+										showing {selected.instanceRows.length} of {selected.instances}
 									</span>
+								{/if}
+								{#if selected.trend}
+									{@const trend = selected.trend}
+									<InfoTip label="How the trend is read" width="w-80">
+										{#snippet trigger()}
+											<span
+												class="text-[0.625rem] font-medium uppercase tracking-wide text-text-secondary
+													border-b border-dotted border-border/70"
+											>
+												{TREND_LABEL[trend]}
+											</span>
+										{/snippet}
+										<p class="text-xs font-semibold leading-relaxed text-text">
+											The newer half against the older half
+										</p>
+										<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+											The TT loot rate of the newer half of these instances compared with the older
+											half; within two percentage points reads as stable. Based on
+											{selected.instanceRows.length} instances.
+										</p>
+										<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+											Loot is the noisiest series in the game: one large loot can carry a whole
+											half. Treat this as a nudge to look at the instances, never as a verdict.
+										</p>
+									</InfoTip>
 								{/if}
 							</span>
 							<span class="eyebrow w-14 text-right shrink-0">Time</span>
@@ -494,7 +551,7 @@
 							<span class="eyebrow w-20 text-right shrink-0">Cycled</span>
 							<span class="eyebrow w-20 text-right shrink-0">TT Net</span>
 						</div>
-						<ul class="flex max-h-[14rem] flex-col gap-1 overflow-y-auto">
+						<ul class="flex flex-col gap-1">
 							{#each selected.instanceRows as instance (instance.sessionId)}
 								{@const instanceNet = instance.returns - instance.cycled}
 								<li
@@ -514,11 +571,7 @@
 									<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
 										{formatPed(instance.cycled)}
 									</span>
-									<span
-										class="w-20 shrink-0 text-right text-sm tabular-nums font-medium {netTone(
-											instanceNet,
-										)}"
-									>
+									<span class="w-20 shrink-0 text-right text-sm tabular-nums font-medium text-text">
 										{signedPed(instanceNet)}
 									</span>
 								</li>

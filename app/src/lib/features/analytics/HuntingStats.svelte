@@ -1,10 +1,13 @@
 <script lang="ts">
 	/**
 	 * The Hunting Overall block: the same paired stat grid, tones, and
-	 * estimate/realised disclosures as the Tree Cutting headline, extended
-	 * with the direct hunting signal (PES, kills, duration, evidence
-	 * depth). Full session sustainability, heal, and armour stay on
-	 * Dashboard and Overview; this block reports what hunting itself did.
+	 * estimate/realised disclosures as the Tree Cutting headline. The
+	 * pairing rule holds throughout: left column is a primary net figure,
+	 * right column its secondary rate. The evidence depth (sessions, kills,
+	 * duration) lives in a compact strip under the heading rather than as
+	 * grid rows, so the block stays the same height family as its sibling.
+	 * Full session sustainability, heal, and armour stay on Dashboard and
+	 * Overview; this block reports what hunting itself did.
 	 */
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
@@ -46,6 +49,13 @@
 			Only markup that a confirmed sale actually produced. It reads the same as TT Net until
 			something sells.
 		</p>
+		{#if overall.realisedOutsidePeriod > 0.005}
+			<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+				{formatPed(overall.realisedOutsidePeriod)} PED of the confirmed markup belongs to
+				species not hunted in the selected period. It is still counted here, because the sale
+				happened whichever period is showing.
+			</p>
+		{/if}
 	</InfoTip>
 {/snippet}
 
@@ -60,8 +70,27 @@
 	</InfoTip>
 {/snippet}
 
+{#snippet pesTip()}
+	<InfoTip label="What PES is">
+		<p class="text-xs font-semibold leading-relaxed text-text">Skill progress, not money</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			Project Entropia Skill: the non-liquid denomination of skill progress, derived from the
+			skill curve. It never enters a PED figure; PES/100 is PES earned per 100 PED cycled,
+			the primary skilling comparison.
+		</p>
+	</InfoTip>
+{/snippet}
+
 <div class="grid grid-cols-[auto_auto] content-start items-end gap-x-10 gap-y-4">
-	<h2 class="text-3xl font-bold tracking-tight leading-none text-text">Overall</h2>
+	<div class="min-w-0">
+		<h2 class="text-3xl font-bold tracking-tight leading-none text-text">Overall</h2>
+		<!-- The evidence strip: how much play stands behind the figures. -->
+		<p class="mt-1.5 whitespace-nowrap text-xs tabular-nums text-text-tertiary">
+			{overall.sessions}
+			{overall.sessions === 1 ? 'session' : 'sessions'} · {overall.kills} kills ·
+			{formatHours(overall.durationHours)}
+		</p>
+	</div>
 	<StatDisplay
 		label="Cycled"
 		value={formatPed(overall.cycled)}
@@ -105,23 +134,10 @@
 		emphasis="secondary"
 	/>
 
-	<StatDisplay label="PES" value={overall.pes.toFixed(2)} />
+	<StatDisplay label="PES" value={overall.pes.toFixed(2)} labelSuffix={pesTip} />
 	<StatDisplay
 		label="PES/100"
 		value={overall.pesPer100Ped.toFixed(2)}
-		emphasis="secondary"
-	/>
-
-	<StatDisplay label="Kills" value={String(overall.kills)} emphasis="secondary" />
-	<StatDisplay
-		label="Duration"
-		value={formatHours(overall.durationHours)}
-		emphasis="secondary"
-	/>
-
-	<StatDisplay
-		label="Sessions"
-		value={String(overall.sessions)}
 		emphasis="secondary"
 	/>
 </div>

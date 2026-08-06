@@ -12,50 +12,47 @@
 	 */
 	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import Input from '$lib/components/Input.svelte';
+	import SearchInput from '$lib/components/SearchInput.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
-	import type { SortDir, SortKey } from '$lib/view/tableModel.svelte';
+	import type { TableModel } from '$lib/view/tableModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 	import { confidenceTip, confidenceTitle, markupLabel } from './marketConfidence';
 	import type { HuntingTargetSection, HuntingTargetSortKey } from './huntingModel.svelte';
 	import type { TreeCuttingItem } from './treeCuttingModel.svelte';
 
 	let {
-		sections,
+		table,
 		selected,
 		onselect,
-		sortKey,
-		sortDir,
-		onsort,
 	}: {
-		sections: HuntingTargetSection[];
+		table: TableModel<HuntingTargetSection>;
 		selected: HuntingTargetSection | null;
 		onselect: (key: string) => void;
-		sortKey: SortKey<HuntingTargetSection> | undefined;
-		sortDir: SortDir;
-		onsort: (key: HuntingTargetSortKey) => void;
 	} = $props();
 
 	// A species list grows for as long as the player hunts; the search
-	// appears once scanning stops being quicker than typing.
+	// appears once scanning stops being quicker than typing, and stays
+	// visible while a query is live so a filter can always be cleared.
 	const SEARCH_THRESHOLD = 8;
-	let query = $state('');
-	const searchable = $derived(sections.length > SEARCH_THRESHOLD);
-	const matches = $derived(
-		query.trim() === ''
-			? sections
-			: sections.filter((section) =>
-					section.label.toLowerCase().includes(query.trim().toLowerCase()),
-				),
-	);
+	const searchable = $derived(table.filtered.length > SEARCH_THRESHOLD || table.search !== '');
 
 	// Unclassified is pinned after the identified species whatever the sort:
 	// a diagnostic bucket with its economic columns suppressed has no rank
 	// to take part in.
 	let displaySections = $derived([
-		...matches.filter((section) => !section.isUnclassified),
-		...matches.filter((section) => section.isUnclassified),
+		...table.filtered.filter((section) => !section.isUnclassified),
+		...table.filtered.filter((section) => section.isUnclassified),
 	]);
+
+	// The maturity drilldown's own diagnostic band sits last whatever its
+	// kill count, exactly as the buckets above it do.
+	const orderedMaturities = $derived.by(() => {
+		if (!selected) return [];
+		return [
+			...selected.maturities.filter((band) => band.maturity !== ''),
+			...selected.maturities.filter((band) => band.maturity === ''),
+		];
+	});
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
@@ -69,10 +66,10 @@
 	const COL_MU = 'min-w-0 flex-[0_1_4rem]';
 	const COL_REALISED = 'min-w-0 flex-[0_1_7.5rem]';
 	const sortArrow = (key: HuntingTargetSortKey) =>
-		sortKey === key ? (sortDir === 'asc' ? '↑' : '↓') : '';
+		table.sortKey === key ? (table.sortDir === 'asc' ? '↑' : '↓') : '';
 	const sortDescription = (key: HuntingTargetSortKey, label: string) => {
-		if (sortKey !== key) return `Sort by ${label}`;
-		return `Sort by ${label}, currently ${sortDir === 'asc' ? 'ascending' : 'descending'}`;
+		if (table.sortKey !== key) return `Sort by ${label}`;
+		return `Sort by ${label}, currently ${table.sortDir === 'asc' ? 'ascending' : 'descending'}`;
 	};
 </script>
 
@@ -140,11 +137,10 @@
 			<div class="px-2 pt-4">
 				{#if searchable}
 					<div class="px-3 pb-2">
-						<Input
-							type="search"
+						<SearchInput
+							bind:value={table.search}
 							placeholder="Find a species"
 							aria-label="Find a species"
-							bind:value={query}
 						/>
 					</div>
 				{/if}
@@ -155,37 +151,37 @@
 						type="button"
 						class="eyebrow {COL_NAME} flex cursor-pointer items-center gap-1 text-left transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('label', 'Species')}
-						onclick={() => onsort('label')}
+						onclick={() => table.setSort('label')}
 					>
 						Species
-						{#if sortKey === 'label'}<span class="text-accent">{sortArrow('label')}</span>{/if}
+						{#if table.sortKey === 'label'}<span class="text-accent">{sortArrow('label')}</span>{/if}
 					</button>
 					<button
 						type="button"
 						class="eyebrow {COL_CYCLED} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('cycled', 'Cycled')}
-						onclick={() => onsort('cycled')}
+						onclick={() => table.setSort('cycled')}
 					>
 						Cycled
-						{#if sortKey === 'cycled'}<span class="text-accent">{sortArrow('cycled')}</span>{/if}
+						{#if table.sortKey === 'cycled'}<span class="text-accent">{sortArrow('cycled')}</span>{/if}
 					</button>
 					<button
 						type="button"
 						class="eyebrow {COL_MU} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('muRate', 'MU Rate')}
-						onclick={() => onsort('muRate')}
+						onclick={() => table.setSort('muRate')}
 					>
 						MU Rate
-						{#if sortKey === 'muRate'}<span class="text-accent">{sortArrow('muRate')}</span>{/if}
+						{#if table.sortKey === 'muRate'}<span class="text-accent">{sortArrow('muRate')}</span>{/if}
 					</button>
 					<button
 						type="button"
 						class="eyebrow {COL_REALISED} flex cursor-pointer items-center justify-end gap-1 text-right transition-colors duration-[var(--duration-fast)] hover:text-text"
 						aria-label={sortDescription('realisedRate', 'Realised Rate')}
-						onclick={() => onsort('realisedRate')}
+						onclick={() => table.setSort('realisedRate')}
 					>
 						Realised Rate
-						{#if sortKey === 'realisedRate'}<span class="text-accent"
+						{#if table.sortKey === 'realisedRate'}<span class="text-accent"
 								>{sortArrow('realisedRate')}</span
 							>{/if}
 					</button>
@@ -204,7 +200,10 @@
 		</div>
 
 		{#if selected}
-			<div class="min-w-0 p-5">
+			<!-- One scroll region bounded to the list pane's own height, so the
+				two sides of the hairline stay the same height and the pane never
+				stacks nested scrollers. -->
+			<div class="min-w-0 max-h-[32rem] overflow-y-auto p-5">
 				{#if selected.isUnclassified}
 					<div class="flex min-h-28 items-center justify-center">
 						<div class="flex items-center gap-1.5 text-sm text-text-secondary">
@@ -281,7 +280,20 @@
 								: NO_DATA}
 							unit={selected.kills > 0 ? 'PED' : ''}
 							emphasis="secondary"
-						/>
+						>
+							{#snippet labelSuffix()}
+								<InfoTip align="right" width="w-80" label="What Net / Kill covers">
+									<p class="text-xs font-semibold leading-relaxed text-text">
+										Direct cost per kill only
+									</p>
+									<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+										Weapon and enhancer decay attributed to kills of this species. Heal and
+										armour are recorded per session, not per kill, so a full per-kill cost would
+										be a guess; the Dashboard and Overview carry the whole session's economics.
+									</p>
+								</InfoTip>
+							{/snippet}
+						</StatDisplay>
 						<StatDisplay
 							label="PES/100"
 							value={selected.pesPer100Ped !== null
@@ -322,17 +334,36 @@
 								<span class="eyebrow w-20 text-right shrink-0">TT Rate</span>
 							</div>
 							<ul class="flex flex-col gap-1">
-								{#each selected.maturities as band (band.maturity)}
+								{#each orderedMaturities as band (band.maturity)}
 									<li
 										class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
 											hover:bg-surface-hover/30 hover:border-border/40
 											transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
 									>
 										<span
-											class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight
+											class="flex-1 min-w-0 flex items-center gap-1.5 text-sm font-medium tracking-tight
 												{band.maturity === '' ? 'text-text-tertiary' : 'text-text'}"
 										>
-											{band.maturity === '' ? 'Unrecorded' : band.maturity}
+											<span class="min-w-0 truncate">
+												{band.maturity === '' ? 'Unrecorded' : band.maturity}
+											</span>
+											{#if band.maturity === ''}
+												<InfoTip label="Why a kill can lack a maturity" width="w-80">
+													<p class="text-xs font-semibold leading-relaxed text-text">
+														Kills without a maturity band
+													</p>
+													<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+														The tracker recorded the species but never learned the creature's
+														maturity: an unread nameplate, or a session from before maturity
+														stamping existed.
+													</p>
+													<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
+														Their cost and loot still count for the species; they simply cannot
+														join a band, so a large unrecorded count makes this drilldown less
+														complete.
+													</p>
+												</InfoTip>
+											{/if}
 										</span>
 										<span class="w-16 shrink-0 text-right text-sm tabular-nums text-text">
 											{band.kills}
@@ -363,7 +394,7 @@
 								<span class="eyebrow w-12 text-center shrink-0">Conf</span>
 							</div>
 
-							<ul class="flex max-h-[18rem] flex-col gap-1 overflow-y-auto">
+							<ul class="flex flex-col gap-1">
 								{#each selected.items as item (item.name)}
 									<li
 										class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent

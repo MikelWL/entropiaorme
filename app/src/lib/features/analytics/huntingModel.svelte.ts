@@ -63,9 +63,6 @@ import {
 
 // ── Sessions axis ──────────────────────────────────────────────────────
 
-/** The label the unassigned bucket renders under. */
-export const UNASSIGNED_LABEL = 'Unassigned';
-
 /** One session-definition row with its display key (definitions are keyed
  * by id; the unassigned bucket by this sentinel). */
 export type HuntingSessionSection = HuntingDefinitionComparison & {
@@ -119,12 +116,14 @@ export function signatureEconomics(row: HuntingSignature): SignatureEconomics {
 }
 
 /** The definition's instance trend: the newer half of its recorded
- * instances against the older half, on the loot rate. Needs at least four
- * instances to say anything; within two percentage points reads stable. */
+ * instances against the older half, on the loot rate. Needs at least
+ * eight instances before it says anything (loot is the noisiest series in
+ * the game, and a thinner sample is one lucky loot wearing a verdict);
+ * within two percentage points it reads stable. */
 export function instanceTrend(
 	rows: { cycled: number; returns: number }[],
 ): 'improving' | 'declining' | 'stable' | null {
-	if (rows.length < 4) return null;
+	if (rows.length < 8) return null;
 	const half = Math.floor(rows.length / 2);
 	const rate = (slice: { cycled: number; returns: number }[]) => {
 		const cycled = slice.reduce((sum, row) => sum + row.cycled, 0);
@@ -177,6 +176,9 @@ export type HuntingOverallLine = {
 	realisedMarkup: number;
 	realisedReturns: number;
 	realisedRate: number;
+	/** Confirmed markup whose species has no kills in the selected period:
+	 * still real, still counted, and disclosed rather than dropped. */
+	realisedOutsidePeriod: number;
 };
 
 export function createHuntingModel() {
@@ -247,6 +249,7 @@ export function createHuntingModel() {
 	const sessionTable = createTableModel<HuntingSessionSection>({
 		rows: () => sessionSections,
 		pageSize: Number.MAX_SAFE_INTEGER,
+		searchText: (row) => [row.name],
 		initialSort: { key: 'cycled', dir: 'desc' },
 		defaultSortDirs: {
 			name: 'asc',
@@ -303,6 +306,7 @@ export function createHuntingModel() {
 	const targetTable = createTableModel<HuntingTargetSection>({
 		rows: () => targetSections,
 		pageSize: Number.MAX_SAFE_INTEGER,
+		searchText: (row) => [row.label],
 		initialSort: { key: 'cycled', dir: 'desc' },
 		defaultSortDirs: {
 			label: 'asc',
@@ -335,9 +339,14 @@ export function createHuntingModel() {
 			: null;
 		const cycled = data.overall.cycled;
 		const muRate = muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
-		const realisedMarkup = targetSections.reduce((sum, s) => sum + s.realisedMarkup, 0);
+		// Realised markup sums over EVERY species with confirmed sales, not
+		// only those hunted in the selected period: the money exists either
+		// way, and the remainder is disclosed rather than silently dropped.
+		const realisedMarkup = [...realisedBySpecies.values()].reduce((sum, v) => sum + v, 0);
+		const realisedInPeriod = targetSections.reduce((sum, s) => sum + s.realisedMarkup, 0);
 		const realisedReturns = data.overall.returns + realisedMarkup;
 		return {
+			realisedOutsidePeriod: realisedMarkup - realisedInPeriod,
 			sessions: data.overall.sessions,
 			kills: data.overall.kills,
 			durationHours: data.overall.durationHours,

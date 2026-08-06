@@ -1,5 +1,6 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import SearchInput from '$lib/components/SearchInput.svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
@@ -16,6 +17,25 @@
 		onconvert: (item: TreeCuttingStock) => void;
 		sourceDescription?: string;
 	} = $props();
+
+	// A hunting loot table runs to hundreds of distinct items where a
+	// harvesting one holds a handful, so the panel scales itself: past the
+	// threshold a search appears and emptied lines fold behind a quiet
+	// disclosure. Below it, nothing changes: every line stays visible,
+	// emptied ones dimmed, exactly as this panel has always read.
+	const SEARCH_THRESHOLD = 8;
+	let query = $state('');
+	let showEmptied = $state(false);
+	const longList = $derived(stock.length > SEARCH_THRESHOLD);
+	const matches = $derived(
+		query.trim() === ''
+			? stock
+			: stock.filter((item) => item.itemName.toLowerCase().includes(query.trim().toLowerCase())),
+	);
+	const emptiedCount = $derived(matches.filter((item) => item.heldQty <= 0).length);
+	const visibleStock = $derived(
+		longList && !showEmptied ? matches.filter((item) => item.heldQty > 0) : matches,
+	);
 
 	function formatVolume(value: number): string {
 		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -191,6 +211,12 @@
 		</InfoTip>
 	</div>
 
+	{#if longList}
+		<div class="pb-2">
+			<SearchInput bind:value={query} placeholder="Find an item" aria-label="Find an item" />
+		</div>
+	{/if}
+
 	<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 		<span class="eyebrow flex-1 min-w-0">Item</span>
 		<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
@@ -199,8 +225,8 @@
 		<span class="eyebrow w-[3.375rem] shrink-0 text-right">Actions</span>
 	</div>
 
-	<ul class="flex flex-col gap-1">
-		{#each stock as item (item.itemName)}
+	<ul class="flex max-h-[24rem] flex-col gap-1 overflow-y-auto">
+		{#each visibleStock as item (item.itemName)}
 			<!-- An emptied line stays, dimmed: the item is still one this
 				activity produces, and its market reading is worth keeping
 				legible for the next time there is stock to sell. -->
@@ -308,5 +334,23 @@
 				</div>
 			</li>
 		{/each}
+		{#if visibleStock.length === 0 && query.trim() !== ''}
+			<li class="px-2.5 py-3 text-center text-xs text-text-tertiary">
+				No stock item matches that search.
+			</li>
+		{/if}
 	</ul>
+
+	{#if longList && emptiedCount > 0}
+		<button
+			type="button"
+			class="mt-1 px-2.5 text-xs text-text-tertiary cursor-pointer
+				transition-colors duration-[var(--duration-fast)] hover:text-text"
+			onclick={() => (showEmptied = !showEmptied)}
+		>
+			{showEmptied
+				? 'Hide emptied items'
+				: `Show ${emptiedCount} emptied ${emptiedCount === 1 ? 'item' : 'items'}`}
+		</button>
+	{/if}
 </div>

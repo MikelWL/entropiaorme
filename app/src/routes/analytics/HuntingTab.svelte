@@ -12,11 +12,7 @@
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
 	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
 	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
-	import {
-		createHuntingModel,
-		type HuntingSessionSortKey,
-		type HuntingTargetSortKey,
-	} from '$lib/features/analytics/huntingModel.svelte';
+	import { createHuntingModel } from '$lib/features/analytics/huntingModel.svelte';
 	import type {
 		ConfidenceMode,
 		TreeCuttingStock as StockRow,
@@ -151,21 +147,15 @@
 
 			{#if activityView === 'sessions'}
 				<HuntingSessions
-					sections={model.sessionTable.filtered}
+					table={model.sessionTable}
 					selected={model.selectedSession}
 					onselect={(key) => model.selectSession(key)}
-					sortKey={model.sessionTable.sortKey}
-					sortDir={model.sessionTable.sortDir}
-					onsort={(key: HuntingSessionSortKey) => model.sessionTable.setSort(key)}
 				/>
 			{:else if activityView === 'targets'}
 				<HuntingTargets
-					sections={model.targetTable.filtered}
+					table={model.targetTable}
 					selected={model.selectedTarget}
 					onselect={(key) => model.selectTarget(key)}
-					sortKey={model.targetTable.sortKey}
-					sortDir={model.targetTable.sortDir}
-					onsort={(key: HuntingTargetSortKey) => model.targetTable.setSort(key)}
 				/>
 			{:else if activityView === 'market'}
 				<AuctionListings

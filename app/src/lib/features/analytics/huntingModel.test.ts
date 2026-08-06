@@ -280,18 +280,17 @@ describe('signatureEconomics', () => {
 describe('instanceTrend', () => {
 	const row = (cycled: number, returns: number) => ({ cycled, returns });
 
-	it('needs at least four instances to say anything', () => {
-		expect(instanceTrend([row(100, 95), row(100, 80)])).toBeNull();
+	it('says nothing below eight instances: a thin sample is not a verdict', () => {
+		expect(instanceTrend([row(100, 95), row(100, 95), row(100, 80), row(100, 80)])).toBeNull();
 	});
 
 	it('compares the newer half against the older half', () => {
-		// Newest first: two recent runs at 95%, two older at 80%.
-		expect(instanceTrend([row(100, 95), row(100, 95), row(100, 80), row(100, 80)])).toBe(
-			'improving',
-		);
-		expect(instanceTrend([row(100, 80), row(100, 80), row(100, 95), row(100, 95)])).toBe(
-			'declining',
-		);
-		expect(instanceTrend([row(100, 90), row(100, 90), row(100, 90), row(100, 90)])).toBe('stable');
+		// Newest first: four recent runs at 95%, four older at 80%.
+		const improving = [...Array(4).fill(row(100, 95)), ...Array(4).fill(row(100, 80))];
+		const declining = [...Array(4).fill(row(100, 80)), ...Array(4).fill(row(100, 95))];
+		const steady = Array(8).fill(row(100, 90));
+		expect(instanceTrend(improving)).toBe('improving');
+		expect(instanceTrend(declining)).toBe('declining');
+		expect(instanceTrend(steady)).toBe('stable');
 	});
 });

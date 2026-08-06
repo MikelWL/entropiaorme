@@ -2256,17 +2256,19 @@ fn hunting_activity_read(
 
     // Species loot composition (mob loot only: enhancer-shrapnel returns are
     // enhancer accounting, and deactivated rows are archived out of totals).
+    // The unclassified bucket keeps its own composition: the loot is real
+    // and only its attribution is missing, and dropping it would make the
+    // Overall MU numerator exclude cost the denominator still carries.
     let mut species_items: HashMap<String, Vec<HarvestLootItemRow>> = HashMap::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT k.mob_species, li.item_name, SUM(li.quantity), \
+            "SELECT COALESCE(k.mob_species, ''), li.item_name, SUM(li.quantity), \
                     COALESCE(SUM(li.value_ped), 0) \
              FROM kill_loot_items li \
              JOIN kills k ON k.id = li.kill_id \
              JOIN hunting_session_scope scope ON scope.id = k.session_id \
              WHERE li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0 \
-               AND COALESCE(k.mob_species, '') != '' \
-             GROUP BY k.mob_species, li.item_name",
+             GROUP BY 1, li.item_name",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -2688,6 +2690,10 @@ fn hunting_activity_read(
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| a.session_id.cmp(&b.session_id))
             });
+            // The rows exist for the trend read and recent review, not as an
+            // exhaustive scrollback; `instances` still reports the true
+            // count, so a capped list can say what it is showing.
+            instance_rows.truncate(50);
 
             let mobs: Vec<HuntingMobShareRow> = definition_mobs
                 .remove(&definition_id)
@@ -2780,6 +2786,9 @@ fn assemble_signatures(
                 .get(id)
                 .map(|facts| facts.name.clone())
                 .unwrap_or_else(|| format!("Quest {id}")),
+            SignatureMember::Segment(label) if label.is_empty() => {
+                "Unnamed segment".to_string()
+            }
             SignatureMember::Segment(label) => label.clone(),
         }
     };
