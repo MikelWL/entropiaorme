@@ -19,7 +19,8 @@ export const marketShare = (value: number) => {
 };
 
 export const confidenceTitle = (tier: TreeCuttingItem['tier']) => {
-	if (tier === 'liquid') return 'High markup confidence: This markup should be practical to realise';
+	if (tier === 'liquid')
+		return 'High markup confidence: This markup should be practical to realise';
 	if (tier === 'middling') {
 		return 'Medium markup confidence: It may be difficult to realise this markup';
 	}
@@ -80,7 +81,10 @@ export function confidenceTip(item: TreeCuttingItem): {
 			: undefined;
 	const noExampleNote = example
 		? projectionNote
-		: ['The recorded MU does not provide enough markup to calculate a sale after fees.', projectionNote]
+		: [
+				'The recorded MU does not provide enough markup to calculate a sale after fees.',
+				projectionNote,
+			]
 				.filter(Boolean)
 				.join(' ');
 	return {

@@ -50,15 +50,15 @@ import { createTableModel } from '$lib/view/tableModel.svelte';
 import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
 import {
 	type ActivityListingDraft,
-	type ConfidenceMode,
-	NANOCUBE_FALLBACK_MARKUP,
-	NANOCUBE_ITEM,
-	type TreeCuttingItem,
 	type TreeCuttingStock as ActivityStockRow,
+	type ConfidenceMode,
 	effectiveMarkup,
 	marketOpportunity,
+	NANOCUBE_FALLBACK_MARKUP,
+	NANOCUBE_ITEM,
 	opportunityTier,
 	projectLoot,
+	type TreeCuttingItem,
 } from './treeCuttingModel.svelte';
 
 // ── Sessions axis ──────────────────────────────────────────────────────

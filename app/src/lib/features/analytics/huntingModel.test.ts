@@ -100,7 +100,10 @@ function activity(over: Partial<AnalyticsHuntingActivity> = {}): AnalyticsHuntin
 			pesPer100Ped: 8,
 		},
 		definitions: [definition(), definition({ definitionId: null, name: 'Unassigned' })],
-		species: [species(), species({ mobSpecies: '', pes: null, pesPer100Ped: null, pesSessions: 0 })],
+		species: [
+			species(),
+			species({ mobSpecies: '', pes: null, pesPer100Ped: null, pesSessions: 0 }),
+		],
 		...over,
 	};
 }
@@ -283,14 +286,12 @@ describe('instanceTrend', () => {
 
 	it('compares the newer half against the older half', () => {
 		// Newest first: two recent runs at 95%, two older at 80%.
-		expect(
-			instanceTrend([row(100, 95), row(100, 95), row(100, 80), row(100, 80)]),
-		).toBe('improving');
-		expect(
-			instanceTrend([row(100, 80), row(100, 80), row(100, 95), row(100, 95)]),
-		).toBe('declining');
-		expect(
-			instanceTrend([row(100, 90), row(100, 90), row(100, 90), row(100, 90)]),
-		).toBe('stable');
+		expect(instanceTrend([row(100, 95), row(100, 95), row(100, 80), row(100, 80)])).toBe(
+			'improving',
+		);
+		expect(instanceTrend([row(100, 80), row(100, 80), row(100, 95), row(100, 95)])).toBe(
+			'declining',
+		);
+		expect(instanceTrend([row(100, 90), row(100, 90), row(100, 90), row(100, 90)])).toBe('stable');
 	});
 });

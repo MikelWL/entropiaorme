@@ -42,7 +42,6 @@ import type {
 	HarvestLootItem,
 	HarvestTierComparison,
 	HarvestYieldTier,
-	RealisedTierMarkup,
 	StockPosition,
 } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';

@@ -2120,14 +2120,37 @@ fn hunting_sessions(
     }
     {
         let mut stmt = conn.prepare(
-            "SELECT session_id, duration_hours, activity_skill_tt FROM session_summaries",
+            "SELECT session_id, duration_hours FROM session_summaries",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let id = row.get::<_, String>(0)?;
             if let Some(agg) = sessions.get_mut(&id) {
                 agg.duration_hours = as_float(row, 1);
-                agg.pes = as_float(row, 2);
+            }
+        }
+    }
+    // A session the summaries never adopted (degenerate duration or cycled)
+    // still reports the wall-clock span it actually ran.
+    for agg in sessions.values_mut() {
+        if agg.duration_hours == 0.0 {
+            if let Some(ended) = agg.ended_at {
+                agg.duration_hours = (ended - agg.started_at).max(0.0) / 3600.0;
+            }
+        }
+    }
+    // PES on the raw per-session basis, so the definition totals, the
+    // signature rows, and the ambient remainder all sum the same fact.
+    {
+        let mut stmt = conn.prepare(
+            "SELECT session_id, COALESCE(SUM(ped_value), 0) FROM skill_gains \
+             WHERE ped_value IS NOT NULL GROUP BY session_id",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let id = row.get::<_, String>(0)?;
+            if let Some(agg) = sessions.get_mut(&id) {
+                agg.pes = as_float(row, 1);
             }
         }
     }
@@ -3870,6 +3893,7 @@ impl AnalyticsService {
     /// starting-bid fee is spent immediately too, and is written to the
     /// ledger dated to the listing: it is gone whether or not the item ever
     /// sells. No markup is realised here. That waits for confirmation.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_auction_listing(
         &self,
         profession: Profession,
@@ -4106,7 +4130,10 @@ impl AnalyticsService {
                     return Ok(None);
                 }
 
-                let returning: Vec<(Option<String>, Option<String>, Option<String>, f64, f64)> = {
+                // (tier, species, tool, quantity, tt) of each original
+                // listing movement, to be written back in reverse.
+                type ReturningRow = (Option<String>, Option<String>, Option<String>, f64, f64);
+                let returning: Vec<ReturningRow> = {
                     let mut stmt = tx.prepare(
                         "SELECT yield_tier, mob_species, tool_name, quantity, tt_value \
                          FROM stock_movements \
