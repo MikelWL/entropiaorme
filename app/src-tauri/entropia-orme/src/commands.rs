@@ -13,11 +13,12 @@ use std::sync::Arc;
 
 use eo_api::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTargetKind};
 use eo_api::analytics::{
-    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
-    AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
-    InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput,
-    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup,
-    StockConversionInput, StockPosition,
+    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
+    AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
+    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
+    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
+    LedgerPreset, LedgerPresetInput, LedgerSummary, Profession, RealisedSpeciesMarkup,
+    RealisedTierMarkup, StockConversionInput, StockPosition,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -561,8 +562,27 @@ pub async fn analytics_harvest(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn harvest_stock(app: tauri::AppHandle) -> Result<Vec<StockPosition>, ApiError> {
-    facade(&app)?.harvest_stock().await
+pub async fn analytics_hunting_activity(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsHuntingActivity, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = (&app, &period);
+        e2e_analytics("huntingActivity")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.analytics_hunting_activity(&period).await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn activity_stock(
+    app: tauri::AppHandle,
+    profession: Profession,
+) -> Result<Vec<StockPosition>, ApiError> {
+    facade(&app)?.activity_stock(profession).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -573,8 +593,18 @@ pub async fn harvest_realised_markup(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn auction_listings(app: tauri::AppHandle) -> Result<Vec<AuctionListing>, ApiError> {
-    facade(&app)?.auction_listings().await
+pub async fn hunting_realised_markup(
+    app: tauri::AppHandle,
+) -> Result<Vec<RealisedSpeciesMarkup>, ApiError> {
+    facade(&app)?.hunting_realised_markup().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_listings(
+    app: tauri::AppHandle,
+    profession: Profession,
+) -> Result<Vec<AuctionListing>, ApiError> {
+    facade(&app)?.auction_listings(profession).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -612,8 +642,9 @@ pub async fn stock_convert(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn activity_history(
     app: tauri::AppHandle,
+    profession: Profession,
 ) -> Result<Vec<ActivityHistoryEntry>, ApiError> {
-    facade(&app)?.activity_history().await
+    facade(&app)?.activity_history(profession).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -823,6 +854,11 @@ pub async fn market_mob_ranking(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn market_harvest_markups(app: tauri::AppHandle) -> Result<MarketHarvestData, ApiError> {
     facade(&app)?.market_harvest_markups().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_hunt_markups(app: tauri::AppHandle) -> Result<MarketHarvestData, ApiError> {
+    facade(&app)?.market_hunt_markups().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1158,6 +1194,14 @@ pub async fn demo_analytics_harvest(
     period: String,
 ) -> Result<AnalyticsHarvest, ApiError> {
     facade(&app)?.demo_analytics_harvest(&period).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_analytics_hunting_activity(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsHuntingActivity, ApiError> {
+    facade(&app)?.demo_analytics_hunting_activity(&period).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1572,8 +1616,10 @@ mod tests {
         "analytics_overview",
         "analytics_hunting",
         "analytics_harvest",
-        "harvest_stock",
+        "analytics_hunting_activity",
+        "activity_stock",
         "harvest_realised_markup",
+        "hunting_realised_markup",
         "auction_listings",
         "auction_listing_create",
         "auction_listing_confirm",
@@ -1602,6 +1648,7 @@ mod tests {
         "market_break_even",
         "market_mob_ranking",
         "market_harvest_markups",
+        "market_hunt_markups",
         "market_item_history",
         "scan_status",
         "scan_start",
@@ -1637,6 +1684,7 @@ mod tests {
         "tracking_session_delete",
         "demo_analytics_overview",
         "demo_analytics_hunting",
+        "demo_analytics_hunting_activity",
         "demo_analytics_harvest",
         "demo_ledger_list",
         "demo_ledger_summary",

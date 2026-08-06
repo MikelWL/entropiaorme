@@ -12,7 +12,6 @@
 	import { initStatsCustomisation } from '$lib/statsCustomisation.svelte';
 	import { initStatsScope, statsScope, STATS_SCOPE_CHANGED_EVENT, type StatsScope } from '$lib/statsScope.svelte';
 	import { listen } from '@tauri-apps/api/event';
-	import { initActivityArchive } from '$lib/activityArchive.svelte';
 	import { initNews, newsOptIn, newsHasUnread, NEWS_PREFERENCE_KEYS } from '$lib/news.svelte';
 	import { initUpdater, maybeCheckOnLaunch, updateAvailable } from '$lib/updater.svelte';
 	import { maybeRefreshOnMount } from '$lib/newsFetch';
@@ -75,7 +74,6 @@
 			initTheme(),
 			initStatsCustomisation(),
 			initStatsScope(),
-			initActivityArchive(),
 			initNews(),
 			initUpdater(),
 			initMarketData(),

@@ -20,7 +20,7 @@ import {
 vi.mock('$lib/api', () => ({
 	getAnalyticsHarvest: vi.fn(),
 	getMarketHarvestMarkups: vi.fn(),
-	getHarvestStock: vi.fn(),
+	getActivityStock: vi.fn(),
 	getAuctionListings: vi.fn(),
 	getHarvestRealisedMarkup: vi.fn(),
 	createAuctionListing: vi.fn(),
@@ -155,7 +155,7 @@ beforeEach(() => {
 	mocked.getMarketHarvestMarkups.mockResolvedValue({ nanocubeMarkupPct: null, items: [] });
 	// The default position set mirrors the harvest fixture's lifetime loot,
 	// which is what the backend derives positions from.
-	mocked.getHarvestStock.mockResolvedValue([
+	mocked.getActivityStock.mockResolvedValue([
 		position('Wood Shavings', 8738, 87.38),
 		position('Long Moonleaf Board', 571, 34.26),
 	]);
@@ -233,7 +233,7 @@ describe('activity history', () => {
 		mocked.getActivityHistory.mockResolvedValue([historyEntry()]);
 		await model.loadHistory();
 
-		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 642, 38.52)]);
+		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 642, 38.52)]);
 		mocked.getActivityHistory.mockResolvedValue([
 			historyEntry({ undone: true, canRevertSale: false, canDelete: false }),
 		]);
@@ -486,7 +486,7 @@ describe('sections', () => {
 		await model.loadData();
 
 		const before = sectionOf(model, HUGE).muProjectedReturns;
-		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 3, 0.18)]);
+		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 3, 0.18)]);
 		await model.listStock(listingInput('Long Moonleaf Board', 568));
 		expect(sectionOf(model, HUGE).muProjectedReturns).toBe(before);
 		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
@@ -622,7 +622,7 @@ describe('stock', () => {
 
 	it('reports stock out on an open auction rather than showing it simply gone', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getHarvestStock.mockResolvedValue([
+		mocked.getActivityStock.mockResolvedValue([
 			{ ...position('Long Moonleaf Board', 500, 30.0), listedQuantity: 71 },
 		]);
 		const model = createTreeCuttingModel();
@@ -638,7 +638,7 @@ describe('stock', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 500, 30.0)]);
+		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 500, 30.0)]);
 		await model.listStock(listingInput('Long Moonleaf Board', 71));
 
 		expect(mocked.createAuctionListing).toHaveBeenCalledWith(
@@ -660,7 +660,7 @@ describe('stock', () => {
 
 		// Selling changes current stock, not what the observed market says
 		// about repeating the source activity.
-		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 3, 0.18)]);
+		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 3, 0.18)]);
 		await model.listStock(listingInput('Long Moonleaf Board', 568));
 		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(3);
 		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
@@ -792,7 +792,7 @@ describe('holdings refresh', () => {
 		const held = stockOf(model, 'Long Moonleaf Board').heldQty;
 
 		// The write lands; the re-read behind it does not.
-		mocked.getHarvestStock.mockRejectedValue(new Error('offline'));
+		mocked.getActivityStock.mockRejectedValue(new Error('offline'));
 		await model.listStock(listingInput('Long Moonleaf Board', 10));
 
 		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(held);
@@ -804,11 +804,11 @@ describe('holdings refresh', () => {
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		mocked.getHarvestStock.mockRejectedValue(new Error('offline'));
+		mocked.getActivityStock.mockRejectedValue(new Error('offline'));
 		await model.listStock(listingInput('Long Moonleaf Board', 10));
 		expect(model.error).not.toBeNull();
 
-		mocked.getHarvestStock.mockResolvedValue([position('Long Moonleaf Board', 500, 30.0)]);
+		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 500, 30.0)]);
 		await model.listStock(listingInput('Long Moonleaf Board', 10));
 		expect(model.error).toBeNull();
 		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(500);

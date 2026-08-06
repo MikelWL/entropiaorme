@@ -210,6 +210,20 @@ export interface AnalyticsHunting {
 }
 
 /**
+ * The revamped Hunting aggregate: direct headline figures, the
+ * definition-keyed Sessions axis, and the observed Targets axis. All
+ * figures are DIRECT (weapon + enhancer cost at kill grain, loot TT,
+ * session-grain activity skill); heal and armour stay session-grain
+ * residues reported on Dashboard and Overview, never allocated into only
+ * some comparison rows.
+ */
+export interface AnalyticsHuntingActivity {
+	overall: HuntingActivityOverall;
+	definitions: HuntingDefinitionComparison[];
+	species: HuntingSpeciesComparison[];
+}
+
+/**
  * The Overview aggregate: the total return rate and trend, the returns /
  * losses breakdowns, the totals, and the day / month timelines.
  */
@@ -302,9 +316,11 @@ export interface AuctionListing {
 
 /**
  * An auction-listing creation payload. Dates are optional and default to
- * today; the fee is what the game quoted at listing time.
+ * today; the fee is what the game quoted at listing time. The profession
+ * stamps which activity's Market owns the listing.
  */
 export interface AuctionListingInput {
+	profession: Profession;
 	itemName: string;
 	quantity: number;
 	startingBid: number;
@@ -844,6 +860,118 @@ export interface HpOptimizerSkill {
 	hpPerPed: number;
 	codexCategory: string | null;
 	codexDivisor: number | null;
+}
+
+/**
+ * The whole activity's direct headline figures for the period.
+ */
+export interface HuntingActivityOverall {
+	sessions: number;
+	kills: number;
+	durationHours: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	pes: number;
+	pesPer100Ped: number;
+}
+
+/**
+ * One session definition's aggregate over its hunted instances; the
+ * unassigned bucket carries a null `definitionId`.
+ */
+export interface HuntingDefinitionComparison {
+	definitionId: number | null;
+	name: string;
+	isArchived: boolean;
+	instances: number;
+	kills: number;
+	durationHours: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	pes: number;
+	pesPer100Ped: number;
+	activities: HuntingSignature[];
+	mobs: HuntingMobShare[];
+	instanceRows: HuntingInstance[];
+}
+
+/**
+ * One recorded instance of a definition, for the trend read.
+ */
+export interface HuntingInstance {
+	sessionId: string;
+	startedAt: number;
+	durationHours: number;
+	kills: number;
+	cycled: number;
+	returns: number;
+	pes: number;
+}
+
+/**
+ * One maturity band inside a species.
+ */
+export interface HuntingMaturity {
+	maturity: string;
+	kills: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+}
+
+/**
+ * One species' share of a definition's kills.
+ */
+export interface HuntingMobShare {
+	mobSpecies: string;
+	kills: number;
+	lootTt: number;
+}
+
+/**
+ * One activity signature inside a definition: a quest family (variants
+ * aggregated with drilldown), a standalone quest, a co-activation bundle
+ * (one joint-return unit, never duplicated per member), a named segment,
+ * or the ambient remainder.
+ */
+export interface HuntingSignature {
+	/** `quest_family`, `quest`, `bundle`, `segment`, or `ambient`. */
+	kind: string;
+	label: string;
+	/** Distinct focused stretches recorded: a declaration of focus, not a proof of completion. */
+	runs: number;
+	kills: number;
+	durationHours: number;
+	cycled: number;
+	returns: number;
+	pes: number;
+	/** Quest-shaped rows only: the configured liquid reward per completion, separate from tracked loot. */
+	rewardPed: number | null;
+	rewardIsSkill: boolean;
+	/** Informational voucher-markup scenario on the reward; never realised. */
+	expectedRewardMarkupPercent: number | null;
+	variants: HuntingSignature[];
+}
+
+/**
+ * One observed species' aggregate; the unclassified bucket carries an
+ * empty species.
+ */
+export interface HuntingSpeciesComparison {
+	mobSpecies: string;
+	kills: number;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	/** Skill TT from sessions this species dominated; null when no session qualifies, because skill gains carry no per-kill attribution. */
+	pes: number | null;
+	pesPer100Ped: number | null;
+	/** How many sessions stand behind the PES figure. */
+	pesSessions: number;
+	maturities: HuntingMaturity[];
+	lootItems: HarvestLootItem[];
 }
 
 /**
@@ -1723,6 +1851,13 @@ export interface PlaylistItemInput {
 }
 
 /**
+ * The activity family a stock action belongs to. Closed vocabulary: the
+ * auction and conversion lifecycle is shared, and the profession stamp is
+ * what scopes each activity's Market and History to its own records.
+ */
+export type Profession = 'harvesting' | 'hunting';
+
+/**
  * One profession row.
  */
 export interface ProfessionLevel {
@@ -2015,6 +2150,15 @@ export interface RadarGeometry {
 	northY: number;
 	radiusPx: number;
 	displayScale: number;
+}
+
+/**
+ * One mob species' net realised markup from confirmed sales: the Hunting
+ * sibling of [`RealisedTierMarkup`].
+ */
+export interface RealisedSpeciesMarkup {
+	mobSpecies: string;
+	netMarkup: number;
 }
 
 /**
@@ -2422,9 +2566,11 @@ export interface StatProfession {
 }
 
 /**
- * A stock-conversion payload (recycling into Nanocubes at 1:1 TT).
+ * A stock-conversion payload (recycling into Nanocubes at 1:1 TT). The
+ * profession stamps which activity's History owns the conversion.
  */
 export interface StockConversionInput {
+	profession: Profession;
 	sourceItem: string;
 	targetItem: string;
 	quantity: number;
@@ -2925,16 +3071,24 @@ export async function analyticsHarvest(period: string): Promise<AnalyticsHarvest
 	return invokeCommand('analytics_harvest', { period });
 }
 
-export async function harvestStock(): Promise<StockPosition[]> {
-	return invokeCommand('harvest_stock', {});
+export async function analyticsHuntingActivity(period: string): Promise<AnalyticsHuntingActivity> {
+	return invokeCommand('analytics_hunting_activity', { period });
+}
+
+export async function activityStock(profession: Profession): Promise<StockPosition[]> {
+	return invokeCommand('activity_stock', { profession });
 }
 
 export async function harvestRealisedMarkup(): Promise<RealisedTierMarkup[]> {
 	return invokeCommand('harvest_realised_markup', {});
 }
 
-export async function auctionListings(): Promise<AuctionListing[]> {
-	return invokeCommand('auction_listings', {});
+export async function huntingRealisedMarkup(): Promise<RealisedSpeciesMarkup[]> {
+	return invokeCommand('hunting_realised_markup', {});
+}
+
+export async function auctionListings(profession: Profession): Promise<AuctionListing[]> {
+	return invokeCommand('auction_listings', { profession });
 }
 
 export async function auctionListingCreate(input: AuctionListingInput): Promise<AuctionListing> {
@@ -2953,8 +3107,8 @@ export async function stockConvert(input: StockConversionInput): Promise<void> {
 	return invokeCommand('stock_convert', { input });
 }
 
-export async function activityHistory(): Promise<ActivityHistoryEntry[]> {
-	return invokeCommand('activity_history', {});
+export async function activityHistory(profession: Profession): Promise<ActivityHistoryEntry[]> {
+	return invokeCommand('activity_history', { profession });
 }
 
 export async function auctionSaleRevert(input: ActivityUndoInput): Promise<AuctionListing> {
@@ -3043,6 +3197,10 @@ export async function marketMobRanking(horizon: MarketHorizon): Promise<MarketMo
 
 export async function marketHarvestMarkups(): Promise<MarketHarvestData> {
 	return invokeCommand('market_harvest_markups', {});
+}
+
+export async function marketHuntMarkups(): Promise<MarketHarvestData> {
+	return invokeCommand('market_hunt_markups', {});
 }
 
 export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {
@@ -3183,6 +3341,10 @@ export async function demoAnalyticsOverview(period: string): Promise<AnalyticsOv
 
 export async function demoAnalyticsHunting(): Promise<AnalyticsHunting> {
 	return invokeCommand('demo_analytics_hunting', {});
+}
+
+export async function demoAnalyticsHuntingActivity(period: string): Promise<AnalyticsHuntingActivity> {
+	return invokeCommand('demo_analytics_hunting_activity', { period });
 }
 
 export async function demoAnalyticsHarvest(period: string): Promise<AnalyticsHarvest> {

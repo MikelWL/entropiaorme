@@ -471,6 +471,35 @@ impl MarketService {
     /// sanctioned direction of the market boundary; nothing flows back,
     /// and no realised figure is computed.
     pub async fn harvest_markups(&self) -> Result<HarvestMarketData, DbError> {
+        self.activity_markups(
+            "SELECT DISTINCT item_name FROM harvest_loot_items \
+             WHERE deactivated_at IS NULL ORDER BY item_name",
+        )
+        .await
+    }
+
+    /// The estimated market signals for every active hunting-looted item,
+    /// plus the same nanocube recycling floor: the Hunting sibling of
+    /// [`Self::harvest_markups`] over the kill loot composition. Enhancer
+    /// shrapnel returns are enhancer accounting, not mob loot, and are
+    /// excluded from the item set.
+    pub async fn hunt_markups(&self) -> Result<HarvestMarketData, DbError> {
+        self.activity_markups(
+            "SELECT DISTINCT item_name FROM kill_loot_items \
+             WHERE deactivated_at IS NULL AND is_enhancer_shrapnel = 0 \
+             ORDER BY item_name",
+        )
+        .await
+    }
+
+    /// The shared markup read over one activity's item universe. The
+    /// `item_set_sql` names the activity's active loot items; everything
+    /// else (latest observations, horizon fallback, nanocube floor) is
+    /// identical between activities on purpose.
+    async fn activity_markups(
+        &self,
+        item_set_sql: &'static str,
+    ) -> Result<HarvestMarketData, DbError> {
         self.db
             .with_reader(move |connection| {
                 // Per item, the (markup, sales) at the latest submission for
@@ -537,11 +566,8 @@ impl MarketService {
 
                 let nanocube_markup_pct = resolve("Nanocube").map(|(markup, _, _)| markup);
 
-                // The active harvest-looted item set (name-ordered).
-                let mut item_stmt = connection.prepare(
-                    "SELECT DISTINCT item_name FROM harvest_loot_items \
-                     WHERE deactivated_at IS NULL ORDER BY item_name",
-                )?;
+                // The activity's active looted item set (name-ordered).
+                let mut item_stmt = connection.prepare(item_set_sql)?;
                 let names = item_stmt
                     .query_map([], |row| row.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;

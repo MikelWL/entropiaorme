@@ -15,11 +15,12 @@ use serde_json::Value;
 
 use crate::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTargetKind};
 use crate::analytics::{
-    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
-    AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
-    InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput,
-    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup,
-    StockConversionInput, StockPosition,
+    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
+    AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
+    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
+    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
+    LedgerPreset, LedgerPresetInput, LedgerSummary, Profession, RealisedSpeciesMarkup,
+    RealisedTierMarkup, StockConversionInput, StockPosition,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -599,8 +600,19 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(AnalyticsHarvest))),
         },
         CommandSpec {
-            name: "harvest_stock",
-            args: Vec::new(),
+            name: "analytics_hunting_activity",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsHuntingActivity))),
+        },
+        CommandSpec {
+            name: "activity_stock",
+            args: vec![ArgSpec {
+                name: "profession",
+                schema: schema(schema_for!(Profession)),
+            }],
             returns: Some(schema(schema_for!(Vec<StockPosition>))),
         },
         CommandSpec {
@@ -609,8 +621,16 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(Vec<RealisedTierMarkup>))),
         },
         CommandSpec {
-            name: "auction_listings",
+            name: "hunting_realised_markup",
             args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<RealisedSpeciesMarkup>))),
+        },
+        CommandSpec {
+            name: "auction_listings",
+            args: vec![ArgSpec {
+                name: "profession",
+                schema: schema(schema_for!(Profession)),
+            }],
             returns: Some(schema(schema_for!(Vec<AuctionListing>))),
         },
         CommandSpec {
@@ -647,7 +667,10 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "activity_history",
-            args: vec![],
+            args: vec![ArgSpec {
+                name: "profession",
+                schema: schema(schema_for!(Profession)),
+            }],
             returns: Some(schema(schema_for!(Vec<ActivityHistoryEntry>))),
         },
         CommandSpec {
@@ -823,6 +846,11 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "market_harvest_markups",
+            args: vec![],
+            returns: Some(schema(schema_for!(MarketHarvestData))),
+        },
+        CommandSpec {
+            name: "market_hunt_markups",
             args: vec![],
             returns: Some(schema(schema_for!(MarketHarvestData))),
         },
@@ -1163,6 +1191,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "demo_analytics_hunting",
             args: Vec::new(),
             returns: Some(schema(schema_for!(AnalyticsHunting))),
+        },
+        CommandSpec {
+            name: "demo_analytics_hunting_activity",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsHuntingActivity))),
         },
         CommandSpec {
             name: "demo_analytics_harvest",

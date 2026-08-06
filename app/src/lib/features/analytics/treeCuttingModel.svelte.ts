@@ -23,10 +23,10 @@ import {
 	createAuctionListing,
 	expireAuctionListing,
 	getActivityHistory,
+	getActivityStock,
 	getAnalyticsHarvest,
 	getAuctionListings,
 	getHarvestRealisedMarkup,
-	getHarvestStock,
 	getMarketHarvestMarkups,
 	type HarvestData,
 	type MarketHarvestData,
@@ -50,6 +50,10 @@ import { createTableModel } from '$lib/view/tableModel.svelte';
 import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
 
 // ── Holding-independent market opportunity ────────────────────────────
+
+/** What the sell modal knows at listing time; the owning tab's model
+ * stamps the activity family on top. */
+export type ActivityListingDraft = Omit<AuctionListingInput, 'profession'>;
 
 export type OpportunityKind = 'broad' | 'niche' | 'thin' | 'recycle';
 export type ConfidenceTier = 'liquid' | 'middling' | 'illiquid';
@@ -312,7 +316,10 @@ export type TreeCuttingStock = {
 	weeklySalesPed: number | null;
 };
 
-function projectLoot(
+/** Project one activity's loot composition at current market markup. Shared
+ * with the Hunting model: the projection is identical maths whichever
+ * activity's composition it runs over. */
+export function projectLoot(
 	lootItems: HarvestLootItem[],
 	cycled: number,
 	market: MarketHarvestData | null,
@@ -414,8 +421,8 @@ export function createTreeCuttingModel() {
 			const [harvest, markets, stock, openListings, realised] = await Promise.all([
 				getAnalyticsHarvest(period),
 				getMarketHarvestMarkups().catch(() => null),
-				getHarvestStock().catch(() => []),
-				getAuctionListings().catch(() => []),
+				getActivityStock('harvesting').catch(() => []),
+				getAuctionListings('harvesting').catch(() => []),
 				getHarvestRealisedMarkup().catch(() => []),
 			]);
 			if (epoch !== loadEpoch) return;
@@ -545,8 +552,8 @@ export function createTreeCuttingModel() {
 			return fallback;
 		};
 		const [stock, allListings, realised] = await Promise.all([
-			getHarvestStock().catch(() => failed(positions)),
-			getAuctionListings().catch(() => failed(listings)),
+			getActivityStock('harvesting').catch(() => failed(positions)),
+			getAuctionListings('harvesting').catch(() => failed(listings)),
 			getHarvestRealisedMarkup().catch(() => failed(null)),
 		]);
 		positions = stock;
@@ -557,7 +564,7 @@ export function createTreeCuttingModel() {
 		// Only once it has been opened: an undo verdict depends on every other
 		// entry, so a stale list would offer undos that no longer apply.
 		if (history.length > 0) {
-			history = await getActivityHistory().catch(() => failed(history));
+			history = await getActivityHistory('harvesting').catch(() => failed(history));
 		}
 		error = stale
 			? 'That went through, but the figures below could not be re-read and may be out of date.'
@@ -567,7 +574,7 @@ export function createTreeCuttingModel() {
 	/** Everything this activity has done to its stock, newest first. */
 	async function loadHistory() {
 		try {
-			history = await getActivityHistory();
+			history = await getActivityHistory('harvesting');
 		} catch (e) {
 			error = describeError(e, 'Failed to load the activity history');
 			throw e;
@@ -586,7 +593,7 @@ export function createTreeCuttingModel() {
 				await undoAuctionListing({ id: entry.id });
 			}
 			await refreshHoldings();
-			history = await getActivityHistory();
+			history = await getActivityHistory('harvesting');
 		} catch (e) {
 			error = describeError(e, 'Failed to undo that entry');
 			throw e;
@@ -595,9 +602,9 @@ export function createTreeCuttingModel() {
 
 	/** List stock on the auction. The quantity leaves holdings now and the
 	 * starting-bid fee is spent now; nothing is realised until it sells. */
-	async function listStock(input: AuctionListingInput) {
+	async function listStock(input: ActivityListingDraft) {
 		try {
-			await createAuctionListing(input);
+			await createAuctionListing({ profession: 'harvesting', ...input });
 			await refreshHoldings();
 		} catch (e) {
 			error = describeError(e, 'Failed to create the listing');
@@ -636,6 +643,7 @@ export function createTreeCuttingModel() {
 	async function recycleStock(sourceItem: string, quantity: number) {
 		try {
 			await convertStock({
+				profession: 'harvesting',
 				sourceItem,
 				targetItem: NANOCUBE_ITEM,
 				quantity,

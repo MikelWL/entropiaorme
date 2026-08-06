@@ -16,4 +16,5 @@ export const getMarketOverview = commands.marketOverview;
 export const getMarketItemHistory = commands.marketItemHistory;
 export const getMarketMobRanking = commands.marketMobRanking;
 export const getMarketHarvestMarkups = commands.marketHarvestMarkups;
+export const getMarketHuntMarkups = commands.marketHuntMarkups;
 export const getMarketContributionBatch = commands.marketContributionBatch;

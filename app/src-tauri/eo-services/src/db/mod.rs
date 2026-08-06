@@ -1290,10 +1290,11 @@ mod tests {
         // tables' new context stamp) + the quest-families migration's
         // table and member index + the session-definitions migration's
         // 2 tables (definitions, roster) with 2 indexes (roster
-        // definition, session definition stamp) = 46 tables, 54
-        // indexes, 8 triggers.
+        // definition, session definition stamp) + the hunting-provenance
+        // migration's species index on the rebuilt movement ledger
+        // = 46 tables, 55 indexes, 8 triggers.
         assert_eq!(count("table").await, 46);
-        assert_eq!(count("index").await, 54);
+        assert_eq!(count("index").await, 55);
         assert_eq!(count("trigger").await, 8);
 
         let version = db
@@ -1689,11 +1690,12 @@ mod tests {
         // live-listing index) + the session-interval migration's 3
         // interval tables and 7 indexes + the quest-families migration's
         // table and member index + the session-definitions migration's
-        // 2 tables and 2 indexes +
+        // 2 tables and 2 indexes + the hunting-provenance migration's
+        // species index on the rebuilt movement ledger +
         // 8 triggers (only SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), (41 + 3 + 1 + 2) + (44 + 7 + 1 + 2) + 8);
+        assert_eq!(master.len(), (41 + 3 + 1 + 2) + (44 + 7 + 1 + 2 + 1) + 8);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

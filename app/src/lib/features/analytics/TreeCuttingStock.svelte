@@ -7,10 +7,14 @@
 		stock,
 		onsell,
 		onconvert,
+		// The one activity-specific line in the panel, so the Hunting tab can
+		// host the same surface over its own loot without forking the layout.
+		sourceDescription = 'Loot recorded from tree cutting, minus loot you have already sold or converted.',
 	}: {
 		stock: TreeCuttingStock[];
 		onsell: (item: TreeCuttingStock) => void;
 		onconvert: (item: TreeCuttingStock) => void;
+		sourceDescription?: string;
 	} = $props();
 
 	function formatVolume(value: number): string {
@@ -177,7 +181,7 @@
 					Your Current Stock: Loot you still hold
 				</p>
 				<p>
-					Loot recorded from tree cutting, minus loot you have already sold or converted.
+					{sourceDescription}
 				</p>
 				<p>
 					Stock TT is its Trade Terminal value. Market markup only becomes a realised gain when a

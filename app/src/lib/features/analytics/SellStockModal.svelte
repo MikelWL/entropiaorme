@@ -15,17 +15,21 @@
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
 	import { formatPed, todayDate } from '$lib/utils/format';
-	import type { AuctionListingInput } from '$lib/types/analytics';
+	import type { ActivityListingDraft } from './treeCuttingModel.svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 
 	let {
 		item,
 		onlist,
 		oncancel,
+		// The activity the excess warning names, so the Hunting tab hosts the
+		// identical modal over its own vocabulary.
+		activityAttributionNoun = 'a tree cutting activity',
 	}: {
 		item: TreeCuttingStock | null;
-		onlist: (input: AuctionListingInput) => Promise<void>;
+		onlist: (input: ActivityListingDraft) => Promise<void>;
 		oncancel: () => void;
+		activityAttributionNoun?: string;
 	} = $props();
 
 	let quantity = $state(0);
@@ -126,7 +130,7 @@
 			{#if excess > 0}
 				<p class="text-xs text-warning">
 					{excess} beyond tracked stock. Its value counts in your ledger, but it cannot be
-					attributed to a tree cutting activity, so it will not reach the Realised figures.
+					attributed to {activityAttributionNoun}, so it will not reach the Realised figures.
 				</p>
 			{/if}
 
