@@ -52,6 +52,7 @@ pub mod scan_drift;
 pub mod scan_presets;
 pub mod screen_capture;
 pub mod session_definitions;
+pub mod session_rollup;
 pub mod session_summary;
 pub mod skill_panel;
 pub mod skill_scan_manual;

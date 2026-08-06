@@ -2147,22 +2147,32 @@ fn hunting_sessions(
         }
     }
 
-    // The one kill-grain pass. The join keeps the standing semantics: a
-    // kill whose session the tracker never recorded stays out of Hunting.
+    // The kill grain, hybrid: settled sessions fold from their rollup
+    // cells (O(cells), not O(kills)); every other session (the live one,
+    // a freshly edited one, a stale-versioned one) aggregates raw, scoped
+    // to its own id, so the read is correct whatever the heal has or has
+    // not done yet. The session-metadata join keeps the standing
+    // semantics either way: a kill whose session the tracker never
+    // recorded stays out of Hunting.
+    let unsettled: Vec<String> = crate::session_rollup::unsettled_sessions(conn)?
+        .into_iter()
+        .filter(|id| meta.contains_key(id))
+        .collect();
     let mut grain: Vec<HuntingKillGrainRow> = Vec::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT k.session_id, k.context_id, \
-                    COALESCE(k.mob_species, ''), COALESCE(k.mob_maturity, ''), \
-                    COUNT(*), \
-                    COALESCE(SUM(k.cost_ped + k.enhancer_cost), 0), \
-                    COALESCE(SUM(k.loot_total_ped), 0) \
-             FROM kills k \
-             JOIN tracking_sessions s ON s.id = k.session_id \
-             WHERE (?1 IS NULL OR s.started_at >= ?1) \
-             GROUP BY 1, 2, 3, 4",
+            "SELECT r.session_id, r.context_id, r.mob_species, r.mob_maturity, \
+                    r.kills, r.cycled_ped, r.loot_tt \
+             FROM session_kill_rollups r \
+             JOIN session_rollup_meta m ON m.session_id = r.session_id \
+                  AND m.rollup_version >= ?2 \
+             JOIN tracking_sessions s ON s.id = r.session_id \
+             WHERE (?1 IS NULL OR s.started_at >= ?1)",
         )?;
-        let mut rows = stmt.query(rusqlite::params![epoch_start])?;
+        let mut rows = stmt.query(rusqlite::params![
+            epoch_start,
+            crate::session_rollup::ROLLUP_VERSION
+        ])?;
         while let Some(row) = rows.next()? {
             grain.push(HuntingKillGrainRow {
                 session_id: row.get(0)?,
@@ -2173,6 +2183,32 @@ fn hunting_sessions(
                 cycled: as_float(row, 5),
                 loot_tt: as_float(row, 6),
             });
+        }
+    }
+    {
+        let mut stmt = conn.prepare(
+            "SELECT k.context_id, \
+                    COALESCE(k.mob_species, ''), COALESCE(k.mob_maturity, ''), \
+                    COUNT(*), \
+                    COALESCE(SUM(k.cost_ped + k.enhancer_cost), 0), \
+                    COALESCE(SUM(k.loot_total_ped), 0) \
+             FROM kills k \
+             WHERE k.session_id = ?1 \
+             GROUP BY 1, 2, 3",
+        )?;
+        for session_id in &unsettled {
+            let mut rows = stmt.query(rusqlite::params![session_id])?;
+            while let Some(row) = rows.next()? {
+                grain.push(HuntingKillGrainRow {
+                    session_id: session_id.clone(),
+                    context_id: row.get(0)?,
+                    mob_species: row.get(1)?,
+                    mob_maturity: row.get(2)?,
+                    kills: row.get::<_, i64>(3).unwrap_or(0),
+                    cycled: as_float(row, 4),
+                    loot_tt: as_float(row, 5),
+                });
+            }
         }
     }
 
@@ -2217,22 +2253,40 @@ fn hunting_sessions(
         }
     }
 
-    // The one skill-gain pass, (session, context) grain. PES stays on the
-    // raw per-session basis, so the definition totals, the signature rows,
-    // and the ambient remainder all sum the same fact.
+    // The skill-gain grain, (session, context), hybrid on the same split.
+    // PES stays on the raw per-session basis, so the definition totals,
+    // the signature rows, and the ambient remainder all sum the same fact.
     let mut pes_grain: Vec<HuntingPesGrainRow> = Vec::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT session_id, context_id, COALESCE(SUM(ped_value), 0) FROM skill_gains \
-             WHERE ped_value IS NOT NULL GROUP BY 1, 2",
+            "SELECT r.session_id, r.context_id, r.pes \
+             FROM session_pes_rollups r \
+             JOIN session_rollup_meta m ON m.session_id = r.session_id \
+                  AND m.rollup_version >= ?1",
         )?;
-        let mut rows = stmt.query([])?;
+        let mut rows = stmt.query(rusqlite::params![crate::session_rollup::ROLLUP_VERSION])?;
         while let Some(row) = rows.next()? {
             pes_grain.push(HuntingPesGrainRow {
                 session_id: row.get(0)?,
                 context_id: row.get(1)?,
                 pes: as_float(row, 2),
             });
+        }
+    }
+    {
+        let mut stmt = conn.prepare(
+            "SELECT context_id, COALESCE(SUM(ped_value), 0) FROM skill_gains \
+             WHERE session_id = ?1 AND ped_value IS NOT NULL GROUP BY 1",
+        )?;
+        for session_id in &unsettled {
+            let mut rows = stmt.query(rusqlite::params![session_id])?;
+            while let Some(row) = rows.next()? {
+                pes_grain.push(HuntingPesGrainRow {
+                    session_id: session_id.clone(),
+                    context_id: row.get(0)?,
+                    pes: as_float(row, 1),
+                });
+            }
         }
     }
     for cell in &pes_grain {
@@ -2998,6 +3052,10 @@ impl AnalyticsService {
         &self,
         period: &str,
     ) -> Result<HuntingActivityData, AnalyticsError> {
+        // Settle any ended sessions still served raw (a no-op in steady
+        // state), the same heal-before-read the Overview runs on the
+        // daily rollups; the read itself stays correct either way.
+        self.db.with_writer(crate::session_rollup::heal).await?;
         let now = naive_to_epoch(self.clock.now());
         Ok(hunting_activity_impl(&self.db, period_epoch(period, now)).await?)
     }
@@ -3583,22 +3641,11 @@ fn all_item_positions(
     }
 
     {
-        let mut stmt = conn.prepare(
-            "SELECT li.item_name, \
-                    CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
-                    ELSE '' END AS species, \
-                    SUM(li.quantity), SUM(li.value_ped) \
-             FROM kill_loot_items AS li \
-             JOIN kills AS k ON k.id = li.kill_id \
-             WHERE li.deactivated_at IS NULL \
-             GROUP BY li.item_name, species",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let item: String = row.get(0)?;
-            let species: String = row.get(1)?;
-            let quantity: f64 = row.get(2)?;
-            let tt_value: f64 = row.get(3)?;
+        // Hunted loot, hybrid: settled sessions fold from their loot cells
+        // (species pre-folded for shrapnel at settlement), every other
+        // session aggregates raw scoped to its own id. Correct whatever
+        // the heal has or has not done yet.
+        let mut fold = |item: String, species: String, quantity: f64, tt_value: f64| {
             let acc = items.entry(item).or_default();
             acc.base_qty += quantity;
             acc.base_tt += tt_value;
@@ -3609,6 +3656,38 @@ fn all_item_positions(
                     tool: String::new(),
                 })
                 .or_insert(0.0) += quantity;
+        };
+        {
+            let mut stmt = conn.prepare(
+                "SELECT r.item_name, r.mob_species, SUM(r.quantity), SUM(r.value_ped) \
+                 FROM session_loot_rollups r \
+                 JOIN session_rollup_meta m ON m.session_id = r.session_id \
+                      AND m.rollup_version >= ?1 \
+                 GROUP BY 1, 2",
+            )?;
+            let mut rows = stmt.query(rusqlite::params![crate::session_rollup::ROLLUP_VERSION])?;
+            while let Some(row) = rows.next()? {
+                fold(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+            }
+        }
+        {
+            let unsettled = crate::session_rollup::unsettled_sessions(conn)?;
+            let mut stmt = conn.prepare(
+                "SELECT li.item_name, \
+                        CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
+                        ELSE '' END AS species, \
+                        SUM(li.quantity), SUM(li.value_ped) \
+                 FROM kill_loot_items AS li \
+                 JOIN kills AS k ON k.id = li.kill_id \
+                 WHERE k.session_id = ?1 AND li.deactivated_at IS NULL \
+                 GROUP BY li.item_name, species",
+            )?;
+            for session_id in &unsettled {
+                let mut rows = stmt.query(rusqlite::params![session_id])?;
+                while let Some(row) = rows.next()? {
+                    fold(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+                }
+            }
         }
     }
 
@@ -3958,6 +4037,10 @@ impl AnalyticsService {
         &self,
         profession: Profession,
     ) -> Result<Vec<StockPositionRow>, AnalyticsError> {
+        // The hunted arm of the position arithmetic folds settled
+        // sessions' loot cells; settle any backlog first (steady-state
+        // no-op, and the read is correct either way).
+        self.db.with_writer(crate::session_rollup::heal).await?;
         Ok(self
             .db
             .with_reader(move |conn| {
@@ -7862,6 +7945,53 @@ mod tests {
             data.species.iter().all(|row| row.mob_species == "Atrox"),
             "the legacy tag row left with its session"
         );
+    }
+
+    /// The hybrid read is exact: the same database answers identically
+    /// with every session served raw (no settlement has run) and with the
+    /// ended sessions settled into their rollup cells. This is the
+    /// raw-versus-rollup equivalence the settlement marker promises.
+    #[tokio::test]
+    async fn hunting_activity_reads_identically_before_and_after_settlement() {
+        let (_dir, service) = write_service().await;
+        seed_hunting_scenario(&service).await;
+
+        let raw = hunting_activity_impl(service.db(), None).await.unwrap();
+        let raw_stock = all_positions_for_test(service.db()).await;
+        service
+            .db()
+            .with_writer(crate::session_rollup::heal)
+            .await
+            .unwrap();
+        let settled = hunting_activity_impl(service.db(), None).await.unwrap();
+        let settled_stock = all_positions_for_test(service.db()).await;
+
+        assert_eq!(raw, settled);
+        assert_eq!(raw_stock, settled_stock);
+    }
+
+    /// The whole-inventory position map through the batch read, for the
+    /// settlement-equivalence assertion above.
+    async fn all_positions_for_test(
+        db: &crate::db::Db,
+    ) -> Vec<(String, Vec<(String, String, String, f64)>, f64)> {
+        db.with_reader(|conn| {
+            let map = all_item_positions(conn)?;
+            let mut rows: Vec<(String, Vec<(String, String, String, f64)>, f64)> = map
+                .into_iter()
+                .map(|(item, (positions, unit_tt))| {
+                    let keys = positions
+                        .into_iter()
+                        .map(|(key, quantity)| (key.tier, key.species, key.tool, quantity))
+                        .collect();
+                    (item, keys, unit_tt)
+                })
+                .collect();
+            rows.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(rows)
+        })
+        .await
+        .expect("positions")
     }
 
     /// The hunting stock lifecycle end to end: kill loot is the acquisition

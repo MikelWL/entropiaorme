@@ -861,6 +861,7 @@ impl TrackerActor {
                 Self::create_shrapnel_ledger_entry(&tx, &sid, end_time)?;
                 crate::session_summary::write_session_summary(&tx, &sid)?;
                 crate::daily_rollup::refresh_session_days(&tx, &sid)?;
+                crate::session_rollup::recompute_session(&tx, &sid)?;
                 tx.commit()?;
                 Ok(())
             })

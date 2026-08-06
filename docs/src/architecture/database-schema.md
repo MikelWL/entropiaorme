@@ -50,7 +50,9 @@ rebuilding the table because SQLite cannot widen a CHECK constraint in place,
 plus the activity-family stamp on stock conversions), and
 `0025_loot_item_name_indexes.sql` (partial item-name indexes over active loot
 rows on both loot tables, serving the per-item position arithmetic and the
-DISTINCT item universes without full-table scans). The
+DISTINCT item universes without full-table scans), and
+`0026_session_activity_rollups.sql` (the per-session activity rollup
+projection and its settlement marker; see "Derived caches"). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -910,6 +912,38 @@ tables and every day is re-verified once after it completes.
 | --- | --- | --- |
 | `id` | INTEGER | Primary key; constrained to the single row `1`. |
 | `rolled_through` | TEXT | Not null; the inclusive ISO day the rollups are current through. |
+
+#### `session_kill_rollups`, `session_loot_rollups`, `session_pes_rollups`
+
+Per-session activity rollups (migration `0026`; `eo-services/src/session_rollup.rs`),
+the session-grain sibling of the daily projection: the read model behind the
+Hunting analytics aggregate, the stock position arithmetic's hunted arm, and
+the hunting market item universe. An ended session's events settle into cells
+at the finest grain any of those consumers folds (kill cells by context,
+species, and maturity; active loot cells by species, shrapnel flag, and item,
+with the species pre-folded to the empty string for shrapnel rows; skill-gain
+cells by context), so readers do O(cells) work however long the raw history
+grows. Like the daily rollups this is a rebuildable projection: cells write
+eagerly in the mutating transaction (session stop, orphan recovery, the loot
+edit flip, session delete) and heal lazily before an activity read.
+
+| Table | Cell key | Sums |
+| --- | --- | --- |
+| `session_kill_rollups` | `session_id`, `context_id` (nullable), `mob_species`, `mob_maturity` (empty string for unclassified) | `kills`, `cycled_ped` (weapon + enhancer), `loot_tt` |
+| `session_loot_rollups` | `session_id`, `mob_species`, `is_enhancer_shrapnel`, `item_name` (active rows only) | `quantity`, `value_ped` |
+| `session_pes_rollups` | `session_id`, `context_id` (nullable) | `pes` |
+
+#### `session_rollup_meta`
+
+The settlement marker: a session listed at the current `ROLLUP_VERSION` is
+served from its cells, and every other session (the live one, a freshly
+edited one, a stale version) is served from the raw tables scoped to its own
+id, so a reader is correct regardless of heal timing.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `session_id` | TEXT | Primary key. |
+| `rollup_version` | INTEGER | Not null. Cell-format version; a below-version session is served raw and re-settles on the next heal. |
 
 ## Migration mechanism
 
