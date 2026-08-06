@@ -114,6 +114,21 @@ pub fn recompute_session(conn: &rusqlite::Connection, session_id: &str) -> Resul
     Ok(())
 }
 
+/// Drop every cell and marker and settle the whole history again: the
+/// from-scratch rebuild the maintenance surface uses to prove the
+/// incremental maintenance never drifts from a clean projection
+/// (`maintenance::rebuild_and_verify`, the ADR-0018 rebuildability
+/// guarantee).
+pub fn rebuild(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
+    conn.execute_batch(
+        "DELETE FROM session_rollup_meta; \
+         DELETE FROM session_kill_rollups; \
+         DELETE FROM session_loot_rollups; \
+         DELETE FROM session_pes_rollups;",
+    )?;
+    heal(conn)
+}
+
 /// The sessions currently served raw: unmarked or below-version. The live
 /// session is always here; after a heal it is the only member. Plain
 /// `rusqlite` errors so raw read helpers can call it without an error
