@@ -90,6 +90,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		returns: 90,
 		lootRate: 0.9,
 		confirmedRewardPed: 0,
+		rewardMuPed: null,
 		rewardedReturns: 90,
 		rewardedRate: 0.9,
 		rewardStatus: 'none',

@@ -874,6 +874,8 @@ export interface HuntingActivityComparison {
 	returns: number;
 	lootRate: number;
 	confirmedRewardPed: number;
+	/** Projected liquid reward value using the completion-time markup snapshot; null for non-liquid or non-separate rewards. */
+	rewardMuPed: number | null;
 	rewardedReturns: number;
 	rewardedRate: number;
 	rewardStatus: HuntingRewardStatus;

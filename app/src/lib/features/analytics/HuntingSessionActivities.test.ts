@@ -15,6 +15,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		returns: 90,
 		lootRate: 0.9,
 		confirmedRewardPed: 15,
+		rewardMuPed: 18,
 		rewardedReturns: 105,
 		rewardedRate: 1.05,
 		rewardStatus: 'fixed_liquid',
@@ -71,7 +72,7 @@ describe('HuntingSessionActivities', () => {
 			'TT Net',
 			'MU Net',
 			'Realised Net',
-			'Cycled',
+			'Reward MU',
 			'TT Rate',
 			'MU Rate',
 			'Realised Rate',
@@ -79,6 +80,8 @@ describe('HuntingSessionActivities', () => {
 			expect(within(grid).getByText(label)).not.toBeNull();
 		}
 		expect(within(grid).getByText('+15.00')).not.toBeNull();
+		expect(within(grid).getByText('18.00')).not.toBeNull();
+		expect(within(grid).queryByText('Cycled')).toBeNull();
 		expect(within(grid).getByText('+4.00').className).not.toContain('text-positive');
 		expect(within(grid).getByText('+5.00').className).toContain('text-positive');
 		expect(within(grid).getByText('104.0%').className).not.toContain('text-positive');

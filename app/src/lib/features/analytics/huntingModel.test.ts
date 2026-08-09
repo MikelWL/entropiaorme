@@ -66,6 +66,7 @@ function sessionActivity(over: Partial<HuntingActivityComparison> = {}): Hunting
 		returns: 90,
 		lootRate: 0.9,
 		confirmedRewardPed: 15,
+		rewardMuPed: 18,
 		rewardedReturns: 105,
 		rewardedRate: 1.05,
 		rewardStatus: 'fixed_liquid',
@@ -173,6 +174,7 @@ describe('createHuntingModel', () => {
 
 		const row = required(model.selectedSession?.activities[0], 'rewarded activity');
 		expect(row.rewardedRate).toBeCloseTo(1.05, 5);
+		expect(row.rewardMuPed).toBe(18);
 		expect(required(row.muProjectedReturns, 'activity MU projection')).toBeCloseTo(15.6, 5);
 		const session = required(model.selectedSession, 'rewarded session');
 		expect(session.confirmedRewardPed).toBe(15);

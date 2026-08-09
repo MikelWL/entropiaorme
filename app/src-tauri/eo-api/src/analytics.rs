@@ -293,6 +293,9 @@ pub struct HuntingActivityComparison {
     pub returns: f64,
     pub loot_rate: f64,
     pub confirmed_reward_ped: f64,
+    /// Projected liquid reward value using the completion-time markup
+    /// snapshot; null for non-liquid or non-separate rewards.
+    pub reward_mu_ped: Nullable<f64>,
     pub rewarded_returns: f64,
     pub rewarded_rate: f64,
     pub reward_status: HuntingRewardStatus,
@@ -1271,6 +1274,7 @@ pub(crate) fn hunting_activity_dto(
                 0.0
             },
             confirmed_reward_ped: row.confirmed_reward_ped,
+            reward_mu_ped: row.reward_mu_ped.into(),
             rewarded_returns,
             rewarded_rate: if row.cycled > 0.0 {
                 rewarded_returns / row.cycled

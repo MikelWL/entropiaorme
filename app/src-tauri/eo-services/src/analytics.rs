@@ -424,6 +424,9 @@ pub struct HuntingSignatureRow {
     pub pes_per100_ped: f64,
     /// Confirmed liquid reward recorded separately from tracked loot.
     pub confirmed_reward_ped: f64,
+    /// Projected liquid reward value using the markup snapshotted at
+    /// completion. Absent when the reward is not separately liquid-valued.
+    pub reward_mu_ped: Option<f64>,
     /// `none`, `tracked_loot`, `ledger`, `skill`, `mixed`, or
     /// `unverified` for completions predating immutable provenance.
     pub reward_status: String,
@@ -2032,6 +2035,7 @@ struct SignatureAgg {
     pes: f64,
     duration_hours: f64,
     confirmed_reward_ped: f64,
+    reward_mu_ped: f64,
     reward_sources: std::collections::BTreeSet<String>,
     loot_items: std::collections::BTreeMap<String, (i64, f64)>,
     reward_unverified: bool,
@@ -2713,12 +2717,13 @@ fn hunting_activity_read(
     // Completion-time reward facts. A NULL source is deliberately not
     // valued: it names a legacy completion whose current quest definition
     // must never rewrite its history.
-    let mut context_rewards: HashMap<i64, (f64, BTreeSet<String>)> = HashMap::new();
+    let mut context_rewards: HashMap<i64, (f64, f64, BTreeSet<String>)> = HashMap::new();
     let mut legacy_quests: HashMap<Option<i64>, BTreeSet<i64>> = HashMap::new();
     {
         let mut stmt = conn.prepare(
             "SELECT sqc.session_id, sqc.quest_id, sqc.activity_context_id, \
-                    sqc.reward_source, sqc.reward_ped \
+                    sqc.reward_source, sqc.reward_ped, \
+                    sqc.expected_reward_markup_percent \
              FROM session_quest_completions sqc \
              JOIN hunting_session_scope scope ON scope.id = sqc.session_id",
         )?;
@@ -2742,12 +2747,15 @@ fn hunting_activity_read(
             };
             let reward = context_rewards
                 .entry(context_id)
-                .or_insert_with(|| (0.0, BTreeSet::new()));
+                .or_insert_with(|| (0.0, 0.0, BTreeSet::new()));
             if source == "ledger" {
-                reward.0 += row.get::<_, Option<f64>>(4)?.unwrap_or(0.0);
+                let reward_ped = row.get::<_, Option<f64>>(4)?.unwrap_or(0.0);
+                let reward_markup = row.get::<_, Option<f64>>(5)?.unwrap_or(100.0);
+                reward.0 += reward_ped;
+                reward.1 += reward_ped * reward_markup / 100.0;
             }
             if source != "none" {
-                reward.1.insert(source);
+                reward.2.insert(source);
             }
         }
     }
@@ -2800,8 +2808,9 @@ fn hunting_activity_read(
             if let Some(pes) = context_pes.get(context_id) {
                 agg.pes += pes;
             }
-            if let Some((reward_ped, sources)) = context_rewards.get(context_id) {
+            if let Some((reward_ped, reward_mu_ped, sources)) = context_rewards.get(context_id) {
                 agg.confirmed_reward_ped += reward_ped;
+                agg.reward_mu_ped += reward_mu_ped;
                 agg.reward_sources.extend(sources.iter().cloned());
             }
             if let Some(items) = context_items.get(context_id) {
@@ -3031,24 +3040,28 @@ fn assemble_signatures(
         rows
     };
 
-    let base_row = |kind: &str, label: String, agg: &SignatureAgg| HuntingSignatureRow {
-        kind: kind.to_string(),
-        label,
-        runs: agg.runs.len() as i64,
-        kills: agg.kills,
-        duration_hours: round2(agg.duration_hours),
-        cycled: round2(agg.cycled),
-        returns: round2(agg.loot_tt),
-        pes: round4(agg.pes),
-        pes_per100_ped: if agg.cycled > 0.0 {
-            round2((agg.pes / agg.cycled) * 100.0)
-        } else {
-            0.0
-        },
-        confirmed_reward_ped: round2(agg.confirmed_reward_ped),
-        reward_status: reward_status(agg),
-        loot_items: loot_rows(&agg.loot_items),
-        variants: Vec::new(),
+    let base_row = |kind: &str, label: String, agg: &SignatureAgg| {
+        let status = reward_status(agg);
+        HuntingSignatureRow {
+            kind: kind.to_string(),
+            label,
+            runs: agg.runs.len() as i64,
+            kills: agg.kills,
+            duration_hours: round2(agg.duration_hours),
+            cycled: round2(agg.cycled),
+            returns: round2(agg.loot_tt),
+            pes: round4(agg.pes),
+            pes_per100_ped: if agg.cycled > 0.0 {
+                round2((agg.pes / agg.cycled) * 100.0)
+            } else {
+                0.0
+            },
+            confirmed_reward_ped: round2(agg.confirmed_reward_ped),
+            reward_mu_ped: (status == "fixed_liquid").then(|| round2(agg.reward_mu_ped)),
+            reward_status: status,
+            loot_items: loot_rows(&agg.loot_items),
+            variants: Vec::new(),
+        }
     };
 
     let mut families: std::collections::BTreeMap<i64, Vec<HuntingSignatureRow>> =
@@ -3151,6 +3164,8 @@ fn assemble_signatures(
                 0.0
             },
             confirmed_reward_ped: round2(variants.iter().map(|v| v.confirmed_reward_ped).sum()),
+            reward_mu_ped: (family_reward_status == "fixed_liquid")
+                .then(|| round2(variants.iter().filter_map(|v| v.reward_mu_ped).sum())),
             reward_status: family_reward_status,
             loot_items: loot_rows(&family_items),
             variants: Vec::new(),
@@ -8519,6 +8534,9 @@ mod tests {
         assert!((family.pes - 0.8).abs() < 1e-9);
         assert_eq!(family.runs, 1);
         assert_eq!(family.confirmed_reward_ped, 4.0);
+        // The 150% completion snapshot wins over the quest's current value,
+        // which the test changed after completion.
+        assert_eq!(family.reward_mu_ped, Some(6.0));
         assert_eq!(family.reward_status, "fixed_liquid");
         assert_eq!(family.loot_items.len(), 1);
         assert_eq!(family.loot_items[0].item_name, "Animal Muscle Oil");

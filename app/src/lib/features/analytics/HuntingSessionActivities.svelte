@@ -114,6 +114,16 @@
 	</InfoTip>
 {/snippet}
 
+{#snippet rewardMuTip()}
+	<InfoTip label="What Reward MU is">
+		<p class="text-xs font-semibold leading-relaxed text-text">Projected, not realised</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			The separately recorded liquid reward valued at the markup percentage captured when the quest
+			completed. Realised figures continue to use its confirmed face value.
+		</p>
+	</InfoTip>
+{/snippet}
+
 {#if selected}
 	<div>
 		<div class="min-w-0">
@@ -167,8 +177,15 @@
 					labelSuffix={realisedTip}
 				/>
 
-				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-cycled">
-					<StatDisplay label="Cycled" value={formatPed(selected.cycled)} unit="PED" emphasis="secondary" />
+				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-reward-mu">
+					<StatDisplay
+						label="Reward MU"
+						value={selected.rewardMuPed !== null ? formatPed(selected.rewardMuPed) : NO_DATA}
+						unit={selected.rewardMuPed !== null ? 'PED' : ''}
+						valueClass={selected.rewardMuPed !== null ? 'text-text' : 'text-text-tertiary'}
+						labelSuffix={rewardMuTip}
+						emphasis="secondary"
+					/>
 				</div>
 				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-tt-rate">
 					<StatDisplay label="TT Rate" value={formatPercent(selected.lootRate)} valueClass="text-text" emphasis="secondary" />
