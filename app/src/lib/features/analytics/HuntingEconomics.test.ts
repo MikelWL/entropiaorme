@@ -106,7 +106,12 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 
 describe('Hunting economic comparisons', () => {
 	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', async () => {
-		const row = session();
+		const row = session({
+			items: Array.from({ length: 9 }, (_, index) => ({
+				...item,
+				name: index === 0 ? item.name : `Hunting loot ${index + 1}`,
+			})),
+		});
 		const table = createTableModel<HuntingSessionSection>({
 			rows: () => [row],
 			pageSize: Number.MAX_SAFE_INTEGER,
@@ -116,7 +121,17 @@ describe('Hunting economic comparisons', () => {
 		for (const label of ['TT Net', 'MU Net', 'Realised Net']) {
 			expect(screen.getByText(label)).not.toBeNull();
 		}
+		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
+		expect(screen.queryByLabelText('Find an item')).toBeNull();
+		await fireEvent.click(screen.getByRole('button', { name: 'Show session loot' }));
 		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
+		expect(screen.getByRole('button', { name: 'Hide session loot' })).not.toBeNull();
+		expect(screen.queryByLabelText('Find an item')).toBeNull();
+		const sessionLoot = screen.getByTestId('session-loot-list');
+		expect(sessionLoot.className).toContain('max-h-[24rem]');
+		expect(sessionLoot.className).toContain('overflow-y-auto');
+		await fireEvent.click(screen.getByRole('button', { name: 'Hide session loot' }));
+		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
 		const trigger = screen.getByLabelText('Switch hunting view (currently ARIS Dailies)');
 		expect(trigger.className).not.toContain('border');
 		expect(screen.getByTitle('ARIS Dailies').className).toContain('text-text');
@@ -194,18 +209,23 @@ describe('Hunting economic comparisons', () => {
 		expect(onselect).toHaveBeenCalledWith(null);
 	});
 
-	it('offers Activities and Loot only when the session has declared activities', () => {
+	it('shows activity detail and session loot disclosure together', () => {
 		const row = session({ activities: [activity()] });
 		render(HuntingSessions, {
 			props: { selected: row },
 		});
 
-		expect(screen.getByRole('button', { name: 'Activities' })).not.toBeNull();
-		expect(screen.getByRole('button', { name: 'Loot' })).not.toBeNull();
-		expect(screen.getByText('Daily Hunting 1')).not.toBeNull();
+		expect(screen.queryByRole('button', { name: 'Activities' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Loot' })).toBeNull();
+		expect(
+			screen.getByLabelText('Switch session activity (currently Daily Hunting 1)'),
+		).not.toBeNull();
+		expect(screen.getByRole('button', { name: 'Show activity loot' })).not.toBeNull();
+		expect(screen.getByRole('button', { name: 'Show session loot' })).not.toBeNull();
+		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
 	});
 
-	it('opens Loot directly when the only activity evidence is Unscoped', () => {
+	it('offers only session loot when the activity evidence is Unscoped', async () => {
 		const row = session({
 			activities: [activity({ kind: 'ambient', label: 'Unscoped', isUnscoped: true })],
 		});
@@ -216,6 +236,8 @@ describe('Hunting economic comparisons', () => {
 		expect(screen.queryByRole('button', { name: 'Activities' })).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Loot' })).toBeNull();
 		expect(screen.queryByText('Unscoped')).toBeNull();
+		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
+		await fireEvent.click(screen.getByRole('button', { name: 'Show session loot' }));
 		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
 	});
 

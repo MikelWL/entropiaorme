@@ -66,7 +66,15 @@ describe('HuntingSessionActivities', () => {
 		expect(screen.getByText('TT Net')).not.toBeNull();
 		expect(screen.getByText('Rewarded Net')).not.toBeNull();
 		expect(screen.getByText(/90.00 loot \+ 15.00 reward/)).not.toBeNull();
+		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
+		expect(screen.queryByLabelText('Find an item')).toBeNull();
+		await fireEvent.click(screen.getByRole('button', { name: 'Show activity loot' }));
 		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
+		expect(screen.getByRole('button', { name: 'Hide activity loot' })).not.toBeNull();
+		expect(screen.queryByLabelText('Find an item')).toBeNull();
+		const activityLoot = screen.getByTestId('activity-loot-list');
+		expect(activityLoot.className).toContain('max-h-[24rem]');
+		expect(activityLoot.className).toContain('overflow-y-auto');
 		expect(screen.queryByRole('menu')).toBeNull();
 
 		await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
@@ -89,6 +97,8 @@ describe('HuntingSessionActivities', () => {
 		expect(
 			screen.getByLabelText('Switch session activity (currently Bonus Challenge)'),
 		).not.toBeNull();
+		expect(screen.getByRole('button', { name: 'Show activity loot' })).not.toBeNull();
+		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
 		expect(screen.queryByRole('menu')).toBeNull();
 	});
 

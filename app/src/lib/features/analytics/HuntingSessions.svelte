@@ -1,26 +1,14 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import ActivityLootComposition from './ActivityLootComposition.svelte';
 	import HuntingSessionActivities from './HuntingSessionActivities.svelte';
 	import type { HuntingSessionSection } from './huntingModel.svelte';
 
 	let { selected }: { selected: HuntingSessionSection } = $props();
 
-	type DetailView = 'activities' | 'loot';
-	let detailView = $state<DetailView>('activities');
-	const DETAIL_VIEWS = [
-		{ id: 'activities', label: 'Activities' },
-		{ id: 'loot', label: 'Loot' },
-	];
 	const hasDeclaredActivities = $derived(
 		selected?.activities.some((activity) => !activity.isUnscoped) ?? false,
 	);
-	$effect(() => {
-		void selected?.key;
-		detailView = hasDeclaredActivities ? 'activities' : 'loot';
-	});
-
 </script>
 
 {#if selected.isUnassigned}
@@ -35,26 +23,17 @@
 	</div>
 {:else}
 	{#if hasDeclaredActivities}
-		<div class="border-t border-border/50 pt-4">
-			<SegmentedControl
-				options={DETAIL_VIEWS}
-				active={detailView}
-				onchange={(id) => (detailView = id as DetailView)}
-			/>
-		</div>
-	{/if}
-	<div class={hasDeclaredActivities ? 'mt-4' : 'border-t border-border/50 pt-5'}>
-		{#if detailView === 'activities'}
+		<div class="border-t border-border/50 pt-5">
 			<HuntingSessionActivities
 				activities={selected.activities}
 				marketAvailable={selected.muProjectedReturns !== null}
 			/>
-		{:else}
-			<ActivityLootComposition
-				items={selected.items}
-				marketAvailable={selected.muProjectedReturns !== null}
-				emptyLabel="No loot recorded for this session yet."
-			/>
-		{/if}
-	</div>
+		</div>
+	{/if}
+	<ActivityLootComposition
+		items={selected.items}
+		marketAvailable={selected.muProjectedReturns !== null}
+		emptyLabel="No loot recorded for this session yet."
+		disclosure="session"
+	/>
 {/if}

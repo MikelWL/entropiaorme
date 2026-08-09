@@ -9,20 +9,28 @@
 		items,
 		marketAvailable,
 		emptyLabel,
+		disclosure,
 	}: {
 		items: TreeCuttingItem[];
 		marketAvailable: boolean;
 		emptyLabel: string;
+		disclosure?: 'session' | 'activity';
 	} = $props();
 
 	const SEARCH_THRESHOLD = 8;
 	let query = $state('');
-	const searchable = $derived(items.length > SEARCH_THRESHOLD || query !== '');
+	let expanded = $state(false);
+	const searchable = $derived(!disclosure && (items.length > SEARCH_THRESHOLD || query !== ''));
 	const visible = $derived(
-		query.trim() === ''
+		disclosure || query.trim() === ''
 			? items
 			: items.filter((item) => item.name.toLowerCase().includes(query.trim().toLowerCase())),
 	);
+	const disclosureId = $derived(disclosure ? `${disclosure}-loot-composition` : undefined);
+	$effect(() => {
+		void items;
+		expanded = false;
+	});
 </script>
 
 {#snippet confidenceBody(item: TreeCuttingItem)}
@@ -39,22 +47,44 @@
 
 {#if items.length > 0}
 	<div class="mt-5 border-t border-border/50 pt-4">
-		{#if searchable}
-			<div class="px-2.5 pb-3">
-				<SearchInput bind:value={query} placeholder="Find an item" aria-label="Find an item" />
-			</div>
+		{#if disclosure}
+			<button
+				type="button"
+				class="group flex w-full cursor-pointer items-center justify-center gap-2 rounded-md py-1.5
+					text-xs font-medium uppercase tracking-wider text-text-tertiary transition-colors
+					duration-[var(--duration-fast)] hover:bg-surface-hover/30 hover:text-text
+					focus:outline-none focus:[box-shadow:var(--shadow-glow)]"
+				aria-expanded={expanded}
+				aria-controls={disclosureId}
+				onclick={() => (expanded = !expanded)}
+			>
+				<span class="text-sm transition-transform" aria-hidden="true">{expanded ? '↑' : '↓'}</span>
+				<span>{expanded ? `Hide ${disclosure} loot` : `Show ${disclosure} loot`}</span>
+				<span class="text-sm transition-transform" aria-hidden="true">{expanded ? '↑' : '↓'}</span>
+			</button>
 		{/if}
-		<div
-			class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
-		>
-			<span class="eyebrow flex-1 min-w-0">Item</span>
-			<span class="eyebrow w-20 text-right shrink-0">TT</span>
-			<span class="eyebrow w-14 text-right shrink-0">Share</span>
-			<span class="eyebrow w-20 text-right shrink-0">Markup</span>
-			<span class="eyebrow w-12 text-center shrink-0">Conf</span>
-		</div>
 
-		<ul class="flex flex-col gap-1">
+		{#if !disclosure || expanded}
+			<div id={disclosureId} class={disclosure ? 'mt-3' : ''}>
+				{#if searchable}
+					<div class="px-2.5 pb-3">
+						<SearchInput bind:value={query} placeholder="Find an item" aria-label="Find an item" />
+					</div>
+				{/if}
+				<div
+					class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
+				>
+					<span class="eyebrow flex-1 min-w-0">Item</span>
+					<span class="eyebrow w-20 text-right shrink-0">TT</span>
+					<span class="eyebrow w-14 text-right shrink-0">Share</span>
+					<span class="eyebrow w-20 text-right shrink-0">Markup</span>
+					<span class="eyebrow w-12 text-center shrink-0">Conf</span>
+				</div>
+
+				<ul
+					class="flex flex-col gap-1 {disclosure ? 'max-h-[24rem] overflow-y-auto pr-1' : ''}"
+					data-testid={disclosure ? `${disclosure}-loot-list` : undefined}
+				>
 			{#each visible as item (item.name)}
 				<li
 					class="flex items-center gap-3 rounded-md border border-transparent px-2.5 py-2
@@ -120,7 +150,9 @@
 					No loot item matches that search.
 				</li>
 			{/if}
-		</ul>
+				</ul>
+			</div>
+		{/if}
 	</div>
 {:else}
 	<p class="mt-4 px-2.5 text-xs text-text-tertiary">{emptyLabel}</p>

@@ -164,6 +164,7 @@
 				items={selected.items}
 				{marketAvailable}
 				emptyLabel="No itemised loot was recorded for this activity."
+				disclosure="activity"
 			/>
 		{/if}
 	</div>
