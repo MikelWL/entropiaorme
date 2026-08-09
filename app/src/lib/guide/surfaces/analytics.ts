@@ -310,7 +310,7 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Overall is also the session picker: choosing a routine replaces the combined detail beneath the same headline figures. Inside a session, Activities separates its declared quests, segments, and joint bundles without duplicating shared costs; a session without declared activities opens directly onto its loot.',
+						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Overall is also the session picker: choosing a routine replaces the combined detail beneath the same headline figures. Inside a session, the Activity picker opens one declared quest, segment, or joint bundle directly without duplicating shared costs; a session without declared activities opens straight onto its loot.',
 					},
 					{
 						kind: 'p',

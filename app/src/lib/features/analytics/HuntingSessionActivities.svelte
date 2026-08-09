@@ -1,9 +1,9 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import SearchInput from '$lib/components/SearchInput.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 	import ActivityLootComposition from './ActivityLootComposition.svelte';
+	import HuntingActivityPicker from './HuntingActivityPicker.svelte';
 	import type { HuntingActivitySection } from './huntingModel.svelte';
 
 	let {
@@ -14,8 +14,6 @@
 		marketAvailable: boolean;
 	} = $props();
 
-	const SEARCH_THRESHOLD = 8;
-	let query = $state('');
 	let selectedKey = $state<string | null>(null);
 
 	function findActivity(rows: HuntingActivitySection[], key: string): HuntingActivitySection | null {
@@ -27,23 +25,14 @@
 		return null;
 	}
 
-	const selected = $derived(selectedKey ? findActivity(activities, selectedKey) : null);
-	const searchable = $derived(activities.length > SEARCH_THRESHOLD || query !== '');
-	const filtered = $derived(
-		query.trim() === ''
-			? activities
-			: activities.filter((activity) =>
-					activity.label.toLowerCase().includes(query.trim().toLowerCase()),
-				),
+	const selected = $derived(
+		(selectedKey ? findActivity(activities, selectedKey) : null) ??
+			activities.find((activity) => !activity.isUnscoped) ??
+			activities[0] ??
+			null,
 	);
-	const displayActivities = $derived([
-		...filtered.filter((activity) => !activity.isUnscoped),
-		...filtered.filter((activity) => activity.isUnscoped),
-	]);
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
-	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
-	const rateTone = (value: number) => netTone(value - 1);
 	const kindLabel = (activity: HuntingActivitySection) => {
 		switch (activity.kind) {
 			case 'quest_family':
@@ -96,16 +85,11 @@
 	<div>
 		<div class="flex items-start justify-between gap-3">
 			<div class="min-w-0">
-				<button
-					type="button"
-					class="mb-2 text-xs font-medium text-text-tertiary hover:text-accent"
-					onclick={() => (selectedKey = null)}
-				>
-					← Activities
-				</button>
-				<h3 class="truncate text-base font-semibold tracking-tight text-text" title={selected.label}>
-					{selected.label}
-				</h3>
+				<HuntingActivityPicker
+					{activities}
+					{selected}
+					onselect={(key) => (selectedKey = key)}
+				/>
 				<p class="mt-0.5 text-xs text-text-tertiary">{kindLabel(selected)}</p>
 			</div>
 			{#if rewardLabel(selected)}
@@ -127,7 +111,6 @@
 				<StatDisplay
 					label="TT Net"
 					value={signedPed(selected.returns - selected.cycled)}
-					valueClass={netTone(selected.returns - selected.cycled)}
 					unit="PED"
 				/>
 				<StatDisplay
@@ -146,9 +129,7 @@
 					value={selected.rewardStatus === 'unverified'
 						? NO_DATA
 						: signedPed(selected.rewardedReturns - selected.cycled)}
-					valueClass={selected.rewardStatus === 'unverified'
-						? 'text-text-tertiary'
-						: netTone(selected.rewardedReturns - selected.cycled)}
+					valueClass={selected.rewardStatus === 'unverified' ? 'text-text-tertiary' : 'text-text'}
 					unit={selected.rewardStatus === 'unverified' ? '' : 'PED'}
 				/>
 			</div>
@@ -156,7 +137,7 @@
 			{#if selected.rewardStatus === 'fixed_liquid'}
 				<p class="mt-3 text-xs tabular-nums text-text-tertiary">
 					{formatPed(selected.returns)} loot + {formatPed(selected.confirmedRewardPed)} reward − {formatPed(selected.cycled)} cycled =
-					<span class="font-medium {netTone(selected.rewardedReturns - selected.cycled)}">
+					<span class="font-medium text-text">
 						{signedPed(selected.rewardedReturns - selected.cycled)} PED
 					</span>
 				</p>
@@ -169,7 +150,7 @@
 						<p class="text-[0.6875rem] text-text-tertiary">Projected loot markup plus confirmed liquid reward</p>
 					</div>
 					<div class="text-right">
-						<p class="text-sm font-semibold tabular-nums {netTone(selected.muRewardedReturns - selected.cycled)}">
+						<p class="text-sm font-semibold tabular-nums text-text">
 							{signedPed(selected.muRewardedReturns - selected.cycled)} PED
 						</p>
 						<p class="text-xs tabular-nums text-text-secondary">
@@ -179,80 +160,12 @@
 				</div>
 			{/if}
 
-			{#if selected.variants.length > 0}
-				<div class="mt-5 border-t border-border/50 pt-4">
-					<p class="eyebrow px-2.5 pb-2">Variants</p>
-					<ul class="flex flex-col gap-1">
-						{#each selected.variants as variant (variant.key)}
-							<li>
-								<button
-									type="button"
-									class="flex w-full items-center gap-3 rounded-md border border-transparent px-2.5 py-2 text-left hover:border-border/40 hover:bg-surface-hover/30"
-									onclick={() => (selectedKey = variant.key)}
-								>
-									<span class="min-w-0 flex-1 truncate text-sm font-medium text-text">{variant.label}</span>
-									<span class="text-xs tabular-nums text-text-secondary">{formatPed(variant.cycled)} PED</span>
-									<span class="w-16 text-right text-xs font-medium tabular-nums {rateTone(variant.rewardedRate)}">{formatPercent(variant.rewardedRate)}</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
-				</div>
-			{/if}
-
 			<ActivityLootComposition
 				items={selected.items}
 				{marketAvailable}
 				emptyLabel="No itemised loot was recorded for this activity."
 			/>
 		{/if}
-	</div>
-{:else if activities.length > 0}
-	<div>
-		{#if searchable}
-			<div class="px-2.5 pb-3">
-				<SearchInput bind:value={query} placeholder="Find an activity" aria-label="Find an activity" />
-			</div>
-		{/if}
-		<div class="flex items-center gap-3 px-2.5 pb-2 text-text-tertiary">
-			<span class="eyebrow min-w-0 flex-1">Activity</span>
-			<span class="eyebrow w-20 shrink-0 text-right">Cycled</span>
-			<span class="eyebrow w-24 shrink-0 text-right">TT → Rewarded</span>
-		</div>
-		<ul class="flex flex-col gap-1">
-			{#each displayActivities as activity (activity.key)}
-				<li>
-					<button
-						type="button"
-						class="flex w-full items-center gap-3 rounded-lg border border-transparent px-2.5 py-2 text-left transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)] hover:border-border/40 hover:bg-surface-hover/30"
-						onclick={() => (selectedKey = activity.key)}
-					>
-						<span class="min-w-0 flex-1">
-							<span class="block truncate text-sm font-medium tracking-tight {activity.isUnscoped ? 'text-text-tertiary' : 'text-text'}" title={activity.label}>{activity.label}</span>
-							{#if !activity.isUnscoped && rewardLabel(activity)}
-								<span class="block truncate text-[0.6875rem] text-text-tertiary">{rewardLabel(activity)}</span>
-							{/if}
-						</span>
-						{#if activity.isUnscoped}
-							<span class="w-20" aria-hidden="true"></span>
-							<span class="w-24 text-right text-xs text-text-tertiary">Not ranked</span>
-						{:else}
-							<span class="w-20 shrink-0 text-right text-xs tabular-nums text-text">{formatPed(activity.cycled)}</span>
-							<span class="w-24 shrink-0 text-right text-xs font-medium tabular-nums {rateTone(activity.rewardedRate)}">
-								{#if activity.rewardStatus === 'fixed_liquid' && activity.confirmedRewardPed > 0}
-									<span class="text-text-tertiary">{formatPercent(activity.lootRate)}</span>
-									<span class="px-0.5 text-text-tertiary">→</span>
-								{/if}
-								{activity.rewardStatus === 'unverified' ? NO_DATA : formatPercent(activity.rewardedRate)}
-							</span>
-						{/if}
-					</button>
-				</li>
-			{/each}
-			{#if displayActivities.length === 0}
-				<li class="px-3 py-4 text-center text-xs text-text-tertiary">No activity matches that search.</li>
-			{/if}
-		</ul>
 	</div>
 {:else}
 	<p class="px-2.5 py-4 text-center text-xs text-text-tertiary">

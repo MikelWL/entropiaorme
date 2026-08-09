@@ -8,6 +8,8 @@
 		filter = $bindable(''),
 		hasMatches,
 		filterLabel,
+		filterPlaceholder = 'Filter sessions...',
+		emptyNoun = 'sessions',
 		resultsTestId,
 		results,
 		footer
@@ -17,6 +19,8 @@
 		filter?: string;
 		hasMatches: boolean;
 		filterLabel: string;
+		filterPlaceholder?: string;
+		emptyNoun?: string;
 		resultsTestId?: string;
 		results: Snippet;
 		footer?: Snippet;
@@ -31,7 +35,7 @@
 		</div>
 		<SearchInput
 			bind:value={filter}
-			placeholder="Filter sessions..."
+			placeholder={filterPlaceholder}
 			aria-label={filterLabel}
 			autocomplete="off"
 			spellcheck={false}
@@ -45,7 +49,7 @@
 		{@render results()}
 		{#if !hasMatches}
 			<p class="px-3 py-8 text-center text-sm text-text-tertiary">
-				No sessions match “{filter.trim()}”.
+				No {emptyNoun} match “{filter.trim()}”.
 			</p>
 		{/if}
 	</div>
