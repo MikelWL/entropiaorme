@@ -56,7 +56,7 @@
 				</div>
 			{:else}
 				<div
-					class="grid grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))] items-start gap-6
+					class="grid grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))] items-start gap-x-6 gap-y-4
 						border-b border-border/50 pb-5"
 					data-testid="hunting-session-headline"
 				>
@@ -73,6 +73,31 @@
 							</InfoTip>
 						{/snippet}
 					</StatDisplay>
+					<div class="border-t border-border/35 pt-3" data-testid="session-subordinate-cycled">
+						<span class="eyebrow block text-text-tertiary">Cycled</span>
+						<div class="mt-1 flex items-baseline gap-1.5">
+							<span class="text-base font-semibold tabular-nums text-text-secondary">{formatPed(selected.cycled)}</span>
+							<span class="text-[0.625rem] font-medium uppercase tracking-wider text-text-tertiary">PED</span>
+						</div>
+					</div>
+					<div class="border-t border-border/35 pt-3" data-testid="session-subordinate-tt-rate">
+						<span class="eyebrow block text-text-tertiary">TT Rate</span>
+						<span class="mt-1 block text-base font-semibold tabular-nums {netTone(selected.lootRate - 1)}">
+							{formatPercent(selected.lootRate)}
+						</span>
+					</div>
+					<div class="border-t border-border/35 pt-3" data-testid="session-subordinate-mu-rate">
+						<span class="eyebrow block text-text-tertiary">MU Rate</span>
+						<span class="mt-1 block text-base font-semibold tabular-nums {selected.muRate !== null ? netTone(selected.muRate - 1) : 'text-text-tertiary'}">
+							{selected.muRate !== null ? formatPercent(selected.muRate) : NO_DATA}
+						</span>
+					</div>
+					<div class="border-t border-border/35 pt-3" data-testid="session-subordinate-realised-rate">
+						<span class="eyebrow block text-text-tertiary">Realised Rate</span>
+						<span class="mt-1 block text-base font-semibold tabular-nums {netTone(selected.realisedRate - 1)}">
+							{formatPercent(selected.realisedRate)}
+						</span>
+					</div>
 				</div>
 				{#if hasDeclaredActivities}
 					<div class="mt-4">
