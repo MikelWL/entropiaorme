@@ -5,11 +5,12 @@
 //!
 //! ## The model
 //!
-//! An ended session's events aggregate to three cell sets no activity
+//! An ended session's events aggregate to four cell sets no activity
 //! consumer folds finer than: kill cells by `(context, species, maturity)`
 //! (`session_kill_rollups`), active loot cells by `(species, shrapnel,
 //! item)` (`session_loot_rollups`, species pre-folded to the empty string
-//! for shrapnel rows exactly as the position reads fold it), and
+//! for shrapnel rows exactly as the position reads fold it), loot-
+//! composition cells by context (`session_context_loot_rollups`), and
 //! skill-gain cells by context (`session_pes_rollups`). The raw tables
 //! grow with total play history; the cells stay proportional to sessions,
 //! species, and items, so a reader folding cells does O(cells) work
@@ -30,7 +31,7 @@ use crate::db::DbError;
 
 /// Bump when a cell's meaning changes: below-version sessions are served
 /// raw and heal on the next read.
-pub const ROLLUP_VERSION: i64 = 1;
+pub const ROLLUP_VERSION: i64 = 2;
 
 /// Drop one session's cells and marker. The session reads raw from this
 /// commit on; the delete path wants exactly that, and [`recompute_session`]
@@ -45,6 +46,7 @@ pub fn drop_session(conn: &rusqlite::Connection, session_id: &str) -> Result<(),
     for table in [
         "session_kill_rollups",
         "session_loot_rollups",
+        "session_context_loot_rollups",
         "session_pes_rollups",
     ] {
         conn.execute(
@@ -100,6 +102,18 @@ pub fn recompute_session(conn: &rusqlite::Connection, session_id: &str) -> Resul
         rusqlite::params![session_id],
     )?;
     conn.execute(
+        "INSERT INTO session_context_loot_rollups \
+             (session_id, context_id, item_name, quantity, value_ped) \
+         SELECT k.session_id, k.context_id, li.item_name, \
+                SUM(li.quantity), COALESCE(SUM(li.value_ped), 0) \
+         FROM kill_loot_items li \
+         JOIN kills k ON k.id = li.kill_id \
+         WHERE k.session_id = ?1 AND li.deactivated_at IS NULL \
+           AND li.is_enhancer_shrapnel = 0 \
+         GROUP BY 1, 2, 3",
+        rusqlite::params![session_id],
+    )?;
+    conn.execute(
         "INSERT INTO session_pes_rollups (session_id, context_id, pes) \
          SELECT session_id, context_id, COALESCE(SUM(ped_value), 0) \
          FROM skill_gains \
@@ -124,6 +138,7 @@ pub fn rebuild(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
         "DELETE FROM session_rollup_meta; \
          DELETE FROM session_kill_rollups; \
          DELETE FROM session_loot_rollups; \
+         DELETE FROM session_context_loot_rollups; \
          DELETE FROM session_pes_rollups;",
     )?;
     heal(conn)
@@ -187,6 +202,7 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
         "session_rollup_meta",
         "session_kill_rollups",
         "session_loot_rollups",
+        "session_context_loot_rollups",
         "session_pes_rollups",
     ] {
         tx.execute(
@@ -227,6 +243,17 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
         [],
     )?;
     tx.execute(
+        "INSERT INTO session_context_loot_rollups \
+             (session_id, context_id, item_name, quantity, value_ped) \
+         SELECT p.id, k.context_id, li.item_name, \
+                SUM(li.quantity), COALESCE(SUM(li.value_ped), 0) \
+         FROM pending_settlement p CROSS JOIN kills k CROSS JOIN kill_loot_items li \
+         WHERE k.session_id = p.id AND li.kill_id = k.id \
+           AND li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0 \
+         GROUP BY 1, 2, 3",
+        [],
+    )?;
+    tx.execute(
         "INSERT INTO session_pes_rollups (session_id, context_id, pes) \
          SELECT p.id, sg.context_id, COALESCE(SUM(sg.ped_value), 0) \
          FROM pending_settlement p CROSS JOIN skill_gains sg \
@@ -250,6 +277,11 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
     )?;
     tx.execute(
         "DELETE FROM session_loot_rollups \
+         WHERE session_id NOT IN (SELECT id FROM tracking_sessions)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM session_context_loot_rollups \
          WHERE session_id NOT IN (SELECT id FROM tracking_sessions)",
         [],
     )?;

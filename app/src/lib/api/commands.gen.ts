@@ -863,6 +863,27 @@ export interface HpOptimizerSkill {
 }
 
 /**
+ * One exact declared activity signature inside a session definition.
+ * Costs and loot are partitioned by the context stamped at capture; a
+ * separately confirmed liquid reward is additive exactly once.
+ */
+export interface HuntingActivityComparison {
+	kind: HuntingActivityKind;
+	label: string;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	confirmedRewardPed: number;
+	rewardedReturns: number;
+	rewardedRate: number;
+	rewardStatus: HuntingRewardStatus;
+	lootItems: HarvestLootItem[];
+	variants: HuntingActivityComparison[];
+}
+
+export type HuntingActivityKind = 'quest' | 'quest_family' | 'segment' | 'bundle' | 'ambient';
+
+/**
  * The whole activity's direct headline figures for the period.
  */
 export interface HuntingActivityOverall {
@@ -883,12 +904,15 @@ export interface HuntingDefinitionComparison {
 	returns: number;
 	lootRate: number;
 	lootItems: HarvestLootItem[];
+	activities: HuntingActivityComparison[];
 }
 
 export interface HuntingRealisedMarkup {
 	species: RealisedSpeciesMarkup[];
 	definitions: RealisedDefinitionMarkup[];
 }
+
+export type HuntingRewardStatus = 'none' | 'included_in_loot' | 'fixed_liquid' | 'skill' | 'mixed' | 'unverified';
 
 /**
  * One observed species' aggregate; the unclassified bucket carries an

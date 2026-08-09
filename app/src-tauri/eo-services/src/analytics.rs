@@ -16,7 +16,7 @@
 //! floats. The response boundary declares `f64` fields, so every number
 //! coerces to its float form exactly where the facade DTOs pin it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -422,9 +422,12 @@ pub struct HuntingSignatureRow {
     pub returns: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
-    pub reward_ped: Option<f64>,
-    pub reward_is_skill: bool,
-    pub expected_reward_markup_percent: Option<f64>,
+    /// Confirmed liquid reward recorded separately from tracked loot.
+    pub confirmed_reward_ped: f64,
+    /// `none`, `tracked_loot`, `ledger`, `skill`, `mixed`, or
+    /// `unverified` for completions predating immutable provenance.
+    pub reward_status: String,
+    pub loot_items: Vec<HarvestLootItemRow>,
     pub variants: Vec<HuntingSignatureRow>,
 }
 
@@ -2028,6 +2031,10 @@ struct SignatureAgg {
     loot_tt: f64,
     pes: f64,
     duration_hours: f64,
+    confirmed_reward_ped: f64,
+    reward_sources: std::collections::BTreeSet<String>,
+    loot_items: std::collections::BTreeMap<String, (i64, f64)>,
+    reward_unverified: bool,
     /// The distinct interval-id tuples seen, i.e. the focused stretches.
     runs: std::collections::BTreeSet<Vec<i64>>,
 }
@@ -2045,9 +2052,6 @@ enum SignatureMember {
 struct QuestFacts {
     name: String,
     family_id: Option<i64>,
-    reward_ped: Option<f64>,
-    reward_is_skill: bool,
-    expected_reward_markup_percent: Option<f64>,
 }
 
 async fn hunting_activity_impl(
@@ -2210,9 +2214,7 @@ fn hunting_sessions(
     }
 
     {
-        let mut stmt = conn.prepare(
-            "SELECT session_id, duration_hours FROM session_summaries",
-        )?;
+        let mut stmt = conn.prepare("SELECT session_id, duration_hours FROM session_summaries")?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let id = row.get::<_, String>(0)?;
@@ -2540,11 +2542,7 @@ fn hunting_activity_read(
     // The signature substrate: contexts, their quest/segment interval sets,
     // and per-context event totals, attributed by stamp, never by timestamp.
     let quest_facts: HashMap<i64, QuestFacts> = {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, family_id, reward_ped, reward_is_skill, \
-                    expected_reward_markup_percent \
-             FROM quests",
-        )?;
+        let mut stmt = conn.prepare("SELECT id, name, family_id FROM quests")?;
         let mut rows = stmt.query([])?;
         let mut out = HashMap::new();
         while let Some(row) = rows.next()? {
@@ -2553,9 +2551,6 @@ fn hunting_activity_read(
                 QuestFacts {
                     name: row.get(1)?,
                     family_id: row.get(2)?,
-                    reward_ped: row.get(3)?,
-                    reward_is_skill: row.get::<_, i64>(4).unwrap_or(0) != 0,
-                    expected_reward_markup_percent: row.get(5)?,
                 },
             );
         }
@@ -2667,6 +2662,96 @@ fn hunting_activity_read(
         }
     }
 
+    // Item composition at the same context grain as direct cost and loot.
+    // Settled sessions read the maintained projection; only the live or
+    // otherwise-unsettled sessions touch raw loot rows.
+    let mut context_items: HashMap<i64, BTreeMap<String, (i64, f64)>> = HashMap::new();
+    let unsettled = crate::session_rollup::unsettled_sessions(conn)?;
+    {
+        let mut stmt = conn.prepare(
+            "SELECT r.context_id, r.item_name, r.quantity, r.value_ped \
+             FROM session_context_loot_rollups r \
+             JOIN session_rollup_meta m ON m.session_id = r.session_id \
+                  AND m.rollup_version >= ?1 \
+             JOIN hunting_session_scope scope ON scope.id = r.session_id \
+             WHERE r.context_id IS NOT NULL",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![crate::session_rollup::ROLLUP_VERSION])?;
+        while let Some(row) = rows.next()? {
+            let context: i64 = row.get(0)?;
+            context_items.entry(context).or_default().insert(
+                row.get(1)?,
+                (row.get::<_, i64>(2).unwrap_or(0), as_float(row, 3)),
+            );
+        }
+    }
+    {
+        let mut stmt = conn.prepare(
+            "SELECT k.context_id, li.item_name, SUM(li.quantity), \
+                    COALESCE(SUM(li.value_ped), 0) \
+             FROM kill_loot_items li \
+             JOIN kills k ON k.id = li.kill_id \
+             WHERE k.session_id = ?1 AND k.context_id IS NOT NULL \
+               AND li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0 \
+             GROUP BY k.context_id, li.item_name",
+        )?;
+        for session_id in &unsettled {
+            if !sessions.contains_key(session_id) {
+                continue;
+            }
+            let mut rows = stmt.query(rusqlite::params![session_id])?;
+            while let Some(row) = rows.next()? {
+                let context: i64 = row.get(0)?;
+                context_items.entry(context).or_default().insert(
+                    row.get(1)?,
+                    (row.get::<_, i64>(2).unwrap_or(0), as_float(row, 3)),
+                );
+            }
+        }
+    }
+
+    // Completion-time reward facts. A NULL source is deliberately not
+    // valued: it names a legacy completion whose current quest definition
+    // must never rewrite its history.
+    let mut context_rewards: HashMap<i64, (f64, BTreeSet<String>)> = HashMap::new();
+    let mut legacy_quests: HashMap<Option<i64>, BTreeSet<i64>> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT sqc.session_id, sqc.quest_id, sqc.activity_context_id, \
+                    sqc.reward_source, sqc.reward_ped \
+             FROM session_quest_completions sqc \
+             JOIN hunting_session_scope scope ON scope.id = sqc.session_id",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let session_id: String = row.get(0)?;
+            let quest_id: i64 = row.get(1)?;
+            let context_id: Option<i64> = row.get(2)?;
+            let source: Option<String> = row.get(3)?;
+            let Some(source) = source else {
+                if let Some(session) = sessions.get(&session_id) {
+                    legacy_quests
+                        .entry(session.definition_id)
+                        .or_default()
+                        .insert(quest_id);
+                }
+                continue;
+            };
+            let Some(context_id) = context_id else {
+                continue;
+            };
+            let reward = context_rewards
+                .entry(context_id)
+                .or_insert_with(|| (0.0, BTreeSet::new()));
+            if source == "ledger" {
+                reward.0 += row.get::<_, Option<f64>>(4)?.unwrap_or(0.0);
+            }
+            if source != "none" {
+                reward.1.insert(source);
+            }
+        }
+    }
+
     // Fold contexts into per-definition signature aggregates. A context's
     // span is the stretch until the next context (or session end), which is
     // sound because a fresh context is minted on every change.
@@ -2693,6 +2778,15 @@ fn hunting_activity_read(
                 members.iter().map(|(_, member)| member.clone()).collect();
             let interval_ids: Vec<i64> = members.iter().map(|(id, _)| *id).collect();
 
+            let reward_unverified =
+                legacy_quests
+                    .get(&session.definition_id)
+                    .is_some_and(|quests| {
+                        key.iter().any(|member| {
+                        matches!(member, SignatureMember::Quest(id) if quests.contains(id))
+                    })
+                    });
+
             let agg = signatures
                 .entry(session.definition_id)
                 .or_default()
@@ -2706,6 +2800,18 @@ fn hunting_activity_read(
             if let Some(pes) = context_pes.get(context_id) {
                 agg.pes += pes;
             }
+            if let Some((reward_ped, sources)) = context_rewards.get(context_id) {
+                agg.confirmed_reward_ped += reward_ped;
+                agg.reward_sources.extend(sources.iter().cloned());
+            }
+            if let Some(items) = context_items.get(context_id) {
+                for (name, (quantity, value)) in items {
+                    let item = agg.loot_items.entry(name.clone()).or_insert((0, 0.0));
+                    item.0 += quantity;
+                    item.1 += value;
+                }
+            }
+            agg.reward_unverified |= reward_unverified;
             agg.duration_hours += span_hours;
             if !interval_ids.is_empty() {
                 agg.runs.insert(interval_ids);
@@ -2757,7 +2863,10 @@ fn hunting_activity_read(
     let mut by_definition: HashMap<Option<i64>, Vec<(&String, &HuntingSessionAgg)>> =
         HashMap::new();
     for (id, agg) in &sessions {
-        by_definition.entry(agg.definition_id).or_default().push((id, agg));
+        by_definition
+            .entry(agg.definition_id)
+            .or_default()
+            .push((id, agg));
     }
 
     let mut definition_rows: Vec<HuntingDefinitionRow> = by_definition
@@ -2884,11 +2993,42 @@ fn assemble_signatures(
                 .get(id)
                 .map(|facts| facts.name.clone())
                 .unwrap_or_else(|| format!("Quest {id}")),
-            SignatureMember::Segment(label) if label.is_empty() => {
-                "Unnamed segment".to_string()
-            }
+            SignatureMember::Segment(label) if label.is_empty() => "Unnamed segment".to_string(),
             SignatureMember::Segment(label) => label.clone(),
         }
+    };
+
+    let reward_status = |agg: &SignatureAgg| -> String {
+        if agg.reward_unverified {
+            return "unverified".to_string();
+        }
+        match agg.reward_sources.len() {
+            0 => "none".to_string(),
+            1 => match agg.reward_sources.iter().next().map(String::as_str) {
+                Some("tracked_loot") => "included_in_loot".to_string(),
+                Some("ledger") => "fixed_liquid".to_string(),
+                Some("skill") => "skill".to_string(),
+                _ => "none".to_string(),
+            },
+            _ => "mixed".to_string(),
+        }
+    };
+    let loot_rows = |items: &BTreeMap<String, (i64, f64)>| {
+        let mut rows: Vec<HarvestLootItemRow> = items
+            .iter()
+            .map(|(name, (quantity, value))| HarvestLootItemRow {
+                item_name: name.clone(),
+                quantity: *quantity,
+                value_ped: round2(*value),
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            b.value_ped
+                .partial_cmp(&a.value_ped)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.item_name.cmp(&b.item_name))
+        });
+        rows
     };
 
     let base_row = |kind: &str, label: String, agg: &SignatureAgg| HuntingSignatureRow {
@@ -2905,9 +3045,9 @@ fn assemble_signatures(
         } else {
             0.0
         },
-        reward_ped: None,
-        reward_is_skill: false,
-        expected_reward_markup_percent: None,
+        confirmed_reward_ped: round2(agg.confirmed_reward_ped),
+        reward_status: reward_status(agg),
+        loot_items: loot_rows(&agg.loot_items),
         variants: Vec::new(),
     };
 
@@ -2939,12 +3079,7 @@ fn assemble_signatures(
             }
             [SignatureMember::Quest(quest_id)] => {
                 let facts = quest_facts.get(quest_id);
-                let mut row = base_row("quest", member_label(&key[0]), agg);
-                if let Some(facts) = facts {
-                    row.reward_ped = facts.reward_ped;
-                    row.reward_is_skill = facts.reward_is_skill;
-                    row.expected_reward_markup_percent = facts.expected_reward_markup_percent;
-                }
+                let row = base_row("quest", member_label(&key[0]), agg);
                 match facts.and_then(|facts| facts.family_id) {
                     Some(family_id) => families.entry(family_id).or_default().push(row),
                     None => rows.push(row),
@@ -2954,11 +3089,7 @@ fn assemble_signatures(
                 rows.push(base_row("segment", member_label(&key[0]), agg));
             }
             _ => {
-                let label = key
-                    .iter()
-                    .map(member_label)
-                    .collect::<Vec<_>>()
-                    .join(" + ");
+                let label = key.iter().map(member_label).collect::<Vec<_>>().join(" + ");
                 rows.push(base_row("bundle", label, agg));
             }
         }
@@ -2979,6 +3110,32 @@ fn assemble_signatures(
         // the family is the repeatable slot the player decides on.
         let family_cycled: f64 = variants.iter().map(|v| v.cycled).sum();
         let family_pes: f64 = variants.iter().map(|v| v.pes).sum();
+        let mut family_items: BTreeMap<String, (i64, f64)> = BTreeMap::new();
+        let mut family_statuses: BTreeSet<String> = BTreeSet::new();
+        let mut family_unverified = false;
+        for variant in &variants {
+            for item in &variant.loot_items {
+                let total = family_items
+                    .entry(item.item_name.clone())
+                    .or_insert((0, 0.0));
+                total.0 += item.quantity;
+                total.1 += item.value_ped;
+            }
+            if variant.reward_status == "unverified" {
+                family_unverified = true;
+            } else if variant.reward_status != "none" {
+                family_statuses.insert(variant.reward_status.clone());
+            }
+        }
+        let family_reward_status = if family_unverified {
+            "unverified".to_string()
+        } else if family_statuses.is_empty() {
+            "none".to_string()
+        } else if family_statuses.len() == 1 {
+            family_statuses.into_iter().next().unwrap_or_default()
+        } else {
+            "mixed".to_string()
+        };
         let mut family_row = HuntingSignatureRow {
             kind: "quest_family".to_string(),
             label,
@@ -2993,13 +3150,9 @@ fn assemble_signatures(
             } else {
                 0.0
             },
-            // The family's reward columns hold only what every variant
-            // agrees on; a mixed family reports per variant instead.
-            reward_ped: uniform(variants.iter().map(|v| v.reward_ped)),
-            reward_is_skill: variants.iter().all(|v| v.reward_is_skill),
-            expected_reward_markup_percent: uniform(
-                variants.iter().map(|v| v.expected_reward_markup_percent),
-            ),
+            confirmed_reward_ped: round2(variants.iter().map(|v| v.confirmed_reward_ped).sum()),
+            reward_status: family_reward_status,
+            loot_items: loot_rows(&family_items),
             variants: Vec::new(),
         };
         family_row.variants = variants;
@@ -3016,18 +3169,6 @@ fn assemble_signatures(
         rows.push(ambient);
     }
     rows
-}
-
-/// The value every element shares, or `None` when they differ or the
-/// iterator is empty.
-fn uniform<T: PartialEq + Copy>(mut values: impl Iterator<Item = Option<T>>) -> Option<T> {
-    let first = values.next()??;
-    for value in values {
-        if value != Some(first) {
-            return None;
-        }
-    }
-    Some(first)
 }
 
 // ── The Overview and Activity aggregates ──
@@ -3491,9 +3632,7 @@ struct PositionKey {
 /// only that legacy residual across the still-open definition buckets. The
 /// species total stays exact while no historical definition claim is invented
 /// for the realised sale itself.
-fn absorb_legacy_hunt_outflows(
-    by_source: &mut std::collections::BTreeMap<PositionKey, f64>,
-) {
+fn absorb_legacy_hunt_outflows(by_source: &mut std::collections::BTreeMap<PositionKey, f64>) {
     let species: std::collections::BTreeSet<String> = by_source
         .keys()
         .filter(|key| !key.species.is_empty())
@@ -3513,9 +3652,7 @@ fn absorb_legacy_hunt_outflows(
         let definition_keys: Vec<PositionKey> = by_source
             .iter()
             .filter(|(key, quantity)| {
-                key.species == species
-                    && key.definition_id.is_some()
-                    && **quantity > STOCK_EPSILON
+                key.species == species && key.definition_id.is_some() && **quantity > STOCK_EPSILON
             })
             .map(|(key, _)| key.clone())
             .collect();
@@ -4629,7 +4766,9 @@ impl AnalyticsService {
                 // scale nothing supports.
                 let (_, target_loot_unit_tt) = item_positions(&tx, &target_c)?;
                 let target_unit_tt = produced_unit_tt(&target_c)
-                    .or_else(|| (target_loot_unit_tt > STOCK_EPSILON).then_some(target_loot_unit_tt))
+                    .or_else(|| {
+                        (target_loot_unit_tt > STOCK_EPSILON).then_some(target_loot_unit_tt)
+                    })
                     .unwrap_or(1.0);
                 // The service tolerates converting past tracked stock for the
                 // same reason it tolerates selling past it: the player may
@@ -5153,17 +5292,18 @@ impl AnalyticsService {
                          FROM auction_listings \
                          WHERE status = 'sold' AND undone_at IS NULL",
                     )?;
-                    let rows = stmt.query_map([], |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                        ))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                    let rows = stmt
+                        .query_map([], |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
                     rows
                 };
 
@@ -5188,10 +5328,9 @@ impl AnalyticsService {
                                AND (yield_tier IS NOT NULL OR mob_species IS NOT NULL) \
                              GROUP BY session_definition_id",
                         )?;
-                        let rows = stmt.query_map(rusqlite::params![id], |row| {
-                            Ok((row.get(0)?, row.get(1)?))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                        let rows = stmt
+                            .query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
                     let contributed_tt: f64 = contributions.iter().map(|(_, tt)| tt).sum();
@@ -6399,7 +6538,10 @@ mod tests {
         let (_dir, service) = write_service().await;
         seed_board_stock(&service).await;
 
-        let before = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let before = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         assert_eq!(position(&before, "Moonleaf Board").unwrap().quantity, 100.0);
 
         let listing = service
@@ -6422,7 +6564,14 @@ mod tests {
             "an open auction has no realised figure"
         );
 
-        let after = position(&service.stock_positions(Profession::Harvesting).await.unwrap(), "Moonleaf Board").unwrap();
+        let after = position(
+            &service
+                .stock_positions(Profession::Harvesting)
+                .await
+                .unwrap(),
+            "Moonleaf Board",
+        )
+        .unwrap();
         assert!((after.quantity - 50.0).abs() < 1e-9);
         assert!(
             (after.listed_quantity - 50.0).abs() < 1e-9,
@@ -6452,7 +6601,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 50.0, 2.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                50.0,
+                2.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
 
@@ -6490,7 +6647,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 50.0, 2.0, None, 0.5, Some("2026-07-20"))
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                50.0,
+                2.0,
+                None,
+                0.5,
+                Some("2026-07-20"),
+            )
             .await
             .unwrap();
         // 50 boards at 0.03 TT each.
@@ -6570,7 +6735,15 @@ mod tests {
             .unwrap();
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 100.0, 3.0, None, 0.0, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                100.0,
+                3.0,
+                None,
+                0.0,
+                None,
+            )
             .await
             .unwrap();
         let sold = service
@@ -6597,7 +6770,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 50.0, 2.0, None, 0.5, Some("2026-07-20"))
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                50.0,
+                2.0,
+                None,
+                0.5,
+                Some("2026-07-20"),
+            )
             .await
             .unwrap();
         let expired = service
@@ -6608,7 +6789,14 @@ mod tests {
         assert_eq!(expired.status, "expired");
         assert_eq!(expired.activity_net_markup, None);
 
-        let after = position(&service.stock_positions(Profession::Harvesting).await.unwrap(), "Moonleaf Board").unwrap();
+        let after = position(
+            &service
+                .stock_positions(Profession::Harvesting)
+                .await
+                .unwrap(),
+            "Moonleaf Board",
+        )
+        .unwrap();
         assert!(
             (after.quantity - 100.0).abs() < 1e-9,
             "the stock came back whole"
@@ -6648,7 +6836,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 10.0, 1.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                10.0,
+                1.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
         service
@@ -6678,7 +6874,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 150.0, 3.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                150.0,
+                3.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
         assert!((listing.attributed_qty - 100.0).abs() < 1e-9);
@@ -6715,11 +6919,20 @@ mod tests {
         seed_board_stock(&service).await;
 
         service
-            .convert_stock(Profession::Harvesting, "Moonleaf Board", "Nanocube", 50.0, Some("2026-07-21"))
+            .convert_stock(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                "Nanocube",
+                50.0,
+                Some("2026-07-21"),
+            )
             .await
             .unwrap();
 
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let source = position(&rows, "Moonleaf Board").unwrap();
         let produced = position(&rows, "Nanocube").expect("the conversion created stock");
         assert!((source.quantity - 50.0).abs() < 1e-9);
@@ -6729,7 +6942,15 @@ mod tests {
 
         // Selling the produced stock attributes back to the original tiers.
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Nanocube", produced.quantity, 2.0, None, 0.0, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Nanocube",
+                produced.quantity,
+                2.0,
+                None,
+                0.0,
+                None,
+            )
             .await
             .unwrap();
         service
@@ -6756,10 +6977,21 @@ mod tests {
         seed_board_stock(&service).await;
 
         service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 100.0, 3.0, None, 0.0, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                100.0,
+                3.0,
+                None,
+                0.0,
+                None,
+            )
             .await
             .unwrap();
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the line stays");
         assert!(board.quantity.abs() < 1e-9);
         assert!(board.tt_value.abs() < 1e-9);
@@ -6773,11 +7005,22 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 100.0, 4.0, None, 0.5, Some("2026-07-20"))
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                100.0,
+                4.0,
+                None,
+                0.5,
+                Some("2026-07-20"),
+            )
             .await
             .unwrap();
 
-        let history = service.activity_history(Profession::Harvesting).await.unwrap();
+        let history = service
+            .activity_history(Profession::Harvesting)
+            .await
+            .unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].status, "pending");
         assert_eq!(history[0].occurred_at, "2026-07-20");
@@ -6790,7 +7033,10 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let history = service.activity_history(Profession::Harvesting).await.unwrap();
+        let history = service
+            .activity_history(Profession::Harvesting)
+            .await
+            .unwrap();
         assert_eq!(history.len(), 1, "still one entry, now in its sold state");
         assert_eq!(history[0].status, "sold");
         assert_eq!(
@@ -6811,7 +7057,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 100.0, 4.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                100.0,
+                4.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
         service
@@ -6846,7 +7100,10 @@ mod tests {
         // Nothing is realised by an open listing.
         assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
         // The stock is still out on the auction.
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the line stays");
         assert!(board.quantity.abs() < 1e-9);
         assert!((board.listed_quantity - 100.0).abs() < 1e-9);
@@ -6867,7 +7124,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 100.0, 4.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                100.0,
+                4.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
         assert!(service
@@ -6890,7 +7155,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 60.0, 3.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                60.0,
+                3.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
         service
@@ -6901,19 +7174,29 @@ mod tests {
 
         assert!(service.undo_auction_listing(&listing.id).await.unwrap());
 
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the stock is back");
         assert!((board.quantity - 100.0).abs() < 1e-9, "all 100 held again");
         assert!(board.listed_quantity.abs() < 1e-9);
 
         let ledger = ledger_descriptions(&service).await;
         assert!(!ledger.iter().any(|d| d.contains("Moonleaf Board")));
-        assert!(service.auction_listings(Profession::Harvesting).await.unwrap().is_empty());
+        assert!(service
+            .auction_listings(Profession::Harvesting)
+            .await
+            .unwrap()
+            .is_empty());
         assert!(service.realised_markup_by_tier().await.unwrap().is_empty());
 
         // The entry stays as the record of a correction, with nothing left to
         // do to it. Only history sees it.
-        let history = service.activity_history(Profession::Harvesting).await.unwrap();
+        let history = service
+            .activity_history(Profession::Harvesting)
+            .await
+            .unwrap();
         assert_eq!(history.len(), 1);
         assert!(history[0].undone);
         assert!(!history[0].can_delete);
@@ -6933,12 +7216,23 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 150.0, 5.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                150.0,
+                5.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
         assert!(service.undo_auction_listing(&listing.id).await.unwrap());
 
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the stock is back");
         assert!(
             (board.quantity - 100.0).abs() < 1e-9,
@@ -6955,7 +7249,15 @@ mod tests {
         seed_board_stock(&service).await;
 
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 40.0, 2.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                40.0,
+                2.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
         service
@@ -6965,7 +7267,10 @@ mod tests {
             .unwrap();
         assert!(service.undo_auction_listing(&listing.id).await.unwrap());
 
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the stock is there");
         assert!((board.quantity - 100.0).abs() < 1e-9);
         // The fee an expired listing kept spent goes with the listing.
@@ -7012,7 +7317,13 @@ mod tests {
             .unwrap();
 
         service
-            .convert_stock(Profession::Harvesting, "Wood Shavings", "Nanocube", 100.0, None)
+            .convert_stock(
+                Profession::Harvesting,
+                "Wood Shavings",
+                "Nanocube",
+                100.0,
+                None,
+            )
             .await
             .unwrap();
 
@@ -7046,7 +7357,15 @@ mod tests {
 
         // Sell the Nanocubes at 130 for 100 TT, no fees: 30 PED of markup.
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Nanocube", 10_000.0, 130.0, Some(130.0), 0.0, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Nanocube",
+                10_000.0,
+                130.0,
+                Some(130.0),
+                0.0,
+                None,
+            )
             .await
             .unwrap();
         assert!(
@@ -7087,10 +7406,19 @@ mod tests {
         seed_board_stock(&service).await;
 
         service
-            .convert_stock(Profession::Harvesting, "Moonleaf Board", "Nanocube", 50.0, None)
+            .convert_stock(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                "Nanocube",
+                50.0,
+                None,
+            )
             .await
             .unwrap();
-        let history = service.activity_history(Profession::Harvesting).await.unwrap();
+        let history = service
+            .activity_history(Profession::Harvesting)
+            .await
+            .unwrap();
         let conversion = history
             .iter()
             .find(|row| row.kind == "conversion")
@@ -7100,7 +7428,10 @@ mod tests {
 
         assert!(service.undo_stock_conversion(&conversion.id).await.unwrap());
 
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the source is back");
         assert!((board.quantity - 100.0).abs() < 1e-9);
         assert!(
@@ -7108,7 +7439,10 @@ mod tests {
             "the produced stock is unmade"
         );
 
-        let history = service.activity_history(Profession::Harvesting).await.unwrap();
+        let history = service
+            .activity_history(Profession::Harvesting)
+            .await
+            .unwrap();
         assert_eq!(history.len(), 1, "the entry stays, marked");
         assert!(history[0].undone);
         assert!(!history[0].can_delete);
@@ -7124,7 +7458,13 @@ mod tests {
         seed_board_stock(&service).await;
 
         service
-            .convert_stock(Profession::Harvesting, "Moonleaf Board", "Nanocube", 100.0, None)
+            .convert_stock(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                "Nanocube",
+                100.0,
+                None,
+            )
             .await
             .unwrap();
         let conversion_id = service
@@ -7138,11 +7478,22 @@ mod tests {
 
         // The Nanocubes go out on the auction, so they are no longer held.
         service
-            .create_auction_listing(Profession::Harvesting, "Nanocube", 3.0, 4.0, None, 0.5, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Nanocube",
+                3.0,
+                4.0,
+                None,
+                0.5,
+                None,
+            )
             .await
             .unwrap();
 
-        let history = service.activity_history(Profession::Harvesting).await.unwrap();
+        let history = service
+            .activity_history(Profession::Harvesting)
+            .await
+            .unwrap();
         let conversion = history
             .iter()
             .find(|row| row.id == conversion_id)
@@ -7194,12 +7545,23 @@ mod tests {
 
         // 100 boards are tracked; the player sells 150 of them.
         let listing = service
-            .create_auction_listing(Profession::Harvesting, "Moonleaf Board", 150.0, 5.0, None, 0.0, None)
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                150.0,
+                5.0,
+                None,
+                0.0,
+                None,
+            )
             .await
             .unwrap();
         assert!((listing.unattributed_qty - 50.0).abs() < 1e-9);
 
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the line stays");
         assert!(
             board.quantity >= 0.0 && board.quantity.abs() < 1e-9,
@@ -7219,7 +7581,10 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the line stays");
         assert!((board.quantity - 150.0).abs() < 1e-9);
     }
@@ -7232,11 +7597,20 @@ mod tests {
         seed_board_stock(&service).await;
 
         service
-            .convert_stock(Profession::Harvesting, "Moonleaf Board", "Nanocube", 150.0, None)
+            .convert_stock(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                "Nanocube",
+                150.0,
+                None,
+            )
             .await
             .unwrap();
 
-        let rows = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let rows = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         let board = position(&rows, "Moonleaf Board").expect("the line stays");
         assert!(
             board.quantity >= 0.0 && board.quantity.abs() < 1e-9,
@@ -7990,13 +8364,51 @@ mod tests {
                      VALUES(32, 'hunt-a', 1780301800.0)",
                     [],
                 )?;
+                conn.execute(
+                    "INSERT INTO session_quest_completions \
+                     (session_id, quest_id, completed_at, activity_context_id, \
+                      activity_interval_id, reward_source, reward_ped, \
+                      expected_reward_markup_percent) \
+                     VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'ledger', 4.0, 150.0)",
+                    [],
+                )?;
 
                 // Kills: two focused Atrox (distinct maturities), one
                 // unfocused Atrox, and one species-less legacy stamp.
                 for (id, session, ts, species, maturity, cost, enh, loot, context) in [
-                    ("k1", "hunt-a", 1780300100.0, "Atrox", "Young", 3.0, 0.5, 3.2, Some(31)),
-                    ("k2", "hunt-a", 1780300200.0, "Atrox", "Mature", 4.0, 0.0, 3.4, Some(31)),
-                    ("k3", "hunt-a", 1780302000.0, "Atrox", "Young", 2.0, 0.0, 2.6, Some(32)),
+                    (
+                        "k1",
+                        "hunt-a",
+                        1780300100.0,
+                        "Atrox",
+                        "Young",
+                        3.0,
+                        0.5,
+                        3.2,
+                        Some(31),
+                    ),
+                    (
+                        "k2",
+                        "hunt-a",
+                        1780300200.0,
+                        "Atrox",
+                        "Mature",
+                        4.0,
+                        0.0,
+                        3.4,
+                        Some(31),
+                    ),
+                    (
+                        "k3",
+                        "hunt-a",
+                        1780302000.0,
+                        "Atrox",
+                        "Young",
+                        2.0,
+                        0.0,
+                        2.6,
+                        Some(32),
+                    ),
                     ("k4", "hunt-b", 1780200100.0, "", "", 5.0, 0.0, 4.1, None),
                 ] {
                     conn.execute(
@@ -8006,7 +8418,11 @@ mod tests {
                         rusqlite::params![
                             id,
                             session,
-                            if species.is_empty() { "Old Tag" } else { species },
+                            if species.is_empty() {
+                                "Old Tag"
+                            } else {
+                                species
+                            },
                             species,
                             maturity,
                             ts,
@@ -8057,6 +8473,14 @@ mod tests {
     async fn hunting_activity_reconciles_across_overall_sessions_and_targets() {
         let (_dir, service) = write_service().await;
         seed_hunting_scenario(&service).await;
+        service
+            .db
+            .with_writer(|conn| {
+                conn.execute("UPDATE quests SET reward_ped = 99.0 WHERE id = 11", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
 
         let data = service.hunting_activity("all").await.unwrap();
 
@@ -8094,7 +8518,11 @@ mod tests {
         assert!((family.cycled - 7.5).abs() < 1e-9);
         assert!((family.pes - 0.8).abs() < 1e-9);
         assert_eq!(family.runs, 1);
-        assert_eq!(family.reward_ped, Some(4.0));
+        assert_eq!(family.confirmed_reward_ped, 4.0);
+        assert_eq!(family.reward_status, "fixed_liquid");
+        assert_eq!(family.loot_items.len(), 1);
+        assert_eq!(family.loot_items[0].item_name, "Animal Muscle Oil");
+        assert_eq!(family.loot_items[0].quantity, 60);
         assert_eq!(family.variants.len(), 1);
         assert_eq!(family.variants[0].label, "Daily Hunting 1: Weak Mortirex");
         let ambient = aris
@@ -8222,7 +8650,10 @@ mod tests {
         let oil = position(&hunt_stock, "Animal Muscle Oil").expect("oil position");
         assert_eq!(oil.quantity, 60.0);
         assert!((oil.tt_value - 18.0).abs() < 1e-9);
-        let harvest_stock = service.stock_positions(Profession::Harvesting).await.unwrap();
+        let harvest_stock = service
+            .stock_positions(Profession::Harvesting)
+            .await
+            .unwrap();
         assert!(
             position(&harvest_stock, "Animal Muscle Oil").is_none(),
             "hunted loot stays off the harvesting stock list"

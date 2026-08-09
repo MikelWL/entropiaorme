@@ -32,6 +32,7 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		returns: 90,
 		lootRate: 0.9,
 		lootItems: [],
+		activities: [],
 		key: 'definition:7',
 		isUnassigned: false,
 		realisedMarkup: 15,

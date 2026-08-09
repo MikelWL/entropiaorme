@@ -253,7 +253,7 @@ impl QuestService {
                 continue;
             }
             *remaining -= 1;
-            self.complete_quest(quest_id).await?;
+            self.complete_quest_with_loot_evidence(quest_id).await?;
             self.record_notable_event(NotableEventKind::Completed, &quest_name, Ped::ZERO)
                 .await;
         }
@@ -298,8 +298,12 @@ impl QuestService {
             else {
                 continue;
             };
-            self.complete_quest(quest["id"].as_i64().expect("quest id"))
-                .await?;
+            let quest_id = quest["id"].as_i64().expect("quest id");
+            if completion.loot_items.is_empty() {
+                self.complete_quest(quest_id).await?;
+            } else {
+                self.complete_quest_with_loot_evidence(quest_id).await?;
+            }
 
             let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
             let is_skill = json_truthy(quest.get("reward_is_skill"));

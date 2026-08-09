@@ -1,6 +1,6 @@
 /**
  * The market-confidence copy shared by the activity item-composition
- * tables (Tree Cutting sub-activities, Hunting sessions and targets): one source for
+ * tables (Tree Cutting sub-activities, Hunting sessions and mobs): one source for
  * the confidence titles, the applied-markup labels, and the evidence
  * tooltip, so the two tabs explain the same model in the same words.
  */

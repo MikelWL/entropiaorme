@@ -56,7 +56,10 @@ projection and its settlement marker; see "Derived caches"), and
 `0027_hunting_definition_provenance.sql` (the nullable session-definition
 context on stock movements, plus its item/species/definition index, allowing
 one confirmed Hunting sale to be projected by both observed species and the
-repeatable session that produced it without duplicating the sale). The
+repeatable session that produced it without duplicating the sale), and
+`0028_quest_reward_provenance.sql` (immutable completion-time reward and
+activity-context provenance, plus the context-grain loot rollup used by
+Hunting activity composition). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -386,6 +389,13 @@ Records that a given quest was completed during a given session. The
 | `session_id` | TEXT | Not null; indexed (`idx_sqc_session`). |
 | `quest_id` | INTEGER | Not null; indexed (`idx_sqc_quest`). |
 | `completed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+| `activity_context_id` | INTEGER | Optional reference to `session_contexts(id)`. The exact declared activity signature in force immediately before completion; indexed when present. |
+| `activity_interval_id` | INTEGER | Optional reference to `session_intervals(id)`. The declared quest stretch that earned the completion. |
+| `reward_source` | TEXT | Nullable for legacy completions; otherwise one of `none`, `tracked_loot`, `ledger`, or `skill`. |
+| `reward_ped` | REAL | Optional immutable completion-time reward value. Liquid PED enters activity economics; skill value remains progression. |
+| `expected_reward_markup_percent` | REAL | Optional completion-time snapshot for informational market projections. |
+| `ledger_entry_id` | TEXT | Optional reference to the exact liquid reward row in `ledger_entries`. |
+| `quest_claim_id` | INTEGER | Optional reference to the exact progression reward row in `quest_claims`. |
 
 A `UNIQUE(session_id, quest_id)` constraint prevents duplicate completion rows.
 
@@ -917,17 +927,19 @@ tables and every day is re-verified once after it completes.
 | `id` | INTEGER | Primary key; constrained to the single row `1`. |
 | `rolled_through` | TEXT | Not null; the inclusive ISO day the rollups are current through. |
 
-#### `session_kill_rollups`, `session_loot_rollups`, `session_pes_rollups`
+#### `session_kill_rollups`, `session_loot_rollups`, `session_context_loot_rollups`, `session_pes_rollups`
 
-Per-session activity rollups (migration `0026`; `eo-services/src/session_rollup.rs`),
+Per-session activity rollups (migrations `0026` and `0028`;
+`eo-services/src/session_rollup.rs`),
 the session-grain sibling of the daily projection: the read model behind the
 Hunting analytics aggregate, the stock position arithmetic's hunted arm, and
 the hunting market item universe. An ended session's events settle into cells
 at the finest grain any of those consumers folds (kill cells by context,
 species, and maturity; active loot cells by species, shrapnel flag, and item,
-with the species pre-folded to the empty string for shrapnel rows; skill-gain
-cells by context), so readers do O(cells) work however long the raw history
-grows. Like the daily rollups this is a rebuildable projection: cells write
+with the species pre-folded to the empty string for shrapnel rows; item
+composition by activity context; skill-gain cells by context), so readers do
+O(cells) work however long the raw history grows. Like the daily rollups this
+is a rebuildable projection: cells write
 eagerly in the mutating transaction (session stop, orphan recovery, the loot
 edit flip, session delete) and heal lazily before an activity read.
 
@@ -935,6 +947,7 @@ edit flip, session delete) and heal lazily before an activity read.
 | --- | --- | --- |
 | `session_kill_rollups` | `session_id`, `context_id` (nullable), `mob_species`, `mob_maturity` (empty string for unclassified) | `kills`, `cycled_ped` (weapon + enhancer), `loot_tt` |
 | `session_loot_rollups` | `session_id`, `mob_species`, `is_enhancer_shrapnel`, `item_name` (active rows only) | `quantity`, `value_ped` |
+| `session_context_loot_rollups` | `session_id`, `context_id` (nullable), `item_name` (active non-enhancer-shrapnel rows only) | `quantity`, `value_ped` |
 | `session_pes_rollups` | `session_id`, `context_id` (nullable) | `pes` |
 
 #### `session_rollup_meta`
@@ -969,7 +982,8 @@ migrations (`0002_analytical_indexes.sql`,
 `0022_session_definitions.sql`, `0023_default_session_definition.sql`,
 `0024_hunting_stock_provenance.sql`, `0025_loot_item_name_indexes.sql`,
 `0026_session_activity_rollups.sql`,
-`0027_hunting_definition_provenance.sql`); the runner
+`0027_hunting_definition_provenance.sql`,
+`0028_quest_reward_provenance.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

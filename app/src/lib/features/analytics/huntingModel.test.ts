@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
 	AnalyticsHuntingActivity,
+	HuntingActivityComparison,
 	HuntingDefinitionComparison,
 	HuntingSpeciesComparison,
 	MarketHarvestItem,
@@ -41,6 +42,7 @@ function definition(over: Partial<HuntingDefinitionComparison> = {}): HuntingDef
 		returns: 1080,
 		lootRate: 0.9,
 		lootItems: [{ itemName: 'Animal Muscle Oil', quantity: 400, valuePed: 120 }],
+		activities: [],
 		...over,
 	};
 }
@@ -52,6 +54,23 @@ function species(over: Partial<HuntingSpeciesComparison> = {}): HuntingSpeciesCo
 		returns: 810,
 		lootRate: 0.9,
 		lootItems: [{ itemName: 'Animal Muscle Oil', quantity: 400, valuePed: 120 }],
+		...over,
+	};
+}
+
+function sessionActivity(over: Partial<HuntingActivityComparison> = {}): HuntingActivityComparison {
+	return {
+		kind: 'quest',
+		label: 'Daily Hunting 1',
+		cycled: 100,
+		returns: 90,
+		lootRate: 0.9,
+		confirmedRewardPed: 15,
+		rewardedReturns: 105,
+		rewardedRate: 1.05,
+		rewardStatus: 'fixed_liquid',
+		lootItems: [{ itemName: 'Animal Muscle Oil', quantity: 40, valuePed: 12 }],
+		variants: [],
 		...over,
 	};
 }
@@ -135,6 +154,20 @@ describe('createHuntingModel', () => {
 		);
 		expect(unassigned.key).toBe('unassigned');
 		expect(unassigned.realisedMarkup).toBe(0);
+	});
+
+	it('keeps confirmed rewards additive to both TT and current-market activity outcomes', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({ definitions: [definition({ activities: [sessionActivity()] })] }),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		const row = required(model.selectedSession?.activities[0], 'rewarded activity');
+		expect(row.rewardedRate).toBeCloseTo(1.05, 5);
+		expect(required(row.muProjectedReturns, 'activity MU projection')).toBeCloseTo(15.6, 5);
+		expect(required(row.muRewardedReturns, 'rewarded MU projection')).toBeCloseTo(30.6, 5);
+		expect(required(row.muRewardedRate, 'rewarded MU rate')).toBeCloseTo(0.306, 5);
 	});
 
 	it('merges market opportunity and realised markup into target rows', async () => {

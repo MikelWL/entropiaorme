@@ -27,7 +27,7 @@ function ledgerApi(): Partial<LedgerDemoApi> {
 /** Sub-API registered by HuntingTab.svelte on mount for guide-driven view
  * switching. */
 type HuntingDemoApi = {
-	setView(view: 'sessions' | 'targets' | 'market' | 'history'): void;
+	setView(view: 'sessions' | 'mobs' | 'market' | 'history'): void;
 };
 
 function huntingApi(): Partial<HuntingDemoApi> {
@@ -310,11 +310,11 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Sessions compares the routines you defined; Targets compares the species you hunted. Search appears automatically when either list becomes too long to scan.',
+						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Sessions compares the routines you defined; Mobs compares the species you hunted. Inside a session, Activities separates its declared quests, segments, and joint bundles without duplicating shared costs.',
 					},
 					{
 						kind: 'p',
-						text: 'Each row answers the same questions: how much PED was cycled, what the loot returned at TT, what current market evidence projects, and what confirmed sales actually realised. Open a row to inspect its loot composition and markup confidence.',
+						text: 'Each row answers the same economic questions. Activity details also show whether a separately confirmed quest reward changed the outcome, while payouts already present in loot are never added twice.',
 					},
 					{
 						kind: 'p',
@@ -331,7 +331,7 @@ export const analyticsSurface: GuideSurface = {
 				// Walk the two comparison axes the prose describes, then come
 				// back to rest on Sessions.
 				if (!(await abortableWait(900, stillActive))) return;
-				huntingApi().setView?.('targets');
+				huntingApi().setView?.('mobs');
 				if (!(await abortableWait(1600, stillActive))) return;
 				huntingApi().setView?.('sessions');
 			},

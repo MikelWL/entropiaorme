@@ -2,10 +2,12 @@
 	import Card from '$lib/components/Card.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
+	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { TableModel } from '$lib/view/tableModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 	import ActivityLootComposition from './ActivityLootComposition.svelte';
+	import HuntingSessionActivities from './HuntingSessionActivities.svelte';
 	import type { HuntingSessionSection, HuntingSessionSortKey } from './huntingModel.svelte';
 
 	let {
@@ -19,6 +21,12 @@
 	} = $props();
 
 	const SEARCH_THRESHOLD = 8;
+	type DetailView = 'activities' | 'loot';
+	let detailView = $state<DetailView>('activities');
+	const DETAIL_VIEWS = [
+		{ id: 'activities', label: 'Activities' },
+		{ id: 'loot', label: 'Loot' },
+	];
 	const searchable = $derived(table.filtered.length > SEARCH_THRESHOLD || table.search !== '');
 	const displaySections = $derived([
 		...table.filtered.filter((section) => !section.isUnassigned),
@@ -29,6 +37,7 @@
 	$effect(() => {
 		void selected?.key;
 		if (detailPane) detailPane.scrollTop = 0;
+		detailView = selected && selected.activities.length > 0 ? 'activities' : 'loot';
 	});
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
@@ -151,7 +160,27 @@
 							{/snippet}
 						</StatDisplay>
 					</div>
-					<ActivityLootComposition items={selected.items} marketAvailable={selected.muProjectedReturns !== null} emptyLabel="No loot recorded for this session yet." />
+					<div class="mt-5 border-t border-border/50 pt-4">
+						<SegmentedControl
+							options={DETAIL_VIEWS}
+							active={detailView}
+							onchange={(id) => (detailView = id as DetailView)}
+						/>
+					</div>
+					<div class="mt-4">
+						{#if detailView === 'activities'}
+							<HuntingSessionActivities
+								activities={selected.activities}
+								marketAvailable={selected.muProjectedReturns !== null}
+							/>
+						{:else}
+							<ActivityLootComposition
+								items={selected.items}
+								marketAvailable={selected.muProjectedReturns !== null}
+								emptyLabel="No loot recorded for this session yet."
+							/>
+						{/if}
+					</div>
 				{/if}
 			</div>
 		{/if}

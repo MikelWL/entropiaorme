@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * The observed Targets axis: mob species compared on the same frame,
+	 * The observed Mobs axis: mob species compared on the same frame,
 	 * columns, and market treatment as the Tree Cutting sub-activities, so
 	 * a player who knows one tab is already at home in the other. Species is
 	 * the decision unit a player deliberately repeats.
@@ -201,7 +201,7 @@
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
 									Its recorded cost and loot still count in Overall. They cannot be assigned to a
-									species, so a large unclassified count makes the target comparison less complete.
+									species, so a large unclassified count makes the mob comparison less complete.
 								</p>
 							</InfoTip>
 						</div>
@@ -229,7 +229,7 @@
 							{#snippet labelSuffix()}
 								<InfoTip align="right" width="w-80" label="What Realised Net reports">
 									<p class="text-xs font-semibold leading-relaxed text-text">
-										Realised Net: what this target actually achieved
+										Realised Net: what this mob actually achieved
 									</p>
 									<p class="mt-1 text-xs leading-relaxed text-text-secondary">
 										Loot TT less cycled PED, plus the markup confirmed sales of this species' loot

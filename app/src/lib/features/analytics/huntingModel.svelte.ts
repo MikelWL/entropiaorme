@@ -5,7 +5,7 @@
  *
  * Two economic comparison axes compose here. Sessions are the routines the
  * player deliberately defined (keyed by definition, never by recorded free
- * text); Targets are the species the tracker observed. Both open onto the
+ * text); Mobs are the species the tracker observed. Both open onto the
  * same TT, market, realised, and loot-composition frame Tree Cutting uses.
  *
  * Every MU figure is an estimate, never realised P&L. Realised markup
@@ -34,6 +34,7 @@ import {
 import type {
 	ActivityHistoryEntry,
 	AuctionListing,
+	HuntingActivityComparison,
 	HuntingDefinitionComparison,
 	HuntingSpeciesComparison,
 	StockPosition,
@@ -58,7 +59,17 @@ import {
 
 /** One session-definition row with its display key (definitions are keyed
  * by id; the unassigned bucket by this sentinel). */
-export type HuntingSessionSection = HuntingDefinitionComparison & {
+export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'> & {
+	key: string;
+	isUnscoped: boolean;
+	muProjectedReturns: number | null;
+	muRewardedReturns: number | null;
+	muRewardedRate: number | null;
+	items: TreeCuttingItem[];
+	variants: HuntingActivitySection[];
+};
+
+export type HuntingSessionSection = Omit<HuntingDefinitionComparison, 'activities'> & {
 	key: string;
 	isUnassigned: boolean;
 	realisedMarkup: number;
@@ -67,6 +78,7 @@ export type HuntingSessionSection = HuntingDefinitionComparison & {
 	realisedReturns: number;
 	realisedRate: number;
 	items: TreeCuttingItem[];
+	activities: HuntingActivitySection[];
 };
 
 export type HuntingSessionSortKey = 'name' | 'cycled' | 'realisedRate' | 'muRate';
@@ -170,6 +182,37 @@ export function createHuntingModel() {
 		const marketByItem = new Map<string, MarketHarvestItem>(
 			(market?.items ?? []).map((item) => [item.itemName, item]),
 		);
+		const activitySection = (
+			row: HuntingActivityComparison,
+			parentKey: string,
+			index: number,
+		): HuntingActivitySection => {
+			const key = `${parentKey}/${row.kind}:${row.label}:${index}`;
+			const projection = projectLoot(
+				row.lootItems,
+				row.cycled,
+				market,
+				marketByItem,
+				confidenceMode,
+			);
+			const muRewardedReturns =
+				projection.muProjectedReturns === null
+					? null
+					: projection.muProjectedReturns + row.confirmedRewardPed;
+			return {
+				...row,
+				key,
+				isUnscoped: row.kind === 'ambient',
+				muProjectedReturns: projection.muProjectedReturns,
+				muRewardedReturns,
+				muRewardedRate:
+					muRewardedReturns !== null && row.cycled > 0 ? muRewardedReturns / row.cycled : null,
+				items: projection.items,
+				variants: row.variants.map((variant, variantIndex) =>
+					activitySection(variant, key, variantIndex),
+				),
+			};
+		};
 		return data.definitions.map((row) => {
 			const projection = projectLoot(
 				row.lootItems,
@@ -191,6 +234,13 @@ export function createHuntingModel() {
 				realisedReturns,
 				realisedRate: row.cycled > 0 ? realisedReturns / row.cycled : 0,
 				items: projection.items,
+				activities: row.activities.map((activity, index) =>
+					activitySection(
+						activity,
+						row.definitionId === null ? 'unassigned' : `definition:${row.definitionId}`,
+						index,
+					),
+				),
 			};
 		});
 	});
@@ -219,7 +269,7 @@ export function createHuntingModel() {
 		return sessionSections.find((s) => s.key === selectedSessionKey) ?? sessionSections[0];
 	});
 
-	// ── Targets ──
+	// ── Mobs ──
 
 	const targetSections = $derived.by<HuntingTargetSection[]>(() => {
 		if (!data) return [];

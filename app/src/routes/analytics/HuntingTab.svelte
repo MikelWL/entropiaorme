@@ -23,15 +23,15 @@
 	const model = createHuntingModel();
 
 	// The lower box answers four questions about the same activity: how the
-	// player's deliberate routines perform, what the observed targets return,
+	// player's deliberate routines perform, what the observed mobs return,
 	// what is currently happening in the market with what they dropped, and
 	// what has already been done with it. Overall stays put above all four,
 	// since the headline figures describe the activity whichever is open.
-	type ActivityView = 'sessions' | 'targets' | 'market' | 'history';
+	type ActivityView = 'sessions' | 'mobs' | 'market' | 'history';
 	let activityView = $state<ActivityView>('sessions');
 	const ACTIVITY_VIEWS = [
 		{ id: 'sessions', label: 'Sessions' },
-		{ id: 'targets', label: 'Targets' },
+		{ id: 'mobs', label: 'Mobs' },
 		{ id: 'market', label: 'Market' },
 		{ id: 'history', label: 'History' },
 	];
@@ -173,7 +173,7 @@
 					selected={model.selectedSession}
 					onselect={(key) => model.selectSession(key)}
 				/>
-			{:else if activityView === 'targets'}
+			{:else if activityView === 'mobs'}
 				<HuntingTargets
 					table={model.targetTable}
 					selected={model.selectedTarget}
@@ -214,7 +214,7 @@
 {:else}
 	<Card class="p-6">
 		<p class="text-sm text-text-tertiary text-center" data-guide-anchor="analytics-hunting-area">
-			No hunting data yet. Track a hunting session to compare your routines and targets.
+			No hunting data yet. Track a hunting session to compare your routines and mobs.
 		</p>
 	</Card>
 {/if}

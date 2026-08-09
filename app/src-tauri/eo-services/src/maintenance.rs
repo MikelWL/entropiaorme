@@ -30,7 +30,7 @@ struct Projection {
 }
 
 /// The read models, each rebuildable from the raw tracking tables.
-const PROJECTIONS: [Projection; 7] = [
+const PROJECTIONS: [Projection; 8] = [
     Projection {
         table: "session_summaries",
         snapshot_sql: "SELECT session_id, summary_version, started_at, ended_at, \
@@ -65,6 +65,12 @@ const PROJECTIONS: [Projection; 7] = [
         snapshot_sql: "SELECT session_id, mob_species, is_enhancer_shrapnel, item_name, \
              quantity, value_ped FROM session_loot_rollups \
              ORDER BY session_id, mob_species, is_enhancer_shrapnel, item_name",
+    },
+    Projection {
+        table: "session_context_loot_rollups",
+        snapshot_sql: "SELECT session_id, context_id, item_name, quantity, value_ped \
+             FROM session_context_loot_rollups \
+             ORDER BY session_id, context_id, item_name",
     },
     Projection {
         table: "session_pes_rollups",
@@ -221,8 +227,8 @@ mod tests {
         .unwrap();
     }
 
-    /// Seed a session with kills, skill gains and ledger entries, so all
-    /// three projections are non-empty.
+    /// Seed a session with kills, loot, skill gains and ledger entries, so
+    /// every projection family is non-empty.
     async fn seed(db: &Db) {
         run(
             db,
@@ -276,7 +282,7 @@ mod tests {
             "every projection is a pure function of the raw tables: {report:?}"
         );
         // Every projection is covered and non-trivial.
-        assert_eq!(report.tables.len(), 7);
+        assert_eq!(report.tables.len(), 8);
         assert!(report
             .tables
             .iter()
@@ -297,6 +303,10 @@ mod tests {
             .tables
             .iter()
             .any(|t| t.table == "session_loot_rollups" && t.row_count == 1));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "session_context_loot_rollups" && t.row_count == 1));
         assert!(report
             .tables
             .iter()

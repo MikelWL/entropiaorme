@@ -232,6 +232,72 @@ pub struct HuntingDefinitionComparison {
     pub returns: f64,
     pub loot_rate: f64,
     pub loot_items: Vec<HarvestLootItem>,
+    pub activities: Vec<HuntingActivityComparison>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HuntingActivityKind {
+    Quest,
+    QuestFamily,
+    Segment,
+    Bundle,
+    Ambient,
+}
+
+impl HuntingActivityKind {
+    fn classify(kind: &str) -> Self {
+        match kind {
+            "quest" => Self::Quest,
+            "quest_family" => Self::QuestFamily,
+            "segment" => Self::Segment,
+            "bundle" => Self::Bundle,
+            _ => Self::Ambient,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HuntingRewardStatus {
+    None,
+    IncludedInLoot,
+    FixedLiquid,
+    Skill,
+    Mixed,
+    Unverified,
+}
+
+impl HuntingRewardStatus {
+    fn classify(status: &str) -> Self {
+        match status {
+            "included_in_loot" => Self::IncludedInLoot,
+            "fixed_liquid" => Self::FixedLiquid,
+            "skill" => Self::Skill,
+            "mixed" => Self::Mixed,
+            "unverified" => Self::Unverified,
+            _ => Self::None,
+        }
+    }
+}
+
+/// One exact declared activity signature inside a session definition.
+/// Costs and loot are partitioned by the context stamped at capture; a
+/// separately confirmed liquid reward is additive exactly once.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntingActivityComparison {
+    pub kind: HuntingActivityKind,
+    pub label: String,
+    pub cycled: f64,
+    pub returns: f64,
+    pub loot_rate: f64,
+    pub confirmed_reward_ped: f64,
+    pub rewarded_returns: f64,
+    pub rewarded_rate: f64,
+    pub reward_status: HuntingRewardStatus,
+    pub loot_items: Vec<HarvestLootItem>,
+    pub variants: Vec<HuntingActivityComparison>,
 }
 
 /// One observed species' aggregate; the unclassified bucket carries an
@@ -1192,6 +1258,30 @@ pub(crate) fn hunting_activity_dto(
             value_ped: row.value_ped,
         }
     }
+    fn activity(row: eo_services::analytics::HuntingSignatureRow) -> HuntingActivityComparison {
+        let rewarded_returns = row.returns + row.confirmed_reward_ped;
+        HuntingActivityComparison {
+            kind: HuntingActivityKind::classify(&row.kind),
+            label: row.label,
+            cycled: row.cycled,
+            returns: row.returns,
+            loot_rate: if row.cycled > 0.0 {
+                row.returns / row.cycled
+            } else {
+                0.0
+            },
+            confirmed_reward_ped: row.confirmed_reward_ped,
+            rewarded_returns,
+            rewarded_rate: if row.cycled > 0.0 {
+                rewarded_returns / row.cycled
+            } else {
+                0.0
+            },
+            reward_status: HuntingRewardStatus::classify(&row.reward_status),
+            loot_items: row.loot_items.into_iter().map(loot_item).collect(),
+            variants: row.variants.into_iter().map(activity).collect(),
+        }
+    }
     AnalyticsHuntingActivity {
         overall: HuntingActivityOverall {
             cycled: data.overall.cycled,
@@ -1209,6 +1299,7 @@ pub(crate) fn hunting_activity_dto(
                 returns: row.returns,
                 loot_rate: row.loot_rate,
                 loot_items: row.loot_items.into_iter().map(loot_item).collect(),
+                activities: row.activities.into_iter().map(activity).collect(),
             })
             .collect(),
         species: data
