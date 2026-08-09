@@ -135,8 +135,11 @@ describe('Hunting economic comparisons', () => {
 
 		const strip = screen.getByTestId('stock-utility-strip');
 		expect(within(strip).getByText('Your Current Stock')).not.toBeNull();
+		expect(strip.className).toContain('gap-x-5');
+		expect(strip.className).not.toContain('justify-between');
 		const search = within(strip).getByLabelText('Find an item');
 		expect(search.parentElement?.className).toContain('sm:w-64');
+		expect(search.parentElement?.className).not.toContain('sm:ml-auto');
 		expect(search.parentElement?.className).not.toContain('sm:w-full');
 	});
 

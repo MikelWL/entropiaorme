@@ -199,7 +199,7 @@
 
 <div>
 	<div
-		class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pb-2"
+		class="flex flex-wrap items-center gap-x-5 gap-y-2 pb-2"
 		data-testid="stock-utility-strip"
 	>
 		<div class="flex items-center gap-2">
@@ -222,7 +222,7 @@
 
 		{#if longList}
 			<SearchInput
-				class="w-full sm:ml-auto sm:w-64"
+				class="w-full sm:w-64"
 				bind:value={query}
 				placeholder="Find an item"
 				aria-label="Find an item"
