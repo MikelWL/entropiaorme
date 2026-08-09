@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTableModel, type TableModel } from '$lib/view/tableModel.svelte';
 import HuntingPrimaryView from './HuntingPrimaryView.svelte';
 import HuntingSessions from './HuntingSessions.svelte';
+import TreeCuttingStock from './TreeCuttingStock.svelte';
 import type {
 	HuntingActivitySection,
 	HuntingOverallLine,
@@ -114,6 +115,31 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 }
 
 describe('Hunting economic comparisons', () => {
+	it('keeps the long-stock search compact on the title strip', () => {
+		const stock = Array.from({ length: 9 }, (_, index) => ({
+			itemName: `Hunting loot ${index + 1}`,
+			heldQty: 10,
+			heldTt: 5,
+			listedQty: 0,
+			readings: [],
+			opportunity: marketOpportunity(undefined, 100.6),
+			markupPct: null,
+			markupHorizon: null,
+			tier: 'illiquid' as const,
+			effectiveMarkupPct: 100.6,
+			floored: true,
+			salesPed: null,
+			weeklySalesPed: null,
+		}));
+		render(TreeCuttingStock, { props: { stock, onsell: vi.fn(), onconvert: vi.fn() } });
+
+		const strip = screen.getByTestId('stock-utility-strip');
+		expect(within(strip).getByText('Your Current Stock')).not.toBeNull();
+		const search = within(strip).getByLabelText('Find an item');
+		expect(search.parentElement?.className).toContain('sm:w-64');
+		expect(search.parentElement?.className).not.toContain('sm:w-full');
+	});
+
 	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', async () => {
 		const row = session({
 			items: Array.from({ length: 9 }, (_, index) => ({

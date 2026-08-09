@@ -198,29 +198,37 @@
 {/snippet}
 
 <div>
-	<div class="flex items-center gap-2 pb-2">
-		<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
-		<InfoTip align="right" label="What current stock means">
-			<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
-				<p class="font-semibold text-text">
-					Your Current Stock: Loot you still hold
-				</p>
-				<p>
-					{sourceDescription}
-				</p>
-				<p>
-					Stock TT is its Trade Terminal value. Market markup only becomes a realised gain when a
-					sale is confirmed.
-				</p>
-			</div>
-		</InfoTip>
-	</div>
-
-	{#if longList}
-		<div class="pb-2">
-			<SearchInput bind:value={query} placeholder="Find an item" aria-label="Find an item" />
+	<div
+		class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pb-2"
+		data-testid="stock-utility-strip"
+	>
+		<div class="flex items-center gap-2">
+			<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
+			<InfoTip align="right" label="What current stock means">
+				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+					<p class="font-semibold text-text">
+						Your Current Stock: Loot you still hold
+					</p>
+					<p>
+						{sourceDescription}
+					</p>
+					<p>
+						Stock TT is its Trade Terminal value. Market markup only becomes a realised gain when a
+						sale is confirmed.
+					</p>
+				</div>
+			</InfoTip>
 		</div>
-	{/if}
+
+		{#if longList}
+			<SearchInput
+				class="w-full sm:ml-auto sm:w-64"
+				bind:value={query}
+				placeholder="Find an item"
+				aria-label="Find an item"
+			/>
+		{/if}
+	</div>
 
 	<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 		<span class="eyebrow flex-1 min-w-0">Item</span>
