@@ -16,12 +16,12 @@
 //! recycled from boards beside Nanocubes recycled from hides), and a sale of
 //! it draws on each in proportion, crediting each activity its own share.
 //!
-//! Allocation is at (provenance, tool) granularity, not per source event. The
-//! provenance is the activity identity every reported figure is keyed on; the
-//! tool is recorded beside it so a finer reading stays available, though
-//! nothing reports on it today. Per-event granularity would fan a sale of a
-//! few hundred boards into hundreds of rows nothing reads, and the movement
-//! schema carries a nullable `source_event_id` for it if that ever changes.
+//! Allocation is at (provenance, context, tool) granularity, not per source
+//! event. Hunting keeps its session definition beside species so the same
+//! immutable sale can be projected through either honest comparison axis.
+//! Per-event granularity would fan a sale of a few hundred units into hundreds
+//! of rows nothing reads, and the movement schema carries a nullable
+//! `source_event_id` for it if that ever changes.
 
 use crate::harvest_yield::HarvestYieldTier;
 
@@ -45,6 +45,9 @@ pub struct SourcePosition<'a> {
     /// `None` for stock whose provenance is genuinely unknown (migrated
     /// overlay rows, opening balances). Never a guess.
     pub provenance: Option<StockProvenance<'a>>,
+    /// Hunting's user-designated context. `None` for harvesting, genuinely
+    /// unassigned hunting, and movements recorded before this dimension.
+    pub session_definition_id: Option<i64>,
     /// The tool that produced it. `None` when the swing recorded no tool,
     /// when the movement predates tool capture, or for hunted stock (a
     /// kill's loot is not a single tool's produce).
@@ -56,6 +59,7 @@ pub struct SourcePosition<'a> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceAllocation<'a> {
     pub provenance: Option<StockProvenance<'a>>,
+    pub session_definition_id: Option<i64>,
     pub tool_name: Option<&'a str>,
     pub quantity: f64,
     pub tt_value: f64,
@@ -126,6 +130,7 @@ pub fn allocate<'a>(
         assigned += share;
         allocations.push(SourceAllocation {
             provenance: position.provenance,
+            session_definition_id: position.session_definition_id,
             tool_name: position.tool_name,
             quantity: share,
             tt_value: share * unit_tt,
@@ -149,6 +154,7 @@ pub fn allocate<'a>(
     if excess > EPSILON {
         allocations.push(SourceAllocation {
             provenance: None,
+            session_definition_id: None,
             tool_name: None,
             quantity: excess,
             tt_value: excess * unit_tt,
@@ -234,6 +240,7 @@ mod tests {
     fn tier(tier: HarvestYieldTier, quantity: f64) -> SourcePosition<'static> {
         SourcePosition {
             provenance: Some(StockProvenance::Harvest(tier)),
+            session_definition_id: None,
             tool_name: None,
             quantity,
         }
@@ -242,6 +249,7 @@ mod tests {
     fn species(name: &str, quantity: f64) -> SourcePosition<'_> {
         SourcePosition {
             provenance: Some(StockProvenance::Hunt(name)),
+            session_definition_id: None,
             tool_name: None,
             quantity,
         }
@@ -250,6 +258,7 @@ mod tests {
     fn tier_with_tool(tier: HarvestYieldTier, tool: &str, quantity: f64) -> SourcePosition<'_> {
         SourcePosition {
             provenance: Some(StockProvenance::Harvest(tier)),
+            session_definition_id: None,
             tool_name: Some(tool),
             quantity,
         }
@@ -337,6 +346,42 @@ mod tests {
         assert!((plan.unattributed_qty).abs() < 1e-9);
     }
 
+    /// Session definition is an orthogonal provenance dimension: stock from
+    /// two routines that hunted the same species stays separately claimable.
+    #[test]
+    fn definitions_inside_one_species_are_allocated_separately() {
+        let positions = [
+            SourcePosition {
+                provenance: Some(StockProvenance::Hunt("Atrox")),
+                session_definition_id: Some(7),
+                tool_name: None,
+                quantity: 75.0,
+            },
+            SourcePosition {
+                provenance: Some(StockProvenance::Hunt("Atrox")),
+                session_definition_id: Some(9),
+                tool_name: None,
+                quantity: 25.0,
+            },
+        ];
+        let plan = allocate(&positions, 40.0, 0.01);
+
+        let first = plan
+            .allocations
+            .iter()
+            .find(|allocation| allocation.session_definition_id == Some(7))
+            .expect("first definition allocated");
+        let second = plan
+            .allocations
+            .iter()
+            .find(|allocation| allocation.session_definition_id == Some(9))
+            .expect("second definition allocated");
+        assert!((first.quantity - 30.0).abs() < 1e-9);
+        assert!((second.quantity - 10.0).abs() < 1e-9);
+        assert_eq!(first.provenance, Some(StockProvenance::Hunt("Atrox")));
+        assert_eq!(second.provenance, Some(StockProvenance::Hunt("Atrox")));
+    }
+
     /// An item holding both harvest and hunt provenance (Nanocubes recycled
     /// from boards beside Nanocubes recycled from hides) draws on each in
     /// proportion, so a joint pile credits each activity its own share.
@@ -399,6 +444,7 @@ mod tests {
             tier(HarvestYieldTier::Short, 10.0),
             SourcePosition {
                 provenance: None,
+                session_definition_id: None,
                 tool_name: None,
                 quantity: 5.0,
             },
@@ -436,6 +482,7 @@ mod tests {
             tier(HarvestYieldTier::Short, 50.0),
             SourcePosition {
                 provenance: None,
+                session_definition_id: None,
                 tool_name: None,
                 quantity: 50.0,
             },

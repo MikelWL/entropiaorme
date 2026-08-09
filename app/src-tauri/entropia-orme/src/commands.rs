@@ -15,10 +15,10 @@ use eo_api::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTar
 use eo_api::analytics::{
     ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
     AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
-    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput, LedgerSummary, Profession, RealisedSpeciesMarkup,
-    RealisedTierMarkup, StockConversionInput, StockPosition,
+    AuctionListing, AuctionListingInput, HuntingRealisedMarkup, InventoryItem, InventoryItemInput,
+    InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem,
+    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, Profession, RealisedTierMarkup,
+    StockConversionInput, StockPosition,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -595,7 +595,7 @@ pub async fn harvest_realised_markup(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn hunting_realised_markup(
     app: tauri::AppHandle,
-) -> Result<Vec<RealisedSpeciesMarkup>, ApiError> {
+) -> Result<HuntingRealisedMarkup, ApiError> {
     facade(&app)?.hunting_realised_markup().await
 }
 

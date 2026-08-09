@@ -310,21 +310,16 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab compares your play on two honest axes. Sessions ranks the routines you defined on the dashboard, with each routine opening onto the quests and segments played inside it. Targets ranks the species you hunted, with maturity as a drilldown.',
+						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Sessions compares the routines you defined; Targets compares the species you hunted. Search appears automatically when either list becomes too long to scan.',
 					},
 					{
 						kind: 'p',
-						text: 'Market and History carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and every action reversible from History. PES/100 remains the primary skilling comparison across both axes.',
+						text: 'Each row answers the same questions: how much PED was cycled, what the loot returned at TT, what current market evidence projects, and what confirmed sales actually realised. Open a row to inspect its loot composition and markup confidence.',
 					},
 					{
 						kind: 'p',
-						text: 'Figures here are direct hunting cost (weapon and enhancer at kill grain); heal and armour stay with the full session economics on the Dashboard and Overview.',
+						text: 'Market and History carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and reverse an action from History. A confirmed sale is attributed back to both the species and the defined session that produced its stock.',
 					},
-				],
-				note: [
-					{ text: 'See ' },
-					{ text: 'What is PES?', href: 'https://entropiaorme.com/articles/what-is-pes' },
-					{ text: '.' },
 				],
 			},
 			async play({ demoApi, wait }) {

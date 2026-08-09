@@ -3,20 +3,14 @@
  * over the same market, stock, and history machinery Tree Cutting
  * established.
  *
- * Two honest comparison axes compose here. Sessions are the routines the
- * player deliberately defined (keyed by definition, never by recorded
- * free text), each opening onto its activity signatures, quest economics,
- * mob composition, and instance trend. Targets are what the tracker
- * observed (mob species, with maturity as a drilldown), each carrying the
- * same holding-independent market opportunity over its loot composition
- * that Tree Cutting's tiers carry.
+ * Two economic comparison axes compose here. Sessions are the routines the
+ * player deliberately defined (keyed by definition, never by recorded free
+ * text); Targets are the species the tracker observed. Both open onto the
+ * same TT, market, realised, and loot-composition frame Tree Cutting uses.
  *
- * Every accounting figure is DIRECT: weapon plus enhancer cost at kill
- * grain, loot TT, and session-grain skill. Heal and armour stay session
- * residues on Dashboard and Overview. Every MU figure is an estimate,
- * never realised P&L; realised markup arrives only through confirmed
- * sales, attributed to species through the weighted provenance of the
- * source loot.
+ * Every MU figure is an estimate, never realised P&L. Realised markup
+ * arrives only through confirmed sales, attributed through the weighted
+ * species and session-definition provenance of the source loot.
  */
 
 import {
@@ -41,7 +35,6 @@ import type {
 	ActivityHistoryEntry,
 	AuctionListing,
 	HuntingDefinitionComparison,
-	HuntingSignature,
 	HuntingSpeciesComparison,
 	StockPosition,
 } from '$lib/types/analytics';
@@ -68,77 +61,15 @@ import {
 export type HuntingSessionSection = HuntingDefinitionComparison & {
 	key: string;
 	isUnassigned: boolean;
-	ttNet: number;
-	trend: 'improving' | 'declining' | 'stable' | null;
+	realisedMarkup: number;
+	muProjectedReturns: number | null;
+	muRate: number | null;
+	realisedReturns: number;
+	realisedRate: number;
+	items: TreeCuttingItem[];
 };
 
-export type HuntingSessionSortKey = 'name' | 'cycled' | 'lootRate' | 'pesPer100Ped';
-
-/** Quest economics for one quest-shaped signature row: the measured
- * shortfall the fixed reward has to clear, per recorded run. A run is a
- * declared focus stretch, not a proven completion, and the readout says
- * what it measures. */
-export type SignatureEconomics = {
-	/** Direct TT net over the signature (negative is the ordinary case). */
-	net: number;
-	/** Average shortfall per run: what one run costs before its reward. */
-	shortfallPerRun: number | null;
-	/** The configured liquid reward per completion, when one is configured. */
-	rewardPed: number | null;
-	rewardIsSkill: boolean;
-	/** Net after the configured liquid reward, per run. */
-	netAfterRewardPerRun: number | null;
-	/** The informational voucher-markup scenario on the reward, per run. */
-	voucherScenarioPerRun: number | null;
-};
-
-/** Derive the break-even readout for a signature row. Skill rewards are
- * PES, never liquid, so they produce no liquid break-even line. */
-export function signatureEconomics(row: HuntingSignature): SignatureEconomics {
-	const net = row.returns - row.cycled;
-	const runs = row.runs > 0 ? row.runs : null;
-	const shortfallPerRun = runs !== null ? (row.cycled - row.returns) / runs : null;
-	const rewardPed = row.rewardIsSkill ? null : (row.rewardPed ?? null);
-	const netAfterRewardPerRun =
-		runs !== null && rewardPed !== null ? rewardPed - (row.cycled - row.returns) / runs : null;
-	const voucherScenarioPerRun =
-		runs !== null && rewardPed !== null && row.expectedRewardMarkupPercent != null
-			? (rewardPed * row.expectedRewardMarkupPercent) / 100 - (row.cycled - row.returns) / runs
-			: null;
-	return {
-		net,
-		shortfallPerRun,
-		rewardPed,
-		rewardIsSkill: row.rewardIsSkill,
-		netAfterRewardPerRun,
-		voucherScenarioPerRun,
-	};
-}
-
-/** The definition's instance trend: the newer half of its recorded
- * instances against the older half, on the loot rate. Needs at least
- * eight instances before it says anything (loot is the noisiest series in
- * the game, and a thinner sample is one lucky loot wearing a verdict);
- * within two percentage points it reads stable. */
-export function instanceTrend(
-	rows: { cycled: number; returns: number }[],
-): 'improving' | 'declining' | 'stable' | null {
-	if (rows.length < 8) return null;
-	const half = Math.floor(rows.length / 2);
-	const rate = (slice: { cycled: number; returns: number }[]) => {
-		const cycled = slice.reduce((sum, row) => sum + row.cycled, 0);
-		const returns = slice.reduce((sum, row) => sum + row.returns, 0);
-		return cycled > 0 ? returns / cycled : null;
-	};
-	// Instance rows arrive newest first.
-	const newer = rate(rows.slice(0, half));
-	const older = rate(rows.slice(rows.length - half));
-	if (newer === null || older === null) return null;
-	const delta = newer - older;
-	if (delta > 0.02) return 'improving';
-	if (delta < -0.02) return 'declining';
-	return 'stable';
-}
+export type HuntingSessionSortKey = 'name' | 'cycled' | 'realisedRate' | 'muRate';
 
 // ── Targets axis ───────────────────────────────────────────────────────
 
@@ -163,20 +94,15 @@ export type HuntingTargetSortKey = 'label' | 'cycled' | 'realisedRate' | 'muRate
 
 /** The combined direct + market stat line across the whole activity. */
 export type HuntingOverallLine = {
-	sessions: number;
-	kills: number;
-	durationHours: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
-	pes: number;
-	pesPer100Ped: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
 	realisedMarkup: number;
 	realisedReturns: number;
 	realisedRate: number;
-	/** Confirmed markup whose species has no kills in the selected period:
+	/** Confirmed markup whose species has no economic row in the selected period:
 	 * still real, still counted, and disclosed rather than dropped. */
 	realisedOutsidePeriod: number;
 };
@@ -194,6 +120,7 @@ export function createHuntingModel() {
 	// entry.
 	let history = $state<ActivityHistoryEntry[]>([]);
 	let realisedBySpecies = $state<Map<string, number>>(new Map());
+	let realisedByDefinition = $state<Map<number, number>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
@@ -217,14 +144,17 @@ export function createHuntingModel() {
 				getMarketHuntMarkups().catch(() => null),
 				getActivityStock('hunting').catch(() => []),
 				getAuctionListings('hunting').catch(() => []),
-				getHuntingRealisedMarkup().catch(() => []),
+				getHuntingRealisedMarkup().catch(() => ({ species: [], definitions: [] })),
 			]);
 			if (epoch !== loadEpoch) return;
 			data = activity;
 			market = markets;
 			positions = stock;
 			listings = openListings;
-			realisedBySpecies = new Map(realised.map((row) => [row.mobSpecies, row.netMarkup]));
+			realisedBySpecies = new Map(realised.species.map((row) => [row.mobSpecies, row.netMarkup]));
+			realisedByDefinition = new Map(
+				realised.definitions.map((row) => [row.definitionId, row.netMarkup]),
+			);
 		} catch (e) {
 			if (epoch !== loadEpoch) return;
 			error = describeError(e, 'Failed to load hunting data');
@@ -237,13 +167,32 @@ export function createHuntingModel() {
 
 	const sessionSections = $derived.by<HuntingSessionSection[]>(() => {
 		if (!data) return [];
-		return data.definitions.map((row) => ({
-			...row,
-			key: row.definitionId === null ? 'unassigned' : `definition:${row.definitionId}`,
-			isUnassigned: row.definitionId === null,
-			ttNet: row.returns - row.cycled,
-			trend: instanceTrend(row.instanceRows),
-		}));
+		const marketByItem = new Map<string, MarketHarvestItem>(
+			(market?.items ?? []).map((item) => [item.itemName, item]),
+		);
+		return data.definitions.map((row) => {
+			const projection = projectLoot(
+				row.lootItems,
+				row.cycled,
+				market,
+				marketByItem,
+				confidenceMode,
+			);
+			const realisedMarkup =
+				row.definitionId === null ? 0 : (realisedByDefinition.get(row.definitionId) ?? 0);
+			const realisedReturns = row.returns + realisedMarkup;
+			return {
+				...row,
+				key: row.definitionId === null ? 'unassigned' : `definition:${row.definitionId}`,
+				isUnassigned: row.definitionId === null,
+				realisedMarkup,
+				muProjectedReturns: projection.muProjectedReturns,
+				muRate: projection.muRate,
+				realisedReturns,
+				realisedRate: row.cycled > 0 ? realisedReturns / row.cycled : 0,
+				items: projection.items,
+			};
+		});
 	});
 
 	const sessionTable = createTableModel<HuntingSessionSection>({
@@ -254,8 +203,8 @@ export function createHuntingModel() {
 		defaultSortDirs: {
 			name: 'asc',
 			cycled: 'desc',
-			lootRate: 'desc',
-			pesPer100Ped: 'desc',
+			realisedRate: 'desc',
+			muRate: 'desc',
 		},
 		comparators: {
 			name: (a, b) => a.name.localeCompare(b.name),
@@ -329,7 +278,7 @@ export function createHuntingModel() {
 	// ── Overall ──
 
 	const overall = $derived.by<HuntingOverallLine | null>(() => {
-		if (!data || data.overall.sessions === 0) return null;
+		if (!data || data.overall.cycled <= 0) return null;
 		// Market figures aggregate over the species sections so the headline
 		// reconciles with the rows beneath it; a section without market
 		// context contributes nothing.
@@ -347,14 +296,9 @@ export function createHuntingModel() {
 		const realisedReturns = data.overall.returns + realisedMarkup;
 		return {
 			realisedOutsidePeriod: realisedMarkup - realisedInPeriod,
-			sessions: data.overall.sessions,
-			kills: data.overall.kills,
-			durationHours: data.overall.durationHours,
 			cycled,
 			returns: data.overall.returns,
 			lootRate: data.overall.lootRate,
-			pes: data.overall.pes,
-			pesPer100Ped: data.overall.pesPer100Ped,
 			muProjectedReturns,
 			muRate,
 			realisedMarkup,
@@ -436,7 +380,10 @@ export function createHuntingModel() {
 		positions = stockRows;
 		listings = allListings;
 		if (realised) {
-			realisedBySpecies = new Map(realised.map((row) => [row.mobSpecies, row.netMarkup]));
+			realisedBySpecies = new Map(realised.species.map((row) => [row.mobSpecies, row.netMarkup]));
+			realisedByDefinition = new Map(
+				realised.definitions.map((row) => [row.definitionId, row.netMarkup]),
+			);
 		}
 		// Only once it has been opened: an undo verdict depends on every
 		// other entry, so a stale list would offer undos that no longer apply.

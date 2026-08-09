@@ -215,14 +215,9 @@ pub struct AnalyticsHuntingActivity {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HuntingActivityOverall {
-    pub sessions: i64,
-    pub kills: i64,
-    pub duration_hours: f64,
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
-    pub pes: f64,
-    pub pes_per100_ped: f64,
 }
 
 /// One session definition's aggregate over its hunted instances; the
@@ -233,68 +228,10 @@ pub struct HuntingDefinitionComparison {
     pub definition_id: Nullable<i64>,
     pub name: String,
     pub is_archived: bool,
-    pub instances: i64,
-    pub kills: i64,
-    pub duration_hours: f64,
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
-    pub pes: f64,
-    pub pes_per100_ped: f64,
-    pub activities: Vec<HuntingSignature>,
-    pub mobs: Vec<HuntingMobShare>,
-    pub instance_rows: Vec<HuntingInstance>,
-}
-
-/// One activity signature inside a definition: a quest family (variants
-/// aggregated with drilldown), a standalone quest, a co-activation bundle
-/// (one joint-return unit, never duplicated per member), a named segment,
-/// or the ambient remainder.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct HuntingSignature {
-    /// `quest_family`, `quest`, `bundle`, `segment`, or `ambient`.
-    pub kind: String,
-    pub label: String,
-    /// Distinct focused stretches recorded: a declaration of focus, not a
-    /// proof of completion.
-    pub runs: i64,
-    pub kills: i64,
-    pub duration_hours: f64,
-    pub cycled: f64,
-    pub returns: f64,
-    pub pes: f64,
-    /// PES per 100 PED cycled, rounded like every sibling figure.
-    pub pes_per100_ped: f64,
-    /// Quest-shaped rows only: the configured liquid reward per completion,
-    /// separate from tracked loot.
-    pub reward_ped: Nullable<f64>,
-    pub reward_is_skill: bool,
-    /// Informational voucher-markup scenario on the reward; never realised.
-    pub expected_reward_markup_percent: Nullable<f64>,
-    pub variants: Vec<HuntingSignature>,
-}
-
-/// One species' share of a definition's kills.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct HuntingMobShare {
-    pub mob_species: String,
-    pub kills: i64,
-    pub loot_tt: f64,
-}
-
-/// One recorded instance of a definition, for the trend read.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct HuntingInstance {
-    pub session_id: String,
-    pub started_at: f64,
-    pub duration_hours: f64,
-    pub kills: i64,
-    pub cycled: f64,
-    pub returns: f64,
-    pub pes: f64,
+    pub loot_items: Vec<HarvestLootItem>,
 }
 
 /// One observed species' aggregate; the unclassified bucket carries an
@@ -303,29 +240,10 @@ pub struct HuntingInstance {
 #[serde(rename_all = "camelCase")]
 pub struct HuntingSpeciesComparison {
     pub mob_species: String,
-    pub kills: i64,
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
-    /// Skill TT from sessions this species dominated; null when no session
-    /// qualifies, because skill gains carry no per-kill attribution.
-    pub pes: Nullable<f64>,
-    pub pes_per100_ped: Nullable<f64>,
-    /// How many sessions stand behind the PES figure.
-    pub pes_sessions: i64,
-    pub maturities: Vec<HuntingMaturity>,
     pub loot_items: Vec<HarvestLootItem>,
-}
-
-/// One maturity band inside a species.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct HuntingMaturity {
-    pub maturity: String,
-    pub kills: i64,
-    pub cycled: f64,
-    pub returns: f64,
-    pub loot_rate: f64,
 }
 
 /// One mob species' net realised markup from confirmed sales: the Hunting
@@ -335,6 +253,20 @@ pub struct HuntingMaturity {
 pub struct RealisedSpeciesMarkup {
     pub mob_species: String,
     pub net_markup: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RealisedDefinitionMarkup {
+    pub definition_id: i64,
+    pub net_markup: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntingRealisedMarkup {
+    pub species: Vec<RealisedSpeciesMarkup>,
+    pub definitions: Vec<RealisedDefinitionMarkup>,
 }
 
 /// One item in an activity's harvest loot composition: realised TT only.
@@ -912,20 +844,29 @@ impl Api {
             .collect())
     }
 
-    /// Net realised markup per mob species, from confirmed sales only.
-    pub async fn hunting_realised_markup(&self) -> Result<Vec<RealisedSpeciesMarkup>, ApiError> {
-        let rows = self
-            .analytics
-            .realised_markup_by_species()
-            .await
-            .map_err(analytics_error("hunting realised markup"))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| RealisedSpeciesMarkup {
-                mob_species: row.mob_species,
-                net_markup: row.net_markup,
-            })
-            .collect())
+    /// Net realised Hunting markup through both honest comparison axes.
+    pub async fn hunting_realised_markup(&self) -> Result<HuntingRealisedMarkup, ApiError> {
+        let (species, definitions) = tokio::try_join!(
+            self.analytics.realised_markup_by_species(),
+            self.analytics.realised_markup_by_definition(),
+        )
+        .map_err(analytics_error("hunting realised markup"))?;
+        Ok(HuntingRealisedMarkup {
+            species: species
+                .into_iter()
+                .map(|row| RealisedSpeciesMarkup {
+                    mob_species: row.mob_species,
+                    net_markup: row.net_markup,
+                })
+                .collect(),
+            definitions: definitions
+                .into_iter()
+                .map(|row| RealisedDefinitionMarkup {
+                    definition_id: row.definition_id,
+                    net_markup: row.net_markup,
+                })
+                .collect(),
+        })
     }
 
     /// One keyset page of ledger entries (newest first) plus the cursor for
@@ -1244,23 +1185,6 @@ pub(crate) fn auction_listing_dto(
 pub(crate) fn hunting_activity_dto(
     data: eo_services::analytics::HuntingActivityData,
 ) -> AnalyticsHuntingActivity {
-    fn signature(row: eo_services::analytics::HuntingSignatureRow) -> HuntingSignature {
-        HuntingSignature {
-            kind: row.kind,
-            label: row.label,
-            runs: row.runs,
-            kills: row.kills,
-            duration_hours: row.duration_hours,
-            cycled: row.cycled,
-            returns: row.returns,
-            pes: row.pes,
-            pes_per100_ped: row.pes_per100_ped,
-            reward_ped: row.reward_ped.into(),
-            reward_is_skill: row.reward_is_skill,
-            expected_reward_markup_percent: row.expected_reward_markup_percent.into(),
-            variants: row.variants.into_iter().map(signature).collect(),
-        }
-    }
     fn loot_item(row: eo_services::analytics::HarvestLootItemRow) -> HarvestLootItem {
         HarvestLootItem {
             item_name: row.item_name,
@@ -1270,14 +1194,9 @@ pub(crate) fn hunting_activity_dto(
     }
     AnalyticsHuntingActivity {
         overall: HuntingActivityOverall {
-            sessions: data.overall.sessions,
-            kills: data.overall.kills,
-            duration_hours: data.overall.duration_hours,
             cycled: data.overall.cycled,
             returns: data.overall.returns,
             loot_rate: data.overall.loot_rate,
-            pes: data.overall.pes,
-            pes_per100_ped: data.overall.pes_per100_ped,
         },
         definitions: data
             .definitions
@@ -1286,37 +1205,10 @@ pub(crate) fn hunting_activity_dto(
                 definition_id: row.definition_id.into(),
                 name: row.name,
                 is_archived: row.is_archived,
-                instances: row.instances,
-                kills: row.kills,
-                duration_hours: row.duration_hours,
                 cycled: row.cycled,
                 returns: row.returns,
                 loot_rate: row.loot_rate,
-                pes: row.pes,
-                pes_per100_ped: row.pes_per100_ped,
-                activities: row.activities.into_iter().map(signature).collect(),
-                mobs: row
-                    .mobs
-                    .into_iter()
-                    .map(|share| HuntingMobShare {
-                        mob_species: share.mob_species,
-                        kills: share.kills,
-                        loot_tt: share.loot_tt,
-                    })
-                    .collect(),
-                instance_rows: row
-                    .instance_rows
-                    .into_iter()
-                    .map(|instance| HuntingInstance {
-                        session_id: instance.session_id,
-                        started_at: instance.started_at,
-                        duration_hours: instance.duration_hours,
-                        kills: instance.kills,
-                        cycled: instance.cycled,
-                        returns: instance.returns,
-                        pes: instance.pes,
-                    })
-                    .collect(),
+                loot_items: row.loot_items.into_iter().map(loot_item).collect(),
             })
             .collect(),
         species: data
@@ -1324,24 +1216,9 @@ pub(crate) fn hunting_activity_dto(
             .into_iter()
             .map(|row| HuntingSpeciesComparison {
                 mob_species: row.mob_species,
-                kills: row.kills,
                 cycled: row.cycled,
                 returns: row.returns,
                 loot_rate: row.loot_rate,
-                pes: row.pes.into(),
-                pes_per100_ped: row.pes_per100_ped.into(),
-                pes_sessions: row.pes_sessions,
-                maturities: row
-                    .maturities
-                    .into_iter()
-                    .map(|maturity| HuntingMaturity {
-                        maturity: maturity.maturity,
-                        kills: maturity.kills,
-                        cycled: maturity.cycled,
-                        returns: maturity.returns,
-                        loot_rate: maturity.loot_rate,
-                    })
-                    .collect(),
                 loot_items: row.loot_items.into_iter().map(loot_item).collect(),
             })
             .collect(),

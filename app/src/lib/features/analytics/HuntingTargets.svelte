@@ -2,9 +2,8 @@
 	/**
 	 * The observed Targets axis: mob species compared on the same frame,
 	 * columns, and market treatment as the Tree Cutting sub-activities, so
-	 * a player who knows one tab is already at home in the other. Maturity
-	 * is a drilldown of the selected species, never a peer row: the species
-	 * is the decision unit a player deliberately repeats.
+	 * a player who knows one tab is already at home in the other. Species is
+	 * the decision unit a player deliberately repeats.
 	 *
 	 * Species accumulate over a hunting career, so the list carries a quiet
 	 * search once it is long enough to need one, inside the same bounded
@@ -16,9 +15,8 @@
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { TableModel } from '$lib/view/tableModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
-	import { confidenceTip, confidenceTitle, markupLabel } from './marketConfidence';
+	import ActivityLootComposition from './ActivityLootComposition.svelte';
 	import type { HuntingTargetSection, HuntingTargetSortKey } from './huntingModel.svelte';
-	import type { TreeCuttingItem } from './treeCuttingModel.svelte';
 
 	let {
 		table,
@@ -44,16 +42,6 @@
 		...table.filtered.filter((section) => section.isUnclassified),
 	]);
 
-	// The maturity drilldown's own diagnostic band sits last whatever its
-	// kill count, exactly as the buckets above it do.
-	const orderedMaturities = $derived.by(() => {
-		if (!selected) return [];
-		return [
-			...selected.maturities.filter((band) => band.maturity !== ''),
-			...selected.maturities.filter((band) => band.maturity === ''),
-		];
-	});
-
 	let detailPane = $state<HTMLElement | null>(null);
 	$effect(() => {
 		void selected?.key;
@@ -78,18 +66,6 @@
 		return `Sort by ${label}, currently ${table.sortDir === 'asc' ? 'ascending' : 'descending'}`;
 	};
 </script>
-
-{#snippet confidenceBody(item: TreeCuttingItem)}
-	{@const tip = confidenceTip(item)}
-	<p class="text-xs font-semibold leading-relaxed text-text">{tip.title}</p>
-	<p class="mt-1 text-xs leading-relaxed text-text-secondary">{tip.subtitle}</p>
-	{#if tip.example}
-		<p class="mt-2 text-xs leading-relaxed text-text-secondary">{tip.example}</p>
-	{/if}
-	{#if tip.note}
-		<p class="mt-2 text-xs leading-relaxed text-text-tertiary">{tip.note}</p>
-	{/if}
-{/snippet}
 
 {#snippet targetRow(section: HuntingTargetSection, isSelected: boolean)}
 	<li>
@@ -213,18 +189,14 @@
 				{#if selected.isUnclassified}
 					<div class="flex min-h-28 items-center justify-center">
 						<div class="flex items-center gap-1.5 text-sm text-text-secondary">
-							<span>
-								{selected.kills}
-								{selected.kills === 1 ? 'kill is' : 'kills are'} unclassified and cannot be assigned
-								to a species.
-							</span>
-							<InfoTip label="Why kills can be unclassified" width="w-80">
+							<span>Some hunting could not be assigned to a species.</span>
+							<InfoTip label="Why hunting can be unclassified" width="w-80">
 								<p class="text-xs font-semibold leading-relaxed text-text">
-									Why kills can be unclassified
+									Why hunting can be unclassified
 								</p>
 								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									A kill is unclassified when no species was recorded for it: sessions tracked
-									before species stamping existed, kills recorded under a free-text tag, or a
+									Hunting is unclassified when no species was recorded for it: sessions tracked
+									before species stamping existed, activity recorded under a free-text tag, or a
 									creature the tracker could not identify.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
@@ -273,210 +245,11 @@
 						</StatDisplay>
 					</div>
 
-					<div class="mt-4 grid grid-cols-3 gap-x-5">
-						<StatDisplay
-							label="Kills"
-							value={String(selected.kills)}
-							emphasis="secondary"
-						/>
-						<StatDisplay
-							label="Net / Kill"
-							value={selected.kills > 0
-								? signedPed((selected.returns - selected.cycled) / selected.kills)
-								: NO_DATA}
-							unit={selected.kills > 0 ? 'PED' : ''}
-							emphasis="secondary"
-						>
-							{#snippet labelSuffix()}
-								<InfoTip align="right" width="w-80" label="What Net / Kill covers">
-									<p class="text-xs font-semibold leading-relaxed text-text">
-										Direct cost per kill only
-									</p>
-									<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-										Weapon and enhancer decay attributed to kills of this species. Heal and
-										armour are recorded per session, not per kill, so a full per-kill cost would
-										be a guess; the Dashboard and Overview carry the whole session's economics.
-									</p>
-								</InfoTip>
-							{/snippet}
-						</StatDisplay>
-						<StatDisplay
-							label="PES/100"
-							value={selected.pesPer100Ped !== null
-								? selected.pesPer100Ped.toFixed(2)
-								: NO_DATA}
-							emphasis="secondary"
-						>
-							{#snippet labelSuffix()}
-								<InfoTip align="right" width="w-80" label="How PES is attributed to a species">
-									<p class="text-xs font-semibold leading-relaxed text-text">
-										Skill progress a species can claim
-									</p>
-									<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-										Skill gains are recorded per session, not per kill, so a species may claim a
-										session's skill total only when its kills dominated that session.
-									</p>
-									<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-										{#if selected.pesSessions > 0}
-											This figure comes from {selected.pesSessions}
-											{selected.pesSessions === 1 ? 'session' : 'sessions'} this species dominated;
-											mixed hunts contribute nothing rather than being guessed at.
-										{:else}
-											No session was dominated by this species, so no skill claim is made rather
-											than one being guessed at.
-										{/if}
-									</p>
-								</InfoTip>
-							{/snippet}
-						</StatDisplay>
-					</div>
-
-					{#if selected.maturities.length > 1 || (selected.maturities.length === 1 && selected.maturities[0].maturity !== '')}
-						<div class="mt-5 border-t border-border/50 pt-4">
-							<div
-								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
-							>
-								<span class="eyebrow flex-1 min-w-0">Maturity</span>
-								<span class="eyebrow w-16 text-right shrink-0">Kills</span>
-								<span class="eyebrow w-20 text-right shrink-0">Cycled</span>
-								<span class="eyebrow w-20 text-right shrink-0">TT Rate</span>
-							</div>
-							<ul class="flex flex-col gap-1">
-								{#each orderedMaturities as band (band.maturity)}
-									<li
-										class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
-											hover:bg-surface-hover/30 hover:border-border/40
-											transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
-									>
-										<span
-											class="flex-1 min-w-0 flex items-center gap-1.5 text-sm font-medium tracking-tight
-												{band.maturity === '' ? 'text-text-tertiary' : 'text-text'}"
-										>
-											<span class="min-w-0 truncate">
-												{band.maturity === '' ? 'Unrecorded' : band.maturity}
-											</span>
-											{#if band.maturity === ''}
-												<InfoTip label="Why a kill can lack a maturity" width="w-80">
-													<p class="text-xs font-semibold leading-relaxed text-text">
-														Kills without a maturity band
-													</p>
-													<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-														The tracker recorded the species but never learned the creature's
-														maturity: an unread nameplate, or a session from before maturity
-														stamping existed.
-													</p>
-													<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-														Their cost and loot still count for the species; they simply cannot
-														join a band, so a large unrecorded count makes this drilldown less
-														complete.
-													</p>
-												</InfoTip>
-											{/if}
-										</span>
-										<span class="w-16 shrink-0 text-right text-sm tabular-nums text-text">
-											{band.kills}
-										</span>
-										<span class="w-20 shrink-0 text-right text-sm tabular-nums text-text">
-											{formatPed(band.cycled)}
-										</span>
-										<span
-											class="w-20 shrink-0 text-right text-sm tabular-nums font-medium {rateTone(
-												band.lootRate,
-											)}"
-										>
-											{formatPercent(band.lootRate)}
-										</span>
-									</li>
-								{/each}
-							</ul>
-						</div>
-					{/if}
-
-					{#if selected.items.length > 0}
-						<div class="mt-5 border-t border-border/50 pt-4">
-							<div
-								class="sticky top-0 z-10 -mx-5 flex items-center gap-3 bg-[color-mix(in_oklab,var(--color-surface)_70%,var(--color-base))] px-[1.875rem] py-1 text-text-tertiary"
-							>
-								<span class="eyebrow flex-1 min-w-0">Item</span>
-								<span class="eyebrow w-20 text-right shrink-0">TT</span>
-								<span class="eyebrow w-14 text-right shrink-0">Share</span>
-								<span class="eyebrow w-20 text-right shrink-0">Markup</span>
-								<span class="eyebrow w-12 text-center shrink-0">Conf</span>
-							</div>
-
-							<ul class="flex flex-col gap-1">
-								{#each selected.items as item (item.name)}
-									<li
-										class="flex items-center gap-3 rounded-md px-2.5 py-2 border border-transparent
-											hover:bg-surface-hover/30 hover:border-border/40
-											transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]"
-									>
-										<span class="flex-1 min-w-0 truncate text-sm font-medium tracking-tight text-text">
-											{item.name}
-										</span>
-
-										<span class="text-sm tabular-nums font-medium text-text shrink-0 w-20 text-right">
-											{formatPed(item.ttValue)}
-										</span>
-
-										<span
-											class="text-sm tabular-nums font-semibold text-accent shrink-0 w-14 text-right tracking-tight"
-										>
-											{item.sharePct.toFixed(1)}%
-										</span>
-
-										<div class="w-20 shrink-0 flex items-center justify-end">
-											{#if selected.muProjectedReturns === null}
-												<span class="text-sm text-text-tertiary">{NO_DATA}</span>
-											{:else}
-												<span
-													class="inline-flex h-5 flex-col items-end justify-center tabular-nums"
-													aria-label={markupLabel(item)}
-												>
-													{#if item.floored && item.ownMarkupPct !== null}
-														{@const observedMarkup = item.ownMarkupPct}
-														<span class="text-[9px] leading-[9px] text-text-tertiary line-through">
-															{formatPercent(observedMarkup / 100)}
-														</span>
-														<span class="text-xs leading-[11px] text-text-secondary">
-															{formatPercent(item.effectiveMarkupPct / 100)}
-														</span>
-													{:else}
-														<span class="text-sm leading-5 text-text-secondary">
-															{formatPercent(item.effectiveMarkupPct / 100)}
-														</span>
-													{/if}
-												</span>
-											{/if}
-										</div>
-
-										<div class="w-12 shrink-0 flex items-center justify-center">
-											{#if selected.muProjectedReturns === null}
-												<span class="text-sm text-text-tertiary">{NO_DATA}</span>
-											{:else}
-												<InfoTip align="right" width="w-96" label={confidenceTitle(item.tier)}>
-													{#snippet trigger()}
-														{#if item.tier === 'liquid'}
-															<span class="text-positive" aria-label="High volume">✓</span>
-														{:else if item.tier === 'middling'}
-															<span class="text-warning" aria-label="Medium volume">⚠</span>
-														{:else}
-															<span class="text-error font-semibold" aria-label="Low volume">!</span>
-														{/if}
-													{/snippet}
-													{@render confidenceBody(item)}
-												</InfoTip>
-											{/if}
-										</div>
-									</li>
-								{/each}
-							</ul>
-						</div>
-					{:else}
-						<p class="mt-4 text-xs text-text-tertiary px-2.5">
-							No loot recorded for this species yet.
-						</p>
-					{/if}
+					<ActivityLootComposition
+						items={selected.items}
+						marketAvailable={selected.muProjectedReturns !== null}
+						emptyLabel="No loot recorded for this species yet."
+					/>
 				{/if}
 			</div>
 		{/if}

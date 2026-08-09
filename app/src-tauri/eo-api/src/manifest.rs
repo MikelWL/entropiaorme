@@ -19,7 +19,7 @@ use crate::analytics::{
     AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
     AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
     InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    LedgerPreset, LedgerPresetInput, LedgerSummary, Profession, RealisedSpeciesMarkup,
+    HuntingRealisedMarkup, LedgerPreset, LedgerPresetInput, LedgerSummary, Profession,
     RealisedTierMarkup, StockConversionInput, StockPosition,
 };
 use crate::character::{
@@ -623,7 +623,7 @@ pub fn manifest() -> Vec<CommandSpec> {
         CommandSpec {
             name: "hunting_realised_markup",
             args: Vec::new(),
-            returns: Some(schema(schema_for!(Vec<RealisedSpeciesMarkup>))),
+            returns: Some(schema(schema_for!(HuntingRealisedMarkup))),
         },
         CommandSpec {
             name: "auction_listings",

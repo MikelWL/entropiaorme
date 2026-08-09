@@ -866,14 +866,9 @@ export interface HpOptimizerSkill {
  * The whole activity's direct headline figures for the period.
  */
 export interface HuntingActivityOverall {
-	sessions: number;
-	kills: number;
-	durationHours: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
-	pes: number;
-	pesPer100Ped: number;
 }
 
 /**
@@ -884,77 +879,15 @@ export interface HuntingDefinitionComparison {
 	definitionId: number | null;
 	name: string;
 	isArchived: boolean;
-	instances: number;
-	kills: number;
-	durationHours: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
-	pes: number;
-	pesPer100Ped: number;
-	activities: HuntingSignature[];
-	mobs: HuntingMobShare[];
-	instanceRows: HuntingInstance[];
+	lootItems: HarvestLootItem[];
 }
 
-/**
- * One recorded instance of a definition, for the trend read.
- */
-export interface HuntingInstance {
-	sessionId: string;
-	startedAt: number;
-	durationHours: number;
-	kills: number;
-	cycled: number;
-	returns: number;
-	pes: number;
-}
-
-/**
- * One maturity band inside a species.
- */
-export interface HuntingMaturity {
-	maturity: string;
-	kills: number;
-	cycled: number;
-	returns: number;
-	lootRate: number;
-}
-
-/**
- * One species' share of a definition's kills.
- */
-export interface HuntingMobShare {
-	mobSpecies: string;
-	kills: number;
-	lootTt: number;
-}
-
-/**
- * One activity signature inside a definition: a quest family (variants
- * aggregated with drilldown), a standalone quest, a co-activation bundle
- * (one joint-return unit, never duplicated per member), a named segment,
- * or the ambient remainder.
- */
-export interface HuntingSignature {
-	/** `quest_family`, `quest`, `bundle`, `segment`, or `ambient`. */
-	kind: string;
-	label: string;
-	/** Distinct focused stretches recorded: a declaration of focus, not a proof of completion. */
-	runs: number;
-	kills: number;
-	durationHours: number;
-	cycled: number;
-	returns: number;
-	pes: number;
-	/** PES per 100 PED cycled, rounded like every sibling figure. */
-	pesPer100Ped: number;
-	/** Quest-shaped rows only: the configured liquid reward per completion, separate from tracked loot. */
-	rewardPed: number | null;
-	rewardIsSkill: boolean;
-	/** Informational voucher-markup scenario on the reward; never realised. */
-	expectedRewardMarkupPercent: number | null;
-	variants: HuntingSignature[];
+export interface HuntingRealisedMarkup {
+	species: RealisedSpeciesMarkup[];
+	definitions: RealisedDefinitionMarkup[];
 }
 
 /**
@@ -963,16 +896,9 @@ export interface HuntingSignature {
  */
 export interface HuntingSpeciesComparison {
 	mobSpecies: string;
-	kills: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
-	/** Skill TT from sessions this species dominated; null when no session qualifies, because skill gains carry no per-kill attribution. */
-	pes: number | null;
-	pesPer100Ped: number | null;
-	/** How many sessions stand behind the PES figure. */
-	pesSessions: number;
-	maturities: HuntingMaturity[];
 	lootItems: HarvestLootItem[];
 }
 
@@ -2154,6 +2080,11 @@ export interface RadarGeometry {
 	displayScale: number;
 }
 
+export interface RealisedDefinitionMarkup {
+	definitionId: number;
+	netMarkup: number;
+}
+
 /**
  * One mob species' net realised markup from confirmed sales: the Hunting
  * sibling of [`RealisedTierMarkup`].
@@ -3085,7 +3016,7 @@ export async function harvestRealisedMarkup(): Promise<RealisedTierMarkup[]> {
 	return invokeCommand('harvest_realised_markup', {});
 }
 
-export async function huntingRealisedMarkup(): Promise<RealisedSpeciesMarkup[]> {
+export async function huntingRealisedMarkup(): Promise<HuntingRealisedMarkup> {
 	return invokeCommand('hunting_realised_markup', {});
 }
 

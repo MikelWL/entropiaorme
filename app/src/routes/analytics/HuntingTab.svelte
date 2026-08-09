@@ -7,10 +7,10 @@
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import HuntingSessions from '$lib/features/analytics/HuntingSessions.svelte';
-	import HuntingStats from '$lib/features/analytics/HuntingStats.svelte';
 	import HuntingTargets from '$lib/features/analytics/HuntingTargets.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
 	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
+	import TreeCuttingStats from '$lib/features/analytics/TreeCuttingStats.svelte';
 	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
 	import { createHuntingModel } from '$lib/features/analytics/huntingModel.svelte';
 	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
@@ -138,7 +138,16 @@
 				backdrop-blur-[2px] bg-gradient-to-br from-accent/[0.12] via-surface/70 to-surface/70"
 		>
 			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_minmax(0,1fr)]">
-				<HuntingStats overall={model.overall} />
+				<TreeCuttingStats
+					heading="Overall"
+					cycled={model.overall.cycled}
+					returns={model.overall.returns}
+					lootRate={model.overall.lootRate}
+					muProjectedReturns={model.overall.muProjectedReturns}
+					muRate={model.overall.muRate}
+					realisedReturns={model.overall.realisedReturns}
+					realisedRate={model.overall.realisedRate}
+				/>
 
 				{#if model.stock.length > 0}
 					<TreeCuttingStock

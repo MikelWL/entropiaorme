@@ -52,7 +52,11 @@ plus the activity-family stamp on stock conversions), and
 rows on both loot tables, serving the per-item position arithmetic and the
 DISTINCT item universes without full-table scans), and
 `0026_session_activity_rollups.sql` (the per-session activity rollup
-projection and its settlement marker; see "Derived caches"). The
+projection and its settlement marker; see "Derived caches"), and
+`0027_hunting_definition_provenance.sql` (the nullable session-definition
+context on stock movements, plus its item/species/definition index, allowing
+one confirmed Hunting sale to be projected by both observed species and the
+repeatable session that produced it without duplicating the sale). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -962,7 +966,10 @@ migrations (`0002_analytical_indexes.sql`,
 `0016_stock_opening_balance.sql`, `0017_undone_entries.sql`,
 `0018_session_facets.sql`, `0019_session_intervals.sql`,
 `0020_signal_quests.sql`, `0021_quest_families.sql`,
-`0022_session_definitions.sql`, `0023_default_session_definition.sql`); the runner
+`0022_session_definitions.sql`, `0023_default_session_definition.sql`,
+`0024_hunting_stock_provenance.sql`, `0025_loot_item_name_indexes.sql`,
+`0026_session_activity_rollups.sql`,
+`0027_hunting_definition_provenance.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
