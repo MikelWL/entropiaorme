@@ -85,6 +85,9 @@ describe('Hunting economic comparisons', () => {
 		const trigger = screen.getByLabelText('Switch analytics session (currently ARIS Dailies)');
 		expect(trigger.className).not.toContain('border');
 		expect(screen.getByTitle('ARIS Dailies').className).toContain('text-text');
+		expect(screen.getByTestId('hunting-session-headline').className).toContain(
+			'grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))]',
+		);
 		expect(screen.queryByRole('menu')).toBeNull();
 		await fireEvent.click(trigger);
 		const menu = screen.getByRole('menu');
@@ -137,6 +140,24 @@ describe('Hunting economic comparisons', () => {
 		expect(screen.getByRole('button', { name: 'Activities' })).not.toBeNull();
 		expect(screen.getByRole('button', { name: 'Loot' })).not.toBeNull();
 		expect(screen.getByText('Daily Hunting 1')).not.toBeNull();
+	});
+
+	it('opens Loot directly when the only activity evidence is Unscoped', () => {
+		const row = session({
+			activities: [activity({ kind: 'ambient', label: 'Unscoped', isUnscoped: true })],
+		});
+		const table = createTableModel<HuntingSessionSection>({
+			rows: () => [row],
+			pageSize: Number.MAX_SAFE_INTEGER,
+		});
+		render(HuntingSessions, {
+			props: { table, selected: row, totalCount: 1, onselect: vi.fn() },
+		});
+
+		expect(screen.queryByRole('button', { name: 'Activities' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Loot' })).toBeNull();
+		expect(screen.queryByText('Unscoped')).toBeNull();
+		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
 	});
 
 	it('filters rich economic rows and selects from the keyboard-ready overlay', async () => {

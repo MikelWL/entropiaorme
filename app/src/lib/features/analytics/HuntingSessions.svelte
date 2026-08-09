@@ -28,9 +28,12 @@
 		{ id: 'activities', label: 'Activities' },
 		{ id: 'loot', label: 'Loot' },
 	];
+	const hasDeclaredActivities = $derived(
+		selected?.activities.some((activity) => !activity.isUnscoped) ?? false,
+	);
 	$effect(() => {
 		void selected?.key;
-		detailView = selected && selected.activities.length > 0 ? 'activities' : 'loot';
+		detailView = hasDeclaredActivities ? 'activities' : 'loot';
 	});
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
@@ -52,7 +55,11 @@
 					</div>
 				</div>
 			{:else}
-				<div class="grid items-start gap-6 sm:grid-cols-2 lg:grid-cols-4">
+				<div
+					class="grid grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))] items-start gap-6
+						border-b border-border/50 pb-5"
+					data-testid="hunting-session-headline"
+				>
 					<div class="min-w-0">
 						<HuntingSessionPicker {table} {selected} {totalCount} {onselect} />
 					</div>
@@ -67,8 +74,8 @@
 						{/snippet}
 					</StatDisplay>
 				</div>
-				{#if selected.activities.length > 0}
-					<div class="mt-5 border-t border-border/50 pt-4">
+				{#if hasDeclaredActivities}
+					<div class="mt-4">
 						<SegmentedControl
 							options={DETAIL_VIEWS}
 							active={detailView}
@@ -76,7 +83,7 @@
 						/>
 					</div>
 				{/if}
-				<div class={selected.activities.length > 0 ? 'mt-4' : 'mt-5 border-t border-border/50 pt-4'}>
+				<div class={hasDeclaredActivities ? 'mt-4' : 'mt-5'}>
 					{#if detailView === 'activities'}
 						<HuntingSessionActivities
 							activities={selected.activities}
