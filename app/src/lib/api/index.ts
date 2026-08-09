@@ -50,12 +50,15 @@ export type {
 	MarketReading,
 	MarketSkippedLine,
 	MarketWeaponBreakEven,
+	PrivateSaleInput,
 	Profession,
 	RealisedSpeciesMarkup,
 	RealisedTierMarkup,
 	SessionQuestLinkSuggestion,
+	ShrapnelConversionInput,
 	StockConversionInput,
 	StockPosition,
+	StockRemovalInput,
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';

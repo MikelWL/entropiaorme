@@ -130,7 +130,7 @@ pub struct AuctionListingRow {
 }
 
 /// One thing this activity did to its stock: an auction listing across its
-/// whole lifecycle, or a conversion into another item.
+/// whole lifecycle, a private trade, a conversion, or a stock-only removal.
 ///
 /// A listing is one entry whatever state it reaches. Creating it and selling
 /// it are not two events to be listed separately; they are the same listing,
@@ -143,19 +143,19 @@ pub struct AuctionListingRow {
 #[serde(rename_all = "camelCase")]
 pub struct ActivityHistoryRow {
     pub id: String,
-    /// `listing` or `conversion`.
+    /// `listing`, `trade`, `conversion`, or `removal`.
     pub kind: String,
-    /// `pending`, `sold`, `expired` for a listing; `converted` otherwise.
+    /// `pending`, `sold`, `expired`, `converted`, or `removed`.
     pub status: String,
     pub item_name: String,
-    /// What a conversion produced. `None` for a listing.
+    /// What a conversion produced. `None` for other outcomes.
     pub target_item: Option<String>,
     /// The date the entry currently stands at: when a listing resolved, or
     /// when it was listed if it has not, and when a conversion happened.
     pub occurred_at: String,
     pub quantity: f64,
     pub tt_value: f64,
-    /// Sold listings only: the whole gain, and the part an activity may claim.
+    /// Realised outcomes only: the whole gain, and the part an activity may claim.
     pub net_markup: Option<f64>,
     pub activity_net_markup: Option<f64>,
     /// Sold listings only: whether the sale can be taken back, leaving the
@@ -169,7 +169,7 @@ pub struct ActivityHistoryRow {
     pub undone: bool,
 }
 
-/// One yield tier's realised markup from confirmed sales, for the Tree
+/// One yield tier's realised markup from confirmed stock outcomes, for the Tree
 /// Cutting Realised figures.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,7 +178,7 @@ pub struct RealisedTierMarkup {
     pub net_markup: f64,
 }
 
-/// One mob species' realised markup from confirmed sales, for the Hunting
+/// One mob species' realised markup from confirmed stock outcomes, for the Hunting
 /// Realised figures. The Hunting sibling of [`RealisedTierMarkup`]: the
 /// species is Hunting's observed source axis the way the tier is Tree
 /// Cutting's.
@@ -189,7 +189,7 @@ pub struct RealisedSpeciesMarkup {
     pub net_markup: f64,
 }
 
-/// One session definition's net realised markup from confirmed sales. This
+/// One session definition's net realised markup from confirmed stock outcomes. This
 /// is a second projection of the same immutable allocations used by species,
 /// never a second gain.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -3531,8 +3531,53 @@ fn record_opening_balance(
 fn produced_unit_tt(item_name: &str) -> Option<f64> {
     match item_name {
         "Nanocube" => Some(0.01),
+        "Universal Ammo" => Some(0.0001),
         _ => None,
     }
+}
+
+struct RealisedStockOutcome {
+    id: String,
+    movement_kind: String,
+    outcome: stock_allocation::SaleOutcome,
+}
+
+/// Every stock outcome that has crossed a recognition boundary. Auction
+/// sales, private trades, and Shrapnel conversion differ operationally, but
+/// their activity attribution is the same calculation over the immutable
+/// source movements that funded them.
+fn realised_stock_outcomes(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<Vec<RealisedStockOutcome>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, 'listing', tt_value, attributed_tt, COALESCE(final_price, 0), \
+                listing_fee, COALESCE(sale_fee, 0) \
+         FROM auction_listings WHERE status = 'sold' AND undone_at IS NULL \
+         UNION ALL \
+         SELECT id, 'trade', tt_value, attributed_tt, final_price, 0, 0 \
+         FROM private_sales WHERE undone_at IS NULL \
+         UNION ALL \
+         SELECT id, 'conversion_out', tt_value, COALESCE(attributed_tt, tt_value), \
+                COALESCE(output_tt_value, tt_value), 0, 0 \
+         FROM stock_conversions \
+         WHERE undone_at IS NULL AND gain_entry_id IS NOT NULL",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(RealisedStockOutcome {
+                id: row.get(0)?,
+                movement_kind: row.get(1)?,
+                outcome: stock_allocation::resolve_sale(
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ),
+            })
+        })?
+        .collect();
+    rows
 }
 
 /// Why a reversal cannot go ahead, in terms of the stock rather than the
@@ -4784,6 +4829,47 @@ impl AnalyticsService {
         quantity: f64,
         converted_at: Option<&str>,
     ) -> Result<(), AnalyticsError> {
+        self.convert_stock_with_ratio(
+            profession,
+            source_item,
+            target_item,
+            quantity,
+            converted_at,
+            1.0,
+        )
+        .await
+    }
+
+    /// Convert held Shrapnel into Universal Ammo at the game's fixed 100:101
+    /// ratio. The 1% increase becomes realised only here, when the player says
+    /// the conversion happened.
+    pub async fn convert_shrapnel(
+        &self,
+        profession: Profession,
+        quantity: f64,
+        converted_at: Option<&str>,
+    ) -> Result<(), AnalyticsError> {
+        self.convert_stock_with_ratio(
+            profession,
+            "Shrapnel",
+            "Universal Ammo",
+            quantity,
+            converted_at,
+            1.01,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn convert_stock_with_ratio(
+        &self,
+        profession: Profession,
+        source_item: &str,
+        target_item: &str,
+        quantity: f64,
+        converted_at: Option<&str>,
+        value_ratio: f64,
+    ) -> Result<(), AnalyticsError> {
         if quantity <= 0.0 {
             return Err(AnalyticsError::InvalidInput(
                 "a conversion needs a positive quantity",
@@ -4825,12 +4911,17 @@ impl AnalyticsService {
                 let plan =
                     stock_allocation::allocate(&as_source_positions(&positions), quantity, unit_tt);
                 let converted_tt = quantity * unit_tt;
+                let gain =
+                    eo_wire::normalizer::round_half_even(converted_tt * (value_ratio - 1.0), 4);
+                let output_tt = converted_tt + gain;
+                let realised_output_tt = (gain > STOCK_EPSILON).then_some(output_tt);
+                let realised_attributed_tt = (gain > STOCK_EPSILON).then_some(plan.attributed_tt);
 
                 tx.execute(
                     "INSERT INTO stock_conversions \
                          (id, source_item, target_item, profession, quantity, tt_value, \
-                          converted_at, created_at) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          output_tt_value, attributed_tt, converted_at, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         id,
                         source_c,
@@ -4838,6 +4929,8 @@ impl AnalyticsService {
                         profession.as_str(),
                         quantity,
                         converted_tt,
+                        realised_output_tt,
+                        realised_attributed_tt,
                         converted_at,
                         now
                     ],
@@ -4859,9 +4952,11 @@ impl AnalyticsService {
                         &converted_at,
                         now,
                     )?;
-                    // TT is preserved exactly (the game's recycling ratio is
-                    // 1:1 in value), so the produced count is that value over
-                    // the produced item's own unit TT.
+                    let allocation_output_tt = if converted_tt > STOCK_EPSILON {
+                        allocation.tt_value + gain * (allocation.tt_value / converted_tt)
+                    } else {
+                        allocation.tt_value
+                    };
                     insert_movement(
                         &tx,
                         &target_c,
@@ -4870,11 +4965,25 @@ impl AnalyticsService {
                         allocation.provenance,
                         allocation.session_definition_id,
                         allocation.tool_name,
-                        allocation.tt_value / target_unit_tt,
-                        allocation.tt_value,
+                        allocation_output_tt / target_unit_tt,
+                        allocation_output_tt,
                         &converted_at,
                         now,
                     )?;
+                }
+
+                if gain > STOCK_EPSILON {
+                    let entry_id = Uuid::new_v4().to_string();
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, 'markup', ?, ?, 'convert')",
+                        rusqlite::params![entry_id, converted_at, "Shrapnel Conversion", gain,],
+                    )?;
+                    tx.execute(
+                        "UPDATE stock_conversions SET gain_entry_id = ? WHERE id = ?",
+                        rusqlite::params![entry_id, id],
+                    )?;
+                    daily_rollup::refresh_days(&tx, [converted_at.as_str()])?;
                 }
 
                 tx.commit()?;
@@ -4884,9 +4993,170 @@ impl AnalyticsService {
         Ok(())
     }
 
+    /// Record a private player-to-player sale. There is no listing lifecycle
+    /// and no auction fee: the entered price is final, so recognition and the
+    /// stock outflow happen atomically.
+    pub async fn create_private_sale(
+        &self,
+        profession: Profession,
+        item_name: &str,
+        quantity: f64,
+        final_price: f64,
+        sold_at: Option<&str>,
+    ) -> Result<(), AnalyticsError> {
+        if quantity <= 0.0 || final_price < 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "a trade needs a positive quantity and a non-negative price",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let item = item_name.to_string();
+        let sold_at = sold_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
+        let now = naive_to_epoch(self.clock.now());
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let (positions, unit_tt) = item_positions(&tx, &item)?;
+                let plan =
+                    stock_allocation::allocate(&as_source_positions(&positions), quantity, unit_tt);
+                let tt_value = quantity * unit_tt;
+                tx.execute(
+                    "INSERT INTO private_sales (id, item_name, profession, quantity, \
+                         attributed_qty, unattributed_qty, tt_value, attributed_tt, final_price, \
+                         sold_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        id,
+                        item,
+                        profession.as_str(),
+                        quantity,
+                        plan.attributed_qty,
+                        plan.unattributed_qty,
+                        tt_value,
+                        plan.attributed_tt,
+                        final_price,
+                        sold_at,
+                        now,
+                    ],
+                )?;
+                record_opening_balance(&tx, &item, &id, &plan, &sold_at, now)?;
+                for allocation in &plan.allocations {
+                    insert_movement(
+                        &tx,
+                        &item,
+                        "trade",
+                        Some(&id),
+                        allocation.provenance,
+                        allocation.session_definition_id,
+                        allocation.tool_name,
+                        -allocation.quantity,
+                        -allocation.tt_value,
+                        &sold_at,
+                        now,
+                    )?;
+                }
+                let markup = final_price - tt_value;
+                if markup.abs() > STOCK_EPSILON {
+                    let entry_id = Uuid::new_v4().to_string();
+                    let kind = if markup > 0.0 { "markup" } else { "expense" };
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, ?, ?, ?, 'market')",
+                        rusqlite::params![
+                            entry_id,
+                            sold_at,
+                            kind,
+                            format!("Private Sale: {item}"),
+                            markup.abs(),
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE private_sales SET sale_entry_id = ? WHERE id = ?",
+                        rusqlite::params![entry_id, id],
+                    )?;
+                }
+                daily_rollup::refresh_days(&tx, [sold_at.as_str()])?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Remove held stock whose ultimate outcome is unknown. This changes the
+    /// current position only: it writes no ledger row and cannot consume more
+    /// than the app currently knows is held.
+    pub async fn remove_stock(
+        &self,
+        profession: Profession,
+        item_name: &str,
+        quantity: f64,
+        removed_at: Option<&str>,
+    ) -> Result<(), AnalyticsError> {
+        if quantity <= 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "a removal needs a positive quantity",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let item = item_name.to_string();
+        let removed_at = removed_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
+        let now = naive_to_epoch(self.clock.now());
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let (positions, unit_tt) = item_positions(&tx, &item)?;
+                let plan =
+                    stock_allocation::allocate(&as_source_positions(&positions), quantity, unit_tt);
+                if plan.excess_qty > STOCK_EPSILON {
+                    return Ok(Err(
+                        "you cannot remove more than the current stock".to_string()
+                    ));
+                }
+                tx.execute(
+                    "INSERT INTO stock_removals \
+                         (id, item_name, profession, quantity, tt_value, removed_at, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        id,
+                        item,
+                        profession.as_str(),
+                        quantity,
+                        quantity * unit_tt,
+                        removed_at,
+                        now,
+                    ],
+                )?;
+                for allocation in &plan.allocations {
+                    insert_movement(
+                        &tx,
+                        &item,
+                        "removal",
+                        Some(&id),
+                        allocation.provenance,
+                        allocation.session_definition_id,
+                        allocation.tool_name,
+                        -allocation.quantity,
+                        -allocation.tt_value,
+                        &removed_at,
+                        now,
+                    )?;
+                }
+                tx.commit()?;
+                Ok(Ok(()))
+            })
+            .await?
+            .map_err(AnalyticsError::Rejected)
+    }
+
     /// Everything this activity has done to its stock, newest first.
     ///
-    /// Listings and conversions in one list, each carrying whether it can be
+    /// Listings, trades, conversions, and removals in one list, each carrying whether it can be
     /// taken back. The verdict is computed here because it depends on what the
     /// rest of the ledger has since done with the stock, which the caller
     /// cannot see.
@@ -4947,7 +5217,7 @@ impl AnalyticsService {
                 {
                     let mut stmt = conn.prepare(
                         "SELECT id, source_item, target_item, quantity, tt_value, converted_at, \
-                                undone_at \
+                                undone_at, output_tt_value, attributed_tt \
                          FROM stock_conversions WHERE profession = ?",
                     )?;
                     let conversions = stmt
@@ -4960,11 +5230,22 @@ impl AnalyticsService {
                                 row.get::<_, f64>(4)?,
                                 row.get::<_, String>(5)?,
                                 row.get::<_, Option<String>>(6)?,
+                                row.get::<_, Option<f64>>(7)?,
+                                row.get::<_, Option<f64>>(8)?,
                             ))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
-                    for (id, source, target, quantity, tt_value, converted_at, undone_at) in
-                        conversions
+                    for (
+                        id,
+                        source,
+                        target,
+                        quantity,
+                        tt_value,
+                        converted_at,
+                        undone_at,
+                        output_tt,
+                        attributed_tt,
+                    ) in conversions
                     {
                         let undone = undone_at.is_some();
                         let blocker = if undone {
@@ -4981,13 +5262,99 @@ impl AnalyticsService {
                             occurred_at: converted_at,
                             quantity,
                             tt_value,
-                            net_markup: None,
-                            activity_net_markup: None,
+                            net_markup: output_tt.map(|output| output - tt_value),
+                            activity_net_markup: output_tt.zip(attributed_tt).map(
+                                |(output, attributed)| {
+                                    stock_allocation::resolve_sale(
+                                        tt_value, attributed, output, 0.0, 0.0,
+                                    )
+                                    .activity_net_markup
+                                },
+                            ),
                             can_revert_sale: false,
                             can_delete: !undone && blocker.is_none(),
                             undo_blocked_reason: blocker
                                 .map(|(item, short)| blocked_reason(&item, short)),
                             undone,
+                        });
+                    }
+                }
+
+                {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, item_name, quantity, tt_value, attributed_tt, final_price, \
+                                sold_at, undone_at FROM private_sales WHERE profession = ?",
+                    )?;
+                    let sales = stmt
+                        .query_map(rusqlite::params![profession.as_str()], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, f64>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, f64>(4)?,
+                                row.get::<_, f64>(5)?,
+                                row.get::<_, String>(6)?,
+                                row.get::<_, Option<String>>(7)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    for (id, item, quantity, tt, attributed_tt, price, sold_at, undone_at) in sales
+                    {
+                        let outcome =
+                            stock_allocation::resolve_sale(tt, attributed_tt, price, 0.0, 0.0);
+                        rows.push(ActivityHistoryRow {
+                            id,
+                            kind: "trade".to_string(),
+                            status: "sold".to_string(),
+                            item_name: item,
+                            target_item: None,
+                            occurred_at: sold_at,
+                            quantity,
+                            tt_value: tt,
+                            net_markup: Some(outcome.net_markup),
+                            activity_net_markup: Some(outcome.activity_net_markup),
+                            can_revert_sale: false,
+                            can_delete: undone_at.is_none(),
+                            undo_blocked_reason: None,
+                            undone: undone_at.is_some(),
+                        });
+                    }
+                }
+
+                {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, item_name, quantity, tt_value, removed_at, undone_at \
+                         FROM stock_removals WHERE profession = ?",
+                    )?;
+                    let removals = stmt
+                        .query_map(rusqlite::params![profession.as_str()], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, f64>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, String>(4)?,
+                                row.get::<_, Option<String>>(5)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    for (id, item, quantity, tt, removed_at, undone_at) in removals {
+                        rows.push(ActivityHistoryRow {
+                            id,
+                            kind: "removal".to_string(),
+                            status: "removed".to_string(),
+                            item_name: item,
+                            target_item: None,
+                            occurred_at: removed_at,
+                            quantity,
+                            tt_value: tt,
+                            net_markup: None,
+                            activity_net_markup: None,
+                            can_revert_sale: false,
+                            can_delete: undone_at.is_none(),
+                            undo_blocked_reason: None,
+                            undone: undone_at.is_some(),
                         });
                     }
                 }
@@ -5114,15 +5481,15 @@ impl AnalyticsService {
             .with_writer(move |conn| {
                 use rusqlite::OptionalExtension as _;
                 let tx = conn.transaction()?;
-                let converted_at: Option<String> = tx
+                let conversion: Option<(String, Option<String>)> = tx
                     .query_row(
-                        "SELECT converted_at FROM stock_conversions \
+                        "SELECT converted_at, gain_entry_id FROM stock_conversions \
                          WHERE id = ? AND undone_at IS NULL",
                         rusqlite::params![conversion_id],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .optional()?;
-                let Some(converted_at) = converted_at else {
+                let Some((converted_at, gain_entry_id)) = conversion else {
                     return Ok(Ok(false));
                 };
                 if let Some((item, short)) = reversal_blocker(&tx, &conversion_id)? {
@@ -5133,8 +5500,14 @@ impl AnalyticsService {
                     "DELETE FROM stock_movements WHERE ref_id = ?",
                     rusqlite::params![conversion_id],
                 )?;
+                if let Some(entry_id) = gain_entry_id {
+                    tx.execute(
+                        "DELETE FROM ledger_entries WHERE id = ?",
+                        rusqlite::params![entry_id],
+                    )?;
+                }
                 tx.execute(
-                    "UPDATE stock_conversions SET undone_at = ? WHERE id = ?",
+                    "UPDATE stock_conversions SET undone_at = ?, gain_entry_id = NULL WHERE id = ?",
                     rusqlite::params![undone_at, conversion_id],
                 )?;
                 // A conversion writes no money, but its day is refreshed all
@@ -5147,7 +5520,84 @@ impl AnalyticsService {
             .map_err(AnalyticsError::Rejected)
     }
 
-    /// Net realised markup per yield tier, from confirmed sales only.
+    /// Undo a private trade recorded in error: restore its stock and remove
+    /// the markup row it owned. The history entry remains as the correction
+    /// record.
+    pub async fn undo_private_sale(&self, sale_id: &str) -> Result<bool, AnalyticsError> {
+        let sale_id = sale_id.to_string();
+        let undone_at = self.default_date();
+        self.db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let sale: Option<(String, Option<String>)> = tx
+                    .query_row(
+                        "SELECT sold_at, sale_entry_id FROM private_sales \
+                         WHERE id = ? AND undone_at IS NULL",
+                        rusqlite::params![sale_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((sold_at, entry_id)) = sale else {
+                    return Ok(false);
+                };
+                tx.execute(
+                    "DELETE FROM stock_movements WHERE ref_id = ?",
+                    rusqlite::params![sale_id],
+                )?;
+                if let Some(entry_id) = entry_id {
+                    tx.execute(
+                        "DELETE FROM ledger_entries WHERE id = ?",
+                        rusqlite::params![entry_id],
+                    )?;
+                }
+                tx.execute(
+                    "UPDATE private_sales SET undone_at = ?, sale_entry_id = NULL WHERE id = ?",
+                    rusqlite::params![undone_at, sale_id],
+                )?;
+                daily_rollup::refresh_days(&tx, [sold_at])?;
+                tx.commit()?;
+                Ok(true)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Undo an uncertain removal recorded in error. No ledger row exists;
+    /// deleting its movements is enough to restore the position.
+    pub async fn undo_stock_removal(&self, removal_id: &str) -> Result<bool, AnalyticsError> {
+        let removal_id = removal_id.to_string();
+        let undone_at = self.default_date();
+        self.db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let exists: Option<i64> = tx
+                    .query_row(
+                        "SELECT 1 FROM stock_removals WHERE id = ? AND undone_at IS NULL",
+                        rusqlite::params![removal_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if exists.is_none() {
+                    return Ok(false);
+                }
+                tx.execute(
+                    "DELETE FROM stock_movements WHERE ref_id = ?",
+                    rusqlite::params![removal_id],
+                )?;
+                tx.execute(
+                    "UPDATE stock_removals SET undone_at = ? WHERE id = ?",
+                    rusqlite::params![undone_at, removal_id],
+                )?;
+                tx.commit()?;
+                Ok(true)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Net realised markup per yield tier, from confirmed stock outcomes.
     ///
     /// Each sold listing's activity-claimable markup is divided across the
     /// sources that supplied it, in proportion to the TT each contributed.
@@ -5161,38 +5611,13 @@ impl AnalyticsService {
         Ok(self
             .db
             .with_reader(|conn| {
-                let sold: Vec<(String, f64, f64, f64, f64, f64)> = {
-                    let mut stmt = conn.prepare(
-                        "SELECT id, tt_value, attributed_tt, COALESCE(final_price, 0), \
-                                listing_fee, COALESCE(sale_fee, 0) \
-                         FROM auction_listings \
-                         WHERE status = 'sold' AND undone_at IS NULL",
-                    )?;
-                    let rows = stmt
-                        .query_map([], |row| {
-                            Ok((
-                                row.get(0)?,
-                                row.get(1)?,
-                                row.get(2)?,
-                                row.get(3)?,
-                                row.get(4)?,
-                                row.get(5)?,
-                            ))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows
-                };
+                let sold = realised_stock_outcomes(conn)?;
 
                 let mut totals: std::collections::BTreeMap<String, f64> =
                     std::collections::BTreeMap::new();
-                for (id, tt_value, attributed_tt, final_price, listing_fee, sale_fee) in sold {
-                    let outcome = stock_allocation::resolve_sale(
-                        tt_value,
-                        attributed_tt,
-                        final_price,
-                        listing_fee,
-                        sale_fee,
-                    );
+                for realised in sold {
+                    let id = realised.id;
+                    let outcome = realised.outcome;
                     if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
                         continue;
                     }
@@ -5202,12 +5627,14 @@ impl AnalyticsService {
                     let contributions: Vec<(Option<String>, f64)> = {
                         let mut stmt = conn.prepare(
                             "SELECT yield_tier, SUM(-tt_value) FROM stock_movements \
-                             WHERE ref_id = ? AND movement_kind = 'listing' \
+                             WHERE ref_id = ? AND movement_kind = ? \
                                AND (yield_tier IS NOT NULL OR mob_species IS NOT NULL) \
                              GROUP BY yield_tier",
                         )?;
                         let rows = stmt
-                            .query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                            .query_map(rusqlite::params![id, realised.movement_kind], |row| {
+                                Ok((row.get(0)?, row.get(1)?))
+                            })?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
@@ -5235,7 +5662,7 @@ impl AnalyticsService {
             .await?)
     }
 
-    /// Net realised markup per mob species, from confirmed sales only: the
+    /// Net realised markup per mob species, from confirmed stock outcomes: the
     /// Hunting sibling of [`Self::realised_markup_by_tier`], reading the
     /// species dimension of the same movement ledger. A sold listing's
     /// activity-claimable markup divides across every contributing source in
@@ -5247,38 +5674,13 @@ impl AnalyticsService {
         Ok(self
             .db
             .with_reader(|conn| {
-                let sold: Vec<(String, f64, f64, f64, f64, f64)> = {
-                    let mut stmt = conn.prepare(
-                        "SELECT id, tt_value, attributed_tt, COALESCE(final_price, 0), \
-                                listing_fee, COALESCE(sale_fee, 0) \
-                         FROM auction_listings \
-                         WHERE status = 'sold' AND undone_at IS NULL",
-                    )?;
-                    let rows = stmt
-                        .query_map([], |row| {
-                            Ok((
-                                row.get(0)?,
-                                row.get(1)?,
-                                row.get(2)?,
-                                row.get(3)?,
-                                row.get(4)?,
-                                row.get(5)?,
-                            ))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows
-                };
+                let sold = realised_stock_outcomes(conn)?;
 
                 let mut totals: std::collections::BTreeMap<String, f64> =
                     std::collections::BTreeMap::new();
-                for (id, tt_value, attributed_tt, final_price, listing_fee, sale_fee) in sold {
-                    let outcome = stock_allocation::resolve_sale(
-                        tt_value,
-                        attributed_tt,
-                        final_price,
-                        listing_fee,
-                        sale_fee,
-                    );
+                for realised in sold {
+                    let id = realised.id;
+                    let outcome = realised.outcome;
                     if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
                         continue;
                     }
@@ -5288,12 +5690,14 @@ impl AnalyticsService {
                     let contributions: Vec<(Option<String>, f64)> = {
                         let mut stmt = conn.prepare(
                             "SELECT mob_species, SUM(-tt_value) FROM stock_movements \
-                             WHERE ref_id = ? AND movement_kind = 'listing' \
+                             WHERE ref_id = ? AND movement_kind = ? \
                                AND (yield_tier IS NOT NULL OR mob_species IS NOT NULL) \
                              GROUP BY mob_species",
                         )?;
                         let rows = stmt
-                            .query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                            .query_map(rusqlite::params![id, realised.movement_kind], |row| {
+                                Ok((row.get(0)?, row.get(1)?))
+                            })?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
@@ -5329,38 +5733,13 @@ impl AnalyticsService {
         Ok(self
             .db
             .with_reader(|conn| {
-                let sold: Vec<(String, f64, f64, f64, f64, f64)> = {
-                    let mut stmt = conn.prepare(
-                        "SELECT id, tt_value, attributed_tt, COALESCE(final_price, 0), \
-                                listing_fee, COALESCE(sale_fee, 0) \
-                         FROM auction_listings \
-                         WHERE status = 'sold' AND undone_at IS NULL",
-                    )?;
-                    let rows = stmt
-                        .query_map([], |row| {
-                            Ok((
-                                row.get(0)?,
-                                row.get(1)?,
-                                row.get(2)?,
-                                row.get(3)?,
-                                row.get(4)?,
-                                row.get(5)?,
-                            ))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows
-                };
+                let sold = realised_stock_outcomes(conn)?;
 
                 let mut totals: std::collections::BTreeMap<i64, f64> =
                     std::collections::BTreeMap::new();
-                for (id, tt_value, attributed_tt, final_price, listing_fee, sale_fee) in sold {
-                    let outcome = stock_allocation::resolve_sale(
-                        tt_value,
-                        attributed_tt,
-                        final_price,
-                        listing_fee,
-                        sale_fee,
-                    );
+                for realised in sold {
+                    let id = realised.id;
+                    let outcome = realised.outcome;
                     if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
                         continue;
                     }
@@ -5368,12 +5747,14 @@ impl AnalyticsService {
                         let mut stmt = conn.prepare(
                             "SELECT session_definition_id, SUM(-tt_value) \
                              FROM stock_movements \
-                             WHERE ref_id = ? AND movement_kind = 'listing' \
+                             WHERE ref_id = ? AND movement_kind = ? \
                                AND (yield_tier IS NOT NULL OR mob_species IS NOT NULL) \
                              GROUP BY session_definition_id",
                         )?;
                         let rows = stmt
-                            .query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                            .query_map(rusqlite::params![id, realised.movement_kind], |row| {
+                                Ok((row.get(0)?, row.get(1)?))
+                            })?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
@@ -8838,5 +9219,118 @@ mod tests {
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].definition_id, 7);
         assert!((definitions[0].net_markup - 0.50).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn private_trade_and_removal_change_stock_without_rewriting_loot() {
+        let (_dir, service) = write_service().await;
+        seed_hunting_scenario(&service).await;
+
+        service
+            .create_private_sale(
+                Profession::Hunting,
+                "Animal Muscle Oil",
+                10.0,
+                4.0,
+                Some("2026-06-02"),
+            )
+            .await
+            .unwrap();
+        service
+            .remove_stock(
+                Profession::Hunting,
+                "Animal Muscle Oil",
+                5.0,
+                Some("2026-06-03"),
+            )
+            .await
+            .unwrap();
+
+        let stock = service.stock_positions(Profession::Hunting).await.unwrap();
+        assert_eq!(
+            position(&stock, "Animal Muscle Oil").unwrap().quantity,
+            45.0
+        );
+        let realised = service.realised_markup_by_species().await.unwrap();
+        assert!((realised[0].net_markup - 1.0).abs() < 1e-9);
+        let history = service.activity_history(Profession::Hunting).await.unwrap();
+        assert_eq!(history[0].kind, "removal");
+        assert_eq!(history[1].kind, "trade");
+        assert_eq!(history[1].net_markup, Some(1.0));
+
+        assert!(service.undo_stock_removal(&history[0].id).await.unwrap());
+        assert!(service.undo_private_sale(&history[1].id).await.unwrap());
+        let restored = service.stock_positions(Profession::Hunting).await.unwrap();
+        assert_eq!(
+            position(&restored, "Animal Muscle Oil").unwrap().quantity,
+            60.0
+        );
+        assert!(service
+            .realised_markup_by_species()
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn deliberate_shrapnel_conversion_realises_the_fixed_margin() {
+        let (_dir, service) = write_service().await;
+        seed_hunting_scenario(&service).await;
+        service
+            .db
+            .with_writer(|conn| {
+                conn.execute(
+                    "INSERT INTO kill_loot_items \
+                     (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) \
+                     VALUES ('k1', 'Shrapnel', 5000, 5.0, 0)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        service
+            .convert_shrapnel(Profession::Hunting, 10_000.0, Some("2026-06-04"))
+            .await
+            .unwrap();
+
+        let stock = service.stock_positions(Profession::Hunting).await.unwrap();
+        assert!(position(&stock, "Shrapnel").is_none());
+        let ammo = position(&stock, "Universal Ammo").expect("converted ammo");
+        assert!((ammo.tt_value - 10.10).abs() < 1e-9);
+        assert!((ammo.quantity - 101_000.0).abs() < 1e-6);
+
+        let ledger_gain: f64 = service
+            .db
+            .with_reader(|conn| {
+                conn.query_row(
+                    "SELECT amount FROM ledger_entries WHERE tag = 'convert'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .unwrap();
+        assert!((ledger_gain - 0.10).abs() < 1e-9);
+        // Half the converted pile was enhancer rebate stock and therefore
+        // unattributed. Only the non-enhancer half reaches Hunting realised.
+        let realised = service.realised_markup_by_species().await.unwrap();
+        assert!((realised[0].net_markup - 0.05).abs() < 1e-9);
+
+        let conversion = service
+            .activity_history(Profession::Hunting)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.kind == "conversion")
+            .expect("conversion history");
+        assert_eq!(conversion.net_markup, Some(0.10));
+        assert!(service.undo_stock_conversion(&conversion.id).await.unwrap());
+        assert!(service
+            .realised_markup_by_species()
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

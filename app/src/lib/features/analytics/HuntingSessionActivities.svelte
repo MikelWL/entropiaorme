@@ -109,7 +109,7 @@
 		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus confirmed liquid reward</p>
 		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
 			At activity grain, a separately confirmed liquid quest reward is added exactly once. Confirmed
-			sale markup remains attributed at session grain.
+			 stock-outcome markup remains attributed at session grain.
 		</p>
 	</InfoTip>
 {/snippet}

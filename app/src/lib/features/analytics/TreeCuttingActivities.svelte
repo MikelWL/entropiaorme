@@ -223,13 +223,13 @@
 									Realised Net: what this activity actually achieved
 								</p>
 								<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-									Loot TT less cycled PED, plus the markup confirmed sales of this activity's
-									output have realised, after auction fees.
+									Loot TT less cycled PED, plus the markup its recorded stock outcomes have
+									realised.
 								</p>
 								<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-									It reads the same as TT Net until stock this activity produced is sold and the
-									sale confirmed, because until then no markup has been realised. A sale recorded
-									directly in the Ledger carries no link to an activity and does not reach here.
+									It reads the same as TT Net until a sale or deliberate Shrapnel conversion
+									realises markup. A sale recorded directly in the Ledger carries no link to an
+									activity and does not reach here.
 								</p>
 							</InfoTip>
 						{/snippet}

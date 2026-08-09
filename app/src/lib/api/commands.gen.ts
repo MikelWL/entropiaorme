@@ -64,25 +64,25 @@ export interface ActiveActivityView {
 
 /**
  * One thing an activity did to its stock: a listing across its whole
- * lifecycle, or a conversion into another item.
+ * lifecycle, a private trade, a conversion, or a stock-only removal.
  * 
  * A listing appears once however far it has got. Creating and selling are the
  * same listing at two moments, not two entries.
  */
 export interface ActivityHistoryEntry {
 	id: string;
-	/** `listing` or `conversion`. */
+	/** `listing`, `trade`, `conversion`, or `removal`. */
 	kind: string;
-	/** `pending`, `sold` or `expired` for a listing; `converted` otherwise. */
+	/** `pending`, `sold`, `expired`, `converted`, or `removed`. */
 	status: string;
 	itemName: string;
-	/** What a conversion produced; `null` for a listing. */
+	/** What a conversion produced; `null` for other outcomes. */
 	targetItem: string | null;
 	/** When a listing resolved, or when it was listed if it has not; when a conversion happened. */
 	occurredAt: string;
 	quantity: number;
 	ttValue: number;
-	/** Sold listings only: the gain after both fees, and the part of it an activity may claim. */
+	/** Realised outcomes only: the net gain, and the part an activity may claim. */
 	netMarkup: number | null;
 	activityNetMarkup: number | null;
 	/** Whether the sale can be taken back, leaving the listing open. */
@@ -1805,6 +1805,18 @@ export interface PlaylistItemInput {
 }
 
 /**
+ * A completed player-to-player trade. Unlike an auction listing, its price
+ * and outcome are already known and no fee is involved.
+ */
+export interface PrivateSaleInput {
+	profession: Profession;
+	itemName: string;
+	quantity: number;
+	soldFor: number;
+	soldAt?: string | null;
+}
+
+/**
  * The activity family a stock action belongs to. Closed vocabulary: the
  * auction and conversion lifecycle is shared, and the profession stamp is
  * what scopes each activity's Market and History to its own records.
@@ -2112,7 +2124,7 @@ export interface RealisedDefinitionMarkup {
 }
 
 /**
- * One mob species' net realised markup from confirmed sales: the Hunting
+ * One mob species' net realised markup from confirmed stock outcomes: the Hunting
  * sibling of [`RealisedTierMarkup`].
  */
 export interface RealisedSpeciesMarkup {
@@ -2121,7 +2133,7 @@ export interface RealisedSpeciesMarkup {
 }
 
 /**
- * One yield tier's net realised markup from confirmed sales.
+ * One yield tier's net realised markup from confirmed stock outcomes.
  */
 export interface RealisedTierMarkup {
 	yieldTier: HarvestYieldTier;
@@ -2467,6 +2479,15 @@ export interface SettingsPatch {
 }
 
 /**
+ * Deliberate Shrapnel conversion at the game's fixed 100:101 ratio.
+ */
+export interface ShrapnelConversionInput {
+	profession: Profession;
+	quantity: number;
+	convertedAt?: string | null;
+}
+
+/**
  * One per-skill gain (attributes excluded).
  */
 export interface SkillGain {
@@ -2548,6 +2569,17 @@ export interface StockPosition {
 	ttValue: number;
 	/** Quantity sitting in an unresolved auction listing. Already out of `quantity`, since listed stock has left the player's inventory in game, but reported so it does not read as simply gone. */
 	listedQuantity: number;
+}
+
+/**
+ * Stock whose later fate is unknown. This changes holdings only and never
+ * rewrites the loot or ledger history that established its TT.
+ */
+export interface StockRemovalInput {
+	profession: Profession;
+	itemName: string;
+	quantity: number;
+	removedAt?: string | null;
 }
 
 /**
@@ -3066,6 +3098,18 @@ export async function stockConvert(input: StockConversionInput): Promise<void> {
 	return invokeCommand('stock_convert', { input });
 }
 
+export async function stockPrivateSale(input: PrivateSaleInput): Promise<void> {
+	return invokeCommand('stock_private_sale', { input });
+}
+
+export async function stockRemove(input: StockRemovalInput): Promise<void> {
+	return invokeCommand('stock_remove', { input });
+}
+
+export async function stockShrapnelConvert(input: ShrapnelConversionInput): Promise<void> {
+	return invokeCommand('stock_shrapnel_convert', { input });
+}
+
 export async function activityHistory(profession: Profession): Promise<ActivityHistoryEntry[]> {
 	return invokeCommand('activity_history', { profession });
 }
@@ -3080,6 +3124,14 @@ export async function auctionListingUndo(input: ActivityUndoInput): Promise<void
 
 export async function stockConversionUndo(input: ActivityUndoInput): Promise<void> {
 	return invokeCommand('stock_conversion_undo', { input });
+}
+
+export async function privateSaleUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('private_sale_undo', { input });
+}
+
+export async function stockRemovalUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('stock_removal_undo', { input });
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {

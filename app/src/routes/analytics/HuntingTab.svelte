@@ -2,6 +2,7 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import AdjustStockModal from '$lib/features/analytics/AdjustStockModal.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import HuntingPrimaryView from '$lib/features/analytics/HuntingPrimaryView.svelte';
 	import type { HuntingOverallPanel } from '$lib/features/analytics/HuntingOverallPanels.svelte';
@@ -21,6 +22,8 @@
 
 	let sellItem = $state<StockRow | null>(null);
 	let convertItem = $state<StockRow | null>(null);
+	let removeItem = $state<StockRow | null>(null);
+	let shrapnelItem = $state<StockRow | null>(null);
 
 	// History reads when it is opened rather than with the tab: an undo verdict
 	// depends on every other entry, so it is worth computing fresh at the
@@ -131,6 +134,8 @@
 			onselect={(key) => model.selectSession(key)}
 			onsell={(item) => (sellItem = item)}
 			onconvert={(item) => (convertItem = item)}
+			onremove={(item) => (removeItem = item)}
+			onshrapnelconvert={(item) => (shrapnelItem = item)}
 			overallPanel={overallPanel}
 			onpanelchange={showView}
 			openListings={model.openListings}
@@ -145,8 +150,21 @@
 	<SellStockModal
 		item={sellItem}
 		onlist={model.listStock}
+		ontrade={model.tradeStock}
 		oncancel={() => (sellItem = null)}
 		activityAttributionNoun="a hunted species"
+	/>
+	<AdjustStockModal
+		item={removeItem}
+		mode="remove"
+		onconfirm={model.discardStock}
+		oncancel={() => (removeItem = null)}
+	/>
+	<AdjustStockModal
+		item={shrapnelItem}
+		mode="shrapnel"
+		onconfirm={(_itemName, quantity) => model.convertShrapnelStock(quantity)}
+		oncancel={() => (shrapnelItem = null)}
 	/>
 	<ConvertStockModal
 		item={convertItem}

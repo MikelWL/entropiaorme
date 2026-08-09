@@ -8,12 +8,13 @@
  * it is not currently presented as a comparison axis.
  *
  * Every MU figure is an estimate, never realised P&L. Realised markup
- * arrives only through confirmed sales, attributed through the weighted
+ * arrives only through recorded stock outcomes, attributed through the weighted
  * species and session-definition provenance of the source loot.
  */
 
 import {
 	confirmAuctionListing,
+	convertShrapnel,
 	convertStock,
 	createAuctionListing,
 	expireAuctionListing,
@@ -26,9 +27,13 @@ import {
 	type HuntingActivityData,
 	type MarketHarvestData,
 	type MarketHarvestItem,
+	removeStock,
 	revertAuctionSale,
+	sellStockPrivately,
 	undoAuctionListing,
+	undoPrivateSale,
 	undoStockConversion,
+	undoStockRemoval,
 } from '$lib/api';
 import type {
 	ActivityHistoryEntry,
@@ -44,6 +49,7 @@ import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyt
 import {
 	type ActivityListingDraft,
 	type TreeCuttingStock as ActivityStockRow,
+	type ActivityTradeDraft,
 	type ConfidenceMode,
 	effectiveMarkup,
 	marketOpportunity,
@@ -122,7 +128,7 @@ export function createHuntingModel() {
 	let data = $state<HuntingActivityData | null>(null);
 	let market = $state<MarketHarvestData | null>(null);
 	// Current positions, the auction lifecycle over them, and the markup
-	// confirmed sales have realised per species. All three drive holdings
+	// recorded stock outcomes have realised per species. All three drive holdings
 	// and realised figures only, never the holding-independent opportunity.
 	let positions = $state<StockPosition[]>([]);
 	let listings = $state<AuctionListing[]>([]);
@@ -315,7 +321,7 @@ export function createHuntingModel() {
 			: null;
 		const cycled = data.overall.cycled;
 		const muRate = muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
-		// Realised markup sums over EVERY species with confirmed sales, not
+		// Realised markup sums over EVERY species with recognised stock outcomes, not
 		// only those hunted in the selected period: the money exists either
 		// way, and the remainder is disclosed rather than silently dropped.
 		const realisedMarkup = [...realisedBySpecies.values()].reduce((sum, v) => sum + v, 0);
@@ -442,6 +448,10 @@ export function createHuntingModel() {
 		try {
 			if (entry.kind === 'conversion') {
 				await undoStockConversion({ id: entry.id });
+			} else if (entry.kind === 'trade') {
+				await undoPrivateSale({ id: entry.id });
+			} else if (entry.kind === 'removal') {
+				await undoStockRemoval({ id: entry.id });
 			} else if (revertSale) {
 				await revertAuctionSale({ id: entry.id });
 			} else {
@@ -463,6 +473,36 @@ export function createHuntingModel() {
 			await refreshHoldings();
 		} catch (e) {
 			error = describeError(e, 'Failed to create the listing');
+			throw e;
+		}
+	}
+
+	async function tradeStock(input: ActivityTradeDraft) {
+		try {
+			await sellStockPrivately({ profession: 'hunting', ...input });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to record the trade');
+			throw e;
+		}
+	}
+
+	async function discardStock(itemName: string, quantity: number) {
+		try {
+			await removeStock({ profession: 'hunting', itemName, quantity, removedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to remove the stock');
+			throw e;
+		}
+	}
+
+	async function convertShrapnelStock(quantity: number) {
+		try {
+			await convertShrapnel({ profession: 'hunting', quantity, convertedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to convert the Shrapnel');
 			throw e;
 		}
 	}
@@ -570,6 +610,9 @@ export function createHuntingModel() {
 		undoHistoryEntry,
 		loadData,
 		listStock,
+		tradeStock,
+		discardStock,
+		convertShrapnelStock,
 		resolveListing,
 		recycleStock,
 	};

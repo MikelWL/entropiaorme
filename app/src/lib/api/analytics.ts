@@ -57,11 +57,16 @@ export const createAuctionListing = commands.auctionListingCreate;
 export const confirmAuctionListing = commands.auctionListingConfirm;
 export const expireAuctionListing = commands.auctionListingExpire;
 export const convertStock = commands.stockConvert;
-// What the activity has done to its stock, and the three ways back out of it.
+export const sellStockPrivately = commands.stockPrivateSale;
+export const removeStock = commands.stockRemove;
+export const convertShrapnel = commands.stockShrapnelConvert;
+// What the activity has done to its stock, and the ways back out of it.
 export const getActivityHistory = commands.activityHistory;
 export const revertAuctionSale = commands.auctionSaleRevert;
 export const undoAuctionListing = commands.auctionListingUndo;
 export const undoStockConversion = commands.stockConversionUndo;
+export const undoPrivateSale = commands.privateSaleUndo;
+export const undoStockRemoval = commands.stockRemovalUndo;
 
 export const addInventoryItem = commands.inventoryCreate;
 export const updateInventoryItem = commands.inventoryUpdate;

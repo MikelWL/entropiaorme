@@ -315,7 +315,7 @@ pub struct HuntingSpeciesComparison {
     pub loot_items: Vec<HarvestLootItem>,
 }
 
-/// One mob species' net realised markup from confirmed sales: the Hunting
+/// One mob species' net realised markup from confirmed stock outcomes: the Hunting
 /// sibling of [`RealisedTierMarkup`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -505,7 +505,7 @@ pub struct AuctionListing {
 }
 
 /// One thing an activity did to its stock: a listing across its whole
-/// lifecycle, or a conversion into another item.
+/// lifecycle, a private trade, a conversion, or a stock-only removal.
 ///
 /// A listing appears once however far it has got. Creating and selling are the
 /// same listing at two moments, not two entries.
@@ -513,20 +513,19 @@ pub struct AuctionListing {
 #[serde(rename_all = "camelCase")]
 pub struct ActivityHistoryEntry {
     pub id: String,
-    /// `listing` or `conversion`.
+    /// `listing`, `trade`, `conversion`, or `removal`.
     pub kind: String,
-    /// `pending`, `sold` or `expired` for a listing; `converted` otherwise.
+    /// `pending`, `sold`, `expired`, `converted`, or `removed`.
     pub status: String,
     pub item_name: String,
-    /// What a conversion produced; `null` for a listing.
+    /// What a conversion produced; `null` for other outcomes.
     pub target_item: Nullable<String>,
     /// When a listing resolved, or when it was listed if it has not; when a
     /// conversion happened.
     pub occurred_at: String,
     pub quantity: f64,
     pub tt_value: f64,
-    /// Sold listings only: the gain after both fees, and the part of it an
-    /// activity may claim.
+    /// Realised outcomes only: the net gain, and the part an activity may claim.
     pub net_markup: Nullable<f64>,
     pub activity_net_markup: Nullable<f64>,
     /// Whether the sale can be taken back, leaving the listing open.
@@ -547,7 +546,7 @@ pub struct ActivityUndoInput {
     pub id: String,
 }
 
-/// One yield tier's net realised markup from confirmed sales.
+/// One yield tier's net realised markup from confirmed stock outcomes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RealisedTierMarkup {
@@ -599,6 +598,38 @@ pub struct StockConversionInput {
     pub profession: Profession,
     pub source_item: String,
     pub target_item: String,
+    pub quantity: f64,
+    pub converted_at: Option<String>,
+}
+
+/// A completed player-to-player trade. Unlike an auction listing, its price
+/// and outcome are already known and no fee is involved.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateSaleInput {
+    pub profession: Profession,
+    pub item_name: String,
+    pub quantity: f64,
+    pub sold_for: f64,
+    pub sold_at: Option<String>,
+}
+
+/// Stock whose later fate is unknown. This changes holdings only and never
+/// rewrites the loot or ledger history that established its TT.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StockRemovalInput {
+    pub profession: Profession,
+    pub item_name: String,
+    pub quantity: f64,
+    pub removed_at: Option<String>,
+}
+
+/// Deliberate Shrapnel conversion at the game's fixed 100:101 ratio.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShrapnelConversionInput {
+    pub profession: Profession,
     pub quantity: f64,
     pub converted_at: Option<String>,
 }
@@ -820,6 +851,45 @@ impl Api {
         Ok(())
     }
 
+    pub async fn stock_private_sale(&self, input: PrivateSaleInput) -> Result<(), ApiError> {
+        self.analytics
+            .create_private_sale(
+                input.profession.into(),
+                &input.item_name,
+                input.quantity,
+                input.sold_for,
+                input.sold_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("private sale"))
+    }
+
+    pub async fn stock_remove(&self, input: StockRemovalInput) -> Result<(), ApiError> {
+        self.analytics
+            .remove_stock(
+                input.profession.into(),
+                &input.item_name,
+                input.quantity,
+                input.removed_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("stock remove"))
+    }
+
+    pub async fn stock_shrapnel_convert(
+        &self,
+        input: ShrapnelConversionInput,
+    ) -> Result<(), ApiError> {
+        self.analytics
+            .convert_shrapnel(
+                input.profession.into(),
+                input.quantity,
+                input.converted_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("Shrapnel convert"))
+    }
+
     /// Everything one activity has done to its stock, newest first, each
     /// entry carrying whether it can be taken back.
     pub async fn activity_history(
@@ -897,7 +967,33 @@ impl Api {
         }
     }
 
-    /// Net realised markup per yield tier, from confirmed sales only.
+    pub async fn private_sale_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        if self
+            .analytics
+            .undo_private_sale(&input.id)
+            .await
+            .map_err(analytics_error("private sale undo"))?
+        {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no private sale with that id to undo"))
+        }
+    }
+
+    pub async fn stock_removal_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        if self
+            .analytics
+            .undo_stock_removal(&input.id)
+            .await
+            .map_err(analytics_error("stock removal undo"))?
+        {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no stock removal with that id to undo"))
+        }
+    }
+
+    /// Net realised markup per yield tier, from confirmed stock outcomes.
     pub async fn harvest_realised_markup(&self) -> Result<Vec<RealisedTierMarkup>, ApiError> {
         let rows = self
             .analytics

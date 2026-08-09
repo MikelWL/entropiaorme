@@ -17,10 +17,11 @@ use crate::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTarg
 use crate::analytics::{
     ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
     AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
-    AuctionListing, AuctionListingInput, InventoryItem, InventoryItemInput, InventoryPatch,
-    InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem, LedgerPage,
-    HuntingRealisedMarkup, LedgerPreset, LedgerPresetInput, LedgerSummary, Profession,
-    RealisedTierMarkup, StockConversionInput, StockPosition,
+    AuctionListing, AuctionListingInput, HuntingRealisedMarkup, InventoryItem, InventoryItemInput,
+    InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem,
+    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput, Profession,
+    RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
+    StockRemovalInput,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -666,6 +667,30 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: None,
         },
         CommandSpec {
+            name: "stock_private_sale",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(PrivateSaleInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "stock_remove",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(StockRemovalInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "stock_shrapnel_convert",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ShrapnelConversionInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
             name: "activity_history",
             args: vec![ArgSpec {
                 name: "profession",
@@ -691,6 +716,22 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "stock_conversion_undo",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ActivityUndoInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "private_sale_undo",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ActivityUndoInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "stock_removal_undo",
             args: vec![ArgSpec {
                 name: "input",
                 schema: schema(schema_for!(ActivityUndoInput)),

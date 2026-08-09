@@ -49,6 +49,7 @@ export type {
 	OptimizerSkill,
 	PathAllocation,
 	PathOptimizerResult,
+	PrivateSaleInput,
 	ProfessionLevel,
 	ProfessionOptimizerResult,
 	ProspectOption,
@@ -60,8 +61,10 @@ export type {
 	RealisedSpeciesMarkup,
 	RealisedTierMarkup,
 	ReturnsBreakdown,
+	ShrapnelConversionInput,
 	SkillLevel,
 	StatProfession,
 	StockPosition,
+	StockRemovalInput,
 	TimelineDay,
 } from '$lib/api/commands.gen';

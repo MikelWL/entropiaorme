@@ -61,7 +61,9 @@ repeatable session that produced it without duplicating the sale), and
 activity-context provenance), `0029_session_context_loot_rollups.sql`
 (the context-grain loot rollup used by Hunting activity composition), and
 `0030_quest_reward_items.sql` (actual reward-item evidence captured at quest
-completion). The
+completion), and `0031_stock_outcomes.sql` (private trades, stock-only
+removals, deliberate Shrapnel conversion gains, and the corresponding
+provenance-aware movement kinds). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -646,6 +648,33 @@ table was dropped, so current position derives from recorded loot plus that
 signed movement ledger rather than from two sources of the same quantity. No
 current database carries it.
 
+### Activity stock outcomes
+
+Recorded loot remains the immutable acquisition base. Current stock is that
+loot plus the signed rows in `stock_movements`; auction listings, conversions,
+private trades, and removals own the lifecycle records those movements refer
+to. A stock action never edits the loot that originally established an
+activity's TT return.
+
+- `auction_listings` records the pending, sold, or expired auction lifecycle.
+  Stock leaves at listing time, the listing fee is spent then, and markup is
+  realised only when the final sale is confirmed.
+- `private_sales` records a completed player trade with its quantity, TT,
+  tracked and untracked shares, final price, date, and owned ledger entry. It
+  has no auction fees and recognises markup atomically with the stock outflow.
+- `stock_conversions` records source and target stock. Ordinary Nanocube
+  recycling preserves TT; deliberate Shrapnel conversion records its 101%
+  output TT and owns the 1% ledger gain.
+- `stock_removals` records that a quantity is no longer held when its outcome
+  is unknown. It has no ledger effect, so historical loot TT remains intact.
+- `stock_movements` is the signed, provenance-aware inventory ledger. Its
+  source dimensions carry harvesting tier/tool or Hunting species/session
+  definition through transformations and into realised outcomes.
+
+Every outcome can be undone as a correction while retaining its lifecycle row
+marked as undone. A conversion undo is refused if later movements have already
+consumed what it produced.
+
 #### `notable_events`
 
 Notable in-session events (for example globals and Hall-of-Fame drops).
@@ -1001,7 +1030,7 @@ migrations (`0002_analytical_indexes.sql`,
 `0027_hunting_definition_provenance.sql`,
 `0028_quest_reward_provenance.sql`,
 `0029_session_context_loot_rollups.sql`,
-`0030_quest_reward_items.sql`); the runner
+`0030_quest_reward_items.sql`, `0031_stock_outcomes.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

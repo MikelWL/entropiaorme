@@ -19,6 +19,7 @@
 
 import {
 	confirmAuctionListing,
+	convertShrapnel,
 	convertStock,
 	createAuctionListing,
 	expireAuctionListing,
@@ -31,9 +32,13 @@ import {
 	type HarvestData,
 	type MarketHarvestData,
 	type MarketHarvestItem,
+	removeStock,
 	revertAuctionSale,
+	sellStockPrivately,
 	undoAuctionListing,
+	undoPrivateSale,
 	undoStockConversion,
+	undoStockRemoval,
 } from '$lib/api';
 import type {
 	ActivityHistoryEntry,
@@ -53,6 +58,12 @@ import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyt
 /** What the sell modal knows at listing time; the owning tab's model
  * stamps the activity family on top. */
 export type ActivityListingDraft = Omit<AuctionListingInput, 'profession'>;
+export type ActivityTradeDraft = {
+	itemName: string;
+	quantity: number;
+	soldFor: number;
+	soldAt: string | null;
+};
 
 export type OpportunityKind = 'broad' | 'niche' | 'thin' | 'recycle';
 export type ConfidenceTier = 'liquid' | 'middling' | 'illiquid';
@@ -242,14 +253,14 @@ export type TreeCuttingItem = {
 
 /** The combined stat line across every sub-activity (the "Overall" block). */
 export type TreeCuttingOverall = {
-	/** Markup confirmed sales have realised, already inside `realisedReturns`. */
+	/** Markup recorded stock outcomes have realised, already inside `realisedReturns`. */
 	realisedMarkup: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
-	/** Loot TT plus the markup confirmed sales have realised. It equals TT
+	/** Loot TT plus the markup recorded stock outcomes have realised. It equals TT
 	 * until something sells, which is the recognition boundary made
 	 * visible. */
 	realisedReturns: number;
@@ -257,7 +268,7 @@ export type TreeCuttingOverall = {
 };
 
 export type TreeCuttingSection = {
-	/** Markup confirmed sales of this tier's output have realised, already
+	/** Markup recorded stock outcomes for this tier's output have realised, already
 	 * inside `realisedReturns`. Zero until a sale is confirmed. */
 	realisedMarkup: number;
 	yieldTier: HarvestYieldTier;
@@ -388,7 +399,7 @@ export function createTreeCuttingModel() {
 	let data = $state<HarvestData | null>(null);
 	let market = $state<MarketHarvestData | null>(null);
 	// Current positions, the auction lifecycle over them, and the markup
-	// confirmed sales have realised per tier. All three drive holdings and
+	// recorded stock outcomes have realised per tier. All three drive holdings and
 	// realised figures only, never the holding-independent opportunity.
 	let positions = $state<StockPosition[]>([]);
 	let listings = $state<AuctionListing[]>([]);
@@ -586,6 +597,10 @@ export function createTreeCuttingModel() {
 		try {
 			if (entry.kind === 'conversion') {
 				await undoStockConversion({ id: entry.id });
+			} else if (entry.kind === 'trade') {
+				await undoPrivateSale({ id: entry.id });
+			} else if (entry.kind === 'removal') {
+				await undoStockRemoval({ id: entry.id });
 			} else if (revertSale) {
 				await revertAuctionSale({ id: entry.id });
 			} else {
@@ -607,6 +622,36 @@ export function createTreeCuttingModel() {
 			await refreshHoldings();
 		} catch (e) {
 			error = describeError(e, 'Failed to create the listing');
+			throw e;
+		}
+	}
+
+	async function tradeStock(input: ActivityTradeDraft) {
+		try {
+			await sellStockPrivately({ profession: 'harvesting', ...input });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to record the trade');
+			throw e;
+		}
+	}
+
+	async function discardStock(itemName: string, quantity: number) {
+		try {
+			await removeStock({ profession: 'harvesting', itemName, quantity, removedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to remove the stock');
+			throw e;
+		}
+	}
+
+	async function convertShrapnelStock(quantity: number) {
+		try {
+			await convertShrapnel({ profession: 'harvesting', quantity, convertedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to convert the Shrapnel');
 			throw e;
 		}
 	}
@@ -737,6 +782,9 @@ export function createTreeCuttingModel() {
 		undoHistoryEntry,
 		loadData,
 		listStock,
+		tradeStock,
+		discardStock,
+		convertShrapnelStock,
 		resolveListing,
 		recycleStock,
 	};

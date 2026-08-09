@@ -18,6 +18,8 @@
 		onchange,
 		onsell,
 		onconvert,
+		onremove = () => {},
+		onshrapnelconvert = () => {},
 		onresolve,
 		onundo,
 	}: {
@@ -30,6 +32,8 @@
 		onchange: (panel: HuntingOverallPanel) => void;
 		onsell: (item: StockRow) => void;
 		onconvert: (item: StockRow) => void;
+		onremove?: (item: StockRow) => void;
+		onshrapnelconvert?: (item: StockRow) => void;
 		onresolve: (listingId: string, outcome: { sold: true; finalPrice: number; saleFee: number; resolvedAt?: string } | { sold: false; resolvedAt?: string }) => Promise<void>;
 		onundo: (entry: ActivityHistoryEntry, revertSale?: boolean) => Promise<void>;
 	} = $props();
@@ -55,7 +59,9 @@
 					{stock}
 					onsell={onsell}
 					onconvert={onconvert}
-					sourceDescription="Loot recorded from hunting, minus loot you have already sold or converted."
+					onremove={onremove}
+					onshrapnelconvert={onshrapnelconvert}
+					sourceDescription="Loot recorded from hunting, minus stock you have sold, converted, or removed."
 				/>
 			{:else}
 				<p class="py-8 text-center text-sm text-text-tertiary">No hunted stock recorded.</p>

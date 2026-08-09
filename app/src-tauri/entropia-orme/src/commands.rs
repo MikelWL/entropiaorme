@@ -17,8 +17,9 @@ use eo_api::analytics::{
     AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
     AuctionListing, AuctionListingInput, HuntingRealisedMarkup, InventoryItem, InventoryItemInput,
     InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem,
-    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, Profession, RealisedTierMarkup,
-    StockConversionInput, StockPosition,
+    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput, Profession,
+    RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
+    StockRemovalInput,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -640,6 +641,27 @@ pub async fn stock_convert(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn stock_private_sale(
+    app: tauri::AppHandle,
+    input: PrivateSaleInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.stock_private_sale(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_remove(app: tauri::AppHandle, input: StockRemovalInput) -> Result<(), ApiError> {
+    facade(&app)?.stock_remove(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_shrapnel_convert(
+    app: tauri::AppHandle,
+    input: ShrapnelConversionInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.stock_shrapnel_convert(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn activity_history(
     app: tauri::AppHandle,
     profession: Profession,
@@ -669,6 +691,22 @@ pub async fn stock_conversion_undo(
     input: ActivityUndoInput,
 ) -> Result<(), ApiError> {
     facade(&app)?.stock_conversion_undo(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn private_sale_undo(
+    app: tauri::AppHandle,
+    input: ActivityUndoInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.private_sale_undo(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_removal_undo(
+    app: tauri::AppHandle,
+    input: ActivityUndoInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.stock_removal_undo(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1625,10 +1663,15 @@ mod tests {
         "auction_listing_confirm",
         "auction_listing_expire",
         "stock_convert",
+        "stock_private_sale",
+        "stock_remove",
+        "stock_shrapnel_convert",
         "activity_history",
         "auction_sale_revert",
         "auction_listing_undo",
         "stock_conversion_undo",
+        "private_sale_undo",
+        "stock_removal_undo",
         "ledger_list",
         "ledger_summary",
         "ledger_create",

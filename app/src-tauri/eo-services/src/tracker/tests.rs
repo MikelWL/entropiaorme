@@ -329,8 +329,8 @@ fn session_lifecycle_round_trip() {
         0.05
     );
 
-    // Ledger gains: the enhancer rebate at full value, the
-    // conversion margin at 1%, both rounded half-even to 4.
+    // Enhancer-break Shrapnel remains an immediate rebate. Ordinary
+    // Shrapnel stays in stock until the player deliberately converts it.
     assert_eq!(
         rig.scalar_f64(
             "SELECT amount FROM ledger_entries WHERE tag = 'enhancer' \
@@ -340,12 +340,20 @@ fn session_lifecycle_round_trip() {
         0.1
     );
     assert_eq!(
-        rig.scalar_f64(
-            "SELECT amount FROM ledger_entries WHERE tag = 'convert' \
-                 AND description = 'Shrapnel Conversion'",
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM ledger_entries WHERE tag = 'convert'",
             &[],
         ),
-        0.005
+        0
+    );
+    assert_eq!(
+        rig.scalar_f64(
+            "SELECT SUM(value_ped) FROM kill_loot_items \
+             WHERE item_name = 'Shrapnel' AND is_enhancer_shrapnel = 0 \
+               AND deactivated_at IS NULL",
+            &[],
+        ),
+        0.5
     );
     assert_eq!(
         rig.scalar_i64(
@@ -475,11 +483,11 @@ fn recovery_closes_crash_orphaned_sessions() {
         1500.0
     );
     assert_eq!(
-        rig.scalar_f64(
-            "SELECT amount FROM ledger_entries WHERE tag = 'convert'",
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM ledger_entries WHERE tag = 'convert'",
             &[],
         ),
-        0.5
+        0
     );
     assert_eq!(
         rig.scalar_f64(
@@ -492,7 +500,7 @@ fn recovery_closes_crash_orphaned_sessions() {
     let date: String = rig
         .wait(rig.db.with_reader(|conn| {
             Ok(conn.query_row(
-                "SELECT date FROM ledger_entries WHERE tag = 'convert'",
+                "SELECT date FROM ledger_entries WHERE tag = 'enhancer'",
                 [],
                 |row| row.get::<_, String>(0),
             )?)
@@ -625,6 +633,10 @@ fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
              is_enhancer_shrapnel) VALUES ('k1', 'Shrapnel', 500, 50.0, 0)",
     );
     rig.execute(
+        "INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, \
+             is_enhancer_shrapnel) VALUES ('k1', 'Shrapnel', 300, 30.0, 1)",
+    );
+    rig.execute(
         "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
              critical_hits, cost_per_shot) VALUES ('k1', 'Rifle', 3, 30.0, 0, 0.05)",
     );
@@ -656,21 +668,28 @@ fn recovery_relands_the_orphans_days_and_backdated_ledger_keys() {
     };
     assert_eq!(loot, Some(80.0));
 
-    // The backdated shrapnel-conversion ledger entry (a datetime
-    // key at the crashed session's end) rolled up eagerly too.
+    // The still-automatic enhancer rebate relands at the crashed session's
+    // end, while ordinary Shrapnel remains unrealised.
     let ledger_key = naive_isoformat(epoch_to_naive(kill_epoch));
     let (kind, amount): (String, f64) = {
         let ledger_key = ledger_key.clone();
         rig.wait(rig.db.with_reader(move |conn| {
             Ok(conn.query_row(
-                "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ? AND tag = 'convert'",
+                "SELECT entry_type, amount FROM daily_ledger_rollups WHERE day = ? AND tag = 'enhancer'",
                 rusqlite::params![ledger_key],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
             )?)
         }))
         .unwrap()
     };
-    assert_eq!((kind.as_str(), amount), ("markup", 0.5));
+    assert_eq!((kind.as_str(), amount), ("markup", 30.0));
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM daily_ledger_rollups WHERE day = ? AND tag = 'convert'",
+            &[&ledger_key],
+        ),
+        0
+    );
 }
 
 #[test]
@@ -678,7 +697,7 @@ fn a_failed_stop_rolls_back_every_stop_write() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
-    // A kill with convertible Shrapnel and a skill gain, so the stop
+    // A kill with enhancer-break Shrapnel and a skill gain, so the stop
     // sequence writes the session close, a ledger gain, and a summary.
     rig.execute(
         "INSERT INTO kills (id, session_id, mob_name, mob_species, mob_maturity, \
@@ -689,7 +708,7 @@ fn a_failed_stop_rolls_back_every_stop_write() {
     );
     rig.execute(
         "INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, \
-             is_enhancer_shrapnel) VALUES ('k1', 'Shrapnel', 500, 50.0, 0)",
+             is_enhancer_shrapnel) VALUES ('k1', 'Shrapnel', 500, 50.0, 1)",
     );
     rig.execute(
         "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \

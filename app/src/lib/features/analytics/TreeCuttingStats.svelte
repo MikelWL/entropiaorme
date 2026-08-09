@@ -45,10 +45,10 @@
 
 {#snippet realisedTip()}
 	<InfoTip label="What realised figures are">
-		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus confirmed markup</p>
+		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus realised markup</p>
 		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-			Only markup that a confirmed sale actually produced. It reads the same as TT Net until
-			something sells.
+			Only markup from a recorded sale or deliberate Shrapnel conversion. It reads the same as
+			TT Net until a stock outcome realises a gain or loss.
 		</p>
 	</InfoTip>
 {/snippet}

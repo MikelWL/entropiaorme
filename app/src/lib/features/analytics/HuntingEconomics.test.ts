@@ -156,6 +156,40 @@ describe('Hunting economic comparisons', () => {
 		expect(continuation.className).toContain('opacity-0');
 	});
 
+	it('offers removal on every holding and deliberate conversion only on Shrapnel', () => {
+		const base = {
+			heldQty: 100,
+			heldTt: 1,
+			listedQty: 0,
+			readings: [],
+			opportunity: marketOpportunity(undefined, 100.6),
+			markupPct: null,
+			markupHorizon: null,
+			tier: 'illiquid' as const,
+			effectiveMarkupPct: 100.6,
+			floored: true,
+			salesPed: null,
+			weeklySalesPed: null,
+		};
+		const onremove = vi.fn();
+		const onshrapnelconvert = vi.fn();
+		render(TreeCuttingStock, {
+			props: {
+				stock: [
+					{ ...base, itemName: 'Shrapnel' },
+					{ ...base, itemName: 'Animal Muscle Oil' },
+				],
+				onsell: vi.fn(),
+				onconvert: vi.fn(),
+				onremove,
+				onshrapnelconvert,
+			},
+		});
+
+		expect(screen.getAllByLabelText('Remove')).toHaveLength(2);
+		expect(screen.getAllByLabelText('Convert')).toHaveLength(1);
+	});
+
 	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', async () => {
 		const row = session({
 			items: Array.from({ length: 9 }, (_, index) => ({

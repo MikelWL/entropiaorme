@@ -54,6 +54,7 @@
 		sold: 'Sold',
 		expired: 'Expired',
 		converted: 'Converted',
+		removed: 'Removed',
 	};
 
 	const STATUS_TONE: Record<string, string> = {
@@ -61,6 +62,7 @@
 		sold: 'text-positive',
 		expired: 'text-text-tertiary',
 		converted: 'text-text-secondary',
+		removed: 'text-text-tertiary',
 	};
 
 	/** What happened, in a line. The figures a row leads with are on the
@@ -68,6 +70,8 @@
 	function summary(entry: ActivityHistoryEntry): string {
 		const tt = `${formatPed(entry.ttValue)} PED TT`;
 		if (entry.kind === 'conversion') return `${tt} into ${entry.targetItem ?? 'another item'}`;
+		if (entry.kind === 'removal') return `${entry.quantity} removed, ${tt}`;
+		if (entry.kind === 'trade') return `${entry.quantity} sold by trade, ${tt}`;
 		if (entry.status === 'sold') return `${entry.quantity} sold, ${tt}`;
 		if (entry.status === 'expired') return `${entry.quantity} returned, ${tt}`;
 		return `${entry.quantity} on auction, ${tt}`;
@@ -98,7 +102,7 @@
 	{:else if entries.length === 0}
 		<div class="flex min-h-40 items-center justify-center p-6">
 			<p class="max-w-sm text-center text-sm leading-relaxed text-text-tertiary">
-				Nothing recorded yet. Auction listings and Nanocube conversions appear here, and can be
+				Nothing recorded yet. Sales, conversions, and removals appear here, and can be
 				taken back from here if you record one by mistake.
 			</p>
 		</div>

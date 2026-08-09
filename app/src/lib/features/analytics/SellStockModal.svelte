@@ -14,13 +14,15 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
+	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import { formatPed, todayDate } from '$lib/utils/format';
-	import type { ActivityListingDraft } from './treeCuttingModel.svelte';
+	import type { ActivityListingDraft, ActivityTradeDraft } from './treeCuttingModel.svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 
 	let {
 		item,
 		onlist,
+		ontrade,
 		oncancel,
 		// The activity the excess warning names, so the Hunting tab hosts the
 		// identical modal over its own vocabulary.
@@ -28,6 +30,7 @@
 	}: {
 		item: TreeCuttingStock | null;
 		onlist: (input: ActivityListingDraft) => Promise<void>;
+		ontrade: (input: ActivityTradeDraft) => Promise<void>;
 		oncancel: () => void;
 		activityAttributionNoun?: string;
 	} = $props();
@@ -37,7 +40,9 @@
 	let buyout = $state<number | null>(null);
 	let listingFee = $state(0.5);
 	let listedAt = $state('');
-	let listing = $state(false);
+	let soldFor = $state(0);
+	let saleMethod = $state<'auction' | 'trade'>('auction');
+	let saving = $state(false);
 	let error = $state<string | null>(null);
 
 	let modalOpen = $state(false);
@@ -53,7 +58,11 @@
 	// is created: a preview that quoted the gross would promise more than the
 	// player can ever end up holding, and by a margin that matters on a
 	// low-markup clear.
-	const netMarkup = $derived((buyout ?? startingBid) - listedTt - (listingFee || 0));
+	const netMarkup = $derived(
+		(saleMethod === 'trade' ? soldFor : (buyout ?? startingBid)) -
+			listedTt -
+			(saleMethod === 'auction' ? listingFee || 0 : 0),
+	);
 
 	$effect(() => {
 		if (item && initialisedFor !== item.itemName) {
@@ -61,6 +70,8 @@
 			startingBid = 0;
 			buyout = null;
 			listingFee = 0.5;
+			soldFor = 0;
+			saleMethod = 'auction';
 			// Prefilled rather than left blank: listing today is the case, and
 			// an empty field reads as unset when the effect is today's date.
 			listedAt = todayDate();
@@ -79,23 +90,32 @@
 	});
 
 	async function confirm() {
-		if (!item || listing || quantity <= 0) return;
-		listing = true;
+		if (!item || saving || quantity <= 0) return;
+		saving = true;
 		error = null;
 		try {
-			await onlist({
-				itemName: item.itemName,
-				quantity,
-				startingBid,
-				buyout,
-				listingFee,
-				listedAt: listedAt || null,
-			});
+			if (saleMethod === 'auction') {
+				await onlist({
+					itemName: item.itemName,
+					quantity,
+					startingBid,
+					buyout,
+					listingFee,
+					listedAt: listedAt || null,
+				});
+			} else {
+				await ontrade({
+					itemName: item.itemName,
+					quantity,
+					soldFor,
+					soldAt: listedAt || null,
+				});
+			}
 			modalOpen = false;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to create the listing';
+			error = e instanceof Error ? e.message : 'Failed to record the sale';
 		} finally {
-			listing = false;
+			saving = false;
 		}
 	}
 </script>
@@ -103,18 +123,25 @@
 {#if item}
 	<Modal bind:open={modalOpen} title={`Sell ${item.itemName}`}>
 		<div class="space-y-4">
+			<SegmentedControl
+				options={[{ id: 'auction', label: 'Auction' }, { id: 'trade', label: 'Trade' }]}
+				active={saleMethod}
+				onchange={(id) => (saleMethod = id as 'auction' | 'trade')}
+			/>
 			<div class="bg-surface/50 rounded-md border border-border/50 px-3 py-2 space-y-1.5 text-sm">
 				<div class="flex items-center justify-between">
 					<span class="text-text-secondary">Held</span>
 					<span class="tabular-nums text-text">{item.heldQty} ({formatPed(item.heldTt)} PED)</span>
 				</div>
 				<div class="flex items-center justify-between">
-					<span class="text-text-secondary">Listing TT</span>
+					<span class="text-text-secondary">{saleMethod === 'auction' ? 'Listing TT' : 'Sale TT'}</span>
 					<span class="tabular-nums text-text">{formatPed(listedTt)} PED</span>
 				</div>
-				{#if (buyout ?? startingBid) > 0}
+				{#if (saleMethod === 'trade' ? soldFor : (buyout ?? startingBid)) > 0}
 					<div class="flex items-center justify-between pt-1.5 border-t border-border/50">
-						<span class="text-text font-medium">Net markup if it clears</span>
+						<span class="text-text font-medium">
+							{saleMethod === 'auction' ? 'Net markup if it clears' : 'Realised markup'}
+						</span>
 						<span class="tabular-nums font-medium {netMarkup >= 0 ? 'text-success' : 'text-error'}">
 							{formatPed(netMarkup)} PED
 						</span>
@@ -134,6 +161,7 @@
 				</p>
 			{/if}
 
+			{#if saleMethod === 'auction'}
 			<div class="grid grid-cols-2 gap-3">
 				<label class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Starting bid (PED)</span>
@@ -159,15 +187,27 @@
 				The fee is charged now and stays spent even if the listing expires unsold. Any further fee
 				charged when it sells is entered at confirmation.
 			</p>
+			{:else}
+				<div class="grid grid-cols-2 gap-3">
+					<label class="block space-y-1">
+						<span class="eyebrow text-text-tertiary">Sold for (PED)</span>
+						<Input type="number" min="0" step="0.01" bind:value={soldFor} />
+					</label>
+					<label class="block space-y-1">
+						<span class="eyebrow text-text-tertiary">Sold on</span>
+						<Input type="date" bind:value={listedAt} />
+					</label>
+				</div>
+			{/if}
 
 			{#if error}
 				<p class="text-xs text-error">{error}</p>
 			{/if}
 
 			<div class="flex items-center justify-end gap-2 pt-2">
-				<Button variant="ghost" onclick={oncancel} disabled={listing}>Cancel</Button>
-				<Button onclick={confirm} loading={listing} disabled={quantity <= 0}>
-					List on auction
+				<Button variant="ghost" onclick={oncancel} disabled={saving}>Cancel</Button>
+				<Button onclick={confirm} loading={saving} disabled={quantity <= 0}>
+					{saleMethod === 'auction' ? 'List on auction' : 'Record trade'}
 				</Button>
 			</div>
 		</div>

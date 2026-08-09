@@ -9,13 +9,17 @@
 		stock,
 		onsell,
 		onconvert,
+		onremove = () => {},
+		onshrapnelconvert = () => {},
 		// The one activity-specific line in the panel, so the Hunting tab can
 		// host the same surface over its own loot without forking the layout.
-		sourceDescription = 'Loot recorded from tree cutting, minus loot you have already sold or converted.',
+		sourceDescription = 'Loot recorded from tree cutting, minus stock you have sold, converted, or removed.',
 	}: {
 		stock: TreeCuttingStock[];
 		onsell: (item: TreeCuttingStock) => void;
 		onconvert: (item: TreeCuttingStock) => void;
+		onremove?: (item: TreeCuttingStock) => void;
+		onshrapnelconvert?: (item: TreeCuttingStock) => void;
 		sourceDescription?: string;
 	} = $props();
 
@@ -239,8 +243,8 @@
 						{sourceDescription}
 					</p>
 					<p>
-						Stock TT is its Trade Terminal value. Market markup only becomes a realised gain when a
-						sale is confirmed.
+						Stock TT is its Trade Terminal value. Markup becomes realised when a sale is confirmed
+						or Shrapnel is deliberately converted.
 					</p>
 				</div>
 			</InfoTip>
@@ -261,7 +265,7 @@
 		<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
 		<span class="eyebrow w-20 text-right shrink-0">Markup</span>
 		<span class="eyebrow w-12 text-center shrink-0">Conf</span>
-		<span class="eyebrow w-[3.375rem] shrink-0 text-right">Actions</span>
+		<span class="eyebrow w-[7.125rem] shrink-0 text-right">Actions</span>
 	</div>
 
 	<div class="relative">
@@ -369,12 +373,28 @@
 						item.heldQty <= 0,
 						item.heldQty <= 0 ? 'Nothing held to convert' : '',
 					)}
+					{#if item.itemName === 'Shrapnel'}
+						{@render actionButton(
+							'C',
+							'Convert',
+							() => onshrapnelconvert(item),
+							item.heldQty <= 0,
+							item.heldQty <= 0 ? 'Nothing held to convert' : '',
+						)}
+					{/if}
 					{@render actionButton(
 						'S',
 						'Sell',
 						() => onsell(item),
 						item.heldQty <= 0,
 						item.heldQty <= 0 ? 'Nothing held to sell' : '',
+					)}
+					{@render actionButton(
+						'X',
+						'Remove',
+						() => onremove(item),
+						item.heldQty <= 0,
+						item.heldQty <= 0 ? 'Nothing held to remove' : '',
 					)}
 				</div>
 			</li>
