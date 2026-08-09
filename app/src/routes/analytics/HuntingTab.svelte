@@ -1,5 +1,4 @@
 <script lang="ts">
-	import Card from '$lib/components/Card.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
@@ -155,9 +154,10 @@
 		oncancel={() => (convertItem = null)}
 	/>
 {:else}
-	<Card class="p-6">
-		<p class="text-sm text-text-tertiary text-center" data-guide-anchor="analytics-hunting-area">
-			No hunting data yet. Track a hunting session to compare your routines and activities.
-		</p>
-	</Card>
+	<p
+		class="py-10 text-center text-sm text-text-tertiary"
+		data-guide-anchor="analytics-hunting-area"
+	>
+		No hunting data yet. Track a hunting session to compare your routines and activities.
+	</p>
 {/if}

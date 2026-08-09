@@ -126,6 +126,11 @@ describe('Hunting economic comparisons', () => {
 			pageSize: Number.MAX_SAFE_INTEGER,
 		});
 		render(HuntingPrimaryView, { props: primaryProps(table, row) });
+		const surface = screen.getByTestId('hunting-primary-surface');
+		expect(surface.tagName).toBe('SECTION');
+		for (const boxClass of ['border', 'rounded', 'shadow', 'bg-gradient', 'backdrop-blur']) {
+			expect(surface.className).not.toContain(boxClass);
+		}
 
 		for (const label of ['TT Net', 'MU Net', 'Realised Net']) {
 			expect(screen.getByText(label)).not.toBeNull();

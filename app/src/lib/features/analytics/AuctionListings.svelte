@@ -36,6 +36,7 @@
 		emptyLead = 'Selling harvested stock',
 		expiredChargeNote = 'No board activity is charged for it: not selling describes the market ' +
 			'and the price you asked, not the harvesting that produced the stock.',
+		embedded = false,
 	}: {
 		open: AuctionListing[];
 		resolved: AuctionListing[];
@@ -50,6 +51,7 @@
 		sourceNounIndefinite?: string;
 		emptyLead?: string;
 		expiredChargeNote?: string;
+		embedded?: boolean;
 	} = $props();
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
@@ -185,7 +187,7 @@
 	</li>
 {/snippet}
 
-<Card class="hover:z-20">
+{#snippet content()}
 	{#if allListings.length === 0}
 		<div class="flex min-h-40 items-center justify-center p-6">
 			<div class="flex items-center gap-1.5 text-sm text-text-tertiary">
@@ -432,4 +434,10 @@
 			{/if}
 		</div>
 	{/if}
-</Card>
+{/snippet}
+
+{#if embedded}
+	<div>{@render content()}</div>
+{:else}
+	<Card class="hover:z-20">{@render content()}</Card>
+{/if}

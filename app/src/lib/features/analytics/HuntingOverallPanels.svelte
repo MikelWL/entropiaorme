@@ -62,6 +62,7 @@
 			{/if}
 		{:else if active === 'market'}
 			<AuctionListings
+				embedded
 				open={openListings}
 				resolved={resolvedListings}
 				onresolve={onresolve}
@@ -72,7 +73,7 @@
 				expiredChargeNote="No species is charged for it: not selling describes the market and the price you asked, not the hunting that produced the stock."
 			/>
 		{:else}
-			<ActivityHistory entries={history} loading={historyLoading} onundo={onundo} />
+			<ActivityHistory embedded entries={history} loading={historyLoading} onundo={onundo} />
 		{/if}
 	</div>
 </div>

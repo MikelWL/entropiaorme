@@ -1,5 +1,4 @@
 <script lang="ts">
-	import Card from '$lib/components/Card.svelte';
 	import type { ActivityHistoryEntry, AuctionListing } from '$lib/types/analytics';
 	import type { TableModel } from '$lib/view/tableModel.svelte';
 	import HuntingOverallPanels, { type HuntingOverallPanel } from './HuntingOverallPanels.svelte';
@@ -55,7 +54,7 @@
 	<HuntingSessionPicker {table} {selected} {overall} {totalCount} {onselect} />
 {/snippet}
 
-<Card class="relative hover:z-20 border-accent/30 p-6 shadow-lg backdrop-blur-[2px] bg-gradient-to-br from-accent/[0.12] via-surface/70 to-surface/70">
+<section class="relative" data-testid="hunting-primary-surface">
 	{#if selected?.isUnassigned}
 		<div class="min-w-0">
 			{@render scopeControl()}
@@ -95,4 +94,4 @@
 			{/if}
 		</div>
 	{/if}
-</Card>
+</section>

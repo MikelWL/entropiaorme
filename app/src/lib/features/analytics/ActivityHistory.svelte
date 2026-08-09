@@ -34,10 +34,12 @@
 		entries,
 		loading,
 		onundo,
+		embedded = false,
 	}: {
 		entries: ActivityHistoryEntry[];
 		loading: boolean;
 		onundo: (entry: ActivityHistoryEntry, revertSale: boolean) => Promise<void>;
+		embedded?: boolean;
 	} = $props();
 
 	// Which row is asking to be confirmed, and which row is mid-undo. Only one
@@ -90,7 +92,7 @@
 	}
 </script>
 
-<Card class="hover:z-20">
+{#snippet content()}
 	{#if loading}
 		<p class="py-10 text-center text-sm text-text-tertiary">Reading what has been recorded...</p>
 	{:else if entries.length === 0}
@@ -215,4 +217,10 @@
 			{/each}
 		</ul>
 	{/if}
-</Card>
+{/snippet}
+
+{#if embedded}
+	<div>{@render content()}</div>
+{:else}
+	<Card class="hover:z-20">{@render content()}</Card>
+{/if}
