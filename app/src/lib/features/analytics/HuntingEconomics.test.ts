@@ -217,11 +217,14 @@ describe('Hunting economic comparisons', () => {
 
 		expect(screen.queryByRole('button', { name: 'Activities' })).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Loot' })).toBeNull();
+		const activityTrigger = screen.getByLabelText(
+			'Switch session activity (currently Daily Hunting 1)',
+		);
+		const sessionLootTrigger = screen.getByRole('button', { name: 'Show session loot' });
 		expect(
-			screen.getByLabelText('Switch session activity (currently Daily Hunting 1)'),
-		).not.toBeNull();
+			sessionLootTrigger.compareDocumentPosition(activityTrigger) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).not.toBe(0);
 		expect(screen.getByRole('button', { name: 'Show activity loot' })).not.toBeNull();
-		expect(screen.getByRole('button', { name: 'Show session loot' })).not.toBeNull();
 		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
 	});
 

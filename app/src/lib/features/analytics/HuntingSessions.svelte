@@ -22,6 +22,12 @@
 		</div>
 	</div>
 {:else}
+	<ActivityLootComposition
+		items={selected.items}
+		marketAvailable={selected.muProjectedReturns !== null}
+		emptyLabel="No loot recorded for this session yet."
+		disclosure="session"
+	/>
 	{#if hasDeclaredActivities}
 		<div class="border-t border-border/50 pt-5">
 			<HuntingSessionActivities
@@ -30,10 +36,4 @@
 			/>
 		</div>
 	{/if}
-	<ActivityLootComposition
-		items={selected.items}
-		marketAvailable={selected.muProjectedReturns !== null}
-		emptyLabel="No loot recorded for this session yet."
-		disclosure="session"
-	/>
 {/if}
