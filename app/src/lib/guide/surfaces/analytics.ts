@@ -27,7 +27,7 @@ function ledgerApi(): Partial<LedgerDemoApi> {
 /** Sub-API registered by HuntingTab.svelte on mount for guide-driven view
  * switching. */
 type HuntingDemoApi = {
-	setView(view: 'sessions' | 'market' | 'history'): void;
+	setView(view: 'overall' | 'market' | 'history'): void;
 };
 
 function huntingApi(): Partial<HuntingDemoApi> {
@@ -310,7 +310,7 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Sessions compares the routines you defined. Inside a session, Activities separates its declared quests, segments, and joint bundles without duplicating shared costs; a session without declared activities opens directly onto its loot.',
+						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Overall is also the session picker: choosing a routine replaces the combined detail beneath the same headline figures. Inside a session, Activities separates its declared quests, segments, and joint bundles without duplicating shared costs; a session without declared activities opens directly onto its loot.',
 					},
 					{
 						kind: 'p',
@@ -328,14 +328,14 @@ export const analyticsSurface: GuideSurface = {
 				const api = demoApi as Partial<AnalyticsDemoApi>;
 				api.setTab?.('hunting');
 				await wait(600);
-				// Briefly show the sale surface, then return to Sessions.
+				// Briefly show the sale surface, then return to Overall.
 				if (!(await abortableWait(900, stillActive))) return;
 				huntingApi().setView?.('market');
 				if (!(await abortableWait(1600, stillActive))) return;
-				huntingApi().setView?.('sessions');
+				huntingApi().setView?.('overall');
 			},
 			resetDemo() {
-				huntingApi().setView?.('sessions');
+				huntingApi().setView?.('overall');
 				analyticsApi().setTab?.('ledger');
 			},
 		},

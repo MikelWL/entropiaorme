@@ -257,12 +257,12 @@ export function createHuntingModel() {
 		},
 	});
 
-	/** The session whose detail panel is open: the selection, or the
-	 * busiest definition when nothing is selected or the selection no
-	 * longer resolves (a period switch can retire a key). */
+	/** The session whose detail replaces Overall. A null selection means
+	 * Overall; an invalid selection also returns there when a period switch
+	 * retires the selected key. */
 	const selectedSession = $derived.by<HuntingSessionSection | null>(() => {
-		if (sessionSections.length === 0) return null;
-		return sessionSections.find((s) => s.key === selectedSessionKey) ?? sessionSections[0];
+		if (selectedSessionKey === null) return null;
+		return sessionSections.find((s) => s.key === selectedSessionKey) ?? null;
 	});
 
 	// ── Dormant species projection ──
@@ -540,7 +540,7 @@ export function createHuntingModel() {
 		get selectedSession() {
 			return selectedSession;
 		},
-		selectSession(key: string) {
+		selectSession(key: string | null) {
 			selectedSessionKey = key;
 		},
 		get targetSections() {

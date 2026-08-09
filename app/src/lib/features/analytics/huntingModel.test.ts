@@ -162,6 +162,7 @@ describe('createHuntingModel', () => {
 		);
 		const model = createHuntingModel();
 		await model.loadData();
+		model.selectSession('definition:1');
 
 		const row = required(model.selectedSession?.activities[0], 'rewarded activity');
 		expect(row.rewardedRate).toBeCloseTo(1.05, 5);
@@ -199,12 +200,17 @@ describe('createHuntingModel', () => {
 		expect(overall.realisedRate).toBeCloseTo((1350 + 12) / 1500, 5);
 	});
 
-	it('degrades a stale session selection to the first economic row', async () => {
+	it('uses Overall by default and returns there for a stale session selection', async () => {
 		const model = createHuntingModel();
 		await model.loadData();
 
+		expect(model.selectedSession).toBeNull();
+		model.selectSession('definition:1');
+		expect(required(model.selectedSession, 'selected session').definitionId).toBe(1);
 		model.selectSession('definition:99');
-		expect(required(model.selectedSession, 'fallback session').definitionId).toBe(1);
+		expect(model.selectedSession).toBeNull();
+		model.selectSession(null);
+		expect(model.selectedSession).toBeNull();
 	});
 
 	it('stamps hunting on listings and conversions', async () => {

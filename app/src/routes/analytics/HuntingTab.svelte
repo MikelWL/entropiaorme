@@ -6,10 +6,8 @@
 	import ActivityHistory from '$lib/features/analytics/ActivityHistory.svelte';
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
-	import HuntingSessions from '$lib/features/analytics/HuntingSessions.svelte';
+	import HuntingPrimaryView from '$lib/features/analytics/HuntingPrimaryView.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
-	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
-	import TreeCuttingStats from '$lib/features/analytics/TreeCuttingStats.svelte';
 	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
 	import { createHuntingModel } from '$lib/features/analytics/huntingModel.svelte';
 	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
@@ -21,15 +19,11 @@
 
 	const model = createHuntingModel();
 
-	// The lower box answers three questions about the same activity: how the
-	// player's deliberate routines perform, what is currently happening in
-	// the market with what they dropped, and what has already been done with
-	// it. Overall stays put above all three,
-	// since the headline figures describe the activity whichever is open.
-	type ActivityView = 'sessions' | 'market' | 'history';
-	let activityView = $state<ActivityView>('sessions');
+	// Sessions replace Overall inside the primary economic surface. Market
+	// and History remain a separate stock-lifecycle surface beneath it.
+	type ActivityView = 'market' | 'history';
+	let activityView = $state<ActivityView>('market');
 	const ACTIVITY_VIEWS = [
-		{ id: 'sessions', label: 'Sessions' },
 		{ id: 'market', label: 'Market' },
 		{ id: 'history', label: 'History' },
 	];
@@ -64,6 +58,10 @@
 	onMount(() => {
 		registerDemoApi('analytics-hunting', {
 			setView: (view: string) => {
+				if (view === 'overall' || view === 'sessions') {
+					model.selectSession(null);
+					return;
+				}
 				void showView(view as ActivityView);
 			},
 		});
@@ -131,32 +129,16 @@
 			</div>
 		</div>
 
-		<div
-			class="relative hover:z-20 rounded-xl border border-accent/30 p-6 shadow-lg
-				backdrop-blur-[2px] bg-gradient-to-br from-accent/[0.12] via-surface/70 to-surface/70"
-		>
-			<div class="grid gap-x-8 gap-y-6 sm:grid-cols-[auto_minmax(0,1fr)]">
-				<TreeCuttingStats
-					heading="Overall"
-					cycled={model.overall.cycled}
-					returns={model.overall.returns}
-					lootRate={model.overall.lootRate}
-					muProjectedReturns={model.overall.muProjectedReturns}
-					muRate={model.overall.muRate}
-					realisedReturns={model.overall.realisedReturns}
-					realisedRate={model.overall.realisedRate}
-				/>
-
-				{#if model.stock.length > 0}
-					<TreeCuttingStock
-						stock={model.stock}
-						onsell={(item) => (sellItem = item)}
-						onconvert={(item) => (convertItem = item)}
-						sourceDescription="Loot recorded from hunting, minus loot you have already sold or converted."
-					/>
-				{/if}
-			</div>
-		</div>
+		<HuntingPrimaryView
+			overall={model.overall}
+			stock={model.stock}
+			table={model.sessionTable}
+			selected={model.selectedSession}
+			totalCount={model.sessionSections.length}
+			onselect={(key) => model.selectSession(key)}
+			onsell={(item) => (sellItem = item)}
+			onconvert={(item) => (convertItem = item)}
+		/>
 
 		<div class="space-y-3">
 			<SegmentedControl
@@ -165,14 +147,7 @@
 				onchange={(id) => showView(id as ActivityView)}
 			/>
 
-			{#if activityView === 'sessions'}
-				<HuntingSessions
-					table={model.sessionTable}
-					selected={model.selectedSession}
-					totalCount={model.sessionSections.length}
-					onselect={(key) => model.selectSession(key)}
-				/>
-			{:else if activityView === 'market'}
+			{#if activityView === 'market'}
 				<AuctionListings
 					open={model.openListings}
 					resolved={model.resolvedListings}
