@@ -366,13 +366,6 @@
 				</div>
 
 				<div class="shrink-0 flex items-center justify-end gap-1.5">
-					{@render actionButton(
-						'N',
-						'Nanocube',
-						() => onconvert(item),
-						item.heldQty <= 0,
-						item.heldQty <= 0 ? 'Nothing held to convert' : '',
-					)}
 					{#if item.itemName === 'Shrapnel'}
 						{@render actionButton(
 							'C',
@@ -381,7 +374,16 @@
 							item.heldQty <= 0,
 							item.heldQty <= 0 ? 'Nothing held to convert' : '',
 						)}
+					{:else}
+						<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
 					{/if}
+					{@render actionButton(
+						'N',
+						'Nanocube',
+						() => onconvert(item),
+						item.heldQty <= 0,
+						item.heldQty <= 0 ? 'Nothing held to convert' : '',
+					)}
 					{@render actionButton(
 						'S',
 						'Sell',

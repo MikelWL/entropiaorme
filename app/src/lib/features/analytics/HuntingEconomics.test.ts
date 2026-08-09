@@ -188,6 +188,17 @@ describe('Hunting economic comparisons', () => {
 
 		expect(screen.getAllByLabelText('Remove')).toHaveLength(2);
 		expect(screen.getAllByLabelText('Convert')).toHaveLength(1);
+		const rows = screen.getByTestId('stock-scroll-list').querySelectorAll('li');
+		expect(
+			rows[0]
+				?.querySelector('[aria-label="Convert"]')
+				?.nextElementSibling?.getAttribute('aria-label'),
+		).toBe('Nanocube');
+		expect(
+			rows[1]
+				?.querySelector('[aria-hidden="true"]')
+				?.nextElementSibling?.getAttribute('aria-label'),
+		).toBe('Nanocube');
 	});
 
 	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', async () => {
