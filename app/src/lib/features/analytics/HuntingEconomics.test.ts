@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createTableModel } from '$lib/view/tableModel.svelte';
 import HuntingSessions from './HuntingSessions.svelte';
@@ -68,27 +68,27 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 }
 
 describe('Hunting economic comparisons', () => {
-	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', () => {
+	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', async () => {
 		const row = session();
 		const table = createTableModel<HuntingSessionSection>({
 			rows: () => [row],
 			pageSize: Number.MAX_SAFE_INTEGER,
 		});
 		render(HuntingSessions, {
-			props: { table, selected: row, onselect: vi.fn() },
+			props: { table, selected: row, totalCount: 1, onselect: vi.fn() },
 		});
 
-		for (const label of [
-			'Cycled',
-			'MU Rate',
-			'Realised Rate',
-			'TT Net',
-			'MU Net',
-			'Realised Net',
-		]) {
+		for (const label of ['TT Net', 'MU Net', 'Realised Net']) {
 			expect(screen.getByText(label)).not.toBeNull();
 		}
 		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
+		const trigger = screen.getByLabelText('Switch analytics session (currently ARIS Dailies)');
+		expect(screen.queryByRole('menu')).toBeNull();
+		await fireEvent.click(trigger);
+		const menu = screen.getByRole('menu');
+		for (const label of ['Cycled', 'MU Rate', 'Realised Rate']) {
+			expect(within(menu).getByText(label)).not.toBeNull();
+		}
 		expect(screen.queryByRole('button', { name: 'Activities' })).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Loot' })).toBeNull();
 		for (const legacy of ['PES/100', 'Kills', 'Runs', 'Instances', 'Duration', 'Net / Kill']) {
@@ -96,7 +96,7 @@ describe('Hunting economic comparisons', () => {
 		}
 	});
 
-	it('pins unassigned sessions last and suppresses their economic metrics', () => {
+	it('pins unassigned sessions last in the picker and suppresses their economic metrics', async () => {
 		const unassigned = session({
 			definitionId: null,
 			name: 'Unassigned',
@@ -110,14 +110,15 @@ describe('Hunting economic comparisons', () => {
 			pageSize: Number.MAX_SAFE_INTEGER,
 		});
 		render(HuntingSessions, {
-			props: { table, selected: unassigned, onselect: vi.fn() },
+			props: { table, selected: unassigned, totalCount: 2, onselect: vi.fn() },
 		});
 
-		const rows = screen.getAllByRole('listitem');
+		await fireEvent.click(screen.getByLabelText('Switch analytics session (currently Unassigned)'));
+		const rows = screen.getAllByRole('menuitem');
 		expect(rows).toHaveLength(2);
 		expect(rows[0].textContent).toContain('ARIS Dailies');
 		expect(rows[1].textContent).toContain('Unassigned');
-		expect(within(rows[1]).getByRole('button').textContent).not.toContain('999.00');
+		expect(rows[1].textContent).not.toContain('999.00');
 		expect(screen.queryByText('TT Net')).toBeNull();
 	});
 
@@ -128,11 +129,50 @@ describe('Hunting economic comparisons', () => {
 			pageSize: Number.MAX_SAFE_INTEGER,
 		});
 		render(HuntingSessions, {
-			props: { table, selected: row, onselect: vi.fn() },
+			props: { table, selected: row, totalCount: 1, onselect: vi.fn() },
 		});
 
 		expect(screen.getByRole('button', { name: 'Activities' })).not.toBeNull();
 		expect(screen.getByRole('button', { name: 'Loot' })).not.toBeNull();
 		expect(screen.getByText('Daily Hunting 1')).not.toBeNull();
+	});
+
+	it('filters rich economic rows and selects from the keyboard-ready overlay', async () => {
+		const current = session();
+		const alternative = session({
+			definitionId: 8,
+			name: 'General Hunting',
+			key: 'definition:8',
+			cycled: 80,
+			realisedRate: 0.98,
+		});
+		const table = createTableModel<HuntingSessionSection>({
+			rows: () => [current, alternative],
+			pageSize: Number.MAX_SAFE_INTEGER,
+			searchText: (row) => [row.name],
+			initialSort: { key: 'cycled', dir: 'desc' },
+		});
+		const onselect = vi.fn();
+		render(HuntingSessions, {
+			props: { table, selected: current, totalCount: 2, onselect },
+		});
+
+		const trigger = screen.getByLabelText('Switch analytics session (currently ARIS Dailies)');
+		await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+		const filter = screen.getByLabelText('Filter analytics sessions');
+		expect(document.activeElement).toBe(filter);
+		const menu = screen.getByRole('menu');
+		expect(within(menu).getByText('100.00')).not.toBeNull();
+		expect(within(menu).getByText('105.0%')).not.toBeNull();
+
+		await fireEvent.input(filter, { target: { value: 'general' } });
+		const match = screen.getByRole('menuitem', { name: /General Hunting/ });
+		expect(screen.queryByRole('menuitem', { name: /ARIS Dailies/ })).toBeNull();
+		await fireEvent.keyDown(filter, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(match);
+		await fireEvent.click(match);
+
+		expect(onselect).toHaveBeenCalledWith('definition:8');
+		expect(screen.queryByRole('menu')).toBeNull();
 	});
 });

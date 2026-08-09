@@ -169,6 +169,7 @@
 				<HuntingSessions
 					table={model.sessionTable}
 					selected={model.selectedSession}
+					totalCount={model.sessionSections.length}
 					onselect={(key) => model.selectSession(key)}
 				/>
 			{:else if activityView === 'market'}
