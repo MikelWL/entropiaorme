@@ -62,8 +62,6 @@ export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'>
 	key: string;
 	isUnscoped: boolean;
 	muProjectedReturns: number | null;
-	muRewardedReturns: number | null;
-	muRewardedRate: number | null;
 	items: TreeCuttingItem[];
 	variants: HuntingActivitySection[];
 };
@@ -71,6 +69,7 @@ export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'>
 export type HuntingSessionSection = Omit<HuntingDefinitionComparison, 'activities'> & {
 	key: string;
 	isUnassigned: boolean;
+	confirmedRewardPed: number;
 	realisedMarkup: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
@@ -191,18 +190,11 @@ export function createHuntingModel() {
 				marketByItem,
 				confidenceMode,
 			);
-			const muRewardedReturns =
-				projection.muProjectedReturns === null
-					? null
-					: projection.muProjectedReturns + row.confirmedRewardPed;
 			return {
 				...row,
 				key,
 				isUnscoped: row.kind === 'ambient',
 				muProjectedReturns: projection.muProjectedReturns,
-				muRewardedReturns,
-				muRewardedRate:
-					muRewardedReturns !== null && row.cycled > 0 ? muRewardedReturns / row.cycled : null,
 				items: projection.items,
 				variants: row.variants.map((variant, variantIndex) =>
 					activitySection(variant, key, variantIndex),
@@ -219,11 +211,18 @@ export function createHuntingModel() {
 			);
 			const realisedMarkup =
 				row.definitionId === null ? 0 : (realisedByDefinition.get(row.definitionId) ?? 0);
-			const realisedReturns = row.returns + realisedMarkup;
+			// Top-level activities partition the definition. Family variants are
+			// explanatory children whose reward is already present in their parent.
+			const confirmedRewardPed = row.activities.reduce(
+				(sum, activity) => sum + activity.confirmedRewardPed,
+				0,
+			);
+			const realisedReturns = row.returns + confirmedRewardPed + realisedMarkup;
 			return {
 				...row,
 				key: row.definitionId === null ? 'unassigned' : `definition:${row.definitionId}`,
 				isUnassigned: row.definitionId === null,
+				confirmedRewardPed,
 				realisedMarkup,
 				muProjectedReturns: projection.muProjectedReturns,
 				muRate: projection.muRate,
@@ -316,7 +315,11 @@ export function createHuntingModel() {
 		// way, and the remainder is disclosed rather than silently dropped.
 		const realisedMarkup = [...realisedBySpecies.values()].reduce((sum, v) => sum + v, 0);
 		const realisedInPeriod = targetSections.reduce((sum, s) => sum + s.realisedMarkup, 0);
-		const realisedReturns = data.overall.returns + realisedMarkup;
+		const confirmedRewardPed = sessionSections.reduce(
+			(sum, session) => sum + session.confirmedRewardPed,
+			0,
+		);
+		const realisedReturns = data.overall.returns + confirmedRewardPed + realisedMarkup;
 		return {
 			realisedOutsidePeriod: realisedMarkup - realisedInPeriod,
 			cycled,

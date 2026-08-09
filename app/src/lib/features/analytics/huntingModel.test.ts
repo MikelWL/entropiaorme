@@ -156,9 +156,16 @@ describe('createHuntingModel', () => {
 		expect(unassigned.realisedMarkup).toBe(0);
 	});
 
-	it('keeps confirmed rewards additive to both TT and current-market activity outcomes', async () => {
+	it('adds confirmed rewards once to activity, session, and Overall realised outcomes', async () => {
+		const variant = sessionActivity();
 		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
-			activity({ definitions: [definition({ activities: [sessionActivity()] })] }),
+			activity({
+				definitions: [
+					definition({
+						activities: [sessionActivity({ kind: 'quest_family', variants: [variant] })],
+					}),
+				],
+			}),
 		);
 		const model = createHuntingModel();
 		await model.loadData();
@@ -167,8 +174,13 @@ describe('createHuntingModel', () => {
 		const row = required(model.selectedSession?.activities[0], 'rewarded activity');
 		expect(row.rewardedRate).toBeCloseTo(1.05, 5);
 		expect(required(row.muProjectedReturns, 'activity MU projection')).toBeCloseTo(15.6, 5);
-		expect(required(row.muRewardedReturns, 'rewarded MU projection')).toBeCloseTo(30.6, 5);
-		expect(required(row.muRewardedRate, 'rewarded MU rate')).toBeCloseTo(0.306, 5);
+		const session = required(model.selectedSession, 'rewarded session');
+		expect(session.confirmedRewardPed).toBe(15);
+		expect(session.realisedReturns).toBe(1113);
+		expect(session.realisedRate).toBeCloseTo(1113 / 1200, 5);
+		const overall = required(model.overall, 'rewarded Overall');
+		expect(overall.realisedReturns).toBe(1377);
+		expect(overall.realisedRate).toBeCloseTo(1377 / 1500, 5);
 	});
 
 	it('merges market opportunity and realised markup into target rows', async () => {

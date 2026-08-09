@@ -46,7 +46,7 @@
 {/snippet}
 
 {#if items.length > 0}
-	<div class="mt-5 border-t border-border/50 pt-4">
+	<div class="mt-5 {disclosure ? '' : 'border-t border-border/50 pt-4'}">
 		{#if disclosure}
 			<button
 				type="button"

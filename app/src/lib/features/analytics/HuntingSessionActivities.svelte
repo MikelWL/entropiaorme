@@ -33,6 +33,11 @@
 	);
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
+	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
+	const muRate = (activity: HuntingActivitySection) =>
+		activity.muProjectedReturns !== null && activity.cycled > 0
+			? activity.muProjectedReturns / activity.cycled
+			: null;
 	const kindLabel = (activity: HuntingActivitySection) => {
 		switch (activity.kind) {
 			case 'quest_family':
@@ -47,20 +52,20 @@
 				return 'Quest';
 		}
 	};
-	const rewardLabel = (activity: HuntingActivitySection) => {
+	const rewardValue = (activity: HuntingActivitySection) => {
 		switch (activity.rewardStatus) {
 			case 'included_in_loot':
-				return 'Included in loot';
+				return 'In loot';
 			case 'fixed_liquid':
-				return `+${formatPed(activity.confirmedRewardPed)} PED`;
+				return `+${formatPed(activity.confirmedRewardPed)}`;
 			case 'skill':
-				return 'Skill reward';
+				return 'Skill';
 			case 'mixed':
-				return 'Mixed rewards';
+				return 'Mixed';
 			case 'unverified':
-				return 'Earlier reward unverified';
+				return NO_DATA;
 			default:
-				return null;
+				return NO_DATA;
 		}
 	};
 	const rewardDetail = (activity: HuntingActivitySection) => {
@@ -81,10 +86,38 @@
 	};
 </script>
 
+{#snippet rewardTip()}
+	{#if selected}
+		<InfoTip align="right" width="w-80" label="How this reward is counted">
+			<p class="text-xs leading-relaxed text-text-secondary">{rewardDetail(selected)}</p>
+		</InfoTip>
+	{/if}
+{/snippet}
+
+{#snippet estimateTip()}
+	<InfoTip label="What MU figures are">
+		<p class="text-xs font-semibold leading-relaxed text-text">Estimated, not realised</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			What current market markup would add if this activity's loot sold at it. Confirmed rewards
+			remain outside this estimate.
+		</p>
+	</InfoTip>
+{/snippet}
+
+{#snippet realisedTip()}
+	<InfoTip label="What realised figures are">
+		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus confirmed liquid reward</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			At activity grain, a separately confirmed liquid quest reward is added exactly once. Confirmed
+			sale markup remains attributed at session grain.
+		</p>
+	</InfoTip>
+{/snippet}
+
 {#if selected}
 	<div>
-		<div class="flex items-start justify-between gap-3">
-			<div class="min-w-0">
+		<div class="min-w-0">
+			<div class="w-full min-w-0">
 				<HuntingActivityPicker
 					{activities}
 					{selected}
@@ -92,14 +125,6 @@
 				/>
 				<p class="mt-0.5 text-xs text-text-tertiary">{kindLabel(selected)}</p>
 			</div>
-			{#if rewardLabel(selected)}
-				<div class="flex shrink-0 items-center gap-1.5 rounded-md border border-border/50 bg-surface-hover/30 px-2 py-1 text-xs text-text-secondary">
-					<span>{rewardLabel(selected)}</span>
-					<InfoTip align="right" width="w-80" label="How this reward is counted">
-						<p class="text-xs leading-relaxed text-text-secondary">{rewardDetail(selected)}</p>
-					</InfoTip>
-				</div>
-			{/if}
 		</div>
 
 		{#if selected.isUnscoped}
@@ -107,58 +132,68 @@
 				This evidence was recorded without a declared quest or segment. It remains in the session total but cannot support a repeatable activity comparison.
 			</p>
 		{:else}
-			<div class="mt-5 grid grid-cols-3 gap-x-5">
+			<div
+				class="mt-5 grid grid-cols-4 items-start gap-x-6 gap-y-4"
+				data-testid="activity-economic-grid"
+			>
+				<StatDisplay
+					label="Reward"
+					value={rewardValue(selected)}
+					unit={selected.rewardStatus === 'fixed_liquid' ? 'PED' : ''}
+					labelSuffix={rewardTip}
+				/>
 				<StatDisplay
 					label="TT Net"
 					value={signedPed(selected.returns - selected.cycled)}
 					unit="PED"
 				/>
 				<StatDisplay
-					label="Reward"
-					value={selected.rewardStatus === 'fixed_liquid'
-						? `+${formatPed(selected.confirmedRewardPed)}`
-						: selected.rewardStatus === 'included_in_loot'
-							? 'In loot'
-							: selected.rewardStatus === 'skill'
-								? 'Skill'
-								: NO_DATA}
-					unit={selected.rewardStatus === 'fixed_liquid' ? 'PED' : ''}
+					label="MU Net"
+					value={selected.muProjectedReturns !== null
+						? signedPed(selected.muProjectedReturns - selected.cycled)
+						: NO_DATA}
+					unit={selected.muProjectedReturns !== null ? 'PED' : ''}
+					labelSuffix={estimateTip}
 				/>
 				<StatDisplay
-					label="Rewarded Net"
+					label="Realised Net"
 					value={selected.rewardStatus === 'unverified'
 						? NO_DATA
 						: signedPed(selected.rewardedReturns - selected.cycled)}
-					valueClass={selected.rewardStatus === 'unverified' ? 'text-text-tertiary' : 'text-text'}
+					valueClass={selected.rewardStatus === 'unverified'
+						? 'text-text-tertiary'
+						: netTone(selected.rewardedReturns - selected.cycled)}
 					unit={selected.rewardStatus === 'unverified' ? '' : 'PED'}
+					labelSuffix={realisedTip}
 				/>
-			</div>
 
-			{#if selected.rewardStatus === 'fixed_liquid'}
-				<p class="mt-3 text-xs tabular-nums text-text-tertiary">
-					{formatPed(selected.returns)} loot + {formatPed(selected.confirmedRewardPed)} reward − {formatPed(selected.cycled)} cycled =
-					<span class="font-medium text-text">
-						{signedPed(selected.rewardedReturns - selected.cycled)} PED
-					</span>
-				</p>
-			{/if}
-
-			{#if selected.muRewardedReturns !== null}
-				<div class="mt-4 flex items-center justify-between rounded-lg border border-border/40 bg-surface-hover/20 px-3 py-2">
-					<div>
-						<p class="text-xs font-medium text-text">At current market</p>
-						<p class="text-[0.6875rem] text-text-tertiary">Projected loot markup plus confirmed liquid reward</p>
-					</div>
-					<div class="text-right">
-						<p class="text-sm font-semibold tabular-nums text-text">
-							{signedPed(selected.muRewardedReturns - selected.cycled)} PED
-						</p>
-						<p class="text-xs tabular-nums text-text-secondary">
-							{selected.muRewardedRate !== null ? formatPercent(selected.muRewardedRate) : NO_DATA}
-						</p>
-					</div>
+				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-cycled">
+					<StatDisplay label="Cycled" value={formatPed(selected.cycled)} unit="PED" emphasis="secondary" />
 				</div>
-			{/if}
+				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-tt-rate">
+					<StatDisplay label="TT Rate" value={formatPercent(selected.lootRate)} valueClass="text-text" emphasis="secondary" />
+				</div>
+				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-mu-rate">
+					<StatDisplay
+						label="MU Rate"
+						value={muRate(selected) !== null ? formatPercent(muRate(selected) ?? 0) : NO_DATA}
+						valueClass={muRate(selected) !== null ? 'text-text' : 'text-text-tertiary'}
+						emphasis="secondary"
+					/>
+				</div>
+				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-realised-rate">
+					<StatDisplay
+						label="Realised Rate"
+						value={selected.rewardStatus === 'unverified'
+							? NO_DATA
+							: formatPercent(selected.rewardedRate)}
+						valueClass={selected.rewardStatus === 'unverified'
+							? 'text-text-tertiary'
+							: netTone(selected.rewardedRate - 1)}
+						emphasis="secondary"
+					/>
+				</div>
+			</div>
 
 			<ActivityLootComposition
 				items={selected.items}

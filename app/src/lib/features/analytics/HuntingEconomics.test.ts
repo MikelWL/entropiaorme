@@ -39,6 +39,7 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		activities: [],
 		key: 'definition:7',
 		isUnassigned: false,
+		confirmedRewardPed: 0,
 		realisedMarkup: 15,
 		muProjectedReturns: 106,
 		muRate: 1.06,
@@ -96,8 +97,6 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		key: 'quest:daily-hunting-1',
 		isUnscoped: false,
 		muProjectedReturns: 106,
-		muRewardedReturns: 106,
-		muRewardedRate: 1.06,
 		items: [item],
 		variants: [],
 		...overrides,
@@ -222,7 +221,8 @@ describe('Hunting economic comparisons', () => {
 		);
 		const sessionLootTrigger = screen.getByRole('button', { name: 'Show session loot' });
 		expect(
-			sessionLootTrigger.compareDocumentPosition(activityTrigger) & Node.DOCUMENT_POSITION_FOLLOWING,
+			sessionLootTrigger.compareDocumentPosition(activityTrigger) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
 		).not.toBe(0);
 		expect(screen.getByRole('button', { name: 'Show activity loot' })).not.toBeNull();
 		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();

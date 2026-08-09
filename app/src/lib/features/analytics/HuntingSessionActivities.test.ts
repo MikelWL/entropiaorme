@@ -22,8 +22,6 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		key: 'quest:daily-1',
 		isUnscoped: false,
 		muProjectedReturns: 104,
-		muRewardedReturns: 119,
-		muRewardedRate: 1.19,
 		items: [
 			{
 				name: 'Animal Muscle Oil',
@@ -63,12 +61,35 @@ describe('HuntingSessionActivities', () => {
 		});
 
 		const trigger = screen.getByLabelText('Switch session activity (currently Daily Hunting 1)');
-		expect(screen.getByText('TT Net')).not.toBeNull();
-		expect(screen.getByText('Rewarded Net')).not.toBeNull();
-		expect(screen.getByText(/90.00 loot \+ 15.00 reward/)).not.toBeNull();
+		const activityName = screen.getByTitle('Daily Hunting 1');
+		expect(activityName.className).toContain('break-words');
+		expect(activityName.className).not.toContain('truncate');
+		const grid = screen.getByTestId('activity-economic-grid');
+		expect(grid.className).toContain('grid-cols-4');
+		for (const label of [
+			'Reward',
+			'TT Net',
+			'MU Net',
+			'Realised Net',
+			'Cycled',
+			'TT Rate',
+			'MU Rate',
+			'Realised Rate',
+		]) {
+			expect(within(grid).getByText(label)).not.toBeNull();
+		}
+		expect(within(grid).getByText('+15.00')).not.toBeNull();
+		expect(within(grid).getByText('+4.00').className).not.toContain('text-positive');
+		expect(within(grid).getByText('+5.00').className).toContain('text-positive');
+		expect(within(grid).getByText('104.0%').className).not.toContain('text-positive');
+		expect(within(grid).getByText('105.0%').className).toContain('text-positive');
+		expect(screen.queryByText('Rewarded Net')).toBeNull();
+		expect(screen.queryByText('At current market')).toBeNull();
 		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
 		expect(screen.queryByLabelText('Find an item')).toBeNull();
-		await fireEvent.click(screen.getByRole('button', { name: 'Show activity loot' }));
+		const lootTrigger = screen.getByRole('button', { name: 'Show activity loot' });
+		expect(lootTrigger.parentElement?.className).not.toContain('border-t');
+		await fireEvent.click(lootTrigger);
 		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
 		expect(screen.getByRole('button', { name: 'Hide activity loot' })).not.toBeNull();
 		expect(screen.queryByLabelText('Find an item')).toBeNull();
@@ -119,10 +140,10 @@ describe('HuntingSessionActivities', () => {
 			},
 		});
 
-		expect(screen.getByText('Included in loot')).not.toBeNull();
-		for (const value of screen.getAllByText('+5.00')) {
-			expect(value.classList.contains('text-positive')).toBe(false);
-		}
+		expect(screen.getByText('In loot')).not.toBeNull();
+		const nets = screen.getAllByText('+5.00');
+		expect(nets).toHaveLength(2);
+		expect(nets.filter((value) => value.classList.contains('text-positive'))).toHaveLength(1);
 	});
 
 	it('suppresses an unverified historical reward instead of reading current quest settings', () => {
@@ -133,7 +154,8 @@ describe('HuntingSessionActivities', () => {
 			},
 		});
 
-		expect(screen.getByText('Earlier reward unverified')).not.toBeNull();
+		expect(screen.getByText('Realised Net')).not.toBeNull();
+		expect(screen.getByText('Realised Rate')).not.toBeNull();
 		expect(screen.getAllByText(NO_DATA).length).toBeGreaterThan(0);
 	});
 

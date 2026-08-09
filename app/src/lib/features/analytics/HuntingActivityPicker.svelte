@@ -49,12 +49,12 @@
 	initialFocus="first-input"
 	overlayOverflow="hidden"
 	panelClass="w-[min(38rem,calc(100vw-1rem))] p-0"
-	class="min-w-0"
+	class="w-full min-w-0"
 >
 	{#snippet trigger({ open, toggle, keydown })}
 		<button
 			type="button"
-			class="group -ml-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left
+			class="group -ml-1.5 flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left
 				transition-colors duration-[var(--duration-fast)] hover:bg-surface-hover focus:outline-none
 				focus:bg-surface-hover focus:[box-shadow:var(--shadow-glow)]"
 			aria-haspopup="menu"
@@ -69,9 +69,9 @@
 				keydown(event);
 			}}
 		>
-			<span class="min-w-0">
+			<span class="min-w-0 flex-1">
 				<span class="eyebrow block text-text-tertiary">Activity</span>
-				<span class="mt-0.5 block truncate text-xl font-semibold tracking-tight text-text" title={selected.label}>
+				<span class="mt-0.5 block break-words text-xl font-semibold tracking-tight text-text" title={selected.label}>
 					{selected.label}
 				</span>
 			</span>
