@@ -118,8 +118,8 @@
 	<InfoTip label="What Reward MU is">
 		<p class="text-xs font-semibold leading-relaxed text-text">Projected, not realised</p>
 		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-			The separately recorded liquid reward valued at the markup percentage captured when the quest
-			completed. Realised figures continue to use its confirmed face value.
+			The actual reward item recorded at completion, valued from its current market data. An item
+			without usable market data stays at TT. Realised figures continue to use confirmed value only.
 		</p>
 	</InfoTip>
 {/snippet}

@@ -1,10 +1,11 @@
 <script lang="ts">
 	import Card from '$lib/components/Card.svelte';
+	import type { ActivityHistoryEntry, AuctionListing } from '$lib/types/analytics';
 	import type { TableModel } from '$lib/view/tableModel.svelte';
+	import HuntingOverallPanels, { type HuntingOverallPanel } from './HuntingOverallPanels.svelte';
 	import HuntingSessionPicker from './HuntingSessionPicker.svelte';
 	import HuntingSessions from './HuntingSessions.svelte';
 	import TreeCuttingStats from './TreeCuttingStats.svelte';
-	import TreeCuttingStock from './TreeCuttingStock.svelte';
 	import type {
 		HuntingOverallLine,
 		HuntingSessionSection,
@@ -20,6 +21,14 @@
 		onselect,
 		onsell,
 		onconvert,
+		overallPanel,
+		onpanelchange,
+		openListings,
+		resolvedListings,
+		history,
+		historyLoading,
+		onresolve,
+		onundo,
 	}: {
 		overall: HuntingOverallLine;
 		stock: StockRow[];
@@ -29,6 +38,14 @@
 		onselect: (key: string | null) => void;
 		onsell: (item: StockRow) => void;
 		onconvert: (item: StockRow) => void;
+		overallPanel: HuntingOverallPanel;
+		onpanelchange: (panel: HuntingOverallPanel) => void;
+		openListings: AuctionListing[];
+		resolvedListings: AuctionListing[];
+		history: ActivityHistoryEntry[];
+		historyLoading: boolean;
+		onresolve: (listingId: string, outcome: { sold: true; finalPrice: number; saleFee: number; resolvedAt?: string } | { sold: false; resolvedAt?: string }) => Promise<void>;
+		onundo: (entry: ActivityHistoryEntry, revertSale?: boolean) => Promise<void>;
 	} = $props();
 
 	const line = $derived(selected ?? overall);
@@ -61,15 +78,20 @@
 		<div class="mt-5">
 			{#if selected}
 				<HuntingSessions {selected} />
-			{:else if stock.length > 0}
-				<div class="border-t border-border/50 pt-5">
-					<TreeCuttingStock
-						{stock}
-						onsell={onsell}
-						onconvert={onconvert}
-						sourceDescription="Loot recorded from hunting, minus loot you have already sold or converted."
-					/>
-				</div>
+			{:else}
+				<HuntingOverallPanels
+					active={overallPanel}
+					{stock}
+					{openListings}
+					{resolvedListings}
+					{history}
+					{historyLoading}
+					onchange={onpanelchange}
+					{onsell}
+					{onconvert}
+					{onresolve}
+					{onundo}
+				/>
 			{/if}
 		</div>
 	{/if}

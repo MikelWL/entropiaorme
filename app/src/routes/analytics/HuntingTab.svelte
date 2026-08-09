@@ -3,10 +3,9 @@
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
-	import ActivityHistory from '$lib/features/analytics/ActivityHistory.svelte';
-	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import HuntingPrimaryView from '$lib/features/analytics/HuntingPrimaryView.svelte';
+	import type { HuntingOverallPanel } from '$lib/features/analytics/HuntingOverallPanels.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
 	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
 	import { createHuntingModel } from '$lib/features/analytics/huntingModel.svelte';
@@ -19,14 +18,7 @@
 
 	const model = createHuntingModel();
 
-	// Sessions replace Overall inside the primary economic surface. Market
-	// and History remain a separate stock-lifecycle surface beneath it.
-	type ActivityView = 'market' | 'history';
-	let activityView = $state<ActivityView>('market');
-	const ACTIVITY_VIEWS = [
-		{ id: 'market', label: 'Market' },
-		{ id: 'history', label: 'History' },
-	];
+	let overallPanel = $state<HuntingOverallPanel>('stock');
 
 	let sellItem = $state<StockRow | null>(null);
 	let convertItem = $state<StockRow | null>(null);
@@ -35,8 +27,8 @@
 	// depends on every other entry, so it is worth computing fresh at the
 	// moment it is offered.
 	let historyLoading = $state(false);
-	async function showView(id: ActivityView) {
-		activityView = id;
+	async function showView(id: HuntingOverallPanel) {
+		overallPanel = id;
 		if (id !== 'history') return;
 		historyLoading = true;
 		try {
@@ -60,9 +52,11 @@
 			setView: (view: string) => {
 				if (view === 'overall' || view === 'sessions') {
 					model.selectSession(null);
+					void showView('stock');
 					return;
 				}
-				void showView(view as ActivityView);
+				model.selectSession(null);
+				void showView(view as HuntingOverallPanel);
 			},
 		});
 		return () => unregisterDemoApi('analytics-hunting');
@@ -138,34 +132,15 @@
 			onselect={(key) => model.selectSession(key)}
 			onsell={(item) => (sellItem = item)}
 			onconvert={(item) => (convertItem = item)}
+			overallPanel={overallPanel}
+			onpanelchange={showView}
+			openListings={model.openListings}
+			resolvedListings={model.resolvedListings}
+			history={model.history}
+			{historyLoading}
+			onresolve={model.resolveListing}
+			onundo={model.undoHistoryEntry}
 		/>
-
-		<div class="space-y-3">
-			<SegmentedControl
-				options={ACTIVITY_VIEWS}
-				active={activityView}
-				onchange={(id) => showView(id as ActivityView)}
-			/>
-
-			{#if activityView === 'market'}
-				<AuctionListings
-					open={model.openListings}
-					resolved={model.resolvedListings}
-					onresolve={model.resolveListing}
-					activityNoun="hunting"
-					sourceNounPlural="the species"
-					sourceNounIndefinite="a species"
-					emptyLead="Selling hunted stock"
-					expiredChargeNote="No species is charged for it: not selling describes the market and the price you asked, not the hunting that produced the stock."
-				/>
-			{:else}
-				<ActivityHistory
-					entries={model.history}
-					loading={historyLoading}
-					onundo={model.undoHistoryEntry}
-				/>
-			{/if}
-		</div>
 	</div>
 
 	<SellStockModal

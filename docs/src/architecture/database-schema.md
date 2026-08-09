@@ -58,8 +58,10 @@ context on stock movements, plus its item/species/definition index, allowing
 one confirmed Hunting sale to be projected by both observed species and the
 repeatable session that produced it without duplicating the sale), and
 `0028_quest_reward_provenance.sql` (immutable completion-time reward and
-activity-context provenance), and `0029_session_context_loot_rollups.sql`
-(the context-grain loot rollup used by Hunting activity composition). The
+activity-context provenance), `0029_session_context_loot_rollups.sql`
+(the context-grain loot rollup used by Hunting activity composition), and
+`0030_quest_reward_items.sql` (actual reward-item evidence captured at quest
+completion). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -393,11 +395,25 @@ Records that a given quest was completed during a given session. The
 | `activity_interval_id` | INTEGER | Optional reference to `session_intervals(id)`. The declared quest stretch that earned the completion. |
 | `reward_source` | TEXT | Nullable for legacy completions; otherwise one of `none`, `tracked_loot`, `ledger`, or `skill`. |
 | `reward_ped` | REAL | Optional immutable completion-time reward value. Liquid PED enters activity economics; skill value remains progression. |
-| `expected_reward_markup_percent` | REAL | Optional completion-time snapshot for informational market projections. |
+| `expected_reward_markup_percent` | REAL | Optional legacy completion-time snapshot. Retained for compatibility; Hunting projections do not consume it. |
 | `ledger_entry_id` | TEXT | Optional reference to the exact liquid reward row in `ledger_entries`. |
 | `quest_claim_id` | INTEGER | Optional reference to the exact progression reward row in `quest_claims`. |
 
 A `UNIQUE(session_id, quest_id)` constraint prevents duplicate completion rows.
+
+#### `session_quest_completion_reward_items`
+
+Immutable item evidence observed as part of a quest reward. Hunting projects
+these items through current market data outside the accounting aggregate; an
+item without usable market data remains at its recorded TT value.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `completion_id` | INTEGER | Not null; references `session_quest_completions(id)` with cascade deletion and is indexed (`idx_sqc_reward_items_completion`). |
+| `item_name` | TEXT | Not null; the observed item name. |
+| `quantity` | INTEGER | Not null and positive; the observed quantity. |
+| `value_ped` | REAL | Not null and non-negative; the completion-time TT value. |
 
 #### `session_quest_analytics_links`
 
@@ -984,7 +1000,8 @@ migrations (`0002_analytical_indexes.sql`,
 `0026_session_activity_rollups.sql`,
 `0027_hunting_definition_provenance.sql`,
 `0028_quest_reward_provenance.sql`,
-`0029_session_context_loot_rollups.sql`); the runner
+`0029_session_context_loot_rollups.sql`,
+`0030_quest_reward_items.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

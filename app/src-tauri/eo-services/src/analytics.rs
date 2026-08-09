@@ -424,9 +424,9 @@ pub struct HuntingSignatureRow {
     pub pes_per100_ped: f64,
     /// Confirmed liquid reward recorded separately from tracked loot.
     pub confirmed_reward_ped: f64,
-    /// Projected liquid reward value using the markup snapshotted at
-    /// completion. Absent when the reward is not separately liquid-valued.
-    pub reward_mu_ped: Option<f64>,
+    /// Actual reward items observed at completion. Their current market
+    /// projection is resolved outside the accounting service.
+    pub reward_items: Vec<HarvestLootItemRow>,
     /// `none`, `tracked_loot`, `ledger`, `skill`, `mixed`, or
     /// `unverified` for completions predating immutable provenance.
     pub reward_status: String,
@@ -2035,8 +2035,8 @@ struct SignatureAgg {
     pes: f64,
     duration_hours: f64,
     confirmed_reward_ped: f64,
-    reward_mu_ped: f64,
     reward_sources: std::collections::BTreeSet<String>,
+    reward_items: std::collections::BTreeMap<String, (i64, f64)>,
     loot_items: std::collections::BTreeMap<String, (i64, f64)>,
     reward_unverified: bool,
     /// The distinct interval-id tuples seen, i.e. the focused stretches.
@@ -2717,13 +2717,13 @@ fn hunting_activity_read(
     // Completion-time reward facts. A NULL source is deliberately not
     // valued: it names a legacy completion whose current quest definition
     // must never rewrite its history.
-    let mut context_rewards: HashMap<i64, (f64, f64, BTreeSet<String>)> = HashMap::new();
+    let mut context_rewards: HashMap<i64, (f64, BTreeSet<String>)> = HashMap::new();
+    let mut context_reward_items: HashMap<i64, BTreeMap<String, (i64, f64)>> = HashMap::new();
     let mut legacy_quests: HashMap<Option<i64>, BTreeSet<i64>> = HashMap::new();
     {
         let mut stmt = conn.prepare(
             "SELECT sqc.session_id, sqc.quest_id, sqc.activity_context_id, \
-                    sqc.reward_source, sqc.reward_ped, \
-                    sqc.expected_reward_markup_percent \
+                    sqc.reward_source, sqc.reward_ped \
              FROM session_quest_completions sqc \
              JOIN hunting_session_scope scope ON scope.id = sqc.session_id",
         )?;
@@ -2747,16 +2747,32 @@ fn hunting_activity_read(
             };
             let reward = context_rewards
                 .entry(context_id)
-                .or_insert_with(|| (0.0, 0.0, BTreeSet::new()));
+                .or_insert_with(|| (0.0, BTreeSet::new()));
             if source == "ledger" {
                 let reward_ped = row.get::<_, Option<f64>>(4)?.unwrap_or(0.0);
-                let reward_markup = row.get::<_, Option<f64>>(5)?.unwrap_or(100.0);
                 reward.0 += reward_ped;
-                reward.1 += reward_ped * reward_markup / 100.0;
             }
             if source != "none" {
-                reward.2.insert(source);
+                reward.1.insert(source);
             }
+        }
+    }
+    {
+        let mut stmt = conn.prepare(
+            "SELECT sqc.activity_context_id, ri.item_name, SUM(ri.quantity), \
+                    COALESCE(SUM(ri.value_ped), 0) \
+             FROM session_quest_completion_reward_items ri \
+             JOIN session_quest_completions sqc ON sqc.id = ri.completion_id \
+             JOIN hunting_session_scope scope ON scope.id = sqc.session_id \
+             WHERE sqc.activity_context_id IS NOT NULL \
+             GROUP BY sqc.activity_context_id, ri.item_name",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            context_reward_items.entry(row.get(0)?).or_default().insert(
+                row.get(1)?,
+                (row.get::<_, i64>(2).unwrap_or(0), as_float(row, 3)),
+            );
         }
     }
 
@@ -2808,10 +2824,16 @@ fn hunting_activity_read(
             if let Some(pes) = context_pes.get(context_id) {
                 agg.pes += pes;
             }
-            if let Some((reward_ped, reward_mu_ped, sources)) = context_rewards.get(context_id) {
+            if let Some((reward_ped, sources)) = context_rewards.get(context_id) {
                 agg.confirmed_reward_ped += reward_ped;
-                agg.reward_mu_ped += reward_mu_ped;
                 agg.reward_sources.extend(sources.iter().cloned());
+            }
+            if let Some(items) = context_reward_items.get(context_id) {
+                for (name, (quantity, value)) in items {
+                    let item = agg.reward_items.entry(name.clone()).or_insert((0, 0.0));
+                    item.0 += quantity;
+                    item.1 += value;
+                }
             }
             if let Some(items) = context_items.get(context_id) {
                 for (name, (quantity, value)) in items {
@@ -3057,7 +3079,7 @@ fn assemble_signatures(
                 0.0
             },
             confirmed_reward_ped: round2(agg.confirmed_reward_ped),
-            reward_mu_ped: (status == "fixed_liquid").then(|| round2(agg.reward_mu_ped)),
+            reward_items: loot_rows(&agg.reward_items),
             reward_status: status,
             loot_items: loot_rows(&agg.loot_items),
             variants: Vec::new(),
@@ -3124,11 +3146,19 @@ fn assemble_signatures(
         let family_cycled: f64 = variants.iter().map(|v| v.cycled).sum();
         let family_pes: f64 = variants.iter().map(|v| v.pes).sum();
         let mut family_items: BTreeMap<String, (i64, f64)> = BTreeMap::new();
+        let mut family_reward_items: BTreeMap<String, (i64, f64)> = BTreeMap::new();
         let mut family_statuses: BTreeSet<String> = BTreeSet::new();
         let mut family_unverified = false;
         for variant in &variants {
             for item in &variant.loot_items {
                 let total = family_items
+                    .entry(item.item_name.clone())
+                    .or_insert((0, 0.0));
+                total.0 += item.quantity;
+                total.1 += item.value_ped;
+            }
+            for item in &variant.reward_items {
+                let total = family_reward_items
                     .entry(item.item_name.clone())
                     .or_insert((0, 0.0));
                 total.0 += item.quantity;
@@ -3164,8 +3194,7 @@ fn assemble_signatures(
                 0.0
             },
             confirmed_reward_ped: round2(variants.iter().map(|v| v.confirmed_reward_ped).sum()),
-            reward_mu_ped: (family_reward_status == "fixed_liquid")
-                .then(|| round2(variants.iter().filter_map(|v| v.reward_mu_ped).sum())),
+            reward_items: loot_rows(&family_reward_items),
             reward_status: family_reward_status,
             loot_items: loot_rows(&family_items),
             variants: Vec::new(),
@@ -8387,6 +8416,14 @@ mod tests {
                      VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'ledger', 4.0, 150.0)",
                     [],
                 )?;
+                conn.execute(
+                    "INSERT INTO session_quest_completion_reward_items \
+                     (completion_id, item_name, quantity, value_ped) \
+                     SELECT id, 'Universal Ammo', 1, 4.0 \
+                     FROM session_quest_completions \
+                     WHERE session_id = 'hunt-a' AND quest_id = 11",
+                    [],
+                )?;
 
                 // Kills: two focused Atrox (distinct maturities), one
                 // unfocused Atrox, and one species-less legacy stamp.
@@ -8534,9 +8571,9 @@ mod tests {
         assert!((family.pes - 0.8).abs() < 1e-9);
         assert_eq!(family.runs, 1);
         assert_eq!(family.confirmed_reward_ped, 4.0);
-        // The 150% completion snapshot wins over the quest's current value,
-        // which the test changed after completion.
-        assert_eq!(family.reward_mu_ped, Some(6.0));
+        assert_eq!(family.reward_items.len(), 1);
+        assert_eq!(family.reward_items[0].item_name, "Universal Ammo");
+        assert_eq!(family.reward_items[0].value_ped, 4.0);
         assert_eq!(family.reward_status, "fixed_liquid");
         assert_eq!(family.loot_items.len(), 1);
         assert_eq!(family.loot_items[0].item_name, "Animal Muscle Oil");

@@ -11,6 +11,15 @@ use crate::time::to_iso_utc;
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
 
+/// One actual item observed as a quest reward. This is completion evidence,
+/// not a market valuation: analytics resolves its current markup separately.
+#[derive(Debug, Clone)]
+pub(super) struct RewardItemEvidence {
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: Ped,
+}
+
 /// The overlay-event vocabulary the quest flows record: a started
 /// quest, a completed liquid reward, a completed skill (PES) reward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,14 +76,17 @@ impl QuestService {
     /// instead so a reward already present in tracked loot is preserved as
     /// provenance without being added a second time.
     pub async fn complete_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
-        self.complete_quest_with_evidence(quest_id, false).await
+        self.complete_quest_with_evidence(quest_id, false, Vec::new())
+            .await
     }
 
     pub(super) async fn complete_quest_with_loot_evidence(
         &self,
         quest_id: i64,
+        reward_items: Vec<RewardItemEvidence>,
     ) -> Result<Option<Value>, QuestError> {
-        self.complete_quest_with_evidence(quest_id, true).await
+        self.complete_quest_with_evidence(quest_id, true, reward_items)
+            .await
     }
 
     /// Complete a quest and preserve the immutable economic evidence in one
@@ -85,6 +97,7 @@ impl QuestService {
         &self,
         quest_id: i64,
         completion_had_tracked_loot: bool,
+        reward_items: Vec<RewardItemEvidence>,
     ) -> Result<Option<Value>, QuestError> {
         let Some(quest) = self.get_quest(quest_id).await? else {
             return Ok(None);
@@ -153,6 +166,19 @@ impl QuestService {
                     return Ok(());
                 }
                 let completion_id = tx.last_insert_rowid();
+                for item in reward_items {
+                    tx.execute(
+                        "INSERT INTO session_quest_completion_reward_items \
+                         (completion_id, item_name, quantity, value_ped) \
+                         VALUES (?, ?, ?, ?)",
+                        rusqlite::params![
+                            completion_id,
+                            item.item_name,
+                            item.quantity.max(1),
+                            item.value_ped.value().max(0.0),
+                        ],
+                    )?;
+                }
                 if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
                     if reward_is_skill {
                         tx.execute(

@@ -318,7 +318,7 @@ export const analyticsSurface: GuideSurface = {
 					},
 					{
 						kind: 'p',
-						text: 'Market and History carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and reverse an action from History. A confirmed sale is attributed back to the defined session that produced its stock.',
+						text: 'Stock, Market, and History share one progressive detail area inside Overall. Together they carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and reverse an action from History. A confirmed sale is attributed back to the defined session that produced its stock.',
 					},
 				],
 			},

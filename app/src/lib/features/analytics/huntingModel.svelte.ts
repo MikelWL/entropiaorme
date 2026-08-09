@@ -61,6 +61,9 @@ import {
 export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'> & {
 	key: string;
 	isUnscoped: boolean;
+	/** Current market projection over actual completion reward items. Missing
+	 * or excluded item market data contributes TT at 100%, never a proxy. */
+	rewardMuPed: number | null;
 	muProjectedReturns: number | null;
 	items: TreeCuttingItem[];
 	variants: HuntingActivitySection[];
@@ -190,10 +193,12 @@ export function createHuntingModel() {
 				marketByItem,
 				confidenceMode,
 			);
+			const rewardMuPed = projectRewardItems(row.rewardItems, market, marketByItem, confidenceMode);
 			return {
 				...row,
 				key,
 				isUnscoped: row.kind === 'ambient',
+				rewardMuPed,
 				muProjectedReturns: projection.muProjectedReturns,
 				items: projection.items,
 				variants: row.variants.map((variant, variantIndex) =>
@@ -568,6 +573,28 @@ export function createHuntingModel() {
 		resolveListing,
 		recycleStock,
 	};
+}
+
+/** Value observed reward items at current direct item markup. A missing or
+ * confidence-excluded market observation leaves that item's TT unchanged;
+ * the generic loot projection's Nanocube substitution is deliberately not
+ * used for quest rewards. */
+export function projectRewardItems(
+	items: HuntingActivityComparison['rewardItems'],
+	market: MarketHarvestData | null,
+	marketByItem: Map<string, MarketHarvestItem>,
+	confidenceMode: ConfidenceMode,
+): number | null {
+	if (items.length === 0) return null;
+	const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
+	return items.reduce((sum, item) => {
+		const marketItem = marketByItem.get(item.itemName);
+		if (!market || !marketItem) return sum + item.valuePed;
+		const opportunity = marketOpportunity(marketItem, nanocube);
+		const applied = effectiveMarkup(opportunity, nanocube, confidenceMode);
+		const markupPct = opportunity.usesNanocube || applied.floored ? 100 : applied.markupPct;
+		return sum + (item.valuePed * markupPct) / 100;
+	}, 0);
 }
 
 export type HuntingModel = ReturnType<typeof createHuntingModel>;

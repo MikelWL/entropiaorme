@@ -66,7 +66,7 @@ function sessionActivity(over: Partial<HuntingActivityComparison> = {}): Hunting
 		returns: 90,
 		lootRate: 0.9,
 		confirmedRewardPed: 15,
-		rewardMuPed: 18,
+		rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
 		rewardedReturns: 105,
 		rewardedRate: 1.05,
 		rewardStatus: 'fixed_liquid',
@@ -174,7 +174,7 @@ describe('createHuntingModel', () => {
 
 		const row = required(model.selectedSession?.activities[0], 'rewarded activity');
 		expect(row.rewardedRate).toBeCloseTo(1.05, 5);
-		expect(row.rewardMuPed).toBe(18);
+		expect(row.rewardMuPed).toBeCloseTo(19.5, 5);
 		expect(required(row.muProjectedReturns, 'activity MU projection')).toBeCloseTo(15.6, 5);
 		const session = required(model.selectedSession, 'rewarded session');
 		expect(session.confirmedRewardPed).toBe(15);
@@ -183,6 +183,26 @@ describe('createHuntingModel', () => {
 		const overall = required(model.overall, 'rewarded Overall');
 		expect(overall.realisedReturns).toBe(1377);
 		expect(overall.realisedRate).toBeCloseTo(1377 / 1500, 5);
+	});
+
+	it('leaves a recorded reward item at TT when it has no usable market data', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				definitions: [
+					definition({
+						activities: [
+							sessionActivity({
+								rewardItems: [{ itemName: 'Mission Token', quantity: 1, valuePed: 15 }],
+							}),
+						],
+					}),
+				],
+			}),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(15);
 	});
 
 	it('merges market opportunity and realised markup into target rows', async () => {

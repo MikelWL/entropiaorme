@@ -874,8 +874,8 @@ export interface HuntingActivityComparison {
 	returns: number;
 	lootRate: number;
 	confirmedRewardPed: number;
-	/** Projected liquid reward value using the completion-time markup snapshot; null for non-liquid or non-separate rewards. */
-	rewardMuPed: number | null;
+	/** Actual reward items observed at completion. Their markup stays a current market projection and never enters realised accounting. */
+	rewardItems: HarvestLootItem[];
 	rewardedReturns: number;
 	rewardedRate: number;
 	rewardStatus: HuntingRewardStatus;

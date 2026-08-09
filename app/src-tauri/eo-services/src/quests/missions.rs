@@ -12,7 +12,7 @@ use crate::chatlog_watcher::{MissionCompletion, SignalLoot};
 use crate::difflib::sequence_ratio;
 use crate::ped::Ped;
 
-use super::lifecycle::NotableEventKind;
+use super::lifecycle::{NotableEventKind, RewardItemEvidence};
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
 
@@ -238,22 +238,30 @@ impl QuestService {
         // candidate walk draws down, so a single marker never completes
         // two quests sharing it, and two markers in one tick (two runs
         // paid at once) complete two, stacked or not.
-        let mut budget: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut budget: std::collections::HashMap<String, Vec<RewardItemEvidence>> =
+            std::collections::HashMap::new();
         for line in loot {
-            *budget
+            let quantity = line.quantity.max(1);
+            let unit_value = line.value_ped * (1.0 / quantity as f64);
+            budget
                 .entry(line.item_name.trim().to_ascii_lowercase())
-                .or_insert(0) += line.quantity.max(1);
+                .or_default()
+                .extend((0..quantity).map(|_| RewardItemEvidence {
+                    item_name: line.item_name.trim().to_string(),
+                    quantity: 1,
+                    value_ped: unit_value,
+                }));
         }
         for (quest_id, quest_name, signal) in candidates {
             let key = signal.trim().to_ascii_lowercase();
             let Some(remaining) = budget.get_mut(&key) else {
                 continue;
             };
-            if *remaining == 0 {
+            let Some(reward_item) = remaining.pop() else {
                 continue;
-            }
-            *remaining -= 1;
-            self.complete_quest_with_loot_evidence(quest_id).await?;
+            };
+            self.complete_quest_with_loot_evidence(quest_id, vec![reward_item])
+                .await?;
             self.record_notable_event(NotableEventKind::Completed, &quest_name, Ped::ZERO)
                 .await;
         }
@@ -299,16 +307,25 @@ impl QuestService {
                 continue;
             };
             let quest_id = quest["id"].as_i64().expect("quest id");
+            let (suppression, suppressed_desc) =
+                reward_suppression(&quest, &completion.loot_items, &completion.skill_gains);
+            let reward_items = suppression
+                .as_ref()
+                .and_then(|value| value.get("suppress_loot_index"))
+                .and_then(Value::as_u64)
+                .and_then(|index| completion.loot_items.get(index as usize))
+                .and_then(reward_item_evidence)
+                .into_iter()
+                .collect();
             if completion.loot_items.is_empty() {
                 self.complete_quest(quest_id).await?;
             } else {
-                self.complete_quest_with_loot_evidence(quest_id).await?;
+                self.complete_quest_with_loot_evidence(quest_id, reward_items)
+                    .await?;
             }
 
             let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
             let is_skill = json_truthy(quest.get("reward_is_skill"));
-            let (_, suppressed_desc) =
-                reward_suppression(&quest, &completion.loot_items, &completion.skill_gains);
             let mut description = quest["name"].as_str().expect("quest name").to_string();
             if let Some(suppressed) = suppressed_desc {
                 description.push_str(": ");
@@ -324,6 +341,26 @@ impl QuestService {
         }
         Ok(())
     }
+}
+
+fn reward_item_evidence(item: &Value) -> Option<RewardItemEvidence> {
+    let item_name = item.get("item_name")?.as_str()?.trim();
+    if item_name.is_empty() {
+        return None;
+    }
+    Some(RewardItemEvidence {
+        item_name: item_name.to_string(),
+        quantity: item
+            .get("quantity")
+            .and_then(Value::as_i64)
+            .unwrap_or(1)
+            .max(1),
+        value_ped: Ped(item
+            .get("value")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+            .max(0.0)),
+    })
 }
 
 /// The reward-echo decision for one completion: which loot item or

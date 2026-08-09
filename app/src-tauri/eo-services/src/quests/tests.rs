@@ -1193,6 +1193,27 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         .await
         .unwrap();
     assert_eq!(final_ledger, ["fixed-0003", "fixed-0004"]);
+    let reward_items: Vec<(String, i64, f64)> = db
+        .with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT ri.item_name, ri.quantity, ri.value_ped \
+                 FROM session_quest_completion_reward_items ri \
+                 JOIN session_quest_completions c ON c.id = ri.completion_id \
+                 WHERE c.quest_id = ? ORDER BY ri.id",
+            )?;
+            Ok(stmt
+                .query_map(params![qa], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        reward_items,
+        [("Universal Ammo".to_string(), 1, 2.51)],
+        "the actual suppressed item is immutable reward evidence"
+    );
 
     // A session stop clears the tracked session: notable events
     // stop recording.
@@ -1821,6 +1842,15 @@ fn marker(item_name: &str, quantity: i64) -> SignalLoot {
     SignalLoot {
         item_name: item_name.to_string(),
         quantity,
+        value_ped: Ped::ZERO,
+    }
+}
+
+fn marker_value(item_name: &str, quantity: i64, value_ped: f64) -> SignalLoot {
+    SignalLoot {
+        item_name: item_name.to_string(),
+        quantity,
+        value_ped: Ped(value_ped),
     }
 }
 
@@ -1854,7 +1884,7 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     // purpose) completes the run; unrelated items complete nothing.
     svc.signal_loot_check(&[
         marker("Shrapnel", 4639),
-        marker(" hyperion daily voucher ", 1),
+        marker_value(" hyperion daily voucher ", 1, 0.25),
         marker("Hyperium", 2),
     ])
     .await
@@ -1876,6 +1906,26 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
         .await
         .unwrap();
     assert_eq!(source, ("tracked_loot".to_string(), None));
+    let reward_item = db
+        .with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT ri.item_name, ri.quantity, ri.value_ped \
+                 FROM session_quest_completion_reward_items ri \
+                 JOIN session_quest_completions c ON c.id = ri.completion_id \
+                 WHERE c.quest_id = ?",
+                params![boss],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                },
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(reward_item, ("hyperion daily voucher".to_string(), 1, 0.25));
 }
 
 /// A signal quest that is NOT in progress ignores its marker: an
