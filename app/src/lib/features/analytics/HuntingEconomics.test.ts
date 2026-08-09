@@ -83,6 +83,8 @@ describe('Hunting economic comparisons', () => {
 		}
 		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
 		const trigger = screen.getByLabelText('Switch analytics session (currently ARIS Dailies)');
+		expect(trigger.className).not.toContain('border');
+		expect(screen.getByTitle('ARIS Dailies').className).toContain('text-text');
 		expect(screen.queryByRole('menu')).toBeNull();
 		await fireEvent.click(trigger);
 		const menu = screen.getByRole('menu');

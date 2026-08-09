@@ -39,57 +39,58 @@
 
 <Card class="hover:z-20">
 	{#if selected}
-		<div class="border-b border-border/40 p-4">
-			<HuntingSessionPicker {table} {selected} {totalCount} {onselect} />
-		</div>
 		<div class="min-w-0 p-6">
-				{#if selected.isUnassigned}
-					<div class="flex min-h-36 items-center justify-center">
-						<div class="flex items-center gap-1.5 text-sm text-text-secondary">
-							<span>Hunting outside a defined session cannot join the routine comparison.</span>
-							<InfoTip label="What unassigned hunting means" width="w-80">
-								<p class="text-xs font-semibold leading-relaxed text-text">Hunting without a repeatable routine</p>
-								<p class="mt-1 text-xs leading-relaxed text-text-secondary">Its cost and loot still count in Overall. Without a session definition there is no deliberate activity to rank, so this diagnostic row carries no economic claim of its own.</p>
+			{#if selected.isUnassigned}
+				<HuntingSessionPicker {table} {selected} {totalCount} {onselect} />
+				<div class="mt-5 flex min-h-28 items-center justify-center border-t border-border/50 pt-5">
+					<div class="flex items-center gap-1.5 text-sm text-text-secondary">
+						<span>Hunting outside a defined session cannot join the routine comparison.</span>
+						<InfoTip label="What unassigned hunting means" width="w-80">
+							<p class="text-xs font-semibold leading-relaxed text-text">Hunting without a repeatable routine</p>
+							<p class="mt-1 text-xs leading-relaxed text-text-secondary">Its cost and loot still count in Overall. Without a session definition there is no deliberate activity to rank, so this diagnostic row carries no economic claim of its own.</p>
+						</InfoTip>
+					</div>
+				</div>
+			{:else}
+				<div class="grid items-start gap-6 sm:grid-cols-2 lg:grid-cols-4">
+					<div class="min-w-0">
+						<HuntingSessionPicker {table} {selected} {totalCount} {onselect} />
+					</div>
+					<StatDisplay label="TT Net" value={signedPed(selected.returns - selected.cycled)} unit="PED" />
+					<StatDisplay label="MU Net" value={selected.muProjectedReturns !== null ? signedPed(selected.muProjectedReturns - selected.cycled) : NO_DATA} unit={selected.muProjectedReturns !== null ? 'PED' : ''} />
+					<StatDisplay label="Realised Net" value={signedPed(selected.realisedReturns - selected.cycled)} valueClass={netTone(selected.realisedReturns - selected.cycled)} unit="PED">
+						{#snippet labelSuffix()}
+							<InfoTip align="right" width="w-80" label="What Realised Net reports">
+								<p class="text-xs font-semibold leading-relaxed text-text">Realised Net: what this session actually achieved</p>
+								<p class="mt-1 text-xs leading-relaxed text-text-secondary">Loot TT less cycled PED, plus confirmed markup attributed through the stock this session produced, after auction fees.</p>
 							</InfoTip>
-						</div>
-					</div>
-				{:else}
-					<div class="grid gap-6 sm:grid-cols-3">
-						<StatDisplay label="TT Net" value={signedPed(selected.returns - selected.cycled)} unit="PED" />
-						<StatDisplay label="MU Net" value={selected.muProjectedReturns !== null ? signedPed(selected.muProjectedReturns - selected.cycled) : NO_DATA} unit={selected.muProjectedReturns !== null ? 'PED' : ''} />
-						<StatDisplay label="Realised Net" value={signedPed(selected.realisedReturns - selected.cycled)} valueClass={netTone(selected.realisedReturns - selected.cycled)} unit="PED">
-							{#snippet labelSuffix()}
-								<InfoTip align="right" width="w-80" label="What Realised Net reports">
-									<p class="text-xs font-semibold leading-relaxed text-text">Realised Net: what this session actually achieved</p>
-									<p class="mt-1 text-xs leading-relaxed text-text-secondary">Loot TT less cycled PED, plus confirmed markup attributed through the stock this session produced, after auction fees.</p>
-								</InfoTip>
-							{/snippet}
-						</StatDisplay>
-					</div>
-					{#if selected.activities.length > 0}
-						<div class="mt-5 border-t border-border/50 pt-4">
-							<SegmentedControl
-								options={DETAIL_VIEWS}
-								active={detailView}
-								onchange={(id) => (detailView = id as DetailView)}
-							/>
-						</div>
-					{/if}
-					<div class={selected.activities.length > 0 ? 'mt-4' : 'mt-5 border-t border-border/50 pt-4'}>
-						{#if detailView === 'activities'}
-							<HuntingSessionActivities
-								activities={selected.activities}
-								marketAvailable={selected.muProjectedReturns !== null}
-							/>
-						{:else}
-							<ActivityLootComposition
-								items={selected.items}
-								marketAvailable={selected.muProjectedReturns !== null}
-								emptyLabel="No loot recorded for this session yet."
-							/>
-						{/if}
+						{/snippet}
+					</StatDisplay>
+				</div>
+				{#if selected.activities.length > 0}
+					<div class="mt-5 border-t border-border/50 pt-4">
+						<SegmentedControl
+							options={DETAIL_VIEWS}
+							active={detailView}
+							onchange={(id) => (detailView = id as DetailView)}
+						/>
 					</div>
 				{/if}
+				<div class={selected.activities.length > 0 ? 'mt-4' : 'mt-5 border-t border-border/50 pt-4'}>
+					{#if detailView === 'activities'}
+						<HuntingSessionActivities
+							activities={selected.activities}
+							marketAvailable={selected.muProjectedReturns !== null}
+						/>
+					{:else}
+						<ActivityLootComposition
+							items={selected.items}
+							marketAvailable={selected.muProjectedReturns !== null}
+							emptyLabel="No loot recorded for this session yet."
+						/>
+					{/if}
+				</div>
+			{/if}
 		</div>
 	{:else}
 		<div class="p-8 text-center text-sm text-text-tertiary">No hunting sessions in this period.</div>

@@ -41,16 +41,14 @@
 	initialFocus="first-input"
 	overlayOverflow="hidden"
 	panelClass="w-[min(38rem,calc(100vw-1rem))] p-0"
-	class="w-full"
+	class="min-w-0"
 >
 	{#snippet trigger({ open, toggle, keydown })}
 		<button
 			type="button"
-			class="group flex w-full items-center justify-between gap-4 rounded-lg border border-border/60
-				bg-surface/35 px-4 py-3 text-left transition-[background-color,border-color,box-shadow]
-				duration-[var(--duration-base)] ease-[var(--ease-out)] hover:border-border-bright
-				hover:bg-surface-hover/45 focus:outline-none focus:border-accent/60
-				focus:[box-shadow:var(--shadow-glow)]"
+			class="group -ml-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-1
+				text-left transition-colors duration-[var(--duration-fast)] hover:bg-surface-hover
+				focus:outline-none focus:bg-surface-hover focus:[box-shadow:var(--shadow-glow)]"
 			aria-haspopup="menu"
 			aria-expanded={open}
 			aria-label={`Switch analytics session (currently ${selected.name})`}
@@ -66,7 +64,7 @@
 			<span class="min-w-0">
 				<span class="eyebrow block text-text-tertiary">Session</span>
 				<span class="mt-0.5 flex min-w-0 items-center gap-2">
-					<span class="truncate text-base font-semibold tracking-tight text-accent" title={selected.name}>
+					<span class="truncate text-base font-semibold tracking-tight text-text" title={selected.name}>
 						{selected.name}
 					</span>
 					{#if selected.isArchived}
@@ -76,11 +74,7 @@
 					{/if}
 				</span>
 			</span>
-			<span
-				class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/50
-					text-text-secondary transition-colors group-hover:border-border-bright group-hover:text-text"
-				aria-hidden="true"
-			>
+			<span class="shrink-0 text-text-secondary transition-colors group-hover:text-text" aria-hidden="true">
 				<svg class="h-4 w-4 transition-transform {open ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
 					<path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
 				</svg>
