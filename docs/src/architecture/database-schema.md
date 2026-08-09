@@ -58,8 +58,8 @@ context on stock movements, plus its item/species/definition index, allowing
 one confirmed Hunting sale to be projected by both observed species and the
 repeatable session that produced it without duplicating the sale), and
 `0028_quest_reward_provenance.sql` (immutable completion-time reward and
-activity-context provenance, plus the context-grain loot rollup used by
-Hunting activity composition). The
+activity-context provenance), and `0029_session_context_loot_rollups.sql`
+(the context-grain loot rollup used by Hunting activity composition). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -929,7 +929,7 @@ tables and every day is re-verified once after it completes.
 
 #### `session_kill_rollups`, `session_loot_rollups`, `session_context_loot_rollups`, `session_pes_rollups`
 
-Per-session activity rollups (migrations `0026` and `0028`;
+Per-session activity rollups (migrations `0026` and `0029`;
 `eo-services/src/session_rollup.rs`),
 the session-grain sibling of the daily projection: the read model behind the
 Hunting analytics aggregate, the stock position arithmetic's hunted arm, and
@@ -983,7 +983,8 @@ migrations (`0002_analytical_indexes.sql`,
 `0024_hunting_stock_provenance.sql`, `0025_loot_item_name_indexes.sql`,
 `0026_session_activity_rollups.sql`,
 `0027_hunting_definition_provenance.sql`,
-`0028_quest_reward_provenance.sql`); the runner
+`0028_quest_reward_provenance.sql`,
+`0029_session_context_loot_rollups.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
