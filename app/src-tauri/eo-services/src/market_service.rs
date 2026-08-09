@@ -517,10 +517,7 @@ impl MarketService {
     /// `item_set_sql` names the activity's active loot items; everything
     /// else (latest observations, horizon fallback, nanocube floor) is
     /// identical between activities on purpose.
-    async fn activity_markups(
-        &self,
-        item_set_sql: String,
-    ) -> Result<HarvestMarketData, DbError> {
+    async fn activity_markups(&self, item_set_sql: String) -> Result<HarvestMarketData, DbError> {
         self.db
             .with_reader(move |connection| {
                 // Per item, the (markup, sales) at the latest submission for

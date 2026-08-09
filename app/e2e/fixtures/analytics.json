@@ -190,136 +190,101 @@
   "sessions": [],
   "huntingActivity": {
     "overall": {
-      "sessions": 8,
-      "kills": 500,
-      "durationHours": 7.1,
       "cycled": 2140.0,
       "returns": 1926.0,
-      "lootRate": 0.9,
-      "pes": 168.4,
-      "pesPer100Ped": 7.87
+      "lootRate": 0.9
     },
     "definitions": [
       {
         "definitionId": 1,
         "name": "ARIS Dailies",
         "isArchived": false,
-        "instances": 5,
-        "kills": 320,
-        "durationHours": 4.5,
         "cycled": 1200.0,
         "returns": 1092.0,
         "lootRate": 0.91,
-        "pes": 98.4,
-        "pesPer100Ped": 8.2,
+        "lootItems": [
+          { "itemName": "Animal Muscle Oil", "quantity": 420, "valuePed": 126.0 },
+          { "itemName": "Shrapnel", "quantity": 50000, "valuePed": 500.0 }
+        ],
         "activities": [
           {
             "kind": "quest_family",
             "label": "Daily Hunting 1",
-            "runs": 5,
-            "kills": 210,
-            "durationHours": 2.8,
             "cycled": 760.0,
             "returns": 695.0,
-            "pes": 61.2,
-            "rewardPed": 4.0,
-            "rewardIsSkill": false,
-            "expectedRewardMarkupPercent": 140.0,
+            "lootRate": 0.9145,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [
+              { "itemName": "Universal Ammo", "quantity": 40000, "valuePed": 4.0 }
+            ],
+            "rewardedReturns": 695.0,
+            "rewardedRate": 0.9145,
+            "rewardStatus": "included_in_loot",
+            "lootItems": [
+              { "itemName": "Animal Muscle Oil", "quantity": 280, "valuePed": 84.0 }
+            ],
             "variants": [
               {
                 "kind": "quest",
                 "label": "Daily Hunting 1: Weak Mortirex",
-                "runs": 3,
-                "kills": 130,
-                "durationHours": 1.7,
                 "cycled": 470.0,
                 "returns": 430.0,
-                "pes": 37.9,
-                "rewardPed": 4.0,
-                "rewardIsSkill": false,
-                "expectedRewardMarkupPercent": 140.0,
-                "variants": [],
-                "pesPer100Ped": 8.06
+                "lootRate": 0.9149,
+                "confirmedRewardPed": 0.0,
+                "rewardItems": [
+                  { "itemName": "Universal Ammo", "quantity": 25000, "valuePed": 2.5 }
+                ],
+                "rewardedReturns": 430.0,
+                "rewardedRate": 0.9149,
+                "rewardStatus": "included_in_loot",
+                "lootItems": [],
+                "variants": []
               },
               {
                 "kind": "quest",
                 "label": "Daily Hunting 1: Weak Kerberos",
-                "runs": 2,
-                "kills": 80,
-                "durationHours": 1.1,
                 "cycled": 290.0,
                 "returns": 265.0,
-                "pes": 23.3,
-                "rewardPed": 4.0,
-                "rewardIsSkill": false,
-                "expectedRewardMarkupPercent": 140.0,
-                "variants": [],
-                "pesPer100Ped": 8.03
+                "lootRate": 0.9138,
+                "confirmedRewardPed": 0.0,
+                "rewardItems": [
+                  { "itemName": "Universal Ammo", "quantity": 15000, "valuePed": 1.5 }
+                ],
+                "rewardedReturns": 265.0,
+                "rewardedRate": 0.9138,
+                "rewardStatus": "included_in_loot",
+                "lootItems": [],
+                "variants": []
               }
-            ],
-            "pesPer100Ped": 8.05
+            ]
           },
           {
             "kind": "segment",
             "label": "Warm-up lap",
-            "runs": 4,
-            "kills": 60,
-            "durationHours": 0.9,
             "cycled": 220.0,
             "returns": 198.0,
-            "pes": 18.6,
-            "rewardPed": null,
-            "rewardIsSkill": false,
-            "expectedRewardMarkupPercent": null,
-            "variants": [],
-            "pesPer100Ped": 8.45
+            "lootRate": 0.9,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [],
+            "rewardedReturns": 198.0,
+            "rewardedRate": 0.9,
+            "rewardStatus": "none",
+            "lootItems": [],
+            "variants": []
           },
           {
             "kind": "ambient",
             "label": "Unscoped",
-            "runs": 0,
-            "kills": 50,
-            "durationHours": 0.8,
             "cycled": 220.0,
             "returns": 199.0,
-            "pes": 18.6,
-            "rewardPed": null,
-            "rewardIsSkill": false,
-            "expectedRewardMarkupPercent": null,
-            "variants": [],
-            "pesPer100Ped": 8.45
-          }
-        ],
-        "mobs": [
-          {
-            "mobSpecies": "Atrox",
-            "kills": 250,
-            "lootTt": 830.0
-          },
-          {
-            "mobSpecies": "Combibo",
-            "kills": 70,
-            "lootTt": 262.0
-          }
-        ],
-        "instanceRows": [
-          {
-            "sessionId": "e2e-hunt-1",
-            "startedAt": 1754000000.0,
-            "durationHours": 0.9,
-            "kills": 66,
-            "cycled": 240.0,
-            "returns": 221.0,
-            "pes": 19.8
-          },
-          {
-            "sessionId": "e2e-hunt-2",
-            "startedAt": 1753900000.0,
-            "durationHours": 0.8,
-            "kills": 61,
-            "cycled": 231.0,
-            "returns": 205.0,
-            "pes": 18.9
+            "lootRate": 0.9045,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [],
+            "rewardedReturns": 199.0,
+            "rewardedRate": 0.9045,
+            "rewardStatus": "none",
+            "lootItems": [],
+            "variants": []
           }
         ]
       },
@@ -327,47 +292,26 @@
         "definitionId": null,
         "name": "Unassigned",
         "isArchived": false,
-        "instances": 3,
-        "kills": 180,
-        "durationHours": 2.6,
         "cycled": 940.0,
         "returns": 834.0,
         "lootRate": 0.89,
-        "pes": 70.0,
-        "pesPer100Ped": 7.45,
+        "lootItems": [
+          { "itemName": "Animal Eye Oil", "quantity": 310, "valuePed": 93.0 }
+        ],
         "activities": [
           {
             "kind": "ambient",
             "label": "Unscoped",
-            "runs": 0,
-            "kills": 180,
-            "durationHours": 0.0,
             "cycled": 940.0,
             "returns": 834.0,
-            "pes": 70.0,
-            "rewardPed": null,
-            "rewardIsSkill": false,
-            "expectedRewardMarkupPercent": null,
-            "variants": [],
-            "pesPer100Ped": 7.45
-          }
-        ],
-        "mobs": [
-          {
-            "mobSpecies": "Combibo",
-            "kills": 180,
-            "lootTt": 834.0
-          }
-        ],
-        "instanceRows": [
-          {
-            "sessionId": "e2e-hunt-3",
-            "startedAt": 1753800000.0,
-            "durationHours": 0.9,
-            "kills": 60,
-            "cycled": 313.0,
-            "returns": 278.0,
-            "pes": 23.3
+            "lootRate": 0.8872,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [],
+            "rewardedReturns": 834.0,
+            "rewardedRate": 0.8872,
+            "rewardStatus": "none",
+            "lootItems": [],
+            "variants": []
           }
         ]
       }
@@ -375,29 +319,9 @@
     "species": [
       {
         "mobSpecies": "Atrox",
-        "kills": 250,
         "cycled": 900.0,
         "returns": 830.0,
         "lootRate": 0.9222,
-        "pes": 98.4,
-        "pesPer100Ped": 10.93,
-        "pesSessions": 4,
-        "maturities": [
-          {
-            "maturity": "Young",
-            "kills": 150,
-            "cycled": 520.0,
-            "returns": 489.0,
-            "lootRate": 0.9404
-          },
-          {
-            "maturity": "Mature",
-            "kills": 100,
-            "cycled": 380.0,
-            "returns": 341.0,
-            "lootRate": 0.8974
-          }
-        ],
         "lootItems": [
           {
             "itemName": "Animal Muscle Oil",
@@ -413,22 +337,9 @@
       },
       {
         "mobSpecies": "Combibo",
-        "kills": 250,
         "cycled": 1240.0,
         "returns": 1096.0,
         "lootRate": 0.8839,
-        "pes": null,
-        "pesPer100Ped": null,
-        "pesSessions": 0,
-        "maturities": [
-          {
-            "maturity": "Old",
-            "kills": 250,
-            "cycled": 1240.0,
-            "returns": 1096.0,
-            "lootRate": 0.8839
-          }
-        ],
         "lootItems": [
           {
             "itemName": "Animal Eye Oil",

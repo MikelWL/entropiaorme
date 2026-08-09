@@ -41,16 +41,7 @@
       "timestamp": "<TS_13>"
     }
   ],
-  "ledger_entries": [
-    {
-      "amount": 0.054,
-      "date": "<TS_14>",
-      "description": "Shrapnel Conversion",
-      "id": "<UUID_3>",
-      "tag": "convert",
-      "type": "markup"
-    }
-  ],
+  "ledger_entries": [],
   "map_pins": [],
   "notable_events": [],
   "quest_claims": [],

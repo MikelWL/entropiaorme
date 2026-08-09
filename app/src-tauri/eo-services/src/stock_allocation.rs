@@ -396,9 +396,7 @@ mod tests {
         let harvest_share: f64 = plan
             .allocations
             .iter()
-            .filter(|allocation| {
-                matches!(allocation.provenance, Some(StockProvenance::Harvest(_)))
-            })
+            .filter(|allocation| matches!(allocation.provenance, Some(StockProvenance::Harvest(_))))
             .map(|allocation| allocation.quantity)
             .sum();
         let hunt_share: f64 = plan

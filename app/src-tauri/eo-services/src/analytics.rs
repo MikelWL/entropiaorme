@@ -4093,9 +4093,11 @@ fn as_source_positions(
             } else {
                 None
             },
-            session_definition_id: (!key.species.is_empty())
-                .then_some(key.definition_id)
-                .flatten(),
+            // Keep the session-definition key even when Shrapnel has no
+            // species provenance. The definition does not make enhancer
+            // rebate activity-attributable, but the movement must still
+            // cancel the exact stock bucket it consumed.
+            session_definition_id: key.definition_id,
             tool_name: (!key.tool.is_empty()).then_some(key.tool.as_str()),
             quantity: *quantity,
         })
@@ -9296,7 +9298,9 @@ mod tests {
             .unwrap();
 
         let stock = service.stock_positions(Profession::Hunting).await.unwrap();
-        assert!(position(&stock, "Shrapnel").is_none());
+        let shrapnel = position(&stock, "Shrapnel").expect("depleted position remains visible");
+        assert!((shrapnel.quantity - 0.0).abs() < 1e-9, "{shrapnel:?}");
+        assert!((shrapnel.tt_value - 0.0).abs() < 1e-9, "{shrapnel:?}");
         let ammo = position(&stock, "Universal Ammo").expect("converted ammo");
         assert!((ammo.tt_value - 10.10).abs() < 1e-9);
         assert!((ammo.quantity - 101_000.0).abs() < 1e-6);
@@ -9304,11 +9308,11 @@ mod tests {
         let ledger_gain: f64 = service
             .db
             .with_reader(|conn| {
-                conn.query_row(
+                Ok(conn.query_row(
                     "SELECT amount FROM ledger_entries WHERE tag = 'convert'",
                     [],
                     |row| row.get(0),
-                )
+                )?)
             })
             .await
             .unwrap();
@@ -9325,7 +9329,7 @@ mod tests {
             .into_iter()
             .find(|row| row.kind == "conversion")
             .expect("conversion history");
-        assert_eq!(conversion.net_markup, Some(0.10));
+        assert!((conversion.net_markup.expect("conversion gain") - 0.10).abs() < 1e-9);
         assert!(service.undo_stock_conversion(&conversion.id).await.unwrap());
         assert!(service
             .realised_markup_by_species()

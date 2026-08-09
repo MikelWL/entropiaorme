@@ -118,15 +118,6 @@
       "cost_per_shot": 0.0
     }
   ],
-  "ledger_entries": [
-    {
-      "id": "adfeb5ba-0d3a-4c6c-8168-f43bebf0b69e",
-      "date": "2026-01-01T00:00:01",
-      "type": "markup",
-      "description": "Shrapnel Conversion",
-      "amount": 0.07,
-      "tag": "convert"
-    }
-  ],
+  "ledger_entries": [],
   "notable_events": []
 }

@@ -750,7 +750,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         vec![json!(["manual-fixed-0002", qa, 1772366460.0])]
     );
     let reward_provenance = db
-        .with_reader(|conn| {
+        .with_reader(move |conn| {
             Ok(conn.query_row(
                 "SELECT reward_source, reward_ped, ledger_entry_id, quest_claim_id \
                  FROM session_quest_completions WHERE quest_id = ?",
@@ -1180,8 +1180,8 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         ]
     );
 
-    // The final ledger carries exactly the two liquid completions
-    // the filter recorded; the zero-reward completion wrote none.
+    // The final ledger carries only the separately liquid completion;
+    // suppressed reward items remain item provenance rather than cash.
     let final_ledger: Vec<String> = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare("SELECT id FROM ledger_entries ORDER BY id")?;
@@ -1192,7 +1192,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         })
         .await
         .unwrap();
-    assert_eq!(final_ledger, ["fixed-0003", "fixed-0004"]);
+    assert_eq!(final_ledger, ["fixed-0003"]);
     let reward_items: Vec<(String, i64, f64)> = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare(
@@ -1201,11 +1201,12 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                  JOIN session_quest_completions c ON c.id = ri.completion_id \
                  WHERE c.quest_id = ? ORDER BY ri.id",
             )?;
-            Ok(stmt
+            let rows = stmt
                 .query_map(params![qa], |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()?)
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
         })
         .await
         .unwrap();
