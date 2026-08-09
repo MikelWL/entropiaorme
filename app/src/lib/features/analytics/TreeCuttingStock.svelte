@@ -197,7 +197,7 @@
 	</div>
 {/snippet}
 
-<div class="sm:border-l sm:border-border/40 sm:pl-8">
+<div>
 	<div class="flex items-center gap-2 pb-2">
 		<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
 		<InfoTip align="right" label="What current stock means">

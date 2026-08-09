@@ -142,8 +142,11 @@ describe('Hunting economic comparisons', () => {
 		expect(screen.getByRole('button', { name: 'Hide session loot' })).not.toBeNull();
 		expect(screen.queryByLabelText('Find an item')).toBeNull();
 		const sessionLoot = screen.getByTestId('session-loot-list');
+		const sessionLootHeader = screen.getByTestId('session-loot-header');
 		expect(sessionLoot.className).toContain('max-h-[24rem]');
 		expect(sessionLoot.className).toContain('overflow-y-auto');
+		expect(sessionLootHeader.className).not.toContain('border');
+		expect(sessionLootHeader.className).not.toContain('bg-');
 		await fireEvent.click(screen.getByRole('button', { name: 'Hide session loot' }));
 		expect(screen.queryByText('Animal Muscle Oil')).toBeNull();
 		const trigger = screen.getByLabelText('Switch hunting view (currently ARIS Dailies)');

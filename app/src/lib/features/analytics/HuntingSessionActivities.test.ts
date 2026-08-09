@@ -98,8 +98,11 @@ describe('HuntingSessionActivities', () => {
 		expect(screen.getByRole('button', { name: 'Hide activity loot' })).not.toBeNull();
 		expect(screen.queryByLabelText('Find an item')).toBeNull();
 		const activityLoot = screen.getByTestId('activity-loot-list');
+		const activityLootHeader = screen.getByTestId('activity-loot-header');
 		expect(activityLoot.className).toContain('max-h-[24rem]');
 		expect(activityLoot.className).toContain('overflow-y-auto');
+		expect(activityLootHeader.className).not.toContain('border');
+		expect(activityLootHeader.className).not.toContain('bg-');
 		expect(screen.queryByRole('menu')).toBeNull();
 
 		await fireEvent.keyDown(trigger, { key: 'ArrowDown' });

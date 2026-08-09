@@ -76,7 +76,7 @@
 	<div class="space-y-5" data-guide-anchor="analytics-hunting-area">
 		<ErrorNotice message={model.error} />
 
-		<div class="flex flex-wrap items-center justify-between gap-3">
+		<div class="flex flex-wrap items-center justify-between gap-3 pb-2">
 			<SegmentedControl
 				options={ANALYTICS_RANGES.map((range) => ({ id: range, label: range }))}
 				active={model.activeRange}
