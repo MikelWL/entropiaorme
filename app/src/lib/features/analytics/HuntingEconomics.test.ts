@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTableModel, type TableModel } from '$lib/view/tableModel.svelte';
 import HuntingPrimaryView from './HuntingPrimaryView.svelte';
 import HuntingSessions from './HuntingSessions.svelte';
-import TreeCuttingStock from './TreeCuttingStock.svelte';
 import type {
 	HuntingActivitySection,
 	HuntingOverallLine,
 	HuntingSessionSection,
 } from './huntingModel.svelte';
+import TreeCuttingStock from './TreeCuttingStock.svelte';
 import { marketOpportunity } from './treeCuttingModel.svelte';
 
 const item = {
@@ -115,7 +115,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 }
 
 describe('Hunting economic comparisons', () => {
-	it('keeps the long-stock search compact on the title strip', () => {
+	it('keeps the long-stock search compact and visually discloses overflow', async () => {
 		const stock = Array.from({ length: 9 }, (_, index) => ({
 			itemName: `Hunting loot ${index + 1}`,
 			heldQty: 10,
@@ -141,6 +141,19 @@ describe('Hunting economic comparisons', () => {
 		expect(search.parentElement?.className).toContain('sm:w-64');
 		expect(search.parentElement?.className).not.toContain('sm:ml-auto');
 		expect(search.parentElement?.className).not.toContain('sm:w-full');
+
+		const list = screen.getByTestId('stock-scroll-list');
+		Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 800 });
+		Object.defineProperty(list, 'clientHeight', { configurable: true, value: 300 });
+		Object.defineProperty(list, 'scrollTop', { configurable: true, value: 0, writable: true });
+		await fireEvent.scroll(list);
+		const continuation = screen.getByTestId('stock-scroll-continuation');
+		expect(continuation.className).toContain('opacity-100');
+		expect(continuation.textContent?.trim()).toBe('');
+
+		list.scrollTop = 500;
+		await fireEvent.scroll(list);
+		expect(continuation.className).toContain('opacity-0');
 	});
 
 	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', async () => {

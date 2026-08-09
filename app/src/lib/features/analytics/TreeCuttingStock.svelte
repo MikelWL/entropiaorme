@@ -1,6 +1,7 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
+	import { tick } from 'svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
@@ -41,6 +42,31 @@
 			? matches.filter((item) => item.heldQty > 0)
 			: matches,
 	);
+	let stockList = $state<HTMLUListElement>();
+	let hasMoreBelow = $state(false);
+
+	function updateScrollContinuation() {
+		if (!stockList) {
+			hasMoreBelow = false;
+			return;
+		}
+		hasMoreBelow = stockList.scrollHeight - stockList.clientHeight - stockList.scrollTop > 2;
+	}
+
+	$effect(() => {
+		void visibleStock;
+		const list = stockList;
+		if (!list) return;
+		void tick().then(updateScrollContinuation);
+		const observer =
+			typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateScrollContinuation);
+		observer?.observe(list);
+		window.addEventListener('resize', updateScrollContinuation);
+		return () => {
+			observer?.disconnect();
+			window.removeEventListener('resize', updateScrollContinuation);
+		};
+	});
 
 	function formatVolume(value: number): string {
 		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -238,7 +264,13 @@
 		<span class="eyebrow w-[3.375rem] shrink-0 text-right">Actions</span>
 	</div>
 
-	<ul class="flex max-h-[24rem] flex-col gap-1 overflow-y-auto">
+	<div class="relative">
+	<ul
+		bind:this={stockList}
+		class="flex max-h-[24rem] flex-col gap-1 overflow-y-auto"
+		data-testid="stock-scroll-list"
+		onscroll={updateScrollContinuation}
+	>
 		{#each visibleStock as item (item.itemName)}
 			<!-- An emptied line stays, dimmed: the item is still one this
 				activity produces, and its market reading is worth keeping
@@ -353,6 +385,29 @@
 			</li>
 		{/if}
 	</ul>
+
+		<div
+			class="pointer-events-none absolute inset-x-0 bottom-0 flex h-14 items-end justify-center
+				bg-gradient-to-t from-base via-base/75 to-transparent pb-1.5
+				transition-opacity duration-[var(--duration-base)] ease-[var(--ease-out)]
+				{hasMoreBelow ? 'opacity-100' : 'opacity-0'}"
+			data-testid="stock-scroll-continuation"
+			aria-hidden="true"
+		>
+			<svg
+				class="h-5 w-5 text-text-tertiary/80 drop-shadow-sm"
+				viewBox="0 0 20 20"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.35"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			>
+				<path d="m5 6.5 5 4 5-4" />
+				<path d="m5 11 5 4 5-4" opacity="0.6" />
+			</svg>
+		</div>
+	</div>
 
 	{#if longList && emptiedCount > 0 && query.trim() === ''}
 		<button
