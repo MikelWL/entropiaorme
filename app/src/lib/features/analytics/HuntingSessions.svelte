@@ -82,13 +82,13 @@
 					</div>
 					<div class="border-t border-border/35 pt-3" data-testid="session-subordinate-tt-rate">
 						<span class="eyebrow block text-text-tertiary">TT Rate</span>
-						<span class="mt-1 block text-base font-semibold tabular-nums {netTone(selected.lootRate - 1)}">
+						<span class="mt-1 block text-base font-semibold tabular-nums text-text">
 							{formatPercent(selected.lootRate)}
 						</span>
 					</div>
 					<div class="border-t border-border/35 pt-3" data-testid="session-subordinate-mu-rate">
 						<span class="eyebrow block text-text-tertiary">MU Rate</span>
-						<span class="mt-1 block text-base font-semibold tabular-nums {selected.muRate !== null ? netTone(selected.muRate - 1) : 'text-text-tertiary'}">
+						<span class="mt-1 block text-base font-semibold tabular-nums {selected.muRate !== null ? 'text-text' : 'text-text-tertiary'}">
 							{selected.muRate !== null ? formatPercent(selected.muRate) : NO_DATA}
 						</span>
 					</div>

@@ -89,9 +89,16 @@ describe('Hunting economic comparisons', () => {
 			'grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))]',
 		);
 		expect(screen.getByTestId('session-subordinate-cycled').textContent).toContain('100.00');
-		expect(screen.getByTestId('session-subordinate-tt-rate').textContent).toContain('90.0%');
-		expect(screen.getByTestId('session-subordinate-mu-rate').textContent).toContain('106.0%');
-		expect(screen.getByTestId('session-subordinate-realised-rate').textContent).toContain('105.0%');
+		const ttRate = within(screen.getByTestId('session-subordinate-tt-rate')).getByText('90.0%');
+		const muRate = within(screen.getByTestId('session-subordinate-mu-rate')).getByText('106.0%');
+		const realisedRate = within(screen.getByTestId('session-subordinate-realised-rate')).getByText(
+			'105.0%',
+		);
+		expect(ttRate.classList.contains('text-text')).toBe(true);
+		expect(ttRate.classList.contains('text-negative')).toBe(false);
+		expect(muRate.classList.contains('text-text')).toBe(true);
+		expect(muRate.classList.contains('text-positive')).toBe(false);
+		expect(realisedRate.classList.contains('text-positive')).toBe(true);
 		expect(screen.queryByRole('menu')).toBeNull();
 		await fireEvent.click(trigger);
 		const menu = screen.getByRole('menu');
