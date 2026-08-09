@@ -160,14 +160,16 @@
 							{/snippet}
 						</StatDisplay>
 					</div>
-					<div class="mt-5 border-t border-border/50 pt-4">
-						<SegmentedControl
-							options={DETAIL_VIEWS}
-							active={detailView}
-							onchange={(id) => (detailView = id as DetailView)}
-						/>
-					</div>
-					<div class="mt-4">
+					{#if selected.activities.length > 0}
+						<div class="mt-5 border-t border-border/50 pt-4">
+							<SegmentedControl
+								options={DETAIL_VIEWS}
+								active={detailView}
+								onchange={(id) => (detailView = id as DetailView)}
+							/>
+						</div>
+					{/if}
+					<div class={selected.activities.length > 0 ? 'mt-4' : 'mt-5 border-t border-border/50 pt-4'}>
 						{#if detailView === 'activities'}
 							<HuntingSessionActivities
 								activities={selected.activities}

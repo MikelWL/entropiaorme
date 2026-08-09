@@ -27,7 +27,7 @@ function ledgerApi(): Partial<LedgerDemoApi> {
 /** Sub-API registered by HuntingTab.svelte on mount for guide-driven view
  * switching. */
 type HuntingDemoApi = {
-	setView(view: 'sessions' | 'mobs' | 'market' | 'history'): void;
+	setView(view: 'sessions' | 'market' | 'history'): void;
 };
 
 function huntingApi(): Partial<HuntingDemoApi> {
@@ -310,7 +310,7 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Sessions compares the routines you defined; Mobs compares the species you hunted. Inside a session, Activities separates its declared quests, segments, and joint bundles without duplicating shared costs.',
+						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Sessions compares the routines you defined. Inside a session, Activities separates its declared quests, segments, and joint bundles without duplicating shared costs; a session without declared activities opens directly onto its loot.',
 					},
 					{
 						kind: 'p',
@@ -318,7 +318,7 @@ export const analyticsSurface: GuideSurface = {
 					},
 					{
 						kind: 'p',
-						text: 'Market and History carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and reverse an action from History. A confirmed sale is attributed back to both the species and the defined session that produced its stock.',
+						text: 'Market and History carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and reverse an action from History. A confirmed sale is attributed back to the defined session that produced its stock.',
 					},
 				],
 			},
@@ -328,10 +328,9 @@ export const analyticsSurface: GuideSurface = {
 				const api = demoApi as Partial<AnalyticsDemoApi>;
 				api.setTab?.('hunting');
 				await wait(600);
-				// Walk the two comparison axes the prose describes, then come
-				// back to rest on Sessions.
+				// Briefly show the sale surface, then return to Sessions.
 				if (!(await abortableWait(900, stillActive))) return;
-				huntingApi().setView?.('mobs');
+				huntingApi().setView?.('market');
 				if (!(await abortableWait(1600, stillActive))) return;
 				huntingApi().setView?.('sessions');
 			},

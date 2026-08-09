@@ -7,7 +7,6 @@
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import HuntingSessions from '$lib/features/analytics/HuntingSessions.svelte';
-	import HuntingTargets from '$lib/features/analytics/HuntingTargets.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
 	import TreeCuttingStock from '$lib/features/analytics/TreeCuttingStock.svelte';
 	import TreeCuttingStats from '$lib/features/analytics/TreeCuttingStats.svelte';
@@ -22,16 +21,15 @@
 
 	const model = createHuntingModel();
 
-	// The lower box answers four questions about the same activity: how the
-	// player's deliberate routines perform, what the observed mobs return,
-	// what is currently happening in the market with what they dropped, and
-	// what has already been done with it. Overall stays put above all four,
+	// The lower box answers three questions about the same activity: how the
+	// player's deliberate routines perform, what is currently happening in
+	// the market with what they dropped, and what has already been done with
+	// it. Overall stays put above all three,
 	// since the headline figures describe the activity whichever is open.
-	type ActivityView = 'sessions' | 'mobs' | 'market' | 'history';
+	type ActivityView = 'sessions' | 'market' | 'history';
 	let activityView = $state<ActivityView>('sessions');
 	const ACTIVITY_VIEWS = [
 		{ id: 'sessions', label: 'Sessions' },
-		{ id: 'mobs', label: 'Mobs' },
 		{ id: 'market', label: 'Market' },
 		{ id: 'history', label: 'History' },
 	];
@@ -173,12 +171,6 @@
 					selected={model.selectedSession}
 					onselect={(key) => model.selectSession(key)}
 				/>
-			{:else if activityView === 'mobs'}
-				<HuntingTargets
-					table={model.targetTable}
-					selected={model.selectedTarget}
-					onselect={(key) => model.selectTarget(key)}
-				/>
 			{:else if activityView === 'market'}
 				<AuctionListings
 					open={model.openListings}
@@ -214,7 +206,7 @@
 {:else}
 	<Card class="p-6">
 		<p class="text-sm text-text-tertiary text-center" data-guide-anchor="analytics-hunting-area">
-			No hunting data yet. Track a hunting session to compare your routines and mobs.
+			No hunting data yet. Track a hunting session to compare your routines and activities.
 		</p>
 	</Card>
 {/if}

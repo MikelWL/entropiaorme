@@ -199,12 +199,10 @@ describe('createHuntingModel', () => {
 		expect(overall.realisedRate).toBeCloseTo((1350 + 12) / 1500, 5);
 	});
 
-	it('degrades stale selections to the first economic row', async () => {
+	it('degrades a stale session selection to the first economic row', async () => {
 		const model = createHuntingModel();
 		await model.loadData();
 
-		model.selectTarget('species:Berycled');
-		expect(required(model.selectedTarget, 'fallback target').mobSpecies).toBe('Atrox');
 		model.selectSession('definition:99');
 		expect(required(model.selectedSession, 'fallback session').definitionId).toBe(1);
 	});

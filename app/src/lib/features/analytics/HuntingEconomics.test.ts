@@ -4,8 +4,7 @@ import { render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createTableModel } from '$lib/view/tableModel.svelte';
 import HuntingSessions from './HuntingSessions.svelte';
-import HuntingTargets from './HuntingTargets.svelte';
-import type { HuntingSessionSection, HuntingTargetSection } from './huntingModel.svelte';
+import type { HuntingActivitySection, HuntingSessionSection } from './huntingModel.svelte';
 import { marketOpportunity } from './treeCuttingModel.svelte';
 
 const item = {
@@ -45,22 +44,25 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 	};
 }
 
-function target(overrides: Partial<HuntingTargetSection> = {}): HuntingTargetSection {
+function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActivitySection {
 	return {
-		mobSpecies: 'Atrox',
+		kind: 'quest',
+		label: 'Daily Hunting 1',
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		confirmedRewardPed: 0,
+		rewardedReturns: 90,
+		rewardedRate: 0.9,
+		rewardStatus: 'none',
 		lootItems: [],
-		key: 'species:Atrox',
-		label: 'Atrox',
-		isUnclassified: false,
-		realisedMarkup: 15,
+		key: 'quest:daily-hunting-1',
+		isUnscoped: false,
 		muProjectedReturns: 106,
-		muRate: 1.06,
-		realisedReturns: 105,
-		realisedRate: 1.05,
+		muRewardedReturns: 106,
+		muRewardedRate: 1.06,
 		items: [item],
+		variants: [],
 		...overrides,
 	};
 }
@@ -87,6 +89,8 @@ describe('Hunting economic comparisons', () => {
 			expect(screen.getByText(label)).not.toBeNull();
 		}
 		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
+		expect(screen.queryByRole('button', { name: 'Activities' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Loot' })).toBeNull();
 		for (const legacy of ['PES/100', 'Kills', 'Runs', 'Instances', 'Duration', 'Net / Kill']) {
 			expect(screen.queryByText(legacy)).toBeNull();
 		}
@@ -117,20 +121,18 @@ describe('Hunting economic comparisons', () => {
 		expect(screen.queryByText('TT Net')).toBeNull();
 	});
 
-	it('uses the same compact economic detail for species without maturity or kill drilldowns', () => {
-		const row = target();
-		const table = createTableModel<HuntingTargetSection>({
+	it('offers Activities and Loot only when the session has declared activities', () => {
+		const row = session({ activities: [activity()] });
+		const table = createTableModel<HuntingSessionSection>({
 			rows: () => [row],
 			pageSize: Number.MAX_SAFE_INTEGER,
 		});
-		render(HuntingTargets, {
+		render(HuntingSessions, {
 			props: { table, selected: row, onselect: vi.fn() },
 		});
 
-		expect(screen.getByText('TT Net')).not.toBeNull();
-		expect(screen.getByText('Animal Muscle Oil')).not.toBeNull();
-		for (const legacy of ['PES/100', 'Kills', 'Maturity', 'Net / Kill']) {
-			expect(screen.queryByText(legacy)).toBeNull();
-		}
+		expect(screen.getByRole('button', { name: 'Activities' })).not.toBeNull();
+		expect(screen.getByRole('button', { name: 'Loot' })).not.toBeNull();
+		expect(screen.getByText('Daily Hunting 1')).not.toBeNull();
 	});
 });

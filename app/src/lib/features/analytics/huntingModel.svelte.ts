@@ -1,12 +1,11 @@
 /**
- * Hunting-tab view model: the session-definition and observed-target axes
- * over the same market, stock, and history machinery Tree Cutting
- * established.
+ * Hunting-tab view model: the session-definition axis over the same market,
+ * stock, and history machinery Tree Cutting established.
  *
- * Two economic comparison axes compose here. Sessions are the routines the
- * player deliberately defined (keyed by definition, never by recorded free
- * text); Mobs are the species the tracker observed. Both open onto the
- * same TT, market, realised, and loot-composition frame Tree Cutting uses.
+ * Sessions are the routines the player deliberately defined (keyed by
+ * definition, never by recorded free text). Species evidence remains an
+ * internal projection for reconciling Overall market and realised figures;
+ * it is not currently presented as a comparison axis.
  *
  * Every MU figure is an estimate, never realised P&L. Realised markup
  * arrives only through confirmed sales, attributed through the weighted
@@ -83,13 +82,13 @@ export type HuntingSessionSection = Omit<HuntingDefinitionComparison, 'activitie
 
 export type HuntingSessionSortKey = 'name' | 'cycled' | 'realisedRate' | 'muRate';
 
-// ── Targets axis ───────────────────────────────────────────────────────
+// ── Dormant species projection ─────────────────────────────────────────
 
-/** The label the unclassified bucket renders under. */
+/** The stable label retained for diagnostics and contract-level proofs. */
 export const UNCLASSIFIED_LABEL = 'Unclassified';
 
-/** One species row with the merged market layer, in the same shape the
- * Tree Cutting sub-activities carry so the two tabs read identically. */
+/** One species row with the merged market layer. Kept internally so Overall
+ * remains reconcilable while the species comparison UI is dormant. */
 export type HuntingTargetSection = HuntingSpeciesComparison & {
 	key: string;
 	label: string;
@@ -101,8 +100,6 @@ export type HuntingTargetSection = HuntingSpeciesComparison & {
 	realisedRate: number;
 	items: TreeCuttingItem[];
 };
-
-export type HuntingTargetSortKey = 'label' | 'cycled' | 'realisedRate' | 'muRate';
 
 /** The combined direct + market stat line across the whole activity. */
 export type HuntingOverallLine = {
@@ -138,7 +135,6 @@ export function createHuntingModel() {
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
 	let activeRange = $state<AnalyticsRange>('All Time');
 	let selectedSessionKey = $state<string | null>(null);
-	let selectedTargetKey = $state<string | null>(null);
 
 	let loadEpoch = 0;
 
@@ -269,7 +265,7 @@ export function createHuntingModel() {
 		return sessionSections.find((s) => s.key === selectedSessionKey) ?? sessionSections[0];
 	});
 
-	// ── Mobs ──
+	// ── Dormant species projection ──
 
 	const targetSections = $derived.by<HuntingTargetSection[]>(() => {
 		if (!data) return [];
@@ -300,29 +296,6 @@ export function createHuntingModel() {
 				items: projection.items,
 			};
 		});
-	});
-
-	const targetTable = createTableModel<HuntingTargetSection>({
-		rows: () => targetSections,
-		pageSize: Number.MAX_SAFE_INTEGER,
-		searchText: (row) => [row.label],
-		initialSort: { key: 'cycled', dir: 'desc' },
-		defaultSortDirs: {
-			label: 'asc',
-			cycled: 'desc',
-			realisedRate: 'desc',
-			muRate: 'desc',
-		},
-		comparators: {
-			label: (a, b) => a.label.localeCompare(b.label),
-		},
-	});
-
-	/** The target whose detail panel is open, with the same busiest-first
-	 * fallback as the sessions pane. */
-	const selectedTarget = $derived.by<HuntingTargetSection | null>(() => {
-		if (targetSections.length === 0) return null;
-		return targetSections.find((s) => s.key === selectedTargetKey) ?? targetSections[0];
 	});
 
 	// ── Overall ──
@@ -572,15 +545,6 @@ export function createHuntingModel() {
 		},
 		get targetSections() {
 			return targetSections;
-		},
-		get targetTable() {
-			return targetTable;
-		},
-		get selectedTarget() {
-			return selectedTarget;
-		},
-		selectTarget(key: string) {
-			selectedTargetKey = key;
 		},
 		get stock() {
 			return stock;
