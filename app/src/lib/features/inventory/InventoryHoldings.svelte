@@ -3,7 +3,8 @@
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import type { InventoryItem } from '$lib/api';
-	import MarkupConfidenceControl from '$lib/features/analytics/MarkupConfidenceControl.svelte';
+	import MarkupConfidenceInfo from '$lib/features/analytics/MarkupConfidenceInfo.svelte';
+	import MarkupConfidenceSelector from '$lib/features/analytics/MarkupConfidenceSelector.svelte';
 	import TreeCuttingStockView from '$lib/features/analytics/TreeCuttingStock.svelte';
 	import type {
 		ConfidenceMode,
@@ -80,8 +81,11 @@
 					onchange={onkindchange}
 				/>
 			{/snippet}
+			{#snippet controlsLabel()}
+				<MarkupConfidenceInfo />
+			{/snippet}
 			{#snippet controls()}
-				<MarkupConfidenceControl active={confidenceMode} onchange={onconfidencechange} />
+				<MarkupConfidenceSelector active={confidenceMode} onchange={onconfidencechange} />
 			{/snippet}
 		</TreeCuttingStockView>
 	{:else}

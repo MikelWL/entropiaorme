@@ -14,6 +14,7 @@
 		onremove,
 		onshrapnelconvert,
 		heading,
+		controlsLabel,
 		controls,
 		actionLayout = 'activity',
 		emptyMessage = 'No tracked stock is currently held.',
@@ -29,6 +30,7 @@
 		onremove: (item: TreeCuttingStock) => void;
 		onshrapnelconvert: (item: TreeCuttingStock) => void;
 		heading?: Snippet;
+		controlsLabel?: Snippet;
 		controls?: Snippet;
 		actionLayout?: 'activity' | 'inventory';
 		emptyMessage?: string;
@@ -203,43 +205,60 @@
 {/snippet}
 
 <div class={fillAvailable ? 'flex h-full min-h-0 flex-col' : ''}>
-	<div
-		class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 pb-2"
-		data-testid="stock-utility-strip"
-	>
-		<div class="flex items-center gap-2">
-			{#if heading}
-				{@render heading()}
-			{:else}
-				<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
-			{/if}
-			<InfoTip align="right" label="What current stock means">
-				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
-					<p class="font-semibold text-text">
-						Your Current Stock: Loot you still hold
-					</p>
-					<p>
-						{sourceDescription}
-					</p>
-					<p>
-						Stock TT is its Trade Terminal value. Markup becomes realised when a sale is confirmed
-						or Shrapnel is deliberately converted.
-					</p>
-				</div>
-			</InfoTip>
+	{#if controlsLabel}
+		<div
+			class="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5 gap-y-3 pb-5"
+			data-testid="stock-utility-strip"
+		>
+			<div>{#if heading}{@render heading()}{/if}</div>
+			<div class="justify-self-end">{@render controlsLabel()}</div>
+			<div>
+				{#if searchable}
+					<SearchInput
+						class="w-full sm:w-64"
+						bind:value={query}
+						placeholder="Find an item"
+						aria-label="Find an item"
+					/>
+				{/if}
+			</div>
+			<div class="justify-self-end">{#if controls}{@render controls()}{/if}</div>
 		</div>
+	{:else}
+		<div
+			class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 pb-2"
+			data-testid="stock-utility-strip"
+		>
+			<div class="flex items-center gap-2">
+				{#if heading}
+					{@render heading()}
+				{:else}
+					<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
+				{/if}
+				<InfoTip align="right" label="What current stock means">
+					<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+						<p class="font-semibold text-text">Your Current Stock: Loot you still hold</p>
+						<p>{sourceDescription}</p>
+						<p>
+							Stock TT is its Trade Terminal value. Markup becomes realised when a sale is
+							confirmed or Shrapnel is deliberately converted.
+						</p>
+					</div>
+				</InfoTip>
+			</div>
 
-		{#if searchable}
-			<SearchInput
-				class="w-full sm:w-64"
-				bind:value={query}
-				placeholder="Find an item"
-				aria-label="Find an item"
-			/>
-		{/if}
+			{#if searchable}
+				<SearchInput
+					class="w-full sm:w-64"
+					bind:value={query}
+					placeholder="Find an item"
+					aria-label="Find an item"
+				/>
+			{/if}
 
-		{#if controls}<div class="ml-auto">{@render controls()}</div>{/if}
-	</div>
+			{#if controls}<div class="ml-auto">{@render controls()}</div>{/if}
+		</div>
+	{/if}
 
 	<div class="flex shrink-0 items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 		<span class="eyebrow flex-1 min-w-0">Item</span>
