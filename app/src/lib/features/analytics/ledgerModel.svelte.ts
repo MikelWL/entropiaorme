@@ -279,8 +279,7 @@ export function createLedgerModel() {
 		}
 	}
 
-	// Computed summaries (the netRange-scoped server aggregate; the demo
-	// overlay folds a guide-mode synthetic sale in locally).
+	// Computed summaries: the netRange-scoped server aggregate.
 	const expenseTags = $derived(
 		Object.entries(summaryLosses).map(([tag, total]) => ({ tag, total })),
 	);

@@ -374,7 +374,7 @@ async fn a_profit_sale_emits_a_markup_ledger_entry() {
     assert_eq!(entry.tag, "inventory_sale");
     assert_eq!(entry.description, "Inventory Sale: Sword");
     assert_eq!(sold.sold_item.name, "Sword");
-    // The item is removed; the emitted ledger row is the only one.
+    // The sold item leaves current holdings; the emitted ledger row is the only one.
     assert!(api.inventory_list().await.unwrap().is_empty());
     assert_eq!(api.ledger_list(None, None).await.unwrap().entries.len(), 1);
 }

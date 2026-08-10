@@ -79,7 +79,7 @@
 
 			<MarkupConfidenceControl
 				active={model.confidenceMode}
-				onchange={(id) => (model.confidenceMode = id as ConfidenceMode)}
+				onchange={(id) => (model.confidenceMode = id)}
 			/>
 		</div>
 

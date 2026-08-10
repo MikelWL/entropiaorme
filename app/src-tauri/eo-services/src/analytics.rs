@@ -4512,19 +4512,27 @@ impl AnalyticsService {
                          UNION SELECT item_name FROM kill_loot_items WHERE deactivated_at IS NULL"
                     }
                 };
-                let legacy_clause = match profession {
-                    Profession::Harvesting => "OR m.ref_id IS NULL",
-                    Profession::Hunting | Profession::Inventory => "",
+                let movement_scope = match profession {
+                    Profession::Harvesting => {
+                        "WHERE EXISTS (SELECT 1 FROM auction_listings al \
+                                      WHERE al.id = m.ref_id AND al.profession = ?1) \
+                            OR EXISTS (SELECT 1 FROM stock_conversions sc \
+                                      WHERE sc.id = m.ref_id AND sc.profession = ?1) \
+                            OR m.ref_id IS NULL"
+                    }
+                    Profession::Hunting => {
+                        "WHERE EXISTS (SELECT 1 FROM auction_listings al \
+                                      WHERE al.id = m.ref_id AND al.profession = ?1) \
+                            OR EXISTS (SELECT 1 FROM stock_conversions sc \
+                                      WHERE sc.id = m.ref_id AND sc.profession = ?1)"
+                    }
+                    Profession::Inventory => "WHERE ?1 = 'inventory'",
                 };
                 let sql = format!(
                     "{base_sql} \
                      UNION \
                      SELECT m.item_name FROM stock_movements m \
-                     WHERE EXISTS (SELECT 1 FROM auction_listings al \
-                                   WHERE al.id = m.ref_id AND al.profession = ?1) \
-                        OR EXISTS (SELECT 1 FROM stock_conversions sc \
-                                   WHERE sc.id = m.ref_id AND sc.profession = ?1) \
-                        {legacy_clause}"
+                     {movement_scope}"
                 );
                 let mut items: Vec<String> = Vec::new();
                 {
@@ -5739,6 +5747,11 @@ impl AnalyticsService {
                 if listing.status != "sold" {
                     return Ok(None);
                 }
+                // A trade resolves in one step and has no open stage to
+                // return to; only an auction sale can be taken back.
+                if listing.channel != "auction" {
+                    return Ok(None);
+                }
 
                 let mut days: Vec<String> = Vec::new();
                 for column in ["sale_entry_id", "sale_fee_entry_id"] {
@@ -6299,7 +6312,7 @@ impl AnalyticsService {
     }
 
     /// Sell an inventory item: emit the realised delta to the ledger and
-    /// remove the row, atomically; a zero-delta sale skips the ledger row
+    /// retain the row as sold, atomically; a zero-delta sale skips the ledger row
     /// (`ledgerEntry` null). Returns the `{ ledgerEntry, soldItem }` shape,
     /// or `None` for a missing item.
     pub async fn sell_inventory_item(
@@ -6310,7 +6323,7 @@ impl AnalyticsService {
         sold_at: Option<&str>,
     ) -> Result<Option<InventorySale>, AnalyticsError> {
         // The item is read on a reader-core connection; the realised sale then
-        // writes its ledger row and removes the item in one writer transaction
+        // writes its ledger row and marks the item sold in one writer transaction
         // (the rollup refresh must commit atomically with the ledger insert).
         let fetched = {
             let item_id = item_id.to_string();
@@ -6347,8 +6360,8 @@ impl AnalyticsService {
             .map(str::to_string)
             .unwrap_or_else(|| self.default_date());
 
-        // The realised sale writes its ledger row (when non-zero) and removes
-        // the item in one writer-core transaction; the rollup refresh commits
+        // The realised sale writes its ledger row (when non-zero) and retains
+        // the item as sold in one writer-core transaction; the rollup refresh commits
         // atomically with the ledger insert.
         let ledger_write: Option<(String, String, &'static str, String, f64)> = if delta != 0.0 {
             let entry_id = Uuid::new_v4().to_string();
@@ -6359,15 +6372,24 @@ impl AnalyticsService {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("Inventory Sale: {name}"));
-            Some((entry_id, sold_at, entry_type, description, amount))
+            Some((entry_id, sold_at.clone(), entry_type, description, amount))
         } else {
             None
         };
         let item_id_owned = item_id.to_string();
         let ledger_for_closure = ledger_write.clone();
-        self.db
+        let updated = self
+            .db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
+                let affected = tx.execute(
+                    "UPDATE inventory_items SET state = 'sold', disposed_at = ?, \
+                         updated_at = unixepoch('now') WHERE id = ? AND state = 'held'",
+                    rusqlite::params![sold_at, item_id_owned],
+                )?;
+                if affected == 0 {
+                    return Ok(false);
+                }
                 if let Some((entry_id, sold_at, entry_type, description, amount)) =
                     &ledger_for_closure
                 {
@@ -6385,14 +6407,13 @@ impl AnalyticsService {
                     )?;
                     daily_rollup::refresh_days(&tx, [sold_at.as_str()])?;
                 }
-                tx.execute(
-                    "DELETE FROM inventory_items WHERE id = ?",
-                    rusqlite::params![item_id_owned],
-                )?;
                 tx.commit()?;
-                Ok(())
+                Ok(true)
             })
             .await?;
+        if !updated {
+            return Ok(None);
+        }
         let ledger_entry = ledger_write.map(
             |(entry_id, sold_at, entry_type, description, amount)| LedgerRow {
                 id: entry_id,
@@ -7732,6 +7753,31 @@ mod tests {
         assert!((source.tt_value - 1.5).abs() < 1e-9);
         assert!((produced.tt_value - 1.5).abs() < 1e-9);
 
+        service
+            .db()
+            .with_writer(|conn| {
+                conn.execute(
+                    "INSERT INTO stock_movements (item_name, movement_kind, ref_id, source_kind, \
+                         quantity, tt_value, occurred_at, created_at) \
+                     VALUES ('Universal Ammo', 'legacy_adjustment', NULL, 'unattributed', \
+                         100.0, 1.0, '2026-07-21', 0)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        // The central Inventory universe includes outputs from every
+        // profession-scoped conversion and legacy movements, not only records
+        // labelled inventory.
+        let inventory = service
+            .stock_positions(Profession::Inventory)
+            .await
+            .unwrap();
+        assert!(position(&inventory, "Nanocube").is_some());
+        assert!(position(&inventory, "Universal Ammo").is_some());
+
         // Selling the produced stock attributes back to the original tiers.
         let listing = service
             .create_auction_listing(
@@ -8498,7 +8544,7 @@ mod tests {
     }
 
     /// Sell a created item, asserting the delta/type/description-default
-    /// branch for profit / loss / zero-delta and the atomic item removal.
+    /// branch for profit / loss / zero-delta and the retained sold row.
     #[tokio::test]
     async fn sell_emits_the_right_delta_branch() {
         // PROFIT: sale 20 over cost 12 -> markup 8.0; default description.
@@ -8528,8 +8574,23 @@ mod tests {
             "default description form"
         );
         assert_eq!(body["soldItem"]["name"], json!("Sword"));
-        // Item removed; the emitted ledger row is the only one.
+        // The item leaves current holdings but remains as an auditable sold row.
         assert_eq!(service.list_inventory().await.unwrap().len(), 0);
+        let sold_state = service
+            .db()
+            .with_reader({
+                let id = id.clone();
+                move |conn| {
+                    Ok(conn.query_row(
+                        "SELECT state, disposed_at FROM inventory_items WHERE id = ?",
+                        rusqlite::params![id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )?)
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(sold_state, ("sold".to_string(), "2026-05-10".to_string()));
         assert_eq!(
             service.list_ledger(None, None).await.unwrap().entries.len(),
             1
@@ -8558,7 +8619,7 @@ mod tests {
         // Default sold_at is the frozen clock date.
         assert_eq!(entry["date"], json!("2026-06-01"));
 
-        // ZERO-DELTA: sale == cost -> no ledger entry, item still removed.
+        // ZERO-DELTA: sale == cost -> no ledger entry, item leaves holdings.
         let (_dir, service) = write_service().await;
         let item = to_json(
             service
@@ -8584,7 +8645,7 @@ mod tests {
         assert_eq!(
             service.list_inventory().await.unwrap().len(),
             0,
-            "item removed"
+            "sold item is not a current holding"
         );
 
         // Sell a missing id -> not found.
@@ -8739,6 +8800,94 @@ mod tests {
             .unwrap()
             .entries
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn equipment_auction_sale_reverts_but_an_immediate_trade_cannot() {
+        let (_dir, service) = write_service().await;
+        let item = service
+            .create_inventory_item("Ares Ring", 25.0, 75.0, None, None)
+            .await
+            .unwrap();
+        let listing = service
+            .create_equipment_listing(&item.id, 105.0, Some(120.0), 0.5, Some("2026-06-02"))
+            .await
+            .unwrap()
+            .expect("held equipment");
+        let sale = service
+            .confirm_auction_listing(&listing.id, 120.0, 1.0, Some("2026-06-04"))
+            .await
+            .unwrap()
+            .expect("pending auction");
+        assert_eq!(sale.gross_markup, Some(20.0));
+        assert_eq!(sale.sale_fee, Some(1.0));
+        let state = service
+            .db()
+            .with_reader({
+                let id = item.id.clone();
+                move |conn| {
+                    Ok(conn.query_row(
+                        "SELECT state, disposed_at FROM inventory_items WHERE id = ?",
+                        rusqlite::params![id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )?)
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(state, ("sold".to_string(), "2026-06-04".to_string()));
+
+        let reopened = service
+            .revert_auction_sale(&listing.id)
+            .await
+            .unwrap()
+            .expect("sold auction");
+        assert_eq!(reopened.status, "pending");
+        assert_eq!(reopened.final_price, None);
+        let reopened_state = service
+            .db()
+            .with_reader({
+                let id = item.id.clone();
+                move |conn| {
+                    Ok(conn.query_row(
+                        "SELECT state, disposed_at FROM inventory_items WHERE id = ?",
+                        rusqlite::params![id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                    )?)
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(reopened_state, ("listed".to_string(), None));
+        let ledger = service.list_ledger(None, None).await.unwrap();
+        assert_eq!(
+            ledger.entries.len(),
+            1,
+            "the original listing fee remains spent"
+        );
+        assert_eq!(ledger.entries[0].amount, 0.5);
+
+        let traded = service
+            .create_inventory_item("Restoration Chip", 50.0, 20.0, None, None)
+            .await
+            .unwrap();
+        let trade = service
+            .trade_equipment(&traded.id, 85.0, Some("2026-06-05"))
+            .await
+            .unwrap()
+            .expect("held equipment");
+        assert!(service
+            .revert_auction_sale(&trade.id)
+            .await
+            .unwrap()
+            .is_none());
+        let history = service
+            .activity_history(Profession::Inventory)
+            .await
+            .unwrap();
+        let trade_history = history.iter().find(|row| row.id == trade.id).unwrap();
+        assert_eq!(trade_history.status, "sold");
+        assert!(!trade_history.can_revert_sale);
     }
 
     #[tokio::test]

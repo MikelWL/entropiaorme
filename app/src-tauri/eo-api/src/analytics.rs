@@ -1261,6 +1261,9 @@ impl Api {
         })
     }
 
+    /// List one whole recognised equipment holding on the auction. The
+    /// holding moves to `listed` and the starting-bid fee is spent now; a
+    /// missing, sold, or already-listed holding is a not-found.
     pub async fn inventory_equipment_listing_create(
         &self,
         input: EquipmentListingInput,
@@ -1279,6 +1282,9 @@ impl Api {
             .ok_or_else(|| ApiError::not_found("no held equipment with that id"))
     }
 
+    /// Record a completed fee-free player trade for one whole recognised
+    /// equipment holding. The result is realised immediately; a missing,
+    /// sold, or already-listed holding is a not-found.
     pub async fn inventory_equipment_trade(
         &self,
         input: EquipmentTradeInput,
@@ -1347,7 +1353,7 @@ impl Api {
     }
 
     /// Sell an inventory item (emit the realised delta to the ledger and
-    /// remove the row); a missing item is a not-found.
+    /// retain the row as sold); a missing item is a not-found.
     pub async fn inventory_sell(
         &self,
         item_id: String,

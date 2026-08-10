@@ -11,10 +11,7 @@
 	import { createHuntingModel } from '$lib/features/analytics/huntingModel.svelte';
 	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
 	import { onMount } from 'svelte';
-	import type {
-		ConfidenceMode,
-		TreeCuttingStock as StockRow,
-	} from '$lib/features/analytics/treeCuttingModel.svelte';
+	import type { TreeCuttingStock as StockRow } from '$lib/features/analytics/treeCuttingModel.svelte';
 
 	const model = createHuntingModel();
 
@@ -83,7 +80,7 @@
 
 			<MarkupConfidenceControl
 				active={model.confidenceMode}
-				onchange={(id) => (model.confidenceMode = id as ConfidenceMode)}
+				onchange={(id) => (model.confidenceMode = id)}
 			/>
 		</div>
 

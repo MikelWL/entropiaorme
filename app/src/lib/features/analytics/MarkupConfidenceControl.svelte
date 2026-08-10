@@ -8,12 +8,16 @@
 		onchange,
 	}: {
 		active: ConfidenceMode;
-		onchange: (id: string) => void;
+		onchange: (id: ConfidenceMode) => void;
 	} = $props();
+
+	function selectConfidence(id: string) {
+		onchange(id as ConfidenceMode);
+	}
 
 </script>
 
 <div class="flex items-center gap-2.5">
 	<MarkupConfidenceInfo />
-	<MarkupConfidenceSelector {active} {onchange} />
+	<MarkupConfidenceSelector {active} onchange={selectConfidence} />
 </div>

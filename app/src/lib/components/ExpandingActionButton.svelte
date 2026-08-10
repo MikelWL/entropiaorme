@@ -29,18 +29,21 @@
 		rounded-md border border-border/40 bg-transparent text-xs font-semibold text-text-secondary
 		transition-[width,color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
 		hover:w-[var(--expanded)] hover:border-border hover:text-text
+		focus-visible:w-[var(--expanded)] focus-visible:border-border focus-visible:text-text
 		disabled:cursor-not-allowed disabled:border-dashed disabled:text-text-tertiary
 		disabled:hover:border-border/40 disabled:hover:text-text-tertiary"
 >
 	<span
 		class="absolute inset-0 flex items-center justify-center
-			transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-0"
+			transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-0
+			group-focus-visible/act:opacity-0"
 	>
 		{letter}
 	</span>
 	<span
 		class="absolute inset-0 flex items-center justify-center whitespace-nowrap px-2
-			opacity-0 transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-100"
+			opacity-0 transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-100
+			group-focus-visible/act:opacity-100"
 	>
 		{label}
 	</span>

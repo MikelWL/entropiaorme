@@ -45,7 +45,9 @@
 
 	function selectView(id: string) {
 		model.view = id as InventoryView;
-		if (id === 'history' && model.history.length === 0) void model.loadHistory();
+		if (id === 'history' && !model.historyLoaded && !model.historyLoading) {
+			void model.loadHistory().catch(() => undefined);
+		}
 	}
 
 	function addEquipment() {
@@ -60,7 +62,7 @@
 
 	async function deleteEquipment(item: InventoryItem) {
 		if (!window.confirm(`Remove ${item.name} from your assets?`)) return;
-		await model.deleteEquipment(item);
+		await model.deleteEquipment(item).catch(() => undefined);
 	}
 </script>
 
@@ -161,7 +163,7 @@
 <InventoryItemFormModal
 	bind:open={equipmentFormOpen}
 	item={equipmentToEdit}
-	onsaved={() => void model.refresh()}
+	onsaved={() => void model.refresh().catch(() => undefined)}
 />
 <EquipmentSaleModal
 	item={equipmentToSell}

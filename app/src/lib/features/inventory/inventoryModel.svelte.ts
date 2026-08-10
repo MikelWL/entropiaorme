@@ -352,6 +352,9 @@ export function createInventoryModel() {
 		get historyLoading() {
 			return historyLoading;
 		},
+		get historyLoaded() {
+			return historyLoaded;
+		},
 		get error() {
 			return error;
 		},

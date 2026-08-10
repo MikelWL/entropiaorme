@@ -210,6 +210,9 @@ History and correction flows after it leaves current holdings.
 | `state` | TEXT | `held`, `listed`, or `sold`; defaults to `held`. |
 | `disposed_at` | TEXT | Sale date for a disposed position; null while held or listed. |
 
+A `listed` position returns to `held` when its auction expires. It moves to
+`sold` only when an auction sale or immediate player trade is confirmed.
+
 ### Ledger
 
 #### `ledger_entries`
@@ -664,10 +667,11 @@ activity's TT return.
 - `auction_listings` records the pending, sold, or expired market lifecycle.
   `subject_kind` distinguishes fungible loot from a whole equipment position;
   equipment rows point to `inventory_item_id` and retain their acquisition
-  `cost_basis`. `channel` distinguishes auction listings from immediate player
-  trades. Stock leaves at listing time, the listing fee is spent then, and
-  markup is realised only when the final sale is confirmed.
-- `private_sales` records a completed player trade with its quantity, TT,
+  `cost_basis`. For equipment, `channel` distinguishes auction listings from
+  immediate player trades recorded on this same whole-position lifecycle.
+  Stock leaves at listing time, the listing fee is spent then, and markup is
+  realised only when the final sale is confirmed.
+- `private_sales` records a completed loot trade with its quantity, TT,
   tracked and untracked shares, final price, date, and owned ledger entry. It
   has no auction fees and recognises markup atomically with the stock outflow.
 - `stock_conversions` records source and target stock. Ordinary Nanocube

@@ -13,22 +13,22 @@
 			</p>
 			<ul class="space-y-1.5">
 				<li>
-					<span class="font-semibold text-positive" aria-label="High volume">✓</span>
+					<span class="font-semibold text-positive" aria-hidden="true">✓</span>
 					Enough TT value sells each week to make the markup practical to realise.
 				</li>
 				<li>
-					<span class="font-semibold text-warning" aria-label="Medium volume">⚠</span>
+					<span class="font-semibold text-warning" aria-hidden="true">⚠</span>
 					Sales are less frequent, but the markup is high enough for a practical sale to cover
 					the 0.5 PED minimum fee.
 				</li>
 				<li>
-					<span class="font-semibold text-error" aria-label="Low volume">!</span>
+					<span class="font-semibold text-error" aria-hidden="true">!</span>
 					Too little TT value has sold recently to rely on the markup.
 				</li>
 			</ul>
 			<p>
-				Excluded items use the Nanocube markup instead. The amount you currently hold does not
-				affect these levels.
+				Items excluded by the selected confidence level use the Nanocube markup instead. The
+				amount you currently hold does not affect these levels.
 			</p>
 		</div>
 	</InfoTip>

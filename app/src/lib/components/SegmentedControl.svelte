@@ -45,7 +45,7 @@
 			disabled={option.disabled}
 			onclick={() => onchange(option.id)}
 		>
-			<span class={option.labelClass ?? ''}>{option.label}</span>
+			<span class={option.labelClass}>{option.label}</span>
 		</button>
 	{/each}
 </div>
