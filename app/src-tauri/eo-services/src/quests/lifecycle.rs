@@ -334,6 +334,11 @@ impl QuestService {
                     .optional()?;
                 if let Some((completion_id, _, _)) = &completion {
                     tx.execute(
+                        "DELETE FROM session_quest_completion_reward_items \
+                         WHERE completion_id = ?",
+                        rusqlite::params![completion_id],
+                    )?;
+                    tx.execute(
                         "DELETE FROM session_quest_completions WHERE id = ?",
                         rusqlite::params![completion_id],
                     )?;

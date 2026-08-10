@@ -100,6 +100,12 @@
 		onmouseleave={() => (open = false)}
 		onfocus={() => (open = true)}
 		onblur={() => (open = false)}
+		onkeydown={(event) => {
+			if (event.key === 'Escape' && open) {
+				event.stopPropagation();
+				open = false;
+			}
+		}}
 		class="inline-flex items-center justify-center rounded leading-none cursor-help
 			transition-colors duration-[var(--duration-fast)]
 			focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60

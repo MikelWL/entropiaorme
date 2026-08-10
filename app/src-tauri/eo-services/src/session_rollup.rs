@@ -61,13 +61,16 @@ pub fn drop_session(conn: &rusqlite::Connection, session_id: &str) -> Result<(),
 /// nothing (it stays raw-served); an ended one gets fresh cells and the
 /// marker, in that order. The caller owns the surrounding commit.
 pub fn recompute_session(conn: &rusqlite::Connection, session_id: &str) -> Result<(), DbError> {
+    use rusqlite::OptionalExtension as _;
+
     drop_session(conn, session_id)?;
-    let ended: bool = conn
+    let ended = conn
         .query_row(
             "SELECT ended_at IS NOT NULL FROM tracking_sessions WHERE id = ?",
             rusqlite::params![session_id],
             |row| row.get(0),
         )
+        .optional()?
         .unwrap_or(false);
     if !ended {
         return Ok(());
@@ -180,7 +183,13 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
         rusqlite::params![ROLLUP_VERSION],
         |row| row.get(0),
     )?;
-    if pending == 0 {
+    let orphaned: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM session_rollup_meta \
+         WHERE session_id NOT IN (SELECT id FROM tracking_sessions)",
+        [],
+        |row| row.get(0),
+    )?;
+    if pending == 0 && orphaned == 0 {
         return Ok(());
     }
     let tx = conn.transaction()?;
@@ -431,8 +440,6 @@ mod tests {
             // left its cells behind.
             conn.execute("DELETE FROM kills WHERE session_id = 's-gone'", [])?;
             conn.execute("DELETE FROM tracking_sessions WHERE id = 's-gone'", [])?;
-            // A pending session forces the heal past its fast path.
-            seed_session(conn, "s-new", true);
             heal(conn)?;
 
             let ghost: i64 = conn.query_row(

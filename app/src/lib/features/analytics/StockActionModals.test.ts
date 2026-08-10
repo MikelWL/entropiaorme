@@ -65,7 +65,7 @@ describe('stock action modals', () => {
 		const onconfirm = vi.fn().mockResolvedValue(undefined);
 		render(AdjustStockModal, {
 			props: {
-				item: stock,
+				item: { ...stock, heldTt: 10.03 },
 				mode: 'shrapnel',
 				onconfirm,
 				oncancel: vi.fn(),
@@ -75,7 +75,7 @@ describe('stock action modals', () => {
 		await fireEvent.input(screen.getByLabelText('PED to convert'), { target: { value: '5' } });
 		expect(screen.getByText('5.05 PED ammo after conversion')).not.toBeNull();
 		await fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
-		await waitFor(() => expect(onconfirm).toHaveBeenCalledWith('Shrapnel', 5000));
+		await waitFor(() => expect(onconfirm).toHaveBeenCalledWith('Shrapnel', 4985));
 	});
 
 	it('states that Remove leaves historical TT intact', () => {

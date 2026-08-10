@@ -46,10 +46,12 @@
 
 	async function submit() {
 		if (!item || saving || ped <= 0 || unitTt <= 0 || ped > item.heldTt) return;
+		const quantity = Math.min(item.heldQty, Math.round(ped / unitTt));
+		if (quantity <= 0) return;
 		saving = true;
 		error = null;
 		try {
-			await onconfirm(item.itemName, ped / unitTt);
+			await onconfirm(item.itemName, quantity);
 			modalOpen = false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Failed to ${mode === 'remove' ? 'remove' : 'convert'} the stock`;

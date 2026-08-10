@@ -1875,6 +1875,7 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
         &svc.create_quest(&json!({
             "name": "Hyperion Boss 1",
             "signal_loot_item": "Hyperion Daily Voucher",
+            "cooldown_hours": 20,
         }))
         .await
         .unwrap(),
@@ -1927,6 +1928,17 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
         .await
         .unwrap();
     assert_eq!(reward_item, ("hyperion daily voucher".to_string(), 1, 0.25));
+
+    svc.cancel_quest(boss, false).await.unwrap();
+    let remaining_reward_items = count_rows(
+        &db,
+        "SELECT COUNT(*) FROM session_quest_completion_reward_items",
+    )
+    .await;
+    assert_eq!(
+        remaining_reward_items, 0,
+        "cancel removes linked reward evidence"
+    );
 }
 
 /// A signal quest that is NOT in progress ignores its marker: an

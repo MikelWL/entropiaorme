@@ -9,8 +9,8 @@
 		stock,
 		onsell,
 		onconvert,
-		onremove = () => {},
-		onshrapnelconvert = () => {},
+		onremove,
+		onshrapnelconvert,
 		// The one activity-specific line in the panel, so the Hunting tab can
 		// host the same surface over its own loot without forking the layout.
 		sourceDescription = 'Loot recorded from tree cutting, minus stock you have sold, converted, or removed.',
@@ -18,8 +18,8 @@
 		stock: TreeCuttingStock[];
 		onsell: (item: TreeCuttingStock) => void;
 		onconvert: (item: TreeCuttingStock) => void;
-		onremove?: (item: TreeCuttingStock) => void;
-		onshrapnelconvert?: (item: TreeCuttingStock) => void;
+		onremove: (item: TreeCuttingStock) => void;
+		onshrapnelconvert: (item: TreeCuttingStock) => void;
 		sourceDescription?: string;
 	} = $props();
 

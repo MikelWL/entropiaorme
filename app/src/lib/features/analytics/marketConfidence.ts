@@ -79,10 +79,13 @@ export function confidenceTip(item: TreeCuttingItem): {
 		batchTt !== null && batchMarkup !== null && batchShare !== null && horizon
 			? `For example: A ${formatPed(batchTt)} PED TT sale at this MU would produce about ${formatPed(batchMarkup)} PED of markup. The minimum auction fee is 0.5 PED, or 10% of that markup. That sale would be ${marketShare(batchShare)} of the TT sold ${marketPeriod(horizon)}.`
 			: undefined;
+	const insufficientMarkup = batchTt === null || batchMarkup === null;
 	const noExampleNote = example
 		? projectionNote
 		: [
-				'The recorded MU does not provide enough markup to calculate a sale after fees.',
+				insufficientMarkup
+					? 'The recorded MU does not provide enough markup to calculate a sale after fees.'
+					: undefined,
 				projectionNote,
 			]
 				.filter(Boolean)

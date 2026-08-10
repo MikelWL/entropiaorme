@@ -80,6 +80,8 @@ function primaryProps(
 		onselect,
 		onsell: vi.fn(),
 		onconvert: vi.fn(),
+		onremove: vi.fn(),
+		onshrapnelconvert: vi.fn(),
 		overallPanel: 'stock' as const,
 		onpanelchange: vi.fn(),
 		openListings: [],
@@ -131,7 +133,15 @@ describe('Hunting economic comparisons', () => {
 			salesPed: null,
 			weeklySalesPed: null,
 		}));
-		render(TreeCuttingStock, { props: { stock, onsell: vi.fn(), onconvert: vi.fn() } });
+		render(TreeCuttingStock, {
+			props: {
+				stock,
+				onsell: vi.fn(),
+				onconvert: vi.fn(),
+				onremove: vi.fn(),
+				onshrapnelconvert: vi.fn(),
+			},
+		});
 
 		const strip = screen.getByTestId('stock-utility-strip');
 		expect(within(strip).getByText('Your Current Stock')).not.toBeNull();
@@ -156,7 +166,7 @@ describe('Hunting economic comparisons', () => {
 		expect(continuation.className).toContain('opacity-0');
 	});
 
-	it('offers removal on every holding and deliberate conversion only on Shrapnel', () => {
+	it('offers removal on every holding and deliberate conversion only on Shrapnel', async () => {
 		const base = {
 			heldQty: 100,
 			heldTt: 1,
@@ -199,6 +209,14 @@ describe('Hunting economic comparisons', () => {
 				?.querySelector('[aria-hidden="true"]')
 				?.nextElementSibling?.getAttribute('aria-label'),
 		).toBe('Nanocube');
+		await fireEvent.click(screen.getAllByLabelText('Remove')[1]);
+		await fireEvent.click(screen.getByLabelText('Convert'));
+		expect(onremove).toHaveBeenCalledWith(
+			expect.objectContaining({ itemName: 'Animal Muscle Oil' }),
+		);
+		expect(onshrapnelconvert).toHaveBeenCalledWith(
+			expect.objectContaining({ itemName: 'Shrapnel' }),
+		);
 	});
 
 	it('uses the Tree Cutting frame for sessions and omits legacy activity statistics', async () => {

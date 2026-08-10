@@ -18,8 +18,8 @@
 		onchange,
 		onsell,
 		onconvert,
-		onremove = () => {},
-		onshrapnelconvert = () => {},
+		onremove,
+		onshrapnelconvert,
 		onresolve,
 		onundo,
 	}: {
@@ -32,8 +32,8 @@
 		onchange: (panel: HuntingOverallPanel) => void;
 		onsell: (item: StockRow) => void;
 		onconvert: (item: StockRow) => void;
-		onremove?: (item: StockRow) => void;
-		onshrapnelconvert?: (item: StockRow) => void;
+		onremove: (item: StockRow) => void;
+		onshrapnelconvert: (item: StockRow) => void;
 		onresolve: (listingId: string, outcome: { sold: true; finalPrice: number; saleFee: number; resolvedAt?: string } | { sold: false; resolvedAt?: string }) => Promise<void>;
 		onundo: (entry: ActivityHistoryEntry, revertSale?: boolean) => Promise<void>;
 	} = $props();

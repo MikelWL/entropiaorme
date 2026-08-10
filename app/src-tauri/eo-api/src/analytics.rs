@@ -25,6 +25,7 @@
 use std::collections::BTreeMap;
 
 use eo_services::analytics::AnalyticsError;
+use eo_wire::normalizer::round_half_even;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -1365,7 +1366,7 @@ pub(crate) fn hunting_activity_dto(
             cycled: row.cycled,
             returns: row.returns,
             loot_rate: if row.cycled > 0.0 {
-                row.returns / row.cycled
+                round_half_even(row.returns / row.cycled, 4)
             } else {
                 0.0
             },
@@ -1373,7 +1374,7 @@ pub(crate) fn hunting_activity_dto(
             reward_items: row.reward_items.into_iter().map(loot_item).collect(),
             rewarded_returns,
             rewarded_rate: if row.cycled > 0.0 {
-                rewarded_returns / row.cycled
+                round_half_even(rewarded_returns / row.cycled, 4)
             } else {
                 0.0
             },

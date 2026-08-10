@@ -20,8 +20,8 @@
 		onselect,
 		onsell,
 		onconvert,
-		onremove = () => {},
-		onshrapnelconvert = () => {},
+		onremove,
+		onshrapnelconvert,
 		overallPanel,
 		onpanelchange,
 		openListings,
@@ -39,8 +39,8 @@
 		onselect: (key: string | null) => void;
 		onsell: (item: StockRow) => void;
 		onconvert: (item: StockRow) => void;
-		onremove?: (item: StockRow) => void;
-		onshrapnelconvert?: (item: StockRow) => void;
+		onremove: (item: StockRow) => void;
+		onshrapnelconvert: (item: StockRow) => void;
 		overallPanel: HuntingOverallPanel;
 		onpanelchange: (panel: HuntingOverallPanel) => void;
 		openListings: AuctionListing[];
