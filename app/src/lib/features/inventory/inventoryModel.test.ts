@@ -20,9 +20,16 @@ vi.mock('$lib/api/inventory', () => ({
 	undoInventoryTrade: vi.fn(),
 }));
 
+vi.mock('$lib/api/market', () => ({
+	getMarketHarvestMarkups: vi.fn(),
+	getMarketHuntMarkups: vi.fn(),
+}));
+
 import * as inventoryApi from '$lib/api/inventory';
+import * as marketApi from '$lib/api/market';
 
 const mocked = vi.mocked(inventoryApi);
+const mockedMarket = vi.mocked(marketApi);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -42,6 +49,25 @@ beforeEach(() => {
 	mocked.getInventoryListings.mockResolvedValue([]);
 	mocked.getInventoryHistory.mockResolvedValue([]);
 	mocked.commitInventorySaleDraft.mockResolvedValue(undefined);
+	mockedMarket.getMarketHuntMarkups.mockResolvedValue({
+		nanocubeMarkupPct: 100.6,
+		items: [
+			{
+				itemName: 'Animal Oil Residue',
+				markupPct: 125,
+				horizon: 'week',
+				salesPed: 1_000,
+				readings: [
+					{ horizon: 'day', markupPct: 126, salesPed: 100 },
+					{ horizon: 'week', markupPct: 125, salesPed: 1_000 },
+				],
+			},
+		],
+	});
+	mockedMarket.getMarketHarvestMarkups.mockResolvedValue({
+		nanocubeMarkupPct: 100.6,
+		items: [],
+	});
 });
 
 describe('central inventory model', () => {
@@ -52,6 +78,12 @@ describe('central inventory model', () => {
 		expect(model.lootTt).toBe(1);
 		expect(model.equipmentTt).toBe(25);
 		expect(model.equipmentBasis).toBe(100);
+		expect(model.loot[0]).toMatchObject({
+			markupPct: 125,
+			effectiveMarkupPct: 125,
+			tier: 'liquid',
+			markupHorizon: 'week',
+		});
 		expect(model.loading).toBe(false);
 	});
 
@@ -85,6 +117,40 @@ describe('central inventory model', () => {
 				score: 100,
 			},
 			occurredAt: '2026-08-10',
+		});
+	});
+
+	it('applies the shared confidence threshold without hiding the observed markup', async () => {
+		mockedMarket.getMarketHuntMarkups.mockResolvedValue({
+			nanocubeMarkupPct: 100.6,
+			items: [
+				{
+					itemName: 'Animal Oil Residue',
+					markupPct: 110,
+					horizon: 'month',
+					salesPed: 100,
+					readings: [
+						{ horizon: 'week', markupPct: null, salesPed: 0 },
+						{ horizon: 'month', markupPct: 110, salesPed: 100 },
+					],
+				},
+			],
+		});
+		const model = createInventoryModel();
+		await model.load();
+
+		expect(model.loot[0]).toMatchObject({
+			markupPct: 110,
+			effectiveMarkupPct: 100.6,
+			tier: 'illiquid',
+			floored: true,
+		});
+
+		model.confidenceMode = 'all';
+		expect(model.loot[0]).toMatchObject({
+			markupPct: 110,
+			effectiveMarkupPct: 110,
+			floored: false,
 		});
 	});
 });

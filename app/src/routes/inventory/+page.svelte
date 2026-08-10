@@ -17,7 +17,10 @@
 		type InventoryKind,
 		type InventoryView,
 	} from '$lib/features/inventory/inventoryModel.svelte';
-	import type { TreeCuttingStock } from '$lib/features/analytics/treeCuttingModel.svelte';
+	import type {
+		ConfidenceMode,
+		TreeCuttingStock,
+	} from '$lib/features/analytics/treeCuttingModel.svelte';
 
 	const model = createInventoryModel();
 	let equipmentFormOpen = $state(false);
@@ -82,6 +85,8 @@
 		<InventoryHoldings
 			kind={model.kind}
 			onkindchange={(id) => (model.kind = id as InventoryKind)}
+			confidenceMode={model.confidenceMode}
+			onconfidencechange={(id) => (model.confidenceMode = id as ConfidenceMode)}
 			loot={model.loot}
 			equipment={model.equipment}
 			onsellloot={(item) => (lootToSell = item)}

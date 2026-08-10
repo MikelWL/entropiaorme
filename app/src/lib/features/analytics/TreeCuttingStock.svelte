@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import ExpandingActionButton from '$lib/components/ExpandingActionButton.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
@@ -12,6 +13,10 @@
 		onconvert,
 		onremove,
 		onshrapnelconvert,
+		heading,
+		controls,
+		actionLayout = 'activity',
+		emptyMessage = 'No tracked stock is currently held.',
 		// The one activity-specific line in the panel, so the Hunting tab can
 		// host the same surface over its own loot without forking the layout.
 		sourceDescription = 'Loot recorded from tree cutting, minus stock you have sold, converted, or removed.',
@@ -21,6 +26,10 @@
 		onconvert: (item: TreeCuttingStock) => void;
 		onremove: (item: TreeCuttingStock) => void;
 		onshrapnelconvert: (item: TreeCuttingStock) => void;
+		heading?: Snippet;
+		controls?: Snippet;
+		actionLayout?: 'activity' | 'inventory';
+		emptyMessage?: string;
 		sourceDescription?: string;
 	} = $props();
 
@@ -194,7 +203,11 @@
 		data-testid="stock-utility-strip"
 	>
 		<div class="flex items-center gap-2">
-			<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
+			{#if heading}
+				{@render heading()}
+			{:else}
+				<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
+			{/if}
 			<InfoTip align="right" label="What current stock means">
 				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
 					<p class="font-semibold text-text">
@@ -219,6 +232,8 @@
 				aria-label="Find an item"
 			/>
 		{/if}
+
+		{#if controls}{@render controls()}{/if}
 	</div>
 
 	<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
@@ -226,7 +241,7 @@
 		<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
 		<span class="eyebrow w-20 text-right shrink-0">Markup</span>
 		<span class="eyebrow w-12 text-center shrink-0">Conf</span>
-		<span class="eyebrow w-[7.125rem] shrink-0 text-right">Actions</span>
+		<span class="eyebrow {actionLayout === 'inventory' ? 'w-[5.25rem]' : 'w-[7.125rem]'} shrink-0 text-right">Actions</span>
 	</div>
 
 	<div class="relative">
@@ -326,45 +341,89 @@
 					{/if}
 				</div>
 
-				<div class="shrink-0 flex items-center justify-end gap-1.5">
-					{#if item.itemName === 'Shrapnel'}
+				<div
+					class="shrink-0 flex items-center justify-end gap-1.5 {actionLayout === 'inventory'
+						? 'w-[5.25rem]'
+						: ''}"
+				>
+					{#if actionLayout === 'inventory'}
+						{#if item.itemName === 'Shrapnel'}
+							<ExpandingActionButton
+								letter="C"
+								label="Convert 101%"
+								onclick={() => onshrapnelconvert(item)}
+								disabled={item.heldQty <= 0}
+								title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
+							/>
+						{:else if item.itemName !== 'Nanocube' && item.itemName !== 'Universal Ammo'}
+							<ExpandingActionButton
+								letter="N"
+								label="Nanocubes"
+								onclick={() => onconvert(item)}
+								disabled={item.heldQty <= 0}
+								title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
+							/>
+						{:else}
+							<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
+						{/if}
 						<ExpandingActionButton
-							letter="C"
-							label="Convert"
-							onclick={() => onshrapnelconvert(item)}
+							letter="S"
+							label="Sell"
+							onclick={() => onsell(item)}
+							disabled={item.heldQty <= 0}
+							title={item.heldQty <= 0 ? 'Nothing held to sell' : ''}
+						/>
+						<ExpandingActionButton
+							letter="X"
+							label="Remove"
+							onclick={() => onremove(item)}
+							disabled={item.heldQty <= 0}
+							title={item.heldQty <= 0 ? 'Nothing held to remove' : ''}
+						/>
+					{:else}
+						{#if item.itemName === 'Shrapnel'}
+							<ExpandingActionButton
+								letter="C"
+								label="Convert"
+								onclick={() => onshrapnelconvert(item)}
+								disabled={item.heldQty <= 0}
+								title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
+							/>
+						{:else}
+							<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
+						{/if}
+						<ExpandingActionButton
+							letter="N"
+							label="Nanocube"
+							onclick={() => onconvert(item)}
 							disabled={item.heldQty <= 0}
 							title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
 						/>
-					{:else}
-						<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
+						<ExpandingActionButton
+							letter="S"
+							label="Sell"
+							onclick={() => onsell(item)}
+							disabled={item.heldQty <= 0}
+							title={item.heldQty <= 0 ? 'Nothing held to sell' : ''}
+						/>
+						<ExpandingActionButton
+							letter="X"
+							label="Remove"
+							onclick={() => onremove(item)}
+							disabled={item.heldQty <= 0}
+							title={item.heldQty <= 0 ? 'Nothing held to remove' : ''}
+						/>
 					{/if}
-					<ExpandingActionButton
-						letter="N"
-						label="Nanocube"
-						onclick={() => onconvert(item)}
-						disabled={item.heldQty <= 0}
-						title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
-					/>
-					<ExpandingActionButton
-						letter="S"
-						label="Sell"
-						onclick={() => onsell(item)}
-						disabled={item.heldQty <= 0}
-						title={item.heldQty <= 0 ? 'Nothing held to sell' : ''}
-					/>
-					<ExpandingActionButton
-						letter="X"
-						label="Remove"
-						onclick={() => onremove(item)}
-						disabled={item.heldQty <= 0}
-						title={item.heldQty <= 0 ? 'Nothing held to remove' : ''}
-					/>
 				</div>
 			</li>
 		{/each}
 		{#if visibleStock.length === 0 && query.trim() !== ''}
 			<li class="px-2.5 py-3 text-center text-xs text-text-tertiary">
 				No stock item matches that search.
+			</li>
+		{:else if visibleStock.length === 0}
+			<li class="px-2.5 py-10 text-center text-sm text-text-tertiary">
+				{emptyMessage}
 			</li>
 		{/if}
 	</ul>

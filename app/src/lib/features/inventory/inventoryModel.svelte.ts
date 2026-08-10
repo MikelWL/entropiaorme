@@ -5,6 +5,8 @@ import type {
 	EquipmentTradeInput,
 	InventoryItem,
 	InventorySaleDraft,
+	MarketHarvestData,
+	MarketHarvestItem,
 	StockPosition,
 } from '$lib/api/commands.gen';
 import {
@@ -25,31 +27,66 @@ import {
 	undoInventoryRemoval,
 	undoInventoryTrade,
 } from '$lib/api/inventory';
+import { getMarketHarvestMarkups, getMarketHuntMarkups } from '$lib/api/market';
 import type {
 	ActivityListingDraft,
 	ActivityTradeDraft,
 	TreeCuttingStock,
+} from '$lib/features/analytics/treeCuttingModel.svelte';
+import {
+	type ConfidenceMode,
+	effectiveMarkup,
+	marketOpportunity,
+	NANOCUBE_FALLBACK_MARKUP,
+	opportunityTier,
 } from '$lib/features/analytics/treeCuttingModel.svelte';
 import { describeError } from '$lib/view/errorState';
 
 export type InventoryKind = 'loot' | 'equipment';
 export type InventoryView = 'holdings' | 'listings' | 'history';
 
-function stockRow(row: StockPosition): TreeCuttingStock {
+function mergeMarketFeeds(feeds: Array<MarketHarvestData | null>): MarketHarvestData | null {
+	const available = feeds.filter((feed): feed is MarketHarvestData => feed !== null);
+	if (available.length === 0) return null;
+	const items = new Map<string, MarketHarvestItem>();
+	for (const feed of available) {
+		for (const item of feed.items) items.set(item.itemName, item);
+	}
+	return {
+		nanocubeMarkupPct:
+			available.find((feed) => feed.nanocubeMarkupPct !== null)?.nanocubeMarkupPct ?? null,
+		items: [...items.values()].sort((a, b) => a.itemName.localeCompare(b.itemName)),
+	};
+}
+
+function stockRow(
+	row: StockPosition,
+	market: MarketHarvestData | null,
+	confidenceMode: ConfidenceMode,
+): TreeCuttingStock {
+	const marketItem = market?.items.find((item) => item.itemName === row.itemName);
+	const nanocubeMarkup = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
+	const opportunity = market ? marketOpportunity(marketItem, nanocubeMarkup) : null;
+	const applied = opportunity ? effectiveMarkup(opportunity, nanocubeMarkup, confidenceMode) : null;
 	return {
 		itemName: row.itemName,
 		heldQty: row.quantity,
 		heldTt: row.ttValue,
 		listedQty: row.listedQuantity,
-		readings: [],
-		opportunity: null,
-		markupPct: null,
-		markupHorizon: null,
-		tier: null,
-		effectiveMarkupPct: null,
-		floored: false,
-		salesPed: null,
-		weeklySalesPed: null,
+		readings: (marketItem?.readings ?? []).map((reading) => ({
+			horizon: reading.horizon,
+			markupPct: reading.markupPct,
+			salesPed: reading.salesPed,
+		})),
+		opportunity,
+		markupPct: marketItem?.markupPct ?? null,
+		markupHorizon: marketItem?.horizon ?? null,
+		tier: opportunity ? opportunityTier(opportunity) : null,
+		effectiveMarkupPct: applied?.markupPct ?? null,
+		floored: applied?.floored ?? false,
+		salesPed: marketItem?.salesPed ?? null,
+		weeklySalesPed:
+			marketItem?.readings.find((reading) => reading.horizon === 'week')?.salesPed ?? null,
 	};
 }
 
@@ -81,11 +118,13 @@ function manualDraft(
 export function createInventoryModel() {
 	let kind = $state<InventoryKind>('loot');
 	let view = $state<InventoryView>('holdings');
+	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
 	let loading = $state(true);
 	let historyLoading = $state(false);
 	let historyLoaded = $state(false);
 	let error = $state<string | null>(null);
-	let loot = $state<TreeCuttingStock[]>([]);
+	let positions = $state<StockPosition[]>([]);
+	let market = $state<MarketHarvestData | null>(null);
 	let equipment = $state<InventoryItem[]>([]);
 	let listings = $state<AuctionListing[]>([]);
 	let history = $state<ActivityHistoryEntry[]>([]);
@@ -94,12 +133,16 @@ export function createInventoryModel() {
 		loading = true;
 		error = null;
 		try {
-			const [positions, equipmentRows, listingRows] = await Promise.all([
-				getLootInventory(),
-				getEquipmentInventory(),
-				getInventoryListings(),
-			]);
-			loot = positions.map(stockRow);
+			const [positionRows, equipmentRows, listingRows, huntingMarket, harvestingMarket] =
+				await Promise.all([
+					getLootInventory(),
+					getEquipmentInventory(),
+					getInventoryListings(),
+					getMarketHuntMarkups().catch(() => null),
+					getMarketHarvestMarkups().catch(() => null),
+				]);
+			positions = positionRows;
+			market = mergeMarketFeeds([huntingMarket, harvestingMarket]);
 			equipment = equipmentRows;
 			listings = listingRows;
 		} catch (cause) {
@@ -124,13 +167,13 @@ export function createInventoryModel() {
 	}
 
 	async function refresh(includeHistory = historyLoaded) {
-		const [positions, equipmentRows, listingRows, historyRows] = await Promise.all([
+		const [positionRows, equipmentRows, listingRows, historyRows] = await Promise.all([
 			getLootInventory(),
 			getEquipmentInventory(),
 			getInventoryListings(),
 			includeHistory ? getInventoryHistory() : Promise.resolve(history),
 		]);
-		loot = positions.map(stockRow);
+		positions = positionRows;
 		equipment = equipmentRows;
 		listings = listingRows;
 		history = historyRows;
@@ -278,6 +321,11 @@ export function createInventoryModel() {
 		),
 	);
 	const visibleHistory = $derived(history.filter((row) => row.subjectKind === kind));
+	const loot = $derived.by(() =>
+		positions
+			.map((position) => stockRow(position, market, confidenceMode))
+			.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName)),
+	);
 
 	return {
 		get kind() {
@@ -291,6 +339,12 @@ export function createInventoryModel() {
 		},
 		set view(value: InventoryView) {
 			view = value;
+		},
+		get confidenceMode() {
+			return confidenceMode;
+		},
+		set confidenceMode(value: ConfidenceMode) {
+			confidenceMode = value;
 		},
 		get loading() {
 			return loading;
