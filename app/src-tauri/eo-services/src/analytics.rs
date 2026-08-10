@@ -83,6 +83,18 @@ pub struct InventoryRow {
     pub acquired_at: String,
 }
 
+/// One holding candidate for a manually typed or OCR-observed item name.
+/// A candidate is a proposal only: callers commit against its stable reference,
+/// never against the observed string.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryMatchRow {
+    pub kind: String,
+    pub holding_id: String,
+    pub name: String,
+    pub score: f64,
+}
+
 /// One canonical item's current position: recorded loot still held, after
 /// everything that has left through a listing or a conversion and back
 /// through an expiry. Position context only: it never feeds market
@@ -122,6 +134,16 @@ pub struct AuctionListingRow {
     pub final_price: Option<f64>,
     pub sale_fee: Option<f64>,
     pub resolved_at: Option<String>,
+    /// The position family this listing consumes. Loot uses the weighted
+    /// provenance pool; equipment points at one stable capital holding.
+    pub subject_kind: String,
+    pub inventory_item_id: Option<String>,
+    /// Acquisition basis for equipment. Loot has no capital basis here: its
+    /// TT was recognised when acquired and only markup is realised on sale.
+    pub cost_basis: Option<f64>,
+    /// `auction` for a pending lifecycle, `trade` for an immediately resolved
+    /// fee-free player-to-player sale.
+    pub channel: String,
     /// Net markup the activity may claim, after both auction fees and after
     /// removing the share covered by untracked stock.
     pub activity_net_markup: Option<f64>,
@@ -143,6 +165,10 @@ pub struct AuctionListingRow {
 #[serde(rename_all = "camelCase")]
 pub struct ActivityHistoryRow {
     pub id: String,
+    /// The holding family this outcome acted on: `loot` or `equipment`.
+    pub subject_kind: String,
+    /// The operational path: `auction`, `trade`, `conversion`, or `removal`.
+    pub channel: String,
     /// `listing`, `trade`, `conversion`, or `removal`.
     pub kind: String,
     /// `pending`, `sold`, `expired`, `converted`, or `removed`.
@@ -206,6 +232,10 @@ pub struct RealisedDefinitionMarkup {
 pub enum Profession {
     Harvesting,
     Hunting,
+    /// The central Inventory command surface. This stamps where an action was
+    /// initiated, never what activity may claim its result; provenance owns
+    /// that attribution.
+    Inventory,
 }
 
 impl Profession {
@@ -213,6 +243,7 @@ impl Profession {
         match self {
             Self::Harvesting => "harvesting",
             Self::Hunting => "hunting",
+            Self::Inventory => "inventory",
         }
     }
 }
@@ -3360,7 +3391,7 @@ const STOCK_EPSILON: f64 = 1e-9;
 /// The auction-listing column list, in the order [`listing_from_row`] reads.
 const LISTING_COLUMNS: &str = "id, item_name, quantity, attributed_qty, unattributed_qty, \
      tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, status, \
-     final_price, sale_fee, resolved_at";
+     final_price, sale_fee, resolved_at, subject_kind, inventory_item_id, cost_basis, channel";
 
 /// One auction listing from a row over [`LISTING_COLUMNS`], with its
 /// realised figures derived rather than read: a stored copy could drift from
@@ -3372,8 +3403,11 @@ fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
     let status = row.get_unwrap::<_, String>(11);
     let final_price = row.get_unwrap::<_, Option<f64>>(12);
     let sale_fee = row.get_unwrap::<_, Option<f64>>(13);
+    let subject_kind = row.get_unwrap::<_, String>(15);
+    let cost_basis = row.get_unwrap::<_, Option<f64>>(17);
+    let sold = status == "sold";
 
-    let outcome = (status == "sold").then(|| {
+    let loot_outcome = (sold && subject_kind == "loot").then(|| {
         stock_allocation::resolve_sale(
             tt_value,
             attributed_tt,
@@ -3399,8 +3433,20 @@ fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
         final_price,
         sale_fee,
         resolved_at: row.get_unwrap::<_, Option<String>>(14),
-        activity_net_markup: outcome.map(|outcome| outcome.activity_net_markup),
-        gross_markup: outcome.map(|outcome| outcome.gross_markup),
+        subject_kind,
+        inventory_item_id: row.get_unwrap::<_, Option<String>>(16),
+        cost_basis,
+        channel: row.get_unwrap::<_, String>(18),
+        activity_net_markup: loot_outcome.map(|outcome| outcome.activity_net_markup),
+        gross_markup: if sold {
+            if let Some(basis) = cost_basis {
+                Some(final_price.unwrap_or(0.0) - basis)
+            } else {
+                loot_outcome.map(|outcome| outcome.gross_markup)
+            }
+        } else {
+            None
+        },
     }
 }
 
@@ -3552,7 +3598,8 @@ fn realised_stock_outcomes(
     let mut stmt = conn.prepare(
         "SELECT id, 'listing', tt_value, attributed_tt, COALESCE(final_price, 0), \
                 listing_fee, COALESCE(sale_fee, 0) \
-         FROM auction_listings WHERE status = 'sold' AND undone_at IS NULL \
+         FROM auction_listings \
+         WHERE status = 'sold' AND undone_at IS NULL AND subject_kind = 'loot' \
          UNION ALL \
          SELECT id, 'trade', tt_value, attributed_tt, final_price, 0, 0 \
          FROM private_sales WHERE undone_at IS NULL \
@@ -4351,7 +4398,8 @@ impl AnalyticsService {
             .with_reader(|conn| {
                 let mut stmt = conn.prepare(
                     "SELECT id, name, tt_value, markup_paid, notes, acquired_at \
-                     FROM inventory_items ORDER BY acquired_at DESC, id DESC",
+                     FROM inventory_items WHERE state = 'held' \
+                     ORDER BY acquired_at DESC, id DESC",
                 )?;
                 let rows = stmt
                     .query_map([], |row| Ok(inventory_item(row)))?
@@ -4359,6 +4407,66 @@ impl AnalyticsService {
                 Ok(rows)
             })
             .await?)
+    }
+
+    /// Resolve an observed item name against the holdings that can currently
+    /// be transacted. This is the intake-neutral seam shared by manual entry
+    /// and a future market-window OCR adapter. Exact normalised matches lead;
+    /// fuzzy candidates remain proposals for the review surface.
+    pub async fn resolve_inventory_name(
+        &self,
+        observed_name: &str,
+    ) -> Result<Vec<InventoryMatchRow>, AnalyticsError> {
+        let query = observed_name.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut candidates: Vec<InventoryMatchRow> = self
+            .stock_positions(Profession::Inventory)
+            .await?
+            .into_iter()
+            .filter(|row| row.quantity > STOCK_EPSILON)
+            .map(|row| InventoryMatchRow {
+                kind: "loot".to_string(),
+                holding_id: row.item_name.clone(),
+                score: crate::fuzzy_match::wratio(query, &row.item_name),
+                name: row.item_name,
+            })
+            .collect();
+        candidates.extend(
+            self.list_inventory()
+                .await?
+                .into_iter()
+                .map(|row| InventoryMatchRow {
+                    kind: "equipment".to_string(),
+                    holding_id: row.id,
+                    score: crate::fuzzy_match::wratio(query, &row.name),
+                    name: row.name,
+                }),
+        );
+        let normalised = |value: &str| {
+            value
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        };
+        let query_key = normalised(query);
+        for candidate in &mut candidates {
+            if normalised(&candidate.name) == query_key {
+                candidate.score = 100.0;
+            }
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.holding_id.cmp(&right.holding_id))
+        });
+        candidates.truncate(5);
+        Ok(candidates)
     }
 
     /// Every canonical item the player has held, most valuable first.
@@ -4399,10 +4507,14 @@ impl AnalyticsService {
                     Profession::Hunting => {
                         "SELECT item_name FROM kill_loot_items WHERE deactivated_at IS NULL"
                     }
+                    Profession::Inventory => {
+                        "SELECT item_name FROM harvest_loot_items WHERE deactivated_at IS NULL \
+                         UNION SELECT item_name FROM kill_loot_items WHERE deactivated_at IS NULL"
+                    }
                 };
                 let legacy_clause = match profession {
                     Profession::Harvesting => "OR m.ref_id IS NULL",
-                    Profession::Hunting => "",
+                    Profession::Hunting | Profession::Inventory => "",
                 };
                 let sql = format!(
                     "{base_sql} \
@@ -4433,7 +4545,8 @@ impl AnalyticsService {
                 let listed_by_item: std::collections::HashMap<String, f64> = {
                     let mut stmt = conn.prepare(
                         "SELECT item_name, COALESCE(SUM(quantity), 0) FROM auction_listings \
-                         WHERE status = 'pending' AND undone_at IS NULL GROUP BY item_name",
+                         WHERE status = 'pending' AND undone_at IS NULL \
+                           AND subject_kind = 'loot' GROUP BY item_name",
                     )?;
                     let mut out = std::collections::HashMap::new();
                     let mut listed = stmt.query([])?;
@@ -4617,6 +4730,195 @@ impl AnalyticsService {
             .map_err(AnalyticsError::from)
     }
 
+    /// List one whole capital-equipment holding on the auction.
+    ///
+    /// Equipment is indivisible in this first model: the stable inventory row
+    /// is the position and its TT plus paid markup is the acquisition basis.
+    /// The row moves to `listed` rather than being deleted, so expiry, sale
+    /// reversal, history, and undo all retain the original fact.
+    pub async fn create_equipment_listing(
+        &self,
+        item_id: &str,
+        starting_bid: f64,
+        buyout: Option<f64>,
+        listing_fee: f64,
+        listed_at: Option<&str>,
+    ) -> Result<Option<AuctionListingRow>, AnalyticsError> {
+        if starting_bid < 0.0 || listing_fee < 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "auction prices and fees cannot be negative",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let item_id = item_id.to_string();
+        let listed_at = listed_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
+        let now = naive_to_epoch(self.clock.now());
+        self.db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let item: Option<(String, f64, f64)> = tx
+                    .query_row(
+                        "SELECT name, tt_value, markup_paid FROM inventory_items \
+                         WHERE id = ? AND state = 'held'",
+                        rusqlite::params![item_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?;
+                let Some((name, tt_value, markup_paid)) = item else {
+                    return Ok(None);
+                };
+                let cost_basis = tt_value + markup_paid;
+                tx.execute(
+                    "INSERT INTO auction_listings ( \
+                         id, item_name, profession, quantity, attributed_qty, unattributed_qty, \
+                         tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, \
+                         status, created_at, updated_at, subject_kind, inventory_item_id, \
+                         cost_basis, channel) \
+                     VALUES (?, ?, 'inventory', 1, 0, 1, ?, 0, ?, ?, ?, ?, \
+                             'pending', ?, ?, 'equipment', ?, ?, 'auction')",
+                    rusqlite::params![
+                        id,
+                        name,
+                        tt_value,
+                        starting_bid,
+                        buyout,
+                        listing_fee,
+                        listed_at,
+                        now,
+                        now,
+                        item_id,
+                        cost_basis,
+                    ],
+                )?;
+                tx.execute(
+                    "UPDATE inventory_items SET state = 'listed', updated_at = ? WHERE id = ?",
+                    rusqlite::params![now, item_id],
+                )?;
+                if listing_fee > 0.0 {
+                    let entry_id = Uuid::new_v4().to_string();
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, 'expense', ?, ?, 'market')",
+                        rusqlite::params![
+                            entry_id,
+                            listed_at,
+                            format!("Auction Fee: {name}"),
+                            listing_fee,
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE auction_listings SET fee_entry_id = ? WHERE id = ?",
+                        rusqlite::params![entry_id, id],
+                    )?;
+                    daily_rollup::refresh_days(&tx, [listed_at.as_str()])?;
+                }
+                let row = read_listing(&tx, &id)?;
+                tx.commit()?;
+                Ok(row)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
+    /// Record an immediate fee-free player trade for one whole equipment
+    /// holding. It uses the listing record as the canonical market lifecycle,
+    /// resolved in the same transaction, with `channel = trade` distinguishing
+    /// it from an auction that happened to sell immediately.
+    pub async fn trade_equipment(
+        &self,
+        item_id: &str,
+        final_price: f64,
+        sold_at: Option<&str>,
+    ) -> Result<Option<AuctionListingRow>, AnalyticsError> {
+        if final_price < 0.0 {
+            return Err(AnalyticsError::InvalidInput(
+                "a sale price cannot be negative",
+            ));
+        }
+        let id = Uuid::new_v4().to_string();
+        let item_id = item_id.to_string();
+        let sold_at = sold_at
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.default_date());
+        let now = naive_to_epoch(self.clock.now());
+        self.db
+            .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
+                let tx = conn.transaction()?;
+                let item: Option<(String, f64, f64)> = tx
+                    .query_row(
+                        "SELECT name, tt_value, markup_paid FROM inventory_items \
+                         WHERE id = ? AND state = 'held'",
+                        rusqlite::params![item_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?;
+                let Some((name, tt_value, markup_paid)) = item else {
+                    return Ok(None);
+                };
+                let cost_basis = tt_value + markup_paid;
+                tx.execute(
+                    "INSERT INTO auction_listings ( \
+                         id, item_name, profession, quantity, attributed_qty, unattributed_qty, \
+                         tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, \
+                         status, final_price, sale_fee, resolved_at, created_at, updated_at, \
+                         subject_kind, inventory_item_id, cost_basis, channel) \
+                     VALUES (?, ?, 'inventory', 1, 0, 1, ?, 0, ?, NULL, 0, ?, \
+                             'sold', ?, 0, ?, ?, ?, 'equipment', ?, ?, 'trade')",
+                    rusqlite::params![
+                        id,
+                        name,
+                        tt_value,
+                        final_price,
+                        sold_at,
+                        final_price,
+                        sold_at,
+                        now,
+                        now,
+                        item_id,
+                        cost_basis,
+                    ],
+                )?;
+                let delta = final_price - cost_basis;
+                if delta.abs() > STOCK_EPSILON {
+                    let entry_id = Uuid::new_v4().to_string();
+                    let kind = if delta > 0.0 { "markup" } else { "expense" };
+                    tx.execute(
+                        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+                         VALUES (?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            entry_id,
+                            sold_at,
+                            kind,
+                            format!("Inventory Sale: {name}"),
+                            delta.abs(),
+                            INVENTORY_SALE_TAG,
+                        ],
+                    )?;
+                    tx.execute(
+                        "UPDATE auction_listings SET sale_entry_id = ? WHERE id = ?",
+                        rusqlite::params![entry_id, id],
+                    )?;
+                }
+                tx.execute(
+                    "UPDATE inventory_items SET state = 'sold', disposed_at = ?, updated_at = ? \
+                     WHERE id = ?",
+                    rusqlite::params![sold_at, now, item_id],
+                )?;
+                daily_rollup::refresh_days(&tx, [sold_at.as_str()])?;
+                let row = read_listing(&tx, &id)?;
+                tx.commit()?;
+                Ok(row)
+            })
+            .await
+            .map_err(AnalyticsError::from)
+    }
+
     /// Confirm a listing sold, at the price it actually fetched.
     ///
     /// This is the recognition boundary: markup becomes realised here and
@@ -4651,13 +4953,18 @@ impl AnalyticsService {
                     return Ok(None);
                 }
 
-                let outcome = stock_allocation::resolve_sale(
-                    listing.tt_value,
-                    listing.attributed_tt,
-                    final_price,
-                    listing.listing_fee,
-                    sale_fee,
-                );
+                let gross_result = if listing.subject_kind == "equipment" {
+                    final_price - listing.cost_basis.unwrap_or(listing.tt_value)
+                } else {
+                    stock_allocation::resolve_sale(
+                        listing.tt_value,
+                        listing.attributed_tt,
+                        final_price,
+                        listing.listing_fee,
+                        sale_fee,
+                    )
+                    .gross_markup
+                };
 
                 tx.execute(
                     "UPDATE auction_listings SET status = 'sold', final_price = ?, \
@@ -4669,22 +4976,28 @@ impl AnalyticsService {
                 // creating income, for untracked stock as much as for tracked:
                 // the player held that value either way, and the app simply
                 // has no record of where the untracked part came from.
-                if outcome.gross_markup.abs() > STOCK_EPSILON {
+                if gross_result.abs() > STOCK_EPSILON {
                     let entry_id = Uuid::new_v4().to_string();
-                    let kind = if outcome.gross_markup > 0.0 {
+                    let kind = if gross_result > 0.0 {
                         "markup"
                     } else {
                         "expense"
                     };
+                    let tag = if listing.subject_kind == "equipment" {
+                        INVENTORY_SALE_TAG
+                    } else {
+                        "market"
+                    };
                     tx.execute(
                         "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-                         VALUES (?, ?, ?, ?, ?, 'market')",
+                         VALUES (?, ?, ?, ?, ?, ?)",
                         rusqlite::params![
                             entry_id,
                             resolved_at,
                             kind,
                             format!("Auction Sale: {}", listing.item_name),
-                            outcome.gross_markup.abs(),
+                            gross_result.abs(),
+                            tag,
                         ],
                     )?;
                     tx.execute(
@@ -4709,6 +5022,16 @@ impl AnalyticsService {
                         "UPDATE auction_listings SET sale_fee_entry_id = ? WHERE id = ?",
                         rusqlite::params![entry_id, listing_id],
                     )?;
+                }
+
+                if listing.subject_kind == "equipment" {
+                    if let Some(item_id) = &listing.inventory_item_id {
+                        tx.execute(
+                            "UPDATE inventory_items SET state = 'sold', disposed_at = ?, \
+                                 updated_at = unixepoch('now') WHERE id = ?",
+                            rusqlite::params![resolved_at, item_id],
+                        )?;
+                    }
                 }
 
                 daily_rollup::refresh_days(&tx, [resolved_at.as_str()])?;
@@ -4749,60 +5072,70 @@ impl AnalyticsService {
                     return Ok(None);
                 }
 
-                // (tier, species, definition, tool, quantity, tt) of each original
-                // listing movement, to be written back in reverse.
-                type ReturningRow = (
-                    Option<String>,
-                    Option<String>,
-                    Option<i64>,
-                    Option<String>,
-                    f64,
-                    f64,
-                );
-                let returning: Vec<ReturningRow> = {
-                    let mut stmt = tx.prepare(
-                        "SELECT yield_tier, mob_species, session_definition_id, tool_name, \
-                                quantity, tt_value \
-                         FROM stock_movements \
-                         WHERE ref_id = ? AND movement_kind = 'listing'",
-                    )?;
-                    let rows = stmt
-                        .query_map(rusqlite::params![listing_id], |row| {
-                            Ok((
-                                row.get(0)?,
-                                row.get(1)?,
-                                row.get(2)?,
-                                row.get(3)?,
-                                row.get(4)?,
-                                row.get(5)?,
-                            ))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows
-                };
-                for (tier, species, definition_id, tool, quantity, tt_value) in returning {
-                    let provenance = match (&tier, &species) {
-                        (Some(tier), _) => Some(stock_allocation::StockProvenance::Harvest(
-                            HarvestYieldTier::from_db(tier),
-                        )),
-                        (None, Some(species)) => {
-                            Some(stock_allocation::StockProvenance::Hunt(species))
-                        }
-                        (None, None) => None,
+                if listing.subject_kind == "equipment" {
+                    if let Some(item_id) = &listing.inventory_item_id {
+                        tx.execute(
+                            "UPDATE inventory_items SET state = 'held', disposed_at = NULL, \
+                                 updated_at = ? WHERE id = ?",
+                            rusqlite::params![now, item_id],
+                        )?;
+                    }
+                } else {
+                    // (tier, species, definition, tool, quantity, tt) of each original
+                    // listing movement, to be written back in reverse.
+                    type ReturningRow = (
+                        Option<String>,
+                        Option<String>,
+                        Option<i64>,
+                        Option<String>,
+                        f64,
+                        f64,
+                    );
+                    let returning: Vec<ReturningRow> = {
+                        let mut stmt = tx.prepare(
+                            "SELECT yield_tier, mob_species, session_definition_id, tool_name, \
+                                    quantity, tt_value \
+                             FROM stock_movements \
+                             WHERE ref_id = ? AND movement_kind = 'listing'",
+                        )?;
+                        let rows = stmt
+                            .query_map(rusqlite::params![listing_id], |row| {
+                                Ok((
+                                    row.get(0)?,
+                                    row.get(1)?,
+                                    row.get(2)?,
+                                    row.get(3)?,
+                                    row.get(4)?,
+                                    row.get(5)?,
+                                ))
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        rows
                     };
-                    insert_movement(
-                        &tx,
-                        &listing.item_name,
-                        "listing_return",
-                        Some(&listing_id),
-                        provenance,
-                        definition_id,
-                        tool.as_deref(),
-                        -quantity,
-                        -tt_value,
-                        &resolved_at,
-                        now,
-                    )?;
+                    for (tier, species, definition_id, tool, quantity, tt_value) in returning {
+                        let provenance = match (&tier, &species) {
+                            (Some(tier), _) => Some(stock_allocation::StockProvenance::Harvest(
+                                HarvestYieldTier::from_db(tier),
+                            )),
+                            (None, Some(species)) => {
+                                Some(stock_allocation::StockProvenance::Hunt(species))
+                            }
+                            (None, None) => None,
+                        };
+                        insert_movement(
+                            &tx,
+                            &listing.item_name,
+                            "listing_return",
+                            Some(&listing_id),
+                            provenance,
+                            definition_id,
+                            tool.as_deref(),
+                            -quantity,
+                            -tt_value,
+                            &resolved_at,
+                            now,
+                        )?;
+                    }
                 }
 
                 tx.execute(
@@ -5180,7 +5513,7 @@ impl AnalyticsService {
                     ))?;
                     let listings = stmt
                         .query_map(rusqlite::params![profession.as_str()], |row| {
-                            Ok((listing_from_row(row), row.get::<_, Option<String>>(15)?))
+                            Ok((listing_from_row(row), row.get::<_, Option<String>>(19)?))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     for (listing, undone_at) in listings {
@@ -5198,7 +5531,13 @@ impl AnalyticsService {
                                 .resolved_at
                                 .clone()
                                 .unwrap_or_else(|| listing.listed_at.clone()),
-                            kind: "listing".to_string(),
+                            kind: if listing.channel == "trade" {
+                                "trade".to_string()
+                            } else {
+                                "listing".to_string()
+                            },
+                            subject_kind: listing.subject_kind.clone(),
+                            channel: listing.channel.clone(),
                             status: listing.status.clone(),
                             item_name: listing.item_name.clone(),
                             target_item: None,
@@ -5206,7 +5545,9 @@ impl AnalyticsService {
                             tt_value: listing.tt_value,
                             net_markup,
                             activity_net_markup: listing.activity_net_markup,
-                            can_revert_sale: !undone && listing.status == "sold",
+                            can_revert_sale: !undone
+                                && listing.status == "sold"
+                                && listing.channel == "auction",
                             can_delete: !undone && blocker.is_none(),
                             undo_blocked_reason: blocker
                                 .map(|(item, short)| blocked_reason(&item, short)),
@@ -5258,6 +5599,8 @@ impl AnalyticsService {
                         rows.push(ActivityHistoryRow {
                             id,
                             kind: "conversion".to_string(),
+                            subject_kind: "loot".to_string(),
+                            channel: "conversion".to_string(),
                             status: "converted".to_string(),
                             item_name: source,
                             target_item: Some(target),
@@ -5308,6 +5651,8 @@ impl AnalyticsService {
                         rows.push(ActivityHistoryRow {
                             id,
                             kind: "trade".to_string(),
+                            subject_kind: "loot".to_string(),
+                            channel: "trade".to_string(),
                             status: "sold".to_string(),
                             item_name: item,
                             target_item: None,
@@ -5345,6 +5690,8 @@ impl AnalyticsService {
                         rows.push(ActivityHistoryRow {
                             id,
                             kind: "removal".to_string(),
+                            subject_kind: "loot".to_string(),
+                            channel: "removal".to_string(),
                             status: "removed".to_string(),
                             item_name: item,
                             target_item: None,
@@ -5407,6 +5754,15 @@ impl AnalyticsService {
                      WHERE id = ?",
                     rusqlite::params![listing_id],
                 )?;
+                if listing.subject_kind == "equipment" {
+                    if let Some(item_id) = &listing.inventory_item_id {
+                        tx.execute(
+                            "UPDATE inventory_items SET state = 'listed', disposed_at = NULL, \
+                                 updated_at = unixepoch('now') WHERE id = ?",
+                            rusqlite::params![item_id],
+                        )?;
+                    }
+                }
                 daily_rollup::refresh_days(&tx, days)?;
                 let row = read_listing(&tx, &listing_id)?;
                 tx.commit()?;
@@ -5455,6 +5811,15 @@ impl AnalyticsService {
                     "DELETE FROM stock_movements WHERE ref_id = ?",
                     rusqlite::params![listing_id],
                 )?;
+                if listing.subject_kind == "equipment" {
+                    if let Some(item_id) = &listing.inventory_item_id {
+                        tx.execute(
+                            "UPDATE inventory_items SET state = 'held', disposed_at = NULL, \
+                                 updated_at = unixepoch('now') WHERE id = ?",
+                            rusqlite::params![item_id],
+                        )?;
+                    }
+                }
                 // The entry stands as a record; its pointers do not, so a
                 // later read cannot follow them to a row somebody else owns.
                 tx.execute(
@@ -5864,7 +6229,7 @@ impl AnalyticsService {
                     use rusqlite::OptionalExtension as _;
                     let exists = conn
                         .query_row(
-                            "SELECT 1 FROM inventory_items WHERE id = ?",
+                            "SELECT 1 FROM inventory_items WHERE id = ? AND state = 'held'",
                             rusqlite::params![item_id],
                             |_| Ok(()),
                         )
@@ -5925,7 +6290,7 @@ impl AnalyticsService {
             .db
             .with_writer(move |conn| {
                 Ok(conn.execute(
-                    "DELETE FROM inventory_items WHERE id = ?",
+                    "DELETE FROM inventory_items WHERE id = ? AND state = 'held'",
                     rusqlite::params![item_id],
                 )?)
             })
@@ -5954,7 +6319,7 @@ impl AnalyticsService {
                     use rusqlite::OptionalExtension as _;
                     conn.query_row(
                         "SELECT id, name, tt_value, markup_paid, notes, acquired_at \
-                         FROM inventory_items WHERE id = ?",
+                         FROM inventory_items WHERE id = ? AND state = 'held'",
                         rusqlite::params![item_id],
                         |row| {
                             Ok((
@@ -8297,6 +8662,100 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "New");
         assert_eq!(rows[1].name, "Old");
+    }
+
+    #[tokio::test]
+    async fn equipment_auction_preserves_basis_across_expiry_and_undo() {
+        let (_dir, service) = write_service().await;
+        let item = service
+            .create_inventory_item("Ares Ring, Improved", 25.0, 75.0, None, None)
+            .await
+            .unwrap();
+        let listing = service
+            .create_equipment_listing(&item.id, 105.0, Some(120.0), 0.5, Some("2026-06-02"))
+            .await
+            .unwrap()
+            .expect("held equipment");
+
+        assert_eq!(listing.subject_kind, "equipment");
+        assert_eq!(listing.inventory_item_id.as_deref(), Some(item.id.as_str()));
+        assert_eq!(listing.cost_basis, Some(100.0));
+        assert!(service.list_inventory().await.unwrap().is_empty());
+
+        service
+            .expire_auction_listing(&listing.id, Some("2026-06-03"))
+            .await
+            .unwrap()
+            .expect("pending listing");
+        assert_eq!(service.list_inventory().await.unwrap().len(), 1);
+        let history = service
+            .activity_history(Profession::Inventory)
+            .await
+            .unwrap();
+        assert_eq!(history[0].subject_kind, "equipment");
+        assert_eq!(history[0].status, "expired");
+        assert!(service.undo_auction_listing(&listing.id).await.unwrap());
+        assert_eq!(service.list_inventory().await.unwrap().len(), 1);
+        assert!(service
+            .list_ledger(None, None)
+            .await
+            .unwrap()
+            .entries
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn equipment_trade_realises_whole_position_result_and_can_be_undone() {
+        let (_dir, service) = write_service().await;
+        let item = service
+            .create_inventory_item("Modified Restoration Chip", 50.0, 20.0, None, None)
+            .await
+            .unwrap();
+        let sale = service
+            .trade_equipment(&item.id, 85.0, Some("2026-06-04"))
+            .await
+            .unwrap()
+            .expect("held equipment");
+
+        assert_eq!(sale.channel, "trade");
+        assert_eq!(sale.gross_markup, Some(15.0));
+        assert!(service.list_inventory().await.unwrap().is_empty());
+        let history = service
+            .activity_history(Profession::Inventory)
+            .await
+            .unwrap();
+        assert_eq!(history[0].kind, "trade");
+        assert_eq!(history[0].subject_kind, "equipment");
+        assert_eq!(history[0].net_markup, Some(15.0));
+        let ledger = service.list_ledger(None, None).await.unwrap();
+        assert_eq!(ledger.entries[0].tag, INVENTORY_SALE_TAG);
+        assert_eq!(ledger.entries[0].amount, 15.0);
+
+        assert!(service.undo_auction_listing(&sale.id).await.unwrap());
+        assert_eq!(service.list_inventory().await.unwrap().len(), 1);
+        assert!(service
+            .list_ledger(None, None)
+            .await
+            .unwrap()
+            .entries
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn inventory_name_resolution_returns_stable_holding_identity() {
+        let (_dir, service) = write_service().await;
+        let item = service
+            .create_inventory_item("Ares Ring, Improved", 25.0, 75.0, None, None)
+            .await
+            .unwrap();
+
+        let candidates = service
+            .resolve_inventory_name(" ares ring, improved ")
+            .await
+            .unwrap();
+        assert_eq!(candidates[0].kind, "equipment");
+        assert_eq!(candidates[0].holding_id, item.id);
+        assert_eq!(candidates[0].score, 100.0);
     }
 
     /// A page whose row count exactly meets the limit ends the walk: the extra

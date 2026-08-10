@@ -18,8 +18,6 @@
 	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
 	import type { LedgerEntryType } from '$lib/types/analytics';
 	import { formatLedgerDate, formatPed } from '$lib/utils/format';
-	import InventoryItemFormModal from './InventoryItemFormModal.svelte';
-	import SellInventoryItemModal from './SellInventoryItemModal.svelte';
 
 	const model = createLedgerModel();
 	const table = model.table;
@@ -28,22 +26,11 @@
 		void model.loadAll();
 	});
 
-	$effect(() => {
-		void model.loadInventory();
-	});
-
-	// Guide-mode demoApi: lets the analytics surface drive the Add Entry modal
-	// and the inventory Sell flow programmatically for the looped animations.
+	// Guide-mode demo API lets the analytics surface drive the Add Entry modal.
 	onMount(() => {
 		registerDemoApi('analytics-ledger', {
 			openAddEntryModal: () => (model.showAddModal = true),
-			closeAddEntryModal: () => (model.showAddModal = false),
-			openInventorySellModal: (itemName: string, prefilledPrice?: number) =>
-				model.openInventorySellByName(itemName, prefilledPrice),
-			closeInventorySellModal: () => model.closeInventorySell(),
-			injectDemoSaleEntry: (itemName: string, gain: number) =>
-				model.injectDemoSaleEntry(itemName, gain),
-			clearDemoSaleEntry: () => model.clearDemoSaleEntry()
+			closeAddEntryModal: () => (model.showAddModal = false)
 		});
 		return () => unregisterDemoApi('analytics-ledger');
 	});
@@ -54,9 +41,7 @@
 {:else}
 	<div class="space-y-6" data-guide-anchor="analytics-ledger-area">
 		<ErrorNotice message={model.error} />
-		<!-- Strip + table grouped so guide-mode can cutout just the main ledger area
-		     (excluding the inventory section below). Inner space-y-6 preserves
-		     the prior vertical rhythm. -->
+		<!-- Strip + table grouped for the guide cutout. -->
 		<div class="space-y-6" data-guide-anchor="analytics-ledger-main-area">
 		<!-- Net ledger impact -->
 		<Card class="p-4">
@@ -254,135 +239,8 @@
 			{/if}
 		</div>
 		</div>
-
-		<Divider />
-
-		<!-- Inventory Ledger -->
-		<div data-guide-anchor="analytics-ledger-inventory-area">
-			{#if model.inventoryLoading}
-				<p class="text-sm text-text-secondary">Loading inventory ledger...</p>
-			{:else}
-				<ErrorNotice message={model.inventoryError} class="mb-3" />
-				<Card class="p-4 mb-3">
-					<div class="flex items-center justify-between gap-4 flex-wrap">
-						<div class="flex items-center gap-6 flex-wrap">
-							<div class="flex items-center gap-3">
-								<span class="eyebrow">
-									Inventory TT Value
-								</span>
-								<span class="text-sm font-semibold tabular-nums text-text">
-									{formatPed(model.inventoryTtTotal)} PED
-								</span>
-							</div>
-							<div class="flex items-center gap-3">
-								<span class="eyebrow">
-									Value After Paid Markup
-								</span>
-								<span class="text-sm font-semibold tabular-nums text-text">
-									{formatPed(model.inventoryPaidTotal)} PED
-								</span>
-							</div>
-						</div>
-						<Button size="sm" onclick={() => model.openInventoryAdd()}>Add Item</Button>
-					</div>
-				</Card>
-
-				{#if model.inventoryItems.length === 0}
-					<Card class="p-6">
-						<p class="text-center text-text-tertiary text-sm">
-							Log unlimited weapons, estates, deeds, or other persistent items you own.
-							Their cost basis is held here; only the realised gain or loss on sale
-							flows into the Ledger.
-						</p>
-					</Card>
-				{:else}
-					<table class="w-full text-sm">
-						<thead>
-							<tr class="border-b border-border">
-								<th class="py-2 px-3 text-xs font-medium text-text-secondary text-left">Name</th>
-								<th class="py-2 px-3 text-xs font-medium text-text-secondary text-right">TT</th>
-								<th class="py-2 px-3 text-xs font-medium text-text-secondary text-right">Markup</th>
-								<th class="py-2 px-3 text-xs font-medium text-text-secondary text-right">Cost Basis</th>
-								<th class="py-2 px-3 text-xs font-medium text-text-secondary text-right">Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each model.inventoryItems as item (item.id)}
-								<tr
-									class="border-b border-border/50 hover:bg-surface-hover/50 transition-colors duration-[var(--duration-fast)]"
-								>
-									<td class="py-2.5 px-3">
-										<div class="text-text">{item.name}</div>
-										{#if item.notes}
-											<div class="text-xs text-text-tertiary truncate mt-0.5">
-												{item.notes}
-											</div>
-										{/if}
-									</td>
-									<td class="py-2.5 px-3 text-right tabular-nums text-text-secondary">
-										{formatPed(item.ttValue)}
-									</td>
-									<td class="py-2.5 px-3 text-right tabular-nums text-text-secondary">
-										{formatPed(item.markupPaid)}
-									</td>
-									<td class="py-2.5 px-3 text-right tabular-nums font-medium text-text">
-										{formatPed(item.ttValue + item.markupPaid)}
-									</td>
-									<td class="py-2.5 px-3">
-										<div class="flex items-center justify-end gap-1.5">
-											<Button size="sm" variant="ghost" onclick={() => model.openInventoryEdit(item)}>
-												Edit
-											</Button>
-											<span
-												data-guide-anchor="inventory-sell-btn"
-												data-item-name={item.name}
-												class="inline-flex"
-											>
-												<Button size="sm" onclick={() => model.openInventorySell(item)}>Sell</Button>
-											</span>
-											<button
-												type="button"
-												class="icon-button-row"
-												onclick={() => model.handleInventoryDelete(item)}
-												aria-label={`Delete ${item.name}`}
-												title="Delete (no ledger entry)"
-											>
-												<svg
-													xmlns="http://www.w3.org/2000/svg"
-													viewBox="0 0 20 20"
-													fill="currentColor"
-													class="h-4 w-4"
-												>
-													<path
-														d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-													/>
-												</svg>
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				{/if}
-			{/if}
-		</div>
-
 	</div>
 {/if}
-
-<!-- Inventory item modals -->
-<InventoryItemFormModal
-	bind:open={model.showInventoryFormModal}
-	item={model.inventoryEditTarget}
-	onsaved={model.handleInventorySaved}
-/>
-<SellInventoryItemModal
-	item={model.inventorySellTarget}
-	prefilledSalePrice={model.inventorySellPrefilledPrice}
-	onsold={model.handleInventorySold}
-	oncancel={() => model.closeInventorySell()}
-/>
 
 <!-- Add Entry Modal -->
 <Modal bind:open={model.showAddModal} title="Add Entry" class="max-w-lg">

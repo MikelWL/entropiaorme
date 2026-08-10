@@ -27,6 +27,7 @@
 		NavEquipment,
 		NavMaps,
 		NavMarket,
+		NavInventory,
 		NavSettings,
 		NavNews,
 		NavUpdates,
@@ -122,6 +123,7 @@
 	const navItems = [
 		{ id: '/', label: 'Dashboard', icon: NavDashboard },
 		{ id: '/analytics', label: 'Analytics', icon: NavAnalytics },
+		{ id: '/inventory', label: 'Inventory', icon: NavInventory },
 		{ id: '/character', label: 'Character', icon: NavCharacter },
 		{ id: '/quests', label: 'Quests', icon: NavQuests },
 		{ id: '/equipment', label: 'Equipment', icon: NavEquipment },

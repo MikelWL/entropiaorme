@@ -15,10 +15,11 @@ use eo_api::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTar
 use eo_api::analytics::{
     ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
     AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
-    AuctionListing, AuctionListingInput, HuntingRealisedMarkup, InventoryItem, InventoryItemInput,
-    InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem,
-    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput, Profession,
-    RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
+    AuctionListing, AuctionListingInput, EquipmentListingInput, EquipmentTradeInput,
+    HuntingRealisedMarkup, InventoryDraftResolution, InventoryItem, InventoryItemInput,
+    InventoryPatch, InventorySaleDraft, InventorySellInput, InventorySellResult, LedgerEntryInput,
+    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput,
+    Profession, RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
     StockRemovalInput,
 };
 use eo_api::character::{
@@ -846,6 +847,32 @@ pub async fn inventory_sell(
     sale: InventorySellInput,
 ) -> Result<InventorySellResult, ApiError> {
     facade(&app)?.inventory_sell(item_id, sale).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_draft_resolve(
+    app: tauri::AppHandle,
+    draft: InventorySaleDraft,
+) -> Result<InventoryDraftResolution, ApiError> {
+    facade(&app)?.inventory_draft_resolve(draft).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_equipment_listing_create(
+    app: tauri::AppHandle,
+    input: EquipmentListingInput,
+) -> Result<AuctionListing, ApiError> {
+    facade(&app)?
+        .inventory_equipment_listing_create(input)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_equipment_trade(
+    app: tauri::AppHandle,
+    input: EquipmentTradeInput,
+) -> Result<AuctionListing, ApiError> {
+    facade(&app)?.inventory_equipment_trade(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1684,6 +1711,9 @@ mod tests {
         "inventory_update",
         "inventory_delete",
         "inventory_sell",
+        "inventory_draft_resolve",
+        "inventory_equipment_listing_create",
+        "inventory_equipment_trade",
         "market_paste_preview",
         "market_paste_commit",
         "market_overview",

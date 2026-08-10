@@ -37,6 +37,7 @@
 		expiredChargeNote = 'No board activity is charged for it: not selling describes the market ' +
 			'and the price you asked, not the harvesting that produced the stock.',
 		embedded = false,
+		central = false,
 	}: {
 		open: AuctionListing[];
 		resolved: AuctionListing[];
@@ -52,6 +53,7 @@
 		emptyLead?: string;
 		expiredChargeNote?: string;
 		embedded?: boolean;
+		central?: boolean;
 	} = $props();
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
@@ -87,6 +89,8 @@
 			: 0,
 	);
 	const unattributedMarkup = $derived(netMarkup - (selected?.activityNetMarkup ?? 0));
+	const listingNet = (listing: AuctionListing) =>
+		(listing.grossMarkup ?? 0) - listing.listingFee - (listing.saleFee ?? 0);
 
 	// What the auction actually fetched, as a rate on the listing's TT: the
 	// same 100%-is-TT reading the rest of Analytics uses for markup, so a sale
@@ -174,8 +178,8 @@
 			</span>
 			<span class="{COL_LISTED} truncate text-right text-xs tabular-nums font-medium">
 				{#if listing.status === 'sold'}
-					<span class={netTone(listing.activityNetMarkup ?? 0)}>
-						{signedPed(listing.activityNetMarkup ?? 0)}
+					<span class={netTone(central ? listingNet(listing) : (listing.activityNetMarkup ?? 0))}>
+						{signedPed(central ? listingNet(listing) : (listing.activityNetMarkup ?? 0))}
 					</span>
 				{:else if listing.status === 'expired'}
 					<span class="text-text-tertiary">{NO_DATA}</span>
@@ -195,7 +199,7 @@
 				<InfoTip label="How listings work" width="w-80">
 					<p class="text-xs font-semibold leading-relaxed text-text">{emptyLead}</p>
 					<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-						Sell an item from Your Current Stock to list it here. The quantity leaves your stock
+						Sell an item from Holdings to list it here. The position leaves your inventory
 						straight away, because in game it has left your inventory, and the starting-bid fee is
 						spent whether or not it sells.
 					</p>
@@ -248,7 +252,7 @@
 					<div class="mb-4 flex items-baseline justify-between gap-3">
 						<div class="min-w-0">
 							<p class="truncate text-sm font-medium tracking-tight text-text">
-								{selected.quantity} x {selected.itemName}
+								{selected.subjectKind === 'equipment' ? selected.itemName : `${selected.quantity} x ${selected.itemName}`}
 							</p>
 							<p class="mt-0.5 text-xs text-text-tertiary">
 								Listed {formatLedgerDate(selected.listedAt)}{selected.resolvedAt
@@ -274,7 +278,11 @@
 						re-reads once the price is known. -->
 					{#if selected.status === 'sold'}
 						<div class="grid grid-cols-3 gap-x-5 gap-y-4">
-							<StatDisplay label="Listing TT" value={formatPed(selected.ttValue)} unit="PED" />
+							<StatDisplay
+								label={selected.subjectKind === 'equipment' ? 'Cost basis' : 'Listing TT'}
+								value={formatPed(selected.costBasis ?? selected.ttValue)}
+								unit="PED"
+							/>
 							<StatDisplay label="Sold for" value={formatPed(selected.finalPrice ?? 0)} unit="PED" />
 							<StatDisplay
 								label="Fees"
@@ -297,8 +305,9 @@
 								unit="PED"
 								valueClass={netTone(netMarkup)}
 							/>
+							{#if selected.subjectKind === 'loot'}
 							<StatDisplay
-								label="Credited"
+								label={central ? 'Attributed' : 'Credited'}
 								value={signedPed(selected.activityNetMarkup ?? 0)}
 								unit="PED"
 							>
@@ -329,6 +338,9 @@
 									</InfoTip>
 								{/snippet}
 							</StatDisplay>
+							{:else}
+								<StatDisplay label="Position" value="Whole item" emphasis="secondary" />
+							{/if}
 						</div>
 					{:else}
 						<!-- What the listing cost above what it asks: the two spent

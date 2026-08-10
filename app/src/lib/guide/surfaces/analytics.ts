@@ -10,10 +10,6 @@ type AnalyticsDemoApi = {
 type LedgerDemoApi = {
 	openAddEntryModal(): void;
 	closeAddEntryModal(): void;
-	openInventorySellModal(itemName: string, prefilledPrice?: number): void;
-	closeInventorySellModal(): void;
-	injectDemoSaleEntry(itemName: string, gain: number): void;
-	clearDemoSaleEntry(): void;
 };
 
 function analyticsApi(): Partial<AnalyticsDemoApi> {
@@ -70,16 +66,7 @@ export const analyticsSurface: GuideSurface = {
 			placement: 'top-right',
 			prose: {
 				title: 'Ledger',
-				body: [
-					{
-						kind: 'p',
-						text: 'The Ledger records your out-of-gameplay activity. There are two surfaces:',
-					},
-					{
-						kind: 'ul',
-						items: ['The main ledger.', 'The inventory.'],
-					},
-				],
+				body: 'The Ledger is the accounting record for gains and expenses outside tracked gameplay. Holdings and sales are managed from Inventory.',
 			},
 			async play({ demoApi, wait }) {
 				const api = demoApi as Partial<AnalyticsDemoApi>;
@@ -158,146 +145,6 @@ export const analyticsSurface: GuideSurface = {
 			},
 			resetDemo() {
 				ledgerApi().closeAddEntryModal?.();
-			},
-		},
-		{
-			id: 'inventory-sell-flow',
-			// Presence-driven dynamic anchor: dialog while the Sell modal is open,
-			// the synthetic new-entry row while it exists, inventory area otherwise.
-			// The 120ms anchor poll + 350ms CSS path transition smooth-shift the
-			// cutout between the three phases each loop iteration.
-			anchor: () => {
-				const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-label^="Sell "]');
-				if (dialog && dialog.offsetParent !== null) return dialog;
-				const entryRow = document.querySelector<HTMLElement>(
-					'[data-guide-anchor="ledger-entry-row"][data-entry-id="demo-inventory-sale"]',
-				);
-				if (entryRow && entryRow.offsetParent !== null) return entryRow;
-				return document.querySelector<HTMLElement>(
-					'[data-guide-anchor="analytics-ledger-inventory-area"]',
-				);
-			},
-			placement: 'bottom-left',
-			prose: {
-				title: 'Inventory',
-				body: 'Manage inventory items by initial purchase price and sale price. The difference is added to your ledger.',
-			},
-			async play({ cursor, demoApi, wait }) {
-				const stepIdx = guideState.currentStepIndex;
-				const stillActive = () => guideState.isActive && guideState.currentStepIndex === stepIdx;
-
-				const aapi = demoApi as Partial<AnalyticsDemoApi>;
-				aapi.setTab?.('ledger');
-				await wait(500);
-				if (!stillActive()) return;
-
-				// LedgerTab registers its sub-API on mount; poll briefly for it.
-				for (let i = 0; i < 40; i++) {
-					if (ledgerApi().openInventorySellModal) break;
-					await wait(50);
-					if (!stillActive()) return;
-				}
-
-				const ITEM_NAME = 'Hedoc Mayhem, Adjusted';
-				const SALE_PRICE = 1360; // cost basis (720 TT + 540 markup) + 100 PED gain
-				const GAIN = 100;
-
-				while (stillActive()) {
-					// === Phase A: scroll inventory into view + cursor → Sell button ===
-					const inventoryArea = document.querySelector<HTMLElement>(
-						'[data-guide-anchor="analytics-ledger-inventory-area"]',
-					);
-					if (inventoryArea) {
-						inventoryArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
-						if (!(await abortableWait(500, stillActive))) break;
-					}
-
-					const sellBtn = document.querySelector<HTMLElement>(
-						`[data-guide-anchor="inventory-sell-btn"][data-item-name="${ITEM_NAME}"]`,
-					);
-					if (!sellBtn) {
-						if (!(await abortableWait(200, stillActive))) return;
-						continue;
-					}
-					const btnRect = sellBtn.getBoundingClientRect();
-					const startX = Math.max(40, btnRect.left - 320);
-					const startY = btnRect.top + btnRect.height / 2;
-					const startRect = new DOMRect(startX, startY, 0, 0);
-					await cursor.moveTo(startRect, { duration: 0 });
-					cursor.show();
-					if (!stillActive()) break;
-					await cursor.moveTo(sellBtn, { duration: 900, from: { x: startX, y: startY } });
-					if (!stillActive()) break;
-					await cursor.clickRipple();
-					cursor.hide();
-					if (!stillActive()) break;
-
-					// === Phase B: open Sell modal pre-filled, dwell, cursor → Confirm Sale ===
-					ledgerApi().openInventorySellModal?.(ITEM_NAME, SALE_PRICE);
-					if (!(await abortableWait(1200, stillActive))) break;
-
-					const dialog = document.querySelector<HTMLElement>(
-						'[role="dialog"][aria-label^="Sell "]',
-					);
-					if (!dialog) {
-						ledgerApi().closeInventorySellModal?.();
-						if (!(await abortableWait(200, stillActive))) return;
-						continue;
-					}
-					let confirmBtn: HTMLElement | null = null;
-					for (const btn of Array.from(dialog.querySelectorAll<HTMLElement>('button'))) {
-						if (btn.textContent?.trim() === 'Confirm Sale') {
-							confirmBtn = btn;
-							break;
-						}
-					}
-					if (!confirmBtn) {
-						ledgerApi().closeInventorySellModal?.();
-						if (!(await abortableWait(200, stillActive))) return;
-						continue;
-					}
-					const confirmRect = confirmBtn.getBoundingClientRect();
-					const confirmStartX = Math.max(40, confirmRect.left - 320);
-					const confirmStartY = confirmRect.top + confirmRect.height / 2;
-					const confirmStartRect = new DOMRect(confirmStartX, confirmStartY, 0, 0);
-					await cursor.moveTo(confirmStartRect, { duration: 0 });
-					cursor.show();
-					if (!stillActive()) break;
-					await cursor.moveTo(confirmBtn, {
-						duration: 900,
-						from: { x: confirmStartX, y: confirmStartY },
-					});
-					if (!stillActive()) break;
-					await cursor.clickRipple();
-					cursor.hide();
-					if (!stillActive()) break;
-
-					// === Phase C: close modal + inject synthetic ledger entry, dwell ===
-					ledgerApi().closeInventorySellModal?.();
-					ledgerApi().injectDemoSaleEntry?.(ITEM_NAME, GAIN);
-					if (!(await abortableWait(300, stillActive))) break;
-
-					const entryRow = document.querySelector<HTMLElement>(
-						'[data-guide-anchor="ledger-entry-row"][data-entry-id="demo-inventory-sale"]',
-					);
-					if (entryRow) {
-						entryRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-					}
-					if (!(await abortableWait(3000, stillActive))) break;
-
-					// === Phase R: clear synthetic entry, gap, loop ===
-					ledgerApi().clearDemoSaleEntry?.();
-					if (!(await abortableWait(700, stillActive))) break;
-				}
-
-				// Cleanup: modal closed, entry cleared, cursor hidden on step exit.
-				ledgerApi().closeInventorySellModal?.();
-				ledgerApi().clearDemoSaleEntry?.();
-				cursor.hide();
-			},
-			resetDemo() {
-				ledgerApi().closeInventorySellModal?.();
-				ledgerApi().clearDemoSaleEntry?.();
 			},
 		},
 		{

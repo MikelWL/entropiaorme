@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { InventoryItem } from '$lib/types/analytics';
-	import { addInventoryItem, updateInventoryItem } from '$lib/api';
+	import { addEquipmentHolding, updateEquipmentHolding } from '$lib/api/inventory';
 	import { formatPed } from '$lib/utils/format';
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -81,8 +81,8 @@
 				notes: notes.trim() || null,
 			};
 			const saved = item
-				? await updateInventoryItem(item.id, payload)
-				: await addInventoryItem(payload);
+				? await updateEquipmentHolding(item.id, payload)
+				: await addEquipmentHolding(payload);
 			onsaved(saved);
 			open = false;
 		} catch (e) {
@@ -93,7 +93,7 @@
 	}
 </script>
 
-<Modal bind:open title={item ? 'Edit Inventory Item' : 'Add Inventory Item'}>
+<Modal bind:open title={item ? 'Edit Equipment Holding' : 'Add Equipment Holding'}>
 	<div class="space-y-4">
 		<div>
 			<label for="inventory-name" class="text-xs text-text-secondary mb-1 block">Name</label>

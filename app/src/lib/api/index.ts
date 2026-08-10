@@ -32,6 +32,12 @@ export type {
 	AuctionExpireInput,
 	AuctionListing,
 	AuctionListingInput,
+	EquipmentListingInput,
+	EquipmentTradeInput,
+	InventoryDraftResolution,
+	InventoryHoldingCandidate,
+	InventoryItem,
+	InventorySaleDraft,
 	LifetimeStats,
 	ManualMobSuggestion,
 	MarketBreakEven,
@@ -62,6 +68,7 @@ export type {
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';
+export * from './inventory';
 export * from './maps';
 export * from './market';
 export * from './quests';
