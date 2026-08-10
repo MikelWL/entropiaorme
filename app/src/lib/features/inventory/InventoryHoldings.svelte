@@ -98,7 +98,7 @@
 									{item.listedQty > 0 ? item.listedQty : '—'}
 								</td>
 								<td class="px-4 py-3">
-									<div class="ml-auto flex w-[7.125rem] items-center justify-end gap-1.5">
+									<div class="ml-auto flex w-[5.25rem] items-center justify-end gap-1.5">
 										{#if item.itemName === 'Shrapnel'}
 											<ExpandingActionButton
 												letter="C"
@@ -107,10 +107,7 @@
 												disabled={item.heldQty <= 0}
 												title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
 											/>
-										{:else}
-											<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
-										{/if}
-										{#if item.itemName !== 'Shrapnel' && item.itemName !== 'Nanocube' && item.itemName !== 'Universal Ammo'}
+										{:else if item.itemName !== 'Nanocube' && item.itemName !== 'Universal Ammo'}
 											<ExpandingActionButton
 												letter="N"
 												label="Nanocubes"
