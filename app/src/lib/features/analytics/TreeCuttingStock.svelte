@@ -17,6 +17,7 @@
 		controls,
 		actionLayout = 'activity',
 		emptyMessage = 'No tracked stock is currently held.',
+		alwaysSearch = false,
 		// The one activity-specific line in the panel, so the Hunting tab can
 		// host the same surface over its own loot without forking the layout.
 		sourceDescription = 'Loot recorded from tree cutting, minus stock you have sold, converted, or removed.',
@@ -30,6 +31,7 @@
 		controls?: Snippet;
 		actionLayout?: 'activity' | 'inventory';
 		emptyMessage?: string;
+		alwaysSearch?: boolean;
 		sourceDescription?: string;
 	} = $props();
 
@@ -42,6 +44,7 @@
 	let query = $state('');
 	let showEmptied = $state(false);
 	const longList = $derived(stock.length > SEARCH_THRESHOLD);
+	const searchable = $derived(alwaysSearch || longList);
 	const matches = $derived(
 		query.trim() === ''
 			? stock
@@ -224,7 +227,7 @@
 			</InfoTip>
 		</div>
 
-		{#if longList}
+		{#if searchable}
 			<SearchInput
 				class="w-full sm:w-64"
 				bind:value={query}
@@ -233,7 +236,7 @@
 			/>
 		{/if}
 
-		{#if controls}{@render controls()}{/if}
+		{#if controls}<div class="ml-auto">{@render controls()}</div>{/if}
 	</div>
 
 	<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">

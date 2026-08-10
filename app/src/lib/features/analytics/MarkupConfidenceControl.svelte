@@ -11,10 +11,34 @@
 		onchange: (id: string) => void;
 	} = $props();
 
-	const options: { id: ConfidenceMode; label: string }[] = [
-		{ id: 'liquid', label: 'High Vol. Only' },
-		{ id: 'liquidMiddling', label: 'High & Mid Vol.' },
-		{ id: 'all', label: 'High, Mid & Low Vol.' },
+	const options: {
+		id: ConfidenceMode;
+		label: string;
+		ariaLabel: string;
+		title: string;
+		labelClass: string;
+	}[] = [
+		{
+			id: 'liquid',
+			label: '✓',
+			ariaLabel: 'High volume only',
+			title: 'Use high-volume market prices only',
+			labelClass: 'text-positive',
+		},
+		{
+			id: 'liquidMiddling',
+			label: '⚠',
+			ariaLabel: 'High and medium volume',
+			title: 'Use high- and medium-volume market prices',
+			labelClass: 'text-warning',
+		},
+		{
+			id: 'all',
+			label: '!',
+			ariaLabel: 'High, medium, and low volume',
+			title: 'Use high-, medium-, and low-volume market prices',
+			labelClass: 'text-error',
+		},
 	];
 </script>
 

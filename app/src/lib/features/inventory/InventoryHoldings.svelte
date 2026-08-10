@@ -64,6 +64,7 @@
 			onremove={onremove}
 			onshrapnelconvert={onshrapnel}
 			actionLayout="inventory"
+			alwaysSearch
 			emptyMessage="No tracked loot is currently held."
 			sourceDescription="Loot pooled across every tracked profession, minus stock you have sold, converted, or removed."
 		>
