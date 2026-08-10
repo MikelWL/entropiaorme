@@ -27,6 +27,16 @@
 		open,
 		resolved,
 		onresolve,
+		// The activity-specific nouns in the explanatory copy, so the Hunting
+		// tab hosts the identical surface over its own vocabulary. Defaults
+		// keep Tree Cutting's established wording.
+		activityNoun = 'tree cutting',
+		sourceNounPlural = 'the board activities',
+		sourceNounIndefinite = 'a board activity',
+		emptyLead = 'Selling harvested stock',
+		expiredChargeNote = 'No board activity is charged for it: not selling describes the market ' +
+			'and the price you asked, not the harvesting that produced the stock.',
+		embedded = false,
 	}: {
 		open: AuctionListing[];
 		resolved: AuctionListing[];
@@ -36,6 +46,12 @@
 				| { sold: true; finalPrice: number; saleFee: number; resolvedAt?: string }
 				| { sold: false; resolvedAt?: string },
 		) => Promise<void>;
+		activityNoun?: string;
+		sourceNounPlural?: string;
+		sourceNounIndefinite?: string;
+		emptyLead?: string;
+		expiredChargeNote?: string;
+		embedded?: boolean;
 	} = $props();
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
@@ -171,13 +187,13 @@
 	</li>
 {/snippet}
 
-<Card class="hover:z-20">
+{#snippet content()}
 	{#if allListings.length === 0}
 		<div class="flex min-h-40 items-center justify-center p-6">
 			<div class="flex items-center gap-1.5 text-sm text-text-tertiary">
 				<span>Nothing has been listed on the auction yet.</span>
 				<InfoTip label="How listings work" width="w-80">
-					<p class="text-xs font-semibold leading-relaxed text-text">Selling harvested stock</p>
+					<p class="text-xs font-semibold leading-relaxed text-text">{emptyLead}</p>
 					<p class="mt-1 text-xs leading-relaxed text-text-secondary">
 						Sell an item from Your Current Stock to list it here. The quantity leaves your stock
 						straight away, because in game it has left your inventory, and the starting-bid fee is
@@ -289,11 +305,11 @@
 								{#snippet labelSuffix()}
 									<InfoTip label="How the credited amount is worked out" width="w-80">
 										<p class="text-xs font-semibold leading-relaxed text-text">
-											The part tree cutting can claim
+											The part {activityNoun} can claim
 										</p>
 										<p class="mt-1 text-xs leading-relaxed text-text-secondary">
 											The share of net markup covered by stock this activity is recorded as
-											producing, split across the board activities that supplied it in proportion
+											producing, split across {sourceNounPlural} that supplied it in proportion
 											to what each contributed.
 										</p>
 										{#if selected.unattributedQty > 0}
@@ -302,7 +318,7 @@
 												listed was beyond tracked stock, so {formatPed(
 													(1 - selected.attributedTt / selected.ttValue) * 100,
 												)}% of this sale, {signedPed(unattributedMarkup)} PED, cannot be credited
-												to a board activity. Its value is still yours and still in your ledger.
+												to {sourceNounIndefinite}. Its value is still yours and still in your ledger.
 											</p>
 										{:else}
 											<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
@@ -331,8 +347,7 @@
 												The stock returned to your holdings in full. The listing fee stays spent.
 											</p>
 											<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
-												No board activity is charged for it: not selling describes the market and
-												the price you asked, not the harvesting that produced the stock.
+												{expiredChargeNote}
 											</p>
 										</InfoTip>
 									{/if}
@@ -419,4 +434,10 @@
 			{/if}
 		</div>
 	{/if}
-</Card>
+{/snippet}
+
+{#if embedded}
+	<div>{@render content()}</div>
+{:else}
+	<Card class="hover:z-20">{@render content()}</Card>
+{/if}

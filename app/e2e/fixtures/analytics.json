@@ -187,5 +187,167 @@
   "inventory": [
     { "id": "I1", "name": "Modified Mercenary (L)", "ttValue": 80.0, "markupPaid": 25.0, "notes": "primary armour set", "acquiredAt": "2026-02-15T12:00:00.000Z" }
   ],
-  "sessions": []
+  "sessions": [],
+  "huntingActivity": {
+    "overall": {
+      "cycled": 2140.0,
+      "returns": 1926.0,
+      "lootRate": 0.9
+    },
+    "definitions": [
+      {
+        "definitionId": 1,
+        "name": "ARIS Dailies",
+        "isArchived": false,
+        "cycled": 1200.0,
+        "returns": 1092.0,
+        "lootRate": 0.91,
+        "lootItems": [
+          { "itemName": "Animal Muscle Oil", "quantity": 420, "valuePed": 126.0 },
+          { "itemName": "Shrapnel", "quantity": 50000, "valuePed": 500.0 }
+        ],
+        "activities": [
+          {
+            "kind": "quest_family",
+            "label": "Daily Hunting 1",
+            "cycled": 760.0,
+            "returns": 695.0,
+            "lootRate": 0.9145,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [
+              { "itemName": "Universal Ammo", "quantity": 40000, "valuePed": 4.0 }
+            ],
+            "rewardedReturns": 695.0,
+            "rewardedRate": 0.9145,
+            "rewardStatus": "included_in_loot",
+            "lootItems": [
+              { "itemName": "Animal Muscle Oil", "quantity": 280, "valuePed": 84.0 }
+            ],
+            "variants": [
+              {
+                "kind": "quest",
+                "label": "Daily Hunting 1: Weak Mortirex",
+                "cycled": 470.0,
+                "returns": 430.0,
+                "lootRate": 0.9149,
+                "confirmedRewardPed": 0.0,
+                "rewardItems": [
+                  { "itemName": "Universal Ammo", "quantity": 25000, "valuePed": 2.5 }
+                ],
+                "rewardedReturns": 430.0,
+                "rewardedRate": 0.9149,
+                "rewardStatus": "included_in_loot",
+                "lootItems": [],
+                "variants": []
+              },
+              {
+                "kind": "quest",
+                "label": "Daily Hunting 1: Weak Kerberos",
+                "cycled": 290.0,
+                "returns": 265.0,
+                "lootRate": 0.9138,
+                "confirmedRewardPed": 0.0,
+                "rewardItems": [
+                  { "itemName": "Universal Ammo", "quantity": 15000, "valuePed": 1.5 }
+                ],
+                "rewardedReturns": 265.0,
+                "rewardedRate": 0.9138,
+                "rewardStatus": "included_in_loot",
+                "lootItems": [],
+                "variants": []
+              }
+            ]
+          },
+          {
+            "kind": "segment",
+            "label": "Warm-up lap",
+            "cycled": 220.0,
+            "returns": 198.0,
+            "lootRate": 0.9,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [],
+            "rewardedReturns": 198.0,
+            "rewardedRate": 0.9,
+            "rewardStatus": "none",
+            "lootItems": [],
+            "variants": []
+          },
+          {
+            "kind": "ambient",
+            "label": "Unscoped",
+            "cycled": 220.0,
+            "returns": 199.0,
+            "lootRate": 0.9045,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [],
+            "rewardedReturns": 199.0,
+            "rewardedRate": 0.9045,
+            "rewardStatus": "none",
+            "lootItems": [],
+            "variants": []
+          }
+        ]
+      },
+      {
+        "definitionId": null,
+        "name": "Unassigned",
+        "isArchived": false,
+        "cycled": 940.0,
+        "returns": 834.0,
+        "lootRate": 0.89,
+        "lootItems": [
+          { "itemName": "Animal Eye Oil", "quantity": 310, "valuePed": 93.0 }
+        ],
+        "activities": [
+          {
+            "kind": "ambient",
+            "label": "Unscoped",
+            "cycled": 940.0,
+            "returns": 834.0,
+            "lootRate": 0.8872,
+            "confirmedRewardPed": 0.0,
+            "rewardItems": [],
+            "rewardedReturns": 834.0,
+            "rewardedRate": 0.8872,
+            "rewardStatus": "none",
+            "lootItems": [],
+            "variants": []
+          }
+        ]
+      }
+    ],
+    "species": [
+      {
+        "mobSpecies": "Atrox",
+        "cycled": 900.0,
+        "returns": 830.0,
+        "lootRate": 0.9222,
+        "lootItems": [
+          {
+            "itemName": "Animal Muscle Oil",
+            "quantity": 420,
+            "valuePed": 126.0
+          },
+          {
+            "itemName": "Shrapnel",
+            "quantity": 50000,
+            "valuePed": 500.0
+          }
+        ]
+      },
+      {
+        "mobSpecies": "Combibo",
+        "cycled": 1240.0,
+        "returns": 1096.0,
+        "lootRate": 0.8839,
+        "lootItems": [
+          {
+            "itemName": "Animal Eye Oil",
+            "quantity": 310,
+            "valuePed": 93.0
+          }
+        ]
+      }
+    ]
+  }
 }

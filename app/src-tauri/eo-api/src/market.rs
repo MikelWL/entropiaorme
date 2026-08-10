@@ -516,27 +516,45 @@ impl Api {
             .harvest_markups()
             .await
             .map_err(ApiError::internal("market harvest markups"))?;
-        Ok(MarketHarvestData {
-            nanocube_markup_pct: data.nanocube_markup_pct.into(),
-            items: data
-                .items
-                .into_iter()
-                .map(|item| MarketHarvestItem {
-                    item_name: item.item_name,
-                    markup_pct: item.markup_pct.into(),
-                    horizon: item.horizon.into(),
-                    sales_ped: item.sales_ped.into(),
-                    readings: item
-                        .readings
-                        .into_iter()
-                        .map(|r| MarketHarvestHorizon {
-                            horizon: r.horizon,
-                            markup_pct: r.markup_pct.into(),
-                            sales_ped: r.sales_ped,
-                        })
-                        .collect(),
-                })
-                .collect(),
-        })
+        Ok(market_items_dto(data))
+    }
+
+    /// The estimated market signals for every active hunting-looted item
+    /// plus the nanocube recycling floor: the Hunting sibling of
+    /// [`Self::market_harvest_markups`], over the kill loot composition
+    /// (enhancer-shrapnel returns excluded).
+    pub async fn market_hunt_markups(&self) -> Result<MarketHarvestData, ApiError> {
+        let data = self
+            .market
+            .hunt_markups()
+            .await
+            .map_err(ApiError::internal("market hunt markups"))?;
+        Ok(market_items_dto(data))
+    }
+}
+
+/// Shape one activity's per-item market signals onto the wire DTO.
+fn market_items_dto(data: eo_services::market_service::HarvestMarketData) -> MarketHarvestData {
+    MarketHarvestData {
+        nanocube_markup_pct: data.nanocube_markup_pct.into(),
+        items: data
+            .items
+            .into_iter()
+            .map(|item| MarketHarvestItem {
+                item_name: item.item_name,
+                markup_pct: item.markup_pct.into(),
+                horizon: item.horizon.into(),
+                sales_ped: item.sales_ped.into(),
+                readings: item
+                    .readings
+                    .into_iter()
+                    .map(|r| MarketHarvestHorizon {
+                        horizon: r.horizon,
+                        markup_pct: r.markup_pct.into(),
+                        sales_ped: r.sales_ped,
+                    })
+                    .collect(),
+            })
+            .collect(),
     }
 }

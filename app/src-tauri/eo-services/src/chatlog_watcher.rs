@@ -30,6 +30,7 @@ use crate::bus_events::{
 };
 use crate::chatlog_parser::{parse_line, ChatEvent, EventType};
 use crate::event_bus::{EventBus, Topic};
+use crate::ped::Ped;
 
 /// Seconds between reads, exactly the original's tail interval.
 pub const TAIL_INTERVAL: Duration = Duration::from_millis(100);
@@ -56,10 +57,11 @@ pub type QuestRewardFilter = Arc<dyn Fn(&str, &[Value], &[Value]) -> Option<Valu
 /// One loot line of a mission-less tick, as the signal probe sees it:
 /// the item name plus the line's stacked quantity (one marker per
 /// unit, so a stacked pair of markers pays for two runs).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SignalLoot {
     pub item_name: String,
     pub quantity: i64,
+    pub value_ped: Ped,
 }
 
 /// The signal-loot probe: receives the loot lines of a tick that
@@ -657,9 +659,11 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
                 .filter_map(|e| {
                     let item_name = e.data.get("item_name").and_then(Value::as_str)?;
                     let quantity = e.data.get("quantity").and_then(Value::as_i64).unwrap_or(1);
+                    let value_ped = Ped(e.data.get("value").and_then(Value::as_f64).unwrap_or(0.0));
                     Some(SignalLoot {
                         item_name: item_name.to_string(),
                         quantity: quantity.max(1),
+                        value_ped,
                     })
                 })
                 .collect()
@@ -1261,10 +1265,12 @@ mod tests {
                 SignalLoot {
                     item_name: "Shrapnel".to_string(),
                     quantity: 4639,
+                    value_ped: Ped(0.4639),
                 },
                 SignalLoot {
                     item_name: "Hyperion Daily Voucher".to_string(),
                     quantity: 1,
+                    value_ped: Ped::ZERO,
                 },
             ]],
             "each entry carries its line's stacked quantity"

@@ -1,0 +1,116 @@
+<script lang="ts">
+	import Modal from '$lib/components/Modal.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import Input from '$lib/components/Input.svelte';
+	import { formatPed } from '$lib/utils/format';
+	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
+
+	let {
+		item,
+		mode,
+		onconfirm,
+		oncancel,
+	}: {
+		item: TreeCuttingStock | null;
+		mode: 'remove' | 'shrapnel';
+		onconfirm: (itemName: string, quantity: number) => Promise<void>;
+		oncancel: () => void;
+	} = $props();
+
+	let ped = $state(0);
+	let saving = $state(false);
+	let error = $state<string | null>(null);
+	let modalOpen = $state(false);
+	let initialisedFor = $state<string | null>(null);
+	const unitTt = $derived(item && item.heldQty > 0 ? item.heldTt / item.heldQty : 0);
+	const atMax = $derived(!!item && Math.abs(ped - item.heldTt) < 0.005);
+
+	$effect(() => {
+		if (item && ped > item.heldTt) ped = item.heldTt;
+	});
+	$effect(() => {
+		if (item && initialisedFor !== item.itemName) {
+			ped = item.heldTt;
+			error = null;
+			initialisedFor = item.itemName;
+			modalOpen = true;
+		}
+		if (!item) {
+			initialisedFor = null;
+			modalOpen = false;
+		}
+	});
+	$effect(() => {
+		if (item && !modalOpen) oncancel();
+	});
+
+	async function submit() {
+		if (!item || saving || ped <= 0 || unitTt <= 0 || ped > item.heldTt) return;
+		const quantity = Math.min(item.heldQty, Math.round(ped / unitTt));
+		if (quantity <= 0) return;
+		saving = true;
+		error = null;
+		try {
+			await onconfirm(item.itemName, quantity);
+			modalOpen = false;
+		} catch (e) {
+			error = e instanceof Error ? e.message : `Failed to ${mode === 'remove' ? 'remove' : 'convert'} the stock`;
+		} finally {
+			saving = false;
+		}
+	}
+</script>
+
+{#if item}
+	<Modal
+		bind:open={modalOpen}
+		class="max-w-xs"
+		title={mode === 'remove' ? `Remove ${item.itemName}` : 'Convert Shrapnel'}
+	>
+		<div class="space-y-5">
+			<div class="space-y-1.5">
+				<Input
+					type="number"
+					min="0"
+					max={item.heldTt}
+					step="0.01"
+					align="right"
+					aria-label={mode === 'remove' ? 'PED to remove' : 'PED to convert'}
+					bind:value={ped}
+				>
+					{#snippet suffix()}<span class="text-xs font-medium uppercase tracking-wider">PED</span>{/snippet}
+				</Input>
+				<div class="flex items-baseline justify-between gap-2 text-xs">
+					<span class="text-text-tertiary tabular-nums">
+						{mode === 'shrapnel'
+							? `${formatPed(ped * 1.01)} PED ammo after conversion`
+							: `${formatPed(item.heldTt)} PED in stock`}
+					</span>
+					<button
+						type="button"
+						disabled={atMax}
+						onclick={() => (ped = item.heldTt)}
+						class="cursor-pointer font-medium text-accent transition-colors
+							duration-[var(--duration-fast)] hover:text-text disabled:cursor-default
+							disabled:text-text-tertiary/50 disabled:hover:text-text-tertiary/50"
+					>
+						All of it
+					</button>
+				</div>
+			</div>
+
+			{#if mode === 'remove'}
+				<p class="text-xs leading-relaxed text-text-tertiary">
+					This only removes it from current stock. The loot and its historical TT stay recorded.
+				</p>
+			{/if}
+			{#if error}<p class="text-xs text-error">{error}</p>{/if}
+			<div class="flex items-center justify-end gap-2">
+				<Button variant="ghost" onclick={oncancel} disabled={saving}>Cancel</Button>
+				<Button onclick={submit} loading={saving} disabled={ped <= 0 || unitTt <= 0}>
+					{mode === 'remove' ? 'Remove' : 'Convert'}
+				</Button>
+			</div>
+		</div>
+	</Modal>
+{/if}

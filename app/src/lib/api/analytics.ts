@@ -27,6 +27,13 @@ const readAnalyticsHarvest = guideSwapped(commands.analyticsHarvest, commands.de
 export async function getAnalyticsHarvest(period: string = 'all') {
 	return readAnalyticsHarvest(period);
 }
+const readAnalyticsHuntingActivity = guideSwapped(
+	commands.analyticsHuntingActivity,
+	commands.demoAnalyticsHuntingActivity,
+);
+export async function getAnalyticsHuntingActivity(period: string = 'all') {
+	return readAnalyticsHuntingActivity(period);
+}
 export const getLedgerPresets = guideSwapped(
 	commands.ledgerPresetsList,
 	commands.demoLedgerPresetsList,
@@ -40,19 +47,26 @@ export const deleteLedgerPreset = commands.ledgerPresetDelete;
 // Current holdings and the auction lifecycle over them: operational
 // position context for sale and recycling actions. It does not influence
 // holding-independent market opportunity. No demo variant; the reader
-// degrades to an empty position list in guide mode.
-export const getHarvestStock = commands.harvestStock;
+// degrades to an empty position list in guide mode. Each read is scoped
+// to the activity family whose tab is asking.
+export const getActivityStock = commands.activityStock;
 export const getHarvestRealisedMarkup = commands.harvestRealisedMarkup;
+export const getHuntingRealisedMarkup = commands.huntingRealisedMarkup;
 export const getAuctionListings = commands.auctionListings;
 export const createAuctionListing = commands.auctionListingCreate;
 export const confirmAuctionListing = commands.auctionListingConfirm;
 export const expireAuctionListing = commands.auctionListingExpire;
 export const convertStock = commands.stockConvert;
-// What the activity has done to its stock, and the three ways back out of it.
+export const sellStockPrivately = commands.stockPrivateSale;
+export const removeStock = commands.stockRemove;
+export const convertShrapnel = commands.stockShrapnelConvert;
+// What the activity has done to its stock, and the ways back out of it.
 export const getActivityHistory = commands.activityHistory;
 export const revertAuctionSale = commands.auctionSaleRevert;
 export const undoAuctionListing = commands.auctionListingUndo;
 export const undoStockConversion = commands.stockConversionUndo;
+export const undoPrivateSale = commands.privateSaleUndo;
+export const undoStockRemoval = commands.stockRemovalUndo;
 
 export const addInventoryItem = commands.inventoryCreate;
 export const updateInventoryItem = commands.inventoryUpdate;

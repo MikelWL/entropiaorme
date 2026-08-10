@@ -1,182 +1,562 @@
 /**
- * Hunting-tab view model: the per-mob and per-session-name comparison data, the
- * archive/main view split with its confirm flow, and the sorted
- * projections. Presentation lives in the tab component; it composes over
- * this state.
+ * Hunting-tab view model: the session-definition axis over the same market,
+ * stock, and history machinery Tree Cutting established.
+ *
+ * Sessions are the routines the player deliberately defined (keyed by
+ * definition, never by recorded free text). Species evidence remains an
+ * internal projection for reconciling Overall market and realised figures;
+ * it is not currently presented as a comparison axis.
+ *
+ * Every MU figure is an estimate, never realised P&L. Realised markup
+ * arrives only through recorded stock outcomes, attributed through the weighted
+ * species and session-definition provenance of the source loot.
  */
 
 import {
-	type ArchiveKind,
-	activityArchive,
-	archive as archiveItem,
-	isArchived,
-	unarchive as unarchiveItem,
-} from '$lib/activityArchive.svelte';
-import { getAnalyticsHunting, type HuntingData } from '$lib/api';
-import type { MobComparison, NameComparison } from '$lib/types/analytics';
+	confirmAuctionListing,
+	convertShrapnel,
+	convertStock,
+	createAuctionListing,
+	expireAuctionListing,
+	getActivityHistory,
+	getActivityStock,
+	getAnalyticsHuntingActivity,
+	getAuctionListings,
+	getHuntingRealisedMarkup,
+	getMarketHuntMarkups,
+	type HuntingActivityData,
+	type MarketHarvestData,
+	type MarketHarvestItem,
+	removeStock,
+	revertAuctionSale,
+	sellStockPrivately,
+	undoAuctionListing,
+	undoPrivateSale,
+	undoStockConversion,
+	undoStockRemoval,
+} from '$lib/api';
+import type {
+	ActivityHistoryEntry,
+	AuctionListing,
+	HuntingActivityComparison,
+	HuntingDefinitionComparison,
+	HuntingSpeciesComparison,
+	StockPosition,
+} from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
+import { createTableModel } from '$lib/view/tableModel.svelte';
+import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
+import {
+	type ActivityListingDraft,
+	type TreeCuttingStock as ActivityStockRow,
+	type ActivityTradeDraft,
+	type ConfidenceMode,
+	effectiveMarkup,
+	marketOpportunity,
+	NANOCUBE_FALLBACK_MARKUP,
+	NANOCUBE_ITEM,
+	opportunityTier,
+	projectLoot,
+	type TreeCuttingItem,
+} from './treeCuttingModel.svelte';
 
-export type SortDir = 'asc' | 'desc';
-export type ViewMode = 'main' | 'archive';
+// ── Sessions axis ──────────────────────────────────────────────────────
 
-export const ACTION_KEY = '__action';
+/** One session-definition row with its display key (definitions are keyed
+ * by id; the unassigned bucket by this sentinel). */
+export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'> & {
+	key: string;
+	isUnscoped: boolean;
+	/** Current market projection over actual completion reward items. Missing
+	 * or excluded item market data contributes TT at 100%, never a proxy. */
+	rewardMuPed: number | null;
+	muProjectedReturns: number | null;
+	items: TreeCuttingItem[];
+	variants: HuntingActivitySection[];
+};
 
-export const mobColumns = [
-	{ key: 'mobName', label: 'Mob', sortable: true, widthClass: 'w-[26%]' },
-	{
-		key: 'sessions',
-		label: 'Sessions',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[10%]',
-	},
-	{ key: 'kills', label: 'Kills', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-	{
-		key: 'cycled',
-		label: 'Cycled',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{
-		key: 'pesPer100Ped',
-		label: 'PES/100',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{
-		key: 'lootRate',
-		label: 'Loot',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
-];
+export type HuntingSessionSection = Omit<HuntingDefinitionComparison, 'activities'> & {
+	key: string;
+	isUnassigned: boolean;
+	confirmedRewardPed: number;
+	realisedMarkup: number;
+	muProjectedReturns: number | null;
+	muRate: number | null;
+	realisedReturns: number;
+	realisedRate: number;
+	items: TreeCuttingItem[];
+	activities: HuntingActivitySection[];
+};
 
-export const nameColumns = [
-	{ key: 'sessionName', label: 'Session', sortable: true, widthClass: 'w-[26%]' },
-	{
-		key: 'sessions',
-		label: 'Sessions',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[10%]',
-	},
-	{ key: 'kills', label: 'Kills', align: 'right' as const, sortable: true, widthClass: 'w-[10%]' },
-	{
-		key: 'cycled',
-		label: 'Cycled',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{
-		key: 'pesPer100Ped',
-		label: 'PES/100',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{
-		key: 'lootRate',
-		label: 'Loot',
-		align: 'right' as const,
-		sortable: true,
-		widthClass: 'w-[16%]',
-	},
-	{ key: ACTION_KEY, label: '', align: 'right' as const, sortable: false, widthClass: 'w-[6%]' },
-];
+export type HuntingSessionSortKey = 'name' | 'cycled' | 'realisedRate' | 'muRate';
 
-export function rowKey(kind: ArchiveKind, name: string): string {
-	return `${kind}:${name}`;
-}
+// ── Dormant species projection ─────────────────────────────────────────
 
-function sortComparisons<T>(rows: T[], key: keyof T & string, dir: SortDir): T[] {
-	return [...rows].sort((a, b) => {
-		const aVal = a[key];
-		const bVal = b[key];
-		if (typeof aVal === 'number' && typeof bVal === 'number') {
-			return dir === 'asc' ? aVal - bVal : bVal - aVal;
-		}
-		return dir === 'asc'
-			? String(aVal).localeCompare(String(bVal))
-			: String(bVal).localeCompare(String(aVal));
-	});
-}
+/** The stable label retained for diagnostics and contract-level proofs. */
+export const UNCLASSIFIED_LABEL = 'Unclassified';
+
+/** One species row with the merged market layer. Kept internally so Overall
+ * remains reconcilable while the species comparison UI is dormant. */
+export type HuntingTargetSection = HuntingSpeciesComparison & {
+	key: string;
+	label: string;
+	isUnclassified: boolean;
+	realisedMarkup: number;
+	muProjectedReturns: number | null;
+	muRate: number | null;
+	realisedReturns: number;
+	realisedRate: number;
+	items: TreeCuttingItem[];
+};
+
+/** The combined direct + market stat line across the whole activity. */
+export type HuntingOverallLine = {
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	muProjectedReturns: number | null;
+	muRate: number | null;
+	realisedMarkup: number;
+	realisedReturns: number;
+	realisedRate: number;
+	/** Confirmed markup whose species has no economic row in the selected period:
+	 * still real, still counted, and disclosed rather than dropped. */
+	realisedOutsidePeriod: number;
+};
 
 export function createHuntingModel() {
-	let data = $state<HuntingData | null>(null);
+	let data = $state<HuntingActivityData | null>(null);
+	let market = $state<MarketHarvestData | null>(null);
+	// Current positions, the auction lifecycle over them, and the markup
+	// recorded stock outcomes have realised per species. All three drive holdings
+	// and realised figures only, never the holding-independent opportunity.
+	let positions = $state<StockPosition[]>([]);
+	let listings = $state<AuctionListing[]>([]);
+	// Read on demand rather than with the tab: History is a surface the
+	// player opens deliberately, and the verdicts on it are computed per
+	// entry.
+	let history = $state<ActivityHistoryEntry[]>([]);
+	let realisedBySpecies = $state<Map<string, number>>(new Map());
+	let realisedByDefinition = $state<Map<number, number>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
+	let activeRange = $state<AnalyticsRange>('All Time');
+	let selectedSessionKey = $state<string | null>(null);
 
-	let viewMode = $state<ViewMode>('main');
-	let confirmKey = $state<string | null>(null);
+	let loadEpoch = 0;
 
-	async function loadData() {
+	async function loadData(period: string = 'all') {
+		const epoch = ++loadEpoch;
 		loading = true;
 		error = null;
 		try {
-			data = await getAnalyticsHunting();
+			// The comparison aggregate is the spine; the market feed and the
+			// stock overlay are best-effort context, so either failing
+			// degrades gracefully (MU figures blank / no removals) rather
+			// than blanking the tab.
+			const [activity, markets, stock, openListings, realised] = await Promise.all([
+				getAnalyticsHuntingActivity(period),
+				getMarketHuntMarkups().catch(() => null),
+				getActivityStock('hunting').catch(() => []),
+				getAuctionListings('hunting').catch(() => []),
+				getHuntingRealisedMarkup().catch(() => ({ species: [], definitions: [] })),
+			]);
+			if (epoch !== loadEpoch) return;
+			data = activity;
+			market = markets;
+			positions = stock;
+			listings = openListings;
+			realisedBySpecies = new Map(realised.species.map((row) => [row.mobSpecies, row.netMarkup]));
+			realisedByDefinition = new Map(
+				realised.definitions.map((row) => [row.definitionId, row.netMarkup]),
+			);
 		} catch (e) {
+			if (epoch !== loadEpoch) return;
 			error = describeError(e, 'Failed to load hunting data');
 		} finally {
-			loading = false;
+			if (epoch === loadEpoch) loading = false;
 		}
 	}
 
-	async function onArchiveConfirm(kind: ArchiveKind, name: string) {
-		error = null;
-		try {
-			await archiveItem(kind, name);
-		} catch (e) {
-			error = describeError(e, 'Failed to archive');
-		}
-		confirmKey = null;
-	}
+	// ── Sessions ──
 
-	async function onUnarchiveConfirm(kind: ArchiveKind, name: string) {
-		error = null;
-		try {
-			await unarchiveItem(kind, name);
-		} catch (e) {
-			error = describeError(e, 'Failed to restore from archive');
-		}
-		confirmKey = null;
-	}
-
-	let mobSortKey = $state<(keyof MobComparison & string) | undefined>('cycled');
-	let mobSortDir = $state<SortDir>('desc');
-
-	const sortedMobs = $derived.by(() => {
+	const sessionSections = $derived.by<HuntingSessionSection[]>(() => {
 		if (!data) return [];
-		const filtered = data.mobComparisons.filter((m) =>
-			viewMode === 'archive'
-				? isArchived(activityArchive.current, 'mob', m.mobName)
-				: !isArchived(activityArchive.current, 'mob', m.mobName),
+		const marketByItem = new Map<string, MarketHarvestItem>(
+			(market?.items ?? []).map((item) => [item.itemName, item]),
 		);
-		if (!mobSortKey) return filtered;
-		return sortComparisons(filtered, mobSortKey, mobSortDir);
+		const activitySection = (
+			row: HuntingActivityComparison,
+			parentKey: string,
+			index: number,
+		): HuntingActivitySection => {
+			const key = `${parentKey}/${row.kind}:${row.label}:${index}`;
+			const projection = projectLoot(
+				row.lootItems,
+				row.cycled,
+				market,
+				marketByItem,
+				confidenceMode,
+			);
+			const rewardMuPed = projectRewardItems(row.rewardItems, market, marketByItem, confidenceMode);
+			return {
+				...row,
+				key,
+				isUnscoped: row.kind === 'ambient',
+				rewardMuPed,
+				muProjectedReturns: projection.muProjectedReturns,
+				items: projection.items,
+				variants: row.variants.map((variant, variantIndex) =>
+					activitySection(variant, key, variantIndex),
+				),
+			};
+		};
+		return data.definitions.map((row) => {
+			const projection = projectLoot(
+				row.lootItems,
+				row.cycled,
+				market,
+				marketByItem,
+				confidenceMode,
+			);
+			const realisedMarkup =
+				row.definitionId === null ? 0 : (realisedByDefinition.get(row.definitionId) ?? 0);
+			// Top-level activities partition the definition. Family variants are
+			// explanatory children whose reward is already present in their parent.
+			const confirmedRewardPed = row.activities.reduce(
+				(sum, activity) => sum + activity.confirmedRewardPed,
+				0,
+			);
+			const realisedReturns = row.returns + confirmedRewardPed + realisedMarkup;
+			return {
+				...row,
+				key: row.definitionId === null ? 'unassigned' : `definition:${row.definitionId}`,
+				isUnassigned: row.definitionId === null,
+				confirmedRewardPed,
+				realisedMarkup,
+				muProjectedReturns: projection.muProjectedReturns,
+				muRate: projection.muRate,
+				realisedReturns,
+				realisedRate: row.cycled > 0 ? realisedReturns / row.cycled : 0,
+				items: projection.items,
+				activities: row.activities.map((activity, index) =>
+					activitySection(
+						activity,
+						row.definitionId === null ? 'unassigned' : `definition:${row.definitionId}`,
+						index,
+					),
+				),
+			};
+		});
 	});
 
-	let nameSortKey = $state<(keyof NameComparison & string) | undefined>('cycled');
-	let nameSortDir = $state<SortDir>('desc');
-
-	const sortedNames = $derived.by(() => {
-		if (!data) return [];
-		const filtered = data.nameComparisons.filter((row) =>
-			viewMode === 'archive'
-				? isArchived(activityArchive.current, 'name', row.sessionName)
-				: !isArchived(activityArchive.current, 'name', row.sessionName),
-		);
-		if (!nameSortKey) return filtered;
-		return sortComparisons(filtered, nameSortKey, nameSortDir);
+	const sessionTable = createTableModel<HuntingSessionSection>({
+		rows: () => sessionSections,
+		pageSize: Number.MAX_SAFE_INTEGER,
+		searchText: (row) => [row.name],
+		initialSort: { key: 'cycled', dir: 'desc' },
+		defaultSortDirs: {
+			name: 'asc',
+			cycled: 'desc',
+			realisedRate: 'desc',
+			muRate: 'desc',
+		},
+		comparators: {
+			name: (a, b) => a.name.localeCompare(b.name),
+		},
 	});
+
+	/** The session whose detail replaces Overall. A null selection means
+	 * Overall; an invalid selection also returns there when a period switch
+	 * retires the selected key. */
+	const selectedSession = $derived.by<HuntingSessionSection | null>(() => {
+		if (selectedSessionKey === null) return null;
+		return sessionSections.find((s) => s.key === selectedSessionKey) ?? null;
+	});
+
+	// ── Dormant species projection ──
+
+	const targetSections = $derived.by<HuntingTargetSection[]>(() => {
+		if (!data) return [];
+		const marketByItem = new Map<string, MarketHarvestItem>(
+			(market?.items ?? []).map((item) => [item.itemName, item]),
+		);
+		return data.species.map((row) => {
+			const isUnclassified = row.mobSpecies === '';
+			const projection = projectLoot(
+				row.lootItems,
+				row.cycled,
+				market,
+				marketByItem,
+				confidenceMode,
+			);
+			const realisedMarkup = realisedBySpecies.get(row.mobSpecies) ?? 0;
+			const realisedReturns = row.returns + realisedMarkup;
+			return {
+				...row,
+				key: isUnclassified ? 'unclassified' : `species:${row.mobSpecies}`,
+				label: isUnclassified ? UNCLASSIFIED_LABEL : row.mobSpecies,
+				isUnclassified,
+				realisedMarkup,
+				muProjectedReturns: projection.muProjectedReturns,
+				muRate: projection.muRate,
+				realisedReturns,
+				realisedRate: row.cycled > 0 ? realisedReturns / row.cycled : 0,
+				items: projection.items,
+			};
+		});
+	});
+
+	// ── Overall ──
+
+	const overall = $derived.by<HuntingOverallLine | null>(() => {
+		if (!data || data.overall.cycled <= 0) return null;
+		// Market figures aggregate over the species sections so the headline
+		// reconciles with the rows beneath it; a section without market
+		// context contributes nothing.
+		const anyMarket = targetSections.some((s) => s.muProjectedReturns !== null);
+		const muProjectedReturns = anyMarket
+			? targetSections.reduce((sum, s) => sum + (s.muProjectedReturns ?? 0), 0)
+			: null;
+		const cycled = data.overall.cycled;
+		const muRate = muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
+		// Realised markup sums over EVERY species with recognised stock outcomes, not
+		// only those hunted in the selected period: the money exists either
+		// way, and the remainder is disclosed rather than silently dropped.
+		const realisedMarkup = [...realisedBySpecies.values()].reduce((sum, v) => sum + v, 0);
+		const realisedInPeriod = targetSections.reduce((sum, s) => sum + s.realisedMarkup, 0);
+		const confirmedRewardPed = sessionSections.reduce(
+			(sum, session) => sum + session.confirmedRewardPed,
+			0,
+		);
+		const realisedReturns = data.overall.returns + confirmedRewardPed + realisedMarkup;
+		return {
+			realisedOutsidePeriod: realisedMarkup - realisedInPeriod,
+			cycled,
+			returns: data.overall.returns,
+			lootRate: data.overall.lootRate,
+			muProjectedReturns,
+			muRate,
+			realisedMarkup,
+			realisedReturns,
+			realisedRate: cycled > 0 ? realisedReturns / cycled : 0,
+		};
+	});
+
+	// ── Stock (identical machinery to Tree Cutting, hunting-scoped) ──
+
+	/** The current stock line for the Overall block: per-item held quantity
+	 * and TT, ordered by stock TT (most-held first). The item's market
+	 * opportunity is intrinsic and therefore does not consume held TT. */
+	const stock = $derived.by<ActivityStockRow[]>(() => {
+		const marketByItem = new Map((market?.items ?? []).map((item) => [item.itemName, item]));
+		const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
+		const rows = positions.map((position) => {
+			const m = marketByItem.get(position.itemName);
+			const opportunity = market ? marketOpportunity(m, nanocube) : null;
+			const applied = opportunity ? effectiveMarkup(opportunity, nanocube, confidenceMode) : null;
+			return {
+				itemName: position.itemName,
+				heldQty: position.quantity,
+				heldTt: position.ttValue,
+				listedQty: position.listedQuantity,
+				readings: (m?.readings ?? []).map((r) => ({
+					horizon: r.horizon,
+					markupPct: r.markupPct,
+					salesPed: r.salesPed,
+				})),
+				opportunity,
+				markupPct: m?.markupPct ?? null,
+				markupHorizon: m?.horizon ?? null,
+				tier: opportunity ? opportunityTier(opportunity) : null,
+				effectiveMarkupPct: applied?.markupPct ?? null,
+				floored: applied?.floored ?? false,
+				salesPed: m?.salesPed ?? null,
+				weeklySalesPed: m?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null,
+			};
+		});
+		rows.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName));
+		return rows;
+	});
+
+	/** Unresolved auctions, oldest first: the panel is a worklist, so what
+	 * has been waiting longest is what most likely needs resolving. */
+	const openListings = $derived.by<AuctionListing[]>(() =>
+		listings
+			.filter((listing) => listing.status === 'pending')
+			.slice()
+			.sort((a, b) => a.listedAt.localeCompare(b.listedAt)),
+	);
+
+	/** Resolved auctions, newest first. */
+	const resolvedListings = $derived.by<AuctionListing[]>(() =>
+		listings
+			.filter((listing) => listing.status !== 'pending')
+			.slice()
+			.sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? '')),
+	);
+
+	/** Re-read everything holdings-related after a write. The comparison
+	 * aggregates are untouched by a sale, so only the position, listing, and
+	 * realised reads are re-driven. */
+	async function refreshHoldings() {
+		// After a write that already succeeded, a failed re-read leaves
+		// figures that are known to be out of date; the last-good figures
+		// stay and the tab says they are stale rather than lying either way.
+		let stale = false;
+		const failed = <T>(fallback: T) => {
+			stale = true;
+			return fallback;
+		};
+		const [stockRows, allListings, realised] = await Promise.all([
+			getActivityStock('hunting').catch(() => failed(positions)),
+			getAuctionListings('hunting').catch(() => failed(listings)),
+			getHuntingRealisedMarkup().catch(() => failed(null)),
+		]);
+		positions = stockRows;
+		listings = allListings;
+		if (realised) {
+			realisedBySpecies = new Map(realised.species.map((row) => [row.mobSpecies, row.netMarkup]));
+			realisedByDefinition = new Map(
+				realised.definitions.map((row) => [row.definitionId, row.netMarkup]),
+			);
+		}
+		// Only once it has been opened: an undo verdict depends on every
+		// other entry, so a stale list would offer undos that no longer apply.
+		if (history.length > 0) {
+			history = await getActivityHistory('hunting').catch(() => failed(history));
+		}
+		error = stale
+			? 'That went through, but the figures below could not be re-read and may be out of date.'
+			: null;
+	}
+
+	/** Everything this activity has done to its stock, newest first. */
+	async function loadHistory() {
+		try {
+			history = await getActivityHistory('hunting');
+		} catch (e) {
+			error = describeError(e, 'Failed to load the activity history');
+			throw e;
+		}
+	}
+
+	/** Take back one history entry. `revertSale` leaves the listing open
+	 * instead of removing it, which only a sold listing can do. */
+	async function undoHistoryEntry(entry: ActivityHistoryEntry, revertSale = false) {
+		try {
+			if (entry.kind === 'conversion') {
+				await undoStockConversion({ id: entry.id });
+			} else if (entry.kind === 'trade') {
+				await undoPrivateSale({ id: entry.id });
+			} else if (entry.kind === 'removal') {
+				await undoStockRemoval({ id: entry.id });
+			} else if (revertSale) {
+				await revertAuctionSale({ id: entry.id });
+			} else {
+				await undoAuctionListing({ id: entry.id });
+			}
+			await refreshHoldings();
+			history = await getActivityHistory('hunting');
+		} catch (e) {
+			error = describeError(e, 'Failed to undo that entry');
+			throw e;
+		}
+	}
+
+	/** List stock on the auction. The quantity leaves holdings now and the
+	 * starting-bid fee is spent now; nothing is realised until it sells. */
+	async function listStock(input: ActivityListingDraft) {
+		try {
+			await createAuctionListing({ profession: 'hunting', ...input });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to create the listing');
+			throw e;
+		}
+	}
+
+	async function tradeStock(input: ActivityTradeDraft) {
+		try {
+			await sellStockPrivately({ profession: 'hunting', ...input });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to record the trade');
+			throw e;
+		}
+	}
+
+	async function discardStock(itemName: string, quantity: number) {
+		try {
+			await removeStock({ profession: 'hunting', itemName, quantity, removedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to remove the stock');
+			throw e;
+		}
+	}
+
+	async function convertShrapnelStock(quantity: number) {
+		try {
+			await convertShrapnel({ profession: 'hunting', quantity, convertedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to convert the Shrapnel');
+			throw e;
+		}
+	}
+
+	/** Confirm a listing sold at the price it fetched, or mark it expired
+	 * and returned. Either way the listing leaves the open worklist. */
+	async function resolveListing(
+		listingId: string,
+		outcome:
+			| { sold: true; finalPrice: number; saleFee: number; resolvedAt?: string }
+			| { sold: false; resolvedAt?: string },
+	) {
+		try {
+			if (outcome.sold) {
+				await confirmAuctionListing({
+					listingId,
+					finalPrice: outcome.finalPrice,
+					saleFee: outcome.saleFee,
+					resolvedAt: outcome.resolvedAt ?? null,
+				});
+			} else {
+				await expireAuctionListing({ listingId, resolvedAt: outcome.resolvedAt ?? null });
+			}
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to resolve the listing');
+			throw e;
+		}
+	}
+
+	/** Recycle stock into Nanocubes at 1:1 TT, carrying its activity
+	 * composition forward so a later Nanocube sale still attributes back. */
+	async function recycleStock(sourceItem: string, quantity: number) {
+		try {
+			await convertStock({
+				profession: 'hunting',
+				sourceItem,
+				targetItem: NANOCUBE_ITEM,
+				quantity,
+				convertedAt: null,
+			});
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to convert the stock');
+			throw e;
+		}
+	}
 
 	return {
 		get data() {
 			return data;
+		},
+		get overall() {
+			return overall;
 		},
 		get loading() {
 			return loading;
@@ -184,55 +564,80 @@ export function createHuntingModel() {
 		get error() {
 			return error;
 		},
-		get viewMode() {
-			return viewMode;
+		get confidenceMode() {
+			return confidenceMode;
 		},
-		set viewMode(value: ViewMode) {
-			viewMode = value;
+		set confidenceMode(mode: ConfidenceMode) {
+			confidenceMode = mode;
 		},
-		get confirmKey() {
-			return confirmKey;
+		get activeRange() {
+			return activeRange;
 		},
-		set confirmKey(value: string | null) {
-			confirmKey = value;
+		set activeRange(value: string) {
+			if (isAnalyticsRange(value)) activeRange = value;
 		},
-
-		get mobSortKey() {
-			return mobSortKey;
+		get period() {
+			return analyticsPeriod(activeRange);
 		},
-		set mobSortKey(value: (keyof MobComparison & string) | undefined) {
-			mobSortKey = value;
+		get sessionSections() {
+			return sessionSections;
 		},
-		get mobSortDir() {
-			return mobSortDir;
+		get sessionTable() {
+			return sessionTable;
 		},
-		set mobSortDir(value: SortDir) {
-			mobSortDir = value;
+		get selectedSession() {
+			return selectedSession;
 		},
-		get sortedMobs() {
-			return sortedMobs;
+		selectSession(key: string | null) {
+			selectedSessionKey = key;
 		},
-
-		get nameSortKey() {
-			return nameSortKey;
+		get targetSections() {
+			return targetSections;
 		},
-		set nameSortKey(value: (keyof NameComparison & string) | undefined) {
-			nameSortKey = value;
+		get stock() {
+			return stock;
 		},
-		get nameSortDir() {
-			return nameSortDir;
+		get openListings() {
+			return openListings;
 		},
-		set nameSortDir(value: SortDir) {
-			nameSortDir = value;
+		get resolvedListings() {
+			return resolvedListings;
 		},
-		get sortedNames() {
-			return sortedNames;
+		get history() {
+			return history;
 		},
-
+		loadHistory,
+		undoHistoryEntry,
 		loadData,
-		onArchiveConfirm,
-		onUnarchiveConfirm,
+		listStock,
+		tradeStock,
+		discardStock,
+		convertShrapnelStock,
+		resolveListing,
+		recycleStock,
 	};
+}
+
+/** Value observed reward items at current direct item markup. A missing or
+ * confidence-excluded market observation leaves that item's TT unchanged;
+ * the generic loot projection's Nanocube substitution is deliberately not
+ * used for quest rewards. */
+export function projectRewardItems(
+	items: HuntingActivityComparison['rewardItems'],
+	market: MarketHarvestData | null,
+	marketByItem: Map<string, MarketHarvestItem>,
+	confidenceMode: ConfidenceMode,
+): number | null {
+	if (items.length === 0) return null;
+	const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
+	return items.reduce((sum, item) => {
+		const marketItem = marketByItem.get(item.itemName);
+		if (!market || !marketItem) return sum + item.valuePed;
+		const opportunity = marketOpportunity(marketItem, nanocube);
+		const applied = effectiveMarkup(opportunity, nanocube, confidenceMode);
+		const markupPct = opportunity.usesNanocube || applied.floored ? 100 : applied.markupPct;
+		return sum + (item.valuePed * markupPct) / 100;
+	}, 0);
 }
 
 export type HuntingModel = ReturnType<typeof createHuntingModel>;

@@ -471,6 +471,53 @@ impl MarketService {
     /// sanctioned direction of the market boundary; nothing flows back,
     /// and no realised figure is computed.
     pub async fn harvest_markups(&self) -> Result<HarvestMarketData, DbError> {
+        self.activity_markups(
+            "SELECT DISTINCT item_name FROM harvest_loot_items \
+             WHERE deactivated_at IS NULL ORDER BY item_name"
+                .to_string(),
+        )
+        .await
+    }
+
+    /// The estimated market signals for every active hunting-looted item,
+    /// plus the same nanocube recycling floor: the Hunting sibling of
+    /// [`Self::harvest_markups`] over the kill loot composition. Enhancer
+    /// shrapnel returns are enhancer accounting, not mob loot, and are
+    /// excluded from the item set.
+    pub async fn hunt_markups(&self) -> Result<HarvestMarketData, DbError> {
+        // Hybrid item universe: settled sessions answer from their loot
+        // cells, the rest raw. The raw arm names its join order (CROSS
+        // JOIN from the unsettled ids through the session and kill
+        // indexes) because letting the planner drive from the loot table
+        // would re-scan the whole history this read exists to avoid.
+        self.db.with_writer(crate::session_rollup::heal).await?;
+        let version = crate::session_rollup::ROLLUP_VERSION;
+        self.activity_markups(format!(
+            "SELECT DISTINCT item_name FROM ( \
+                 SELECT r.item_name FROM session_loot_rollups r \
+                 JOIN session_rollup_meta m ON m.session_id = r.session_id \
+                      AND m.rollup_version >= {version} \
+                 WHERE r.is_enhancer_shrapnel = 0 \
+                 UNION \
+                 SELECT li.item_name \
+                 FROM (SELECT t.id FROM tracking_sessions t \
+                       LEFT JOIN session_rollup_meta m2 \
+                              ON m2.session_id = t.id AND m2.rollup_version >= {version} \
+                       WHERE m2.session_id IS NULL) u \
+                 CROSS JOIN kills k \
+                 CROSS JOIN kill_loot_items li \
+                 WHERE k.session_id = u.id AND li.kill_id = k.id \
+                   AND li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0) \
+             ORDER BY item_name"
+        ))
+        .await
+    }
+
+    /// The shared markup read over one activity's item universe. The
+    /// `item_set_sql` names the activity's active loot items; everything
+    /// else (latest observations, horizon fallback, nanocube floor) is
+    /// identical between activities on purpose.
+    async fn activity_markups(&self, item_set_sql: String) -> Result<HarvestMarketData, DbError> {
         self.db
             .with_reader(move |connection| {
                 // Per item, the (markup, sales) at the latest submission for
@@ -537,11 +584,8 @@ impl MarketService {
 
                 let nanocube_markup_pct = resolve("Nanocube").map(|(markup, _, _)| markup);
 
-                // The active harvest-looted item set (name-ordered).
-                let mut item_stmt = connection.prepare(
-                    "SELECT DISTINCT item_name FROM harvest_loot_items \
-                     WHERE deactivated_at IS NULL ORDER BY item_name",
-                )?;
+                // The activity's active looted item set (name-ordered).
+                let mut item_stmt = connection.prepare(&item_set_sql)?;
                 let names = item_stmt
                     .query_map([], |row| row.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;

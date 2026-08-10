@@ -24,6 +24,16 @@ function ledgerApi(): Partial<LedgerDemoApi> {
 	return getDemoApi('analytics-ledger') as Partial<LedgerDemoApi>;
 }
 
+/** Sub-API registered by HuntingTab.svelte on mount for guide-driven view
+ * switching. */
+type HuntingDemoApi = {
+	setView(view: 'overall' | 'market' | 'history'): void;
+};
+
+function huntingApi(): Partial<HuntingDemoApi> {
+	return getDemoApi('analytics-hunting') as Partial<HuntingDemoApi>;
+}
+
 /** Sleep in 200ms chunks so loop iterations can break promptly on Next / Back / Close. */
 async function abortableWait(ms: number, stillActive: () => boolean): Promise<boolean> {
 	const end = Date.now() + ms;
@@ -300,26 +310,32 @@ export const analyticsSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'The Hunting tab lets you review aggregated stats by mob or by session name.',
+						text: 'The Hunting tab applies the same economic frame as Tree Cutting at a larger scale. Overall is also the session picker: choosing a routine replaces the combined detail beneath the same headline figures. Inside a session, the Activity picker opens one declared quest, segment, or joint bundle directly without duplicating shared costs. Session and activity loot remain available beneath their respective details and unfold only when requested.',
 					},
 					{
 						kind: 'p',
-						text: 'The currently most interesting stat is PES/100, showing which activity results in the most skilling per 100 PED cycled.',
+						text: 'Each row answers the same economic questions. Activity details also show whether a separately confirmed quest reward changed the outcome, while payouts already present in loot are never added twice.',
 					},
-					{ kind: 'p', text: 'More hunting insights to come.' },
-				],
-				note: [
-					{ text: 'See ' },
-					{ text: 'What is PES?', href: 'https://entropiaorme.com/articles/what-is-pes' },
-					{ text: '.' },
+					{
+						kind: 'p',
+						text: 'Stock, Market, and History share one progressive detail area inside Overall. Together they carry the same sale lifecycle as Tree Cutting: hold, list, confirm, and reverse an action from History. A confirmed sale is attributed back to the defined session that produced its stock.',
+					},
 				],
 			},
 			async play({ demoApi, wait }) {
+				const stepIdx = guideState.currentStepIndex;
+				const stillActive = () => guideState.isActive && guideState.currentStepIndex === stepIdx;
 				const api = demoApi as Partial<AnalyticsDemoApi>;
 				api.setTab?.('hunting');
-				await wait(500);
+				await wait(600);
+				// Briefly show the sale surface, then return to Overall.
+				if (!(await abortableWait(900, stillActive))) return;
+				huntingApi().setView?.('market');
+				if (!(await abortableWait(1600, stillActive))) return;
+				huntingApi().setView?.('overall');
 			},
 			resetDemo() {
+				huntingApi().setView?.('overall');
 				analyticsApi().setTab?.('ledger');
 			},
 		},

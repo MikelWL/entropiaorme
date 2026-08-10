@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use eo_api::analytics::{
     AuctionConfirmInput, AuctionExpireInput, AuctionListingInput, InventorySellInput,
-    LedgerEntryInput, LedgerPresetInput,
+    LedgerEntryInput, LedgerPresetInput, Profession,
 };
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
@@ -240,6 +240,7 @@ async fn a_non_positive_listing_quantity_is_a_bad_request() {
     // write a fee-bearing listing that can never resolve to anything.
     assert_eq!(
         api.auction_listing_create(AuctionListingInput {
+            profession: Profession::Harvesting,
             item_name: "Long Moonleaf Board".to_string(),
             quantity: 0.0,
             starting_bid: 1.0,

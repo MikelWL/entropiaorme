@@ -19,21 +19,26 @@
 
 import {
 	confirmAuctionListing,
+	convertShrapnel,
 	convertStock,
 	createAuctionListing,
 	expireAuctionListing,
 	getActivityHistory,
+	getActivityStock,
 	getAnalyticsHarvest,
 	getAuctionListings,
 	getHarvestRealisedMarkup,
-	getHarvestStock,
 	getMarketHarvestMarkups,
 	type HarvestData,
 	type MarketHarvestData,
 	type MarketHarvestItem,
+	removeStock,
 	revertAuctionSale,
+	sellStockPrivately,
 	undoAuctionListing,
+	undoPrivateSale,
 	undoStockConversion,
+	undoStockRemoval,
 } from '$lib/api';
 import type {
 	ActivityHistoryEntry,
@@ -42,7 +47,6 @@ import type {
 	HarvestLootItem,
 	HarvestTierComparison,
 	HarvestYieldTier,
-	RealisedTierMarkup,
 	StockPosition,
 } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
@@ -50,6 +54,16 @@ import { createTableModel } from '$lib/view/tableModel.svelte';
 import { type AnalyticsRange, analyticsPeriod, isAnalyticsRange } from './analyticsRange';
 
 // ── Holding-independent market opportunity ────────────────────────────
+
+/** What the sell modal knows at listing time; the owning tab's model
+ * stamps the activity family on top. */
+export type ActivityListingDraft = Omit<AuctionListingInput, 'profession'>;
+export type ActivityTradeDraft = {
+	itemName: string;
+	quantity: number;
+	soldFor: number;
+	soldAt: string | null;
+};
 
 export type OpportunityKind = 'broad' | 'niche' | 'thin' | 'recycle';
 export type ConfidenceTier = 'liquid' | 'middling' | 'illiquid';
@@ -239,14 +253,14 @@ export type TreeCuttingItem = {
 
 /** The combined stat line across every sub-activity (the "Overall" block). */
 export type TreeCuttingOverall = {
-	/** Markup confirmed sales have realised, already inside `realisedReturns`. */
+	/** Markup recorded stock outcomes have realised, already inside `realisedReturns`. */
 	realisedMarkup: number;
 	cycled: number;
 	returns: number;
 	lootRate: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
-	/** Loot TT plus the markup confirmed sales have realised. It equals TT
+	/** Loot TT plus the markup recorded stock outcomes have realised. It equals TT
 	 * until something sells, which is the recognition boundary made
 	 * visible. */
 	realisedReturns: number;
@@ -254,7 +268,7 @@ export type TreeCuttingOverall = {
 };
 
 export type TreeCuttingSection = {
-	/** Markup confirmed sales of this tier's output have realised, already
+	/** Markup recorded stock outcomes for this tier's output have realised, already
 	 * inside `realisedReturns`. Zero until a sale is confirmed. */
 	realisedMarkup: number;
 	yieldTier: HarvestYieldTier;
@@ -312,7 +326,10 @@ export type TreeCuttingStock = {
 	weeklySalesPed: number | null;
 };
 
-function projectLoot(
+/** Project one activity's loot composition at current market markup. Shared
+ * with the Hunting model: the projection is identical maths whichever
+ * activity's composition it runs over. */
+export function projectLoot(
 	lootItems: HarvestLootItem[],
 	cycled: number,
 	market: MarketHarvestData | null,
@@ -382,7 +399,7 @@ export function createTreeCuttingModel() {
 	let data = $state<HarvestData | null>(null);
 	let market = $state<MarketHarvestData | null>(null);
 	// Current positions, the auction lifecycle over them, and the markup
-	// confirmed sales have realised per tier. All three drive holdings and
+	// recorded stock outcomes have realised per tier. All three drive holdings and
 	// realised figures only, never the holding-independent opportunity.
 	let positions = $state<StockPosition[]>([]);
 	let listings = $state<AuctionListing[]>([]);
@@ -414,8 +431,8 @@ export function createTreeCuttingModel() {
 			const [harvest, markets, stock, openListings, realised] = await Promise.all([
 				getAnalyticsHarvest(period),
 				getMarketHarvestMarkups().catch(() => null),
-				getHarvestStock().catch(() => []),
-				getAuctionListings().catch(() => []),
+				getActivityStock('harvesting').catch(() => []),
+				getAuctionListings('harvesting').catch(() => []),
 				getHarvestRealisedMarkup().catch(() => []),
 			]);
 			if (epoch !== loadEpoch) return;
@@ -545,8 +562,8 @@ export function createTreeCuttingModel() {
 			return fallback;
 		};
 		const [stock, allListings, realised] = await Promise.all([
-			getHarvestStock().catch(() => failed(positions)),
-			getAuctionListings().catch(() => failed(listings)),
+			getActivityStock('harvesting').catch(() => failed(positions)),
+			getAuctionListings('harvesting').catch(() => failed(listings)),
 			getHarvestRealisedMarkup().catch(() => failed(null)),
 		]);
 		positions = stock;
@@ -557,7 +574,7 @@ export function createTreeCuttingModel() {
 		// Only once it has been opened: an undo verdict depends on every other
 		// entry, so a stale list would offer undos that no longer apply.
 		if (history.length > 0) {
-			history = await getActivityHistory().catch(() => failed(history));
+			history = await getActivityHistory('harvesting').catch(() => failed(history));
 		}
 		error = stale
 			? 'That went through, but the figures below could not be re-read and may be out of date.'
@@ -567,7 +584,7 @@ export function createTreeCuttingModel() {
 	/** Everything this activity has done to its stock, newest first. */
 	async function loadHistory() {
 		try {
-			history = await getActivityHistory();
+			history = await getActivityHistory('harvesting');
 		} catch (e) {
 			error = describeError(e, 'Failed to load the activity history');
 			throw e;
@@ -580,13 +597,17 @@ export function createTreeCuttingModel() {
 		try {
 			if (entry.kind === 'conversion') {
 				await undoStockConversion({ id: entry.id });
+			} else if (entry.kind === 'trade') {
+				await undoPrivateSale({ id: entry.id });
+			} else if (entry.kind === 'removal') {
+				await undoStockRemoval({ id: entry.id });
 			} else if (revertSale) {
 				await revertAuctionSale({ id: entry.id });
 			} else {
 				await undoAuctionListing({ id: entry.id });
 			}
 			await refreshHoldings();
-			history = await getActivityHistory();
+			history = await getActivityHistory('harvesting');
 		} catch (e) {
 			error = describeError(e, 'Failed to undo that entry');
 			throw e;
@@ -595,12 +616,42 @@ export function createTreeCuttingModel() {
 
 	/** List stock on the auction. The quantity leaves holdings now and the
 	 * starting-bid fee is spent now; nothing is realised until it sells. */
-	async function listStock(input: AuctionListingInput) {
+	async function listStock(input: ActivityListingDraft) {
 		try {
-			await createAuctionListing(input);
+			await createAuctionListing({ profession: 'harvesting', ...input });
 			await refreshHoldings();
 		} catch (e) {
 			error = describeError(e, 'Failed to create the listing');
+			throw e;
+		}
+	}
+
+	async function tradeStock(input: ActivityTradeDraft) {
+		try {
+			await sellStockPrivately({ profession: 'harvesting', ...input });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to record the trade');
+			throw e;
+		}
+	}
+
+	async function discardStock(itemName: string, quantity: number) {
+		try {
+			await removeStock({ profession: 'harvesting', itemName, quantity, removedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to remove the stock');
+			throw e;
+		}
+	}
+
+	async function convertShrapnelStock(quantity: number) {
+		try {
+			await convertShrapnel({ profession: 'harvesting', quantity, convertedAt: null });
+			await refreshHoldings();
+		} catch (e) {
+			error = describeError(e, 'Failed to convert the Shrapnel');
 			throw e;
 		}
 	}
@@ -636,6 +687,7 @@ export function createTreeCuttingModel() {
 	async function recycleStock(sourceItem: string, quantity: number) {
 		try {
 			await convertStock({
+				profession: 'harvesting',
 				sourceItem,
 				targetItem: NANOCUBE_ITEM,
 				quantity,
@@ -730,6 +782,9 @@ export function createTreeCuttingModel() {
 		undoHistoryEntry,
 		loadData,
 		listStock,
+		tradeStock,
+		discardStock,
+		convertShrapnelStock,
 		resolveListing,
 		recycleStock,
 	};

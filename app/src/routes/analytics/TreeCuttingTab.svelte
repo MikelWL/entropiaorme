@@ -4,6 +4,7 @@
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import ActivityHistory from '$lib/features/analytics/ActivityHistory.svelte';
+	import AdjustStockModal from '$lib/features/analytics/AdjustStockModal.svelte';
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
@@ -34,6 +35,8 @@
 
 	let sellItem = $state<StockRow | null>(null);
 	let convertItem = $state<StockRow | null>(null);
+	let removeItem = $state<StockRow | null>(null);
+	let shrapnelItem = $state<StockRow | null>(null);
 
 	// History reads when it is opened rather than with the tab: an undo verdict
 	// depends on every other entry, so it is worth computing fresh at the
@@ -140,6 +143,8 @@
 							stock={model.stock}
 							onsell={(item) => (sellItem = item)}
 							onconvert={(item) => (convertItem = item)}
+							onremove={(item) => (removeItem = item)}
+							onshrapnelconvert={(item) => (shrapnelItem = item)}
 						/>
 					{/if}
 				</div>
@@ -178,11 +183,28 @@
 		</div>
 	</div>
 
-	<SellStockModal item={sellItem} onlist={model.listStock} oncancel={() => (sellItem = null)} />
+	<SellStockModal
+		item={sellItem}
+		onlist={model.listStock}
+		ontrade={model.tradeStock}
+		oncancel={() => (sellItem = null)}
+	/>
 	<ConvertStockModal
 		item={convertItem}
 		onconvert={model.recycleStock}
 		oncancel={() => (convertItem = null)}
+	/>
+	<AdjustStockModal
+		item={removeItem}
+		mode="remove"
+		onconfirm={model.discardStock}
+		oncancel={() => (removeItem = null)}
+	/>
+	<AdjustStockModal
+		item={shrapnelItem}
+		mode="shrapnel"
+		onconfirm={(_itemName, quantity) => model.convertShrapnelStock(quantity)}
+		oncancel={() => (shrapnelItem = null)}
 	/>
 {:else}
 	<Card class="p-6">

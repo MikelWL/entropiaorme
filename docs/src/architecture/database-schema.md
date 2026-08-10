@@ -42,8 +42,28 @@ context spine for duration, cost, and event attribution),
 `0020_signal_quests.sql` (loot-signal completion for quests without a mission-log
 lifecycle), `0021_quest_families.sql` (variant families with shared,
 anchor-aware cooldown), `0022_session_definitions.sql` (authored session
-families, activity rosters, and instance references), and
-`0023_default_session_definition.sql` (the protected fallback definition). The
+families, activity rosters, and instance references),
+`0023_default_session_definition.sql` (the protected fallback definition), and
+`0024_hunting_stock_provenance.sql` (the mob-species provenance dimension on
+the stock-movement ledger, widening the source vocabulary to hunted loot and
+rebuilding the table because SQLite cannot widen a CHECK constraint in place,
+plus the activity-family stamp on stock conversions), and
+`0025_loot_item_name_indexes.sql` (partial item-name indexes over active loot
+rows on both loot tables, serving the per-item position arithmetic and the
+DISTINCT item universes without full-table scans), and
+`0026_session_activity_rollups.sql` (the per-session activity rollup
+projection and its settlement marker; see "Derived caches"), and
+`0027_hunting_definition_provenance.sql` (the nullable session-definition
+context on stock movements, plus its item/species/definition index, allowing
+one confirmed Hunting sale to be projected by both observed species and the
+repeatable session that produced it without duplicating the sale), and
+`0028_quest_reward_provenance.sql` (immutable completion-time reward and
+activity-context provenance), `0029_session_context_loot_rollups.sql`
+(the context-grain loot rollup used by Hunting activity composition), and
+`0030_quest_reward_items.sql` (actual reward-item evidence captured at quest
+completion), and `0031_stock_outcomes.sql` (private trades, stock-only
+removals, deliberate Shrapnel conversion gains, and the corresponding
+provenance-aware movement kinds). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -373,8 +393,29 @@ Records that a given quest was completed during a given session. The
 | `session_id` | TEXT | Not null; indexed (`idx_sqc_session`). |
 | `quest_id` | INTEGER | Not null; indexed (`idx_sqc_quest`). |
 | `completed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
+| `activity_context_id` | INTEGER | Optional reference to `session_contexts(id)`. The exact declared activity signature in force immediately before completion; indexed when present. |
+| `activity_interval_id` | INTEGER | Optional reference to `session_intervals(id)`. The declared quest stretch that earned the completion. |
+| `reward_source` | TEXT | Nullable for legacy completions; otherwise one of `none`, `tracked_loot`, `ledger`, or `skill`. |
+| `reward_ped` | REAL | Optional immutable completion-time reward value. Liquid PED enters activity economics; skill value remains progression. |
+| `expected_reward_markup_percent` | REAL | Optional legacy completion-time snapshot. Retained for compatibility; Hunting projections do not consume it. |
+| `ledger_entry_id` | TEXT | Optional reference to the exact liquid reward row in `ledger_entries`. |
+| `quest_claim_id` | INTEGER | Optional reference to the exact progression reward row in `quest_claims`. |
 
 A `UNIQUE(session_id, quest_id)` constraint prevents duplicate completion rows.
+
+#### `session_quest_completion_reward_items`
+
+Immutable item evidence observed as part of a quest reward. Hunting projects
+these items through current market data outside the accounting aggregate; an
+item without usable market data remains at its recorded TT value.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `completion_id` | INTEGER | Not null; references `session_quest_completions(id)` with cascade deletion and is indexed (`idx_sqc_reward_items_completion`). |
+| `item_name` | TEXT | Not null; the observed item name. |
+| `quantity` | INTEGER | Not null and positive; the observed quantity. |
+| `value_ped` | REAL | Not null and non-negative; the completion-time TT value. |
 
 #### `session_quest_analytics_links`
 
@@ -553,7 +594,7 @@ The individual loot items dropped by a kill.
 | --- | --- | --- |
 | `id` | INTEGER | Primary key, autoincrement. |
 | `kill_id` | TEXT | Not null; references `kills(id)`. Indexed (`idx_kill_loot_items_kill_id`). |
-| `item_name` | TEXT | Not null. |
+| `item_name` | TEXT | Not null. Partially indexed over active rows (`idx_kill_loot_items_item_active`, migration `0025`) for per-item position reads and the DISTINCT item universe. |
 | `quantity` | INTEGER | Defaults to 1. |
 | `value_ped` | REAL | Not null. |
 | `is_enhancer_shrapnel` | INTEGER | Not null; defaults to 0 (boolean flag). |
@@ -593,7 +634,7 @@ The individual wood items a successful swing dropped.
 | --- | --- | --- |
 | `id` | INTEGER | Primary key, autoincrement. |
 | `harvest_id` | TEXT | Not null; references `harvest_events(id)`. Indexed (`idx_harvest_loot_items_harvest`). |
-| `item_name` | TEXT | Not null. |
+| `item_name` | TEXT | Not null. Partially indexed over active rows (`idx_harvest_loot_items_item_active`, migration `0025`) for per-item position reads and the DISTINCT item universe. |
 | `quantity` | INTEGER | Defaults to 1. |
 | `value_ped` | REAL | Defaults to 0. |
 | `deactivated_at` | REAL | Null when active; mirrors `kill_loot_items` so the loot-edit flow can extend to harvest loot without a schema move. |
@@ -606,6 +647,33 @@ carried into `stock_movements` as explicitly unattributed adjustments and the
 table was dropped, so current position derives from recorded loot plus that
 signed movement ledger rather than from two sources of the same quantity. No
 current database carries it.
+
+### Activity stock outcomes
+
+Recorded loot remains the immutable acquisition base. Current stock is that
+loot plus the signed rows in `stock_movements`; auction listings, conversions,
+private trades, and removals own the lifecycle records those movements refer
+to. A stock action never edits the loot that originally established an
+activity's TT return.
+
+- `auction_listings` records the pending, sold, or expired auction lifecycle.
+  Stock leaves at listing time, the listing fee is spent then, and markup is
+  realised only when the final sale is confirmed.
+- `private_sales` records a completed player trade with its quantity, TT,
+  tracked and untracked shares, final price, date, and owned ledger entry. It
+  has no auction fees and recognises markup atomically with the stock outflow.
+- `stock_conversions` records source and target stock. Ordinary Nanocube
+  recycling preserves TT; deliberate Shrapnel conversion records its 101%
+  output TT and owns the 1% ledger gain.
+- `stock_removals` records that a quantity is no longer held when its outcome
+  is unknown. It has no ledger effect, so historical loot TT remains intact.
+- `stock_movements` is the signed, provenance-aware inventory ledger. Its
+  source dimensions carry harvesting tier/tool or Hunting species/session
+  definition through transformations and into realised outcomes.
+
+Every outcome can be undone as a correction while retaining its lifecycle row
+marked as undone. A conversion undo is refused if later movements have already
+consumed what it produced.
 
 #### `notable_events`
 
@@ -904,6 +972,41 @@ tables and every day is re-verified once after it completes.
 | `id` | INTEGER | Primary key; constrained to the single row `1`. |
 | `rolled_through` | TEXT | Not null; the inclusive ISO day the rollups are current through. |
 
+#### `session_kill_rollups`, `session_loot_rollups`, `session_context_loot_rollups`, `session_pes_rollups`
+
+Per-session activity rollups (migrations `0026` and `0029`;
+`eo-services/src/session_rollup.rs`),
+the session-grain sibling of the daily projection: the read model behind the
+Hunting analytics aggregate, the stock position arithmetic's hunted arm, and
+the hunting market item universe. An ended session's events settle into cells
+at the finest grain any of those consumers folds (kill cells by context,
+species, and maturity; active loot cells by species, shrapnel flag, and item,
+with the species pre-folded to the empty string for shrapnel rows; item
+composition by activity context; skill-gain cells by context), so readers do
+O(cells) work however long the raw history grows. Like the daily rollups this
+is a rebuildable projection: cells write
+eagerly in the mutating transaction (session stop, orphan recovery, the loot
+edit flip, session delete) and heal lazily before an activity read.
+
+| Table | Cell key | Sums |
+| --- | --- | --- |
+| `session_kill_rollups` | `session_id`, `context_id` (nullable), `mob_species`, `mob_maturity` (empty string for unclassified) | `kills`, `cycled_ped` (weapon + enhancer), `loot_tt` |
+| `session_loot_rollups` | `session_id`, `mob_species`, `is_enhancer_shrapnel`, `item_name` (active rows only) | `quantity`, `value_ped` |
+| `session_context_loot_rollups` | `session_id`, `context_id` (nullable), `item_name` (active non-enhancer-shrapnel rows only) | `quantity`, `value_ped` |
+| `session_pes_rollups` | `session_id`, `context_id` (nullable) | `pes` |
+
+#### `session_rollup_meta`
+
+The settlement marker: a session listed at the current `ROLLUP_VERSION` is
+served from its cells, and every other session (the live one, a freshly
+edited one, a stale version) is served from the raw tables scoped to its own
+id, so a reader is correct regardless of heal timing.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `session_id` | TEXT | Primary key. |
+| `rollup_version` | INTEGER | Not null. Cell-format version; a below-version session is served raw and re-settles on the next heal. |
+
 ## Migration mechanism
 
 Schema application is handled by the embedded migration runner (`MIGRATIONS`
@@ -921,7 +1024,13 @@ migrations (`0002_analytical_indexes.sql`,
 `0016_stock_opening_balance.sql`, `0017_undone_entries.sql`,
 `0018_session_facets.sql`, `0019_session_intervals.sql`,
 `0020_signal_quests.sql`, `0021_quest_families.sql`,
-`0022_session_definitions.sql`, `0023_default_session_definition.sql`); the runner
+`0022_session_definitions.sql`, `0023_default_session_definition.sql`,
+`0024_hunting_stock_provenance.sql`, `0025_loot_item_name_indexes.sql`,
+`0026_session_activity_rollups.sql`,
+`0027_hunting_definition_provenance.sql`,
+`0028_quest_reward_provenance.sql`,
+`0029_session_context_loot_rollups.sql`,
+`0030_quest_reward_items.sql`, `0031_stock_outcomes.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

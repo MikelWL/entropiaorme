@@ -11,6 +11,15 @@ use crate::time::to_iso_utc;
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
 
+/// One actual item observed as a quest reward. This is completion evidence,
+/// not a market valuation: analytics resolves its current markup separately.
+#[derive(Debug, Clone)]
+pub(super) struct RewardItemEvidence {
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: Ped,
+}
+
 /// The overlay-event vocabulary the quest flows record: a started
 /// quest, a completed liquid reward, a completed skill (PES) reward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,24 +71,41 @@ impl QuestService {
         }
     }
 
-    /// Complete a quest: clear the in-progress state, record the
-    /// reward (liquid rewards into the ledger, skill rewards into
-    /// quest claims), and link the completion to the active session
-    /// (or a synthetic key when none is active). Each step commits
-    /// separately, exactly as the original's commit points fall.
+    /// Complete a quest from an administrative/manual action. A completion
+    /// observed in a loot tick uses [`complete_quest_with_loot_evidence`]
+    /// instead so a reward already present in tracked loot is preserved as
+    /// provenance without being added a second time.
     pub async fn complete_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
+        self.complete_quest_with_evidence(quest_id, false, Vec::new())
+            .await
+    }
+
+    pub(super) async fn complete_quest_with_loot_evidence(
+        &self,
+        quest_id: i64,
+        reward_items: Vec<RewardItemEvidence>,
+    ) -> Result<Option<Value>, QuestError> {
+        self.complete_quest_with_evidence(quest_id, true, reward_items)
+            .await
+    }
+
+    /// Complete a quest and preserve the immutable economic evidence in one
+    /// database transaction. The activity context is snapshotted before the
+    /// declared stretch closes, matching the context already stamped on the
+    /// completion tick's costs and loot.
+    async fn complete_quest_with_evidence(
+        &self,
+        quest_id: i64,
+        completion_had_tracked_loot: bool,
+        reward_items: Vec<RewardItemEvidence>,
+    ) -> Result<Option<Value>, QuestError> {
         let Some(quest) = self.get_quest(quest_id).await? else {
             return Ok(None);
         };
         let now = self.now_epoch();
-        self.db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "UPDATE quests SET started_at = NULL WHERE id = ?",
-                    rusqlite::params![quest_id],
-                )?;
-                Ok(())
-            })
+        let session_id = self.current_session();
+        let attribution = self
+            .completion_attribution(session_id.as_deref(), quest_id)
             .await?;
         // A declared stretch of this quest (when the user declared one)
         // closes at the completion moment, before the reward is
@@ -90,32 +116,89 @@ impl QuestService {
         self.report_stretch_closed(quest_id).await;
 
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
-        if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
-            let name = quest["name"].as_str().expect("quest name").to_string();
-            if json_truthy(quest.get("reward_is_skill")) {
-                // Skill rewards are PES, not PED: a claim row, not a
-                // ledger entry.
-                self.db
-                    .with_writer(move |conn| {
-                        conn.execute(
+        let reward_is_skill = json_truthy(quest.get("reward_is_skill"));
+        let reward_source = match reward_ped.filter(|reward| reward.is_positive()) {
+            Some(_) if reward_is_skill => "skill",
+            Some(_) => "ledger",
+            None if completion_had_tracked_loot => "tracked_loot",
+            None => "none",
+        };
+        let expected_markup = quest
+            .get("expected_reward_markup_percent")
+            .and_then(Value::as_f64);
+        let name = quest["name"].as_str().expect("quest name").to_string();
+        // Preserve the established deterministic identifier order: a liquid
+        // reward receives its ledger id before a session-less completion
+        // receives its synthetic key.
+        let ledger_id = (reward_source == "ledger").then(|| self.next_id());
+        let completion_key = session_id
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| format!("manual-{}", self.next_id()));
+        let (activity_context_id, activity_interval_id) = attribution.unzip();
+        let reward_value = reward_ped.map(Ped::value);
+        let ledger_id_for_write = ledger_id.clone();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "UPDATE quests SET started_at = NULL WHERE id = ?",
+                    rusqlite::params![quest_id],
+                )?;
+                let inserted = tx.execute(
+                    "INSERT OR IGNORE INTO session_quest_completions \
+                     (session_id, quest_id, completed_at, activity_context_id, \
+                      activity_interval_id, reward_source, reward_ped, \
+                      expected_reward_markup_percent) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        completion_key,
+                        quest_id,
+                        now,
+                        activity_context_id,
+                        activity_interval_id,
+                        reward_source,
+                        reward_value,
+                        expected_markup,
+                    ],
+                )?;
+                if inserted == 0 {
+                    tx.commit()?;
+                    return Ok(());
+                }
+                let completion_id = tx.last_insert_rowid();
+                for item in reward_items {
+                    tx.execute(
+                        "INSERT INTO session_quest_completion_reward_items \
+                         (completion_id, item_name, quantity, value_ped) \
+                         VALUES (?, ?, ?, ?)",
+                        rusqlite::params![
+                            completion_id,
+                            item.item_name,
+                            item.quantity.max(1),
+                            item.value_ped.value().max(0.0),
+                        ],
+                    )?;
+                }
+                if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
+                    if reward_is_skill {
+                        tx.execute(
                             "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
                              VALUES (?, ?, ?, ?)",
                             rusqlite::params![quest_id, name, reward.value(), now],
                         )?;
-                        Ok(())
-                    })
-                    .await?;
-                let day = crate::daily_rollup::epoch_day(now);
-                self.db
-                    .with_writer(move |conn| crate::daily_rollup::refresh_days(conn, [day]))
-                    .await?;
-            } else {
-                let ledger_id = self.next_id();
-                let date = to_iso_utc(now);
-                let refresh_date = date.clone();
-                self.db
-                    .with_writer(move |conn| {
-                        conn.execute(
+                        let claim_id = tx.last_insert_rowid();
+                        tx.execute(
+                            "UPDATE session_quest_completions SET quest_claim_id = ? \
+                             WHERE id = ?",
+                            rusqlite::params![claim_id, completion_id],
+                        )?;
+                        crate::daily_rollup::refresh_days(
+                            &tx,
+                            [crate::daily_rollup::epoch_day(now)],
+                        )?;
+                    } else if let Some(ledger_id) = ledger_id_for_write {
+                        let date = to_iso_utc(now);
+                        tx.execute(
                             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
                              VALUES (?, ?, ?, ?, ?, ?)",
                             rusqlite::params![
@@ -127,21 +210,52 @@ impl QuestService {
                                 "quest_reward"
                             ],
                         )?;
-                        Ok(())
-                    })
-                    .await?;
-                self.db
-                    .with_writer(move |conn| {
-                        crate::daily_rollup::refresh_days(conn, [refresh_date])
-                    })
-                    .await?;
-            }
-        }
-
-        let session_id = self.current_session();
-        self.record_session_completion(session_id.as_deref(), quest_id, Some(now))
+                        tx.execute(
+                            "UPDATE session_quest_completions SET ledger_entry_id = ? \
+                             WHERE id = ?",
+                            rusqlite::params![ledger_id, completion_id],
+                        )?;
+                        crate::daily_rollup::refresh_days(&tx, [date])?;
+                    }
+                }
+                tx.commit()?;
+                Ok(())
+            })
             .await?;
         self.get_quest(quest_id).await
+    }
+
+    /// The exact declared quest stretch and activity signature currently in
+    /// force. Absence means the completion is administrative evidence only;
+    /// it must never claim the whole session's economics after the fact.
+    async fn completion_attribution(
+        &self,
+        session_id: Option<&str>,
+        quest_id: i64,
+    ) -> Result<Option<(i64, i64)>, QuestError> {
+        use rusqlite::OptionalExtension as _;
+        let Some(session_id) = session_id.filter(|id| !id.is_empty()) else {
+            return Ok(None);
+        };
+        let session_id = session_id.to_string();
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT c.id, i.id \
+                         FROM session_contexts c \
+                         JOIN session_context_intervals sci ON sci.context_id = c.id \
+                         JOIN session_intervals i ON i.id = sci.interval_id \
+                         WHERE c.session_id = ? AND i.kind = 'quest' \
+                           AND i.ref_id = ? AND i.ended_at IS NULL \
+                         ORDER BY c.id DESC LIMIT 1",
+                        rusqlite::params![session_id, quest_id],
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .optional()?)
+            })
+            .await?)
     }
 
     /// Undo an in-progress quest, or reset an active cooldown back to
@@ -200,17 +314,35 @@ impl QuestService {
         };
         self.db
             .with_writer(move |conn| {
+                use rusqlite::OptionalExtension as _;
                 let tx = conn.transaction()?;
-                tx.execute(
-                    "DELETE FROM session_quest_completions \
-                     WHERE id = ( \
-                         SELECT id FROM session_quest_completions \
+                let completion = tx
+                    .query_row(
+                        "SELECT id, ledger_entry_id, quest_claim_id \
+                         FROM session_quest_completions \
                          WHERE quest_id = ? \
-                         ORDER BY completed_at DESC, id DESC \
-                         LIMIT 1 \
-                     )",
-                    rusqlite::params![quest_id],
-                )?;
+                         ORDER BY completed_at DESC, id DESC LIMIT 1",
+                        rusqlite::params![quest_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, Option<i64>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                if let Some((completion_id, _, _)) = &completion {
+                    tx.execute(
+                        "DELETE FROM session_quest_completion_reward_items \
+                         WHERE completion_id = ?",
+                        rusqlite::params![completion_id],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM session_quest_completions WHERE id = ?",
+                        rusqlite::params![completion_id],
+                    )?;
+                }
                 if clear_pickup_stamp {
                     tx.execute(
                         "UPDATE quests SET last_started_at = NULL WHERE id = ?",
@@ -219,15 +351,30 @@ impl QuestService {
                 }
 
                 if undo_reward {
-                    if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
-                        if reward_is_skill {
-                            delete_latest_quest_claim(&tx, quest_id)?;
-                        } else {
-                            delete_latest_quest_reward_entry(
-                                &tx,
-                                undo_name.as_deref().expect("quest name"),
-                                reward,
-                            )?;
+                    let linked = completion
+                        .as_ref()
+                        .is_some_and(|(_, ledger, claim)| ledger.is_some() || claim.is_some());
+                    if let Some((_, Some(ledger_id), _)) = &completion {
+                        delete_quest_reward_entry_by_id(&tx, ledger_id)?;
+                    }
+                    if let Some((_, _, Some(claim_id))) = &completion {
+                        delete_quest_claim_by_id(&tx, *claim_id)?;
+                    }
+                    // Completions predating immutable links retain the exact
+                    // legacy undo behaviour. New completions always delete by
+                    // identity, so similarly named/rewarded quests cannot
+                    // reverse one another's rows.
+                    if !linked {
+                        if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
+                            if reward_is_skill {
+                                delete_latest_quest_claim(&tx, quest_id)?;
+                            } else {
+                                delete_latest_quest_reward_entry(
+                                    &tx,
+                                    undo_name.as_deref().expect("quest name"),
+                                    reward,
+                                )?;
+                            }
                         }
                     }
                 }
@@ -269,36 +416,6 @@ impl QuestService {
             .await;
     }
 
-    /// Record a completion for cooldown and analytics: keyed by the
-    /// active session, or a synthetic `manual-` key so a session-less
-    /// completion still feeds the derived cooldown.
-    async fn record_session_completion(
-        &self,
-        session_id: Option<&str>,
-        quest_id: i64,
-        completed_at: Option<f64>,
-    ) -> Result<(), QuestError> {
-        let key = match session_id {
-            Some(session_id) => session_id.to_string(),
-            None => format!("manual-{}", self.next_id()),
-        };
-        let ts = match completed_at {
-            Some(ts) => ts,
-            None => self.now_epoch(),
-        };
-        self.db
-            .with_writer(move |conn| {
-                conn.execute(
-                    "INSERT OR IGNORE INTO session_quest_completions \
-                     (session_id, quest_id, completed_at) VALUES (?, ?, ?)",
-                    rusqlite::params![key, quest_id, ts],
-                )?;
-                Ok(())
-            })
-            .await?;
-        Ok(())
-    }
-
     /// Whether the quest's OWN cooldown window is still open against
     /// the injected clock, anchored per its own anchor. Deliberately
     /// blind to the family window: this predicate gates the cancel
@@ -321,6 +438,49 @@ impl QuestService {
         }
         (last + cooldown_hours * 3600.0) > self.now_epoch()
     }
+}
+
+fn delete_quest_claim_by_id(conn: &rusqlite::Connection, claim_id: i64) -> Result<bool, DbError> {
+    use rusqlite::OptionalExtension as _;
+    let claimed_at = conn
+        .query_row(
+            "SELECT claimed_at FROM quest_claims WHERE id = ?",
+            rusqlite::params![claim_id],
+            |row| row.get::<_, f64>(0),
+        )
+        .optional()?;
+    let Some(claimed_at) = claimed_at else {
+        return Ok(false);
+    };
+    conn.execute(
+        "DELETE FROM quest_claims WHERE id = ?",
+        rusqlite::params![claim_id],
+    )?;
+    crate::daily_rollup::refresh_days(conn, [crate::daily_rollup::epoch_day(claimed_at)])?;
+    Ok(true)
+}
+
+fn delete_quest_reward_entry_by_id(
+    conn: &rusqlite::Connection,
+    ledger_id: &str,
+) -> Result<bool, DbError> {
+    use rusqlite::OptionalExtension as _;
+    let date = conn
+        .query_row(
+            "SELECT date FROM ledger_entries WHERE id = ?",
+            rusqlite::params![ledger_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(date) = date else {
+        return Ok(false);
+    };
+    conn.execute(
+        "DELETE FROM ledger_entries WHERE id = ?",
+        rusqlite::params![ledger_id],
+    )?;
+    crate::daily_rollup::refresh_days(conn, [date])?;
+    Ok(true)
 }
 
 /// Delete the newest claim for a quest (the cancel flow's undo).

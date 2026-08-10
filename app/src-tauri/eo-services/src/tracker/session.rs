@@ -856,11 +856,12 @@ impl TrackerActor {
                         sid
                     ],
                 )?;
-                // Auto-generate ledger gains derived from persisted loot rows.
+                // Enhancer-break Shrapnel is an immediate cost rebate. Ordinary
+                // Shrapnel remains stock until the player explicitly converts it.
                 Self::create_enhancer_rebate_ledger_entry(&tx, &sid, end_time)?;
-                Self::create_shrapnel_ledger_entry(&tx, &sid, end_time)?;
                 crate::session_summary::write_session_summary(&tx, &sid)?;
                 crate::daily_rollup::refresh_session_days(&tx, &sid)?;
+                crate::session_rollup::recompute_session(&tx, &sid)?;
                 tx.commit()?;
                 Ok(())
             })

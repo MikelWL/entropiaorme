@@ -62,9 +62,9 @@ impl TrackerActor {
 
                         let end_dt = epoch_to_instant(ended_at);
                         Self::create_enhancer_rebate_ledger_entry(&tx, &sid, end_dt)?;
-                        Self::create_shrapnel_ledger_entry(&tx, &sid, end_dt)?;
                         write_session_summary(&tx, &sid)?;
                         crate::daily_rollup::refresh_session_days(&tx, &sid)?;
+                        crate::session_rollup::recompute_session(&tx, &sid)?;
                         tx.commit()?;
                         Ok(())
                     })
@@ -267,48 +267,6 @@ impl TrackerActor {
             .await;
         // Contained like the other persistence failures.
         let _ = result;
-    }
-
-    /// Session-end margin on non-enhancer Shrapnel loot (1%, the
-    /// trade-terminal conversion premium), recorded as a markup
-    /// ledger gain.
-    pub(super) fn create_shrapnel_ledger_entry(
-        conn: &rusqlite::Connection,
-        session_id: &str,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        let shrapnel_ped: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(kli.value_ped), 0) \
-             FROM kill_loot_items kli \
-             JOIN kills k ON kli.kill_id = k.id \
-             WHERE k.session_id = ? AND kli.item_name = 'Shrapnel' \
-             AND COALESCE(kli.is_enhancer_shrapnel, 0) = 0 \
-             AND kli.deactivated_at IS NULL",
-            rusqlite::params![session_id],
-            |row| row.get::<_, f64>(0),
-        )?;
-        if shrapnel_ped <= 0.0 {
-            return Ok(());
-        }
-        let margin = round_half_even(shrapnel_ped * 0.01, 4);
-        let date = local_isoformat(end_time);
-        conn.execute(
-            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                uuid::Uuid::new_v4().to_string(),
-                date,
-                "markup",
-                "Shrapnel Conversion",
-                margin,
-                "convert",
-            ],
-        )?;
-        // A live stop dates this "now" (past the rollup watermark), but
-        // orphan recovery backdates it to the crashed session's end, so
-        // the entry's day must reland with the write.
-        crate::daily_rollup::refresh_days(conn, [date])?;
-        Ok(())
     }
 
     /// Session-end rebate on enhancer-break Shrapnel (full TT value

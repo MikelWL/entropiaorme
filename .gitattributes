@@ -18,6 +18,9 @@
 # SQLite stores migration statement text verbatim in sqlite_master, so the
 # schema-identity checks need the .sql sources byte-stable across platforms.
 *.sql text eol=lf
+# Migration 0028's SHA-384 identity includes its trailing blank line, so Git
+# must not flag that exact byte as drift.
+app/src-tauri/eo-services/migrations/0028_quest_reward_provenance.sql whitespace=-blank-at-eof
 # Bundled native binaries (the ONNX Runtime + DirectML libraries and the OCR
 # model): always binary, never line-ending- or text-normalised.
 *.dll binary

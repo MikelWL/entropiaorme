@@ -153,6 +153,46 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "default session definition",
         sql: include_str!("../../migrations/0023_default_session_definition.sql"),
     },
+    Migration {
+        version: 24,
+        description: "hunting stock provenance",
+        sql: include_str!("../../migrations/0024_hunting_stock_provenance.sql"),
+    },
+    Migration {
+        version: 25,
+        description: "loot item name indexes",
+        sql: include_str!("../../migrations/0025_loot_item_name_indexes.sql"),
+    },
+    Migration {
+        version: 26,
+        description: "session activity rollups",
+        sql: include_str!("../../migrations/0026_session_activity_rollups.sql"),
+    },
+    Migration {
+        version: 27,
+        description: "hunting definition provenance",
+        sql: include_str!("../../migrations/0027_hunting_definition_provenance.sql"),
+    },
+    Migration {
+        version: 28,
+        description: "quest reward provenance",
+        sql: include_str!("../../migrations/0028_quest_reward_provenance.sql"),
+    },
+    Migration {
+        version: 29,
+        description: "session context loot rollups",
+        sql: include_str!("../../migrations/0029_session_context_loot_rollups.sql"),
+    },
+    Migration {
+        version: 30,
+        description: "quest reward items",
+        sql: include_str!("../../migrations/0030_quest_reward_items.sql"),
+    },
+    Migration {
+        version: 31,
+        description: "stock outcomes",
+        sql: include_str!("../../migrations/0031_stock_outcomes.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -184,6 +224,14 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "E1754050167F73A9B97809EC1399B88C016A5F71422B8684225FD7B834546545A2766FCF0C072BE7089B5DEEA855A41C",
     "EF1309FFA7D79EDEDD0AA4AB9106066C7E6B2CB9856DDE380DB348A5FE9D105C8ADA28D4405594EE3F2988B7E114D3A5",
     "708CB017C278DF637B27B2B8E787A6DC26722B951872932E99C4F50E7974995C14C3065403FD940BF31559D5ED21F3AA",
+    "7E02FF79CF14E66EA4F28EAF0D1EEE302BBBE2A14B0E869E237B0FC5A10E8C6AF2BC7FE59880DCF9324E66F70C210226",
+    "3EE610D8454477F0967F64E2E23A20451F63A1F598C63E2FD4DCA92B6B449CD2FED2BFC578D3A018F09539344E918A11",
+    "FC579385A79892AAA7118C3E565FF81DBC318A77F6C375CEB8EAD0103643B6648A66C0D097FEAC52A8CF6738153E51B4",
+    "C60A838C87F764BE99A8AAE4FEA553C202CE00D4C6C80D840B92B06E5111FBAFD76C892F34AC66157EF4A01A7AC015C4",
+    "B53CCF5F17EB054A5BD4A9A2CF56D175605D0C804DC26DB3FAC1ED8DA5E42CFF27128ABECA438893BF016F77E4E156B0",
+    "2765217EAF4562C4CE0A8E769A35C17528FCA1EF12B7F00E83DFA9333FDC0A08539788D84E06CE626AD0CC69AB334FBB",
+    "4FE8D7F709261531F642402F58D06CE651C5BA0E14DA9AA41880F73A44C6C4C92901DF3EDED0EC45DC18CA730FCA7C55",
+    "87F131388C669ED061C33E18E671DA1AC57C836FA3E576940F1A837A4D6640057AFC36BDCA340B5B883851F0BFA1F6AD",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

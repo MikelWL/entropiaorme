@@ -2,6 +2,7 @@
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
+	import type { Snippet } from 'svelte';
 
 	let {
 		heading,
@@ -12,6 +13,7 @@
 		muRate,
 		realisedReturns,
 		realisedRate,
+		headingControl,
 	}: {
 		heading?: string;
 		cycled: number;
@@ -21,6 +23,7 @@
 		muRate: number | null;
 		realisedReturns: number;
 		realisedRate: number;
+		headingControl?: Snippet;
 	} = $props();
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
@@ -42,15 +45,59 @@
 
 {#snippet realisedTip()}
 	<InfoTip label="What realised figures are">
-		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus confirmed markup</p>
+		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus realised markup</p>
 		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-			Only markup that a confirmed sale actually produced. It reads the same as TT Net until
-			something sells.
+			Only markup from a recorded sale or deliberate Shrapnel conversion. It reads the same as
+			TT Net until a stock outcome realises a gain or loss.
 		</p>
 	</InfoTip>
 {/snippet}
 
-{#if heading}
+{#if headingControl}
+	<div
+		class="grid grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))] items-start gap-x-6 gap-y-4"
+		data-testid="activity-economic-headline"
+	>
+		<div class="min-w-0">{@render headingControl()}</div>
+		<StatDisplay label="TT Net" value={signedPed(returns - cycled)} unit="PED" />
+		<StatDisplay
+			label="MU Net"
+			value={muProjectedReturns !== null ? signedPed(muProjectedReturns - cycled) : NO_DATA}
+			unit={muProjectedReturns !== null ? 'PED' : ''}
+			labelSuffix={estimateTip}
+		/>
+		<StatDisplay
+			label="Realised Net"
+			value={signedPed(realisedReturns - cycled)}
+			valueClass={netTone(realisedReturns - cycled)}
+			unit="PED"
+			labelSuffix={realisedTip}
+		/>
+
+		<div class="border-t border-border/35 pt-3" data-testid="economic-subordinate-cycled">
+			<StatDisplay label="Cycled" value={formatPed(cycled)} unit="PED" emphasis="secondary" />
+		</div>
+		<div class="border-t border-border/35 pt-3" data-testid="economic-subordinate-tt-rate">
+			<StatDisplay label="TT Rate" value={formatPercent(lootRate)} valueClass="text-text" emphasis="secondary" />
+		</div>
+		<div class="border-t border-border/35 pt-3" data-testid="economic-subordinate-mu-rate">
+			<StatDisplay
+				label="MU Rate"
+				value={muRate !== null ? formatPercent(muRate) : NO_DATA}
+				valueClass={muRate !== null ? 'text-text' : 'text-text-tertiary'}
+				emphasis="secondary"
+			/>
+		</div>
+		<div class="border-t border-border/35 pt-3" data-testid="economic-subordinate-realised-rate">
+			<StatDisplay
+				label="Realised Rate"
+				value={formatPercent(realisedRate)}
+				valueClass={netTone(realisedRate - 1)}
+				emphasis="secondary"
+			/>
+		</div>
+	</div>
+{:else if heading}
 	<div class="grid grid-cols-[auto_auto] content-start items-end gap-x-10 gap-y-4">
 		<h2 class="text-3xl font-bold tracking-tight leading-none text-text">{heading}</h2>
 		<StatDisplay label="Cycled" value={formatPed(cycled)} unit="PED" emphasis="secondary" />

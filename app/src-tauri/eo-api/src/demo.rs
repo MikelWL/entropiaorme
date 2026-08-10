@@ -47,8 +47,8 @@ use serde::Deserialize;
 use tokio::sync::OnceCell;
 
 use crate::analytics::{
-    analytics_error, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem,
-    LedgerPage, LedgerPreset, LedgerSummary,
+    analytics_error, AnalyticsHarvest, AnalyticsHunting, AnalyticsHuntingActivity,
+    AnalyticsOverview, InventoryItem, LedgerPage, LedgerPreset, LedgerSummary,
 };
 use crate::tracking::{
     build_snapshot_value, SessionDetail, SessionPage, TrackingSession, TrackingSnapshot,
@@ -229,6 +229,18 @@ impl DemoState {
             .await
             .map_err(analytics_error("demo analytics harvest"))?;
         Ok(crate::analytics::harvest_dto(value))
+    }
+
+    async fn analytics_hunting_activity(
+        &self,
+        period: &str,
+    ) -> Result<AnalyticsHuntingActivity, ApiError> {
+        let value = self
+            .analytics
+            .hunting_activity(period)
+            .await
+            .map_err(analytics_error("demo analytics hunting activity"))?;
+        Ok(crate::analytics::hunting_activity_dto(value))
     }
 
     async fn ledger_list(
@@ -690,6 +702,17 @@ impl Api {
         self.ensure_demo().await?.analytics_harvest(period).await
     }
 
+    /// The demo revamped Hunting aggregate for a named period.
+    pub async fn demo_analytics_hunting_activity(
+        &self,
+        period: &str,
+    ) -> Result<AnalyticsHuntingActivity, ApiError> {
+        self.ensure_demo()
+            .await?
+            .analytics_hunting_activity(period)
+            .await
+    }
+
     /// One demo ledger page plus the cursor for the next page.
     pub async fn demo_ledger_list(
         &self,
@@ -923,6 +946,15 @@ mod tests {
         assert_matches_golden(
             "analytics_harvest",
             &to_json(&demo.analytics_harvest("all").await.expect("harvest")),
+        );
+        assert_matches_golden(
+            "analytics_hunting_activity",
+            &to_json(
+                &demo
+                    .analytics_hunting_activity("all")
+                    .await
+                    .expect("hunting activity"),
+            ),
         );
         assert_matches_golden(
             "analytics_ledger",

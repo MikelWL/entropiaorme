@@ -25,6 +25,7 @@
 use std::collections::BTreeMap;
 
 use eo_services::analytics::AnalyticsError;
+use eo_wire::normalizer::round_half_even;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -174,6 +175,168 @@ pub struct NameComparison {
 pub struct AnalyticsHunting {
     pub mob_comparisons: Vec<MobComparison>,
     pub name_comparisons: Vec<NameComparison>,
+}
+
+/// The activity family a stock action belongs to. Closed vocabulary: the
+/// auction and conversion lifecycle is shared, and the profession stamp is
+/// what scopes each activity's Market and History to its own records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Profession {
+    Harvesting,
+    Hunting,
+}
+
+impl From<Profession> for eo_services::analytics::Profession {
+    fn from(value: Profession) -> Self {
+        match value {
+            Profession::Harvesting => Self::Harvesting,
+            Profession::Hunting => Self::Hunting,
+        }
+    }
+}
+
+// ── Revamped Hunting DTOs ───────────────────────────────────────────
+
+/// The revamped Hunting aggregate: direct headline figures, the
+/// definition-keyed Sessions axis, and the observed Targets axis. All
+/// figures are DIRECT (weapon + enhancer cost at kill grain, loot TT,
+/// session-grain activity skill); heal and armour stay session-grain
+/// residues reported on Dashboard and Overview, never allocated into only
+/// some comparison rows.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsHuntingActivity {
+    pub overall: HuntingActivityOverall,
+    pub definitions: Vec<HuntingDefinitionComparison>,
+    pub species: Vec<HuntingSpeciesComparison>,
+}
+
+/// The whole activity's direct headline figures for the period.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntingActivityOverall {
+    pub cycled: f64,
+    pub returns: f64,
+    pub loot_rate: f64,
+}
+
+/// One session definition's aggregate over its hunted instances; the
+/// unassigned bucket carries a null `definitionId`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntingDefinitionComparison {
+    pub definition_id: Nullable<i64>,
+    pub name: String,
+    pub is_archived: bool,
+    pub cycled: f64,
+    pub returns: f64,
+    pub loot_rate: f64,
+    pub loot_items: Vec<HarvestLootItem>,
+    pub activities: Vec<HuntingActivityComparison>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HuntingActivityKind {
+    Quest,
+    QuestFamily,
+    Segment,
+    Bundle,
+    Ambient,
+}
+
+impl HuntingActivityKind {
+    fn classify(kind: &str) -> Self {
+        match kind {
+            "quest" => Self::Quest,
+            "quest_family" => Self::QuestFamily,
+            "segment" => Self::Segment,
+            "bundle" => Self::Bundle,
+            _ => Self::Ambient,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HuntingRewardStatus {
+    None,
+    IncludedInLoot,
+    FixedLiquid,
+    Skill,
+    Mixed,
+    Unverified,
+}
+
+impl HuntingRewardStatus {
+    fn classify(status: &str) -> Self {
+        match status {
+            "included_in_loot" => Self::IncludedInLoot,
+            "fixed_liquid" => Self::FixedLiquid,
+            "skill" => Self::Skill,
+            "mixed" => Self::Mixed,
+            "unverified" => Self::Unverified,
+            _ => Self::None,
+        }
+    }
+}
+
+/// One exact declared activity signature inside a session definition.
+/// Costs and loot are partitioned by the context stamped at capture; a
+/// separately confirmed liquid reward is additive exactly once.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntingActivityComparison {
+    pub kind: HuntingActivityKind,
+    pub label: String,
+    pub cycled: f64,
+    pub returns: f64,
+    pub loot_rate: f64,
+    pub confirmed_reward_ped: f64,
+    /// Actual reward items observed at completion. Their markup stays a
+    /// current market projection and never enters realised accounting.
+    pub reward_items: Vec<HarvestLootItem>,
+    pub rewarded_returns: f64,
+    pub rewarded_rate: f64,
+    pub reward_status: HuntingRewardStatus,
+    pub loot_items: Vec<HarvestLootItem>,
+    pub variants: Vec<HuntingActivityComparison>,
+}
+
+/// One observed species' aggregate; the unclassified bucket carries an
+/// empty species.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntingSpeciesComparison {
+    pub mob_species: String,
+    pub cycled: f64,
+    pub returns: f64,
+    pub loot_rate: f64,
+    pub loot_items: Vec<HarvestLootItem>,
+}
+
+/// One mob species' net realised markup from confirmed stock outcomes: the Hunting
+/// sibling of [`RealisedTierMarkup`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RealisedSpeciesMarkup {
+    pub mob_species: String,
+    pub net_markup: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RealisedDefinitionMarkup {
+    pub definition_id: i64,
+    pub net_markup: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntingRealisedMarkup {
+    pub species: Vec<RealisedSpeciesMarkup>,
+    pub definitions: Vec<RealisedDefinitionMarkup>,
 }
 
 /// One item in an activity's harvest loot composition: realised TT only.
@@ -343,7 +506,7 @@ pub struct AuctionListing {
 }
 
 /// One thing an activity did to its stock: a listing across its whole
-/// lifecycle, or a conversion into another item.
+/// lifecycle, a private trade, a conversion, or a stock-only removal.
 ///
 /// A listing appears once however far it has got. Creating and selling are the
 /// same listing at two moments, not two entries.
@@ -351,20 +514,19 @@ pub struct AuctionListing {
 #[serde(rename_all = "camelCase")]
 pub struct ActivityHistoryEntry {
     pub id: String,
-    /// `listing` or `conversion`.
+    /// `listing`, `trade`, `conversion`, or `removal`.
     pub kind: String,
-    /// `pending`, `sold` or `expired` for a listing; `converted` otherwise.
+    /// `pending`, `sold`, `expired`, `converted`, or `removed`.
     pub status: String,
     pub item_name: String,
-    /// What a conversion produced; `null` for a listing.
+    /// What a conversion produced; `null` for other outcomes.
     pub target_item: Nullable<String>,
     /// When a listing resolved, or when it was listed if it has not; when a
     /// conversion happened.
     pub occurred_at: String,
     pub quantity: f64,
     pub tt_value: f64,
-    /// Sold listings only: the gain after both fees, and the part of it an
-    /// activity may claim.
+    /// Realised outcomes only: the net gain, and the part an activity may claim.
     pub net_markup: Nullable<f64>,
     pub activity_net_markup: Nullable<f64>,
     /// Whether the sale can be taken back, leaving the listing open.
@@ -385,7 +547,7 @@ pub struct ActivityUndoInput {
     pub id: String,
 }
 
-/// One yield tier's net realised markup from confirmed sales.
+/// One yield tier's net realised markup from confirmed stock outcomes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RealisedTierMarkup {
@@ -396,10 +558,12 @@ pub struct RealisedTierMarkup {
 // ── Request DTOs ────────────────────────────────────────────────────
 
 /// An auction-listing creation payload. Dates are optional and default to
-/// today; the fee is what the game quoted at listing time.
+/// today; the fee is what the game quoted at listing time. The profession
+/// stamps which activity's Market owns the listing.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuctionListingInput {
+    pub profession: Profession,
     pub item_name: String,
     pub quantity: f64,
     pub starting_bid: f64,
@@ -427,12 +591,46 @@ pub struct AuctionExpireInput {
     pub resolved_at: Option<String>,
 }
 
-/// A stock-conversion payload (recycling into Nanocubes at 1:1 TT).
+/// A stock-conversion payload (recycling into Nanocubes at 1:1 TT). The
+/// profession stamps which activity's History owns the conversion.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct StockConversionInput {
+    pub profession: Profession,
     pub source_item: String,
     pub target_item: String,
+    pub quantity: f64,
+    pub converted_at: Option<String>,
+}
+
+/// A completed player-to-player trade. Unlike an auction listing, its price
+/// and outcome are already known and no fee is involved.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateSaleInput {
+    pub profession: Profession,
+    pub item_name: String,
+    pub quantity: f64,
+    pub sold_for: f64,
+    pub sold_at: Option<String>,
+}
+
+/// Stock whose later fate is unknown. This changes holdings only and never
+/// rewrites the loot or ledger history that established its TT.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StockRemovalInput {
+    pub profession: Profession,
+    pub item_name: String,
+    pub quantity: f64,
+    pub removed_at: Option<String>,
+}
+
+/// Deliberate Shrapnel conversion at the game's fixed 100:101 ratio.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShrapnelConversionInput {
+    pub profession: Profession,
     pub quantity: f64,
     pub converted_at: Option<String>,
 }
@@ -531,15 +729,33 @@ impl Api {
         Ok(harvest_dto(value))
     }
 
-    /// Everything the player currently holds. Operational position context
-    /// for sale and recycling actions; it does not influence
+    /// The revamped Hunting aggregate for a named period: the direct
+    /// headline figures, the definition-keyed Sessions axis, and the
+    /// observed Targets axis.
+    pub async fn analytics_hunting_activity(
+        &self,
+        period: &str,
+    ) -> Result<AnalyticsHuntingActivity, ApiError> {
+        let value = self
+            .analytics
+            .hunting_activity(period)
+            .await
+            .map_err(analytics_error("analytics hunting activity"))?;
+        Ok(hunting_activity_dto(value))
+    }
+
+    /// One activity's current holdings. Operational position context for
+    /// sale and recycling actions; it does not influence
     /// holding-independent market opportunity.
-    pub async fn harvest_stock(&self) -> Result<Vec<StockPosition>, ApiError> {
+    pub async fn activity_stock(
+        &self,
+        profession: Profession,
+    ) -> Result<Vec<StockPosition>, ApiError> {
         let rows = self
             .analytics
-            .stock_positions()
+            .stock_positions(profession.into())
             .await
-            .map_err(analytics_error("harvest stock"))?;
+            .map_err(analytics_error("activity stock"))?;
         Ok(rows
             .into_iter()
             .map(|row| StockPosition {
@@ -551,11 +767,14 @@ impl Api {
             .collect())
     }
 
-    /// Every auction listing, unresolved first.
-    pub async fn auction_listings(&self) -> Result<Vec<AuctionListing>, ApiError> {
+    /// One activity's auction listings, unresolved first.
+    pub async fn auction_listings(
+        &self,
+        profession: Profession,
+    ) -> Result<Vec<AuctionListing>, ApiError> {
         let rows = self
             .analytics
-            .auction_listings()
+            .auction_listings(profession.into())
             .await
             .map_err(analytics_error("auction listings"))?;
         Ok(rows.into_iter().map(auction_listing_dto).collect())
@@ -570,6 +789,7 @@ impl Api {
         let row = self
             .analytics
             .create_auction_listing(
+                input.profession.into(),
                 &input.item_name,
                 input.quantity,
                 input.starting_bid,
@@ -621,6 +841,7 @@ impl Api {
     pub async fn stock_convert(&self, input: StockConversionInput) -> Result<(), ApiError> {
         self.analytics
             .convert_stock(
+                input.profession.into(),
                 &input.source_item,
                 &input.target_item,
                 input.quantity,
@@ -631,12 +852,54 @@ impl Api {
         Ok(())
     }
 
-    /// Everything the activity has done to its stock, newest first, each
+    pub async fn stock_private_sale(&self, input: PrivateSaleInput) -> Result<(), ApiError> {
+        self.analytics
+            .create_private_sale(
+                input.profession.into(),
+                &input.item_name,
+                input.quantity,
+                input.sold_for,
+                input.sold_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("private sale"))
+    }
+
+    pub async fn stock_remove(&self, input: StockRemovalInput) -> Result<(), ApiError> {
+        self.analytics
+            .remove_stock(
+                input.profession.into(),
+                &input.item_name,
+                input.quantity,
+                input.removed_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("stock remove"))
+    }
+
+    pub async fn stock_shrapnel_convert(
+        &self,
+        input: ShrapnelConversionInput,
+    ) -> Result<(), ApiError> {
+        self.analytics
+            .convert_shrapnel(
+                input.profession.into(),
+                input.quantity,
+                input.converted_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("Shrapnel convert"))
+    }
+
+    /// Everything one activity has done to its stock, newest first, each
     /// entry carrying whether it can be taken back.
-    pub async fn activity_history(&self) -> Result<Vec<ActivityHistoryEntry>, ApiError> {
+    pub async fn activity_history(
+        &self,
+        profession: Profession,
+    ) -> Result<Vec<ActivityHistoryEntry>, ApiError> {
         let rows = self
             .analytics
-            .activity_history()
+            .activity_history(profession.into())
             .await
             .map_err(analytics_error("activity history"))?;
         Ok(rows
@@ -705,7 +968,33 @@ impl Api {
         }
     }
 
-    /// Net realised markup per yield tier, from confirmed sales only.
+    pub async fn private_sale_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        if self
+            .analytics
+            .undo_private_sale(&input.id)
+            .await
+            .map_err(analytics_error("private sale undo"))?
+        {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no private sale with that id to undo"))
+        }
+    }
+
+    pub async fn stock_removal_undo(&self, input: ActivityUndoInput) -> Result<(), ApiError> {
+        if self
+            .analytics
+            .undo_stock_removal(&input.id)
+            .await
+            .map_err(analytics_error("stock removal undo"))?
+        {
+            Ok(())
+        } else {
+            Err(ApiError::not_found("no stock removal with that id to undo"))
+        }
+    }
+
+    /// Net realised markup per yield tier, from confirmed stock outcomes.
     pub async fn harvest_realised_markup(&self) -> Result<Vec<RealisedTierMarkup>, ApiError> {
         let rows = self
             .analytics
@@ -719,6 +1008,31 @@ impl Api {
                 net_markup: row.net_markup,
             })
             .collect())
+    }
+
+    /// Net realised Hunting markup through both honest comparison axes.
+    pub async fn hunting_realised_markup(&self) -> Result<HuntingRealisedMarkup, ApiError> {
+        let (species, definitions) = tokio::try_join!(
+            self.analytics.realised_markup_by_species(),
+            self.analytics.realised_markup_by_definition(),
+        )
+        .map_err(analytics_error("hunting realised markup"))?;
+        Ok(HuntingRealisedMarkup {
+            species: species
+                .into_iter()
+                .map(|row| RealisedSpeciesMarkup {
+                    mob_species: row.mob_species,
+                    net_markup: row.net_markup,
+                })
+                .collect(),
+            definitions: definitions
+                .into_iter()
+                .map(|row| RealisedDefinitionMarkup {
+                    definition_id: row.definition_id,
+                    net_markup: row.net_markup,
+                })
+                .collect(),
+        })
     }
 
     /// One keyset page of ledger entries (newest first) plus the cursor for
@@ -1031,6 +1345,75 @@ pub(crate) fn auction_listing_dto(
         resolved_at: row.resolved_at.into(),
         activity_net_markup: row.activity_net_markup.into(),
         gross_markup: row.gross_markup.into(),
+    }
+}
+
+pub(crate) fn hunting_activity_dto(
+    data: eo_services::analytics::HuntingActivityData,
+) -> AnalyticsHuntingActivity {
+    fn loot_item(row: eo_services::analytics::HarvestLootItemRow) -> HarvestLootItem {
+        HarvestLootItem {
+            item_name: row.item_name,
+            quantity: row.quantity,
+            value_ped: row.value_ped,
+        }
+    }
+    fn activity(row: eo_services::analytics::HuntingSignatureRow) -> HuntingActivityComparison {
+        let rewarded_returns = row.returns + row.confirmed_reward_ped;
+        HuntingActivityComparison {
+            kind: HuntingActivityKind::classify(&row.kind),
+            label: row.label,
+            cycled: row.cycled,
+            returns: row.returns,
+            loot_rate: if row.cycled > 0.0 {
+                round_half_even(row.returns / row.cycled, 4)
+            } else {
+                0.0
+            },
+            confirmed_reward_ped: row.confirmed_reward_ped,
+            reward_items: row.reward_items.into_iter().map(loot_item).collect(),
+            rewarded_returns,
+            rewarded_rate: if row.cycled > 0.0 {
+                round_half_even(rewarded_returns / row.cycled, 4)
+            } else {
+                0.0
+            },
+            reward_status: HuntingRewardStatus::classify(&row.reward_status),
+            loot_items: row.loot_items.into_iter().map(loot_item).collect(),
+            variants: row.variants.into_iter().map(activity).collect(),
+        }
+    }
+    AnalyticsHuntingActivity {
+        overall: HuntingActivityOverall {
+            cycled: data.overall.cycled,
+            returns: data.overall.returns,
+            loot_rate: data.overall.loot_rate,
+        },
+        definitions: data
+            .definitions
+            .into_iter()
+            .map(|row| HuntingDefinitionComparison {
+                definition_id: row.definition_id.into(),
+                name: row.name,
+                is_archived: row.is_archived,
+                cycled: row.cycled,
+                returns: row.returns,
+                loot_rate: row.loot_rate,
+                loot_items: row.loot_items.into_iter().map(loot_item).collect(),
+                activities: row.activities.into_iter().map(activity).collect(),
+            })
+            .collect(),
+        species: data
+            .species
+            .into_iter()
+            .map(|row| HuntingSpeciesComparison {
+                mob_species: row.mob_species,
+                cycled: row.cycled,
+                returns: row.returns,
+                loot_rate: row.loot_rate,
+                loot_items: row.loot_items.into_iter().map(loot_item).collect(),
+            })
+            .collect(),
     }
 }
 

@@ -1,241 +1,181 @@
 <script lang="ts">
-	import type { ArchiveKind } from '$lib/activityArchive.svelte';
-	import Card from '$lib/components/Card.svelte';
-	import DataTable from '$lib/components/DataTable.svelte';
-	import Divider from '$lib/components/Divider.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
-	import {
-		ACTION_KEY,
-		createHuntingModel,
-		mobColumns,
-		rowKey,
-		nameColumns
-	} from '$lib/features/analytics/huntingModel.svelte';
-	import type { MobComparison, NameComparison } from '$lib/types/analytics';
-	import { formatPed, formatPercent } from '$lib/utils/format';
+	import InfoTip from '$lib/components/InfoTip.svelte';
+	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import AdjustStockModal from '$lib/features/analytics/AdjustStockModal.svelte';
+	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
+	import HuntingPrimaryView from '$lib/features/analytics/HuntingPrimaryView.svelte';
+	import type { HuntingOverallPanel } from '$lib/features/analytics/HuntingOverallPanels.svelte';
+	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
+	import { ANALYTICS_RANGES } from '$lib/features/analytics/analyticsRange';
+	import { createHuntingModel } from '$lib/features/analytics/huntingModel.svelte';
+	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
+	import { onMount } from 'svelte';
+	import type {
+		ConfidenceMode,
+		TreeCuttingStock as StockRow,
+	} from '$lib/features/analytics/treeCuttingModel.svelte';
 
 	const model = createHuntingModel();
 
+	let overallPanel = $state<HuntingOverallPanel>('stock');
+
+	let sellItem = $state<StockRow | null>(null);
+	let convertItem = $state<StockRow | null>(null);
+	let removeItem = $state<StockRow | null>(null);
+	let shrapnelItem = $state<StockRow | null>(null);
+
+	// History reads when it is opened rather than with the tab: an undo verdict
+	// depends on every other entry, so it is worth computing fresh at the
+	// moment it is offered.
+	let historyLoading = $state(false);
+	async function showView(id: HuntingOverallPanel) {
+		overallPanel = id;
+		if (id !== 'history') return;
+		historyLoading = true;
+		try {
+			await model.loadHistory();
+		} catch {
+			// The model records the failure and the tab shows it; the view
+			// stays open on that notice rather than rejecting into nothing.
+		} finally {
+			historyLoading = false;
+		}
+	}
+
 	$effect(() => {
-		void model.loadData();
+		void model.loadData(model.period);
 	});
+
+	// The guide walks the four views it narrates rather than pointing at a
+	// static frame (the LedgerTab precedent).
+	onMount(() => {
+		registerDemoApi('analytics-hunting', {
+			setView: (view: string) => {
+				if (view === 'overall' || view === 'sessions') {
+					model.selectSession(null);
+					void showView('stock');
+					return;
+				}
+				model.selectSession(null);
+				void showView(view as HuntingOverallPanel);
+			},
+		});
+		return () => unregisterDemoApi('analytics-hunting');
+	});
+
+	const MODE_OPTIONS: { id: ConfidenceMode; label: string }[] = [
+		{ id: 'liquid', label: 'High Vol. Only' },
+		{ id: 'liquidMiddling', label: 'High & Mid Vol.' },
+		{ id: 'all', label: 'High, Mid & Low Vol.' },
+	];
 </script>
-
-{#snippet archiveAction(kind: ArchiveKind, name: string)}
-	{#if model.viewMode === 'main'}
-		<button
-			type="button"
-			class="text-text-tertiary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer p-1"
-			onclick={(e) => { e.stopPropagation(); model.confirmKey = rowKey(kind, name); }}
-			aria-label="Archive {name}"
-			title="Archive"
-		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke-width="1.5"
-				stroke="currentColor"
-				class="w-4 h-4"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
-				/>
-			</svg>
-		</button>
-	{:else}
-		<button
-			type="button"
-			class="text-text-tertiary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer p-1"
-			onclick={(e) => { e.stopPropagation(); model.confirmKey = rowKey(kind, name); }}
-			aria-label="Restore {name}"
-			title="Restore from archive"
-		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke-width="1.5"
-				stroke="currentColor"
-				class="w-4 h-4"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3.75l2.25 2.25m0-2.25l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
-				/>
-			</svg>
-		</button>
-	{/if}
-{/snippet}
-
-{#snippet confirmPrompt(kind: ArchiveKind, name: string)}
-	{@const isRestore = model.viewMode === 'archive'}
-	<div class="inline-flex items-center gap-3">
-		<span class="text-xs text-text-secondary">
-			{isRestore ? 'Send back to main hunting records?' : 'Send record to archive?'}
-		</span>
-		<button
-			type="button"
-			class="text-xs text-text-secondary hover:text-text px-2 py-0.5 rounded-sm cursor-pointer border border-border/60 hover:border-border-bright"
-			onclick={(e) => { e.stopPropagation(); model.confirmKey = null; }}
-		>
-			Cancel
-		</button>
-		<button
-			type="button"
-			class="text-xs text-accent hover:text-accent-hover px-2 py-0.5 rounded-sm cursor-pointer border border-accent/40 hover:border-accent font-medium"
-			onclick={(e) => {
-				e.stopPropagation();
-				if (isRestore) model.onUnarchiveConfirm(kind, name);
-				else model.onArchiveConfirm(kind, name);
-			}}
-		>
-			Yes
-		</button>
-	</div>
-{/snippet}
-
-{#snippet mobCell({ column, value, row }: { column: { key: string }; value: unknown; row: MobComparison })}
-	{#if column.key === 'cycled'}
-		<span class="tabular-nums">{formatPed(Number(value))}</span>
-	{:else if column.key === 'pesPer100Ped'}
-		<span class="tabular-nums">{Number(value).toFixed(2)}</span>
-	{:else if column.key === 'lootRate'}
-		<span class="tabular-nums">{formatPercent(Number(value))}</span>
-	{:else if column.key === ACTION_KEY}
-		{@render archiveAction('mob', row.mobName)}
-	{:else}
-		{value}
-	{/if}
-{/snippet}
-
-{#snippet nameCell({ column, value, row }: { column: { key: string }; value: unknown; row: NameComparison })}
-	{#if column.key === 'cycled'}
-		<span class="tabular-nums">{formatPed(Number(value))}</span>
-	{:else if column.key === 'pesPer100Ped'}
-		<span class="tabular-nums">{Number(value).toFixed(2)}</span>
-	{:else if column.key === 'lootRate'}
-		<span class="tabular-nums">{formatPercent(Number(value))}</span>
-	{:else if column.key === ACTION_KEY}
-		{@render archiveAction('name', row.sessionName)}
-	{:else}
-		{value}
-	{/if}
-{/snippet}
 
 {#if model.loading}
 	<p class="text-sm text-text-secondary">Loading hunting data...</p>
-{:else if model.error && !model.data}
+{:else if model.error && !model.overall}
 	<ErrorNotice message={model.error} />
-{:else if model.data}
-	<div class="space-y-6" data-guide-anchor="analytics-hunting-area">
+{:else if model.overall}
+	<div class="space-y-5" data-guide-anchor="analytics-hunting-area">
 		<ErrorNotice message={model.error} />
-		{#if model.viewMode === 'archive'}
-			<div class="flex items-center justify-between">
-				<h3 class="text-sm font-medium text-text-secondary">Archived rows</h3>
-				<button
-					type="button"
-					class="text-sm text-text-secondary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer inline-flex items-center gap-1"
-					onclick={() => { model.viewMode = 'main'; model.confirmKey = null; }}
-				>
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3.5 h-3.5">
-						<path fill-rule="evenodd" d="M9.78 4.22a.75.75 0 010 1.06L7.06 8H15a.75.75 0 010 1.5H7.06l2.72 2.72a.75.75 0 11-1.06 1.06l-4-4a.75.75 0 010-1.06l4-4a.75.75 0 011.06 0z" clip-rule="evenodd" transform="translate(0 2)" />
-					</svg>
-					Back to activity
-				</button>
-			</div>
-		{/if}
 
-		{#snippet mobOverlay({ row }: { row: MobComparison })}
-			{@render confirmPrompt('mob', row.mobName)}
-		{/snippet}
-		{#snippet nameOverlay({ row }: { row: NameComparison })}
-			{@render confirmPrompt('name', row.sessionName)}
-		{/snippet}
-		<!-- Per-mob comparison -->
-		<div>
-			<h3 class="eyebrow mb-3">Per-Mob Comparison</h3>
-			<DataTable
-				columns={mobColumns}
-				rows={model.sortedMobs}
-				bind:sortKey={model.mobSortKey}
-				bind:sortDir={model.mobSortDir}
-				cell={mobCell}
-				fixedLayout={true}
-				rowKeyFn={(r: MobComparison) => rowKey('mob', r.mobName)}
-				overlayKey={model.confirmKey}
-				rowOverlay={mobOverlay}
-				emptyMessage={model.viewMode === 'archive' ? 'No archived mobs' : 'No mob data available'}
+		<div class="flex flex-wrap items-center justify-between gap-3 pb-2">
+			<SegmentedControl
+				options={ANALYTICS_RANGES.map((range) => ({ id: range, label: range }))}
+				active={model.activeRange}
+				onchange={(id) => (model.activeRange = id)}
 			/>
-		</div>
 
-		<Divider />
-
-		<div>
-			<h3 class="eyebrow mb-3">Per-Session Comparison</h3>
-			<DataTable
-				columns={nameColumns}
-				rows={model.sortedNames}
-				bind:sortKey={model.nameSortKey}
-				bind:sortDir={model.nameSortDir}
-				cell={nameCell}
-				fixedLayout={true}
-				rowKeyFn={(r: NameComparison) => rowKey('name', r.sessionName)}
-				overlayKey={model.confirmKey}
-				rowOverlay={nameOverlay}
-				emptyMessage={model.viewMode === 'archive' ? 'No archived sessions' : 'No named hunt sessions yet'}
-			/>
-		</div>
-
-		<Divider />
-
-		<div class="flex items-end justify-between gap-6">
-			<div class="space-y-1 text-xs text-text-tertiary flex-1 min-w-0">
-				<p>
-					<span class="text-text-secondary">PES:</span>
-					Project Entropia Skill: non-liquid skill-progress denomination derived from the skill curve.
-				</p>
-				<p>
-					<span class="text-text-secondary">PES/100:</span>
-					PES per 100 PED cycled; the primary skilling comparison.
-				</p>
-				<p>
-					<span class="text-text-secondary">Loot:</span>
-					loot-only return per cycled PED; useful, but more volatile.
-				</p>
+			<div class="flex items-center gap-2.5">
+				<span class="eyebrow">Markup confidence</span>
+				<InfoTip label="How markup confidence works">
+					<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+						<p class="font-semibold text-text">
+							Markup confidence: Choose which market prices to use
+						</p>
+						<p>
+							Each level uses the item's markup, how much TT value has sold, how recent those
+							sales are, and whether the markup can cover the auction fee.
+						</p>
+						<ul class="space-y-1.5">
+							<li>
+								<span class="text-text font-medium">High Vol.</span> Enough TT value sells each
+								week to make the markup practical to realise.
+							</li>
+							<li>
+								<span class="text-text font-medium">Mid Vol.</span> Sales are less frequent, but the
+								markup is high enough for a practical sale to cover the 0.5 PED minimum fee.
+							</li>
+							<li>
+								<span class="text-text font-medium">Low Vol.</span> Too little TT value has sold
+								recently to rely on the markup.
+							</li>
+						</ul>
+						<p>
+							Excluded items use the Nanocube markup instead. The amount you currently hold does
+							not affect these levels.
+						</p>
+					</div>
+				</InfoTip>
+				<SegmentedControl
+					options={MODE_OPTIONS}
+					active={model.confidenceMode}
+					onchange={(id) => (model.confidenceMode = id as ConfidenceMode)}
+				/>
 			</div>
-			{#if model.viewMode === 'main'}
-				<button
-					type="button"
-					class="text-sm text-text-secondary hover:text-text transition-colors duration-[var(--duration-fast)] cursor-pointer inline-flex items-center gap-1.5 shrink-0"
-					onclick={() => { model.viewMode = 'archive'; model.confirmKey = null; }}
-				>
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke-width="1.5"
-						stroke="currentColor"
-						class="w-4 h-4"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
-						/>
-					</svg>
-					View archive
-				</button>
-			{/if}
 		</div>
+
+		<HuntingPrimaryView
+			overall={model.overall}
+			stock={model.stock}
+			table={model.sessionTable}
+			selected={model.selectedSession}
+			totalCount={model.sessionSections.length}
+			onselect={(key) => model.selectSession(key)}
+			onsell={(item) => (sellItem = item)}
+			onconvert={(item) => (convertItem = item)}
+			onremove={(item) => (removeItem = item)}
+			onshrapnelconvert={(item) => (shrapnelItem = item)}
+			overallPanel={overallPanel}
+			onpanelchange={showView}
+			openListings={model.openListings}
+			resolvedListings={model.resolvedListings}
+			history={model.history}
+			{historyLoading}
+			onresolve={model.resolveListing}
+			onundo={model.undoHistoryEntry}
+		/>
 	</div>
+
+	<SellStockModal
+		item={sellItem}
+		onlist={model.listStock}
+		ontrade={model.tradeStock}
+		oncancel={() => (sellItem = null)}
+		activityAttributionNoun="a hunted species"
+	/>
+	<AdjustStockModal
+		item={removeItem}
+		mode="remove"
+		onconfirm={model.discardStock}
+		oncancel={() => (removeItem = null)}
+	/>
+	<AdjustStockModal
+		item={shrapnelItem}
+		mode="shrapnel"
+		onconfirm={(_itemName, quantity) => model.convertShrapnelStock(quantity)}
+		oncancel={() => (shrapnelItem = null)}
+	/>
+	<ConvertStockModal
+		item={convertItem}
+		onconvert={model.recycleStock}
+		oncancel={() => (convertItem = null)}
+	/>
 {:else}
-	<Card class="p-6">
-		<p class="text-sm text-text-tertiary text-center">
-			No tracking data yet. Complete sessions to see hunting comparisons.
-		</p>
-	</Card>
+	<p
+		class="py-10 text-center text-sm text-text-tertiary"
+		data-guide-anchor="analytics-hunting-area"
+	>
+		No hunting data yet. Track a hunting session to compare your routines and activities.
+	</p>
 {/if}

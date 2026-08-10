@@ -1311,6 +1311,7 @@ pub async fn bulk_flip_loot_item(
                 rusqlite::params![sid],
             )?;
             crate::daily_rollup::refresh_session_days(&tx, &sid)?;
+            crate::session_rollup::recompute_session(&tx, &sid)?;
             tx.commit()?;
 
             Ok(FlipOutcome::Flipped {
@@ -1465,6 +1466,7 @@ pub async fn delete_session_impl(db: &Db, session_id: &str) -> Result<(), EditEr
                 "DELETE FROM tracking_sessions WHERE id = ?",
                 rusqlite::params![sid],
             )?;
+            crate::session_rollup::drop_session(&tx, &sid)?;
 
             crate::daily_rollup::refresh_days(&tx, days)?;
             tx.commit()?;

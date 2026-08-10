@@ -1290,10 +1290,19 @@ mod tests {
         // tables' new context stamp) + the quest-families migration's
         // table and member index + the session-definitions migration's
         // 2 tables (definitions, roster) with 2 indexes (roster
-        // definition, session definition stamp) = 46 tables, 54
-        // indexes, 8 triggers.
-        assert_eq!(count("table").await, 46);
-        assert_eq!(count("index").await, 54);
+        // definition, session definition stamp) + the hunting-provenance
+        // migration's species index on the rebuilt movement ledger
+        // + the loot item-name migration's 2 partial indexes + the
+        // session-rollup migration's 4 tables (kill, loot, and PES cells
+        // plus the settlement marker) with 4 indexes (session on each
+        // cell table, item on the loot cells) + the hunting-definition
+        // provenance index on the movement ledger + the quest reward
+        // provenance index + the context-loot and quest-reward-item
+        // tables with one index each + the private-sale and stock-removal
+        // tables with their three indexes
+        // = 54 tables, 68 indexes, 8 triggers.
+        assert_eq!(count("table").await, 54);
+        assert_eq!(count("index").await, 68);
         assert_eq!(count("trigger").await, 8);
 
         let version = db
@@ -1689,11 +1698,20 @@ mod tests {
         // live-listing index) + the session-interval migration's 3
         // interval tables and 7 indexes + the quest-families migration's
         // table and member index + the session-definitions migration's
-        // 2 tables and 2 indexes +
+        // 2 tables and 2 indexes + the hunting-provenance migration's
+        // species index on the rebuilt movement ledger + the loot
+        // item-name migration's 2 partial indexes + the session-rollup
+        // migration's 4 tables and 4 indexes + the hunting-definition
+        // provenance index + the quest reward provenance index + the
+        // context-loot and quest-reward-item tables with one index each +
+        // the private-sale and stock-removal tables with three indexes +
         // 8 triggers (only SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), (41 + 3 + 1 + 2) + (44 + 7 + 1 + 2) + 8);
+        assert_eq!(
+            master.len(),
+            (41 + 3 + 1 + 2 + 4 + 4) + (44 + 7 + 1 + 2 + 1 + 2 + 4 + 1 + 6) + 8
+        );
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

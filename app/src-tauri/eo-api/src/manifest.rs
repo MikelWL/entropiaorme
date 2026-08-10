@@ -15,11 +15,13 @@ use serde_json::Value;
 
 use crate::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTargetKind};
 use crate::analytics::{
-    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
-    AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
-    InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput,
-    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup,
-    StockConversionInput, StockPosition,
+    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
+    AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
+    AuctionListing, AuctionListingInput, HuntingRealisedMarkup, InventoryItem, InventoryItemInput,
+    InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem,
+    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput, Profession,
+    RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
+    StockRemovalInput,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -599,8 +601,19 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(AnalyticsHarvest))),
         },
         CommandSpec {
-            name: "harvest_stock",
-            args: Vec::new(),
+            name: "analytics_hunting_activity",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsHuntingActivity))),
+        },
+        CommandSpec {
+            name: "activity_stock",
+            args: vec![ArgSpec {
+                name: "profession",
+                schema: schema(schema_for!(Profession)),
+            }],
             returns: Some(schema(schema_for!(Vec<StockPosition>))),
         },
         CommandSpec {
@@ -609,8 +622,16 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(Vec<RealisedTierMarkup>))),
         },
         CommandSpec {
-            name: "auction_listings",
+            name: "hunting_realised_markup",
             args: Vec::new(),
+            returns: Some(schema(schema_for!(HuntingRealisedMarkup))),
+        },
+        CommandSpec {
+            name: "auction_listings",
+            args: vec![ArgSpec {
+                name: "profession",
+                schema: schema(schema_for!(Profession)),
+            }],
             returns: Some(schema(schema_for!(Vec<AuctionListing>))),
         },
         CommandSpec {
@@ -646,8 +667,35 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: None,
         },
         CommandSpec {
+            name: "stock_private_sale",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(PrivateSaleInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "stock_remove",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(StockRemovalInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "stock_shrapnel_convert",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ShrapnelConversionInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
             name: "activity_history",
-            args: vec![],
+            args: vec![ArgSpec {
+                name: "profession",
+                schema: schema(schema_for!(Profession)),
+            }],
             returns: Some(schema(schema_for!(Vec<ActivityHistoryEntry>))),
         },
         CommandSpec {
@@ -668,6 +716,22 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "stock_conversion_undo",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ActivityUndoInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "private_sale_undo",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ActivityUndoInput)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "stock_removal_undo",
             args: vec![ArgSpec {
                 name: "input",
                 schema: schema(schema_for!(ActivityUndoInput)),
@@ -823,6 +887,11 @@ pub fn manifest() -> Vec<CommandSpec> {
         },
         CommandSpec {
             name: "market_harvest_markups",
+            args: vec![],
+            returns: Some(schema(schema_for!(MarketHarvestData))),
+        },
+        CommandSpec {
+            name: "market_hunt_markups",
             args: vec![],
             returns: Some(schema(schema_for!(MarketHarvestData))),
         },
@@ -1163,6 +1232,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "demo_analytics_hunting",
             args: Vec::new(),
             returns: Some(schema(schema_for!(AnalyticsHunting))),
+        },
+        CommandSpec {
+            name: "demo_analytics_hunting_activity",
+            args: vec![ArgSpec {
+                name: "period",
+                schema: schema(schema_for!(String)),
+            }],
+            returns: Some(schema(schema_for!(AnalyticsHuntingActivity))),
         },
         CommandSpec {
             name: "demo_analytics_harvest",

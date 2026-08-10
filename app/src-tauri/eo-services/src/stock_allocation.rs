@@ -9,14 +9,19 @@
 //! particular boards any one swing yielded. Asking the player to pick source
 //! units, or imposing FIFO or LIFO, would invent a fact the game does not
 //! record. The composition of what is held is the honest answer, so a sale
-//! consumes every tier in proportion to what that tier still has open.
+//! consumes every source in proportion to what that source still has open.
 //!
-//! Allocation is at (yield tier, tool) granularity, not per source event. The
-//! tier is the activity identity every reported figure is keyed on; the tool is
-//! recorded beside it so a finer reading stays available, though nothing
-//! reports on it today. Per-event granularity would fan a sale of a few hundred
-//! boards into hundreds of rows nothing reads, and the movement schema carries
-//! a nullable `source_event_id` for it if that ever changes.
+//! A source is one provenance bucket: a harvest yield tier for Tree Cutting,
+//! a mob species for Hunting. One item can hold both at once (Nanocubes
+//! recycled from boards beside Nanocubes recycled from hides), and a sale of
+//! it draws on each in proportion, crediting each activity its own share.
+//!
+//! Allocation is at (provenance, context, tool) granularity, not per source
+//! event. Hunting keeps its session definition beside species so the same
+//! immutable sale can be projected through either honest comparison axis.
+//! Per-event granularity would fan a sale of a few hundred units into hundreds
+//! of rows nothing reads, and the movement schema carries a nullable
+//! `source_event_id` for it if that ever changes.
 
 use crate::harvest_yield::HarvestYieldTier;
 
@@ -25,22 +30,36 @@ use crate::harvest_yield::HarvestYieldTier;
 /// float noise, not a real position.
 const EPSILON: f64 = 1e-9;
 
+/// Which activity a unit of stock traces back to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StockProvenance<'a> {
+    /// Tree Cutting: the effective yield tier whose swings produced it.
+    Harvest(HarvestYieldTier),
+    /// Hunting: the mob species whose kills produced it.
+    Hunt(&'a str),
+}
+
 /// One source's still-open position for a canonical item.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TierPosition<'a> {
+pub struct SourcePosition<'a> {
     /// `None` for stock whose provenance is genuinely unknown (migrated
     /// overlay rows, opening balances). Never a guess.
-    pub yield_tier: Option<HarvestYieldTier>,
-    /// The tool that produced it. `None` when the swing recorded no tool, or
-    /// when the movement predates tool capture.
+    pub provenance: Option<StockProvenance<'a>>,
+    /// Hunting's user-designated context. `None` for harvesting, genuinely
+    /// unassigned hunting, and movements recorded before this dimension.
+    pub session_definition_id: Option<i64>,
+    /// The tool that produced it. `None` when the swing recorded no tool,
+    /// when the movement predates tool capture, or for hunted stock (a
+    /// kill's loot is not a single tool's produce).
     pub tool_name: Option<&'a str>,
     pub quantity: f64,
 }
 
 /// One source's share of an outflow.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TierAllocation<'a> {
-    pub yield_tier: Option<HarvestYieldTier>,
+pub struct SourceAllocation<'a> {
+    pub provenance: Option<StockProvenance<'a>>,
+    pub session_definition_id: Option<i64>,
     pub tool_name: Option<&'a str>,
     pub quantity: f64,
     pub tt_value: f64,
@@ -49,8 +68,8 @@ pub struct TierAllocation<'a> {
 /// How a requested outflow divides across open positions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AllocationPlan<'a> {
-    pub allocations: Vec<TierAllocation<'a>>,
-    /// Quantity covered by open positions carrying a known tier.
+    pub allocations: Vec<SourceAllocation<'a>>,
+    /// Quantity covered by open positions carrying a known provenance.
     pub attributed_qty: f64,
     pub attributed_tt: f64,
     /// Quantity beyond tracked stock, plus any consumed from explicitly
@@ -61,31 +80,31 @@ pub struct AllocationPlan<'a> {
     /// as opposed to the part drawn from positions of unknown provenance.
     ///
     /// The two are the same to the activity (neither may be claimed), but not
-    /// to the stock ledger: an untiered draw leaves a position that was there,
-    /// while this leaves a position the app never recorded. Booking it as an
-    /// outflow alone would drive the item's holdings negative, so the caller
-    /// records the acquisition it implies before recording the outflow.
+    /// to the stock ledger: an unattributed draw leaves a position that was
+    /// there, while this leaves a position the app never recorded. Booking it
+    /// as an outflow alone would drive the item's holdings negative, so the
+    /// caller records the acquisition it implies before recording the outflow.
     pub excess_qty: f64,
     pub excess_tt: f64,
 }
 
-/// Split `quantity` of an item across its open tier positions, weighted by
-/// how much each tier still holds.
+/// Split `quantity` of an item across its open source positions, weighted by
+/// how much each source still holds.
 ///
 /// A request larger than the total open position is not an error: the player
 /// may hold stock from before tracking began, or from another source. The
 /// excess is carried explicitly as unattributed rather than being spread over
-/// the tiers that happen to be tracked, which would credit them with output
+/// the sources that happen to be tracked, which would credit them with output
 /// they never produced.
 ///
 /// `unit_tt` is the item's TT per unit, which Entropia fixes per item, so
 /// quantity share and TT share are the same ratio.
 pub fn allocate<'a>(
-    positions: &[TierPosition<'a>],
+    positions: &[SourcePosition<'a>],
     quantity: f64,
     unit_tt: f64,
 ) -> AllocationPlan<'a> {
-    let open: Vec<TierPosition<'a>> = positions
+    let open: Vec<SourcePosition<'a>> = positions
         .iter()
         .copied()
         .filter(|position| position.quantity > EPSILON)
@@ -99,7 +118,7 @@ pub fn allocate<'a>(
     let mut assigned = 0.0_f64;
     for (index, position) in open.iter().enumerate() {
         // The last open position absorbs the residual so the parts sum to the
-        // whole exactly, rather than drifting by a float ulp per tier.
+        // whole exactly, rather than drifting by a float ulp per source.
         let share = if index + 1 == open.len() {
             attributable - assigned
         } else {
@@ -109,38 +128,40 @@ pub fn allocate<'a>(
             continue;
         }
         assigned += share;
-        allocations.push(TierAllocation {
-            yield_tier: position.yield_tier,
+        allocations.push(SourceAllocation {
+            provenance: position.provenance,
+            session_definition_id: position.session_definition_id,
             tool_name: position.tool_name,
             quantity: share,
             tt_value: share * unit_tt,
         });
     }
 
-    // A position with no known tier is consumed like any other (the player
-    // really is holding it), but what it funds cannot be claimed by an
+    // A position with no known provenance is consumed like any other (the
+    // player really is holding it), but what it funds cannot be claimed by an
     // activity, so it lands on the unattributed side of the split.
     let attributed_qty: f64 = allocations
         .iter()
-        .filter(|allocation| allocation.yield_tier.is_some())
+        .filter(|allocation| allocation.provenance.is_some())
         .map(|allocation| allocation.quantity)
         .sum();
-    let untiered_qty: f64 = allocations
+    let unknown_qty: f64 = allocations
         .iter()
-        .filter(|allocation| allocation.yield_tier.is_none())
+        .filter(|allocation| allocation.provenance.is_none())
         .map(|allocation| allocation.quantity)
         .sum();
 
     if excess > EPSILON {
-        allocations.push(TierAllocation {
-            yield_tier: None,
+        allocations.push(SourceAllocation {
+            provenance: None,
+            session_definition_id: None,
             tool_name: None,
             quantity: excess,
             tt_value: excess * unit_tt,
         });
     }
 
-    let unattributed_qty = untiered_qty + excess;
+    let unattributed_qty = unknown_qty + excess;
     AllocationPlan {
         allocations,
         attributed_qty,
@@ -171,7 +192,7 @@ pub struct SaleOutcome {
     /// The fraction of the listing that tracked stock covered.
     pub attributed_share: f64,
     /// Net realised markup the activity may claim, to be divided across its
-    /// contributing tiers. The remainder of `net_markup` is the untracked
+    /// contributing sources. The remainder of `net_markup` is the untracked
     /// share: real money, but with no activity able to claim it.
     pub activity_net_markup: f64,
 }
@@ -216,17 +237,28 @@ pub fn resolve_sale(
 mod tests {
     use super::*;
 
-    fn tier(tier: HarvestYieldTier, quantity: f64) -> TierPosition<'static> {
-        TierPosition {
-            yield_tier: Some(tier),
+    fn tier(tier: HarvestYieldTier, quantity: f64) -> SourcePosition<'static> {
+        SourcePosition {
+            provenance: Some(StockProvenance::Harvest(tier)),
+            session_definition_id: None,
             tool_name: None,
             quantity,
         }
     }
 
-    fn tier_with_tool(tier: HarvestYieldTier, tool: &str, quantity: f64) -> TierPosition<'_> {
-        TierPosition {
-            yield_tier: Some(tier),
+    fn species(name: &str, quantity: f64) -> SourcePosition<'_> {
+        SourcePosition {
+            provenance: Some(StockProvenance::Hunt(name)),
+            session_definition_id: None,
+            tool_name: None,
+            quantity,
+        }
+    }
+
+    fn tier_with_tool(tier: HarvestYieldTier, tool: &str, quantity: f64) -> SourcePosition<'_> {
+        SourcePosition {
+            provenance: Some(StockProvenance::Harvest(tier)),
+            session_definition_id: None,
             tool_name: Some(tool),
             quantity,
         }
@@ -260,7 +292,7 @@ mod tests {
         }
     }
 
-    /// Tiers are consumed in proportion to what each still holds.
+    /// Sources are consumed in proportion to what each still holds.
     #[test]
     fn allocation_is_weighted_by_open_position() {
         let positions = [
@@ -272,12 +304,16 @@ mod tests {
         let short = plan
             .allocations
             .iter()
-            .find(|allocation| allocation.yield_tier == Some(HarvestYieldTier::Short))
+            .find(|allocation| {
+                allocation.provenance == Some(StockProvenance::Harvest(HarvestYieldTier::Short))
+            })
             .expect("short tier allocated");
         let long = plan
             .allocations
             .iter()
-            .find(|allocation| allocation.yield_tier == Some(HarvestYieldTier::Long))
+            .find(|allocation| {
+                allocation.provenance == Some(StockProvenance::Harvest(HarvestYieldTier::Long))
+            })
             .expect("long tier allocated");
 
         assert!((short.quantity - 30.0).abs() < 1e-9);
@@ -286,8 +322,97 @@ mod tests {
         assert!((plan.unattributed_qty).abs() < 1e-9);
     }
 
+    /// Hunted stock attributes exactly like harvested stock: a species
+    /// position is a first-class source, not a lesser copy of a tier.
+    #[test]
+    fn species_positions_attribute_like_tiers() {
+        let positions = [species("Carabok", 80.0), species("Berycled", 20.0)];
+        let plan = allocate(&positions, 50.0, 0.02);
+
+        let carabok = plan
+            .allocations
+            .iter()
+            .find(|allocation| allocation.provenance == Some(StockProvenance::Hunt("Carabok")))
+            .expect("carabok allocated");
+        let berycled = plan
+            .allocations
+            .iter()
+            .find(|allocation| allocation.provenance == Some(StockProvenance::Hunt("Berycled")))
+            .expect("berycled allocated");
+
+        assert!((carabok.quantity - 40.0).abs() < 1e-9);
+        assert!((berycled.quantity - 10.0).abs() < 1e-9);
+        assert!((plan.attributed_qty - 50.0).abs() < 1e-9);
+        assert!((plan.unattributed_qty).abs() < 1e-9);
+    }
+
+    /// Session definition is an orthogonal provenance dimension: stock from
+    /// two routines that hunted the same species stays separately claimable.
+    #[test]
+    fn definitions_inside_one_species_are_allocated_separately() {
+        let positions = [
+            SourcePosition {
+                provenance: Some(StockProvenance::Hunt("Atrox")),
+                session_definition_id: Some(7),
+                tool_name: None,
+                quantity: 75.0,
+            },
+            SourcePosition {
+                provenance: Some(StockProvenance::Hunt("Atrox")),
+                session_definition_id: Some(9),
+                tool_name: None,
+                quantity: 25.0,
+            },
+        ];
+        let plan = allocate(&positions, 40.0, 0.01);
+
+        let first = plan
+            .allocations
+            .iter()
+            .find(|allocation| allocation.session_definition_id == Some(7))
+            .expect("first definition allocated");
+        let second = plan
+            .allocations
+            .iter()
+            .find(|allocation| allocation.session_definition_id == Some(9))
+            .expect("second definition allocated");
+        assert!((first.quantity - 30.0).abs() < 1e-9);
+        assert!((second.quantity - 10.0).abs() < 1e-9);
+        assert_eq!(first.provenance, Some(StockProvenance::Hunt("Atrox")));
+        assert_eq!(second.provenance, Some(StockProvenance::Hunt("Atrox")));
+    }
+
+    /// An item holding both harvest and hunt provenance (Nanocubes recycled
+    /// from boards beside Nanocubes recycled from hides) draws on each in
+    /// proportion, so a joint pile credits each activity its own share.
+    #[test]
+    fn mixed_provenance_draws_on_both_activities() {
+        let positions = [
+            tier(HarvestYieldTier::Long, 300.0),
+            species("Carabok", 100.0),
+        ];
+        let plan = allocate(&positions, 200.0, 0.01);
+
+        let harvest_share: f64 = plan
+            .allocations
+            .iter()
+            .filter(|allocation| matches!(allocation.provenance, Some(StockProvenance::Harvest(_))))
+            .map(|allocation| allocation.quantity)
+            .sum();
+        let hunt_share: f64 = plan
+            .allocations
+            .iter()
+            .filter(|allocation| matches!(allocation.provenance, Some(StockProvenance::Hunt(_))))
+            .map(|allocation| allocation.quantity)
+            .sum();
+
+        assert!((harvest_share - 150.0).abs() < 1e-9);
+        assert!((hunt_share - 50.0).abs() < 1e-9);
+        assert!((plan.attributed_qty - 200.0).abs() < 1e-9);
+    }
+
     /// Selling more than is held keeps the tracked part attributed and names
-    /// the rest unattributed, instead of inflating the tracked tiers.
+    /// the rest unattributed, instead of inflating the tracked sources.
     #[test]
     fn excess_beyond_stock_is_explicitly_unattributed() {
         let positions = [tier(HarvestYieldTier::Huge, 10.0)];
@@ -300,22 +425,24 @@ mod tests {
         assert_eq!(
             plan.allocations
                 .iter()
-                .filter(|allocation| allocation.yield_tier.is_none())
+                .filter(|allocation| allocation.provenance.is_none())
                 .count(),
             1,
             "the excess is one explicit unattributed row"
         );
     }
 
-    /// Stock drawn from an untiered position is unattributed but not excess:
-    /// the position existed. Only quantity no position covered is excess, and
-    /// the caller needs the two apart to keep holdings off negative.
+    /// Stock drawn from an unattributed position is unattributed but not
+    /// excess: the position existed. Only quantity no position covered is
+    /// excess, and the caller needs the two apart to keep holdings off
+    /// negative.
     #[test]
     fn excess_is_only_the_part_no_position_covered() {
         let positions = [
             tier(HarvestYieldTier::Short, 10.0),
-            TierPosition {
-                yield_tier: None,
+            SourcePosition {
+                provenance: None,
+                session_definition_id: None,
                 tool_name: None,
                 quantity: 5.0,
             },
@@ -323,7 +450,7 @@ mod tests {
         let plan = allocate(&positions, 20.0, 0.03);
 
         assert!((plan.attributed_qty - 10.0).abs() < 1e-9);
-        // 5 drawn from the untiered position, 5 covered by nothing at all.
+        // 5 drawn from the unattributed position, 5 covered by nothing at all.
         assert!((plan.unattributed_qty - 10.0).abs() < 1e-9);
         assert!((plan.excess_qty - 5.0).abs() < 1e-9);
         assert!((plan.excess_tt - 0.15).abs() < 1e-9);
@@ -333,7 +460,7 @@ mod tests {
         assert!(within.excess_qty.abs() < 1e-9);
         assert!(
             within.unattributed_qty > 0.0,
-            "still draws on the untiered position"
+            "still draws on the unattributed position"
         );
     }
 
@@ -348,11 +475,12 @@ mod tests {
 
     /// Stock migrated without provenance is consumed, but funds no activity.
     #[test]
-    fn untiered_positions_consume_but_do_not_attribute() {
+    fn unattributed_positions_consume_but_do_not_attribute() {
         let positions = [
             tier(HarvestYieldTier::Short, 50.0),
-            TierPosition {
-                yield_tier: None,
+            SourcePosition {
+                provenance: None,
+                session_definition_id: None,
                 tool_name: None,
                 quantity: 50.0,
             },
@@ -389,12 +517,18 @@ mod tests {
         assert!((ph3.quantity - 15.0).abs() < 1e-9);
         assert!((ph4.quantity - 5.0).abs() < 1e-9);
         // Both still belong to the tier that owns them.
-        assert_eq!(ph3.yield_tier, Some(HarvestYieldTier::Long));
-        assert_eq!(ph4.yield_tier, Some(HarvestYieldTier::Long));
+        assert_eq!(
+            ph3.provenance,
+            Some(StockProvenance::Harvest(HarvestYieldTier::Long))
+        );
+        assert_eq!(
+            ph4.provenance,
+            Some(StockProvenance::Harvest(HarvestYieldTier::Long))
+        );
         assert!((plan.attributed_qty - 20.0).abs() < 1e-9);
     }
 
-    /// Exhausted tiers do not produce zero-quantity allocation rows.
+    /// Exhausted sources do not produce zero-quantity allocation rows.
     #[test]
     fn closed_positions_are_skipped() {
         let positions = [
@@ -403,7 +537,10 @@ mod tests {
         ];
         let plan = allocate(&positions, 5.0, 0.03);
         assert_eq!(plan.allocations.len(), 1);
-        assert_eq!(plan.allocations[0].yield_tier, Some(HarvestYieldTier::Long));
+        assert_eq!(
+            plan.allocations[0].provenance,
+            Some(StockProvenance::Harvest(HarvestYieldTier::Long))
+        );
     }
 
     /// A fully tracked sale gives the activity the whole net markup, and the

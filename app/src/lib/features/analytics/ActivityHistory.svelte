@@ -34,10 +34,12 @@
 		entries,
 		loading,
 		onundo,
+		embedded = false,
 	}: {
 		entries: ActivityHistoryEntry[];
 		loading: boolean;
 		onundo: (entry: ActivityHistoryEntry, revertSale: boolean) => Promise<void>;
+		embedded?: boolean;
 	} = $props();
 
 	// Which row is asking to be confirmed, and which row is mid-undo. Only one
@@ -52,6 +54,7 @@
 		sold: 'Sold',
 		expired: 'Expired',
 		converted: 'Converted',
+		removed: 'Removed',
 	};
 
 	const STATUS_TONE: Record<string, string> = {
@@ -59,6 +62,7 @@
 		sold: 'text-positive',
 		expired: 'text-text-tertiary',
 		converted: 'text-text-secondary',
+		removed: 'text-text-tertiary',
 	};
 
 	/** What happened, in a line. The figures a row leads with are on the
@@ -66,6 +70,8 @@
 	function summary(entry: ActivityHistoryEntry): string {
 		const tt = `${formatPed(entry.ttValue)} PED TT`;
 		if (entry.kind === 'conversion') return `${tt} into ${entry.targetItem ?? 'another item'}`;
+		if (entry.kind === 'removal') return `${entry.quantity} removed, ${tt}`;
+		if (entry.kind === 'trade') return `${entry.quantity} sold by trade, ${tt}`;
 		if (entry.status === 'sold') return `${entry.quantity} sold, ${tt}`;
 		if (entry.status === 'expired') return `${entry.quantity} returned, ${tt}`;
 		return `${entry.quantity} on auction, ${tt}`;
@@ -90,13 +96,13 @@
 	}
 </script>
 
-<Card class="hover:z-20">
+{#snippet content()}
 	{#if loading}
 		<p class="py-10 text-center text-sm text-text-tertiary">Reading what has been recorded...</p>
 	{:else if entries.length === 0}
 		<div class="flex min-h-40 items-center justify-center p-6">
 			<p class="max-w-sm text-center text-sm leading-relaxed text-text-tertiary">
-				Nothing recorded yet. Auction listings and Nanocube conversions appear here, and can be
+				Nothing recorded yet. Sales, conversions, and removals appear here, and can be
 				taken back from here if you record one by mistake.
 			</p>
 		</div>
@@ -215,4 +221,10 @@
 			{/each}
 		</ul>
 	{/if}
-</Card>
+{/snippet}
+
+{#if embedded}
+	<div>{@render content()}</div>
+{:else}
+	<Card class="hover:z-20">{@render content()}</Card>
+{/if}

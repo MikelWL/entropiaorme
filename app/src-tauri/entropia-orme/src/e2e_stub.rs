@@ -94,8 +94,8 @@ mod tests {
     #[test]
     fn the_analytics_fixture_deserialises_into_the_typed_dtos() {
         use eo_api::analytics::{
-            AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview, InventoryItem, LedgerItem,
-            LedgerPreset,
+            AnalyticsHarvest, AnalyticsHunting, AnalyticsHuntingActivity, AnalyticsOverview,
+            InventoryItem, LedgerItem, LedgerPreset,
         };
         serde_json::from_value::<AnalyticsOverview>(super::analytics_fixture("overview"))
             .expect("overview fixture matches AnalyticsOverview");
@@ -103,6 +103,10 @@ mod tests {
             .expect("hunting fixture matches AnalyticsHunting");
         serde_json::from_value::<AnalyticsHarvest>(super::analytics_fixture("harvest"))
             .expect("harvest fixture matches AnalyticsHarvest");
+        serde_json::from_value::<AnalyticsHuntingActivity>(super::analytics_fixture(
+            "huntingActivity",
+        ))
+        .expect("huntingActivity fixture matches AnalyticsHuntingActivity");
         serde_json::from_value::<Vec<LedgerItem>>(super::analytics_fixture("ledger"))
             .expect("ledger fixture matches Vec<LedgerItem>");
         serde_json::from_value::<Vec<LedgerPreset>>(super::analytics_fixture("presets"))

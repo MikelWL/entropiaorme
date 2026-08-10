@@ -13,11 +13,13 @@ use std::sync::Arc;
 
 use eo_api::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTargetKind};
 use eo_api::analytics::{
-    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting, AnalyticsOverview,
-    AuctionConfirmInput, AuctionExpireInput, AuctionListing, AuctionListingInput, InventoryItem,
-    InventoryItemInput, InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput,
-    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, RealisedTierMarkup,
-    StockConversionInput, StockPosition,
+    ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
+    AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
+    AuctionListing, AuctionListingInput, HuntingRealisedMarkup, InventoryItem, InventoryItemInput,
+    InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem,
+    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput, Profession,
+    RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
+    StockRemovalInput,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -561,8 +563,27 @@ pub async fn analytics_harvest(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn harvest_stock(app: tauri::AppHandle) -> Result<Vec<StockPosition>, ApiError> {
-    facade(&app)?.harvest_stock().await
+pub async fn analytics_hunting_activity(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsHuntingActivity, ApiError> {
+    #[cfg(feature = "e2e-stub")]
+    {
+        let _ = (&app, &period);
+        e2e_analytics("huntingActivity")
+    }
+    #[cfg(not(feature = "e2e-stub"))]
+    {
+        facade(&app)?.analytics_hunting_activity(&period).await
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn activity_stock(
+    app: tauri::AppHandle,
+    profession: Profession,
+) -> Result<Vec<StockPosition>, ApiError> {
+    facade(&app)?.activity_stock(profession).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -573,8 +594,18 @@ pub async fn harvest_realised_markup(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn auction_listings(app: tauri::AppHandle) -> Result<Vec<AuctionListing>, ApiError> {
-    facade(&app)?.auction_listings().await
+pub async fn hunting_realised_markup(
+    app: tauri::AppHandle,
+) -> Result<HuntingRealisedMarkup, ApiError> {
+    facade(&app)?.hunting_realised_markup().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn auction_listings(
+    app: tauri::AppHandle,
+    profession: Profession,
+) -> Result<Vec<AuctionListing>, ApiError> {
+    facade(&app)?.auction_listings(profession).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -610,10 +641,32 @@ pub async fn stock_convert(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn stock_private_sale(
+    app: tauri::AppHandle,
+    input: PrivateSaleInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.stock_private_sale(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_remove(app: tauri::AppHandle, input: StockRemovalInput) -> Result<(), ApiError> {
+    facade(&app)?.stock_remove(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_shrapnel_convert(
+    app: tauri::AppHandle,
+    input: ShrapnelConversionInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.stock_shrapnel_convert(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn activity_history(
     app: tauri::AppHandle,
+    profession: Profession,
 ) -> Result<Vec<ActivityHistoryEntry>, ApiError> {
-    facade(&app)?.activity_history().await
+    facade(&app)?.activity_history(profession).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -638,6 +691,22 @@ pub async fn stock_conversion_undo(
     input: ActivityUndoInput,
 ) -> Result<(), ApiError> {
     facade(&app)?.stock_conversion_undo(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn private_sale_undo(
+    app: tauri::AppHandle,
+    input: ActivityUndoInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.private_sale_undo(input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stock_removal_undo(
+    app: tauri::AppHandle,
+    input: ActivityUndoInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.stock_removal_undo(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -823,6 +892,11 @@ pub async fn market_mob_ranking(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn market_harvest_markups(app: tauri::AppHandle) -> Result<MarketHarvestData, ApiError> {
     facade(&app)?.market_harvest_markups().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_hunt_markups(app: tauri::AppHandle) -> Result<MarketHarvestData, ApiError> {
+    facade(&app)?.market_hunt_markups().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1158,6 +1232,14 @@ pub async fn demo_analytics_harvest(
     period: String,
 ) -> Result<AnalyticsHarvest, ApiError> {
     facade(&app)?.demo_analytics_harvest(&period).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn demo_analytics_hunting_activity(
+    app: tauri::AppHandle,
+    period: String,
+) -> Result<AnalyticsHuntingActivity, ApiError> {
+    facade(&app)?.demo_analytics_hunting_activity(&period).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1572,17 +1654,24 @@ mod tests {
         "analytics_overview",
         "analytics_hunting",
         "analytics_harvest",
-        "harvest_stock",
+        "analytics_hunting_activity",
+        "activity_stock",
         "harvest_realised_markup",
+        "hunting_realised_markup",
         "auction_listings",
         "auction_listing_create",
         "auction_listing_confirm",
         "auction_listing_expire",
         "stock_convert",
+        "stock_private_sale",
+        "stock_remove",
+        "stock_shrapnel_convert",
         "activity_history",
         "auction_sale_revert",
         "auction_listing_undo",
         "stock_conversion_undo",
+        "private_sale_undo",
+        "stock_removal_undo",
         "ledger_list",
         "ledger_summary",
         "ledger_create",
@@ -1602,6 +1691,7 @@ mod tests {
         "market_break_even",
         "market_mob_ranking",
         "market_harvest_markups",
+        "market_hunt_markups",
         "market_item_history",
         "scan_status",
         "scan_start",
@@ -1637,6 +1727,7 @@ mod tests {
         "tracking_session_delete",
         "demo_analytics_overview",
         "demo_analytics_hunting",
+        "demo_analytics_hunting_activity",
         "demo_analytics_harvest",
         "demo_ledger_list",
         "demo_ledger_summary",

@@ -20,7 +20,7 @@
 use serde_json::{Map, Value};
 
 use crate::db::{Db, DbError};
-use crate::{daily_rollup, session_summary};
+use crate::{daily_rollup, session_rollup, session_summary};
 
 /// A projection table and the deterministic, `computed_at`-excluding
 /// snapshot query used to compare its incremental and rebuilt states.
@@ -29,8 +29,8 @@ struct Projection {
     snapshot_sql: &'static str,
 }
 
-/// The three read models, each rebuildable from the raw tracking tables.
-const PROJECTIONS: [Projection; 3] = [
+/// The read models, each rebuildable from the raw tracking tables.
+const PROJECTIONS: [Projection; 8] = [
     Projection {
         table: "session_summaries",
         snapshot_sql: "SELECT session_id, summary_version, started_at, ended_at, \
@@ -53,6 +53,34 @@ const PROJECTIONS: [Projection; 3] = [
         table: "daily_ledger_rollups",
         snapshot_sql: "SELECT day, entry_type, tag, amount FROM daily_ledger_rollups \
              ORDER BY day, entry_type, tag",
+    },
+    Projection {
+        table: "session_kill_rollups",
+        snapshot_sql: "SELECT session_id, context_id, mob_species, mob_maturity, kills, \
+             cycled_ped, loot_tt FROM session_kill_rollups \
+             ORDER BY session_id, context_id, mob_species, mob_maturity",
+    },
+    Projection {
+        table: "session_loot_rollups",
+        snapshot_sql: "SELECT session_id, mob_species, is_enhancer_shrapnel, item_name, \
+             quantity, value_ped FROM session_loot_rollups \
+             ORDER BY session_id, mob_species, is_enhancer_shrapnel, item_name",
+    },
+    Projection {
+        table: "session_context_loot_rollups",
+        snapshot_sql: "SELECT session_id, context_id, item_name, quantity, value_ped \
+             FROM session_context_loot_rollups \
+             ORDER BY session_id, context_id, item_name",
+    },
+    Projection {
+        table: "session_pes_rollups",
+        snapshot_sql: "SELECT session_id, context_id, pes FROM session_pes_rollups \
+             ORDER BY session_id, context_id",
+    },
+    Projection {
+        table: "session_rollup_meta",
+        snapshot_sql: "SELECT session_id, rollup_version FROM session_rollup_meta \
+             ORDER BY session_id",
     },
 ];
 
@@ -144,6 +172,7 @@ pub async fn rebuild_and_verify(db: &Db, now: f64) -> Result<RebuildReport, DbEr
         // against an up-to-date maintained state rather than a mid-heal one.
         daily_rollup::heal_rollups(conn, now)?;
         session_summary::heal_summaries(conn)?;
+        session_rollup::heal(conn)?;
 
         let mut incremental = Vec::with_capacity(PROJECTIONS.len());
         for projection in &PROJECTIONS {
@@ -153,6 +182,7 @@ pub async fn rebuild_and_verify(db: &Db, now: f64) -> Result<RebuildReport, DbEr
         // Rebuild every read model from the raw tables alone.
         daily_rollup::rebuild_rollups(conn, now)?;
         session_summary::rebuild_summaries(conn)?;
+        session_rollup::rebuild(conn)?;
 
         let mut tables = Vec::with_capacity(PROJECTIONS.len());
         for (projection, maintained) in PROJECTIONS.iter().zip(incremental) {
@@ -197,8 +227,8 @@ mod tests {
         .unwrap();
     }
 
-    /// Seed a session with kills, skill gains and ledger entries, so all
-    /// three projections are non-empty.
+    /// Seed a session with kills, loot, skill gains and ledger entries, so
+    /// every projection family is non-empty.
     async fn seed(db: &Db) {
         run(
             db,
@@ -228,6 +258,12 @@ mod tests {
         .await;
         run(
             db,
+            "INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, \
+             is_enhancer_shrapnel) VALUES ('k1', 'Animal Hide', 3, 1.2, 0)",
+        )
+        .await;
+        run(
+            db,
             "INSERT INTO ledger_entries (id, date, type, description, amount, tag) VALUES \
              ('l1', '2001-09-05', 'markup', 'sale', 3.0, 'manual'), \
              ('l2', '2001-09-05', 'expense', 'repair', 1.0, 'repair')",
@@ -245,8 +281,8 @@ mod tests {
             report.all_matched(),
             "every projection is a pure function of the raw tables: {report:?}"
         );
-        // All three projections are covered and non-trivial.
-        assert_eq!(report.tables.len(), 3);
+        // Every projection is covered and non-trivial.
+        assert_eq!(report.tables.len(), 8);
         assert!(report
             .tables
             .iter()
@@ -259,6 +295,26 @@ mod tests {
             .tables
             .iter()
             .any(|t| t.table == "daily_ledger_rollups" && t.row_count == 2));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "session_kill_rollups" && t.row_count == 1));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "session_loot_rollups" && t.row_count == 1));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "session_context_loot_rollups" && t.row_count == 1));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "session_pes_rollups" && t.row_count == 1));
+        assert!(report
+            .tables
+            .iter()
+            .any(|t| t.table == "session_rollup_meta" && t.row_count == 1));
     }
 
     #[tokio::test]

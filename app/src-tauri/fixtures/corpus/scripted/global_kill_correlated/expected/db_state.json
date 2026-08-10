@@ -41,16 +41,7 @@
       "timestamp": "<TS_13>"
     }
   ],
-  "ledger_entries": [
-    {
-      "amount": 0.15,
-      "date": "<TS_14>",
-      "description": "Shrapnel Conversion",
-      "id": "<UUID_3>",
-      "tag": "convert",
-      "type": "markup"
-    }
-  ],
+  "ledger_entries": [],
   "map_pins": [],
   "notable_events": [
     {
@@ -58,7 +49,7 @@
       "kill_id": "<UUID_2>",
       "mob_or_item": "Argonaut Stalker",
       "session_id": "<UUID_1>",
-      "timestamp": "<TS_15>",
+      "timestamp": "<TS_14>",
       "value_ped": 130.0
     }
   ],

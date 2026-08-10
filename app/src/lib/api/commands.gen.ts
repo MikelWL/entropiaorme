@@ -64,25 +64,25 @@ export interface ActiveActivityView {
 
 /**
  * One thing an activity did to its stock: a listing across its whole
- * lifecycle, or a conversion into another item.
+ * lifecycle, a private trade, a conversion, or a stock-only removal.
  * 
  * A listing appears once however far it has got. Creating and selling are the
  * same listing at two moments, not two entries.
  */
 export interface ActivityHistoryEntry {
 	id: string;
-	/** `listing` or `conversion`. */
+	/** `listing`, `trade`, `conversion`, or `removal`. */
 	kind: string;
-	/** `pending`, `sold` or `expired` for a listing; `converted` otherwise. */
+	/** `pending`, `sold`, `expired`, `converted`, or `removed`. */
 	status: string;
 	itemName: string;
-	/** What a conversion produced; `null` for a listing. */
+	/** What a conversion produced; `null` for other outcomes. */
 	targetItem: string | null;
 	/** When a listing resolved, or when it was listed if it has not; when a conversion happened. */
 	occurredAt: string;
 	quantity: number;
 	ttValue: number;
-	/** Sold listings only: the gain after both fees, and the part of it an activity may claim. */
+	/** Realised outcomes only: the net gain, and the part an activity may claim. */
 	netMarkup: number | null;
 	activityNetMarkup: number | null;
 	/** Whether the sale can be taken back, leaving the listing open. */
@@ -210,6 +210,20 @@ export interface AnalyticsHunting {
 }
 
 /**
+ * The revamped Hunting aggregate: direct headline figures, the
+ * definition-keyed Sessions axis, and the observed Targets axis. All
+ * figures are DIRECT (weapon + enhancer cost at kill grain, loot TT,
+ * session-grain activity skill); heal and armour stay session-grain
+ * residues reported on Dashboard and Overview, never allocated into only
+ * some comparison rows.
+ */
+export interface AnalyticsHuntingActivity {
+	overall: HuntingActivityOverall;
+	definitions: HuntingDefinitionComparison[];
+	species: HuntingSpeciesComparison[];
+}
+
+/**
  * The Overview aggregate: the total return rate and trend, the returns /
  * losses breakdowns, the totals, and the day / month timelines.
  */
@@ -302,9 +316,11 @@ export interface AuctionListing {
 
 /**
  * An auction-listing creation payload. Dates are optional and default to
- * today; the fee is what the game quoted at listing time.
+ * today; the fee is what the game quoted at listing time. The profession
+ * stamps which activity's Market owns the listing.
  */
 export interface AuctionListingInput {
+	profession: Profession;
 	itemName: string;
 	quantity: number;
 	startingBid: number;
@@ -844,6 +860,72 @@ export interface HpOptimizerSkill {
 	hpPerPed: number;
 	codexCategory: string | null;
 	codexDivisor: number | null;
+}
+
+/**
+ * One exact declared activity signature inside a session definition.
+ * Costs and loot are partitioned by the context stamped at capture; a
+ * separately confirmed liquid reward is additive exactly once.
+ */
+export interface HuntingActivityComparison {
+	kind: HuntingActivityKind;
+	label: string;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	confirmedRewardPed: number;
+	/** Actual reward items observed at completion. Their markup stays a current market projection and never enters realised accounting. */
+	rewardItems: HarvestLootItem[];
+	rewardedReturns: number;
+	rewardedRate: number;
+	rewardStatus: HuntingRewardStatus;
+	lootItems: HarvestLootItem[];
+	variants: HuntingActivityComparison[];
+}
+
+export type HuntingActivityKind = 'quest' | 'quest_family' | 'segment' | 'bundle' | 'ambient';
+
+/**
+ * The whole activity's direct headline figures for the period.
+ */
+export interface HuntingActivityOverall {
+	cycled: number;
+	returns: number;
+	lootRate: number;
+}
+
+/**
+ * One session definition's aggregate over its hunted instances; the
+ * unassigned bucket carries a null `definitionId`.
+ */
+export interface HuntingDefinitionComparison {
+	definitionId: number | null;
+	name: string;
+	isArchived: boolean;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	lootItems: HarvestLootItem[];
+	activities: HuntingActivityComparison[];
+}
+
+export interface HuntingRealisedMarkup {
+	species: RealisedSpeciesMarkup[];
+	definitions: RealisedDefinitionMarkup[];
+}
+
+export type HuntingRewardStatus = 'none' | 'included_in_loot' | 'fixed_liquid' | 'skill' | 'mixed' | 'unverified';
+
+/**
+ * One observed species' aggregate; the unclassified bucket carries an
+ * empty species.
+ */
+export interface HuntingSpeciesComparison {
+	mobSpecies: string;
+	cycled: number;
+	returns: number;
+	lootRate: number;
+	lootItems: HarvestLootItem[];
 }
 
 /**
@@ -1723,6 +1805,25 @@ export interface PlaylistItemInput {
 }
 
 /**
+ * A completed player-to-player trade. Unlike an auction listing, its price
+ * and outcome are already known and no fee is involved.
+ */
+export interface PrivateSaleInput {
+	profession: Profession;
+	itemName: string;
+	quantity: number;
+	soldFor: number;
+	soldAt?: string | null;
+}
+
+/**
+ * The activity family a stock action belongs to. Closed vocabulary: the
+ * auction and conversion lifecycle is shared, and the profession stamp is
+ * what scopes each activity's Market and History to its own records.
+ */
+export type Profession = 'harvesting' | 'hunting';
+
+/**
  * One profession row.
  */
 export interface ProfessionLevel {
@@ -2017,8 +2118,22 @@ export interface RadarGeometry {
 	displayScale: number;
 }
 
+export interface RealisedDefinitionMarkup {
+	definitionId: number;
+	netMarkup: number;
+}
+
 /**
- * One yield tier's net realised markup from confirmed sales.
+ * One mob species' net realised markup from confirmed stock outcomes: the Hunting
+ * sibling of [`RealisedTierMarkup`].
+ */
+export interface RealisedSpeciesMarkup {
+	mobSpecies: string;
+	netMarkup: number;
+}
+
+/**
+ * One yield tier's net realised markup from confirmed stock outcomes.
  */
 export interface RealisedTierMarkup {
 	yieldTier: HarvestYieldTier;
@@ -2364,6 +2479,15 @@ export interface SettingsPatch {
 }
 
 /**
+ * Deliberate Shrapnel conversion at the game's fixed 100:101 ratio.
+ */
+export interface ShrapnelConversionInput {
+	profession: Profession;
+	quantity: number;
+	convertedAt?: string | null;
+}
+
+/**
  * One per-skill gain (attributes excluded).
  */
 export interface SkillGain {
@@ -2422,9 +2546,11 @@ export interface StatProfession {
 }
 
 /**
- * A stock-conversion payload (recycling into Nanocubes at 1:1 TT).
+ * A stock-conversion payload (recycling into Nanocubes at 1:1 TT). The
+ * profession stamps which activity's History owns the conversion.
  */
 export interface StockConversionInput {
+	profession: Profession;
 	sourceItem: string;
 	targetItem: string;
 	quantity: number;
@@ -2443,6 +2569,17 @@ export interface StockPosition {
 	ttValue: number;
 	/** Quantity sitting in an unresolved auction listing. Already out of `quantity`, since listed stock has left the player's inventory in game, but reported so it does not read as simply gone. */
 	listedQuantity: number;
+}
+
+/**
+ * Stock whose later fate is unknown. This changes holdings only and never
+ * rewrites the loot or ledger history that established its TT.
+ */
+export interface StockRemovalInput {
+	profession: Profession;
+	itemName: string;
+	quantity: number;
+	removedAt?: string | null;
 }
 
 /**
@@ -2925,16 +3062,24 @@ export async function analyticsHarvest(period: string): Promise<AnalyticsHarvest
 	return invokeCommand('analytics_harvest', { period });
 }
 
-export async function harvestStock(): Promise<StockPosition[]> {
-	return invokeCommand('harvest_stock', {});
+export async function analyticsHuntingActivity(period: string): Promise<AnalyticsHuntingActivity> {
+	return invokeCommand('analytics_hunting_activity', { period });
+}
+
+export async function activityStock(profession: Profession): Promise<StockPosition[]> {
+	return invokeCommand('activity_stock', { profession });
 }
 
 export async function harvestRealisedMarkup(): Promise<RealisedTierMarkup[]> {
 	return invokeCommand('harvest_realised_markup', {});
 }
 
-export async function auctionListings(): Promise<AuctionListing[]> {
-	return invokeCommand('auction_listings', {});
+export async function huntingRealisedMarkup(): Promise<HuntingRealisedMarkup> {
+	return invokeCommand('hunting_realised_markup', {});
+}
+
+export async function auctionListings(profession: Profession): Promise<AuctionListing[]> {
+	return invokeCommand('auction_listings', { profession });
 }
 
 export async function auctionListingCreate(input: AuctionListingInput): Promise<AuctionListing> {
@@ -2953,8 +3098,20 @@ export async function stockConvert(input: StockConversionInput): Promise<void> {
 	return invokeCommand('stock_convert', { input });
 }
 
-export async function activityHistory(): Promise<ActivityHistoryEntry[]> {
-	return invokeCommand('activity_history', {});
+export async function stockPrivateSale(input: PrivateSaleInput): Promise<void> {
+	return invokeCommand('stock_private_sale', { input });
+}
+
+export async function stockRemove(input: StockRemovalInput): Promise<void> {
+	return invokeCommand('stock_remove', { input });
+}
+
+export async function stockShrapnelConvert(input: ShrapnelConversionInput): Promise<void> {
+	return invokeCommand('stock_shrapnel_convert', { input });
+}
+
+export async function activityHistory(profession: Profession): Promise<ActivityHistoryEntry[]> {
+	return invokeCommand('activity_history', { profession });
 }
 
 export async function auctionSaleRevert(input: ActivityUndoInput): Promise<AuctionListing> {
@@ -2967,6 +3124,14 @@ export async function auctionListingUndo(input: ActivityUndoInput): Promise<void
 
 export async function stockConversionUndo(input: ActivityUndoInput): Promise<void> {
 	return invokeCommand('stock_conversion_undo', { input });
+}
+
+export async function privateSaleUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('private_sale_undo', { input });
+}
+
+export async function stockRemovalUndo(input: ActivityUndoInput): Promise<void> {
+	return invokeCommand('stock_removal_undo', { input });
 }
 
 export async function ledgerList(cursor: string | null, limit: number | null): Promise<LedgerPage> {
@@ -3043,6 +3208,10 @@ export async function marketMobRanking(horizon: MarketHorizon): Promise<MarketMo
 
 export async function marketHarvestMarkups(): Promise<MarketHarvestData> {
 	return invokeCommand('market_harvest_markups', {});
+}
+
+export async function marketHuntMarkups(): Promise<MarketHarvestData> {
+	return invokeCommand('market_hunt_markups', {});
 }
 
 export async function marketItemHistory(itemName: string, horizon: MarketHorizon): Promise<MarketHistoryPoint[]> {
@@ -3183,6 +3352,10 @@ export async function demoAnalyticsOverview(period: string): Promise<AnalyticsOv
 
 export async function demoAnalyticsHunting(): Promise<AnalyticsHunting> {
 	return invokeCommand('demo_analytics_hunting', {});
+}
+
+export async function demoAnalyticsHuntingActivity(period: string): Promise<AnalyticsHuntingActivity> {
+	return invokeCommand('demo_analytics_hunting_activity', { period });
 }
 
 export async function demoAnalyticsHarvest(period: string): Promise<AnalyticsHarvest> {

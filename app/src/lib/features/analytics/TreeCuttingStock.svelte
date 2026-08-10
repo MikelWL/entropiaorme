@@ -1,5 +1,7 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import SearchInput from '$lib/components/SearchInput.svelte';
+	import { tick } from 'svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
@@ -7,11 +9,68 @@
 		stock,
 		onsell,
 		onconvert,
+		onremove,
+		onshrapnelconvert,
+		// The one activity-specific line in the panel, so the Hunting tab can
+		// host the same surface over its own loot without forking the layout.
+		sourceDescription = 'Loot recorded from tree cutting, minus stock you have sold, converted, or removed.',
 	}: {
 		stock: TreeCuttingStock[];
 		onsell: (item: TreeCuttingStock) => void;
 		onconvert: (item: TreeCuttingStock) => void;
+		onremove: (item: TreeCuttingStock) => void;
+		onshrapnelconvert: (item: TreeCuttingStock) => void;
+		sourceDescription?: string;
 	} = $props();
+
+	// A hunting loot table runs to hundreds of distinct items where a
+	// harvesting one holds a handful, so the panel scales itself: past the
+	// threshold a search appears and emptied lines fold behind a quiet
+	// disclosure. Below it, nothing changes: every line stays visible,
+	// emptied ones dimmed, exactly as this panel has always read.
+	const SEARCH_THRESHOLD = 8;
+	let query = $state('');
+	let showEmptied = $state(false);
+	const longList = $derived(stock.length > SEARCH_THRESHOLD);
+	const matches = $derived(
+		query.trim() === ''
+			? stock
+			: stock.filter((item) => item.itemName.toLowerCase().includes(query.trim().toLowerCase())),
+	);
+	// A live query overrides the emptied fold: a deliberate search is a
+	// deliberate request for that item, sold out or not. The fold's count
+	// reads against the whole list so the two can never disagree.
+	const emptiedCount = $derived(stock.filter((item) => item.heldQty <= 0).length);
+	const visibleStock = $derived(
+		longList && !showEmptied && query.trim() === ''
+			? matches.filter((item) => item.heldQty > 0)
+			: matches,
+	);
+	let stockList = $state<HTMLUListElement>();
+	let hasMoreBelow = $state(false);
+
+	function updateScrollContinuation() {
+		if (!stockList) {
+			hasMoreBelow = false;
+			return;
+		}
+		hasMoreBelow = stockList.scrollHeight - stockList.clientHeight - stockList.scrollTop > 2;
+	}
+
+	$effect(() => {
+		void visibleStock;
+		const list = stockList;
+		if (!list) return;
+		void tick().then(updateScrollContinuation);
+		const observer =
+			typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateScrollContinuation);
+		observer?.observe(list);
+		window.addEventListener('resize', updateScrollContinuation);
+		return () => {
+			observer?.disconnect();
+			window.removeEventListener('resize', updateScrollContinuation);
+		};
+	});
 
 	function formatVolume(value: number): string {
 		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -168,23 +227,37 @@
 	</div>
 {/snippet}
 
-<div class="sm:border-l sm:border-border/40 sm:pl-8">
-	<div class="flex items-center gap-2 pb-2">
-		<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
-		<InfoTip align="right" label="What current stock means">
-			<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
-				<p class="font-semibold text-text">
-					Your Current Stock: Loot you still hold
-				</p>
-				<p>
-					Loot recorded from tree cutting, minus loot you have already sold or converted.
-				</p>
-				<p>
-					Stock TT is its Trade Terminal value. Market markup only becomes a realised gain when a
-					sale is confirmed.
-				</p>
-			</div>
-		</InfoTip>
+<div>
+	<div
+		class="flex flex-wrap items-center gap-x-5 gap-y-2 pb-2"
+		data-testid="stock-utility-strip"
+	>
+		<div class="flex items-center gap-2">
+			<h3 class="text-sm font-semibold tracking-tight text-text">Your Current Stock</h3>
+			<InfoTip align="right" label="What current stock means">
+				<div class="space-y-2 text-xs leading-relaxed text-text-secondary">
+					<p class="font-semibold text-text">
+						Your Current Stock: Loot you still hold
+					</p>
+					<p>
+						{sourceDescription}
+					</p>
+					<p>
+						Stock TT is its Trade Terminal value. Markup becomes realised when a sale is confirmed
+						or Shrapnel is deliberately converted.
+					</p>
+				</div>
+			</InfoTip>
+		</div>
+
+		{#if longList}
+			<SearchInput
+				class="w-full sm:w-64"
+				bind:value={query}
+				placeholder="Find an item"
+				aria-label="Find an item"
+			/>
+		{/if}
 	</div>
 
 	<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
@@ -192,11 +265,17 @@
 		<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
 		<span class="eyebrow w-20 text-right shrink-0">Markup</span>
 		<span class="eyebrow w-12 text-center shrink-0">Conf</span>
-		<span class="eyebrow w-[3.375rem] shrink-0 text-right">Actions</span>
+		<span class="eyebrow w-[7.125rem] shrink-0 text-right">Actions</span>
 	</div>
 
-	<ul class="flex flex-col gap-1">
-		{#each stock as item (item.itemName)}
+	<div class="relative">
+	<ul
+		bind:this={stockList}
+		class="flex max-h-[24rem] flex-col gap-1 overflow-y-auto"
+		data-testid="stock-scroll-list"
+		onscroll={updateScrollContinuation}
+	>
+		{#each visibleStock as item (item.itemName)}
 			<!-- An emptied line stays, dimmed: the item is still one this
 				activity produces, and its market reading is worth keeping
 				legible for the next time there is stock to sell. -->
@@ -287,6 +366,17 @@
 				</div>
 
 				<div class="shrink-0 flex items-center justify-end gap-1.5">
+					{#if item.itemName === 'Shrapnel'}
+						{@render actionButton(
+							'C',
+							'Convert',
+							() => onshrapnelconvert(item),
+							item.heldQty <= 0,
+							item.heldQty <= 0 ? 'Nothing held to convert' : '',
+						)}
+					{:else}
+						<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
+					{/if}
 					{@render actionButton(
 						'N',
 						'Nanocube',
@@ -301,8 +391,56 @@
 						item.heldQty <= 0,
 						item.heldQty <= 0 ? 'Nothing held to sell' : '',
 					)}
+					{@render actionButton(
+						'X',
+						'Remove',
+						() => onremove(item),
+						item.heldQty <= 0,
+						item.heldQty <= 0 ? 'Nothing held to remove' : '',
+					)}
 				</div>
 			</li>
 		{/each}
+		{#if visibleStock.length === 0 && query.trim() !== ''}
+			<li class="px-2.5 py-3 text-center text-xs text-text-tertiary">
+				No stock item matches that search.
+			</li>
+		{/if}
 	</ul>
+
+		<div
+			class="pointer-events-none absolute inset-x-0 bottom-0 flex h-14 items-end justify-center
+				bg-gradient-to-t from-base via-base/75 to-transparent pb-1.5
+				transition-opacity duration-[var(--duration-base)] ease-[var(--ease-out)]
+				{hasMoreBelow ? 'opacity-100' : 'opacity-0'}"
+			data-testid="stock-scroll-continuation"
+			aria-hidden="true"
+		>
+			<svg
+				class="h-5 w-5 text-text-tertiary/80 drop-shadow-sm"
+				viewBox="0 0 20 20"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.35"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			>
+				<path d="m5 6.5 5 4 5-4" />
+				<path d="m5 11 5 4 5-4" opacity="0.6" />
+			</svg>
+		</div>
+	</div>
+
+	{#if longList && emptiedCount > 0 && query.trim() === ''}
+		<button
+			type="button"
+			class="mt-1 px-2.5 text-xs text-text-tertiary cursor-pointer
+				transition-colors duration-[var(--duration-fast)] hover:text-text"
+			onclick={() => (showEmptied = !showEmptied)}
+		>
+			{showEmptied
+				? 'Hide emptied items'
+				: `Show ${emptiedCount} emptied ${emptiedCount === 1 ? 'item' : 'items'}`}
+		</button>
+	{/if}
 </div>

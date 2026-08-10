@@ -749,10 +749,58 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         completions(db.clone()).await,
         vec![json!(["manual-fixed-0002", qa, 1772366460.0])]
     );
+    let reward_provenance = db
+        .with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT reward_source, reward_ped, ledger_entry_id, quest_claim_id \
+                 FROM session_quest_completions WHERE quest_id = ?",
+                params![qa],
+                |row| {
+                    Ok(json!([
+                        row.get::<_, String>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ]))
+                },
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        reward_provenance,
+        json!(["ledger", 2.5, "fixed-0001", null])
+    );
 
     // The bus feeds the active session; a session-scoped skill
-    // completion writes a claim, and a repeat in the same session
-    // dedupes the completion while duplicating the claim.
+    // completion writes a claim, and a repeat in the same session is
+    // idempotent across both the completion and its linked reward.
+    let attribution_db = db.clone();
+    attribution_db
+        .with_writer(move |conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions(id, started_at, is_active) \
+                 VALUES('sess-abc', 1772366400.0, 1)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO session_intervals(id, session_id, kind, label, ref_id, started_at) \
+                 VALUES(901, 'sess-abc', 'quest', 'Daily Hunt: Atrox', ?1, 1772366400.0)",
+                params![qb],
+            )?;
+            conn.execute(
+                "INSERT INTO session_contexts(id, session_id, created_at) \
+                 VALUES(902, 'sess-abc', 1772366400.0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO session_context_intervals(context_id, interval_id) VALUES(902, 901)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
         session_id: "sess-abc".into(),
     }));
@@ -781,10 +829,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         .unwrap();
     assert_eq!(
         claims,
-        vec![
-            json!([qb, "Daily Hunt: Atrox", 5.0, 1772366520.0]),
-            json!([qb, "Daily Hunt: Atrox", 5.0, 1772366580.0]),
-        ]
+        vec![json!([qb, "Daily Hunt: Atrox", 5.0, 1772366520.0])]
     );
     assert_eq!(
         completions(db.clone()).await,
@@ -793,6 +838,25 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
             json!(["sess-abc", qb, 1772366520.0]),
         ]
     );
+    let captured_activity = db
+        .with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT activity_context_id, activity_interval_id, reward_source, quest_claim_id \
+                 FROM session_quest_completions WHERE session_id = 'sess-abc'",
+                [],
+                |row| {
+                    Ok(json!([
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ]))
+                },
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(captured_activity, json!([902, 901, "skill", 1]));
 
     // Cancel legs: a started quest clears; a quest neither started
     // nor cooling passes through; a cooling quest resets its
@@ -805,7 +869,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     clock.advance(60.0).unwrap();
     svc.cancel_quest(qb, true).await.unwrap().unwrap();
     let claim_count = count_rows(&db, "SELECT COUNT(*) FROM quest_claims").await;
-    assert_eq!(claim_count, 1, "the newest claim is undone");
+    assert_eq!(claim_count, 0, "the linked claim is undone exactly");
     svc.cancel_quest(qa, true).await.unwrap().unwrap();
     let ledger_count = count_rows(&db, "SELECT COUNT(*) FROM ledger_entries").await;
     assert_eq!(ledger_count, 0, "the reward ledger entry is undone");
@@ -1116,8 +1180,8 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         ]
     );
 
-    // The final ledger carries exactly the two liquid completions
-    // the filter recorded; the zero-reward completion wrote none.
+    // The final ledger carries only the separately liquid completion;
+    // suppressed reward items remain item provenance rather than cash.
     let final_ledger: Vec<String> = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare("SELECT id FROM ledger_entries ORDER BY id")?;
@@ -1128,7 +1192,29 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         })
         .await
         .unwrap();
-    assert_eq!(final_ledger, ["fixed-0003", "fixed-0004"]);
+    assert_eq!(final_ledger, ["fixed-0003"]);
+    let reward_items: Vec<(String, i64, f64)> = db
+        .with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT ri.item_name, ri.quantity, ri.value_ped \
+                 FROM session_quest_completion_reward_items ri \
+                 JOIN session_quest_completions c ON c.id = ri.completion_id \
+                 WHERE c.quest_id = ? ORDER BY ri.id",
+            )?;
+            let rows = stmt
+                .query_map(params![qa], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        reward_items,
+        [("Universal Ammo".to_string(), 1, 2.51)],
+        "the actual suppressed item is immutable reward evidence"
+    );
 
     // A session stop clears the tracked session: notable events
     // stop recording.
@@ -1757,6 +1843,15 @@ fn marker(item_name: &str, quantity: i64) -> SignalLoot {
     SignalLoot {
         item_name: item_name.to_string(),
         quantity,
+        value_ped: Ped::ZERO,
+    }
+}
+
+fn marker_value(item_name: &str, quantity: i64, value_ped: f64) -> SignalLoot {
+    SignalLoot {
+        item_name: item_name.to_string(),
+        quantity,
+        value_ped: Ped(value_ped),
     }
 }
 
@@ -1767,7 +1862,7 @@ fn marker(item_name: &str, quantity: i64) -> SignalLoot {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, _db) = service(dir.path()).await;
+    let (svc, db) = service(dir.path()).await;
 
     let closed = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = closed.clone();
@@ -1780,6 +1875,7 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
         &svc.create_quest(&json!({
             "name": "Hyperion Boss 1",
             "signal_loot_item": "Hyperion Daily Voucher",
+            "cooldown_hours": 20,
         }))
         .await
         .unwrap(),
@@ -1790,7 +1886,7 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     // purpose) completes the run; unrelated items complete nothing.
     svc.signal_loot_check(&[
         marker("Shrapnel", 4639),
-        marker(" hyperion daily voucher ", 1),
+        marker_value(" hyperion daily voucher ", 1, 0.25),
         marker("Hyperium", 2),
     ])
     .await
@@ -1800,6 +1896,49 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     assert!(quest["started_at"].is_null(), "the run ended");
     assert!(!quest["last_completed_at"].is_null(), "completion recorded");
     assert_eq!(*closed.lock().unwrap(), vec![boss]);
+    let source = db
+        .with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT reward_source, reward_ped FROM session_quest_completions \
+                 WHERE quest_id = ?",
+                params![boss],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(source, ("tracked_loot".to_string(), None));
+    let reward_item = db
+        .with_reader(move |conn| {
+            Ok(conn.query_row(
+                "SELECT ri.item_name, ri.quantity, ri.value_ped \
+                 FROM session_quest_completion_reward_items ri \
+                 JOIN session_quest_completions c ON c.id = ri.completion_id \
+                 WHERE c.quest_id = ?",
+                params![boss],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                },
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(reward_item, ("hyperion daily voucher".to_string(), 1, 0.25));
+
+    svc.cancel_quest(boss, false).await.unwrap();
+    let remaining_reward_items = count_rows(
+        &db,
+        "SELECT COUNT(*) FROM session_quest_completion_reward_items",
+    )
+    .await;
+    assert_eq!(
+        remaining_reward_items, 0,
+        "cancel removes linked reward evidence"
+    );
 }
 
 /// A signal quest that is NOT in progress ignores its marker: an
