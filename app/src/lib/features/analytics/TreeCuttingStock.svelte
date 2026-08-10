@@ -207,12 +207,11 @@
 <div class={fillAvailable ? 'flex h-full min-h-0 flex-col' : ''}>
 	{#if controlsLabel}
 		<div
-			class="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5 gap-y-3 pb-5"
+			class="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-5 pb-5"
 			data-testid="stock-utility-strip"
 		>
-			<div>{#if heading}{@render heading()}{/if}</div>
-			<div class="justify-self-end">{@render controlsLabel()}</div>
-			<div>
+			<div class="flex min-w-0 flex-col items-start gap-3">
+				{#if heading}{@render heading()}{/if}
 				{#if searchable}
 					<SearchInput
 						class="w-full sm:w-64"
@@ -222,7 +221,10 @@
 					/>
 				{/if}
 			</div>
-			<div class="justify-self-end">{#if controls}{@render controls()}{/if}</div>
+			<div class="flex flex-col items-end gap-1">
+				{@render controlsLabel()}
+				{#if controls}{@render controls()}{/if}
+			</div>
 		</div>
 	{:else}
 		<div
