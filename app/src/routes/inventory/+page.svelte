@@ -3,6 +3,7 @@
 	import type { InventoryItem } from '$lib/api';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+	import Tabs from '$lib/components/Tabs.svelte';
 	import ActivityHistory from '$lib/features/analytics/ActivityHistory.svelte';
 	import AdjustStockModal from '$lib/features/analytics/AdjustStockModal.svelte';
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
@@ -11,7 +12,6 @@
 	import EquipmentSaleModal from '$lib/features/inventory/EquipmentSaleModal.svelte';
 	import InventoryHoldings from '$lib/features/inventory/InventoryHoldings.svelte';
 	import InventoryItemFormModal from '$lib/features/inventory/InventoryItemFormModal.svelte';
-	import InventorySummary from '$lib/features/inventory/InventorySummary.svelte';
 	import {
 		createInventoryModel,
 		type InventoryKind,
@@ -32,6 +32,12 @@
 		{ id: 'loot', label: 'Loot' },
 		{ id: 'equipment', label: 'Equipment' },
 	];
+	const tabs = [
+		{ id: 'holdings', label: 'Holdings' },
+		{ id: 'listings', label: 'Listings' },
+		{ id: 'history', label: 'History' },
+	];
+
 	onMount(() => void model.load());
 
 	function selectView(id: string) {
@@ -55,8 +61,8 @@
 	}
 </script>
 
-<div class="space-y-5 px-6 pb-6">
-	<header class="flex flex-wrap items-end justify-between gap-4">
+<div class="space-y-6 px-6 pb-6">
+	<header>
 		<div class="flex flex-col gap-1.5">
 			<h1 class="text-xl font-semibold tracking-tight text-text">Inventory</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
@@ -64,31 +70,18 @@
 				Manage what you hold and sell; review activity performance in Analytics.
 			</p>
 		</div>
-		<SegmentedControl
-			options={kindOptions}
-			active={model.kind}
-			size="md"
-			onchange={(id) => (model.kind = id as InventoryKind)}
-		/>
 	</header>
 
-	<ErrorNotice message={model.error} />
+	<Tabs {tabs} active={model.view} onchange={selectView} />
 
-	<InventorySummary
-		kind={model.kind}
-		view={model.view}
-		heldValue={model.kind === 'loot' ? model.lootTt : model.equipmentTt}
-		distinctHoldings={model.loot.length}
-		costBasis={model.equipmentBasis}
-		openListings={model.openListings.length}
-		onviewchange={selectView}
-	/>
+	<ErrorNotice message={model.error} />
 
 	{#if model.loading}
 		<p class="py-16 text-center text-sm text-text-tertiary">Reading inventory...</p>
 	{:else if model.view === 'holdings'}
 		<InventoryHoldings
 			kind={model.kind}
+			onkindchange={(id) => (model.kind = id as InventoryKind)}
 			loot={model.loot}
 			equipment={model.equipment}
 			onsellloot={(item) => (lootToSell = item)}
@@ -101,6 +94,14 @@
 			ondeleteequipment={deleteEquipment}
 		/>
 	{:else if model.view === 'listings'}
+		<div class="py-3">
+			<SegmentedControl
+				options={kindOptions}
+				active={model.kind}
+				size="md"
+				onchange={(id) => (model.kind = id as InventoryKind)}
+			/>
+		</div>
 		<AuctionListings
 			open={model.openListings}
 			resolved={model.resolvedListings}
@@ -109,6 +110,14 @@
 			embedded
 		/>
 	{:else}
+		<div class="py-3">
+			<SegmentedControl
+				options={kindOptions}
+				active={model.kind}
+				size="md"
+				onchange={(id) => (model.kind = id as InventoryKind)}
+			/>
+		</div>
 		<ActivityHistory
 			entries={model.history}
 			loading={model.historyLoading}

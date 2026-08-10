@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
+	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import type { InventoryItem } from '$lib/api';
 	import type { TreeCuttingStock } from '$lib/features/analytics/treeCuttingModel.svelte';
 	import { formatLedgerDate, formatPed } from '$lib/utils/format';
@@ -8,6 +9,7 @@
 
 	let {
 		kind,
+		onkindchange,
 		loot,
 		equipment,
 		onsellloot,
@@ -20,6 +22,7 @@
 		ondeleteequipment,
 	}: {
 		kind: InventoryKind;
+		onkindchange: (id: string) => void;
 		loot: TreeCuttingStock[];
 		equipment: InventoryItem[];
 		onsellloot: (item: TreeCuttingStock) => void;
@@ -40,15 +43,20 @@
 	const visibleEquipment = $derived(
 		equipment.filter((item) => !normalisedQuery || item.name.toLowerCase().includes(normalisedQuery)),
 	);
+	const kindOptions = [
+		{ id: 'loot', label: 'Loot' },
+		{ id: 'equipment', label: 'Equipment' },
+	];
 </script>
 
 <section aria-label={kind === 'loot' ? 'Loot holdings' : 'Equipment holdings'}>
 	<div class="flex flex-wrap items-center justify-between gap-3 py-3">
-		<div>
-			<h2 class="text-sm font-semibold tracking-tight text-text">
-				{kind === 'loot' ? 'Loot holdings' : 'Equipment holdings'}
-			</h2>
-		</div>
+		<SegmentedControl
+			options={kindOptions}
+			active={kind}
+			size="md"
+			onchange={onkindchange}
+		/>
 		<div class="flex items-center gap-2">
 			<SearchInput
 				class="w-56"
