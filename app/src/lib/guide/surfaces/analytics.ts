@@ -66,7 +66,7 @@ export const analyticsSurface: GuideSurface = {
 			placement: 'top-right',
 			prose: {
 				title: 'Ledger',
-				body: 'The Ledger is the accounting record for gains and expenses outside tracked gameplay. Holdings and sales are managed from Inventory.',
+				body: 'The Ledger is the accounting record for gains and expenses outside tracked gameplay. Assets and sales are managed from Inventory.',
 			},
 			async play({ demoApi, wait }) {
 				const api = demoApi as Partial<AnalyticsDemoApi>;

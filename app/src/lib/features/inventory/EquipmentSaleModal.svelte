@@ -97,11 +97,11 @@
 					<span class="tabular-nums text-text">{formatPed(item.ttValue)} PED</span>
 				</div>
 				<div class="flex items-center justify-between">
-					<span class="text-text-secondary">Markup paid</span>
+					<span class="text-text-secondary">MU paid</span>
 					<span class="tabular-nums text-text">{formatPed(item.markupPaid)} PED</span>
 				</div>
 				<div class="flex items-center justify-between border-t border-border/50 pt-1.5">
-					<span class="font-medium text-text">Cost basis</span>
+					<span class="font-medium text-text">Total cost</span>
 					<span class="tabular-nums font-semibold text-text">{formatPed(costBasis)} PED</span>
 				</div>
 				{#if expectedPrice > 0}
@@ -138,8 +138,8 @@
 					</label>
 				</div>
 				<p class="text-xs leading-relaxed text-text-tertiary">
-					The holding leaves Inventory now. Its fee is charged immediately and remains spent if
-					the auction expires; the original cost basis is retained for confirmation and undo.
+					The asset leaves Inventory now. Its fee is charged immediately and remains spent if
+					the auction expires; the original total cost is retained for confirmation and undo.
 				</p>
 			{:else}
 				<div class="grid grid-cols-2 gap-3">

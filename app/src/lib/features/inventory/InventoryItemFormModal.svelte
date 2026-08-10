@@ -93,7 +93,7 @@
 	}
 </script>
 
-<Modal bind:open title={item ? 'Edit Equipment Holding' : 'Add Equipment Holding'}>
+<Modal bind:open title={item ? 'Edit asset' : 'Add asset'}>
 	<div class="space-y-4">
 		<div>
 			<label for="inventory-name" class="text-xs text-text-secondary mb-1 block">Name</label>
@@ -119,7 +119,7 @@
 
 		<div>
 			<div class="flex items-center justify-between mb-1">
-				<span class="text-xs text-text-secondary">Markup</span>
+				<span class="text-xs text-text-secondary">MU paid</span>
 				<SegmentedControl
 					options={[
 						{ id: 'percent', label: '%', disabled: ttValue <= 0 },
@@ -182,7 +182,7 @@
 		</div>
 
 		<div class="bg-surface/50 rounded-md border border-border/50 px-3 py-2 flex items-center justify-between">
-			<span class="text-xs text-text-secondary uppercase tracking-wide">Cost basis</span>
+			<span class="text-xs text-text-secondary uppercase tracking-wide">Total cost</span>
 			<span class="text-sm font-semibold tabular-nums text-text">
 				{formatPed(costBasis)} PED
 			</span>

@@ -53,12 +53,12 @@
 	);
 	const kindOptions = [
 		{ id: 'loot', label: 'Loot' },
-		{ id: 'equipment', label: 'Equipment' },
+		{ id: 'equipment', label: 'Assets' },
 	];
 </script>
 
 <section
-	aria-label={kind === 'loot' ? 'Loot holdings' : 'Equipment holdings'}
+	aria-label={kind === 'loot' ? 'Loot inventory' : 'Assets'}
 	class="flex h-full min-h-0 flex-col"
 >
 	{#if kind === 'loot'}
@@ -109,23 +109,23 @@
 				/>
 			</div>
 			<div class="flex h-full items-end justify-end">
-				<Button size="sm" onclick={onaddequipment}>Add holding</Button>
+				<Button size="sm" onclick={onaddequipment}>Add asset</Button>
 			</div>
 		</div>
 
 		<div
 			class="flex min-h-0 flex-1 flex-col"
 			role="table"
-			aria-label="Equipment holdings"
+			aria-label="Assets"
 		>
 			<div
 				class="flex shrink-0 items-center gap-3 border-b border-border px-2.5 py-2 text-text-tertiary"
 				role="row"
 			>
-				<span class="eyebrow min-w-0 flex-1" role="columnheader">Holding</span>
+				<span class="eyebrow min-w-0 flex-1" role="columnheader">Asset</span>
 				<span class="eyebrow w-24 shrink-0 text-right" role="columnheader">TT</span>
-				<span class="eyebrow w-24 shrink-0 text-right" role="columnheader">Markup paid</span>
-				<span class="eyebrow w-24 shrink-0 text-right" role="columnheader">Cost basis</span>
+				<span class="eyebrow w-24 shrink-0 text-right" role="columnheader">MU paid</span>
+				<span class="eyebrow w-24 shrink-0 text-right" role="columnheader">Total cost</span>
 				<span class="eyebrow w-28 shrink-0 text-right" role="columnheader">Acquired</span>
 				<span class="eyebrow w-[5.25rem] shrink-0 text-right" role="columnheader">Actions</span>
 			</div>
@@ -155,7 +155,7 @@
 					<span class="w-28 shrink-0 text-right text-xs tabular-nums text-text-tertiary" role="cell">
 						{formatLedgerDate(item.acquiredAt)}
 					</span>
-					<div class="flex w-[5.25rem] shrink-0 items-center justify-end gap-1.5" role="cell">
+					<div class="flex min-w-[5.25rem] shrink-0 items-center justify-end gap-1.5" role="cell">
 						<ExpandingActionButton
 							letter="E"
 							label="Edit"
@@ -176,11 +176,11 @@
 			{/each}
 			{#if visibleEquipment.length === 0 && normalisedQuery}
 				<li class="px-2.5 py-3 text-center text-xs text-text-tertiary" role="row">
-					<span role="cell">No equipment item matches that search.</span>
+					<span role="cell">No asset matches that search.</span>
 				</li>
 			{:else if visibleEquipment.length === 0}
 				<li class="px-2.5 py-10 text-center text-sm text-text-tertiary" role="row">
-					<span role="cell">No equipment holdings recorded yet.</span>
+					<span role="cell">No assets recorded yet.</span>
 				</li>
 			{/if}
 		</ul>

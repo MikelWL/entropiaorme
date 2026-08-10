@@ -220,7 +220,7 @@ export function createInventoryModel() {
 
 	async function listEquipment(input: EquipmentListingInput) {
 		const item = equipment.find((row) => row.id === input.itemId);
-		if (!item) throw new Error('That equipment holding is no longer available');
+		if (!item) throw new Error('That asset is no longer available');
 		const draft = manualDraft('auction', item.name, 1, input);
 		await withRefresh(
 			() =>
@@ -235,7 +235,7 @@ export function createInventoryModel() {
 
 	async function sellEquipmentByTrade(input: EquipmentTradeInput) {
 		const item = equipment.find((row) => row.id === input.itemId);
-		if (!item) throw new Error('That equipment holding is no longer available');
+		if (!item) throw new Error('That asset is no longer available');
 		const draft = manualDraft('trade', item.name, 1, { finalPrice: input.soldFor });
 		await withRefresh(
 			() =>

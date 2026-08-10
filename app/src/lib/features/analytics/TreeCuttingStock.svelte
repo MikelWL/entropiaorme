@@ -372,7 +372,7 @@
 
 				<div
 					class="shrink-0 flex items-center justify-end gap-1.5 {actionLayout === 'inventory'
-						? 'w-[5.25rem]'
+						? 'min-w-[5.25rem]'
 						: ''}"
 				>
 					{#if actionLayout === 'inventory'}

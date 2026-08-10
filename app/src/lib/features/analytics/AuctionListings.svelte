@@ -199,7 +199,7 @@
 				<InfoTip label="How listings work" width="w-80">
 					<p class="text-xs font-semibold leading-relaxed text-text">{emptyLead}</p>
 					<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-						Sell an item from Holdings to list it here. The position leaves your inventory
+						Sell an item from Inventory to list it here. The position leaves your inventory
 						straight away, because in game it has left your inventory, and the starting-bid fee is
 						spent whether or not it sells.
 					</p>
@@ -277,7 +277,7 @@
 					{#if selected.status === 'sold'}
 						<div class="grid grid-cols-3 gap-x-5 gap-y-4">
 							<StatDisplay
-								label={selected.subjectKind === 'equipment' ? 'Cost basis' : 'Listing TT'}
+								label={selected.subjectKind === 'equipment' ? 'Total cost' : 'Listing TT'}
 								value={formatPed(selected.costBasis ?? selected.ttValue)}
 								unit="PED"
 							/>
@@ -354,7 +354,7 @@
 												Expired, and what it cost
 											</p>
 											<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-												The stock returned to your holdings in full. The listing fee stays spent.
+											The stock returned to your inventory in full. The listing fee stays spent.
 											</p>
 											<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
 												{expiredChargeNote}

@@ -33,10 +33,10 @@
 
 	const kindOptions = [
 		{ id: 'loot', label: 'Loot' },
-		{ id: 'equipment', label: 'Equipment' },
+		{ id: 'equipment', label: 'Assets' },
 	];
 	const tabs = [
-		{ id: 'holdings', label: 'Holdings' },
+		{ id: 'holdings', label: 'Assets' },
 		{ id: 'listings', label: 'Listings' },
 		{ id: 'history', label: 'History' },
 	];
@@ -59,7 +59,7 @@
 	}
 
 	async function deleteEquipment(item: InventoryItem) {
-		if (!window.confirm(`Remove ${item.name} from your equipment holdings?`)) return;
+		if (!window.confirm(`Remove ${item.name} from your assets?`)) return;
 		await model.deleteEquipment(item);
 	}
 </script>
@@ -70,7 +70,7 @@
 			<h1 class="text-xl font-semibold tracking-tight text-text">Inventory</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
 			<p class="mt-0.5 text-sm text-text-secondary">
-				Manage what you hold and sell; review activity performance in Analytics.
+				Manage your loot and assets; review activity performance in Analytics.
 			</p>
 		</div>
 	</header>
