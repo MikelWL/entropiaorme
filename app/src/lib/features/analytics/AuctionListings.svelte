@@ -6,7 +6,7 @@
 	 * inventory at a price nobody knows yet. This panel is the only place that
 	 * position is visible, and the only place a sale becomes real.
 	 *
-	 * It takes the sub-activity box's own two-pane shape (selectable list on
+	 * It takes the sub-activity surface's own two-pane shape (selectable list on
 	 * the left, detail on the right) because the toggle swaps between them:
 	 * the same frame with different contents reads as one surface, where a
 	 * second layout would read as a different page.
@@ -37,6 +37,7 @@
 		expiredChargeNote = 'No board activity is charged for it: not selling describes the market ' +
 			'and the price you asked, not the harvesting that produced the stock.',
 		embedded = false,
+		central = false,
 	}: {
 		open: AuctionListing[];
 		resolved: AuctionListing[];
@@ -52,6 +53,7 @@
 		emptyLead?: string;
 		expiredChargeNote?: string;
 		embedded?: boolean;
+		central?: boolean;
 	} = $props();
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
@@ -87,6 +89,8 @@
 			: 0,
 	);
 	const unattributedMarkup = $derived(netMarkup - (selected?.activityNetMarkup ?? 0));
+	const listingNet = (listing: AuctionListing) =>
+		(listing.grossMarkup ?? 0) - listing.listingFee - (listing.saleFee ?? 0);
 
 	// What the auction actually fetched, as a rate on the listing's TT: the
 	// same 100%-is-TT reading the rest of Analytics uses for markup, so a sale
@@ -153,11 +157,11 @@
 			type="button"
 			aria-pressed={isSelected}
 			onclick={() => select(listing)}
-			class="w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left
+			class="w-full flex items-center gap-2 px-3 py-2 text-left
 				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
-				{isSelected
-				? 'border-accent/40 bg-accent/[0.08]'
-				: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
+				{central
+				? `border-b border-border/30 ${isSelected ? 'border-l-2 border-l-accent bg-accent/[0.07]' : 'border-l-2 border-l-transparent hover:bg-surface-hover/40'}`
+				: `rounded-lg border ${isSelected ? 'border-accent/40 bg-accent/[0.08]' : 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}`}"
 		>
 			<span
 				class="{COL_NAME} truncate text-sm font-medium tracking-tight
@@ -174,8 +178,8 @@
 			</span>
 			<span class="{COL_LISTED} truncate text-right text-xs tabular-nums font-medium">
 				{#if listing.status === 'sold'}
-					<span class={netTone(listing.activityNetMarkup ?? 0)}>
-						{signedPed(listing.activityNetMarkup ?? 0)}
+					<span class={netTone(central ? listingNet(listing) : (listing.activityNetMarkup ?? 0))}>
+						{signedPed(central ? listingNet(listing) : (listing.activityNetMarkup ?? 0))}
 					</span>
 				{:else if listing.status === 'expired'}
 					<span class="text-text-tertiary">{NO_DATA}</span>
@@ -195,7 +199,7 @@
 				<InfoTip label="How listings work" width="w-80">
 					<p class="text-xs font-semibold leading-relaxed text-text">{emptyLead}</p>
 					<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-						Sell an item from Your Current Stock to list it here. The quantity leaves your stock
+						Sell an item from Inventory to list it here. The position leaves your inventory
 						straight away, because in game it has left your inventory, and the starting-bid fee is
 						spent whether or not it sells.
 					</p>
@@ -207,15 +211,13 @@
 			</div>
 		</div>
 	{:else}
-		<!-- Kept in step with the sub-activity box the toggle swaps from: same
+		<!-- Kept in step with the sub-activity surface the toggle swaps from: same
 			frame, so the hairline must not move when the contents do, and both
 			panes narrow together as the card does. -->
 		<div class="grid sm:grid-cols-[46%_minmax(0,1fr)]">
 			<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 				<div class="px-2 pt-4">
-					<div
-						class="flex items-center gap-2 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
-					>
+					<div class="flex items-center gap-2 px-3 pb-2 text-text-tertiary">
 						<span class="eyebrow {COL_NAME}">Item</span>
 						<span class="eyebrow {COL_QTY} text-right">Qty</span>
 						<span class="eyebrow {COL_TT} text-right">TT</span>
@@ -226,7 +228,7 @@
 				<div class="flex max-h-[32rem] flex-col overflow-y-auto px-2 pb-3">
 					{#if open.length > 0}
 						<span class="eyebrow px-3 pb-1 text-text-tertiary">On auction</span>
-						<ul class="flex flex-col gap-1">
+						<ul class={central ? 'flex flex-col' : 'flex flex-col gap-1'}>
 							{#each open as listing (listing.id)}
 								{@render listingRow(listing, listing.id === selected?.id)}
 							{/each}
@@ -234,7 +236,7 @@
 					{/if}
 					{#if resolved.length > 0}
 						<span class="eyebrow px-3 pb-1 pt-3 text-text-tertiary">Resolved</span>
-						<ul class="flex flex-col gap-1">
+						<ul class={central ? 'flex flex-col' : 'flex flex-col gap-1'}>
 							{#each resolved as listing (listing.id)}
 								{@render listingRow(listing, listing.id === selected?.id)}
 							{/each}
@@ -248,7 +250,7 @@
 					<div class="mb-4 flex items-baseline justify-between gap-3">
 						<div class="min-w-0">
 							<p class="truncate text-sm font-medium tracking-tight text-text">
-								{selected.quantity} x {selected.itemName}
+								{selected.subjectKind === 'equipment' ? selected.itemName : `${selected.quantity} x ${selected.itemName}`}
 							</p>
 							<p class="mt-0.5 text-xs text-text-tertiary">
 								Listed {formatLedgerDate(selected.listedAt)}{selected.resolvedAt
@@ -274,7 +276,11 @@
 						re-reads once the price is known. -->
 					{#if selected.status === 'sold'}
 						<div class="grid grid-cols-3 gap-x-5 gap-y-4">
-							<StatDisplay label="Listing TT" value={formatPed(selected.ttValue)} unit="PED" />
+							<StatDisplay
+								label={selected.subjectKind === 'equipment' ? 'Total cost' : 'Listing TT'}
+								value={formatPed(selected.costBasis ?? selected.ttValue)}
+								unit="PED"
+							/>
 							<StatDisplay label="Sold for" value={formatPed(selected.finalPrice ?? 0)} unit="PED" />
 							<StatDisplay
 								label="Fees"
@@ -297,8 +303,9 @@
 								unit="PED"
 								valueClass={netTone(netMarkup)}
 							/>
+							{#if selected.subjectKind === 'loot'}
 							<StatDisplay
-								label="Credited"
+								label={central ? 'Attributed' : 'Credited'}
 								value={signedPed(selected.activityNetMarkup ?? 0)}
 								unit="PED"
 							>
@@ -329,6 +336,9 @@
 									</InfoTip>
 								{/snippet}
 							</StatDisplay>
+							{:else}
+								<StatDisplay label="Position" value="Whole item" emphasis="secondary" />
+							{/if}
 						</div>
 					{:else}
 						<!-- What the listing cost above what it asks: the two spent
@@ -344,7 +354,7 @@
 												Expired, and what it cost
 											</p>
 											<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-												The stock returned to your holdings in full. The listing fee stays spent.
+											The stock returned to your inventory in full. The listing fee stays spent.
 											</p>
 											<p class="mt-2 text-xs leading-relaxed text-text-tertiary">
 												{expiredChargeNote}

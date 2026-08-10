@@ -17,10 +17,11 @@ use crate::activities::{ActivityOptionsResult, ActivityStateResult, ActivityTarg
 use crate::analytics::{
     ActivityHistoryEntry, ActivityUndoInput, AnalyticsHarvest, AnalyticsHunting,
     AnalyticsHuntingActivity, AnalyticsOverview, AuctionConfirmInput, AuctionExpireInput,
-    AuctionListing, AuctionListingInput, HuntingRealisedMarkup, InventoryItem, InventoryItemInput,
-    InventoryPatch, InventorySellInput, InventorySellResult, LedgerEntryInput, LedgerItem,
-    LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput, Profession,
-    RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
+    AuctionListing, AuctionListingInput, EquipmentListingInput, EquipmentTradeInput,
+    HuntingRealisedMarkup, InventoryDraftResolution, InventoryItem, InventoryItemInput,
+    InventoryPatch, InventorySaleDraft, InventorySellInput, InventorySellResult, LedgerEntryInput,
+    LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput,
+    Profession, RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
     StockRemovalInput,
 };
 use crate::character::{
@@ -845,6 +846,30 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(InventorySellResult))),
+        },
+        CommandSpec {
+            name: "inventory_draft_resolve",
+            args: vec![ArgSpec {
+                name: "draft",
+                schema: schema(schema_for!(InventorySaleDraft)),
+            }],
+            returns: Some(schema(schema_for!(InventoryDraftResolution))),
+        },
+        CommandSpec {
+            name: "inventory_equipment_listing_create",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(EquipmentListingInput)),
+            }],
+            returns: Some(schema(schema_for!(AuctionListing))),
+        },
+        CommandSpec {
+            name: "inventory_equipment_trade",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(EquipmentTradeInput)),
+            }],
+            returns: Some(schema(schema_for!(AuctionListing))),
         },
         CommandSpec {
             name: "market_paste_preview",

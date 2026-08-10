@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { InventoryItem, LedgerEntry, LedgerPreset } from '$lib/types/analytics';
+import type { LedgerEntry, LedgerPreset } from '$lib/types/analytics';
 import { createLedgerModel, PAGE_SIZE } from './ledgerModel.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -10,8 +10,6 @@ vi.mock('$lib/api', () => ({
 	getLedgerPresets: vi.fn(),
 	addLedgerPreset: vi.fn(),
 	deleteLedgerPreset: vi.fn(),
-	getInventoryItems: vi.fn(),
-	deleteInventoryItem: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -40,17 +38,6 @@ function preset(overrides: Partial<LedgerPreset> = {}): LedgerPreset {
 		tag: 'equipment',
 		...overrides,
 	};
-}
-
-function item(overrides: Partial<InventoryItem> = {}): InventoryItem {
-	return {
-		id: 'i1',
-		name: 'Hedoc Mayhem, Adjusted',
-		ttValue: 720,
-		markupPaid: 540,
-		notes: null,
-		...overrides,
-	} as InventoryItem;
 }
 
 function seedLoad(
@@ -357,113 +344,5 @@ describe('net-range summaries', () => {
 
 		await model.deleteEntry('new');
 		expect(mocked.getLedgerSummary).toHaveBeenCalledTimes(3);
-	});
-});
-
-describe('inventory', () => {
-	it('loads items and derives the TT and cost-basis totals', async () => {
-		mocked.getInventoryItems.mockResolvedValue([
-			item(),
-			item({ id: 'i2', ttValue: 80, markupPaid: 20 }),
-		]);
-		const model = createLedgerModel();
-		await model.loadInventory();
-
-		expect(model.inventoryItems).toHaveLength(2);
-		expect(model.inventoryTtTotal).toBe(800);
-		expect(model.inventoryPaidTotal).toBe(1360);
-	});
-
-	it('upserts on save and drops the sold item', async () => {
-		mocked.getInventoryItems.mockResolvedValue([item()]);
-		const model = createLedgerModel();
-		await model.loadInventory();
-
-		model.handleInventorySaved(item({ id: 'i1', ttValue: 700 }));
-		expect(model.inventoryItems[0].ttValue).toBe(700);
-
-		model.handleInventorySaved(item({ id: 'i2' }));
-		expect(model.inventoryItems.map((i) => i.id)).toEqual(['i2', 'i1']);
-
-		model.handleInventorySold({ soldItem: item({ id: 'i1' }), ledgerEntry: null });
-		expect(model.inventoryItems.map((i) => i.id)).toEqual(['i2']);
-		expect(model.inventorySellTarget).toBeNull();
-	});
-
-	it('surfaces a delete failure and clears a stale inventory error on entry', async () => {
-		mocked.getInventoryItems.mockResolvedValue([item()]);
-		mocked.deleteInventoryItem.mockRejectedValueOnce(new Error('locked'));
-		const model = createLedgerModel();
-		await model.loadInventory();
-
-		await model.handleInventoryDelete(item());
-		expect(model.inventoryError).toBe('locked');
-		expect(model.inventoryItems).toHaveLength(1);
-
-		mocked.deleteInventoryItem.mockResolvedValue(undefined);
-		await model.handleInventoryDelete(item());
-		expect(model.inventoryError).toBeNull();
-		expect(model.inventoryItems).toHaveLength(0);
-	});
-});
-
-describe('guide demo handlers', () => {
-	it('opens the sell modal by item name with an optional prefilled price', async () => {
-		mocked.getInventoryItems.mockResolvedValue([item()]);
-		const model = createLedgerModel();
-		await model.loadInventory();
-
-		model.openInventorySellByName('Unknown Item', 10);
-		expect(model.inventorySellTarget).toBeNull();
-
-		model.openInventorySellByName('Hedoc Mayhem, Adjusted', 1360);
-		expect(model.inventorySellTarget?.id).toBe('i1');
-		expect(model.inventorySellPrefilledPrice).toBe(1360);
-
-		model.closeInventorySell();
-		expect(model.inventorySellTarget).toBeNull();
-		expect(model.inventorySellPrefilledPrice).toBeNull();
-	});
-
-	it('never leaks a demo prefill into a manual sell or past a completed sale', async () => {
-		mocked.getInventoryItems.mockResolvedValue([item()]);
-		const model = createLedgerModel();
-		await model.loadInventory();
-
-		model.openInventorySellByName('Hedoc Mayhem, Adjusted', 1360);
-		expect(model.inventorySellPrefilledPrice).toBe(1360);
-		model.openInventorySell(model.inventoryItems[0]);
-		expect(model.inventorySellPrefilledPrice).toBeNull();
-
-		model.openInventorySellByName('Hedoc Mayhem, Adjusted', 1360);
-		model.handleInventorySold({
-			soldItem: model.inventoryItems[0],
-			ledgerEntry: entry(),
-		});
-		expect(model.inventorySellTarget).toBeNull();
-		expect(model.inventorySellPrefilledPrice).toBeNull();
-	});
-
-	it('injects the synthetic sale entry once, resets the pager, and clears it', async () => {
-		seedLoad(
-			Array.from({ length: 6 }, (_, i) => entry({ id: `e${i}` })),
-			null,
-		);
-		const model = createLedgerModel();
-		await model.loadAll();
-		model.table.page = 1;
-
-		model.injectDemoSaleEntry('Hedoc Mayhem, Adjusted', 100);
-		model.injectDemoSaleEntry('Hedoc Mayhem, Adjusted', 100);
-		expect(model.entries.filter((e) => e.id === 'demo-inventory-sale')).toHaveLength(1);
-		expect(model.entries[0].description).toBe('Sold Hedoc Mayhem, Adjusted at +100 PED over basis');
-		expect(model.table.page).toBe(0);
-		// The synthetic sale folds into the summary-backed cards locally.
-		expect(model.totalMarkup).toBe(100);
-		expect(model.markupTags).toEqual([{ tag: 'inventory_sale', total: 100 }]);
-
-		model.clearDemoSaleEntry();
-		expect(model.entries.some((e) => e.id === 'demo-inventory-sale')).toBe(false);
-		expect(model.totalMarkup).toBe(0);
 	});
 });

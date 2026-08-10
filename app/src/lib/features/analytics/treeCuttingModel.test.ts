@@ -83,6 +83,10 @@ function listing(over: Record<string, unknown>) {
 		finalPrice: null,
 		saleFee: null,
 		resolvedAt: null,
+		subjectKind: 'loot',
+		inventoryItemId: null,
+		costBasis: null,
+		channel: 'auction',
 		activityNetMarkup: null,
 		grossMarkup: null,
 		...over,
@@ -174,6 +178,8 @@ beforeEach(() => {
 function historyEntry(over: Partial<ActivityHistoryEntry> = {}): ActivityHistoryEntry {
 	return {
 		id: 'entry-1',
+		subjectKind: 'loot',
+		channel: 'auction',
 		kind: 'listing',
 		status: 'sold',
 		itemName: 'Long Moonleaf Board',

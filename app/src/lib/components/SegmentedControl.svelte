@@ -1,5 +1,12 @@
 <script lang="ts">
-	type Option = { id: string; label: string; disabled?: boolean };
+	type Option = {
+		id: string;
+		label: string;
+		disabled?: boolean;
+		ariaLabel?: string;
+		title?: string;
+		labelClass?: string;
+	};
 	type Size = 'sm' | 'md';
 
 	let {
@@ -32,11 +39,13 @@
 	{#each options as option (option.id)}
 		<button
 			type="button"
+			aria-label={option.ariaLabel ?? option.label}
+			title={option.title}
 			class="{optionBase} {sizeClasses[size]} {option.id === active ? activeCls : inactiveCls}"
 			disabled={option.disabled}
 			onclick={() => onchange(option.id)}
 		>
-			{option.label}
+			<span class={option.labelClass}>{option.label}</span>
 		</button>
 	{/each}
 </div>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { InventoryItem } from '$lib/types/analytics';
-	import { addInventoryItem, updateInventoryItem } from '$lib/api';
+	import { addEquipmentHolding, updateEquipmentHolding } from '$lib/api/inventory';
 	import { formatPed } from '$lib/utils/format';
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -81,8 +81,8 @@
 				notes: notes.trim() || null,
 			};
 			const saved = item
-				? await updateInventoryItem(item.id, payload)
-				: await addInventoryItem(payload);
+				? await updateEquipmentHolding(item.id, payload)
+				: await addEquipmentHolding(payload);
 			onsaved(saved);
 			open = false;
 		} catch (e) {
@@ -93,7 +93,7 @@
 	}
 </script>
 
-<Modal bind:open title={item ? 'Edit Inventory Item' : 'Add Inventory Item'}>
+<Modal bind:open title={item ? 'Edit asset' : 'Add asset'}>
 	<div class="space-y-4">
 		<div>
 			<label for="inventory-name" class="text-xs text-text-secondary mb-1 block">Name</label>
@@ -119,7 +119,7 @@
 
 		<div>
 			<div class="flex items-center justify-between mb-1">
-				<span class="text-xs text-text-secondary">Markup</span>
+				<span class="text-xs text-text-secondary">MU paid</span>
 				<SegmentedControl
 					options={[
 						{ id: 'percent', label: '%', disabled: ttValue <= 0 },
@@ -182,7 +182,7 @@
 		</div>
 
 		<div class="bg-surface/50 rounded-md border border-border/50 px-3 py-2 flex items-center justify-between">
-			<span class="text-xs text-text-secondary uppercase tracking-wide">Cost basis</span>
+			<span class="text-xs text-text-secondary uppercase tracking-wide">Total cost</span>
 			<span class="text-sm font-semibold tabular-nums text-text">
 				{formatPed(costBasis)} PED
 			</span>

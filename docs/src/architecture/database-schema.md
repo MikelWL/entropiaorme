@@ -63,7 +63,8 @@ activity-context provenance), `0029_session_context_loot_rollups.sql`
 `0030_quest_reward_items.sql` (actual reward-item evidence captured at quest
 completion), and `0031_stock_outcomes.sql` (private trades, stock-only
 removals, deliberate Shrapnel conversion gains, and the corresponding
-provenance-aware movement kinds). The
+provenance-aware movement kinds), and `0032_inventory_hub.sql` (the equipment
+holding lifecycle and the shared loot/equipment market-listing identity). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -193,7 +194,9 @@ replaces an earlier one.
 
 #### `inventory_items`
 
-User-tracked inventory entries with TT value and markup paid.
+User-tracked capital-equipment positions with TT value and markup paid. A row
+survives its market lifecycle so the acquisition basis remains available to
+History and correction flows after it leaves current holdings.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -204,6 +207,11 @@ User-tracked inventory entries with TT value and markup paid.
 | `notes` | TEXT | Optional. |
 | `acquired_at` | TEXT | Not null; stored as a text date. |
 | `updated_at` | REAL | Back-filled by an `AFTER INSERT` trigger when left null. |
+| `state` | TEXT | `held`, `listed`, or `sold`; defaults to `held`. |
+| `disposed_at` | TEXT | Sale date for a disposed position; null while held or listed. |
+
+A `listed` position returns to `held` when its auction expires. It moves to
+`sold` only when an auction sale or immediate player trade is confirmed.
 
 ### Ledger
 
@@ -656,10 +664,14 @@ private trades, and removals own the lifecycle records those movements refer
 to. A stock action never edits the loot that originally established an
 activity's TT return.
 
-- `auction_listings` records the pending, sold, or expired auction lifecycle.
+- `auction_listings` records the pending, sold, or expired market lifecycle.
+  `subject_kind` distinguishes fungible loot from a whole equipment position;
+  equipment rows point to `inventory_item_id` and retain their acquisition
+  `cost_basis`. For equipment, `channel` distinguishes auction listings from
+  immediate player trades recorded on this same whole-position lifecycle.
   Stock leaves at listing time, the listing fee is spent then, and markup is
   realised only when the final sale is confirmed.
-- `private_sales` records a completed player trade with its quantity, TT,
+- `private_sales` records a completed loot trade with its quantity, TT,
   tracked and untracked shares, final price, date, and owned ledger entry. It
   has no auction fees and recognises markup atomically with the stock outflow.
 - `stock_conversions` records source and target stock. Ordinary Nanocube

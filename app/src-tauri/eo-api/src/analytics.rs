@@ -185,6 +185,7 @@ pub struct AnalyticsHunting {
 pub enum Profession {
     Harvesting,
     Hunting,
+    Inventory,
 }
 
 impl From<Profession> for eo_services::analytics::Profession {
@@ -192,6 +193,7 @@ impl From<Profession> for eo_services::analytics::Profession {
         match value {
             Profession::Harvesting => Self::Harvesting,
             Profession::Hunting => Self::Hunting,
+            Profession::Inventory => Self::Inventory,
         }
     }
 }
@@ -498,6 +500,10 @@ pub struct AuctionListing {
     pub final_price: Nullable<f64>,
     pub sale_fee: Nullable<f64>,
     pub resolved_at: Nullable<String>,
+    pub subject_kind: String,
+    pub inventory_item_id: Nullable<String>,
+    pub cost_basis: Nullable<f64>,
+    pub channel: String,
     /// Net markup the activity may claim, after both auction fees and after
     /// removing the share covered by untracked stock.
     pub activity_net_markup: Nullable<f64>,
@@ -514,6 +520,10 @@ pub struct AuctionListing {
 #[serde(rename_all = "camelCase")]
 pub struct ActivityHistoryEntry {
     pub id: String,
+    /// The holding family this outcome acted on: `loot` or `equipment`.
+    pub subject_kind: String,
+    /// The operational path: `auction`, `trade`, `conversion`, or `removal`.
+    pub channel: String,
     /// `listing`, `trade`, `conversion`, or `removal`.
     pub kind: String,
     /// `pending`, `sold`, `expired`, `converted`, or `removed`.
@@ -692,6 +702,66 @@ pub struct InventorySellInput {
     pub description: Option<String>,
     #[serde(default)]
     pub sold_at: Option<String>,
+}
+
+/// An auction draft for one whole capital-equipment position.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EquipmentListingInput {
+    pub item_id: String,
+    pub starting_bid: f64,
+    pub buyout: Option<f64>,
+    pub listing_fee: f64,
+    pub listed_at: Option<String>,
+}
+
+/// A completed fee-free player trade for one whole capital position.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EquipmentTradeInput {
+    pub item_id: String,
+    pub sold_for: f64,
+    pub sold_at: Option<String>,
+}
+
+/// An intake-neutral transaction draft. Manual forms create this shape now;
+/// a future OCR adapter can populate the same fields with its observed values
+/// and confidence without gaining a second commit path.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InventorySaleDraft {
+    pub draft_id: String,
+    /// `manual` or `ocr`; descriptive provenance, never authorisation.
+    pub source: String,
+    /// `auction` or `trade`.
+    pub channel: String,
+    pub observed_name: String,
+    pub quantity: Nullable<f64>,
+    pub starting_bid: Nullable<f64>,
+    pub buyout: Nullable<f64>,
+    pub listing_fee: Nullable<f64>,
+    pub final_price: Nullable<f64>,
+    /// OCR may provide a field-level confidence. Manual drafts use null.
+    pub confidence: Nullable<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryHoldingCandidate {
+    pub kind: String,
+    pub holding_id: String,
+    pub name: String,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryDraftResolution {
+    pub draft: InventorySaleDraft,
+    pub candidates: Vec<InventoryHoldingCandidate>,
+    /// Set only for an exact normalised name with one eligible holding, or a
+    /// high-confidence fuzzy winner separated clearly from the runner-up.
+    pub resolved: Nullable<InventoryHoldingCandidate>,
 }
 
 // ── Facade methods ──────────────────────────────────────────────────
@@ -906,6 +976,8 @@ impl Api {
             .into_iter()
             .map(|row| ActivityHistoryEntry {
                 id: row.id,
+                subject_kind: row.subject_kind,
+                channel: row.channel,
                 kind: row.kind,
                 status: row.status,
                 item_name: row.item_name,
@@ -1149,6 +1221,82 @@ impl Api {
         Ok(rows.into_iter().map(inventory_item_dto).collect())
     }
 
+    /// Resolve a manual or OCR-originated transaction draft against current
+    /// holdings. Resolution is conservative: ambiguity stays visible for the
+    /// review surface instead of silently choosing a cost basis.
+    pub async fn inventory_draft_resolve(
+        &self,
+        draft: InventorySaleDraft,
+    ) -> Result<InventoryDraftResolution, ApiError> {
+        if !matches!(draft.source.as_str(), "manual" | "ocr") {
+            return Err(ApiError::bad_request("source must be 'manual' or 'ocr'"));
+        }
+        if !matches!(draft.channel.as_str(), "auction" | "trade") {
+            return Err(ApiError::bad_request(
+                "channel must be 'auction' or 'trade'",
+            ));
+        }
+        let candidates: Vec<InventoryHoldingCandidate> = self
+            .analytics
+            .resolve_inventory_name(&draft.observed_name)
+            .await
+            .map_err(analytics_error("inventory draft resolve"))?
+            .into_iter()
+            .map(|row| InventoryHoldingCandidate {
+                kind: row.kind,
+                holding_id: row.holding_id,
+                name: row.name,
+                score: row.score,
+            })
+            .collect();
+        let resolved = candidates.first().cloned().filter(|winner| {
+            let runner_up = candidates.get(1).map(|row| row.score).unwrap_or(0.0);
+            (winner.score == 100.0 && runner_up < 100.0)
+                || (winner.score >= 92.0 && winner.score - runner_up >= 5.0)
+        });
+        Ok(InventoryDraftResolution {
+            draft,
+            candidates,
+            resolved: resolved.into(),
+        })
+    }
+
+    /// List one whole recognised equipment holding on the auction. The
+    /// holding moves to `listed` and the starting-bid fee is spent now; a
+    /// missing, sold, or already-listed holding is a not-found.
+    pub async fn inventory_equipment_listing_create(
+        &self,
+        input: EquipmentListingInput,
+    ) -> Result<AuctionListing, ApiError> {
+        self.analytics
+            .create_equipment_listing(
+                &input.item_id,
+                input.starting_bid,
+                input.buyout,
+                input.listing_fee,
+                input.listed_at.as_deref(),
+            )
+            .await
+            .map_err(analytics_error("equipment listing create"))?
+            .map(auction_listing_dto)
+            .ok_or_else(|| ApiError::not_found("no held equipment with that id"))
+    }
+
+    /// Record a completed fee-free player trade for one whole recognised
+    /// equipment holding. The result is realised immediately; a missing,
+    /// sold, or already-listed holding is a not-found.
+    pub async fn inventory_equipment_trade(
+        &self,
+        input: EquipmentTradeInput,
+    ) -> Result<AuctionListing, ApiError> {
+        self.analytics
+            .trade_equipment(&input.item_id, input.sold_for, input.sold_at.as_deref())
+            .await
+            .map_err(analytics_error("equipment trade"))?
+            .map(auction_listing_dto)
+            .ok_or_else(|| ApiError::not_found("no held equipment with that id"))
+    }
+
     /// Create an inventory item.
     pub async fn inventory_create(
         &self,
@@ -1205,7 +1353,7 @@ impl Api {
     }
 
     /// Sell an inventory item (emit the realised delta to the ledger and
-    /// remove the row); a missing item is a not-found.
+    /// retain the row as sold); a missing item is a not-found.
     pub async fn inventory_sell(
         &self,
         item_id: String,
@@ -1343,6 +1491,10 @@ pub(crate) fn auction_listing_dto(
         final_price: row.final_price.into(),
         sale_fee: row.sale_fee.into(),
         resolved_at: row.resolved_at.into(),
+        subject_kind: row.subject_kind,
+        inventory_item_id: row.inventory_item_id.into(),
+        cost_basis: row.cost_basis.into(),
+        channel: row.channel,
         activity_net_markup: row.activity_net_markup.into(),
         gross_markup: row.gross_markup.into(),
     }

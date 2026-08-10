@@ -1,8 +1,7 @@
 /**
  * Ledger-tab view model: the keyset-paged entry list, the entry and preset
- * forms with tag suggestions, the net-impact summaries, and the inventory
- * ledger. Presentation lives in the tab component; it composes over this
- * state.
+ * forms with tag suggestions, and the net-impact summaries. Presentation
+ * lives in the tab component; it composes over this state.
  *
  * Paging is two-layered by design: the server side stays keyset (an opaque
  * cursor grows the loaded window on demand as the pager steps past it),
@@ -13,21 +12,13 @@
 import {
 	addLedgerEntry,
 	addLedgerPreset,
-	deleteInventoryItem,
 	deleteLedgerEntry,
 	deleteLedgerPreset,
-	getInventoryItems,
 	getLedgerEntries,
 	getLedgerPresets,
 	getLedgerSummary,
 } from '$lib/api';
-import type {
-	InventoryItem,
-	InventorySellResult,
-	LedgerEntry,
-	LedgerEntryType,
-	LedgerPreset,
-} from '$lib/types/analytics';
+import type { LedgerEntry, LedgerEntryType, LedgerPreset } from '$lib/types/analytics';
 import { describeError } from '$lib/view/errorState';
 import { createTableModel } from '$lib/view/tableModel.svelte';
 import { ANALYTICS_RANGES, type AnalyticsRange, analyticsPeriod } from './analyticsRange';
@@ -55,9 +46,6 @@ export function createLedgerModel() {
 	// page window is a viewing slice, never the aggregate's source.
 	let summaryGains = $state<Record<string, number>>({});
 	let summaryLosses = $state<Record<string, number>>({});
-	// A guide-mode synthetic sale folded into the summary getters locally
-	// (the demo entry never reaches the backend ledger).
-	let demoSaleOverlay = $state<{ tag: string; gain: number } | null>(null);
 
 	async function loadSummary() {
 		try {
@@ -291,136 +279,18 @@ export function createLedgerModel() {
 		}
 	}
 
-	// Computed summaries (the netRange-scoped server aggregate; the demo
-	// overlay folds a guide-mode synthetic sale in locally).
+	// Computed summaries: the netRange-scoped server aggregate.
 	const expenseTags = $derived(
 		Object.entries(summaryLosses).map(([tag, total]) => ({ tag, total })),
 	);
 
-	const markupTags = $derived.by(() => {
-		const tags: Record<string, number> = { ...summaryGains };
-		if (demoSaleOverlay) {
-			tags[demoSaleOverlay.tag] = (tags[demoSaleOverlay.tag] || 0) + demoSaleOverlay.gain;
-		}
-		return Object.entries(tags).map(([tag, total]) => ({ tag, total }));
-	});
+	const markupTags = $derived(Object.entries(summaryGains).map(([tag, total]) => ({ tag, total })));
 
 	const totalExpenses = $derived(expenseTags.reduce((sum, { total }) => sum + total, 0));
 
 	const totalMarkup = $derived(markupTags.reduce((sum, { total }) => sum + total, 0));
 
 	const netLedger = $derived(totalMarkup - totalExpenses);
-
-	// ── Inventory ledger ──
-	let inventoryItems = $state<InventoryItem[]>([]);
-	let inventoryLoading = $state(true);
-	let inventoryError = $state<string | null>(null);
-	let showInventoryFormModal = $state(false);
-	let inventoryEditTarget = $state<InventoryItem | null>(null);
-	let inventorySellTarget = $state<InventoryItem | null>(null);
-	let inventorySellPrefilledPrice = $state<number | null>(null);
-
-	const inventoryTtTotal = $derived(inventoryItems.reduce((sum, i) => sum + i.ttValue, 0));
-	const inventoryPaidTotal = $derived(
-		inventoryItems.reduce((sum, i) => sum + i.ttValue + i.markupPaid, 0),
-	);
-
-	async function loadInventory() {
-		inventoryLoading = true;
-		inventoryError = null;
-		try {
-			inventoryItems = await getInventoryItems();
-		} catch (e) {
-			inventoryError = describeError(e, 'Failed to load inventory ledger');
-		} finally {
-			inventoryLoading = false;
-		}
-	}
-
-	function openInventoryAdd() {
-		inventoryEditTarget = null;
-		showInventoryFormModal = true;
-	}
-
-	function openInventoryEdit(item: InventoryItem) {
-		inventoryEditTarget = item;
-		showInventoryFormModal = true;
-	}
-
-	function openInventorySell(item: InventoryItem) {
-		inventorySellTarget = item;
-		// A manual open must not inherit a demo prefill from an earlier
-		// guide-mode sell.
-		inventorySellPrefilledPrice = null;
-	}
-
-	function closeInventorySell() {
-		inventorySellTarget = null;
-		inventorySellPrefilledPrice = null;
-	}
-
-	function handleInventorySaved(saved: InventoryItem) {
-		const idx = inventoryItems.findIndex((i) => i.id === saved.id);
-		if (idx >= 0) {
-			inventoryItems = inventoryItems.map((i) => (i.id === saved.id ? saved : i));
-		} else {
-			inventoryItems = [saved, ...inventoryItems];
-		}
-	}
-
-	function handleInventorySold(result: InventorySellResult) {
-		inventoryItems = inventoryItems.filter((i) => i.id !== result.soldItem.id);
-		if (result.ledgerEntry) {
-			entries = [result.ledgerEntry, ...entries];
-			total += 1;
-			table.page = 0;
-			void loadSummary();
-		}
-		inventorySellTarget = null;
-		inventorySellPrefilledPrice = null;
-	}
-
-	async function handleInventoryDelete(item: InventoryItem) {
-		inventoryError = null;
-		try {
-			await deleteInventoryItem(item.id);
-			inventoryItems = inventoryItems.filter((i) => i.id !== item.id);
-		} catch (e) {
-			inventoryError = describeError(e, 'Failed to delete item');
-		}
-	}
-
-	// ── Guide-mode demo handlers ──
-	// injectDemoSaleEntry / clearDemoSaleEntry mutate local entries state only
-	// (no /demo/ writes; the demo router is read-only) so the synthetic row
-	// vanishes the moment guide-mode flips off.
-	function openInventorySellByName(itemName: string, prefilledPrice?: number) {
-		const target = inventoryItems.find((i) => i.name === itemName);
-		if (!target) return;
-		inventorySellPrefilledPrice = prefilledPrice ?? null;
-		inventorySellTarget = target;
-	}
-
-	function injectDemoSaleEntry(itemName: string, gain: number) {
-		const syntheticEntry: LedgerEntry = {
-			id: 'demo-inventory-sale',
-			date: new Date().toISOString(),
-			type: 'markup',
-			description: `Sold ${itemName} at +${gain.toFixed(0)} PED over basis`,
-			amount: gain,
-			tag: 'inventory_sale',
-		};
-		if (!entries.some((e) => e.id === syntheticEntry.id)) total += 1;
-		entries = [syntheticEntry, ...entries.filter((e) => e.id !== syntheticEntry.id)];
-		demoSaleOverlay = { tag: 'inventory_sale', gain };
-		table.page = 0;
-	}
-
-	function clearDemoSaleEntry() {
-		if (entries.some((e) => e.id === 'demo-inventory-sale')) total = Math.max(0, total - 1);
-		entries = entries.filter((e) => e.id !== 'demo-inventory-sale');
-		demoSaleOverlay = null;
-	}
 
 	return {
 		table,
@@ -572,41 +442,6 @@ export function createLedgerModel() {
 			return netLedger;
 		},
 
-		// Inventory
-		get inventoryItems() {
-			return inventoryItems;
-		},
-		get inventoryLoading() {
-			return inventoryLoading;
-		},
-		get inventoryError() {
-			return inventoryError;
-		},
-		set inventoryError(value: string | null) {
-			inventoryError = value;
-		},
-		get showInventoryFormModal() {
-			return showInventoryFormModal;
-		},
-		set showInventoryFormModal(value: boolean) {
-			showInventoryFormModal = value;
-		},
-		get inventoryEditTarget() {
-			return inventoryEditTarget;
-		},
-		get inventorySellTarget() {
-			return inventorySellTarget;
-		},
-		get inventorySellPrefilledPrice() {
-			return inventorySellPrefilledPrice;
-		},
-		get inventoryTtTotal() {
-			return inventoryTtTotal;
-		},
-		get inventoryPaidTotal() {
-			return inventoryPaidTotal;
-		},
-
 		loadAll,
 		loadMoreEntries,
 		nextPage,
@@ -618,17 +453,6 @@ export function createLedgerModel() {
 		savePreset,
 		removePreset,
 		applyPreset,
-		loadInventory,
-		openInventoryAdd,
-		openInventoryEdit,
-		openInventorySell,
-		closeInventorySell,
-		handleInventorySaved,
-		handleInventorySold,
-		handleInventoryDelete,
-		openInventorySellByName,
-		injectDemoSaleEntry,
-		clearDemoSaleEntry,
 	};
 }
 

@@ -71,6 +71,10 @@ export interface ActiveActivityView {
  */
 export interface ActivityHistoryEntry {
 	id: string;
+	/** The holding family this outcome acted on: `loot` or `equipment`. */
+	subjectKind: string;
+	/** The operational path: `auction`, `trade`, `conversion`, or `removal`. */
+	channel: string;
 	/** `listing`, `trade`, `conversion`, or `removal`. */
 	kind: string;
 	/** `pending`, `sold`, `expired`, `converted`, or `removed`. */
@@ -308,6 +312,10 @@ export interface AuctionListing {
 	finalPrice: number | null;
 	saleFee: number | null;
 	resolvedAt: string | null;
+	subjectKind: string;
+	inventoryItemId: string | null;
+	costBasis: number | null;
+	channel: string;
 	/** Net markup the activity may claim, after both auction fees and after removing the share covered by untracked stock. */
 	activityNetMarkup: number | null;
 	/** Sale proceeds above the listing's TT, before fees. */
@@ -663,6 +671,17 @@ export interface EquipmentDetail {
 export type EquipmentKind = 'weapon' | 'healing' | 'consumable' | 'tool';
 
 /**
+ * An auction draft for one whole capital-equipment position.
+ */
+export interface EquipmentListingInput {
+	itemId: string;
+	startingBid: number;
+	buyout?: number | null;
+	listingFee: number;
+	listedAt?: string | null;
+}
+
+/**
  * An add or update request. Field names stay in the request casing the
  * frontend has always sent.
  */
@@ -712,6 +731,15 @@ export interface EquipmentSummary {
 	isLimited: boolean;
 	/** 1 = base item, 2 = amplified, 3 = fully accessorised. */
 	enrichmentLevel: number;
+}
+
+/**
+ * A completed fee-free player trade for one whole capital position.
+ */
+export interface EquipmentTradeInput {
+	itemId: string;
+	soldFor: number;
+	soldAt?: string | null;
 }
 
 /**
@@ -928,6 +956,20 @@ export interface HuntingSpeciesComparison {
 	lootItems: HarvestLootItem[];
 }
 
+export interface InventoryDraftResolution {
+	draft: InventorySaleDraft;
+	candidates: InventoryHoldingCandidate[];
+	/** Set only for an exact normalised name with one eligible holding, or a high-confidence fuzzy winner separated clearly from the runner-up. */
+	resolved: InventoryHoldingCandidate | null;
+}
+
+export interface InventoryHoldingCandidate {
+	kind: string;
+	holdingId: string;
+	name: string;
+	score: number;
+}
+
 /**
  * One inventory item.
  */
@@ -961,6 +1003,27 @@ export interface InventoryPatch {
 	tt_value?: number | null;
 	markup_paid?: number | null;
 	notes?: string | null;
+}
+
+/**
+ * An intake-neutral transaction draft. Manual forms create this shape now;
+ * a future OCR adapter can populate the same fields with its observed values
+ * and confidence without gaining a second commit path.
+ */
+export interface InventorySaleDraft {
+	draftId: string;
+	/** `manual` or `ocr`; descriptive provenance, never authorisation. */
+	source: string;
+	/** `auction` or `trade`. */
+	channel: string;
+	observedName: string;
+	quantity: number | null;
+	startingBid: number | null;
+	buyout: number | null;
+	listingFee: number | null;
+	finalPrice: number | null;
+	/** OCR may provide a field-level confidence. Manual drafts use null. */
+	confidence: number | null;
 }
 
 /**
@@ -1821,7 +1884,7 @@ export interface PrivateSaleInput {
  * auction and conversion lifecycle is shared, and the profession stamp is
  * what scopes each activity's Market and History to its own records.
  */
-export type Profession = 'harvesting' | 'hunting';
+export type Profession = 'harvesting' | 'hunting' | 'inventory';
 
 /**
  * One profession row.
@@ -3180,6 +3243,18 @@ export async function inventoryDelete(itemId: string): Promise<void> {
 
 export async function inventorySell(itemId: string, sale: InventorySellInput): Promise<InventorySellResult> {
 	return invokeCommand('inventory_sell', { item_id: itemId, sale });
+}
+
+export async function inventoryDraftResolve(draft: InventorySaleDraft): Promise<InventoryDraftResolution> {
+	return invokeCommand('inventory_draft_resolve', { draft });
+}
+
+export async function inventoryEquipmentListingCreate(input: EquipmentListingInput): Promise<AuctionListing> {
+	return invokeCommand('inventory_equipment_listing_create', { input });
+}
+
+export async function inventoryEquipmentTrade(input: EquipmentTradeInput): Promise<AuctionListing> {
+	return invokeCommand('inventory_equipment_trade', { input });
 }
 
 export async function marketPastePreview(text: string): Promise<MarketPastePreview> {
