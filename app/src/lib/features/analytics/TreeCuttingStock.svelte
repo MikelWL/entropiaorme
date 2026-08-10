@@ -262,7 +262,10 @@
 		</div>
 	{/if}
 
-	<div class="flex shrink-0 items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+	<div
+		class="flex shrink-0 items-center gap-3 px-2.5 text-text-tertiary
+			{actionLayout === 'inventory' ? 'border-b border-border py-2' : 'pb-1'}"
+	>
 		<span class="eyebrow flex-1 min-w-0">Item</span>
 		<span class="eyebrow w-24 text-right shrink-0">TT</span>
 		<span class="eyebrow w-20 text-right shrink-0">MU</span>
