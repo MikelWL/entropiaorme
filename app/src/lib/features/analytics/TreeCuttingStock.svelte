@@ -221,7 +221,7 @@
 					/>
 				{/if}
 			</div>
-			<div class="flex flex-col items-end gap-1">
+			<div class="flex h-full flex-col items-end justify-end gap-1">
 				{@render controlsLabel()}
 				{#if controls}{@render controls()}{/if}
 			</div>
