@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
+	import ExpandingActionButton from '$lib/components/ExpandingActionButton.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import type { InventoryItem } from '$lib/api';
@@ -97,14 +98,43 @@
 									{item.listedQty > 0 ? item.listedQty : '—'}
 								</td>
 								<td class="px-4 py-3">
-									<div class="flex items-center justify-end gap-1.5">
-										<Button size="sm" onclick={() => onsellloot(item)} disabled={item.heldQty <= 0}>Sell</Button>
+									<div class="ml-auto flex w-[7.125rem] items-center justify-end gap-1.5">
 										{#if item.itemName === 'Shrapnel'}
-											<Button size="sm" variant="ghost" onclick={() => onshrapnel(item)} disabled={item.heldQty <= 0}>Convert 101%</Button>
-										{:else if item.itemName !== 'Nanocube' && item.itemName !== 'Universal Ammo'}
-											<Button size="sm" variant="ghost" onclick={() => onconvert(item)} disabled={item.heldQty <= 0}>Nanocubes</Button>
+											<ExpandingActionButton
+												letter="C"
+												label="Convert 101%"
+												onclick={() => onshrapnel(item)}
+												disabled={item.heldQty <= 0}
+												title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
+											/>
+										{:else}
+											<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
 										{/if}
-										<Button size="sm" variant="ghost" onclick={() => onremove(item)} disabled={item.heldQty <= 0}>Remove</Button>
+										{#if item.itemName !== 'Shrapnel' && item.itemName !== 'Nanocube' && item.itemName !== 'Universal Ammo'}
+											<ExpandingActionButton
+												letter="N"
+												label="Nanocubes"
+												onclick={() => onconvert(item)}
+												disabled={item.heldQty <= 0}
+												title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
+											/>
+										{:else}
+											<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
+										{/if}
+										<ExpandingActionButton
+											letter="S"
+											label="Sell"
+											onclick={() => onsellloot(item)}
+											disabled={item.heldQty <= 0}
+											title={item.heldQty <= 0 ? 'Nothing held to sell' : ''}
+										/>
+										<ExpandingActionButton
+											letter="X"
+											label="Remove"
+											onclick={() => onremove(item)}
+											disabled={item.heldQty <= 0}
+											title={item.heldQty <= 0 ? 'Nothing held to remove' : ''}
+										/>
 									</div>
 								</td>
 							</tr>

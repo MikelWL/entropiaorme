@@ -1,5 +1,6 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import ExpandingActionButton from '$lib/components/ExpandingActionButton.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import { tick } from 'svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
@@ -149,46 +150,6 @@
 		};
 	}
 </script>
-
-{#snippet actionButton(
-	letter: string,
-	label: string,
-	onclick: () => void,
-	disabled = false,
-	title = '',
-)}
-	<!-- The expanded width comes from the label rather than a number chosen to
-		suit it: `ch` is the font's own digit advance, so this tracks the type it
-		is measuring and cannot be left behind by a rename. Lowercase letters run
-		narrower than a digit, so it errs on the side of fitting. -->
-	<button
-		type="button"
-		{onclick}
-		{disabled}
-		{title}
-		aria-label={label}
-		style="--expanded: calc({label.length}ch + 1.25rem)"
-		class="group/act relative inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden
-			rounded-md border border-border/40 bg-transparent text-xs font-semibold text-text-secondary
-			transition-[width,color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
-			hover:w-[var(--expanded)] hover:text-text hover:border-border
-			disabled:cursor-not-allowed disabled:text-text-tertiary disabled:border-dashed
-			disabled:hover:text-text-tertiary disabled:hover:border-border/40"
-	>
-		<span
-			class="absolute inset-0 flex items-center justify-center
-				transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-0"
-		>
-			{letter}
-		</span>
-		<span
-			class="absolute inset-0 flex items-center justify-center whitespace-nowrap px-2
-				opacity-0 transition-opacity duration-[var(--duration-fast)] group-hover/act:opacity-100"
-		>
-			{label}
-		</span>
-	</button>
-{/snippet}
 
 {#snippet confidenceBody(item: TreeCuttingStock)}
 	{@const tip = confidenceTip(item)}
@@ -367,37 +328,37 @@
 
 				<div class="shrink-0 flex items-center justify-end gap-1.5">
 					{#if item.itemName === 'Shrapnel'}
-						{@render actionButton(
-							'C',
-							'Convert',
-							() => onshrapnelconvert(item),
-							item.heldQty <= 0,
-							item.heldQty <= 0 ? 'Nothing held to convert' : '',
-						)}
+						<ExpandingActionButton
+							letter="C"
+							label="Convert"
+							onclick={() => onshrapnelconvert(item)}
+							disabled={item.heldQty <= 0}
+							title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
+						/>
 					{:else}
 						<span class="h-6 w-6 shrink-0" aria-hidden="true"></span>
 					{/if}
-					{@render actionButton(
-						'N',
-						'Nanocube',
-						() => onconvert(item),
-						item.heldQty <= 0,
-						item.heldQty <= 0 ? 'Nothing held to convert' : '',
-					)}
-					{@render actionButton(
-						'S',
-						'Sell',
-						() => onsell(item),
-						item.heldQty <= 0,
-						item.heldQty <= 0 ? 'Nothing held to sell' : '',
-					)}
-					{@render actionButton(
-						'X',
-						'Remove',
-						() => onremove(item),
-						item.heldQty <= 0,
-						item.heldQty <= 0 ? 'Nothing held to remove' : '',
-					)}
+					<ExpandingActionButton
+						letter="N"
+						label="Nanocube"
+						onclick={() => onconvert(item)}
+						disabled={item.heldQty <= 0}
+						title={item.heldQty <= 0 ? 'Nothing held to convert' : ''}
+					/>
+					<ExpandingActionButton
+						letter="S"
+						label="Sell"
+						onclick={() => onsell(item)}
+						disabled={item.heldQty <= 0}
+						title={item.heldQty <= 0 ? 'Nothing held to sell' : ''}
+					/>
+					<ExpandingActionButton
+						letter="X"
+						label="Remove"
+						onclick={() => onremove(item)}
+						disabled={item.heldQty <= 0}
+						title={item.heldQty <= 0 ? 'Nothing held to remove' : ''}
+					/>
 				</div>
 			</li>
 		{/each}
