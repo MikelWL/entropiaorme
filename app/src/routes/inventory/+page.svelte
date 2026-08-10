@@ -64,8 +64,8 @@
 	}
 </script>
 
-<div class="space-y-6 px-6 pb-6">
-	<header>
+<div class="flex h-full min-h-0 flex-col gap-6 px-6 pb-6">
+	<header class="shrink-0">
 		<div class="flex flex-col gap-1.5">
 			<h1 class="text-xl font-semibold tracking-tight text-text">Inventory</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
@@ -75,14 +75,15 @@
 		</div>
 	</header>
 
-	<Tabs {tabs} active={model.view} onchange={selectView} />
+	<Tabs {tabs} active={model.view} onchange={selectView} class="shrink-0" />
 
 	<ErrorNotice message={model.error} />
 
-	{#if model.loading}
-		<p class="py-16 text-center text-sm text-text-tertiary">Reading inventory...</p>
-	{:else if model.view === 'holdings'}
-		<InventoryHoldings
+	<div class="min-h-0 flex-1">
+		{#if model.loading}
+			<p class="py-16 text-center text-sm text-text-tertiary">Reading inventory...</p>
+		{:else if model.view === 'holdings'}
+			<InventoryHoldings
 			kind={model.kind}
 			onkindchange={(id) => (model.kind = id as InventoryKind)}
 			confidenceMode={model.confidenceMode}
@@ -97,39 +98,40 @@
 			oneditequipment={editEquipment}
 			onsellequipment={(item) => (equipmentToSell = item)}
 			ondeleteequipment={deleteEquipment}
-		/>
-	{:else if model.view === 'listings'}
-		<div class="py-3">
+			/>
+		{:else if model.view === 'listings'}
+			<div class="py-3">
 			<SegmentedControl
 				options={kindOptions}
 				active={model.kind}
 				size="md"
 				onchange={(id) => (model.kind = id as InventoryKind)}
 			/>
-		</div>
-		<AuctionListings
+			</div>
+			<AuctionListings
 			open={model.openListings}
 			resolved={model.resolvedListings}
 			onresolve={model.resolveListing}
 			central
 			embedded
-		/>
-	{:else}
-		<div class="py-3">
+			/>
+		{:else}
+			<div class="py-3">
 			<SegmentedControl
 				options={kindOptions}
 				active={model.kind}
 				size="md"
 				onchange={(id) => (model.kind = id as InventoryKind)}
 			/>
-		</div>
-		<ActivityHistory
+			</div>
+			<ActivityHistory
 			entries={model.history}
 			loading={model.historyLoading}
 			onundo={model.undo}
 			embedded
-		/>
-	{/if}
+			/>
+		{/if}
+	</div>
 </div>
 
 <SellStockModal

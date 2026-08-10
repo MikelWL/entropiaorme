@@ -18,6 +18,7 @@
 		actionLayout = 'activity',
 		emptyMessage = 'No tracked stock is currently held.',
 		alwaysSearch = false,
+		fillAvailable = false,
 		// The one activity-specific line in the panel, so the Hunting tab can
 		// host the same surface over its own loot without forking the layout.
 		sourceDescription = 'Loot recorded from tree cutting, minus stock you have sold, converted, or removed.',
@@ -32,6 +33,7 @@
 		actionLayout?: 'activity' | 'inventory';
 		emptyMessage?: string;
 		alwaysSearch?: boolean;
+		fillAvailable?: boolean;
 		sourceDescription?: string;
 	} = $props();
 
@@ -200,9 +202,9 @@
 	</div>
 {/snippet}
 
-<div>
+<div class={fillAvailable ? 'flex h-full min-h-0 flex-col' : ''}>
 	<div
-		class="flex flex-wrap items-center gap-x-5 gap-y-2 pb-2"
+		class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 pb-2"
 		data-testid="stock-utility-strip"
 	>
 		<div class="flex items-center gap-2">
@@ -239,18 +241,18 @@
 		{#if controls}<div class="ml-auto">{@render controls()}</div>{/if}
 	</div>
 
-	<div class="flex items-center gap-3 px-2.5 pb-1 text-text-tertiary">
+	<div class="flex shrink-0 items-center gap-3 px-2.5 pb-1 text-text-tertiary">
 		<span class="eyebrow flex-1 min-w-0">Item</span>
-		<span class="eyebrow w-24 text-right shrink-0">Stock TT</span>
-		<span class="eyebrow w-20 text-right shrink-0">Markup</span>
+		<span class="eyebrow w-24 text-right shrink-0">TT</span>
+		<span class="eyebrow w-20 text-right shrink-0">MU</span>
 		<span class="eyebrow w-12 text-center shrink-0">Conf</span>
 		<span class="eyebrow {actionLayout === 'inventory' ? 'w-[5.25rem]' : 'w-[7.125rem]'} shrink-0 text-right">Actions</span>
 	</div>
 
-	<div class="relative">
+	<div class="relative {fillAvailable ? 'min-h-0 flex-1' : ''}">
 	<ul
 		bind:this={stockList}
-		class="flex max-h-[24rem] flex-col gap-1 overflow-y-auto"
+		class="flex flex-col gap-1 overflow-y-auto {fillAvailable ? 'h-full' : 'max-h-[24rem]'}"
 		data-testid="stock-scroll-list"
 		onscroll={updateScrollContinuation}
 	>

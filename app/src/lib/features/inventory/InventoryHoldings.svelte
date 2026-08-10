@@ -55,7 +55,10 @@
 	];
 </script>
 
-<section aria-label={kind === 'loot' ? 'Loot holdings' : 'Equipment holdings'}>
+<section
+	aria-label={kind === 'loot' ? 'Loot holdings' : 'Equipment holdings'}
+	class="flex h-full min-h-0 flex-col"
+>
 	{#if kind === 'loot'}
 		<TreeCuttingStockView
 			stock={loot}
@@ -65,6 +68,7 @@
 			onshrapnelconvert={onshrapnel}
 			actionLayout="inventory"
 			alwaysSearch
+			fillAvailable
 			emptyMessage="No tracked loot is currently held."
 			sourceDescription="Loot pooled across every tracked profession, minus stock you have sold, converted, or removed."
 		>
@@ -81,7 +85,7 @@
 			{/snippet}
 		</TreeCuttingStockView>
 	{:else}
-		<div class="flex flex-wrap items-center justify-between gap-3 py-3">
+		<div class="flex shrink-0 flex-wrap items-center justify-between gap-3 py-3">
 			<SegmentedControl
 				options={kindOptions}
 				active={kind}
@@ -109,7 +113,7 @@
 				{/if}
 			</div>
 		{:else}
-			<div class="max-h-[34rem] overflow-auto border-t border-border/50">
+			<div class="min-h-0 flex-1 overflow-auto border-t border-border/50">
 				<table class="w-full min-w-[48rem] text-sm">
 					<thead class="sticky top-0 z-10 bg-surface">
 						<tr class="border-b border-border">
