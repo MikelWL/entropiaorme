@@ -6,7 +6,7 @@
 	 * inventory at a price nobody knows yet. This panel is the only place that
 	 * position is visible, and the only place a sale becomes real.
 	 *
-	 * It takes the sub-activity box's own two-pane shape (selectable list on
+	 * It takes the sub-activity surface's own two-pane shape (selectable list on
 	 * the left, detail on the right) because the toggle swaps between them:
 	 * the same frame with different contents reads as one surface, where a
 	 * second layout would read as a different page.
@@ -157,11 +157,11 @@
 			type="button"
 			aria-pressed={isSelected}
 			onclick={() => select(listing)}
-			class="w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left
+			class="w-full flex items-center gap-2 px-3 py-2 text-left
 				transition-[background-color,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)]
-				{isSelected
-				? 'border-accent/40 bg-accent/[0.08]'
-				: 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}"
+				{central
+				? `border-b border-border/30 ${isSelected ? 'border-l-2 border-l-accent bg-accent/[0.07]' : 'border-l-2 border-l-transparent hover:bg-surface-hover/40'}`
+				: `rounded-lg border ${isSelected ? 'border-accent/40 bg-accent/[0.08]' : 'border-transparent hover:border-border/40 hover:bg-surface-hover/40'}`}"
 		>
 			<span
 				class="{COL_NAME} truncate text-sm font-medium tracking-tight
@@ -211,15 +211,13 @@
 			</div>
 		</div>
 	{:else}
-		<!-- Kept in step with the sub-activity box the toggle swaps from: same
+		<!-- Kept in step with the sub-activity surface the toggle swaps from: same
 			frame, so the hairline must not move when the contents do, and both
 			panes narrow together as the card does. -->
 		<div class="grid sm:grid-cols-[46%_minmax(0,1fr)]">
 			<div class="min-w-0 border-b border-border/40 sm:border-b-0 sm:border-r">
 				<div class="px-2 pt-4">
-					<div
-						class="flex items-center gap-2 rounded-lg border border-transparent px-3 pb-2 text-text-tertiary"
-					>
+					<div class="flex items-center gap-2 px-3 pb-2 text-text-tertiary">
 						<span class="eyebrow {COL_NAME}">Item</span>
 						<span class="eyebrow {COL_QTY} text-right">Qty</span>
 						<span class="eyebrow {COL_TT} text-right">TT</span>
@@ -230,7 +228,7 @@
 				<div class="flex max-h-[32rem] flex-col overflow-y-auto px-2 pb-3">
 					{#if open.length > 0}
 						<span class="eyebrow px-3 pb-1 text-text-tertiary">On auction</span>
-						<ul class="flex flex-col gap-1">
+						<ul class={central ? 'flex flex-col' : 'flex flex-col gap-1'}>
 							{#each open as listing (listing.id)}
 								{@render listingRow(listing, listing.id === selected?.id)}
 							{/each}
@@ -238,7 +236,7 @@
 					{/if}
 					{#if resolved.length > 0}
 						<span class="eyebrow px-3 pb-1 pt-3 text-text-tertiary">Resolved</span>
-						<ul class="flex flex-col gap-1">
+						<ul class={central ? 'flex flex-col' : 'flex flex-col gap-1'}>
 							{#each resolved as listing (listing.id)}
 								{@render listingRow(listing, listing.id === selected?.id)}
 							{/each}

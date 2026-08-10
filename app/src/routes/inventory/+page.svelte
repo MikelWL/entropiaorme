@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { InventoryItem } from '$lib/api';
-	import Card from '$lib/components/Card.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import ActivityHistory from '$lib/features/analytics/ActivityHistory.svelte';
@@ -12,13 +11,13 @@
 	import EquipmentSaleModal from '$lib/features/inventory/EquipmentSaleModal.svelte';
 	import InventoryHoldings from '$lib/features/inventory/InventoryHoldings.svelte';
 	import InventoryItemFormModal from '$lib/features/inventory/InventoryItemFormModal.svelte';
+	import InventorySummary from '$lib/features/inventory/InventorySummary.svelte';
 	import {
 		createInventoryModel,
 		type InventoryKind,
 		type InventoryView,
 	} from '$lib/features/inventory/inventoryModel.svelte';
 	import type { TreeCuttingStock } from '$lib/features/analytics/treeCuttingModel.svelte';
-	import { formatPed } from '$lib/utils/format';
 
 	const model = createInventoryModel();
 	let equipmentFormOpen = $state(false);
@@ -33,12 +32,6 @@
 		{ id: 'loot', label: 'Loot' },
 		{ id: 'equipment', label: 'Equipment' },
 	];
-	const viewOptions = [
-		{ id: 'holdings', label: 'Holdings' },
-		{ id: 'listings', label: 'Listings' },
-		{ id: 'history', label: 'History' },
-	];
-
 	onMount(() => void model.load());
 
 	function selectView(id: string) {
@@ -81,29 +74,18 @@
 
 	<ErrorNotice message={model.error} />
 
-	<div class="grid grid-cols-3 gap-3">
-		<Card class="px-4 py-3">
-			<p class="eyebrow text-text-tertiary">Held value</p>
-			<p class="mt-1 text-lg font-semibold tabular-nums text-text">
-				{formatPed(model.kind === 'loot' ? model.lootTt : model.equipmentTt)} PED
-			</p>
-		</Card>
-		<Card class="px-4 py-3">
-			<p class="eyebrow text-text-tertiary">{model.kind === 'loot' ? 'Distinct holdings' : 'Cost basis'}</p>
-			<p class="mt-1 text-lg font-semibold tabular-nums text-text">
-				{model.kind === 'loot' ? model.loot.length : `${formatPed(model.equipmentBasis)} PED`}
-			</p>
-		</Card>
-		<Card class="px-4 py-3">
-			<p class="eyebrow text-text-tertiary">Open listings</p>
-			<p class="mt-1 text-lg font-semibold tabular-nums text-text">{model.openListings.length}</p>
-		</Card>
-	</div>
-
-	<SegmentedControl options={viewOptions} active={model.view} onchange={selectView} />
+	<InventorySummary
+		kind={model.kind}
+		view={model.view}
+		heldValue={model.kind === 'loot' ? model.lootTt : model.equipmentTt}
+		distinctHoldings={model.loot.length}
+		costBasis={model.equipmentBasis}
+		openListings={model.openListings.length}
+		onviewchange={selectView}
+	/>
 
 	{#if model.loading}
-		<Card class="py-16 text-center text-sm text-text-tertiary">Reading inventory...</Card>
+		<p class="py-16 text-center text-sm text-text-tertiary">Reading inventory...</p>
 	{:else if model.view === 'holdings'}
 		<InventoryHoldings
 			kind={model.kind}

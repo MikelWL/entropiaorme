@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
-	import Card from '$lib/components/Card.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import type { InventoryItem } from '$lib/api';
 	import type { TreeCuttingStock } from '$lib/features/analytics/treeCuttingModel.svelte';
@@ -43,17 +42,12 @@
 	);
 </script>
 
-<Card class="overflow-hidden">
-	<div class="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
+<section aria-label={kind === 'loot' ? 'Loot holdings' : 'Equipment holdings'}>
+	<div class="flex flex-wrap items-center justify-between gap-3 py-3">
 		<div>
 			<h2 class="text-sm font-semibold tracking-tight text-text">
 				{kind === 'loot' ? 'Loot holdings' : 'Equipment holdings'}
 			</h2>
-			<p class="mt-0.5 text-xs text-text-tertiary">
-				{kind === 'loot'
-					? 'Canonical items pooled across every tracked profession.'
-					: 'Whole capital positions with their original acquisition basis.'}
-			</p>
 		</div>
 		<div class="flex items-center gap-2">
 			<SearchInput
@@ -74,7 +68,7 @@
 				{query ? 'No loot holding matches that search.' : 'No tracked loot is currently held.'}
 			</p>
 		{:else}
-			<div class="max-h-[34rem] overflow-auto">
+			<div class="max-h-[34rem] overflow-auto border-t border-border/50">
 				<table class="w-full min-w-[46rem] text-sm">
 					<thead class="sticky top-0 z-10 bg-surface">
 						<tr class="border-b border-border">
@@ -121,7 +115,7 @@
 			{/if}
 		</div>
 	{:else}
-		<div class="max-h-[34rem] overflow-auto">
+		<div class="max-h-[34rem] overflow-auto border-t border-border/50">
 			<table class="w-full min-w-[48rem] text-sm">
 				<thead class="sticky top-0 z-10 bg-surface">
 					<tr class="border-b border-border">
@@ -157,4 +151,4 @@
 			</table>
 		</div>
 	{/if}
-</Card>
+</section>
