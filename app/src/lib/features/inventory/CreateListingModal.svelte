@@ -124,8 +124,13 @@
 			candidates = [];
 		},
 		clear() {
+			// `clear` empties the picker's own query directly, so the draft's
+			// copy of the name has to be emptied with it or the form would
+			// still be holding a name the box no longer shows.
 			picker.clear();
+			fields.itemName = '';
 			chosen = null;
+			candidates = [];
 		},
 	};
 
