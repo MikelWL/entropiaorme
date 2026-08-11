@@ -21,7 +21,16 @@ export interface InDevelopmentSurface {
 	readonly graduates: string;
 }
 
-export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [] as const;
+export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
+	{
+		id: 'market-sale-capture',
+		summary:
+			'Reading the sale window off the screen is not working yet, so these buttons do nothing.',
+		graduates:
+			'They start filling the form once the sale window can be located and read. Typing the ' +
+			'figures in is a complete path in the meantime, not a workaround.',
+	},
+] as const;
 
 /** The registered surface for `id`. Throws on an unregistered id, matching
  * the guard's build-time check so both enforcement points agree. */

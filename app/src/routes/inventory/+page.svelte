@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { InventoryItem } from '$lib/api';
+	import Button from '$lib/components/Button.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import Tabs from '$lib/components/Tabs.svelte';
@@ -9,6 +10,7 @@
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
+	import CreateListingModal from '$lib/features/inventory/CreateListingModal.svelte';
 	import EquipmentSaleModal from '$lib/features/inventory/EquipmentSaleModal.svelte';
 	import InventoryHoldings from '$lib/features/inventory/InventoryHoldings.svelte';
 	import InventoryItemFormModal from '$lib/features/inventory/InventoryItemFormModal.svelte';
@@ -23,6 +25,7 @@
 	} from '$lib/features/analytics/treeCuttingModel.svelte';
 
 	const model = createInventoryModel();
+	let createListingOpen = $state(false);
 	let equipmentFormOpen = $state(false);
 	let equipmentToEdit = $state<InventoryItem | null>(null);
 	let equipmentToSell = $state<InventoryItem | null>(null);
@@ -67,7 +70,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col gap-6 px-6 pb-6">
-	<header class="shrink-0">
+	<header class="flex shrink-0 items-start justify-between gap-4">
 		<div class="flex flex-col gap-1.5">
 			<h1 class="text-xl font-semibold tracking-tight text-text">Inventory</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
@@ -75,6 +78,7 @@
 				Manage your loot and assets; review activity performance in Analytics.
 			</p>
 		</div>
+		<Button onclick={() => (createListingOpen = true)}>Create listing</Button>
 	</header>
 
 	<Tabs {tabs} active={model.view} onchange={selectView} class="shrink-0" />
@@ -136,6 +140,11 @@
 	</div>
 </div>
 
+<CreateListingModal
+	bind:open={createListingOpen}
+	onresolve={model.resolveDraftName}
+	onsubmit={model.createFromDraft}
+/>
 <SellStockModal
 	item={lootToSell}
 	onlist={model.listLoot}

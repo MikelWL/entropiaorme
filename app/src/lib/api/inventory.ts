@@ -98,6 +98,7 @@ export async function commitInventorySaleDraft({
 					buyout: draft.buyout,
 					listingFee: draft.listingFee ?? 0,
 					listedAt: occurredAt,
+					auctionDays: draft.auctionDays,
 				})
 			: tradeEquipment({
 					itemId: holding.holdingId,
@@ -117,6 +118,7 @@ export async function commitInventorySaleDraft({
 				buyout: draft.buyout,
 				listingFee: draft.listingFee ?? 0,
 				listedAt: occurredAt,
+				auctionDays: draft.auctionDays,
 			})
 		: tradeLoot({
 				itemName: holding.name,

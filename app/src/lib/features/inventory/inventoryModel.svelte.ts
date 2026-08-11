@@ -3,6 +3,7 @@ import type {
 	AuctionListing,
 	EquipmentListingInput,
 	EquipmentTradeInput,
+	InventoryHoldingCandidate,
 	InventoryItem,
 	InventorySaleDraft,
 	MarketHarvestData,
@@ -21,6 +22,7 @@ import {
 	getInventoryListings,
 	getLootInventory,
 	removeLoot,
+	resolveInventoryDraft,
 	revertInventorySale,
 	undoInventoryConversion,
 	undoInventoryListing,
@@ -41,6 +43,7 @@ import {
 	opportunityTier,
 } from '$lib/features/analytics/treeCuttingModel.svelte';
 import { describeError } from '$lib/view/errorState';
+import type { ListingDraftFields } from './listingIntake';
 
 export type InventoryKind = 'loot' | 'equipment';
 export type InventoryView = 'holdings' | 'listings' | 'history';
@@ -111,6 +114,7 @@ function manualDraft(
 		buyout: values.buyout ?? null,
 		listingFee: values.listingFee ?? null,
 		finalPrice: values.finalPrice ?? null,
+		auctionDays: null,
 		confidence: null,
 	};
 }
@@ -245,6 +249,49 @@ export function createInventoryModel() {
 					occurredAt: input.soldAt ?? null,
 				}),
 			'Failed to record the trade',
+		);
+	}
+
+	/** Candidate holdings for a name read or typed off the game's sale window.
+	 * Conservative by construction: a winner comes back only for a match with
+	 * no plausible rival. */
+	async function resolveDraftName(name: string, channel: 'auction' | 'trade') {
+		const resolution = await resolveInventoryDraft({
+			...manualDraft(channel, name, 0, {}),
+			quantity: null,
+		});
+		return { candidates: resolution.candidates, resolved: resolution.resolved };
+	}
+
+	/** Commit an intake draft against the holding the user reviewed. The same
+	 * boundary a captured draft will cross; nothing here is intake-specific. */
+	async function createFromDraft({
+		fields,
+		channel,
+		holding,
+		occurredAt,
+	}: {
+		fields: ListingDraftFields;
+		channel: 'auction' | 'trade';
+		holding: InventoryHoldingCandidate;
+		occurredAt: string | null;
+	}) {
+		const draft: InventorySaleDraft = {
+			draftId: crypto.randomUUID(),
+			source: 'manual',
+			channel,
+			observedName: holding.name,
+			quantity: fields.quantity,
+			startingBid: fields.startingBid,
+			buyout: fields.buyout,
+			listingFee: fields.auctionFee,
+			finalPrice: channel === 'trade' ? fields.buyout : null,
+			auctionDays: channel === 'auction' ? fields.auctionDays : null,
+			confidence: null,
+		};
+		await withRefresh(
+			() => commitInventorySaleDraft({ draft, holding, occurredAt }),
+			channel === 'auction' ? 'Failed to create the listing' : 'Failed to record the trade',
 		);
 	}
 
@@ -390,6 +437,8 @@ export function createInventoryModel() {
 		refresh,
 		listLoot,
 		sellLootByTrade,
+		resolveDraftName,
+		createFromDraft,
 		listEquipment,
 		sellEquipmentByTrade,
 		resolveListing,

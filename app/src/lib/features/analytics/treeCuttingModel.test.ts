@@ -87,6 +87,8 @@ function listing(over: Record<string, unknown>) {
 		inventoryItemId: null,
 		costBasis: null,
 		channel: 'auction',
+		auctionDays: null,
+		expiresAt: null,
 		activityNetMarkup: null,
 		grossMarkup: null,
 		...over,
