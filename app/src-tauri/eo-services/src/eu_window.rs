@@ -65,6 +65,13 @@ pub fn repair_region(presets: &ScanPresets) -> Option<([i64; 2], [i64; 2])> {
     live_region(&presets.repair)
 }
 
+/// The auction sale window's capture rect, or None when the game
+/// window is absent or the panel has not been calibrated (its
+/// uncalibrated anchor is degenerate, which `compute_region` refuses).
+pub fn sale_window_region(presets: &ScanPresets) -> Option<([i64; 2], [i64; 2])> {
+    live_region(&presets.sale_window)
+}
+
 #[cfg(windows)]
 mod platform {
     use super::{WindowHandle, GAME_TITLE_PREFIX};
@@ -286,6 +293,7 @@ mod tests {
             assert!(skill_region(&presets).is_none());
             assert!(profession_region(&presets).is_none());
             assert!(repair_region(&presets).is_none());
+            assert!(sale_window_region(&presets).is_none());
         }
         #[cfg(target_os = "linux")]
         {
