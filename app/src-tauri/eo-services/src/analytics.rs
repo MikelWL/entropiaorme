@@ -27,7 +27,7 @@ use crate::daily_rollup;
 use crate::db::{Db, DbError};
 use crate::harvest_yield::HarvestYieldTier;
 use crate::stock_allocation;
-use crate::time::naive_to_epoch;
+use crate::time::{naive_to_epoch, to_iso_utc};
 
 /// The analytics domain service over the shared database and injected
 /// clock: the Overview / Activity aggregates and the ledger / preset /
@@ -3400,17 +3400,41 @@ const STOCK_EPSILON: f64 = 1e-9;
 const LISTING_COLUMNS: &str = "id, item_name, quantity, attributed_qty, unattributed_qty, \
      tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, status, \
      final_price, sale_fee, resolved_at, subject_kind, inventory_item_id, cost_basis, channel, \
-     auction_days";
+     auction_days, listed_instant";
 
-/// The day a listing posted on `listed_at` for `auction_days` days runs out.
-/// `None` when the duration was never recorded, or when `listed_at` is not a
-/// plain date: an unparseable stamp yields no deadline rather than a guess.
-fn listing_expiry(listed_at: &str, auction_days: Option<i64>) -> Option<String> {
-    let days = auction_days?;
-    let listed = chrono::NaiveDate::parse_from_str(listed_at, "%Y-%m-%d").ok()?;
-    listed
-        .checked_add_signed(chrono::Duration::days(days))
-        .map(|expiry| expiry.format("%Y-%m-%d").to_string())
+/// The moment a listing runs out: its duration measured from the instant it
+/// started, not from the day. Posted at 18:20 for seven days, it ends at
+/// 18:20 seven days later, which is what the auction house itself does.
+///
+/// `None` unless both the duration and the starting instant are known. A
+/// listing recorded as a bare date has no time of day, and assuming one would
+/// put the deadline hours away from the truth in either direction.
+fn listing_expiry(listed_instant: Option<f64>, auction_days: Option<i64>) -> Option<String> {
+    let (instant, days) = (listed_instant?, auction_days?);
+    Some(to_iso_utc(instant + (days as f64) * 86_400.0))
+}
+
+/// Split a caller's listing moment into the calendar date the ledger is keyed
+/// by and the precise instant the auction clock runs from.
+///
+/// A full timestamp gives both. A bare date gives only the date, so the clock
+/// stays unknown rather than being anchored to an invented midnight. Nothing
+/// at all means now, which is the ordinary case: a listing is normally
+/// recorded as it is made.
+fn listing_moment(supplied: Option<&str>, now: chrono::NaiveDateTime) -> (String, Option<f64>) {
+    let Some(text) = supplied.map(str::trim).filter(|value| !value.is_empty()) else {
+        let epoch = naive_to_epoch(now);
+        return (epoch_to_iso(epoch), Some(epoch));
+    };
+    for format in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"] {
+        if let Ok(stamp) = chrono::NaiveDateTime::parse_from_str(text, format) {
+            return (
+                stamp.format("%Y-%m-%d").to_string(),
+                Some(naive_to_epoch(stamp)),
+            );
+        }
+    }
+    (text.to_string(), None)
 }
 
 /// One auction listing from a row over [`LISTING_COLUMNS`], with its
@@ -3427,7 +3451,7 @@ fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
     let subject_kind = row.get_unwrap::<_, String>(15);
     let cost_basis = row.get_unwrap::<_, Option<f64>>(17);
     let auction_days = row.get_unwrap::<_, Option<i64>>(19);
-    let expires_at = listing_expiry(&listed_at, auction_days);
+    let expires_at = listing_expiry(row.get_unwrap::<_, Option<f64>>(20), auction_days);
     let sold = status == "sold";
 
     let loot_outcome = (sold && subject_kind == "loot").then(|| {
@@ -4686,12 +4710,10 @@ impl AnalyticsService {
         }
 
         let id = Uuid::new_v4().to_string();
-        let listed_at = listed_at
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| self.default_date());
+        let (listed_at, listed_instant) = listing_moment(listed_at, self.clock.now());
         let now = naive_to_epoch(self.clock.now());
         let (id_c, item_c, listed_c) = (id.clone(), item_name.to_string(), listed_at.clone());
+        let instant_c = listed_instant;
 
         self.db
             .with_writer(move |conn| {
@@ -4704,8 +4726,8 @@ impl AnalyticsService {
                     "INSERT INTO auction_listings ( \
                          id, item_name, profession, quantity, attributed_qty, unattributed_qty, \
                          tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, \
-                         auction_days, status, created_at, updated_at) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                         auction_days, listed_instant, status, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
                     rusqlite::params![
                         id_c,
                         item_c,
@@ -4720,6 +4742,7 @@ impl AnalyticsService {
                         listing_fee,
                         listed_c,
                         auction_days,
+                        instant_c,
                         now,
                         now,
                     ],
@@ -4797,10 +4820,7 @@ impl AnalyticsService {
         }
         let id = Uuid::new_v4().to_string();
         let item_id = item_id.to_string();
-        let listed_at = listed_at
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| self.default_date());
+        let (listed_at, listed_instant) = listing_moment(listed_at, self.clock.now());
         let now = naive_to_epoch(self.clock.now());
         self.db
             .with_writer(move |conn| {
@@ -4822,9 +4842,9 @@ impl AnalyticsService {
                     "INSERT INTO auction_listings ( \
                          id, item_name, profession, quantity, attributed_qty, unattributed_qty, \
                          tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, \
-                         auction_days, status, created_at, updated_at, subject_kind, \
-                         inventory_item_id, cost_basis, channel) \
-                     VALUES (?, ?, 'inventory', 1, 0, 1, ?, 0, ?, ?, ?, ?, ?, \
+                         auction_days, listed_instant, status, created_at, updated_at, \
+                         subject_kind, inventory_item_id, cost_basis, channel) \
+                     VALUES (?, ?, 'inventory', 1, 0, 1, ?, 0, ?, ?, ?, ?, ?, ?, \
                              'pending', ?, ?, 'equipment', ?, ?, 'auction')",
                     rusqlite::params![
                         id,
@@ -4835,6 +4855,7 @@ impl AnalyticsService {
                         listing_fee,
                         listed_at,
                         auction_days,
+                        listed_instant,
                         now,
                         now,
                         item_id,
@@ -7220,21 +7241,44 @@ mod tests {
     }
 
     #[test]
-    fn listing_expiry_derives_a_deadline_only_from_a_recorded_duration() {
+    fn listing_expiry_runs_from_the_instant_not_the_day() {
+        // 2026-08-11T18:20:00Z. Seven days later is the same clock time,
+        // which is what the auction house does and what a date alone
+        // cannot express.
+        let listed = 1_786_472_400.0;
         assert_eq!(
-            listing_expiry("2026-08-11", Some(7)),
-            Some("2026-08-18".to_string())
-        );
-        // Month and year boundaries are the calendar's, not 30-day arithmetic.
-        assert_eq!(
-            listing_expiry("2026-12-28", Some(7)),
-            Some("2027-01-04".to_string())
+            listing_expiry(Some(listed), Some(7)).as_deref(),
+            Some("2026-08-18T18:20:00+00:00")
         );
         // An unrecorded duration never invents a deadline, so a listing made
         // before durations were captured simply never nudges.
-        assert_eq!(listing_expiry("2026-08-11", None), None);
-        // Nor does an unparseable stamp: no deadline beats a guessed one.
-        assert_eq!(listing_expiry("not a date", Some(7)), None);
+        assert_eq!(listing_expiry(Some(listed), None), None);
+        // Nor does a listing known only by its date: midnight would be a
+        // guess, and hours out in either direction.
+        assert_eq!(listing_expiry(None, Some(7)), None);
+    }
+
+    #[test]
+    fn listing_moment_keeps_the_clock_only_when_it_was_given() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 8, 11)
+            .unwrap()
+            .and_hms_opt(18, 20, 0)
+            .unwrap();
+
+        // Nothing supplied means now, the ordinary case.
+        let (date, instant) = listing_moment(None, now);
+        assert_eq!(date, "2026-08-11");
+        assert_eq!(instant, Some(naive_to_epoch(now)));
+
+        // A full stamp gives both halves.
+        let (date, instant) = listing_moment(Some("2026-07-02T09:05"), now);
+        assert_eq!(date, "2026-07-02");
+        assert!(instant.is_some());
+
+        // A bare date gives the ledger its key and leaves the clock unknown.
+        let (date, instant) = listing_moment(Some("2026-07-02"), now);
+        assert_eq!(date, "2026-07-02");
+        assert_eq!(instant, None);
     }
 
     #[test]
@@ -7423,13 +7467,15 @@ mod tests {
                 2.0,
                 None,
                 0.5,
-                Some("2026-07-20"),
+                Some("2026-07-20T14:30:00"),
                 Some(7),
             )
             .await
             .unwrap();
         assert_eq!(dated.auction_days, Some(7));
-        assert_eq!(dated.expires_at.as_deref(), Some("2026-07-27"));
+        // Listed at 14:30 local, so the deadline is that same clock time
+        // seven days on, reported in UTC.
+        assert_eq!(dated.expires_at.as_deref(), Some("2026-07-27T13:30:00+00:00"));
 
         let undated = service
             .create_auction_listing(
@@ -7454,7 +7500,7 @@ mod tests {
             .await
             .unwrap();
         let stored = listings.iter().find(|row| row.id == dated.id).unwrap();
-        assert_eq!(stored.expires_at.as_deref(), Some("2026-07-27"));
+        assert_eq!(stored.expires_at.as_deref(), Some("2026-07-27T13:30:00+00:00"));
     }
 
     /// A duration is either absent or a real number of days; zero and

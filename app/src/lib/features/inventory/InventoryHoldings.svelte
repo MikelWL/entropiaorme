@@ -26,6 +26,7 @@
 		onremove,
 		onshrapnel,
 		onaddequipment,
+		oncreatelisting,
 		oneditequipment,
 		onsellequipment,
 		ondeleteequipment,
@@ -41,6 +42,7 @@
 		onremove: (item: TreeCuttingStock) => void;
 		onshrapnel: (item: TreeCuttingStock) => void;
 		onaddequipment: () => void;
+		oncreatelisting: () => void;
 		oneditequipment: (item: InventoryItem) => void;
 		onsellequipment: (item: InventoryItem) => void;
 		ondeleteequipment: (item: InventoryItem) => void;
@@ -88,6 +90,9 @@
 			{#snippet controls()}
 				<MarkupConfidenceSelector active={confidenceMode} onchange={onconfidencechange} />
 			{/snippet}
+			{#snippet actions()}
+				<Button size="sm" onclick={oncreatelisting}>Create listing</Button>
+			{/snippet}
 		</TreeCuttingStockView>
 	{:else}
 		<div
@@ -108,8 +113,9 @@
 					aria-label="Find an item"
 				/>
 			</div>
-			<div class="flex h-full items-end justify-end">
-				<Button size="sm" onclick={onaddequipment}>Add asset</Button>
+			<div class="flex h-full items-end justify-end gap-2">
+				<Button size="sm" variant="secondary" onclick={onaddequipment}>Add asset</Button>
+				<Button size="sm" onclick={oncreatelisting}>Create listing</Button>
 			</div>
 		</div>
 

@@ -64,7 +64,9 @@ activity-context provenance), `0029_session_context_loot_rollups.sql`
 completion), and `0031_stock_outcomes.sql` (private trades, stock-only
 removals, deliberate Shrapnel conversion gains, and the corresponding
 provenance-aware movement kinds), and `0032_inventory_hub.sql` (the equipment
-holding lifecycle and the shared loot/equipment market-listing identity). The
+holding lifecycle and the shared loot/equipment market-listing identity), and
+`0033_listing_duration.sql` plus `0034_listing_instant.sql` (how long a listing
+runs and the instant it started, from which its expiry is derived). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -671,11 +673,13 @@ activity's TT return.
   immediate player trades recorded on this same whole-position lifecycle.
   Stock leaves at listing time, the listing fee is spent then, and markup is
   realised only when the final sale is confirmed. `auction_days` (migration
-  `0033`) records how long the listing was posted for; it is nullable, because
+  `0033`) records how long the listing was posted for and `listed_instant`
+  (migration `0034`) the moment it started; both are nullable, because
   a listing made before durations were recorded has no deadline and inventing
   one would fabricate a decision the player never made. The expiry date is
-  derived from `listed_at` plus this duration rather than stored, so it cannot
-  drift from either.
+  derived from `listed_instant` plus the duration rather than stored, so it
+  cannot drift from either, and it carries a time of day because the auction
+  clock does: a listing posted at 18:20 for seven days ends at 18:20.
 - `private_sales` records a completed loot trade with its quantity, TT,
   tracked and untracked shares, final price, date, and owned ledger entry. It
   has no auction fees and recognises markup atomically with the stock outflow.

@@ -15,6 +15,7 @@
 		onshrapnelconvert,
 		heading,
 		controlsLabel,
+		actions,
 		controls,
 		actionLayout = 'activity',
 		emptyMessage = 'No tracked stock is currently held.',
@@ -31,6 +32,8 @@
 		onshrapnelconvert: (item: TreeCuttingStock) => void;
 		heading?: Snippet;
 		controlsLabel?: Snippet;
+		/** Page-level actions for the strip's right-hand slot. */
+		actions?: Snippet;
 		controls?: Snippet;
 		actionLayout?: 'activity' | 'inventory';
 		emptyMessage?: string;
@@ -212,18 +215,25 @@
 		>
 			<div class="flex min-w-0 flex-col items-start gap-3">
 				{#if heading}{@render heading()}{/if}
-				{#if searchable}
-					<SearchInput
-						class="w-full sm:w-64"
-						bind:value={query}
-						placeholder="Find an item"
-						aria-label="Find an item"
-					/>
-				{/if}
+				<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+					{#if searchable}
+						<SearchInput
+							class="w-full sm:w-64"
+							bind:value={query}
+							placeholder="Find an item"
+							aria-label="Find an item"
+						/>
+					{/if}
+					<!-- Beside the search rather than opposite it: both narrow what
+						the list shows, so they belong to the same gesture. -->
+					<div class="flex items-center gap-1.5">
+						{@render controlsLabel()}
+						{#if controls}{@render controls()}{/if}
+					</div>
+				</div>
 			</div>
-			<div class="flex h-full flex-col items-end justify-end gap-1">
-				{@render controlsLabel()}
-				{#if controls}{@render controls()}{/if}
+			<div class="flex h-full items-end justify-end">
+				{#if actions}{@render actions()}{/if}
 			</div>
 		</div>
 	{:else}

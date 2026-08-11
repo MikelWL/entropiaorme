@@ -5,11 +5,11 @@ import {
 	impliedMarkupPct,
 	isCommittable,
 	type ListingDraftFields,
-	markupTolerancePct,
 	previewNetMarkup,
 } from './listingIntake';
 
-/** A consistent auction draft: 10 PED TT listed at 102.50% / 115.00%. */
+/** An auction draft: 10 PED TT listed at 10.25 / 11.50, which the surface
+ * shows as 102.50% / 115.00%. */
 function auctionDraft(overrides: Partial<ListingDraftFields> = {}): ListingDraftFields {
 	return {
 		...EMPTY_DRAFT,
@@ -17,8 +17,6 @@ function auctionDraft(overrides: Partial<ListingDraftFields> = {}): ListingDraft
 		quantity: 5,
 		ttValue: 10,
 		auctionFee: 0.5,
-		markupSbPct: 102.5,
-		markupBoPct: 115,
 		auctionDays: 7,
 		startingBid: 10.25,
 		buyout: 11.5,
@@ -27,49 +25,13 @@ function auctionDraft(overrides: Partial<ListingDraftFields> = {}): ListingDraft
 }
 
 describe('listing intake', () => {
-	it('accepts a draft whose stated markups agree with its bids', () => {
+	it('accepts a complete auction draft', () => {
 		expect(draftIssues(auctionDraft(), 'auction')).toEqual([]);
 		expect(isCommittable(auctionDraft(), 'auction')).toBe(true);
 	});
 
-	it('blocks a draft whose stated markup contradicts its bid', () => {
-		// A transposed digit in the starting bid: 10.25 typed as 10.52, which
-		// on its own looks like a perfectly ordinary price.
-		const issues = draftIssues(auctionDraft({ startingBid: 10.52 }), 'auction');
-		expect(issues[0]).toMatchObject({ field: 'markupSbPct', severity: 'blocking' });
-		expect(issues[0].message).toContain('105.20%');
-		expect(isCommittable(auctionDraft({ startingBid: 10.52 }), 'auction')).toBe(false);
-	});
-
-	it('tolerates the rounding the game itself displays', () => {
-		// 10.25 / 10.00 is exactly 102.5%; a TT displayed as 10.00 could be
-		// anything up to 10.005, which moves the true markup off the stated
-		// figure without either number being wrong.
-		const draft = auctionDraft({ ttValue: 10.004, startingBid: 10.25 });
-		expect(draftIssues(draft, 'auction')).toEqual([]);
-	});
-
-	it('scales its tolerance with TT, because rounding hurts small values most', () => {
-		// The same half-hundredth of rounding is worth ten times more markup
-		// on a 1 PED item than on a 10 PED one.
-		expect(markupTolerancePct(1, 100)).toBeGreaterThan(markupTolerancePct(10, 100) * 5);
-	});
-
-	it('leaves the markup check out entirely when no markup was recorded', () => {
-		const draft = auctionDraft({ markupSbPct: null, markupBoPct: null, startingBid: 999 });
-		// Nothing contradicts anything: an unstated markup makes no claim.
-		expect(draftIssues(draft, 'auction').some((issue) => issue.field === 'markupSbPct')).toBe(
-			false,
-		);
-	});
-
 	it('reports a below-TT starting bid without blocking it', () => {
-		const draft = auctionDraft({
-			startingBid: 9,
-			markupSbPct: 90,
-			buyout: null,
-			markupBoPct: null,
-		});
+		const draft = auctionDraft({ startingBid: 9, buyout: null });
 		const issues = draftIssues(draft, 'auction');
 		expect(issues).toHaveLength(1);
 		expect(issues[0]).toMatchObject({ severity: 'advisory' });
@@ -77,7 +39,7 @@ describe('listing intake', () => {
 	});
 
 	it('blocks a buyout beneath the starting bid', () => {
-		const draft = auctionDraft({ buyout: 9, markupBoPct: 90 });
+		const draft = auctionDraft({ buyout: 9 });
 		expect(draftIssues(draft, 'auction')).toContainEqual(
 			expect.objectContaining({ field: 'buyout', severity: 'blocking' }),
 		);

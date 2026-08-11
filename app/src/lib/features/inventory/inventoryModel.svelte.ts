@@ -373,6 +373,22 @@ export function createInventoryModel() {
 			.map((position) => stockRow(position, market, confidenceMode))
 			.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName)),
 	);
+	// Everything currently held, in one list, for the intake typeahead: the
+	// sale window names an item, not a profession or an asset class.
+	const holdingOptions = $derived([
+		...loot.map((row) => ({
+			kind: 'loot',
+			holdingId: row.itemName,
+			name: row.itemName,
+			score: 100,
+		})),
+		...equipment.map((row) => ({
+			kind: 'equipment',
+			holdingId: row.id,
+			name: row.name,
+			score: 100,
+		})),
+	]);
 
 	return {
 		get kind() {
@@ -422,6 +438,9 @@ export function createInventoryModel() {
 		},
 		get history() {
 			return visibleHistory;
+		},
+		get holdingOptions() {
+			return holdingOptions;
 		},
 		get lootTt() {
 			return loot.reduce((sum, row) => sum + row.heldTt, 0);
