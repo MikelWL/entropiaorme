@@ -5560,7 +5560,14 @@ impl AnalyticsService {
                     ))?;
                     let listings = stmt
                         .query_map(rusqlite::params![profession.as_str()], |row| {
-                            Ok((listing_from_row(row), row.get::<_, Option<String>>(19)?))
+                            // By name, not by position: this column sits past
+                            // the end of LISTING_COLUMNS, so an index would
+                            // silently start reading a different column the
+                            // next time that list grows.
+                            Ok((
+                                listing_from_row(row),
+                                row.get::<_, Option<String>>("undone_at")?,
+                            ))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     for (listing, undone_at) in listings {

@@ -670,7 +670,12 @@ activity's TT return.
   `cost_basis`. For equipment, `channel` distinguishes auction listings from
   immediate player trades recorded on this same whole-position lifecycle.
   Stock leaves at listing time, the listing fee is spent then, and markup is
-  realised only when the final sale is confirmed.
+  realised only when the final sale is confirmed. `auction_days` (migration
+  `0033`) records how long the listing was posted for; it is nullable, because
+  a listing made before durations were recorded has no deadline and inventing
+  one would fabricate a decision the player never made. The expiry date is
+  derived from `listed_at` plus this duration rather than stored, so it cannot
+  drift from either.
 - `private_sales` records a completed loot trade with its quantity, TT,
   tracked and untracked shares, final price, date, and owned ledger entry. It
   has no auction fees and recognises markup atomically with the stock outflow.

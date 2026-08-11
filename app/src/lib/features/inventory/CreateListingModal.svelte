@@ -70,11 +70,15 @@
 	const netPreview = $derived(previewNetMarkup(fields, channel));
 	const impliedSb = $derived(impliedMarkupPct(fields.startingBid, fields.ttValue));
 	const impliedBo = $derived(impliedMarkupPct(fields.buyout, fields.ttValue));
+	// The match belongs to the name it was made for. Editing the name after
+	// matching must drop it, or a sale could be bound to the holding of a
+	// word the player has since typed over.
+	const matched = $derived(resolvedFor !== null && resolvedFor === fields.itemName.trim());
 	// A name that resolved to nothing is a legitimate sale of untracked stock,
 	// so it may proceed; it just cannot claim any activity's provenance.
-	const untracked = $derived(resolvedFor !== null && candidates.length === 0);
+	const untracked = $derived(matched && candidates.length === 0);
 	const canCommit = $derived(
-		isCommittable(fields, channel) && !saving && (chosen !== null || untracked),
+		isCommittable(fields, channel) && !saving && matched && (chosen !== null || untracked),
 	);
 
 	function reset() {
@@ -163,6 +167,12 @@
 
 			{#if resolving}
 				<p class="text-xs text-text-tertiary">Matching against your holdings...</p>
+			{:else if !matched}
+				<p class="text-xs text-text-tertiary">
+					{fields.itemName.trim() === ''
+						? 'Name the item, then match it to what you hold.'
+						: 'Match this name to a holding to continue.'}
+				</p>
 			{:else if chosen}
 				<p class="text-xs text-text-secondary">
 					Selling from <span class="text-text">{chosen.name}</span>
