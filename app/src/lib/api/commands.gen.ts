@@ -316,6 +316,10 @@ export interface AuctionListing {
 	inventoryItemId: string | null;
 	costBasis: number | null;
 	channel: string;
+	/** How many days the listing was posted for. Null for a listing recorded before durations were captured; no deadline is invented for it. */
+	auctionDays: number | null;
+	/** The day the listing runs out, derived from `listed_at` plus `auction_days`. Null whenever the duration is unknown. */
+	expiresAt: string | null;
 	/** Net markup the activity may claim, after both auction fees and after removing the share covered by untracked stock. */
 	activityNetMarkup: number | null;
 	/** Sale proceeds above the listing's TT, before fees. */
@@ -335,6 +339,8 @@ export interface AuctionListingInput {
 	buyout?: number | null;
 	listingFee: number;
 	listedAt?: string | null;
+	/** How many days the listing runs for. Optional: a listing whose duration the player did not record simply never nudges for resolution. */
+	auctionDays?: number | null;
 }
 
 /**
@@ -679,6 +685,8 @@ export interface EquipmentListingInput {
 	buyout?: number | null;
 	listingFee: number;
 	listedAt?: string | null;
+	/** How many days the listing runs for, when recorded. */
+	auctionDays?: number | null;
 }
 
 /**
@@ -1022,6 +1030,8 @@ export interface InventorySaleDraft {
 	buyout: number | null;
 	listingFee: number | null;
 	finalPrice: number | null;
+	/** How many days an auction listing runs for. */
+	auctionDays: number | null;
 	/** OCR may provide a field-level confidence. Manual drafts use null. */
 	confidence: number | null;
 }

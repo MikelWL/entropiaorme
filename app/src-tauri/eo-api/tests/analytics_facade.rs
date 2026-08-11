@@ -247,6 +247,7 @@ async fn a_non_positive_listing_quantity_is_a_bad_request() {
             buyout: None,
             listing_fee: 0.5,
             listed_at: None,
+            auction_days: None,
         })
         .await
         .unwrap_err(),

@@ -504,6 +504,12 @@ pub struct AuctionListing {
     pub inventory_item_id: Nullable<String>,
     pub cost_basis: Nullable<f64>,
     pub channel: String,
+    /// How many days the listing was posted for. Null for a listing recorded
+    /// before durations were captured; no deadline is invented for it.
+    pub auction_days: Nullable<i64>,
+    /// The day the listing runs out, derived from `listed_at` plus
+    /// `auction_days`. Null whenever the duration is unknown.
+    pub expires_at: Nullable<String>,
     /// Net markup the activity may claim, after both auction fees and after
     /// removing the share covered by untracked stock.
     pub activity_net_markup: Nullable<f64>,
@@ -580,6 +586,9 @@ pub struct AuctionListingInput {
     pub buyout: Option<f64>,
     pub listing_fee: f64,
     pub listed_at: Option<String>,
+    /// How many days the listing runs for. Optional: a listing whose duration
+    /// the player did not record simply never nudges for resolution.
+    pub auction_days: Option<i64>,
 }
 
 /// A sale-confirmation payload: the price the auction actually fetched and
@@ -713,6 +722,8 @@ pub struct EquipmentListingInput {
     pub buyout: Option<f64>,
     pub listing_fee: f64,
     pub listed_at: Option<String>,
+    /// How many days the listing runs for, when recorded.
+    pub auction_days: Option<i64>,
 }
 
 /// A completed fee-free player trade for one whole capital position.
@@ -741,6 +752,8 @@ pub struct InventorySaleDraft {
     pub buyout: Nullable<f64>,
     pub listing_fee: Nullable<f64>,
     pub final_price: Nullable<f64>,
+    /// How many days an auction listing runs for.
+    pub auction_days: Nullable<i64>,
     /// OCR may provide a field-level confidence. Manual drafts use null.
     pub confidence: Nullable<f64>,
 }
@@ -866,6 +879,7 @@ impl Api {
                 input.buyout,
                 input.listing_fee,
                 input.listed_at.as_deref(),
+                input.auction_days,
             )
             .await
             .map_err(analytics_error("auction listing create"))?;
@@ -1275,6 +1289,7 @@ impl Api {
                 input.buyout,
                 input.listing_fee,
                 input.listed_at.as_deref(),
+                input.auction_days,
             )
             .await
             .map_err(analytics_error("equipment listing create"))?
@@ -1495,6 +1510,8 @@ pub(crate) fn auction_listing_dto(
         inventory_item_id: row.inventory_item_id.into(),
         cost_basis: row.cost_basis.into(),
         channel: row.channel,
+        auction_days: row.auction_days.into(),
+        expires_at: row.expires_at.into(),
         activity_net_markup: row.activity_net_markup.into(),
         gross_markup: row.gross_markup.into(),
     }
