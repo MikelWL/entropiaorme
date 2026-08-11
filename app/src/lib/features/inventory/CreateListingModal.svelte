@@ -15,6 +15,12 @@
 	 * cost basis, because the wrong holding attributes real money to gameplay
 	 * that did not earn it.
 	 *
+	 * The item comes first and the rest of the form waits on it, because the
+	 * item is what makes the rest meaningful: once it is known, a quantity is
+	 * enough to say what the sale is worth, since the per-unit TT was recorded
+	 * when the stock was looted. The TT field is filled from that and stays
+	 * editable, because the game's figure is the authority if they disagree.
+	 *
 	 * Nothing is complained about until the player tries to file the listing.
 	 * A form that opens already scolding the reader for not having filled it
 	 * in yet teaches them to ignore its red text.
@@ -35,8 +41,10 @@
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import type { InventoryHoldingCandidate } from '$lib/api/commands.gen';
 	import {
+		derivedTt,
 		draftIssues,
 		EMPTY_DRAFT,
+		type HoldingOption,
 		impliedMarkupPct,
 		type ListingDraftFields,
 		previewNetMarkup,
@@ -50,7 +58,7 @@
 	}: {
 		open?: boolean;
 		/** Everything currently held, loot and assets alike, for the typeahead. */
-		holdings: InventoryHoldingCandidate[];
+		holdings: HoldingOption[];
 		/** Candidate holdings for a name typed rather than chosen. */
 		onresolve: (
 			name: string,
@@ -79,10 +87,16 @@
 	let attempted = $state(false);
 
 	let resolving = $state(false);
-	let candidates = $state<InventoryHoldingCandidate[]>([]);
-	let chosen = $state<InventoryHoldingCandidate | null>(null);
+	let candidates = $state<HoldingOption[]>([]);
+	let chosen = $state<HoldingOption | null>(null);
+	/** The name the free-text resolver last answered for, so a stale answer
+	 * cannot be mistaken for one about what is in the box now. */
+	let resolvedFor = $state<string | null>(null);
+	/** Set once the player edits TT themselves, after which it is theirs and
+	 * the derived figure stops overwriting it. */
+	let ttEdited = $state(false);
 
-	const picker = createTypeahead<InventoryHoldingCandidate>({
+	const picker = createTypeahead<HoldingOption>({
 		search: async (query) => {
 			const needle = query.trim().toLowerCase();
 			return holdings.filter((row) => row.name.toLowerCase().includes(needle)).slice(0, 12);
@@ -104,6 +118,7 @@
 			// player has since typed over.
 			chosen = null;
 			candidates = [];
+			resolvedFor = null;
 		},
 		get results() {
 			return picker.results;
@@ -117,11 +132,12 @@
 		get error() {
 			return picker.error;
 		},
-		select(row: InventoryHoldingCandidate) {
+		select(row: HoldingOption) {
 			picker.select(row);
 			fields.itemName = row.name;
 			chosen = row;
 			candidates = [];
+			resolvedFor = row.name;
 		},
 		clear() {
 			// `clear` empties the picker's own query directly, so the draft's
@@ -131,6 +147,8 @@
 			fields.itemName = '';
 			chosen = null;
 			candidates = [];
+			resolvedFor = null;
+			ttEdited = false;
 		},
 	};
 
@@ -142,8 +160,16 @@
 	const impliedBo = $derived(impliedMarkupPct(fields.buyout, fields.ttValue));
 	const named = $derived(fields.itemName.trim() !== '');
 	// A name that resolved to nothing is a legitimate sale of untracked stock,
-	// so it may proceed; it just cannot claim any activity's provenance.
-	const untracked = $derived(named && !chosen && candidates.length === 0 && !resolving);
+	// so it may proceed; it just cannot claim any activity's provenance. Only
+	// true once the resolver has actually answered about THIS name: an empty
+	// candidate list means nothing before it has been asked.
+	const untracked = $derived(
+		named && !chosen && !resolving && resolvedFor === fields.itemName.trim() && candidates.length === 0,
+	);
+	// The rest of the form waits on the item, which is what gives the other
+	// figures their meaning.
+	const itemSettled = $derived(chosen !== null || untracked);
+	const suggestedTt = $derived(derivedTt(chosen, fields.quantity));
 
 	function reset() {
 		fields = { ...EMPTY_DRAFT };
@@ -153,8 +179,18 @@
 		attempted = false;
 		candidates = [];
 		chosen = null;
+		resolvedFor = null;
+		ttEdited = false;
 		picker.clear();
 	}
+
+	// TT follows the quantity while the player has not taken the field over.
+	// It is a starting figure from what the stock was recorded at, not a
+	// claim about what the game will say.
+	$effect(() => {
+		if (ttEdited || suggestedTt === null) return;
+		if (fields.ttValue !== suggestedTt) fields.ttValue = suggestedTt;
+	});
 
 	$effect(() => {
 		if (open) return;
@@ -163,15 +199,29 @@
 
 	onDestroy(() => picker.destroy());
 
-	/** Resolve a name the player typed instead of choosing. */
+	/** Enrich a resolved candidate with what is known about the holding it
+	 * names, so a name matched by typing behaves like one chosen from the list. */
+	function enrich(candidate: InventoryHoldingCandidate): HoldingOption {
+		const known = holdings.find((row) => row.holdingId === candidate.holdingId);
+		return { ...candidate, unitTt: known?.unitTt ?? null, heldQty: known?.heldQty ?? null };
+	}
+
+	/** Resolve a name the player typed instead of choosing.
+	 *
+	 * Guarded against its own lateness. Clicking a suggestion blurs the field
+	 * first, so this can already be in flight when the click lands; without
+	 * the guard its answer would return a moment later and overwrite the
+	 * choice the player just made with a list of near-misses. */
 	async function resolveTyped() {
 		const name = fields.itemName.trim();
 		if (name === '' || chosen || resolving) return;
 		resolving = true;
 		try {
 			const outcome = await onresolve(name, channel);
-			candidates = outcome.candidates;
-			chosen = outcome.resolved;
+			if (chosen || fields.itemName.trim() !== name) return;
+			candidates = outcome.candidates.map(enrich);
+			chosen = outcome.resolved ? enrich(outcome.resolved) : null;
+			resolvedFor = name;
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not match that name to a holding';
 		} finally {
@@ -286,11 +336,46 @@
 		<div class="grid grid-cols-2 gap-3">
 			<label class="block space-y-1">
 				<span class="eyebrow text-text-tertiary">Quantity</span>
-				<Input type="number" min="0" step="1" align="right" bind:value={fields.quantity} />
+				<Input
+					type="number"
+					min="0"
+					step="1"
+					align="right"
+					disabled={!itemSettled}
+					bind:value={fields.quantity}
+				/>
+				{#if chosen?.heldQty !== null && chosen?.heldQty !== undefined}
+					<span class="block text-right text-[10px] tabular-nums text-text-tertiary">
+						{chosen.heldQty} held
+					</span>
+				{/if}
 			</label>
 			<label class="block space-y-1">
 				<span class="eyebrow text-text-tertiary">TT value (PED)</span>
-				<Input type="number" min="0" step="0.01" align="right" bind:value={fields.ttValue} />
+				<Input
+					type="number"
+					min="0"
+					step="0.01"
+					align="right"
+					disabled={!itemSettled}
+					oninput={() => (ttEdited = true)}
+					bind:value={fields.ttValue}
+				/>
+				<span class="block text-right text-[10px] text-text-tertiary">
+					{#if ttEdited && suggestedTt !== null}
+						<button
+							type="button"
+							class="text-accent underline-offset-2 hover:underline"
+							onclick={() => (ttEdited = false)}
+						>
+							Use {formatPed(suggestedTt)} from stock
+						</button>
+					{:else if suggestedTt !== null}
+						from recorded stock
+					{:else}
+						&nbsp;
+					{/if}
+				</span>
 			</label>
 		</div>
 
@@ -300,14 +385,14 @@
 			<div class="grid grid-cols-2 gap-3">
 				<label class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Starting bid (PED)</span>
-					<Input type="number" min="0" step="0.01" align="right" bind:value={fields.startingBid} />
+					<Input type="number" min="0" step="0.01" align="right" disabled={!itemSettled} bind:value={fields.startingBid} />
 					<span class="block text-right text-[10px] tabular-nums text-text-tertiary">
 						{impliedSb !== null ? `${impliedSb.toFixed(2)}% of TT` : ' '}
 					</span>
 				</label>
 				<label class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Buyout (PED)</span>
-					<Input type="number" min="0" step="0.01" align="right" bind:value={fields.buyout} />
+					<Input type="number" min="0" step="0.01" align="right" disabled={!itemSettled} bind:value={fields.buyout} />
 					<span class="block text-right text-[10px] tabular-nums text-text-tertiary">
 						{impliedBo !== null ? `${impliedBo.toFixed(2)}% of TT` : ' '}
 					</span>
@@ -317,11 +402,11 @@
 			<div class="grid grid-cols-3 gap-3">
 				<label class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Auction fee (PED)</span>
-					<Input type="number" min="0" step="0.01" align="right" bind:value={fields.auctionFee} />
+					<Input type="number" min="0" step="0.01" align="right" disabled={!itemSettled} bind:value={fields.auctionFee} />
 				</label>
 				<label class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Runs for (days)</span>
-					<Input type="number" min="1" step="1" align="right" bind:value={fields.auctionDays} />
+					<Input type="number" min="1" step="1" align="right" disabled={!itemSettled} bind:value={fields.auctionDays} />
 				</label>
 				<div class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Listed</span>
@@ -329,7 +414,9 @@
 						<button
 							type="button"
 							class="h-9 w-full rounded-md border border-border bg-surface/70 px-3 text-left text-sm
-								text-text transition-[border-color] hover:border-border-bright"
+								text-text transition-[border-color] hover:border-border-bright
+								disabled:cursor-not-allowed disabled:opacity-50"
+							disabled={!itemSettled}
 							onclick={() => (occurredAt = nowLocalValue())}
 						>
 							Now
@@ -352,7 +439,7 @@
 			<div class="grid grid-cols-2 gap-3">
 				<label class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Sold for (PED)</span>
-					<Input type="number" min="0" step="0.01" align="right" bind:value={fields.buyout} />
+					<Input type="number" min="0" step="0.01" align="right" disabled={!itemSettled} bind:value={fields.buyout} />
 				</label>
 				<div class="block space-y-1">
 					<span class="eyebrow text-text-tertiary">Sold</span>
@@ -360,7 +447,9 @@
 						<button
 							type="button"
 							class="h-9 w-full rounded-md border border-border bg-surface/70 px-3 text-left text-sm
-								text-text transition-[border-color] hover:border-border-bright"
+								text-text transition-[border-color] hover:border-border-bright
+								disabled:cursor-not-allowed disabled:opacity-50"
+							disabled={!itemSettled}
 							onclick={() => (occurredAt = nowLocalValue())}
 						>
 							Now

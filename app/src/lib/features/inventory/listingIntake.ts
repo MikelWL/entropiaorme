@@ -12,6 +12,29 @@
  * same checks, so a misread cannot reach the ledger by a path a typo could not.
  */
 
+/** One thing the player holds, with what the app already knows about it: the
+ * per-unit TT it was recorded at, so a quantity is enough to say what a sale
+ * is worth, and the quantity held, so an overrun is visible. */
+export interface HoldingOption {
+	kind: string;
+	holdingId: string;
+	name: string;
+	score: number;
+	/** `null` for a holding with no per-unit value to divide (a whole
+	 * capital position, or a tracked quantity of zero). */
+	unitTt: number | null;
+	heldQty: number | null;
+}
+
+/** The TT a quantity of a holding comes to, at the value it was recorded at.
+ * `null` when the holding has no per-unit figure to multiply. */
+export function derivedTt(holding: HoldingOption | null, quantity: number | null): number | null {
+	if (!holding || holding.unitTt === null || quantity === null || quantity <= 0) return null;
+	// Rounded to the hundredth the game itself displays; an unrounded product
+	// would show a TT with more precision than any figure it came from.
+	return Math.round(holding.unitTt * quantity * 100) / 100;
+}
+
 /** What the sale window states, as read or typed. Percentages are the game's
  * own display form: 102.5 means 102.50%. */
 export interface ListingDraftFields {
