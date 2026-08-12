@@ -370,7 +370,7 @@
 				{capturing ? 'Reading the window' : 'Capture from game'}
 			</Button>
 			<Button variant="ghost" size="sm" onclick={() => showSaleCaptureOverlay()}>
-				Capture over the game
+				Capture overlay
 			</Button>
 		</div>
 		{#if unread.length > 0}
