@@ -65,6 +65,16 @@ export async function hideSaleCaptureOverlay(): Promise<void> {
 	await invoke('hide_sale_capture_overlay');
 }
 
+export interface OverlayCaptureReply {
+	message: string;
+	failed: boolean;
+}
+
+/** Consume the one-shot capture authority granted when Inventory opened the overlay. */
+export async function captureSaleFromOverlay(): Promise<OverlayCaptureReply> {
+	return invoke('capture_sale_from_overlay');
+}
+
 /** Metadata about an available update (mirrors the Rust `UpdateInfo`). */
 export type UpdateInfo = {
 	version: string;

@@ -194,11 +194,35 @@ fn show_scan_overlay(app: tauri::AppHandle) {
 /// whether a read came from it.
 pub const SALE_CAPTURE_OVERLAY: &str = "overlay-sale-capture";
 
+/// One-shot authority granted only by the main window opening the capture
+/// overlay. The floating renderer can request a normal listing read once; it
+/// cannot mint or retain screen-capture authority for itself.
+#[derive(Default)]
+struct SaleCaptureAuthority(Mutex<bool>);
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayCaptureReply {
+    message: String,
+    failed: bool,
+}
+
 /// The sale-window capture button, put where a fullscreen game leaves it
 /// reachable. It is the main window's button in another place and nothing
 /// more: the values it reads are reviewed back in the form, not here.
 #[tauri::command]
-fn show_sale_capture_overlay(app: tauri::AppHandle) {
+fn show_sale_capture_overlay(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    authority: tauri::State<'_, SaleCaptureAuthority>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("sale capture can only be opened from the main window".into());
+    }
+    let research_active = commands::facade(&app)
+        .map(|api| api.auction_fee_research_active_for_shell())
+        .unwrap_or(false);
+    *authority.0.lock().expect("sale capture authority") = !research_active;
     if let Some(window) = app.get_webview_window(SALE_CAPTURE_OVERLAY) {
         // Top-left of the monitor, clear of a bottom-right docked sale
         // window, which is the one part of the screen it must never cover.
@@ -206,13 +230,56 @@ fn show_sale_capture_overlay(app: tauri::AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+    Ok(())
 }
 
 #[tauri::command]
-fn hide_sale_capture_overlay(app: tauri::AppHandle) {
+fn hide_sale_capture_overlay(
+    app: tauri::AppHandle,
+    authority: tauri::State<'_, SaleCaptureAuthority>,
+) {
+    *authority.0.lock().expect("sale capture authority") = false;
+    if let Ok(api) = commands::facade(&app) {
+        if api.auction_fee_research_active_for_shell() {
+            api.stop_auction_fee_research_for_shell();
+        }
+    }
     if let Some(window) = app.get_webview_window(SALE_CAPTURE_OVERLAY) {
         let _ = window.hide();
     }
+}
+
+/// Consume the normal listing-read authority and return status only. The
+/// complete typed read waits in the facade for the main Inventory form.
+#[tauri::command]
+async fn capture_sale_from_overlay(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    authority: tauri::State<'_, SaleCaptureAuthority>,
+) -> Result<OverlayCaptureReply, String> {
+    if window.label() != SALE_CAPTURE_OVERLAY {
+        return Err("sale capture is available only from its overlay".into());
+    }
+    let allowed = {
+        let mut armed = authority
+            .0
+            .lock()
+            .map_err(|_| "capture authority unavailable")?;
+        std::mem::replace(&mut *armed, false)
+    };
+    if !allowed {
+        return Err("sale capture is not armed; reopen it from Inventory".into());
+    }
+    let api = commands::facade(&app).map_err(|error| error.to_string())?;
+    let read = tokio::task::spawn_blocking(move || api.inventory_sale_window_capture())
+        .await
+        .map_err(|_| "sale capture task failed".to_string())?
+        .map_err(|error| error.to_string())?;
+    let error = read.error.0;
+    Ok(OverlayCaptureReply {
+        failed: error.is_some(),
+        message: error.unwrap_or_else(|| "Captured. Check the main window.".into()),
+    })
 }
 
 #[tauri::command]
@@ -323,6 +390,7 @@ pub fn run() {
     resources::spawn_resource_sampler();
 
     let app = tauri::Builder::default()
+        .manage(SaleCaptureAuthority::default())
         // The shell plugin stays for its `open` API (external links route to
         // the OS browser via `$lib/utils/openExternal`); the sidecar/execute
         // usage was removed when the Python backend was decommissioned.
@@ -336,6 +404,7 @@ pub fn run() {
             show_scan_overlay,
             show_sale_capture_overlay,
             hide_sale_capture_overlay,
+            capture_sale_from_overlay,
             hide_scan_overlay,
             capture_png,
             planet_map_image,
@@ -454,6 +523,11 @@ pub fn run() {
             commands::scan_reject,
             commands::scan_pending,
             commands::scan_spacebar_capture,
+            commands::dev_auction_fee_research_start,
+            commands::dev_auction_fee_research_stop,
+            commands::dev_auction_fee_research_status,
+            commands::dev_auction_fee_research_capture,
+            commands::dev_auction_fee_research_overlay_status,
             commands::tracking_sessions,
             commands::tracking_session_detail,
             commands::tracking_session_intervals,
@@ -1086,12 +1160,20 @@ mod tests {
         // reachable from a surface that floats over the game.
         assert_eq!(
             crate::command_acl::SALE_CAPTURE_COMMANDS,
-            ["hide_sale_capture_overlay", "inventory_sale_window_capture"]
+            [
+                "capture_sale_from_overlay",
+                "dev_auction_fee_research_capture",
+                "dev_auction_fee_research_overlay_status",
+                "hide_sale_capture_overlay"
+            ]
         );
         // Notably not the collect verb: the form takes the waiting read, the
         // overlay never needs to see one back.
         assert!(!crate::command_acl::SALE_CAPTURE_COMMANDS
             .contains(&"inventory_sale_window_take_capture"));
+        assert!(
+            !crate::command_acl::SALE_CAPTURE_COMMANDS.contains(&"inventory_sale_window_capture")
+        );
         assert!(!crate::command_acl::SALE_CAPTURE_COMMANDS.contains(&"auction_listing_create"));
     }
 

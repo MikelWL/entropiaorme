@@ -119,6 +119,18 @@ pub struct SaleWindowOcrService {
     capture_tap: Mutex<Option<SaleCaptureTap>>,
 }
 
+/// One sale-window observation: the parsed answer plus the exact panel
+/// pixels and screen rectangle it came from. Production callers normally
+/// need only [`SaleWindowOcrService::scan_sale_window`]; the richer form is
+/// for development research that must preserve the evidence behind each
+/// quoted fee.
+#[derive(Clone)]
+pub struct SaleWindowObservation {
+    pub read: Value,
+    pub region: Option<Value>,
+    pub frame: Option<BgrImage>,
+}
+
 impl SaleWindowOcrService {
     pub fn new(providers: SaleWindowProviders) -> Self {
         Self {
@@ -143,32 +155,69 @@ impl SaleWindowOcrService {
     /// (`confidence`), or a single `error` when there was nothing to
     /// read at all.
     pub fn scan_sale_window(&self) -> Value {
+        self.observe_sale_window().read
+    }
+
+    /// Capture and read the sale window while retaining the source frame.
+    /// The OCR path is shared with [`scan_sale_window`](Self::scan_sale_window),
+    /// so research capture cannot drift into a second parser.
+    pub fn observe_sale_window(&self) -> SaleWindowObservation {
         let failure = |error: &str| json!({ "error": error, "unread": SALE_FIELDS });
 
         let anchor = (self.providers.anchor)();
         if anchor.cells.is_empty() {
-            return failure("The sale-window calibration is missing from this installation");
+            return SaleWindowObservation {
+                read: failure("The sale-window calibration is missing from this installation"),
+                region: None,
+                frame: None,
+            };
         }
         let Some((top_left, bottom_right)) = (self.providers.sale_window_region)() else {
-            return failure("Entropia Universe window not found: start the game first");
+            return SaleWindowObservation {
+                read: failure("Entropia Universe window not found: start the game first"),
+                region: None,
+                frame: None,
+            };
         };
         let (x, y) = (top_left[0], top_left[1]);
         let (w, h) = (bottom_right[0] - x, bottom_right[1] - y);
+        let region = json!({"x": x, "y": y, "w": w, "h": h});
         if w <= 0 || h <= 0 {
-            return failure("Invalid region");
+            return SaleWindowObservation {
+                read: failure("Invalid region"),
+                region: Some(region),
+                frame: None,
+            };
         }
         let Some(panel) = (self.providers.capture_region)(x, y, w, h) else {
-            return failure("Capture failed");
+            return SaleWindowObservation {
+                read: failure("Capture failed"),
+                region: Some(region),
+                frame: None,
+            };
         };
 
         let tap = self.capture_tap.lock().expect("capture tap").clone();
         if let Some(tap) = tap {
-            let region = json!({"x": x, "y": y, "w": w, "h": h});
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 tap("sale_window", &region, &panel)
             }));
         }
 
+        let read = self.read_panel(&anchor, &panel, &failure);
+        SaleWindowObservation {
+            read,
+            region: Some(region),
+            frame: Some(panel),
+        }
+    }
+
+    fn read_panel(
+        &self,
+        anchor: &PanelAnchor,
+        panel: &BgrImage,
+        failure: &dyn Fn(&str) -> Value,
+    ) -> Value {
         // The landmark first: everything after it is only meaningful if the
         // panel really is the sale window. A calibration recorded before
         // there was a landmark to record carries none, and reads on without

@@ -351,7 +351,19 @@ The result is deliberately not an accounting command. The typed
 ordinary Create listing form, where the player reviews and may correct every
 value before the existing listing command is allowed to mutate stock or the
 ledger. A narrowly permissioned always-on-top overlay exposes the same capture
-while a fullscreen game is in front. Its result is held in memory for a
-single-use `inventory_sale_window_take_capture` collection when the main form
-regains focus; it is never persisted. OCR therefore changes how the draft is
-filled, not the commit boundary it must cross.
+while a fullscreen game is in front. Opening that overlay from the main window
+grants one capture, which the overlay consumes while receiving only success or
+failure status. The complete result is held in memory for a single-use
+`inventory_sale_window_take_capture` collection when the main form regains
+focus; it is never persisted. OCR therefore changes how the draft is filled,
+not the commit boundary it must cross.
+
+Development builds add a deliberately separate research session around the
+same reader (`app/src-tauri/eo-services/src/auction_fee_research.rs`). While
+that session is armed, each Space press uses the existing shared keyboard
+source to capture another quoted auction scenario. The service writes a
+versioned JSONL record, an analysis-friendly CSV row, and a SHA-256-hashed PNG
+under the development data directory. The floating overlay sees
+only capture state and sample count; it never receives the OCR fields or the
+dataset path. This instrument performs no listing, inventory, ledger, or P&L
+mutation, and release builds refuse to start it.

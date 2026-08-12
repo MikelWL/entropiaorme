@@ -22,7 +22,8 @@ use crate::skill_scan_manual::SkillScanManual;
 pub type KeyTap = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 struct Flags {
-    enabled: AtomicBool,
+    skill_enabled: AtomicBool,
+    research_enabled: AtomicBool,
     source_running: AtomicBool,
     space_down: AtomicBool,
     // One-shot per start episode: whether the "first keystroke delivered"
@@ -34,8 +35,10 @@ struct Flags {
 pub struct SpacebarCaptureListener {
     skill_scan: Arc<SkillScanManual>,
     source: Option<Arc<dyn KeystrokeSource>>,
+    transition: Mutex<()>,
     flags: Flags,
     key_tap: Mutex<Option<KeyTap>>,
+    research_capture: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl SpacebarCaptureListener {
@@ -53,13 +56,16 @@ impl SpacebarCaptureListener {
         let listener = Arc::new(Self {
             skill_scan,
             source: source.clone(),
+            transition: Mutex::new(()),
             flags: Flags {
-                enabled: AtomicBool::new(false),
+                skill_enabled: AtomicBool::new(false),
+                research_enabled: AtomicBool::new(false),
                 source_running: AtomicBool::new(false),
                 space_down: AtomicBool::new(false),
                 first_delivery_logged: AtomicBool::new(false),
             },
             key_tap: Mutex::new(None),
+            research_capture: Mutex::new(None),
         });
         if let Some(source) = source {
             // A weak handle, so the source's subscription does not form a
@@ -84,7 +90,19 @@ impl SpacebarCaptureListener {
 
     /// Whether the overlay toggle is on.
     pub fn is_enabled(&self) -> bool {
-        self.flags.enabled.load(Ordering::SeqCst)
+        self.flags.skill_enabled.load(Ordering::SeqCst)
+    }
+
+    /// Whether the development auction-fee capture consumer is armed.
+    pub fn is_research_enabled(&self) -> bool {
+        self.flags.research_enabled.load(Ordering::SeqCst)
+    }
+
+    /// Install the research capture action. Composition calls this once with
+    /// the actor-owned research service; the keyboard listener remains the
+    /// one implementation of Space edge handling.
+    pub fn set_research_capture(&self, capture: Arc<dyn Fn() + Send + Sync>) {
+        *self.research_capture.lock().expect("research capture") = Some(capture);
     }
 
     /// Install a keystroke observer (called for each space press/release edge).
@@ -100,53 +118,60 @@ impl SpacebarCaptureListener {
     /// Toggle the listener; idempotent. Enabling starts the source, disabling
     /// stops it (the source still only delivers while a listener wants it).
     pub fn set_enabled(&self, enabled: bool) {
-        if self.flags.enabled.swap(enabled, Ordering::SeqCst) == enabled {
+        let _transition = self.transition.lock().expect("spacebar transition");
+        if self.flags.skill_enabled.swap(enabled, Ordering::SeqCst) == enabled {
             return;
         }
-        if enabled {
-            self.start_source();
-        } else {
-            self.stop_source();
+        self.reconcile_source();
+    }
+
+    /// Arm or disarm the development research consumer independently of the
+    /// skill-overlay preference. The shared source stays attached while
+    /// either consumer needs it.
+    pub fn set_research_enabled(&self, enabled: bool) {
+        let _transition = self.transition.lock().expect("spacebar transition");
+        if self.flags.research_enabled.swap(enabled, Ordering::SeqCst) == enabled {
+            return;
         }
+        self.reconcile_source();
     }
 
     /// Tear down at shutdown.
     pub fn stop(&self) {
-        self.flags.enabled.store(false, Ordering::SeqCst);
-        self.stop_source();
+        let _transition = self.transition.lock().expect("spacebar transition");
+        self.flags.skill_enabled.store(false, Ordering::SeqCst);
+        self.flags.research_enabled.store(false, Ordering::SeqCst);
+        self.reconcile_source();
     }
 
-    fn start_source(&self) {
+    /// Reconcile the one shared hook while holding the transition lock. The
+    /// callback path reads only atomics, so stopping can join the hook worker
+    /// without a lock cycle while concurrent consumers still cannot race a
+    /// double-start or detach a source the other consumer needs.
+    fn reconcile_source(&self) {
         let Some(source) = &self.source else {
             return;
         };
-        if self.flags.source_running.load(Ordering::SeqCst) {
-            return;
+        let desired = self.flags.skill_enabled.load(Ordering::SeqCst)
+            || self.flags.research_enabled.load(Ordering::SeqCst);
+        let running = self.flags.source_running.load(Ordering::SeqCst);
+        if desired && !running {
+            // The source reports whether the underlying mechanism actually
+            // attached; running honestly reflects whether events will come.
+            let attached = source.start();
+            self.flags.source_running.store(attached, Ordering::SeqCst);
+            self.flags
+                .first_delivery_logged
+                .store(false, Ordering::SeqCst);
+            tracing::info!(target: "eo::input", attached, "spacebar capture source start requested");
+        } else if !desired && running {
+            // Make callbacks inert before joining the platform worker. The
+            // worker may already be dispatching, but it never waits for the
+            // transition lock held here.
+            self.flags.source_running.store(false, Ordering::SeqCst);
+            self.flags.space_down.store(false, Ordering::SeqCst);
+            source.stop();
         }
-        // The source reports whether the underlying mechanism actually
-        // attached; running honestly reflects whether events will come.
-        let attached = source.start();
-        self.flags.source_running.store(attached, Ordering::SeqCst);
-        // Reset the delivery breadcrumb for this episode and record the
-        // attach outcome so a non-attaching hook is visible in the rolling
-        // logfile of the packaged build. The spacebar faculty otherwise
-        // has no positive delivery signal (only the shared install line).
-        self.flags
-            .first_delivery_logged
-            .store(false, Ordering::SeqCst);
-        tracing::info!(target: "eo::input", attached, "spacebar capture source start requested");
-    }
-
-    fn stop_source(&self) {
-        let Some(source) = &self.source else {
-            return;
-        };
-        if !self.flags.source_running.load(Ordering::SeqCst) {
-            return;
-        }
-        source.stop();
-        self.flags.source_running.store(false, Ordering::SeqCst);
-        self.flags.space_down.store(false, Ordering::SeqCst);
     }
 
     fn is_capturing(&self) -> bool {
@@ -188,6 +213,19 @@ impl SpacebarCaptureListener {
             let _ =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tap("space", "press")));
         }
+        if self.flags.research_enabled.load(Ordering::SeqCst) {
+            let capture = self
+                .research_capture
+                .lock()
+                .expect("research capture")
+                .clone();
+            if let Some(capture) = capture {
+                let _ = std::thread::Builder::new()
+                    .name("auction-fee-capture".into())
+                    .spawn(move || capture());
+            }
+            return;
+        }
         if !self.is_capturing() {
             return;
         }
@@ -218,7 +256,70 @@ mod tests {
     use crate::keystroke_source::MockKeystrokeSource;
     use crate::skill_scan_manual::{ScanProviders, SkillScanManual};
     use chrono::{DateTime, Utc};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Barrier;
     use std::time::Duration;
+
+    #[derive(Default)]
+    struct CountingSource {
+        starts: AtomicUsize,
+        stops: AtomicUsize,
+    }
+
+    struct JoiningSource {
+        callback: Mutex<Option<crate::keystroke_source::KeystrokeCallback>>,
+        dispatch: Arc<Barrier>,
+        worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    }
+
+    impl JoiningSource {
+        fn new() -> Self {
+            Self {
+                callback: Mutex::new(None),
+                dispatch: Arc::new(Barrier::new(2)),
+                worker: Mutex::new(None),
+            }
+        }
+    }
+
+    impl KeystrokeSource for JoiningSource {
+        fn subscribe(&self, callback: crate::keystroke_source::KeystrokeCallback) {
+            *self.callback.lock().unwrap() = Some(callback);
+        }
+
+        fn start(&self) -> bool {
+            let callback = self.callback.lock().unwrap().clone().unwrap();
+            let dispatch = self.dispatch.clone();
+            *self.worker.lock().unwrap() = Some(std::thread::spawn(move || {
+                dispatch.wait();
+                callback(&KeystrokeEvent {
+                    key: "space".into(),
+                    timestamp: now(),
+                    kind: KeystrokeKind::Release,
+                });
+            }));
+            true
+        }
+
+        fn stop(&self) {
+            self.dispatch.wait();
+            self.worker.lock().unwrap().take().unwrap().join().unwrap();
+        }
+    }
+
+    impl KeystrokeSource for CountingSource {
+        fn subscribe(&self, _callback: crate::keystroke_source::KeystrokeCallback) {}
+
+        fn start(&self) -> bool {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(2));
+            true
+        }
+
+        fn stop(&self) {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-05-19T10:00:00Z")
@@ -274,6 +375,89 @@ mod tests {
         listener.set_enabled(false);
         assert!(!listener.is_running());
         assert!(!listener.is_enabled());
+    }
+
+    #[test]
+    fn research_uses_the_same_space_edge_and_keeps_the_skill_toggle_independent() {
+        let source = Arc::new(MockKeystrokeSource::new());
+        let listener = SpacebarCaptureListener::new(scan(), Some(source.clone()));
+        let captures = Arc::new(Mutex::new(0usize));
+        let sink = captures.clone();
+        listener.set_research_capture(Arc::new(move || {
+            *sink.lock().unwrap() += 1;
+        }));
+
+        listener.set_research_enabled(true);
+        assert!(listener.is_research_enabled());
+        assert!(!listener.is_enabled());
+        source.inject("space", now(), KeystrokeKind::Press);
+        wait_until(|| *captures.lock().unwrap() == 1);
+        source.inject("space", now(), KeystrokeKind::Press);
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(*captures.lock().unwrap(), 1, "auto-repeat stays suppressed");
+        source.inject("space", now(), KeystrokeKind::Release);
+        source.inject("space", now(), KeystrokeKind::Press);
+        wait_until(|| *captures.lock().unwrap() == 2);
+
+        listener.set_enabled(true);
+        listener.set_research_enabled(false);
+        assert!(
+            listener.is_running(),
+            "the skill consumer keeps the source alive"
+        );
+        assert!(listener.is_enabled());
+    }
+
+    #[test]
+    fn concurrent_consumers_share_one_serialised_source_lease() {
+        let source = Arc::new(CountingSource::default());
+        let listener = SpacebarCaptureListener::new(scan(), Some(source.clone()));
+        let gate = Arc::new(Barrier::new(3));
+
+        let skill_listener = listener.clone();
+        let skill_gate = gate.clone();
+        let skill = std::thread::spawn(move || {
+            skill_gate.wait();
+            skill_listener.set_enabled(true);
+        });
+        let research_listener = listener.clone();
+        let research_gate = gate.clone();
+        let research = std::thread::spawn(move || {
+            research_gate.wait();
+            research_listener.set_research_enabled(true);
+        });
+        gate.wait();
+        skill.join().unwrap();
+        research.join().unwrap();
+
+        assert_eq!(source.starts.load(Ordering::SeqCst), 1);
+        listener.set_enabled(false);
+        assert!(listener.is_running());
+        listener.set_research_enabled(false);
+        assert!(!listener.is_running());
+        assert_eq!(source.stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn stop_can_join_a_worker_dispatching_at_the_listener_boundary() {
+        let source = Arc::new(JoiningSource::new());
+        let listener = SpacebarCaptureListener::new(scan(), Some(source));
+        listener.set_enabled(true);
+
+        // stop releases the worker to enter the callback, then joins it. The
+        // callback must not need the transition lock held by stop.
+        listener.set_enabled(false);
+        assert!(!listener.is_running());
+    }
+
+    fn wait_until(predicate: impl Fn() -> bool) {
+        for _ in 0..100 {
+            if predicate() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(predicate(), "condition never settled");
     }
 
     #[test]

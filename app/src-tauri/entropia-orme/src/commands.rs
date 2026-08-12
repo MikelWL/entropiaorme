@@ -31,7 +31,10 @@ use eo_api::codex::{
     CodexCalibrateResult, CodexClaimResult, CodexMasteryClaimResult, CodexMetaAttribute,
     CodexMetaClaimResult, CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
 };
-use eo_api::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildReport};
+use eo_api::dev::{
+    AuctionFeeOverlayStatus, AuctionFeeResearchStatus, CompactResult, CrashReportingStatus,
+    MetricsSnapshot, RebuildReport,
+};
 use eo_api::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -1389,6 +1392,44 @@ pub async fn dev_rebuild_projections(app: tauri::AppHandle) -> Result<RebuildRep
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn dev_auction_fee_research_start(
+    app: tauri::AppHandle,
+) -> Result<AuctionFeeResearchStatus, ApiError> {
+    facade(&app)?.dev_auction_fee_research_start()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_auction_fee_research_stop(
+    app: tauri::AppHandle,
+) -> Result<AuctionFeeResearchStatus, ApiError> {
+    facade(&app)?.dev_auction_fee_research_stop()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_auction_fee_research_status(
+    app: tauri::AppHandle,
+) -> Result<AuctionFeeResearchStatus, ApiError> {
+    facade(&app)?.dev_auction_fee_research_status()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_auction_fee_research_capture(
+    app: tauri::AppHandle,
+) -> Result<AuctionFeeOverlayStatus, ApiError> {
+    let api = facade(&app)?;
+    tokio::task::spawn_blocking(move || api.dev_auction_fee_research_capture())
+        .await
+        .map_err(|_| ApiError::invalid_state("auction fee capture task failed"))?
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dev_auction_fee_research_overlay_status(
+    app: tauri::AppHandle,
+) -> Result<AuctionFeeOverlayStatus, ApiError> {
+    facade(&app)?.dev_auction_fee_research_overlay_status()
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn planet_maps_list(app: tauri::AppHandle) -> Result<Vec<PlanetMap>, ApiError> {
     facade(&app)?.planet_maps()
 }
@@ -1805,6 +1846,11 @@ mod tests {
         "dev_set_crash_reporting",
         "dev_compact_database",
         "dev_rebuild_projections",
+        "dev_auction_fee_research_start",
+        "dev_auction_fee_research_stop",
+        "dev_auction_fee_research_status",
+        "dev_auction_fee_research_capture",
+        "dev_auction_fee_research_overlay_status",
         "planet_maps_list",
         "map_pins_list",
         "map_pins_viewport",
@@ -1857,6 +1903,7 @@ mod tests {
             "toggle_cartography_overlay",
             "show_scan_overlay",
             "show_sale_capture_overlay",
+            "capture_sale_from_overlay",
             "hide_sale_capture_overlay",
             "hide_scan_overlay",
             "show_navigation_overlays",

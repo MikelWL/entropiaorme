@@ -292,6 +292,38 @@ export interface AuctionExpireInput {
 }
 
 /**
+ * The last attempt made by the research collector.
+ */
+export interface AuctionFeeCaptureStatus {
+	sample: number;
+	accepted: boolean;
+	message: string;
+}
+
+/**
+ * Least-privilege state exposed to the floating overlay. It deliberately
+ * omits the filesystem path and every OCR field.
+ */
+export interface AuctionFeeOverlayStatus {
+	active: boolean;
+	busy: boolean;
+	sampleCount: number;
+	message: string | null;
+	failed: boolean;
+}
+
+/**
+ * Full main-window state for the development research session.
+ */
+export interface AuctionFeeResearchStatus {
+	active: boolean;
+	busy: boolean;
+	sampleCount: number;
+	outputDir: string | null;
+	lastCapture: AuctionFeeCaptureStatus | null;
+}
+
+/**
  * One auction listing across its lifecycle. Realised figures are `null`
  * until the listing is confirmed sold: an open auction has no price yet,
  * and an expired one never realised anything.
@@ -3524,6 +3556,26 @@ export async function devCompactDatabase(): Promise<CompactResult> {
 
 export async function devRebuildProjections(): Promise<RebuildReport> {
 	return invokeCommand('dev_rebuild_projections', {});
+}
+
+export async function devAuctionFeeResearchStart(): Promise<AuctionFeeResearchStatus> {
+	return invokeCommand('dev_auction_fee_research_start', {});
+}
+
+export async function devAuctionFeeResearchStop(): Promise<AuctionFeeResearchStatus> {
+	return invokeCommand('dev_auction_fee_research_stop', {});
+}
+
+export async function devAuctionFeeResearchStatus(): Promise<AuctionFeeResearchStatus> {
+	return invokeCommand('dev_auction_fee_research_status', {});
+}
+
+export async function devAuctionFeeResearchCapture(): Promise<AuctionFeeOverlayStatus> {
+	return invokeCommand('dev_auction_fee_research_capture', {});
+}
+
+export async function devAuctionFeeResearchOverlayStatus(): Promise<AuctionFeeOverlayStatus> {
+	return invokeCommand('dev_auction_fee_research_overlay_status', {});
 }
 
 export async function planetMapsList(): Promise<PlanetMap[]> {

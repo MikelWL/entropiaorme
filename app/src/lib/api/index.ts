@@ -79,6 +79,7 @@ export * from './settings';
 // owns that flow (phases, progress, stores) and imports them directly.
 export {
 	beginNavigationAreaSelection,
+	captureSaleFromOverlay,
 	hideNavigationOverlays,
 	hideSaleCaptureOverlay,
 	hideScanOverlay,

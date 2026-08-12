@@ -6,8 +6,18 @@
 	import MarketDataSettings from '$lib/features/market/MarketDataSettings.svelte';
 	import { autoUpdateEnabled, setAutoUpdateEnabled } from '$lib/updater.svelte';
 	import { goto } from '$app/navigation';
-	import { getSettings, updateSettings } from '$lib/api';
+	import {
+		getAuctionFeeResearchStatus,
+		getSettings,
+		hideSaleCaptureOverlay,
+		showSaleCaptureOverlay,
+		startAuctionFeeResearch,
+		stopAuctionFeeResearch,
+		updateSettings,
+		type AuctionFeeResearchStatus,
+	} from '$lib/api';
 	import type { AppSettings } from '$lib/types';
+	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 	import { externalLinks } from '$lib/utils/openExternal';
 
 	let settings = $state<AppSettings | null>(null);
@@ -15,6 +25,8 @@
 	let loadError: string | null = $state(null);
 
 	let savedIndicator: string | null = $state(null);
+	let auctionFeeResearch: AuctionFeeResearchStatus | null = $state(null);
+	let auctionFeeResearchError: string | null = $state(null);
 
 	// Capability toggles
 	let savingField = $state<string | null>(null);
@@ -57,6 +69,7 @@
 		(async () => {
 			try {
 				await refreshSettingsState();
+				await refreshFeeResearch();
 			} catch (e) {
 				loadError = e instanceof Error ? e.message : 'Failed to load settings';
 			} finally {
@@ -64,9 +77,14 @@
 				await scrollHashTargetIntoView();
 			}
 		})();
+		const stopResearchPoll = useVisiblePoll(refreshFeeResearch, {
+			intervalMs: 1000,
+			immediate: false,
+		});
 
 		return () => {
 			globalThis.removeEventListener('hashchange', handleHashChange);
+			stopResearchPoll();
 		};
 	});
 
@@ -169,12 +187,48 @@
 		savingField = 'developerMode';
 		capabilityError = null;
 		try {
+			if (!checked && auctionFeeResearch?.active) {
+				auctionFeeResearch = await stopAuctionFeeResearch();
+				await hideSaleCaptureOverlay();
+			}
 			settings = await updateSettings({ developer_mode_enabled: checked });
+			await refreshFeeResearch();
 			flashSaved('developerMode');
 		} catch (e) {
 			capabilityError = e instanceof Error ? e.message : 'Failed to update developer mode';
 		} finally {
 			savingField = null;
+		}
+	}
+
+	async function startFeeResearch() {
+		auctionFeeResearchError = null;
+		try {
+			auctionFeeResearch = await startAuctionFeeResearch();
+			await showSaleCaptureOverlay();
+		} catch (error) {
+			auctionFeeResearchError =
+				error instanceof Error ? error.message : 'Could not start auction fee capture';
+		}
+	}
+
+	async function stopFeeResearch() {
+		auctionFeeResearchError = null;
+		try {
+			auctionFeeResearch = await stopAuctionFeeResearch();
+			await hideSaleCaptureOverlay();
+		} catch (error) {
+			auctionFeeResearchError =
+				error instanceof Error ? error.message : 'Could not stop auction fee capture';
+		}
+	}
+
+	async function refreshFeeResearch() {
+		if (!settings?.developerModeEnabled) return;
+		try {
+			auctionFeeResearch = await getAuctionFeeResearchStatus();
+		} catch {
+			auctionFeeResearch = null;
 		}
 	}
 
@@ -452,6 +506,34 @@
 						label="Enable developer mode"
 					/>
 				</div>
+
+				{#if settings.developerModeEnabled}
+					<Divider />
+					<div class="py-5 flex items-start justify-between gap-6">
+						<div class="min-w-0">
+							<p class="text-sm text-text">Auction fee research</p>
+							<p class="text-xs text-text-tertiary mt-0.5">
+								Capture quoted fees without creating a listing. Change the sale-window values and press Space for each sample.
+							</p>
+							{#if auctionFeeResearch?.outputDir}
+								<p class="mt-1 break-all font-mono text-[11px] text-text-tertiary">
+									{auctionFeeResearch.sampleCount} samples · {auctionFeeResearch.outputDir}
+								</p>
+							{/if}
+							{#if auctionFeeResearchError}
+								<p class="mt-1 text-xs text-error">{auctionFeeResearchError}</p>
+							{/if}
+						</div>
+						<div class="flex shrink-0 gap-2">
+							{#if auctionFeeResearch?.active}
+								<Button variant="ghost" size="sm" onclick={stopFeeResearch}>Finish</Button>
+								<Button variant="secondary" size="sm" onclick={() => showSaleCaptureOverlay()}>Reopen</Button>
+							{:else}
+								<Button variant="secondary" size="sm" onclick={startFeeResearch}>Start capture</Button>
+							{/if}
+						</div>
+					</div>
+				{/if}
 			</div>
 		</section>
 	{/if}
