@@ -47,6 +47,15 @@
 			error = cause instanceof Error ? cause.message : 'Could not stop auction fee capture';
 		}
 	}
+
+	async function reopen() {
+		error = null;
+		try {
+			await showSaleCaptureOverlay();
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not reopen sale capture';
+		}
+	}
 </script>
 
 <Divider />
@@ -68,7 +77,7 @@
 	<div class="flex shrink-0 gap-2">
 		{#if research?.active}
 			<Button variant="ghost" size="sm" onclick={stop}>Finish</Button>
-			<Button variant="secondary" size="sm" onclick={showSaleCaptureOverlay}>Reopen</Button>
+			<Button variant="secondary" size="sm" onclick={reopen}>Reopen</Button>
 		{:else}
 			<Button variant="secondary" size="sm" onclick={start}>Start capture</Button>
 		{/if}
