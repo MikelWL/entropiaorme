@@ -13,12 +13,16 @@
 	} from '$lib/features/analytics/treeCuttingModel.svelte';
 	import { formatLedgerDate, formatPed } from '$lib/utils/format';
 	import type { InventoryKind } from './inventoryModel.svelte';
+	import PacketFeeInfo from './PacketFeeInfo.svelte';
+	import PacketFeeSelector from './PacketFeeSelector.svelte';
 
 	let {
 		kind,
 		onkindchange,
 		confidenceMode,
 		onconfidencechange,
+		packetFeeSharePct,
+		onpacketfeesharechange,
 		loot,
 		equipment,
 		onsellloot,
@@ -35,6 +39,8 @@
 		onkindchange: (id: string) => void;
 		confidenceMode: ConfidenceMode;
 		onconfidencechange: (id: string) => void;
+		packetFeeSharePct: number;
+		onpacketfeesharechange: (value: number) => void | Promise<void>;
 		loot: TreeCuttingStock[];
 		equipment: InventoryItem[];
 		onsellloot: (item: TreeCuttingStock) => void;
@@ -88,7 +94,13 @@
 				<MarkupConfidenceInfo />
 			{/snippet}
 			{#snippet controls()}
-				<MarkupConfidenceSelector active={confidenceMode} onchange={onconfidencechange} />
+				<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+					<MarkupConfidenceSelector active={confidenceMode} onchange={onconfidencechange} />
+					<div class="flex items-center gap-2.5">
+						<PacketFeeInfo />
+						<PacketFeeSelector value={packetFeeSharePct} onchange={onpacketfeesharechange} />
+					</div>
+				</div>
 			{/snippet}
 			{#snippet actions()}
 				<Button size="sm" onclick={oncreatelisting}>Create listing</Button>

@@ -106,6 +106,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "maps_calibration_start",
     "maps_calibration_status",
     "maps_scan_coordinates",
+    "market_auction_packet_threshold",
     "market_break_even",
     "market_contribution_batch",
     "market_harvest_markups",

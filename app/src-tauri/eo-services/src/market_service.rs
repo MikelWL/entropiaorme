@@ -606,8 +606,12 @@ impl MarketService {
                             markup_pct,
                             horizon,
                             sales_ped,
-                            recommended_packet_tt: markup_pct
-                                .and_then(crate::auction_fee::recommended_packet_tt),
+                            recommended_packet_tt: markup_pct.and_then(|markup| {
+                                crate::auction_fee::recommended_packet_tt(
+                                    markup,
+                                    crate::auction_fee::DEFAULT_MAX_FEE_SHARE_PCT,
+                                )
+                            }),
                             readings,
                         }
                     })

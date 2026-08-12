@@ -1324,6 +1324,15 @@ export interface MapView {
 }
 
 /**
+ * Gross markup needed for the auction listing fee to consume no more than
+ * the requested share. Item packet TT is this amount divided by its premium.
+ */
+export interface MarketAuctionPacketThreshold {
+	maxFeeSharePct: number;
+	grossMarkupPed: number;
+}
+
+/**
  * The break-even readout: the player's looter professions and every
  * library weapon's modelled break-even markup against each of them.
  */
@@ -3346,6 +3355,10 @@ export async function marketOverview(): Promise<MarketOverviewRow[]> {
 
 export async function marketContributionBatch(): Promise<MarketContributionBatch | null> {
 	return invokeCommand('market_contribution_batch', {});
+}
+
+export async function marketAuctionPacketThreshold(maxFeeSharePct: number): Promise<MarketAuctionPacketThreshold> {
+	return invokeCommand('market_auction_packet_threshold', { max_fee_share_pct: maxFeeSharePct });
 }
 
 export async function marketBreakEven(): Promise<MarketBreakEven> {

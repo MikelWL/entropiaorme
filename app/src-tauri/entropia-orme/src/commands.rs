@@ -44,8 +44,9 @@ use eo_api::maps::{
     PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use eo_api::market::{
-    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHarvestData,
-    MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+    MarketAuctionPacketThreshold, MarketBreakEven, MarketCommitResult, MarketContributionBatch,
+    MarketHarvestData, MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow,
+    MarketPastePreview,
 };
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
@@ -936,6 +937,14 @@ pub async fn market_contribution_batch(
     app: tauri::AppHandle,
 ) -> Result<eo_api::Nullable<MarketContributionBatch>, ApiError> {
     facade(&app)?.market_contribution_batch().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn market_auction_packet_threshold(
+    app: tauri::AppHandle,
+    max_fee_share_pct: f64,
+) -> Result<MarketAuctionPacketThreshold, ApiError> {
+    facade(&app)?.market_auction_packet_threshold(max_fee_share_pct)
 }
 
 #[tauri::command(rename_all = "snake_case")]

@@ -14,6 +14,8 @@ describe('inventory assets', () => {
 		onkindchange: vi.fn(),
 		confidenceMode: 'liquid' as const,
 		onconfidencechange: vi.fn(),
+		packetFeeSharePct: 10,
+		onpacketfeesharechange: vi.fn(),
 		loot,
 		equipment: [],
 		onsellloot: vi.fn(),
@@ -46,6 +48,8 @@ describe('inventory assets', () => {
 				onkindchange: vi.fn(),
 				confidenceMode: 'liquid',
 				onconfidencechange: vi.fn(),
+				packetFeeSharePct: 10,
+				onpacketfeesharechange: vi.fn(),
 				loot: [],
 				equipment: [equipment],
 				onsellloot: vi.fn(),
@@ -93,6 +97,8 @@ describe('inventory assets', () => {
 				onkindchange: vi.fn(),
 				confidenceMode: 'liquid',
 				onconfidencechange: vi.fn(),
+				packetFeeSharePct: 10,
+				onpacketfeesharechange: vi.fn(),
 				loot: [
 					{
 						itemName: 'Animal Muscle Oil',
@@ -164,5 +170,22 @@ describe('inventory assets', () => {
 		expect(within(accumulating).getByText('2.00').className).toContain('text-text');
 		expect(within(accumulating).getByText('2.00').className).not.toContain('text-positive');
 		expect(within(ready).getByText('2.00').className).toContain('text-positive');
+	});
+
+	it('offers preset and custom packet fee caps beside markup confidence', async () => {
+		const onchange = vi.fn();
+		render(InventoryHoldings, {
+			props: { ...lootProps([]), onpacketfeesharechange: onchange },
+		});
+
+		expect(screen.getByText('Fee cap')).not.toBeNull();
+		await fireEvent.click(screen.getByRole('button', { name: '5%' }));
+		expect(onchange).toHaveBeenCalledWith(5);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+		const input = screen.getByRole('spinbutton', { name: 'Custom fee cap percentage' });
+		await fireEvent.input(input, { target: { value: '8.5' } });
+		await fireEvent.blur(input);
+		expect(onchange).toHaveBeenLastCalledWith(8.5);
 	});
 });

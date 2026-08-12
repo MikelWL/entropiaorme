@@ -23,6 +23,7 @@ vi.mock('$lib/api/inventory', () => ({
 }));
 
 vi.mock('$lib/api/market', () => ({
+	getMarketAuctionPacketThreshold: vi.fn(),
 	getMarketHarvestMarkups: vi.fn(),
 	getMarketHuntMarkups: vi.fn(),
 }));
@@ -71,6 +72,10 @@ beforeEach(() => {
 		nanocubeMarkupPct: 100.6,
 		items: [],
 	});
+	mockedMarket.getMarketAuctionPacketThreshold.mockResolvedValue({
+		maxFeeSharePct: 10,
+		grossMarkupPed: 9.8,
+	});
 });
 
 describe('central inventory model', () => {
@@ -89,6 +94,20 @@ describe('central inventory model', () => {
 			recommendedPacketTt: 39.2,
 		});
 		expect(model.loading).toBe(false);
+	});
+
+	it('recomputes packet TT from a selected listing-fee cap', async () => {
+		const model = createInventoryModel();
+		await model.load();
+		mockedMarket.getMarketAuctionPacketThreshold.mockResolvedValueOnce({
+			maxFeeSharePct: 5,
+			grossMarkupPed: 126,
+		});
+
+		await model.setPacketFeeSharePct(5);
+
+		expect(model.packetFeeSharePct).toBe(5);
+		expect(model.loot[0].recommendedPacketTt).toBe(504);
 	});
 
 	it('turns a manual loot listing into the same reviewed draft an OCR intake will use', async () => {

@@ -12,6 +12,7 @@ import * as commands from './commands.gen';
 export const previewMarketPaste = commands.marketPastePreview;
 export const commitMarketPaste = commands.marketPasteCommit;
 export const getMarketBreakEven = commands.marketBreakEven;
+export const getMarketAuctionPacketThreshold = commands.marketAuctionPacketThreshold;
 export const getMarketOverview = commands.marketOverview;
 export const getMarketItemHistory = commands.marketItemHistory;
 export const getMarketMobRanking = commands.marketMobRanking;

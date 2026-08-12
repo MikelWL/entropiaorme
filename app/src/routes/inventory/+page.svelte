@@ -92,6 +92,8 @@
 			onkindchange={(id) => (model.kind = id as InventoryKind)}
 			confidenceMode={model.confidenceMode}
 			onconfidencechange={(id) => (model.confidenceMode = id as ConfidenceMode)}
+			packetFeeSharePct={model.packetFeeSharePct}
+			onpacketfeesharechange={model.setPacketFeeSharePct}
 			loot={model.loot}
 			equipment={model.equipment}
 			onsellloot={(item) => (lootToSell = item)}

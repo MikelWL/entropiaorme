@@ -46,8 +46,9 @@ use crate::maps::{
     PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use crate::market::{
-    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHarvestData,
-    MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+    MarketAuctionPacketThreshold, MarketBreakEven, MarketCommitResult, MarketContributionBatch,
+    MarketHarvestData, MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow,
+    MarketPastePreview,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
@@ -909,6 +910,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "market_contribution_batch",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Nullable<MarketContributionBatch>))),
+        },
+        CommandSpec {
+            name: "market_auction_packet_threshold",
+            args: vec![ArgSpec {
+                name: "max_fee_share_pct",
+                schema: schema(schema_for!(f64)),
+            }],
+            returns: Some(schema(schema_for!(MarketAuctionPacketThreshold))),
         },
         CommandSpec {
             name: "market_break_even",
