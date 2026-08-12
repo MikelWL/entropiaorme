@@ -59,6 +59,7 @@ beforeEach(() => {
 				markupPct: 125,
 				horizon: 'week',
 				salesPed: 1_000,
+				recommendedPacketTt: 39.2,
 				readings: [
 					{ horizon: 'day', markupPct: 126, salesPed: 100 },
 					{ horizon: 'week', markupPct: 125, salesPed: 1_000 },
@@ -85,6 +86,7 @@ describe('central inventory model', () => {
 			effectiveMarkupPct: 125,
 			tier: 'liquid',
 			markupHorizon: 'week',
+			recommendedPacketTt: 39.2,
 		});
 		expect(model.loading).toBe(false);
 	});
@@ -131,6 +133,7 @@ describe('central inventory model', () => {
 					markupPct: 110,
 					horizon: 'month',
 					salesPed: 100,
+					recommendedPacketTt: 98,
 					readings: [
 						{ horizon: 'week', markupPct: null, salesPed: 0 },
 						{ horizon: 'month', markupPct: 110, salesPed: 100 },

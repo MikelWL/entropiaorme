@@ -1417,6 +1417,8 @@ export interface MarketHarvestItem {
 	markupPct: number | null;
 	horizon: string | null;
 	salesPed: number | null;
+	/** Fee-efficient TT packet at the resolved direct-market markup. This deliberately excludes turnover: capacity is a separate market signal. */
+	recommendedPacketTt: number | null;
 	/** Every horizon's reading, ordered day, week, month, year. */
 	readings: MarketHarvestHorizon[];
 }

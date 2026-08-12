@@ -26,10 +26,14 @@ parse, and commits it.
   [schema reference](database-schema.md)).
 - `eo-services/src/market_service.rs` serves the reads: the tracked-item
   overview with staleness, per-item history, the modelled break-even
-  readout, and a per-species ranking that TT-weights each species'
-  recorded loot composition by the latest markup observations. The
-  ranking reads the accounting tables directly; the reverse direction is
-  forbidden (see the boundary below).
+  readout, a fee-efficient packet TT for each resolved item markup, and a
+  per-species ranking that TT-weights each species' recorded loot composition
+  by the latest markup observations. The packet model uses the measured
+  listing-fee curve in `eo-services/src/auction_fee.rs` and finds the smallest
+  parcel that keeps that fee to at most ten per cent of expected gross markup.
+  It deliberately does not constrain the parcel by traded volume. The ranking
+  reads the accounting tables directly; the reverse direction is forbidden
+  (see the boundary below).
 - `eo-api/src/market.rs` is the typed command family over those reads,
   consumed by the Market page (`app/src/lib/features/market/`).
 

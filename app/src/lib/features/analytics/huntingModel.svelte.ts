@@ -374,6 +374,7 @@ export function createHuntingModel() {
 				floored: applied?.floored ?? false,
 				salesPed: m?.salesPed ?? null,
 				weeklySalesPed: m?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null,
+				recommendedPacketTt: m?.recommendedPacketTt ?? null,
 			};
 		});
 		rows.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName));

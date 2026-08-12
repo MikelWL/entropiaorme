@@ -26,6 +26,7 @@ const item = {
 	tier: 'liquid' as const,
 	salesPed: 5000,
 	weeklySalesPed: 5000,
+	recommendedPacketTt: 32.67,
 };
 
 function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSessionSection {
@@ -132,6 +133,7 @@ describe('Hunting economic comparisons', () => {
 			floored: true,
 			salesPed: null,
 			weeklySalesPed: null,
+			recommendedPacketTt: null,
 		}));
 		render(TreeCuttingStock, {
 			props: {
@@ -180,6 +182,7 @@ describe('Hunting economic comparisons', () => {
 			floored: true,
 			salesPed: null,
 			weeklySalesPed: null,
+			recommendedPacketTt: null,
 		};
 		const onremove = vi.fn();
 		const onshrapnelconvert = vi.fn();

@@ -152,6 +152,9 @@ pub struct HarvestItemMarkup {
     pub horizon: Option<String>,
     /// TT turnover (PED) at the resolved horizon: market-capacity evidence.
     pub sales_ped: Option<f64>,
+    /// TT packet whose expected direct-market markup keeps the listing fee
+    /// to at most ten per cent of gross markup. Independent of turnover.
+    pub recommended_packet_tt: Option<f64>,
     /// Every horizon's reading, ordered day, week, month, year.
     pub readings: Vec<HarvestHorizonReading>,
 }
@@ -603,6 +606,8 @@ impl MarketService {
                             markup_pct,
                             horizon,
                             sales_ped,
+                            recommended_packet_tt: markup_pct
+                                .and_then(crate::auction_fee::recommended_packet_tt),
                             readings,
                         }
                     })
@@ -915,6 +920,7 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
         assert_eq!(by_name["Wood Shavings"].markup_pct, Some(120.0));
         assert_eq!(by_name["Wood Shavings"].horizon.as_deref(), Some("week"));
         assert_eq!(by_name["Wood Shavings"].sales_ped, Some(10.0));
+        assert_eq!(by_name["Wood Shavings"].recommended_packet_tt, Some(49.0));
         // Full day/week/month/year breakdown, markup and volume per horizon.
         assert_eq!(
             markups("Wood Shavings"),
@@ -931,6 +937,10 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
             Some("month")
         );
         assert_eq!(by_name["Short Moonleaf Board"].sales_ped, Some(30.0));
+        assert_eq!(
+            by_name["Short Moonleaf Board"].recommended_packet_tt,
+            Some(9.8)
+        );
         // Fell back to month; the day/week rows carry no markup and zero
         // volume, still present in the breakdown.
         assert_eq!(
@@ -948,6 +958,7 @@ Nanocube\t0\t101.000%\t100.000 PED\t100.840%\t200.000 PED\t\
         assert_eq!(by_name["Long Moonleaf Board"].markup_pct, None);
         assert_eq!(by_name["Long Moonleaf Board"].horizon, None);
         assert_eq!(by_name["Long Moonleaf Board"].sales_ped, None);
+        assert_eq!(by_name["Long Moonleaf Board"].recommended_packet_tt, None);
         // No observation at all: every horizon reads empty.
         assert_eq!(
             markups("Long Moonleaf Board"),

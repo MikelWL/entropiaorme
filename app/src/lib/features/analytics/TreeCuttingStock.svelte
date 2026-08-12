@@ -278,6 +278,9 @@
 	>
 		<span class="eyebrow flex-1 min-w-0">Item</span>
 		<span class="eyebrow w-24 text-right shrink-0">TT</span>
+		{#if actionLayout === 'inventory'}
+			<span class="eyebrow w-24 text-right shrink-0">Packet TT</span>
+		{/if}
 		<span class="eyebrow w-20 text-right shrink-0">MU</span>
 		<span class="eyebrow w-12 text-center shrink-0">Conf</span>
 		<span class="eyebrow {actionLayout === 'inventory' ? 'w-[5.25rem]' : 'w-[7.125rem]'} shrink-0 text-right">Actions</span>
@@ -317,6 +320,20 @@
 						</span>
 					{/if}
 				</span>
+
+				{#if actionLayout === 'inventory'}
+					{@const packetTt = item.recommendedPacketTt}
+					<span
+						class="w-24 text-right shrink-0 text-sm tabular-nums font-medium
+							{packetTt !== null && item.heldTt >= packetTt
+								? 'text-positive'
+								: packetTt !== null
+									? 'text-text'
+									: 'text-text-tertiary'}"
+					>
+						{packetTt !== null ? formatPed(packetTt) : NO_DATA}
+					</span>
+				{/if}
 
 				<div class="w-20 shrink-0 flex items-center justify-end">
 					{#if item.effectiveMarkupPct !== null && item.markupPct !== null}

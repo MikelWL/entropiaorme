@@ -92,6 +92,7 @@ function stockRow(
 		salesPed: marketItem?.salesPed ?? null,
 		weeklySalesPed:
 			marketItem?.readings.find((reading) => reading.horizon === 'week')?.salesPed ?? null,
+		recommendedPacketTt: marketItem?.recommendedPacketTt ?? null,
 	};
 }
 

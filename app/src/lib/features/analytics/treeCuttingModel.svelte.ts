@@ -80,12 +80,10 @@ const WEEKS_PER_YEAR = 52.14;
  * sold, so the model stays aligned with the lived difficulty of realising
  * markup rather than becoming anchored to the first available examples.
  */
-/** The minimum auction fee (PED) the markup gain must clear to be worth
- * realising. Replace with the exact fee curve once known. */
-const AUCTION_FEE_PED = 0.5;
-/** A healthy parcel keeps the minimum fee to at most 10% of its gross
- * markup. This is an evidence heuristic, not a sale recommendation. */
-const HEALTHY_FEE_SHARE = 0.1;
+/** Stable capacity-classification proxy. The exact packet recommendation
+ * stays separate until packet size versus volume is deliberately revisited. */
+const CAPACITY_FEE_PROXY_PED = 0.5;
+const CAPACITY_FEE_SHARE = 0.1;
 /** A healthy parcel at or below 15% of weekly turnover is broad when the
  * markup itself is supported by weekly evidence. */
 const BROAD_MAX_MARKET_SHARE = 0.15;
@@ -126,7 +124,8 @@ export type MarketOpportunity = {
 	/** Gross direct-market premium transacted per normalised week. This is
 	 * market-wide evidence, never personally capturable profit. */
 	weeklyPremiumThroughput: number;
-	/** TT parcel at which the minimum fee is at most 10% of gross markup. */
+	/** Existing capacity-classification parcel. Separate from the exact
+	 * backend recommendation until volume calibration is revisited. */
 	efficientBatchTt: number | null;
 	/** Efficient parcel as a share of turnover at the resolved horizon. */
 	efficientBatchMarketShare: number | null;
@@ -150,7 +149,8 @@ export function marketOpportunity(
 	const weeklySalesPed = market?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null;
 	const weeklyEquivalentSalesPed = weeklyEquivalentVolume(salesPed, horizon);
 	const premium = ownMarkupPct == null ? 0 : ownMarkupPct / 100 - 1;
-	const efficientBatchTt = premium > 0 ? AUCTION_FEE_PED / (HEALTHY_FEE_SHARE * premium) : null;
+	const efficientBatchTt =
+		premium > 0 ? CAPACITY_FEE_PROXY_PED / (CAPACITY_FEE_SHARE * premium) : null;
 	const efficientBatchMarketShare =
 		efficientBatchTt !== null && salesPed !== null && salesPed > 0
 			? efficientBatchTt / salesPed
@@ -324,6 +324,7 @@ export type TreeCuttingStock = {
 	floored: boolean;
 	salesPed: number | null;
 	weeklySalesPed: number | null;
+	recommendedPacketTt: number | null;
 };
 
 /** Project one activity's loot composition at current market markup. Shared
@@ -524,6 +525,7 @@ export function createTreeCuttingModel() {
 				floored: applied?.floored ?? false,
 				salesPed: m?.salesPed ?? null,
 				weeklySalesPed: m?.readings.find((r) => r.horizon === 'week')?.salesPed ?? null,
+				recommendedPacketTt: m?.recommendedPacketTt ?? null,
 			};
 		});
 		rows.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName));

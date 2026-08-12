@@ -99,7 +99,11 @@ function obs(
 		markupPct: h === horizon ? markupPct : null,
 		salesPed: h === horizon ? (salesPed ?? 0) : 0,
 	}));
-	return { itemName: name, markupPct, horizon, salesPed, readings };
+	const recommendedPacketTt =
+		markupPct !== null && markupPct > 100
+			? Math.ceil((9.8 / (markupPct / 100 - 1)) * 100) / 100
+			: null;
+	return { itemName: name, markupPct, horizon, salesPed, recommendedPacketTt, readings };
 }
 
 beforeEach(() => {

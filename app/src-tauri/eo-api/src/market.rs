@@ -236,6 +236,9 @@ pub struct MarketHarvestItem {
     pub markup_pct: Nullable<f64>,
     pub horizon: Nullable<String>,
     pub sales_ped: Nullable<f64>,
+    /// Fee-efficient TT packet at the resolved direct-market markup. This
+    /// deliberately excludes turnover: capacity is a separate market signal.
+    pub recommended_packet_tt: Nullable<f64>,
     /// Every horizon's reading, ordered day, week, month, year.
     pub readings: Vec<MarketHarvestHorizon>,
 }
@@ -545,6 +548,7 @@ fn market_items_dto(data: eo_services::market_service::HarvestMarketData) -> Mar
                 markup_pct: item.markup_pct.into(),
                 horizon: item.horizon.into(),
                 sales_ped: item.sales_ped.into(),
+                recommended_packet_tt: item.recommended_packet_tt.into(),
                 readings: item
                     .readings
                     .into_iter()
