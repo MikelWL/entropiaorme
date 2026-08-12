@@ -37,6 +37,8 @@
 	import PickerInput from '$lib/components/PickerInput.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import { showSaleCaptureOverlay } from '$lib/api';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import type { UnlistenFn } from '@tauri-apps/api/event';
 	import { formatPed } from '$lib/utils/format';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import type { InventoryHoldingCandidate, SaleWindowCapture } from '$lib/api/commands.gen';
@@ -211,12 +213,32 @@
 		reset();
 	});
 
-	// A capture taken from the overlay was taken for this form, so opening it
-	// is what collects that read. There is nothing to confirm: the figures
-	// landing in the fields is the review, exactly as it is for the button.
+	// A capture taken from the overlay was taken for this form, so the form
+	// collects it. There is nothing to confirm: the figures landing in the
+	// fields is the review, exactly as it is for the button.
+	//
+	// Two moments, because the overlay's button is pressed from inside the
+	// game and the form may be either closed or already open behind it.
+	// Opening covers the first. Coming back to this window covers the
+	// second, which is the same instant the player looks at the form.
 	$effect(() => {
 		if (!open) return;
 		collect();
+
+		let unlisten: UnlistenFn | undefined;
+		let disposed = false;
+		void getCurrentWindow()
+			.onFocusChanged(({ payload: focused }) => {
+				if (!disposed && focused) collect();
+			})
+			.then((fn) => {
+				if (disposed) fn();
+				else unlisten = fn;
+			});
+		return () => {
+			disposed = true;
+			unlisten?.();
+		};
 	});
 
 	async function collect() {
@@ -270,6 +292,10 @@
 		error = null;
 		try {
 			await fill(await oncapture());
+			// Its own read is already in the fields; leaving the held copy
+			// behind would re-fill the form the next time this window came
+			// back into focus.
+			await oncollect();
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not read the sale window';
 		} finally {
