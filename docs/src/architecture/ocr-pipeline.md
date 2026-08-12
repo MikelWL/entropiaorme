@@ -4,8 +4,8 @@ EntropiaOrme reads a player's skill levels directly from the in-game skills
 panel: the user captures the panel page by page, the application recognises
 the text in each cell, and the recognised values are resolved into a map of
 canonical skill name to level. The same recogniser also serves on-demand
-repair-cost and map-coordinate reads. This page traces the shared machinery
-and the skill-panel journey stage by stage.
+repair-cost, auction sale-window, and map-coordinate reads. This page traces
+the shared machinery and the skill-panel journey stage by stage.
 
 The pipeline runs in-process in the native Rust spine, and the Rust
 implementation is the implementation. The recogniser is pinned against a
@@ -44,18 +44,21 @@ The model weights ship inside the installer and the recogniser operates fully
 offline from a cold start: there is no network access at any point of the read
 path.
 
-Three consumers share the recogniser:
+Four consumers share the recogniser:
 
 | Consumer | Input | Output |
 | --- | --- | --- |
 | Skill-panel scan | A captured panel sliced into per-cell crops | A `name → level` map |
 | Repair-cost read | A single small numeric region on the repair terminal | A parsed PED cost |
+| Sale-window read | One calibrated auction panel sliced into independently validated fields | A reviewable listing draft |
 | Map-coordinate read | A calibrated minimap region read line by line | Parsed longitude, latitude, and optional altitude |
 
 This page focuses on the skill-panel scan; the repair-cost read
 (`app/src-tauri/eo-services/src/repair_ocr.rs`) reuses the same recogniser
 for a single on-demand number and is summarised under
-[The shared repair-cost read](#the-shared-repair-cost-read). The coordinate
+[The shared repair-cost read](#the-shared-repair-cost-read). The auction reader
+(`app/src-tauri/eo-services/src/sale_window_ocr.rs`) is described under
+[The auction sale-window read](#the-auction-sale-window-read). The coordinate
 reader (`app/src-tauri/eo-services/src/coord_capture.rs`) adds explicit grammar
 and per-planet bounds checks so an unreadable or implausible result cannot
 silently become a map pin.
@@ -330,3 +333,25 @@ not found, invalid region, capture failure, engine unavailable) surfaces a
 distinct error while still returning a zeroed cost, so the caller's contract is
 preserved. It shares the capture and recognition seams with the skill scan but
 holds no multi-page state machine.
+
+## The auction sale-window read
+
+The sale-window reader is another one-shot consumer of the shared capture and
+recognition seams. Its calibrated panel and per-field rectangles live in
+`app/src-tauri/entropia-orme/resources/panel_geometry.json`. The service
+captures the panel once, verifies a fixed heading landmark before trusting any
+field rectangle, then recognises the item name, quantity, TT value, auction fee,
+duration, starting bid, and buyout from crops of that single frame. Each field
+must clear the recogniser confidence floor and its own loose plausibility
+bounds; unreadable fields remain empty and are named back to the frontend so a
+plausible-looking misread is never silently substituted.
+
+The result is deliberately not an accounting command. The typed
+`inventory_sale_window_capture` operation returns a draft which fills the
+ordinary Create listing form, where the player reviews and may correct every
+value before the existing listing command is allowed to mutate stock or the
+ledger. A narrowly permissioned always-on-top overlay exposes the same capture
+while a fullscreen game is in front. Its result is held in memory for a
+single-use `inventory_sale_window_take_capture` collection when the main form
+regains focus; it is never persisted. OCR therefore changes how the draft is
+filled, not the commit boundary it must cross.

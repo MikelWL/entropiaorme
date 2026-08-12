@@ -17,6 +17,12 @@
 //! wrong-shape payload also falls back where the backend would crash
 //! at import: this is a deliberate divergence from the original's strict
 //! typed reads.
+//!
+//! The panel rect itself may also come from that file, per field, over
+//! the fallback constants. Both are calibration facts of the same kind:
+//! the constants are the shipped default for panels that have one, and
+//! a panel calibrated after the fact carries its whole rect in the file
+//! rather than needing a code change to have anywhere to land.
 
 use std::path::Path;
 
@@ -48,6 +54,12 @@ pub struct PanelAnchor {
 }
 
 impl PanelAnchor {
+    /// An anchor with no rect and no fields: what an uncalibrated panel
+    /// amounts to, and what a reader with no geometry to offer returns.
+    pub fn empty() -> Self {
+        Self::fallback(0, 0, 0, 0)
+    }
+
     const fn fallback(width: i64, height: i64, right_offset: i64, bottom_offset: i64) -> Self {
         Self {
             width,
@@ -81,6 +93,37 @@ impl PanelAnchor {
         }
         json!({ "n_rows": self.n_rows, "cells": Value::Object(cells) })
     }
+
+    /// Encode the whole anchor as one `panel_geometry.json` entry: the
+    /// panel rect plus the grid geometry. The inverse of `build_anchor`
+    /// over a complete entry, so what calibration writes is what the
+    /// loader reads back.
+    pub fn to_geometry_entry(&self) -> Value {
+        let mut entry = self.to_geom_value();
+        let object = entry.as_object_mut().expect("geometry entry object");
+        object.insert("width".into(), json!(self.width));
+        object.insert("height".into(), json!(self.height));
+        object.insert("right_offset".into(), json!(self.right_offset));
+        object.insert("bottom_offset".into(), json!(self.bottom_offset));
+        if self.n_rows.is_none() {
+            object.remove("n_rows");
+        }
+        entry
+    }
+}
+
+impl CellGeometry {
+    /// A single (non-repeating) cell as a panel-relative `x/y/w/h`
+    /// rectangle: the sale window's fields are one rect each rather than
+    /// a row band, which this shape expresses as a band of one row.
+    pub fn single_rect(&self) -> (i64, i64, i64, i64) {
+        (
+            self.x_left,
+            self.first_y_top,
+            self.x_right - self.x_left,
+            self.height,
+        )
+    }
 }
 
 fn skill_fallback() -> PanelAnchor {
@@ -93,6 +136,15 @@ fn profession_fallback() -> PanelAnchor {
 
 fn repair_fallback() -> PanelAnchor {
     PanelAnchor::fallback(50, 17, 48, 86)
+}
+
+/// The auction sale window carries no shipped constants: its rect is
+/// whatever calibration recorded, and a degenerate fallback is the
+/// honest stand-in until then. `compute_region` refuses a zero-sized
+/// anchor, so an uncalibrated build yields no region and the read
+/// refuses rather than capturing an arbitrary rectangle.
+fn sale_window_fallback() -> PanelAnchor {
+    PanelAnchor::fallback(0, 0, 0, 0)
 }
 
 /// Load `panel_geometry.json` if present and parseable; absence or an
@@ -123,10 +175,10 @@ fn parse_cell(entry: &Value) -> Option<CellGeometry> {
     })
 }
 
-/// Apply a JSON grid-geometry entry on top of the panel-rect fallback:
-/// the panel rect always comes from the fallback, the JSON carries
-/// `n_rows` and `cells`; absent or empty entries return the fallback
-/// unchanged.
+/// Apply a JSON geometry entry on top of the panel-rect fallback: the
+/// JSON carries `n_rows` and `cells`, and may override any of the four
+/// panel-rect fields; each absent field keeps the fallback's value.
+/// Absent or empty entries return the fallback unchanged.
 fn build_anchor(entry: Option<&Value>, fallback: PanelAnchor) -> PanelAnchor {
     let Some(entry) = entry.filter(|e| e.as_object().is_some_and(|o| !o.is_empty())) else {
         return fallback;
@@ -139,22 +191,24 @@ fn build_anchor(entry: Option<&Value>, fallback: PanelAnchor) -> PanelAnchor {
             }
         }
     }
+    let rect = |key: &str, default: i64| entry.get(key).and_then(Value::as_i64).unwrap_or(default);
     PanelAnchor {
-        width: fallback.width,
-        height: fallback.height,
-        right_offset: fallback.right_offset,
-        bottom_offset: fallback.bottom_offset,
+        width: rect("width", fallback.width),
+        height: rect("height", fallback.height),
+        right_offset: rect("right_offset", fallback.right_offset),
+        bottom_offset: rect("bottom_offset", fallback.bottom_offset),
         n_rows: entry.get("n_rows").and_then(Value::as_i64),
         cells,
     }
 }
 
-/// The three panel anchors, built once from the geometry file beside
-/// the snapshot data (the repair anchor takes no grid geometry).
+/// The panel anchors, built once from the geometry file beside the
+/// snapshot data (the repair anchor takes no grid geometry).
 pub struct ScanPresets {
     pub skill: PanelAnchor,
     pub profession: PanelAnchor,
     pub repair: PanelAnchor,
+    pub sale_window: PanelAnchor,
 }
 
 impl ScanPresets {
@@ -166,9 +220,14 @@ impl ScanPresets {
             skill: build_anchor(geometry.get("skill"), skill_fallback()),
             profession: build_anchor(geometry.get("profession"), profession_fallback()),
             repair: repair_fallback(),
+            sale_window: build_anchor(geometry.get(SALE_WINDOW_KEY), sale_window_fallback()),
         }
     }
 }
+
+/// The sale window's key in the geometry file, shared by the loader and
+/// the calibration tool that writes the entry.
+pub const SALE_WINDOW_KEY: &str = "sale_window";
 
 /// The capture rect for a panel anchored to the window's bottom-right
 /// corner, or None for a degenerate rect. `window` is the game
@@ -225,6 +284,78 @@ mod tests {
         assert_eq!(presets.skill.width, 635);
         assert_eq!(presets.profession.bottom_offset, 161);
         assert_eq!(presets.repair.height, 17);
+        // An uncalibrated sale window has no rect, so it yields no
+        // region rather than an arbitrary one.
+        assert_eq!(presets.sale_window, sale_window_fallback());
+        assert!(compute_region(&presets.sale_window, (0, 0, 1920, 1080)).is_none());
+    }
+
+    #[test]
+    fn a_geometry_entry_can_carry_the_whole_panel_rect() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("panel_geometry.json");
+        std::fs::write(
+            &path,
+            json!({
+                "sale_window": {
+                    "width": 400,
+                    "height": 220,
+                    "right_offset": 12,
+                    "bottom_offset": 40,
+                    "cells": {
+                        "quantity": {"x_left": 20, "x_right": 90, "first_y_top": 60, "last_y_top": 60, "height": 14},
+                    },
+                },
+                // A partial override keeps the fallback's other fields.
+                "skill": {"width": 700},
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let presets = ScanPresets::new(&path);
+        assert_eq!(presets.sale_window.width, 400);
+        assert_eq!(presets.sale_window.height, 220);
+        assert_eq!(presets.sale_window.right_offset, 12);
+        assert_eq!(presets.sale_window.bottom_offset, 40);
+        assert_eq!(presets.sale_window.n_rows, None);
+        assert_eq!(presets.sale_window.cells.len(), 1);
+        assert_eq!(
+            presets.sale_window.cells[0].1.single_rect(),
+            (20, 60, 70, 14)
+        );
+
+        assert_eq!(presets.skill.width, 700, "the override applies");
+        assert_eq!(
+            presets.skill.right_offset, 30,
+            "unnamed rect fields keep the fallback"
+        );
+    }
+
+    #[test]
+    fn an_entry_written_from_an_anchor_reads_back_as_that_anchor() {
+        let anchor = PanelAnchor {
+            width: 400,
+            height: 220,
+            right_offset: 12,
+            bottom_offset: 40,
+            n_rows: None,
+            cells: vec![(
+                "item_name".to_string(),
+                CellGeometry {
+                    x_left: 20,
+                    x_right: 300,
+                    first_y_top: 18,
+                    last_y_top: 18,
+                    height: 16,
+                },
+            )],
+        };
+        let entry = anchor.to_geometry_entry();
+        assert_eq!(entry.get("n_rows"), None, "a non-grid panel omits n_rows");
+        // Round-trip over a fallback that shares none of its values, so
+        // every field demonstrably comes from the entry.
+        let read_back = build_anchor(Some(&entry), sale_window_fallback());
+        assert_eq!(read_back, anchor);
     }
 
     #[test]

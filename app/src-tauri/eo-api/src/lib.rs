@@ -35,6 +35,7 @@ use eo_services::hotbar_listener::HotbarListener;
 use eo_services::market_service::MarketService;
 use eo_services::quests::QuestService;
 use eo_services::repair_ocr::RepairOcrService;
+use eo_services::sale_window_ocr::SaleWindowOcrService;
 use eo_services::skill_scan_manual::SkillScanManual;
 use eo_services::skill_tracker::SkillTracker;
 use eo_services::spacebar_capture_listener::SpacebarCaptureListener;
@@ -94,6 +95,17 @@ pub struct Api {
     /// The one-shot repair-cost OCR: the tracking family's repair-scan leg
     /// drives it (gated on the `repair_ocr_enabled` config flag).
     repair_ocr: Arc<RepairOcrService>,
+    /// The one-shot sale-window OCR: the analytics family's listing-read
+    /// leg drives it, filling a draft the user reviews before committing.
+    sale_window_ocr: Arc<SaleWindowOcrService>,
+    /// The last sale-window read, waiting to be collected.
+    ///
+    /// Its whole purpose is to bridge the gap between the overlay's capture
+    /// button and the main window's form: the form may not be on screen when
+    /// the button is pressed, so the values wait here until it opens. Taken
+    /// once and cleared, and never persisted, because a capture nobody came
+    /// back for is one worth taking again.
+    last_sale_capture: std::sync::Mutex<Option<analytics::SaleWindowCapture>>,
     /// The codex service (species / ranks / recommendations / claims),
     /// built over the facade's shared db, catalogue, and clock.
     codex: CodexService,
@@ -161,6 +173,7 @@ impl Api {
         skill_scan: Arc<SkillScanManual>,
         spacebar: Arc<SpacebarCaptureListener>,
         repair_ocr: Arc<RepairOcrService>,
+        sale_window_ocr: Arc<SaleWindowOcrService>,
         quests: Arc<QuestService>,
         demo_db_path: Option<PathBuf>,
         planet_maps: Option<Arc<eo_services::planet_maps::PlanetMapStore>>,
@@ -190,6 +203,8 @@ impl Api {
             skill_scan,
             spacebar,
             repair_ocr,
+            sale_window_ocr,
+            last_sale_capture: std::sync::Mutex::new(None),
             codex,
             quests,
             analytics,

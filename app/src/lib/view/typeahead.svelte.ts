@@ -15,6 +15,13 @@ export interface Typeahead<T> {
 	readonly loading: boolean;
 	readonly error: string | null;
 	select(item: T): void;
+	/**
+	 * Put text in the box without asking for suggestions: sets the query,
+	 * cancels any pending search and blanks the results. For text that did
+	 * not come from typing (a screen read, a restored draft), where a
+	 * dropdown would flash open over the form and close again unbidden.
+	 */
+	fill(value: string): void;
 	clear(): void;
 	/**
 	 * Re-run the search for the current query, dropping any in-flight
@@ -123,6 +130,14 @@ export function createTypeahead<T>(options: TypeaheadOptions<T>): Typeahead<T> {
 			cancelPending();
 			selected = item;
 			if (labelOf) query = labelOf(item);
+			results = [];
+			loading = false;
+			error = null;
+		},
+		fill(value: string) {
+			cancelPending();
+			selected = null;
+			query = value;
 			results = [];
 			loading = false;
 			error = null;

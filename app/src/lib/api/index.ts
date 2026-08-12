@@ -80,10 +80,12 @@ export * from './settings';
 export {
 	beginNavigationAreaSelection,
 	hideNavigationOverlays,
+	hideSaleCaptureOverlay,
 	hideScanOverlay,
 	manualSkillScanCapturePng,
 	planetMapImage,
 	showNavigationOverlays,
+	showSaleCaptureOverlay,
 	showScanOverlay,
 	toggleCartographyOverlay,
 	toggleOverlay,

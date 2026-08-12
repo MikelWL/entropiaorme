@@ -21,8 +21,8 @@ use crate::analytics::{
     HuntingRealisedMarkup, InventoryDraftResolution, InventoryItem, InventoryItemInput,
     InventoryPatch, InventorySaleDraft, InventorySellInput, InventorySellResult, LedgerEntryInput,
     LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput,
-    Profession, RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
-    StockRemovalInput,
+    Profession, RealisedTierMarkup, SaleWindowCapture, ShrapnelConversionInput,
+    StockConversionInput, StockPosition, StockRemovalInput,
 };
 use crate::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -846,6 +846,16 @@ pub fn manifest() -> Vec<CommandSpec> {
                 },
             ],
             returns: Some(schema(schema_for!(InventorySellResult))),
+        },
+        CommandSpec {
+            name: "inventory_sale_window_capture",
+            args: vec![],
+            returns: Some(schema(schema_for!(SaleWindowCapture))),
+        },
+        CommandSpec {
+            name: "inventory_sale_window_take_capture",
+            args: vec![],
+            returns: Some(schema(schema_for!(Nullable<SaleWindowCapture>))),
         },
         CommandSpec {
             name: "inventory_draft_resolve",

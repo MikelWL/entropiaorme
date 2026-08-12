@@ -16,6 +16,15 @@ fn main() {
     }
     permissions.push_str(
         "]\n\n[[permission]]\n\
+         identifier = \"sale-capture-commands\"\n\
+         description = \"Allows only the read and the dismissal the capture overlay uses.\"\n\
+         commands.allow = [\n",
+    );
+    for command in SALE_CAPTURE_COMMANDS {
+        permissions.push_str(&format!("  \"{command}\",\n"));
+    }
+    permissions.push_str(
+        "]\n\n[[permission]]\n\
          identifier = \"cartography-commands\"\n\
          description = \"Allows only the reads and write used by the cartography overlay.\"\n\
          commands.allow = [\n",

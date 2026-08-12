@@ -1,0 +1,12 @@
+-- The moment a listing started, not just the day.
+--
+-- A listing runs for its duration from the instant it was created: posted at
+-- 18:20 on a Thursday for seven days, it ends at 18:20 the Thursday after.
+-- The date alone cannot say that, so it cannot say when the clock is up
+-- either, which is the whole point of recording a duration.
+--
+-- `listed_at` stays the calendar date, because that is what the ledger and
+-- the daily rollups are keyed by; this is the precise instant beside it.
+-- Nullable: a listing recorded only as a date has no known time of day, and
+-- assuming midnight would invent a deadline several hours off.
+ALTER TABLE auction_listings ADD COLUMN listed_instant REAL;

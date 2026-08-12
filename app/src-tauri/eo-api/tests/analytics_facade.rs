@@ -51,6 +51,7 @@ async fn analytics_api(dir: &Path) -> Api {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.sale_window_ocr,
         handles.quests.clone(),
         None,
         None,
@@ -247,6 +248,7 @@ async fn a_non_positive_listing_quantity_is_a_bad_request() {
             buyout: None,
             listing_fee: 0.5,
             listed_at: None,
+            auction_days: None,
         })
         .await
         .unwrap_err(),

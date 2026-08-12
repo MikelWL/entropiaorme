@@ -27,7 +27,7 @@ use crate::daily_rollup;
 use crate::db::{Db, DbError};
 use crate::harvest_yield::HarvestYieldTier;
 use crate::stock_allocation;
-use crate::time::naive_to_epoch;
+use crate::time::{naive_to_epoch, to_iso_utc};
 
 /// The analytics domain service over the shared database and injected
 /// clock: the Overview / Activity aggregates and the ledger / preset /
@@ -144,6 +144,14 @@ pub struct AuctionListingRow {
     /// `auction` for a pending lifecycle, `trade` for an immediately resolved
     /// fee-free player-to-player sale.
     pub channel: String,
+    /// How many days the listing was posted for, when the player recorded it.
+    /// `None` for a listing made before durations were captured: no deadline
+    /// is invented for it.
+    pub auction_days: Option<i64>,
+    /// The day the listing runs out, derived from `listed_at` plus
+    /// `auction_days` rather than stored, so it cannot drift from either.
+    /// `None` whenever the duration is unknown.
+    pub expires_at: Option<String>,
     /// Net markup the activity may claim, after both auction fees and after
     /// removing the share covered by untracked stock.
     pub activity_net_markup: Option<f64>,
@@ -3391,7 +3399,43 @@ const STOCK_EPSILON: f64 = 1e-9;
 /// The auction-listing column list, in the order [`listing_from_row`] reads.
 const LISTING_COLUMNS: &str = "id, item_name, quantity, attributed_qty, unattributed_qty, \
      tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, status, \
-     final_price, sale_fee, resolved_at, subject_kind, inventory_item_id, cost_basis, channel";
+     final_price, sale_fee, resolved_at, subject_kind, inventory_item_id, cost_basis, channel, \
+     auction_days, listed_instant";
+
+/// The moment a listing runs out: its duration measured from the instant it
+/// started, not from the day. Posted at 18:20 for seven days, it ends at
+/// 18:20 seven days later, which is what the auction house itself does.
+///
+/// `None` unless both the duration and the starting instant are known. A
+/// listing recorded as a bare date has no time of day, and assuming one would
+/// put the deadline hours away from the truth in either direction.
+fn listing_expiry(listed_instant: Option<f64>, auction_days: Option<i64>) -> Option<String> {
+    let (instant, days) = (listed_instant?, auction_days?);
+    Some(to_iso_utc(instant + (days as f64) * 86_400.0))
+}
+
+/// Split a caller's listing moment into the calendar date the ledger is keyed
+/// by and the precise instant the auction clock runs from.
+///
+/// A full timestamp gives both. A bare date gives only the date, so the clock
+/// stays unknown rather than being anchored to an invented midnight. Nothing
+/// at all means now, which is the ordinary case: a listing is normally
+/// recorded as it is made.
+fn listing_moment(supplied: Option<&str>, now: chrono::NaiveDateTime) -> (String, Option<f64>) {
+    let Some(text) = supplied.map(str::trim).filter(|value| !value.is_empty()) else {
+        let epoch = naive_to_epoch(now);
+        return (epoch_to_iso(epoch), Some(epoch));
+    };
+    for format in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"] {
+        if let Ok(stamp) = chrono::NaiveDateTime::parse_from_str(text, format) {
+            return (
+                stamp.format("%Y-%m-%d").to_string(),
+                Some(naive_to_epoch(stamp)),
+            );
+        }
+    }
+    (text.to_string(), None)
+}
 
 /// One auction listing from a row over [`LISTING_COLUMNS`], with its
 /// realised figures derived rather than read: a stored copy could drift from
@@ -3403,8 +3447,11 @@ fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
     let status = row.get_unwrap::<_, String>(11);
     let final_price = row.get_unwrap::<_, Option<f64>>(12);
     let sale_fee = row.get_unwrap::<_, Option<f64>>(13);
+    let listed_at = row.get_unwrap::<_, String>(10);
     let subject_kind = row.get_unwrap::<_, String>(15);
     let cost_basis = row.get_unwrap::<_, Option<f64>>(17);
+    let auction_days = row.get_unwrap::<_, Option<i64>>(19);
+    let expires_at = listing_expiry(row.get_unwrap::<_, Option<f64>>(20), auction_days);
     let sold = status == "sold";
 
     let loot_outcome = (sold && subject_kind == "loot").then(|| {
@@ -3428,7 +3475,7 @@ fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
         starting_bid: row.get_unwrap::<_, f64>(7),
         buyout: row.get_unwrap::<_, Option<f64>>(8),
         listing_fee,
-        listed_at: row.get_unwrap::<_, String>(10),
+        listed_at,
         status,
         final_price,
         sale_fee,
@@ -3437,6 +3484,8 @@ fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
         inventory_item_id: row.get_unwrap::<_, Option<String>>(16),
         cost_basis,
         channel: row.get_unwrap::<_, String>(18),
+        auction_days,
+        expires_at,
         activity_net_markup: loot_outcome.map(|outcome| outcome.activity_net_markup),
         gross_markup: if sold {
             if let Some(basis) = cost_basis {
@@ -4642,6 +4691,7 @@ impl AnalyticsService {
         buyout: Option<f64>,
         listing_fee: f64,
         listed_at: Option<&str>,
+        auction_days: Option<i64>,
     ) -> Result<AuctionListingRow, AnalyticsError> {
         if quantity <= 0.0 {
             return Err(AnalyticsError::InvalidInput(
@@ -4653,14 +4703,17 @@ impl AnalyticsService {
                 "auction prices and fees cannot be negative",
             ));
         }
+        if auction_days.is_some_and(|days| days <= 0) {
+            return Err(AnalyticsError::InvalidInput(
+                "a listing duration must be a positive number of days",
+            ));
+        }
 
         let id = Uuid::new_v4().to_string();
-        let listed_at = listed_at
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| self.default_date());
+        let (listed_at, listed_instant) = listing_moment(listed_at, self.clock.now());
         let now = naive_to_epoch(self.clock.now());
         let (id_c, item_c, listed_c) = (id.clone(), item_name.to_string(), listed_at.clone());
+        let instant_c = listed_instant;
 
         self.db
             .with_writer(move |conn| {
@@ -4673,8 +4726,8 @@ impl AnalyticsService {
                     "INSERT INTO auction_listings ( \
                          id, item_name, profession, quantity, attributed_qty, unattributed_qty, \
                          tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, \
-                         status, created_at, updated_at) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                         auction_days, listed_instant, status, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
                     rusqlite::params![
                         id_c,
                         item_c,
@@ -4688,6 +4741,8 @@ impl AnalyticsService {
                         buyout,
                         listing_fee,
                         listed_c,
+                        auction_days,
+                        instant_c,
                         now,
                         now,
                     ],
@@ -4751,18 +4806,21 @@ impl AnalyticsService {
         buyout: Option<f64>,
         listing_fee: f64,
         listed_at: Option<&str>,
+        auction_days: Option<i64>,
     ) -> Result<Option<AuctionListingRow>, AnalyticsError> {
         if starting_bid < 0.0 || listing_fee < 0.0 {
             return Err(AnalyticsError::InvalidInput(
                 "auction prices and fees cannot be negative",
             ));
         }
+        if auction_days.is_some_and(|days| days <= 0) {
+            return Err(AnalyticsError::InvalidInput(
+                "a listing duration must be a positive number of days",
+            ));
+        }
         let id = Uuid::new_v4().to_string();
         let item_id = item_id.to_string();
-        let listed_at = listed_at
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| self.default_date());
+        let (listed_at, listed_instant) = listing_moment(listed_at, self.clock.now());
         let now = naive_to_epoch(self.clock.now());
         self.db
             .with_writer(move |conn| {
@@ -4784,9 +4842,9 @@ impl AnalyticsService {
                     "INSERT INTO auction_listings ( \
                          id, item_name, profession, quantity, attributed_qty, unattributed_qty, \
                          tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, \
-                         status, created_at, updated_at, subject_kind, inventory_item_id, \
-                         cost_basis, channel) \
-                     VALUES (?, ?, 'inventory', 1, 0, 1, ?, 0, ?, ?, ?, ?, \
+                         auction_days, listed_instant, status, created_at, updated_at, \
+                         subject_kind, inventory_item_id, cost_basis, channel) \
+                     VALUES (?, ?, 'inventory', 1, 0, 1, ?, 0, ?, ?, ?, ?, ?, ?, \
                              'pending', ?, ?, 'equipment', ?, ?, 'auction')",
                     rusqlite::params![
                         id,
@@ -4796,6 +4854,8 @@ impl AnalyticsService {
                         buyout,
                         listing_fee,
                         listed_at,
+                        auction_days,
+                        listed_instant,
                         now,
                         now,
                         item_id,
@@ -5521,7 +5581,14 @@ impl AnalyticsService {
                     ))?;
                     let listings = stmt
                         .query_map(rusqlite::params![profession.as_str()], |row| {
-                            Ok((listing_from_row(row), row.get::<_, Option<String>>(19)?))
+                            // By name, not by position: this column sits past
+                            // the end of LISTING_COLUMNS, so an index would
+                            // silently start reading a different column the
+                            // next time that list grows.
+                            Ok((
+                                listing_from_row(row),
+                                row.get::<_, Option<String>>("undone_at")?,
+                            ))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     for (listing, undone_at) in listings {
@@ -7174,6 +7241,47 @@ mod tests {
     }
 
     #[test]
+    fn listing_expiry_runs_from_the_instant_not_the_day() {
+        // 2026-08-11T18:20:00Z. Seven days later is the same clock time,
+        // which is what the auction house does and what a date alone
+        // cannot express.
+        let listed = 1_786_472_400.0;
+        assert_eq!(
+            listing_expiry(Some(listed), Some(7)).as_deref(),
+            Some("2026-08-18T18:20:00+00:00")
+        );
+        // An unrecorded duration never invents a deadline, so a listing made
+        // before durations were captured simply never nudges.
+        assert_eq!(listing_expiry(Some(listed), None), None);
+        // Nor does a listing known only by its date: midnight would be a
+        // guess, and hours out in either direction.
+        assert_eq!(listing_expiry(None, Some(7)), None);
+    }
+
+    #[test]
+    fn listing_moment_keeps_the_clock_only_when_it_was_given() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 8, 11)
+            .unwrap()
+            .and_hms_opt(18, 20, 0)
+            .unwrap();
+
+        // Nothing supplied means now, the ordinary case.
+        let (date, instant) = listing_moment(None, now);
+        assert_eq!(date, "2026-08-11");
+        assert_eq!(instant, Some(naive_to_epoch(now)));
+
+        // A full stamp gives both halves.
+        let (date, instant) = listing_moment(Some("2026-07-02T09:05"), now);
+        assert_eq!(date, "2026-07-02");
+        assert!(instant.is_some());
+
+        // A bare date gives the ledger its key and leaves the clock unknown.
+        let (date, instant) = listing_moment(Some("2026-07-02"), now);
+        assert_eq!(date, "2026-07-02");
+        assert_eq!(instant, None);
+    }
+
+    #[test]
     fn sql_number_float_form_coerces_integers_only() {
         assert_eq!(SqlNumber::Int(0).as_f64(), 0.0);
         assert_eq!(SqlNumber::Int(3).as_f64(), 3.0);
@@ -7343,6 +7451,89 @@ mod tests {
         rows.iter().find(|row| row.item_name == item).cloned()
     }
 
+    /// A recorded duration survives the round trip and reports the day the
+    /// listing runs out, so the Listings surface can ask what became of it.
+    /// A listing made without one keeps no deadline at all.
+    #[tokio::test]
+    async fn listing_duration_round_trips_and_reports_its_expiry() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let dated = service
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                10.0,
+                2.0,
+                None,
+                0.5,
+                Some("2026-07-20T14:30:00"),
+                Some(7),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dated.auction_days, Some(7));
+        // Listed at 14:30 on the machine's own clock, so the deadline is
+        // that same wall-clock moment seven days on, reported in UTC. The
+        // expectation is worked out the same way rather than written down,
+        // because a written-down UTC string would only be right in the
+        // timezone it was written in and would fail everywhere else.
+        let listed_naive = chrono::NaiveDate::from_ymd_opt(2026, 7, 20)
+            .unwrap()
+            .and_hms_opt(14, 30, 0)
+            .unwrap();
+        let expected = to_iso_utc(naive_to_epoch(listed_naive) + 7.0 * 86_400.0);
+        assert_eq!(dated.expires_at.as_deref(), Some(expected.as_str()));
+
+        let undated = service
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                10.0,
+                2.0,
+                None,
+                0.5,
+                Some("2026-07-20"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(undated.auction_days, None);
+        assert_eq!(undated.expires_at, None);
+
+        // The duration reads back from the database, not just from the
+        // creation call's own return value.
+        let listings = service
+            .auction_listings(Profession::Harvesting)
+            .await
+            .unwrap();
+        let stored = listings.iter().find(|row| row.id == dated.id).unwrap();
+        assert_eq!(stored.expires_at.as_deref(), Some(expected.as_str()));
+    }
+
+    /// A duration is either absent or a real number of days; zero and
+    /// negatives are refused rather than stored as a deadline in the past.
+    #[tokio::test]
+    async fn listing_rejects_a_non_positive_duration() {
+        let (_dir, service) = write_service().await;
+        seed_board_stock(&service).await;
+
+        let error = service
+            .create_auction_listing(
+                Profession::Harvesting,
+                "Moonleaf Board",
+                10.0,
+                2.0,
+                None,
+                0.5,
+                Some("2026-07-20"),
+                Some(0),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AnalyticsError::InvalidInput(_)));
+    }
+
     /// Listing removes the stock immediately, because in game it has left the
     /// player's inventory, and spends the starting-bid fee immediately too.
     /// Nothing is realised: the auction has not closed.
@@ -7366,6 +7557,7 @@ mod tests {
                 Some(4.0),
                 0.5,
                 Some("2026-07-20"),
+                None,
             )
             .await
             .unwrap();
@@ -7422,6 +7614,7 @@ mod tests {
                 None,
                 0.5,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -7468,6 +7661,7 @@ mod tests {
                 None,
                 0.5,
                 Some("2026-07-20"),
+                None,
             )
             .await
             .unwrap();
@@ -7556,6 +7750,7 @@ mod tests {
                 None,
                 0.0,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -7591,6 +7786,7 @@ mod tests {
                 None,
                 0.5,
                 Some("2026-07-20"),
+                None,
             )
             .await
             .unwrap();
@@ -7657,6 +7853,7 @@ mod tests {
                 None,
                 0.5,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -7694,6 +7891,7 @@ mod tests {
                 3.0,
                 None,
                 0.5,
+                None,
                 None,
             )
             .await
@@ -7788,6 +7986,7 @@ mod tests {
                 None,
                 0.0,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -7823,6 +8022,7 @@ mod tests {
                 None,
                 0.0,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -7851,6 +8051,7 @@ mod tests {
                 None,
                 0.5,
                 Some("2026-07-20"),
+                None,
             )
             .await
             .unwrap();
@@ -7902,6 +8103,7 @@ mod tests {
                 4.0,
                 None,
                 0.5,
+                None,
                 None,
             )
             .await
@@ -7970,6 +8172,7 @@ mod tests {
                 None,
                 0.5,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -8000,6 +8203,7 @@ mod tests {
                 3.0,
                 None,
                 0.5,
+                None,
                 None,
             )
             .await
@@ -8062,6 +8266,7 @@ mod tests {
                 None,
                 0.5,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -8094,6 +8299,7 @@ mod tests {
                 2.0,
                 None,
                 0.5,
+                None,
                 None,
             )
             .await
@@ -8202,6 +8408,7 @@ mod tests {
                 130.0,
                 Some(130.0),
                 0.0,
+                None,
                 None,
             )
             .await
@@ -8324,6 +8531,7 @@ mod tests {
                 None,
                 0.5,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -8390,6 +8598,7 @@ mod tests {
                 5.0,
                 None,
                 0.0,
+                None,
                 None,
             )
             .await
@@ -8733,7 +8942,7 @@ mod tests {
             .await
             .unwrap();
         let listing = service
-            .create_equipment_listing(&item.id, 105.0, Some(120.0), 0.5, Some("2026-06-02"))
+            .create_equipment_listing(&item.id, 105.0, Some(120.0), 0.5, Some("2026-06-02"), None)
             .await
             .unwrap()
             .expect("held equipment");
@@ -8810,7 +9019,7 @@ mod tests {
             .await
             .unwrap();
         let listing = service
-            .create_equipment_listing(&item.id, 105.0, Some(120.0), 0.5, Some("2026-06-02"))
+            .create_equipment_listing(&item.id, 105.0, Some(120.0), 0.5, Some("2026-06-02"), None)
             .await
             .unwrap()
             .expect("held equipment");
@@ -9715,6 +9924,7 @@ mod tests {
                 None,
                 0.5,
                 Some("2026-06-01"),
+                None,
             )
             .await
             .unwrap();
@@ -9811,6 +10021,7 @@ mod tests {
                 None,
                 0.5,
                 Some("2026-06-01"),
+                None,
             )
             .await
             .unwrap();

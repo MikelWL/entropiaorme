@@ -54,6 +54,17 @@ export async function hideScanOverlay(): Promise<void> {
 	await invoke('hide_scan_overlay');
 }
 
+/** Show the sale-window capture button where a fullscreen game leaves it
+ * reachable. It is the main window's button in another place. */
+export async function showSaleCaptureOverlay(): Promise<void> {
+	await invoke('show_sale_capture_overlay');
+}
+
+/** Hide the sale-window capture overlay. */
+export async function hideSaleCaptureOverlay(): Promise<void> {
+	await invoke('hide_sale_capture_overlay');
+}
+
 /** Metadata about an available update (mirrors the Rust `UpdateInfo`). */
 export type UpdateInfo = {
 	version: string;

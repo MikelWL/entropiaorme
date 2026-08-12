@@ -19,8 +19,8 @@ use eo_api::analytics::{
     HuntingRealisedMarkup, InventoryDraftResolution, InventoryItem, InventoryItemInput,
     InventoryPatch, InventorySaleDraft, InventorySellInput, InventorySellResult, LedgerEntryInput,
     LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput,
-    Profession, RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
-    StockRemovalInput,
+    Profession, RealisedTierMarkup, SaleWindowCapture, ShrapnelConversionInput,
+    StockConversionInput, StockPosition, StockRemovalInput,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -62,6 +62,7 @@ use eo_api::tracking::{
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
+use tauri::Emitter;
 
 /// Holds the composed facade for the typed commands, published by
 /// `install_native_services` once every service is present.
@@ -847,6 +848,37 @@ pub async fn inventory_sell(
     sale: InventorySellInput,
 ) -> Result<InventorySellResult, ApiError> {
     facade(&app)?.inventory_sell(item_id, sale).await
+}
+
+// The capture blocks on the portal and the recogniser, so offload it the
+// way the repair scan is offloaded: on a runtime worker its inner
+// `block_on` panics outright, and the panic poisons the shared capture
+// engine for every later scan in the process.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_sale_window_capture(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+) -> Result<SaleWindowCapture, ApiError> {
+    let api = facade(&app)?;
+    let capture = tokio::task::spawn_blocking(move || api.inventory_sale_window_capture())
+        .await
+        .map_err(|_| ApiError::invalid_state("sale window capture task failed"))??;
+    // A read taken from the overlay was taken for a form the player is not
+    // looking at. Waiting for the main window to be focused would leave a
+    // form sitting in plain sight on a second screen, unchanged, looking
+    // exactly like a capture that failed. So it is told, and fills where it
+    // stands. Window orchestration, not a domain event.
+    if window.label() == crate::SALE_CAPTURE_OVERLAY && capture.error.0.is_none() {
+        let _ = app.emit_to("main", "sale-capture-ready", ());
+    }
+    Ok(capture)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_sale_window_take_capture(
+    app: tauri::AppHandle,
+) -> Result<Nullable<SaleWindowCapture>, ApiError> {
+    Ok(facade(&app)?.inventory_sale_window_take_capture())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1711,6 +1743,8 @@ mod tests {
         "inventory_update",
         "inventory_delete",
         "inventory_sell",
+        "inventory_sale_window_capture",
+        "inventory_sale_window_take_capture",
         "inventory_draft_resolve",
         "inventory_equipment_listing_create",
         "inventory_equipment_trade",
@@ -1822,6 +1856,8 @@ mod tests {
             "toggle_overlay",
             "toggle_cartography_overlay",
             "show_scan_overlay",
+            "show_sale_capture_overlay",
+            "hide_sale_capture_overlay",
             "hide_scan_overlay",
             "show_navigation_overlays",
             "hide_navigation_overlays",

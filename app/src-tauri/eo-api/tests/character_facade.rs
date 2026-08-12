@@ -107,6 +107,7 @@ async fn seeded_api(dir: &Path) -> Api {
         handles.skill_scan,
         handles.spacebar,
         handles.repair_ocr,
+        handles.sale_window_ocr,
         handles.quests.clone(),
         None,
         None,

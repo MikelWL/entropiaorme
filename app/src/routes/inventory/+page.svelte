@@ -9,6 +9,7 @@
 	import AuctionListings from '$lib/features/analytics/AuctionListings.svelte';
 	import ConvertStockModal from '$lib/features/analytics/ConvertStockModal.svelte';
 	import SellStockModal from '$lib/features/analytics/SellStockModal.svelte';
+	import CreateListingModal from '$lib/features/inventory/CreateListingModal.svelte';
 	import EquipmentSaleModal from '$lib/features/inventory/EquipmentSaleModal.svelte';
 	import InventoryHoldings from '$lib/features/inventory/InventoryHoldings.svelte';
 	import InventoryItemFormModal from '$lib/features/inventory/InventoryItemFormModal.svelte';
@@ -23,6 +24,7 @@
 	} from '$lib/features/analytics/treeCuttingModel.svelte';
 
 	const model = createInventoryModel();
+	let createListingOpen = $state(false);
 	let equipmentFormOpen = $state(false);
 	let equipmentToEdit = $state<InventoryItem | null>(null);
 	let equipmentToSell = $state<InventoryItem | null>(null);
@@ -97,6 +99,7 @@
 			onremove={(item) => (lootToRemove = item)}
 			onshrapnel={(item) => (shrapnelToConvert = item)}
 			onaddequipment={addEquipment}
+			oncreatelisting={() => (createListingOpen = true)}
 			oneditequipment={editEquipment}
 			onsellequipment={(item) => (equipmentToSell = item)}
 			ondeleteequipment={deleteEquipment}
@@ -136,6 +139,14 @@
 	</div>
 </div>
 
+<CreateListingModal
+	bind:open={createListingOpen}
+	holdings={model.holdingOptions}
+	onresolve={model.resolveDraftName}
+	oncapture={model.captureSaleWindow}
+	oncollect={model.takeSaleWindowCapture}
+	onsubmit={model.createFromDraft}
+/>
 <SellStockModal
 	item={lootToSell}
 	onlist={model.listLoot}

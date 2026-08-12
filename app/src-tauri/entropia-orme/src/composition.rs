@@ -85,6 +85,7 @@ pub use eo_services::ocr_engine::OcrEngine;
 use eo_services::paths::{resolve_data_dir, DB_FILE_NAME};
 use eo_services::quests::QuestService;
 use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
+use eo_services::sale_window_ocr::{SaleWindowOcrService, SaleWindowProviders};
 use eo_services::scan_completion::{complete_skill_scan, hydrate_skill_scan_state};
 use eo_services::scan_presets::ScanPresets;
 use eo_services::screen_capture::{capture_region_bgr, capture_region_png};
@@ -738,13 +739,16 @@ async fn compose_with(
         .parent()
         .map(|parent| parent.join("panel_geometry.json"))
         .unwrap_or_else(|| snapshot.join("panel_geometry.json"));
-    let (skill_scan, repair_ocr, spacebar_listener) = compose_scan_services(
+    let (skill_scan, repair_ocr, sale_window_ocr, spacebar_listener) = compose_scan_services(
         producers.bus_handle(),
         ocr_engine.clone(),
         game_data.clone(),
         db.clone(),
         clock.clone(),
-        geometry_path,
+        ScanPaths {
+            geometry: geometry_path,
+            debug: data_dir.join("debug"),
+        },
         producers.keystroke_source_handle(),
     )
     .await;
@@ -891,6 +895,7 @@ async fn compose_with(
         skill_scan.clone(),
         spacebar_listener.clone(),
         repair_ocr.clone(),
+        sale_window_ocr.clone(),
         producers.quests_handle(),
         demo_db_path,
         planet_maps,
@@ -964,27 +969,35 @@ async fn build_ocr_engine(models: PathBuf) -> Option<Arc<OcrEngine>> {
     Some(engine)
 }
 
-/// Compose the manual skill scan and the repair-cost OCR over the OCR
-/// engine, the live game-window region lookups, and the on-demand screen
-/// capturer. The scan publishes `scan.status.changed` on the spine `bus`
-/// (so its frames reach the shell's event bridge), persists accepted
-/// calibrations
-/// through the shared `pool`, and hydrates its resting status from the
-/// same. When the OCR runtime is absent the providers stand down to
-/// "engine unavailable" rather than declining composition, so the scan
-/// operations still serve (the scan reports offline, a golden-pinned
-/// reply). Both services are always constructed.
+/// Where the scan services read their calibration and drop what they saw.
+struct ScanPaths {
+    /// The calibration artefact, beside the snapshot in both layouts.
+    geometry: PathBuf,
+    /// Where a scan leaves its last captured frame for later inspection.
+    debug: PathBuf,
+}
+
+/// Compose the manual skill scan, the repair-cost OCR and the sale-window
+/// read over the OCR engine, the live game-window region lookups, and the
+/// on-demand screen capturer. The scan publishes `scan.status.changed` on
+/// the spine `bus` (so its frames reach the shell's event bridge), persists
+/// accepted calibrations through the shared `pool`, and hydrates its resting
+/// status from the same. When the OCR runtime is absent the providers stand
+/// down to "engine unavailable" rather than declining composition, so the
+/// scan operations still serve (the scan reports offline, a golden-pinned
+/// reply). All three services are always constructed.
 async fn compose_scan_services(
     bus: Arc<EventBus>,
     ocr_engine: Option<Arc<OcrEngine>>,
     game_data: Arc<GameDataStore>,
     db: Db,
     clock: Arc<dyn Clock>,
-    geometry_path: PathBuf,
+    paths: ScanPaths,
     keystroke_source: Arc<dyn KeystrokeSource>,
 ) -> (
     Arc<SkillScanManual>,
     Arc<RepairOcrService>,
+    Arc<SaleWindowOcrService>,
     Arc<SpacebarCaptureListener>,
 ) {
     let runtime = tokio::runtime::Handle::current();
@@ -994,7 +1007,7 @@ async fn compose_scan_services(
     // assets (the geometry artefact beside the snapshot dir, the skill
     // names from the bundled `skills` endpoint), so this is port scope, not
     // new surface.
-    let presets = Arc::new(ScanPresets::new(&geometry_path));
+    let presets = Arc::new(ScanPresets::new(&paths.geometry));
     let skill_geom = presets.skill.to_geom_value();
     let vocab: Vec<String> = game_data
         .get_entities("skills")
@@ -1068,7 +1081,8 @@ async fn compose_scan_services(
 
     // The repair-OCR provider seams: the same calibrated region lookup and
     // capturer (BGR pixels here), recognised by the shared engine.
-    let repair_presets = presets;
+    let repair_presets = presets.clone();
+    let repair_engine_for_sale = ocr_engine.clone();
     let repair_engine = ocr_engine;
     let repair_ocr = Arc::new(RepairOcrService::new(RepairProviders {
         repair_region: Arc::new(move || eu_window::repair_region(&repair_presets)),
@@ -1081,13 +1095,47 @@ async fn compose_scan_services(
         }),
     }));
 
+    // The sale-window read: the same seams again, over the same warm
+    // engine and capturer. It takes the anchor as well as the region,
+    // because it crops each field out of the one captured panel.
+    let sale_presets = presets;
+    let sale_engine = repair_engine_for_sale;
+    let anchor_presets = sale_presets.clone();
+    let sale_window_ocr = Arc::new(SaleWindowOcrService::new(SaleWindowProviders {
+        sale_window_region: Arc::new(move || eu_window::sale_window_region(&sale_presets)),
+        anchor: Arc::new(move || anchor_presets.sale_window.clone()),
+        capture_region: Arc::new(capture_region_bgr),
+        read_text: Arc::new(move |frame: &BgrImage| {
+            sale_engine
+                .as_ref()?
+                .recognize_bgr(&frame.data, frame.h, frame.w)
+                .ok()
+        }),
+    }));
+
+    // A development read drops its captured panel under the data dir's
+    // debug/, the way a coordinate scan drops its frame: one small
+    // overwritten file, local only, and the only way to see afterwards what
+    // the recogniser was actually looking at when a field would not read.
+    // Release builds do not retain transaction pixels after recognition.
+    let sale_debug_dir = paths.debug;
+    sale_window_ocr.set_capture_tap(Arc::new(move |_panel, _region, frame| {
+        if cfg!(debug_assertions) {
+            eo_services::screen_capture::write_debug_frame(
+                &sale_debug_dir,
+                "sale-window-last.png",
+                frame,
+            );
+        }
+    }));
+
     // The spacebar-capture listener fires a manual-scan capture on a space
     // press while the scan is capturing, over the SAME OS hook the hotbar
     // listener rides (the hook is single-instance). Off until the overlay
     // toggle enables it through the spacebar-capture command.
     let spacebar = SpacebarCaptureListener::new(skill_scan.clone(), Some(keystroke_source));
 
-    (skill_scan, repair_ocr, spacebar)
+    (skill_scan, repair_ocr, sale_window_ocr, spacebar)
 }
 
 /// Extract `{canonical_name: level}` rows from one captured skill-panel

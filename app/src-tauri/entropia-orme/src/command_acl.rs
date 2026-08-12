@@ -64,6 +64,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "get_update_channel",
     "harvest_realised_markup",
     "hide_navigation_overlays",
+    "hide_sale_capture_overlay",
     "hide_scan_overlay",
     "hunting_realised_markup",
     "install_update",
@@ -73,6 +74,8 @@ pub const APP_COMMANDS: &[&str] = &[
     "inventory_equipment_listing_create",
     "inventory_equipment_trade",
     "inventory_list",
+    "inventory_sale_window_capture",
+    "inventory_sale_window_take_capture",
     "inventory_sell",
     "inventory_update",
     "ledger_create",
@@ -166,6 +169,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "settings_set_overlay_position",
     "settings_update",
     "show_navigation_overlays",
+    "show_sale_capture_overlay",
     "show_scan_overlay",
     "stock_conversion_undo",
     "stock_convert",
@@ -199,6 +203,11 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_start",
     "tracking_stop",
 ];
+
+/// The capture overlay does one thing: read the sale window and take
+/// itself off screen. It gets those two and nothing else.
+pub const SALE_CAPTURE_COMMANDS: &[&str] =
+    &["hide_sale_capture_overlay", "inventory_sale_window_capture"];
 
 pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
     "map_pin_create",

@@ -316,6 +316,10 @@ export interface AuctionListing {
 	inventoryItemId: string | null;
 	costBasis: number | null;
 	channel: string;
+	/** How many days the listing was posted for. Null for a listing recorded before durations were captured; no deadline is invented for it. */
+	auctionDays: number | null;
+	/** The moment the listing runs out, as a UTC timestamp: the instant it was posted plus `auction_days`, so it carries a time of day and not only a date. Null whenever the duration or the starting instant is unknown. Compare it as an instant; treating it as a calendar date mixes it with whatever local date the reader is on. */
+	expiresAt: string | null;
 	/** Net markup the activity may claim, after both auction fees and after removing the share covered by untracked stock. */
 	activityNetMarkup: number | null;
 	/** Sale proceeds above the listing's TT, before fees. */
@@ -335,6 +339,8 @@ export interface AuctionListingInput {
 	buyout?: number | null;
 	listingFee: number;
 	listedAt?: string | null;
+	/** How many days the listing runs for. Optional: a listing whose duration the player did not record simply never nudges for resolution. */
+	auctionDays?: number | null;
 }
 
 /**
@@ -679,6 +685,8 @@ export interface EquipmentListingInput {
 	buyout?: number | null;
 	listingFee: number;
 	listedAt?: string | null;
+	/** How many days the listing runs for, when recorded. */
+	auctionDays?: number | null;
 }
 
 /**
@@ -1022,6 +1030,8 @@ export interface InventorySaleDraft {
 	buyout: number | null;
 	listingFee: number | null;
 	finalPrice: number | null;
+	/** How many days an auction listing runs for. */
+	auctionDays: number | null;
 	/** OCR may provide a field-level confidence. Manual drafts use null. */
 	confidence: number | null;
 }
@@ -2294,6 +2304,29 @@ export interface ReturnsBreakdown {
 }
 
 /**
+ * What one look at the game's sale window resolved.
+ * Every field is nullable because every field can refuse: a value that
+ * did not read comes back empty and is named in `unread`, so the review
+ * surface shows a gap to fill rather than a figure to trust. `error` is
+ * set only when there was nothing to read at all (no game window, no
+ * calibration, no capture), and then no field is populated.
+ */
+export interface SaleWindowCapture {
+	observedName: string | null;
+	quantity: number | null;
+	ttValue: number | null;
+	listingFee: number | null;
+	auctionDays: number | null;
+	startingBid: number | null;
+	buyout: number | null;
+	/** The lowest confidence among the fields that did read. */
+	confidence: number | null;
+	/** The fields that did not read, by the name the window gives them. */
+	unread: string[];
+	error: string | null;
+}
+
+/**
  * The settled scan phase, in the wire vocabulary the overlay switches on.
  */
 export type ScanPhase = 'idle' | 'capturing' | 'processing' | 'awaiting_review';
@@ -3243,6 +3276,14 @@ export async function inventoryDelete(itemId: string): Promise<void> {
 
 export async function inventorySell(itemId: string, sale: InventorySellInput): Promise<InventorySellResult> {
 	return invokeCommand('inventory_sell', { item_id: itemId, sale });
+}
+
+export async function inventorySaleWindowCapture(): Promise<SaleWindowCapture> {
+	return invokeCommand('inventory_sale_window_capture', {});
+}
+
+export async function inventorySaleWindowTakeCapture(): Promise<SaleWindowCapture | null> {
+	return invokeCommand('inventory_sale_window_take_capture', {});
 }
 
 export async function inventoryDraftResolve(draft: InventorySaleDraft): Promise<InventoryDraftResolution> {

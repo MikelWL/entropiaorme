@@ -442,3 +442,34 @@ describe('teardown', () => {
 		expect(rejecting.error).toBeNull();
 	});
 });
+
+describe('fill', () => {
+	it('puts text in the box without searching for it', async () => {
+		const search = vi.fn(async () => [alpha, beta]);
+		const picker = createTypeahead<Item>({ search, debounceMs: 0, minLength: 1 });
+
+		picker.fill('Shrapnel');
+		await vi.advanceTimersByTimeAsync(50);
+		await flush();
+
+		expect(picker.query).toBe('Shrapnel');
+		expect(search).not.toHaveBeenCalled();
+		expect(picker.results).toEqual([]);
+		expect(picker.loading).toBe(false);
+	});
+
+	it('drops a search already in flight, so no dropdown arrives after it', async () => {
+		const pending = deferred<Item[]>();
+		const search = vi.fn(() => pending.promise);
+		const picker = createTypeahead<Item>({ search, debounceMs: 0, minLength: 1 });
+
+		picker.query = 'Al';
+		await vi.advanceTimersByTimeAsync(5);
+		picker.fill('Shrapnel');
+		pending.resolve([alpha]);
+		await flush();
+
+		expect(picker.query).toBe('Shrapnel');
+		expect(picker.results).toEqual([]);
+	});
+});

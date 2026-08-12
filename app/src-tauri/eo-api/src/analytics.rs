@@ -504,6 +504,15 @@ pub struct AuctionListing {
     pub inventory_item_id: Nullable<String>,
     pub cost_basis: Nullable<f64>,
     pub channel: String,
+    /// How many days the listing was posted for. Null for a listing recorded
+    /// before durations were captured; no deadline is invented for it.
+    pub auction_days: Nullable<i64>,
+    /// The moment the listing runs out, as a UTC timestamp: the instant it
+    /// was posted plus `auction_days`, so it carries a time of day and not
+    /// only a date. Null whenever the duration or the starting instant is
+    /// unknown. Compare it as an instant; treating it as a calendar date
+    /// mixes it with whatever local date the reader is on.
+    pub expires_at: Nullable<String>,
     /// Net markup the activity may claim, after both auction fees and after
     /// removing the share covered by untracked stock.
     pub activity_net_markup: Nullable<f64>,
@@ -580,6 +589,9 @@ pub struct AuctionListingInput {
     pub buyout: Option<f64>,
     pub listing_fee: f64,
     pub listed_at: Option<String>,
+    /// How many days the listing runs for. Optional: a listing whose duration
+    /// the player did not record simply never nudges for resolution.
+    pub auction_days: Option<i64>,
 }
 
 /// A sale-confirmation payload: the price the auction actually fetched and
@@ -713,6 +725,8 @@ pub struct EquipmentListingInput {
     pub buyout: Option<f64>,
     pub listing_fee: f64,
     pub listed_at: Option<String>,
+    /// How many days the listing runs for, when recorded.
+    pub auction_days: Option<i64>,
 }
 
 /// A completed fee-free player trade for one whole capital position.
@@ -741,8 +755,33 @@ pub struct InventorySaleDraft {
     pub buyout: Nullable<f64>,
     pub listing_fee: Nullable<f64>,
     pub final_price: Nullable<f64>,
+    /// How many days an auction listing runs for.
+    pub auction_days: Nullable<i64>,
     /// OCR may provide a field-level confidence. Manual drafts use null.
     pub confidence: Nullable<f64>,
+}
+
+/// What one look at the game's sale window resolved.
+/// Every field is nullable because every field can refuse: a value that
+/// did not read comes back empty and is named in `unread`, so the review
+/// surface shows a gap to fill rather than a figure to trust. `error` is
+/// set only when there was nothing to read at all (no game window, no
+/// calibration, no capture), and then no field is populated.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleWindowCapture {
+    pub observed_name: Nullable<String>,
+    pub quantity: Nullable<f64>,
+    pub tt_value: Nullable<f64>,
+    pub listing_fee: Nullable<f64>,
+    pub auction_days: Nullable<i64>,
+    pub starting_bid: Nullable<f64>,
+    pub buyout: Nullable<f64>,
+    /// The lowest confidence among the fields that did read.
+    pub confidence: Nullable<f64>,
+    /// The fields that did not read, by the name the window gives them.
+    pub unread: Vec<String>,
+    pub error: Nullable<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -866,6 +905,7 @@ impl Api {
                 input.buyout,
                 input.listing_fee,
                 input.listed_at.as_deref(),
+                input.auction_days,
             )
             .await
             .map_err(analytics_error("auction listing create"))?;
@@ -1221,6 +1261,67 @@ impl Api {
         Ok(rows.into_iter().map(inventory_item_dto).collect())
     }
 
+    /// Read the game's auction sale window once and answer what it said.
+    ///
+    /// This fills a form; it never commits. Capture and typing converge on
+    /// the same draft and meet the same checks, so a misread cannot reach
+    /// the ledger by a path a typo could not.
+    ///
+    /// Synchronous, like the repair read: the capture blocks on the portal,
+    /// so its caller must offload it rather than run it on a runtime worker.
+    pub fn inventory_sale_window_capture(&self) -> Result<SaleWindowCapture, ApiError> {
+        let read = self.sale_window_ocr.scan_sale_window();
+        let text = |key: &str| {
+            read.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .into()
+        };
+        let number = |key: &str| read.get(key).and_then(serde_json::Value::as_f64).into();
+        let capture = SaleWindowCapture {
+            observed_name: text("item_name"),
+            quantity: number("quantity"),
+            tt_value: number("tt_value"),
+            // The window calls it the auction fee; the ledger has always
+            // called it the listing fee. Same money.
+            listing_fee: number("auction_fee"),
+            auction_days: read
+                .get("auction_days")
+                .and_then(serde_json::Value::as_i64)
+                .into(),
+            starting_bid: number("starting_bid"),
+            buyout: number("buyout"),
+            confidence: number("confidence"),
+            unread: read
+                .get("unread")
+                .and_then(serde_json::Value::as_array)
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            error: text("error"),
+        };
+        // Held for the form to collect, since the overlay's button can be
+        // pressed while the form is not on screen.
+        if let Ok(mut slot) = self.last_sale_capture.lock() {
+            *slot = Some(capture.clone());
+        }
+        Ok(capture)
+    }
+
+    /// Collect the last sale-window read, clearing it.
+    pub fn inventory_sale_window_take_capture(&self) -> Nullable<SaleWindowCapture> {
+        self.last_sale_capture
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+            .into()
+    }
+
     /// Resolve a manual or OCR-originated transaction draft against current
     /// holdings. Resolution is conservative: ambiguity stays visible for the
     /// review surface instead of silently choosing a cost basis.
@@ -1275,6 +1376,7 @@ impl Api {
                 input.buyout,
                 input.listing_fee,
                 input.listed_at.as_deref(),
+                input.auction_days,
             )
             .await
             .map_err(analytics_error("equipment listing create"))?
@@ -1495,6 +1597,8 @@ pub(crate) fn auction_listing_dto(
         inventory_item_id: row.inventory_item_id.into(),
         cost_basis: row.cost_basis.into(),
         channel: row.channel,
+        auction_days: row.auction_days.into(),
+        expires_at: row.expires_at.into(),
         activity_net_markup: row.activity_net_markup.into(),
         gross_markup: row.gross_markup.into(),
     }

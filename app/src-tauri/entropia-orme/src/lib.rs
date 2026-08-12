@@ -190,6 +190,31 @@ fn show_scan_overlay(app: tauri::AppHandle) {
     }
 }
 
+/// The capture overlay's window label, shared with the command that decides
+/// whether a read came from it.
+pub const SALE_CAPTURE_OVERLAY: &str = "overlay-sale-capture";
+
+/// The sale-window capture button, put where a fullscreen game leaves it
+/// reachable. It is the main window's button in another place and nothing
+/// more: the values it reads are reviewed back in the form, not here.
+#[tauri::command]
+fn show_sale_capture_overlay(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(SALE_CAPTURE_OVERLAY) {
+        // Top-left of the monitor, clear of a bottom-right docked sale
+        // window, which is the one part of the screen it must never cover.
+        let _ = window.set_position(monitor_anchor(&window, (40, 40)));
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn hide_sale_capture_overlay(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(SALE_CAPTURE_OVERLAY) {
+        let _ = window.hide();
+    }
+}
+
 #[tauri::command]
 fn hide_scan_overlay(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("scan-overlay") {
@@ -309,6 +334,8 @@ pub fn run() {
             toggle_overlay,
             toggle_cartography_overlay,
             show_scan_overlay,
+            show_sale_capture_overlay,
+            hide_sale_capture_overlay,
             hide_scan_overlay,
             capture_png,
             planet_map_image,
@@ -403,6 +430,8 @@ pub fn run() {
             commands::inventory_update,
             commands::inventory_delete,
             commands::inventory_sell,
+            commands::inventory_sale_window_capture,
+            commands::inventory_sale_window_take_capture,
             commands::inventory_draft_resolve,
             commands::inventory_equipment_listing_create,
             commands::inventory_equipment_trade,
@@ -1024,6 +1053,46 @@ mod tests {
             capabilities.contains("shell:allow-open"),
             "the shell open capability must survive for external links: {capabilities}"
         );
+    }
+
+    #[test]
+    fn the_capture_overlay_has_a_dedicated_least_privilege_capability() {
+        let default_capability = include_str!("../capabilities/default.json");
+        let capture_capability = include_str!("../capabilities/sale-capture-overlay.json");
+        assert!(
+            !default_capability.contains("overlay-sale-capture"),
+            "the capture webview must not inherit the main capability: {default_capability}"
+        );
+        assert!(capture_capability.contains("\"windows\": [\"overlay-sale-capture\"]"));
+        assert!(capture_capability.contains("sale-capture-commands"));
+        for forbidden in [
+            "shell:allow-open",
+            "core:window:allow-create",
+            "core:webview:allow-create-webview-window",
+            "trusted-commands",
+            "store:allow-set",
+            "store:allow-get",
+            "store:allow-load",
+            "core:path:allow-join",
+            "core:path:allow-resolve-directory",
+        ] {
+            assert!(
+                !capture_capability.contains(forbidden),
+                "the capture capability must not grant {forbidden}: {capture_capability}"
+            );
+        }
+        // A button that reads the screen and dismisses itself needs those two
+        // commands. Anything else here would be a window on the whole ledger
+        // reachable from a surface that floats over the game.
+        assert_eq!(
+            crate::command_acl::SALE_CAPTURE_COMMANDS,
+            ["hide_sale_capture_overlay", "inventory_sale_window_capture"]
+        );
+        // Notably not the collect verb: the form takes the waiting read, the
+        // overlay never needs to see one back.
+        assert!(!crate::command_acl::SALE_CAPTURE_COMMANDS
+            .contains(&"inventory_sale_window_take_capture"));
+        assert!(!crate::command_acl::SALE_CAPTURE_COMMANDS.contains(&"auction_listing_create"));
     }
 
     #[test]
