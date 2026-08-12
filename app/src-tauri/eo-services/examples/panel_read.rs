@@ -33,14 +33,59 @@ fn panel_image(saved: Option<&Path>, presets: &ScanPresets) -> Result<BgrImage, 
         let (data, h, w) = load_bgr_png(&bytes).map_err(|error| format!("{path:?}: {error}"))?;
         return Ok(BgrImage { data, h, w });
     }
+    // Point the capture at the stored consent token before it opens a
+    // stream. Without one it asks the portal for fresh consent, and that
+    // dialog opens behind a fullscreen game: the wait then looks like a
+    // hang, with nothing on screen to say what it is waiting for.
+    if std::env::var_os("EO_CAPTURE_TOKEN_PATH").is_none() {
+        let token = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/capture-restore-token");
+        if token.is_file() {
+            std::env::set_var("EO_CAPTURE_TOKEN_PATH", &token);
+            eprintln!("consent: reusing {}", token.display());
+        } else {
+            eprintln!(
+                "consent: no stored token, so the portal will ask. Its dialog can open behind a \
+                 fullscreen game: alt-tab to it, or window the game for this run."
+            );
+        }
+    }
     let (top_left, bottom_right) = eu_window::sale_window_region(presets)
         .ok_or("no sale-window region: the game must be running and the panel calibrated")?;
     let (x, y) = (top_left[0], top_left[1]);
     let (w, h) = (bottom_right[0] - x, bottom_right[1] - y);
-    screen_capture::capture_region_bgr(x, y, w, h).ok_or("the screen capture returned nothing".into())
+    eprintln!("region: {w}x{h} at ({x}, {y}); capturing");
+
+    // A capture that stalls stalls silently, so say so on a beat. The
+    // two log lines to watch for are the portal stream being acquired
+    // and the stream's first frame: between them means the stream came
+    // up but is producing nothing.
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watching = done.clone();
+    std::thread::spawn(move || {
+        let mut waited = 0;
+        while !watching.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            waited += 5;
+            if !watching.load(std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("  still waiting on the capture after {waited}s");
+            }
+        }
+    });
+    let frame = screen_capture::capture_region_bgr(x, y, w, h);
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    frame.ok_or("the screen capture returned nothing".into())
 }
 
 fn main() {
+    // The capture path reports what it is doing through tracing, which
+    // is worth nothing without a subscriber attached.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let mut saved: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
