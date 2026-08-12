@@ -849,11 +849,18 @@ pub async fn inventory_sell(
     facade(&app)?.inventory_sell(item_id, sale).await
 }
 
+// The capture blocks on the portal and the recogniser, so offload it the
+// way the repair scan is offloaded: on a runtime worker its inner
+// `block_on` panics outright, and the panic poisons the shared capture
+// engine for every later scan in the process.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn inventory_sale_window_capture(
     app: tauri::AppHandle,
 ) -> Result<SaleWindowCapture, ApiError> {
-    facade(&app)?.inventory_sale_window_capture().await
+    let api = facade(&app)?;
+    tokio::task::spawn_blocking(move || api.inventory_sale_window_capture())
+        .await
+        .map_err(|_| ApiError::invalid_state("sale window capture task failed"))?
 }
 
 #[tauri::command(rename_all = "snake_case")]

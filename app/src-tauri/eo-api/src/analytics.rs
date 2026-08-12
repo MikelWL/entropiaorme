@@ -1264,7 +1264,10 @@ impl Api {
     /// This fills a form; it never commits. Capture and typing converge on
     /// the same draft and meet the same checks, so a misread cannot reach
     /// the ledger by a path a typo could not.
-    pub async fn inventory_sale_window_capture(&self) -> Result<SaleWindowCapture, ApiError> {
+    ///
+    /// Synchronous, like the repair read: the capture blocks on the portal,
+    /// so its caller must offload it rather than run it on a runtime worker.
+    pub fn inventory_sale_window_capture(&self) -> Result<SaleWindowCapture, ApiError> {
         let read = self.sale_window_ocr.scan_sale_window();
         let text = |key: &str| {
             read.get(key)

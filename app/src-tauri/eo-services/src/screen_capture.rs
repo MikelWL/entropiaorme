@@ -213,12 +213,25 @@ mod platform {
 
     static ENGINE: Mutex<Option<Arc<Engine>>> = Mutex::new(None);
 
+    /// Take one of this module's locks, ignoring poisoning.
+    ///
+    /// A panic elsewhere in the process poisons these mutexes, and the
+    /// default `expect` then turns that one panic into a permanent one:
+    /// every later capture panics on the lock instead of on the original
+    /// fault, and screen reading stays dead until the app restarts. What
+    /// they guard is a cached handle and a frame slot, neither of which a
+    /// panic can leave half-written into an invalid state, so the guard is
+    /// safe to take back.
+    fn guard<T>(lock: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// The engine slot: built lazily on first use and kept for the
     /// process, but a FAILED start does not latch. A cold-start portal
     /// timeout or a declined consent leaves the slot empty, and the next
     /// user-invoked capture simply tries again.
     fn engine() -> Option<Arc<Engine>> {
-        let mut slot = ENGINE.lock().expect("engine slot");
+        let mut slot = guard(&ENGINE);
         if slot
             .as_ref()
             .is_some_and(|engine| !engine.healthy.load(Ordering::Acquire))
@@ -392,7 +405,7 @@ mod platform {
                         let start = row * stride;
                         bgra.extend_from_slice(&map[start..start + width * 4]);
                     }
-                    let mut slot = sink_slot.lock().expect("frame slot");
+                    let mut slot = guard(&sink_slot);
                     let generation = slot
                         .as_ref()
                         .map_or(1, |frame| frame.generation.saturating_add(1));
@@ -418,7 +431,7 @@ mod platform {
         // failure surfaces as its actual error, never a blind timeout.
         let bus = pipeline.bus().ok_or("pipeline has no bus")?;
         let deadline = Instant::now() + Duration::from_secs(10);
-        while latest.lock().expect("frame slot").is_none() {
+        while guard(&latest).is_none() {
             while let Some(message) = bus.pop() {
                 use gstreamer::MessageView;
                 match message.view() {
@@ -511,9 +524,9 @@ mod platform {
     fn invalidate_engine(engine: &Arc<Engine>, reason: &str) {
         tracing::warn!(target: "eo::capture", %reason, "screen capture engine invalidated");
         engine.healthy.store(false, Ordering::Release);
-        *engine.latest.lock().expect("frame slot") = None;
+        *guard(&engine.latest) = None;
         let _ = engine._pipeline.set_state(gstreamer::State::Null);
-        let mut slot = ENGINE.lock().expect("engine slot");
+        let mut slot = guard(&ENGINE);
         if slot
             .as_ref()
             .is_some_and(|cached| Arc::ptr_eq(cached, engine))
@@ -530,8 +543,8 @@ mod platform {
         if !engine.healthy.load(Ordering::Acquire) {
             return None;
         }
-        let guard = engine.latest.lock().expect("frame slot");
-        let frame = guard.as_ref()?;
+        let frame_slot = guard(&engine.latest);
+        let frame = frame_slot.as_ref()?;
 
         // Translate the global rectangle into frame-local coordinates.
         let local_x = x - frame.origin_x;
@@ -592,13 +605,13 @@ mod platform {
                 healthy: AtomicBool::new(true),
                 _pipeline: gstreamer::Pipeline::new(),
             });
-            *ENGINE.lock().expect("engine slot") = Some(engine.clone());
+            *guard(&ENGINE) = Some(engine.clone());
 
             invalidate_engine(&engine, "test failure");
 
             assert!(!engine.healthy.load(Ordering::Acquire));
-            assert!(latest.lock().expect("frame slot").is_none());
-            assert!(ENGINE.lock().expect("engine slot").is_none());
+            assert!(guard(&latest).is_none());
+            assert!(guard(&ENGINE).is_none());
         }
 
         #[test]
