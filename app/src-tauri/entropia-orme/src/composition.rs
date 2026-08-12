@@ -1113,17 +1113,20 @@ async fn compose_scan_services(
         }),
     }));
 
-    // Every sale-window read drops its captured panel under the data dir's
+    // A development read drops its captured panel under the data dir's
     // debug/, the way a coordinate scan drops its frame: one small
     // overwritten file, local only, and the only way to see afterwards what
     // the recogniser was actually looking at when a field would not read.
+    // Release builds do not retain transaction pixels after recognition.
     let sale_debug_dir = paths.debug;
     sale_window_ocr.set_capture_tap(Arc::new(move |_panel, _region, frame| {
-        eo_services::screen_capture::write_debug_frame(
-            &sale_debug_dir,
-            "sale-window-last.png",
-            frame,
-        );
+        if cfg!(debug_assertions) {
+            eo_services::screen_capture::write_debug_frame(
+                &sale_debug_dir,
+                "sale-window-last.png",
+                frame,
+            );
+        }
     }));
 
     // The spacebar-capture listener fires a manual-scan capture on a space
