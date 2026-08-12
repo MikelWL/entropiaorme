@@ -54,6 +54,12 @@ pub struct PanelAnchor {
 }
 
 impl PanelAnchor {
+    /// An anchor with no rect and no fields: what an uncalibrated panel
+    /// amounts to, and what a reader with no geometry to offer returns.
+    pub fn empty() -> Self {
+        Self::fallback(0, 0, 0, 0)
+    }
+
     const fn fallback(width: i64, height: i64, right_offset: i64, bottom_offset: i64) -> Self {
         Self {
             width,

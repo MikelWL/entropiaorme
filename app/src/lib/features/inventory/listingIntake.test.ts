@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	capturedDraft,
 	derivedTt,
 	draftIssues,
 	EMPTY_DRAFT,
@@ -108,5 +109,57 @@ describe('listing intake', () => {
 		// A trade pays no fee.
 		expect(previewNetMarkup(auctionDraft({ buyout: 11.5 }), 'trade')).toBeCloseTo(1.5, 6);
 		expect(previewNetMarkup(auctionDraft({ ttValue: null }), 'auction')).toBeNull();
+	});
+});
+
+describe('capturedDraft', () => {
+	const read = {
+		observedName: 'Shrapnel',
+		quantity: 2754889,
+		ttValue: 275.48,
+		listingFee: 64.51,
+		auctionDays: 6,
+		startingBid: 9276,
+		buyout: 9276,
+	};
+
+	it('fills the draft from what the window said', () => {
+		expect(capturedDraft(read)).toEqual({
+			itemName: 'Shrapnel',
+			quantity: 2754889,
+			ttValue: 275.48,
+			auctionFee: 64.51,
+			auctionDays: 6,
+			startingBid: 9276,
+			buyout: 9276,
+		});
+	});
+
+	it('leaves a field the read refused empty rather than guessing at it', () => {
+		const draft = capturedDraft({ ...read, quantity: null, startingBid: null });
+		expect(draft.quantity).toBeNull();
+		expect(draft.startingBid).toBeNull();
+		// A refusal must not be reported as committable: an empty quantity is
+		// exactly what the manual path already blocks on.
+		expect(isCommittable(draft, 'auction')).toBe(false);
+	});
+
+	it('treats an unread name as no name at all', () => {
+		expect(capturedDraft({ ...read, observedName: null }).itemName).toBe('');
+	});
+
+	it('carries a captured draft through the same checks a typed one meets', () => {
+		expect(isCommittable(capturedDraft(read), 'auction')).toBe(true);
+	});
+
+	it('derives a markup off the shown TT, which the window has rounded', () => {
+		// The window showed TT 275.48 and markup 3367.10%. Those disagree:
+		// 9276 / 275.48 is 3367.21%. The game computes against the unrounded
+		// TT, which for 2,754,889 shrapnel at 0.0001 PED is 275.4889, and
+		// only the display is cut to two decimals.
+		expect(impliedMarkupPct(read.startingBid, read.ttValue)).toBeCloseTo(3367.21, 2);
+		expect(impliedMarkupPct(read.startingBid, 275.4889)).toBeCloseTo(3367.1, 2);
+		// So a derived percentage can differ from the game's in its last
+		// decimal. It is a display figure either way; nothing accounts on it.
 	});
 });

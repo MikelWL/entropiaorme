@@ -2304,6 +2304,30 @@ export interface ReturnsBreakdown {
 }
 
 /**
+ * What one look at the game's sale window resolved.
+ * 
+ * Every field is nullable because every field can refuse: a value that
+ * did not read comes back empty and is named in `unread`, so the review
+ * surface shows a gap to fill rather than a figure to trust. `error` is
+ * set only when there was nothing to read at all (no game window, no
+ * calibration, no capture), and then no field is populated.
+ */
+export interface SaleWindowCapture {
+	observedName: string | null;
+	quantity: number | null;
+	ttValue: number | null;
+	listingFee: number | null;
+	auctionDays: number | null;
+	startingBid: number | null;
+	buyout: number | null;
+	/** The lowest confidence among the fields that did read. */
+	confidence: number | null;
+	/** The fields that did not read, by the name the window gives them. */
+	unread: string[];
+	error: string | null;
+}
+
+/**
  * The settled scan phase, in the wire vocabulary the overlay switches on.
  */
 export type ScanPhase = 'idle' | 'capturing' | 'processing' | 'awaiting_review';
@@ -3253,6 +3277,10 @@ export async function inventoryDelete(itemId: string): Promise<void> {
 
 export async function inventorySell(itemId: string, sale: InventorySellInput): Promise<InventorySellResult> {
 	return invokeCommand('inventory_sell', { item_id: itemId, sale });
+}
+
+export async function inventorySaleWindowCapture(): Promise<SaleWindowCapture> {
+	return invokeCommand('inventory_sale_window_capture', {});
 }
 
 export async function inventoryDraftResolve(draft: InventorySaleDraft): Promise<InventoryDraftResolution> {

@@ -143,6 +143,7 @@
 	bind:open={createListingOpen}
 	holdings={model.holdingOptions}
 	onresolve={model.resolveDraftName}
+	oncapture={model.captureSaleWindow}
 	onsubmit={model.createFromDraft}
 />
 <SellStockModal

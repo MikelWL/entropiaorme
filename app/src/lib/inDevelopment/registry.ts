@@ -23,12 +23,14 @@ export interface InDevelopmentSurface {
 
 export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
 	{
-		id: 'market-sale-capture',
+		id: 'market-sale-capture-overlay',
 		summary:
-			'Reading the sale window off the screen is not working yet, so these buttons do nothing.',
+			'Capturing from an overlay is not working yet, so this button does nothing. The button ' +
+			'beside it reads the window and does work.',
 		graduates:
-			'They start filling the form once the sale window can be located and read. Typing the ' +
-			'figures in is a complete path in the meantime, not a workaround.',
+			'It starts working once a capture can be triggered without leaving the game, which is ' +
+			'what a single-screen setup needs. Until then, capture from this window or type the ' +
+			'figures in.',
 	},
 ] as const;
 

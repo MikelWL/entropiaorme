@@ -7,6 +7,13 @@
  * same way rather than recorded: a figure the player cannot set is not a
  * figure to ask them for, and one fewer thing to read off the screen later.
  *
+ * One wrinkle that follows from deriving it. The window rounds the TT it
+ * displays to two decimals but computes its own percentage against the
+ * unrounded value, so a percentage derived from the shown TT can differ from
+ * the shown percentage in the last decimal (275.48 and 9276 give 3367.21%
+ * where the window says 3367.10%, its TT really being 275.4889). Both are
+ * display figures and nothing accounts on either, so the derivation stands.
+ *
  * This module is deliberately pure and intake-neutral. A typed form fills the
  * draft today; the screen-capture adapter fills the same shape and meets the
  * same checks, so a misread cannot reach the ledger by a path a typo could not.
@@ -172,4 +179,36 @@ export function previewNetMarkup(
 	if (price === null || draft.ttValue === null) return null;
 	const fee = channel === 'auction' ? (draft.auctionFee ?? 0) : 0;
 	return price - draft.ttValue - fee;
+}
+
+/** What one read of the sale window said, in the shape the capture command
+ * answers. Declared structurally rather than imported so this module stays
+ * free of the generated wire types, as the rest of it is. */
+export interface CapturedSaleWindow {
+	observedName: string | null;
+	quantity: number | null;
+	ttValue: number | null;
+	listingFee: number | null;
+	auctionDays: number | null;
+	startingBid: number | null;
+	buyout: number | null;
+}
+
+/** A draft filled from a captured window.
+ *
+ * A capture replaces the form rather than merging into it. It is one look at
+ * one window, so combining it with half-typed values would produce a listing
+ * matching neither the screen nor the player's own entry. Fields the read
+ * refused arrive null and stay null: an empty box asks to be filled, while a
+ * plausible wrong number does not. */
+export function capturedDraft(read: CapturedSaleWindow): ListingDraftFields {
+	return {
+		itemName: read.observedName ?? '',
+		quantity: read.quantity,
+		ttValue: read.ttValue,
+		auctionFee: read.listingFee,
+		auctionDays: read.auctionDays,
+		startingBid: read.startingBid,
+		buyout: read.buyout,
+	};
 }

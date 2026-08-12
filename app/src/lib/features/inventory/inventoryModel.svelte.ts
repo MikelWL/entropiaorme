@@ -11,6 +11,7 @@ import type {
 	StockPosition,
 } from '$lib/api/commands.gen';
 import {
+	captureSaleWindow,
 	commitInventorySaleDraft,
 	confirmInventoryListing,
 	convertLoot,
@@ -462,6 +463,7 @@ export function createInventoryModel() {
 		listLoot,
 		sellLootByTrade,
 		resolveDraftName,
+		captureSaleWindow,
 		createFromDraft,
 		listEquipment,
 		sellEquipmentByTrade,

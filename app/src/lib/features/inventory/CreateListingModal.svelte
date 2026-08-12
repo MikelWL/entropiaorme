@@ -39,8 +39,9 @@
 	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
 	import { formatPed } from '$lib/utils/format';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
-	import type { InventoryHoldingCandidate } from '$lib/api/commands.gen';
+	import type { InventoryHoldingCandidate, SaleWindowCapture } from '$lib/api/commands.gen';
 	import {
+		capturedDraft,
 		derivedTt,
 		draftIssues,
 		EMPTY_DRAFT,
@@ -54,6 +55,7 @@
 		open = $bindable(false),
 		holdings,
 		onresolve,
+		oncapture,
 		onsubmit,
 	}: {
 		open?: boolean;
@@ -67,6 +69,8 @@
 			candidates: InventoryHoldingCandidate[];
 			resolved: InventoryHoldingCandidate | null;
 		}>;
+		/** One read of the game's sale window. */
+		oncapture: () => Promise<SaleWindowCapture>;
 		onsubmit: (input: {
 			fields: ListingDraftFields;
 			channel: 'auction' | 'trade';
@@ -95,6 +99,11 @@
 	/** Set once the player edits TT themselves, after which it is theirs and
 	 * the derived figure stops overwriting it. */
 	let ttEdited = $state(false);
+
+	let capturing = $state(false);
+	/** What the last read could not make out, so the gaps are visible rather
+	 * than left looking like fields the window did not have. */
+	let unread = $state<string[]>([]);
 
 	const picker = createTypeahead<HoldingOption>({
 		search: async (query) => {
@@ -181,6 +190,7 @@
 		chosen = null;
 		resolvedFor = null;
 		ttEdited = false;
+		unread = [];
 		picker.clear();
 	}
 
@@ -204,6 +214,67 @@
 	function enrich(candidate: InventoryHoldingCandidate): HoldingOption {
 		const known = holdings.find((row) => row.holdingId === candidate.holdingId);
 		return { ...candidate, unitTt: known?.unitTt ?? null, heldQty: known?.heldQty ?? null };
+	}
+
+	/** The window's own name for a field, for saying what did not read. */
+	function fieldLabel(field: string): string {
+		return (
+			{
+				item_name: 'the item name',
+				quantity: 'the quantity',
+				tt_value: 'the TT value',
+				auction_fee: 'the auction fee',
+				auction_days: 'the number of days',
+				starting_bid: 'the starting bid',
+				buyout: 'the buyout',
+			}[field] ?? field
+		);
+	}
+
+	/** Read the sale window and fill the form from it.
+	 *
+	 * Nothing here commits, and nothing it fills is trusted further than a
+	 * typed figure would be: the same validation, the same review, the same
+	 * button. A field the read refused stays empty and is named below the
+	 * buttons, because an empty box invites a correction while a plausible
+	 * wrong number does not.
+	 *
+	 * Filling replaces what is in the form. A capture is a fresh look at the
+	 * window, so merging it into half-typed values would produce a listing
+	 * that matches neither the screen nor what the player entered. */
+	async function capture() {
+		if (capturing) return;
+		capturing = true;
+		error = null;
+		try {
+			const read = await oncapture();
+			if (read.error !== null) {
+				error = read.error;
+				return;
+			}
+			unread = read.unread;
+			attempted = false;
+			candidates = [];
+			chosen = null;
+			resolvedFor = null;
+			fields = capturedDraft(read);
+			// The box has to show the name the draft is holding, or the form
+			// would carry a name nothing on screen accounts for.
+			picker.query = fields.itemName;
+			// The window's TT is what the game says the goods are worth, which
+			// outranks anything derived from our own records.
+			ttEdited = read.ttValue !== null;
+			if (fields.itemName === '') return;
+			await resolveTyped();
+			// A name the window gave and the resolver settled is as chosen as
+			// one picked by hand, so settle it the same way and put the list
+			// away rather than leaving it open over the form.
+			if (chosen) pickerModel.select(chosen);
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Could not read the sale window';
+		} finally {
+			capturing = false;
+		}
 	}
 
 	/** Resolve a name the player typed instead of choosing.
@@ -268,12 +339,21 @@
 
 <Modal bind:open title="Create listing" class="max-w-xl">
 	<div class="space-y-5">
-		{#if inDevelopment.visible}
-			<div class="flex flex-wrap items-center gap-2">
-				<Button variant="secondary" size="sm" disabled>Capture from game</Button>
+		<div class="flex flex-wrap items-center gap-2">
+			<Button variant="secondary" size="sm" onclick={capture} disabled={capturing}>
+				{capturing ? 'Reading the window' : 'Capture from game'}
+			</Button>
+			{#if inDevelopment.visible}
 				<Button variant="ghost" size="sm" disabled>Capture overlay</Button>
-				<InDevelopmentMark id="market-sale-capture" align="left" />
-			</div>
+				<InDevelopmentMark id="market-sale-capture-overlay" align="left" />
+			{/if}
+		</div>
+		{#if unread.length > 0}
+			<p class="text-sm text-text-tertiary">
+				Could not make out {unread.map(fieldLabel).join(', ')}. Fill {unread.length === 1
+					? 'it'
+					: 'them'} in yourself.
+			</p>
 		{/if}
 
 		<SegmentedControl

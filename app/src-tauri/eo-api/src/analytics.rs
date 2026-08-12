@@ -758,6 +758,30 @@ pub struct InventorySaleDraft {
     pub confidence: Nullable<f64>,
 }
 
+/// What one look at the game's sale window resolved.
+///
+/// Every field is nullable because every field can refuse: a value that
+/// did not read comes back empty and is named in `unread`, so the review
+/// surface shows a gap to fill rather than a figure to trust. `error` is
+/// set only when there was nothing to read at all (no game window, no
+/// calibration, no capture), and then no field is populated.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleWindowCapture {
+    pub observed_name: Nullable<String>,
+    pub quantity: Nullable<f64>,
+    pub tt_value: Nullable<f64>,
+    pub listing_fee: Nullable<f64>,
+    pub auction_days: Nullable<i64>,
+    pub starting_bid: Nullable<f64>,
+    pub buyout: Nullable<f64>,
+    /// The lowest confidence among the fields that did read.
+    pub confidence: Nullable<f64>,
+    /// The fields that did not read, by the name the window gives them.
+    pub unread: Vec<String>,
+    pub error: Nullable<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InventoryHoldingCandidate {
@@ -1233,6 +1257,48 @@ impl Api {
             .await
             .map_err(analytics_error("inventory list"))?;
         Ok(rows.into_iter().map(inventory_item_dto).collect())
+    }
+
+    /// Read the game's auction sale window once and answer what it said.
+    ///
+    /// This fills a form; it never commits. Capture and typing converge on
+    /// the same draft and meet the same checks, so a misread cannot reach
+    /// the ledger by a path a typo could not.
+    pub async fn inventory_sale_window_capture(&self) -> Result<SaleWindowCapture, ApiError> {
+        let read = self.sale_window_ocr.scan_sale_window();
+        let text = |key: &str| {
+            read.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .into()
+        };
+        let number = |key: &str| read.get(key).and_then(serde_json::Value::as_f64).into();
+        Ok(SaleWindowCapture {
+            observed_name: text("item_name"),
+            quantity: number("quantity"),
+            tt_value: number("tt_value"),
+            // The window calls it the auction fee; the ledger has always
+            // called it the listing fee. Same money.
+            listing_fee: number("auction_fee"),
+            auction_days: read.get("auction_days")
+                .and_then(serde_json::Value::as_i64)
+                .into(),
+            starting_bid: number("starting_bid"),
+            buyout: number("buyout"),
+            confidence: number("confidence"),
+            unread: read
+                .get("unread")
+                .and_then(serde_json::Value::as_array)
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            error: text("error"),
+        })
     }
 
     /// Resolve a manual or OCR-originated transaction draft against current

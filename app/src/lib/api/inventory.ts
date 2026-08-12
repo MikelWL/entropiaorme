@@ -77,6 +77,9 @@ export const deleteEquipmentHolding = commands.inventoryDelete;
 export const resolveInventoryDraft = (draft: InventorySaleDraft) =>
 	commands.inventoryDraftResolve(draft);
 
+/** Read the game's sale window once. Fills the form; commits nothing. */
+export const captureSaleWindow = () => commands.inventorySaleWindowCapture();
+
 /** A reviewed transaction proposal. Manual selection and future OCR matching
  * both cross this boundary before any accounting command is allowed to run. */
 export interface ResolvedInventorySaleDraft {
