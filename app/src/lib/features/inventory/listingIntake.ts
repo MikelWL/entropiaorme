@@ -21,9 +21,9 @@
  * where the window says 3367.10%, its TT really being 275.4889). Both are
  * display figures and nothing accounts on either, so the derivation stands.
  *
- * This module is deliberately pure and intake-neutral. A typed form fills the
- * draft today; the screen-capture adapter fills the same shape and meets the
- * same checks, so a misread cannot reach the ledger by a path a typo could not.
+ * This module is deliberately pure and intake-neutral. A typed form and a
+ * screen capture fill the same shape and meet the same checks, so a misread
+ * cannot reach the ledger by a path a typo could not.
  */
 
 /** One thing the player holds, with what the app already knows about it: the

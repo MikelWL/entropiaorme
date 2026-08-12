@@ -147,7 +147,7 @@ impl SaleWindowOcrService {
 
         let anchor = (self.providers.anchor)();
         if anchor.cells.is_empty() {
-            return failure("The sale window has not been calibrated on this machine");
+            return failure("The sale-window calibration is missing from this installation");
         }
         let Some((top_left, bottom_right)) = (self.providers.sale_window_region)() else {
             return failure("Entropia Universe window not found: start the game first");
@@ -316,7 +316,7 @@ mod tests {
         let result = service.scan_sale_window();
         assert_eq!(
             result["error"],
-            "The sale window has not been calibrated on this machine"
+            "The sale-window calibration is missing from this installation"
         );
         assert_eq!(
             result["unread"].as_array().unwrap().len(),

@@ -318,7 +318,7 @@ export interface AuctionListing {
 	channel: string;
 	/** How many days the listing was posted for. Null for a listing recorded before durations were captured; no deadline is invented for it. */
 	auctionDays: number | null;
-	/** The day the listing runs out, derived from `listed_at` plus `auction_days`. Null whenever the duration is unknown. */
+	/** The moment the listing runs out, as a UTC timestamp: the instant it was posted plus `auction_days`, so it carries a time of day and not only a date. Null whenever the duration or the starting instant is unknown. Compare it as an instant; treating it as a calendar date mixes it with whatever local date the reader is on. */
 	expiresAt: string | null;
 	/** Net markup the activity may claim, after both auction fees and after removing the share covered by untracked stock. */
 	activityNetMarkup: number | null;
@@ -2305,7 +2305,6 @@ export interface ReturnsBreakdown {
 
 /**
  * What one look at the game's sale window resolved.
- * 
  * Every field is nullable because every field can refuse: a value that
  * did not read comes back empty and is named in `unread`, so the review
  * surface shows a gap to fill rather than a figure to trust. `error` is

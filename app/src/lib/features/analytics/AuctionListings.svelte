@@ -21,7 +21,7 @@
 	import Input from '$lib/components/Input.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { AuctionListing } from '$lib/types/analytics';
-	import { NO_DATA, formatLedgerDate, formatPed, formatPercent, todayDate } from '$lib/utils/format';
+	import { NO_DATA, formatLedgerDate, formatPed, formatPercent } from '$lib/utils/format';
 	import { hasRunOut } from './listingLifecycle';
 
 	let {
@@ -74,9 +74,9 @@
 	const allListings = $derived([...open, ...resolved]);
 
 	// Read once per mount rather than per row: a panel that changed its mind
-	// about what "today" is halfway down the list would be worse than one that
+	// about what time it is halfway down the list would be worse than one that
 	// is a few hours stale, and the question it raises is not time-critical.
-	const today = todayDate();
+	const now = Date.now();
 
 	let selectedId = $state<string | null>(null);
 	// A stale id (a listing resolved out of the open group, or a reload)
@@ -189,7 +189,7 @@
 					</span>
 				{:else if listing.status === 'expired'}
 					<span class="text-text-tertiary">{NO_DATA}</span>
-				{:else if hasRunOut(listing, today)}
+				{:else if hasRunOut(listing, now)}
 					<span class="font-normal text-warning/80">Ran out</span>
 				{:else}
 					<span class="text-text-tertiary">{formatLedgerDate(listing.listedAt)}</span>
@@ -386,7 +386,7 @@
 					{/if}
 
 					{#if selected.status === 'pending'}
-						{#if hasRunOut(selected, today)}
+						{#if hasRunOut(selected, now)}
 							<!-- The clock is up, and that is all we know. Which way it went
 								is the player's to say: guessing either outcome would write a
 								price, or a return of stock, that never happened. -->

@@ -265,8 +265,9 @@ export function createInventoryModel() {
 		return { candidates: resolution.candidates, resolved: resolution.resolved };
 	}
 
-	/** Commit an intake draft against the holding the user reviewed. The same
-	 * boundary a captured draft will cross; nothing here is intake-specific. */
+	/** Commit an intake draft against the holding the user reviewed. A typed
+	 * draft and a captured one cross the same boundary here; nothing in it is
+	 * specific to how the draft was filled. */
 	async function createFromDraft({
 		fields,
 		channel,

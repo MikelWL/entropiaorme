@@ -16,18 +16,20 @@
 	 * that did not earn it.
 	 *
 	 * The item comes first and the rest of the form waits on it, because the
-	 * item is what makes the rest meaningful: once it is known, a quantity is
-	 * enough to say what the sale is worth, since the per-unit TT was recorded
-	 * when the stock was looted. The TT field is filled from that and stays
-	 * editable, because the game's figure is the authority if they disagree.
+	 * item is what makes the rest meaningful. The TT value is entered rather
+	 * than worked out from recorded stock: stock holds an average across
+	 * everything logged for that item, which drifts from what the stack in
+	 * hand is actually worth, and a figure that quietly disagrees with the
+	 * one on screen is worse than no figure at all.
 	 *
 	 * Nothing is complained about until the player tries to file the listing.
 	 * A form that opens already scolding the reader for not having filled it
 	 * in yet teaches them to ignore its red text.
 	 *
 	 * The capture buttons are the same flow with the fields filled by reading
-	 * the screen instead of by typing. They are inert until that lands, and
-	 * marked as such: typing remains a complete path, not a fallback.
+	 * the game's window instead of by typing. They fill this same draft and
+	 * commit nothing, so typing remains a complete path rather than a
+	 * fallback, and a capture is reviewed here before anything is written.
 	 */
 	import { onDestroy } from 'svelte';
 	import Button from '$lib/components/Button.svelte';

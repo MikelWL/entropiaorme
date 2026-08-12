@@ -969,16 +969,6 @@ async fn build_ocr_engine(models: PathBuf) -> Option<Arc<OcrEngine>> {
     Some(engine)
 }
 
-/// Compose the manual skill scan and the repair-cost OCR over the OCR
-/// engine, the live game-window region lookups, and the on-demand screen
-/// capturer. The scan publishes `scan.status.changed` on the spine `bus`
-/// (so its frames reach the shell's event bridge), persists accepted
-/// calibrations
-/// through the shared `pool`, and hydrates its resting status from the
-/// same. When the OCR runtime is absent the providers stand down to
-/// "engine unavailable" rather than declining composition, so the scan
-/// operations still serve (the scan reports offline, a golden-pinned
-/// reply). Both services are always constructed.
 /// Where the scan services read their calibration and drop what they saw.
 struct ScanPaths {
     /// The calibration artefact, beside the snapshot in both layouts.
@@ -987,6 +977,15 @@ struct ScanPaths {
     debug: PathBuf,
 }
 
+/// Compose the manual skill scan, the repair-cost OCR and the sale-window
+/// read over the OCR engine, the live game-window region lookups, and the
+/// on-demand screen capturer. The scan publishes `scan.status.changed` on
+/// the spine `bus` (so its frames reach the shell's event bridge), persists
+/// accepted calibrations through the shared `pool`, and hydrates its resting
+/// status from the same. When the OCR runtime is absent the providers stand
+/// down to "engine unavailable" rather than declining composition, so the
+/// scan operations still serve (the scan reports offline, a golden-pinned
+/// reply). All three services are always constructed.
 async fn compose_scan_services(
     bus: Arc<EventBus>,
     ocr_engine: Option<Arc<OcrEngine>>,

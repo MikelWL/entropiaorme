@@ -85,8 +85,9 @@ export const captureSaleWindow = () => commands.inventorySaleWindowCapture();
  * waits here until the form opens. */
 export const takeSaleWindowCapture = () => commands.inventorySaleWindowTakeCapture();
 
-/** A reviewed transaction proposal. Manual selection and future OCR matching
- * both cross this boundary before any accounting command is allowed to run. */
+/** A reviewed transaction proposal. Manual selection and a screen-read
+ * capture both cross this boundary before any accounting command is allowed
+ * to run. */
 export interface ResolvedInventorySaleDraft {
 	draft: InventorySaleDraft;
 	holding: InventoryHoldingCandidate;

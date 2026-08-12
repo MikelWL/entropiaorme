@@ -12,19 +12,30 @@
  */
 import type { AuctionListing } from '$lib/types/analytics';
 
-/** Whether an open listing has passed the day it was posted through to.
+/** Whether an open listing has passed the moment it was posted through to,
+ * given the current time in epoch milliseconds.
+ *
  * False whenever the duration was never recorded: no duration, no deadline,
- * so nothing to ask about. */
-export function hasRunOut(listing: AuctionListing, today: string): boolean {
+ * so nothing to ask about.
+ *
+ * The comparison is between instants, not between date strings. The expiry
+ * arrives as a UTC timestamp while a calendar date here would be the local
+ * one, and comparing across those two frames asks the question early for any
+ * listing whose local deadline falls after midnight UTC: half an hour early
+ * an hour east of UTC, most of a day further east. It would also throw away
+ * the time of day the deadline is recorded to carry. */
+export function hasRunOut(listing: AuctionListing, now: number): boolean {
 	if (listing.status !== 'pending') return false;
 	if (!listing.expiresAt) return false;
-	// Plain ISO dates compare correctly as strings, which keeps this free of
-	// any timezone question the comparison does not actually need.
-	return listing.expiresAt < today;
+	const expiry = Date.parse(listing.expiresAt);
+	// An unreadable stamp is not a deadline that has passed; say nothing
+	// rather than raise a question about a listing that may well be live.
+	if (Number.isNaN(expiry)) return false;
+	return expiry <= now;
 }
 
 /** How many open listings have run their course and are waiting to be told
  * what became of them. */
-export function runOutCount(listings: AuctionListing[], today: string): number {
-	return listings.filter((listing) => hasRunOut(listing, today)).length;
+export function runOutCount(listings: AuctionListing[], now: number): number {
+	return listings.filter((listing) => hasRunOut(listing, now)).length;
 }

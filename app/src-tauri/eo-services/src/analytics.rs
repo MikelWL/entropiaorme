@@ -7473,12 +7473,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(dated.auction_days, Some(7));
-        // Listed at 14:30 local, so the deadline is that same clock time
-        // seven days on, reported in UTC.
-        assert_eq!(
-            dated.expires_at.as_deref(),
-            Some("2026-07-27T13:30:00+00:00")
-        );
+        // Listed at 14:30 on the machine's own clock, so the deadline is
+        // that same wall-clock moment seven days on, reported in UTC. The
+        // expectation is worked out the same way rather than written down,
+        // because a written-down UTC string would only be right in the
+        // timezone it was written in and would fail everywhere else.
+        let listed_naive = chrono::NaiveDate::from_ymd_opt(2026, 7, 20)
+            .unwrap()
+            .and_hms_opt(14, 30, 0)
+            .unwrap();
+        let expected = to_iso_utc(naive_to_epoch(listed_naive) + 7.0 * 86_400.0);
+        assert_eq!(dated.expires_at.as_deref(), Some(expected.as_str()));
 
         let undated = service
             .create_auction_listing(
@@ -7503,10 +7508,7 @@ mod tests {
             .await
             .unwrap();
         let stored = listings.iter().find(|row| row.id == dated.id).unwrap();
-        assert_eq!(
-            stored.expires_at.as_deref(),
-            Some("2026-07-27T13:30:00+00:00")
-        );
+        assert_eq!(stored.expires_at.as_deref(), Some(expected.as_str()));
     }
 
     /// A duration is either absent or a real number of days; zero and
