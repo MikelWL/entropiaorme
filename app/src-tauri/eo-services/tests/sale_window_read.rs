@@ -117,13 +117,13 @@ fn the_calibrated_rectangles_read_a_real_sale_window() {
         // frame is the one thing a test cannot take for itself.
         let anchor = presets.sale_window.clone();
         let frame = panel.clone();
-        let engine = engine.clone();
+        let engine_for_read = engine.clone();
         let service = SaleWindowOcrService::new(SaleWindowProviders {
             sale_window_region: Arc::new(move || Some(([0, 0], [w as i64, h as i64]))),
             anchor: Arc::new(move || anchor.clone()),
             capture_region: Arc::new(move |_, _, _, _| Some(frame.clone())),
             read_text: Arc::new(move |crop: &BgrImage| {
-                engine.recognize_bgr(&crop.data, crop.h, crop.w).ok()
+                engine_for_read.recognize_bgr(&crop.data, crop.h, crop.w).ok()
             }),
         });
 
@@ -133,6 +133,30 @@ fn the_calibrated_rectangles_read_a_real_sale_window() {
             read["unread"].as_array().map(Vec::len),
             Some(0),
             "{id}: every calibrated field must read: {read}"
+        );
+
+        // The landmark, proven on the same pixels rather than assumed: a
+        // panel that has slipped from where it was calibrated must be
+        // refused whole, not read field by field off whatever now sits at
+        // those offsets. Twelve pixels is smaller than any row.
+        let slipped = panel.crop(12, panel.h as i64, 12, panel.w as i64);
+        let engine_for_slip = engine.clone();
+        let anchor_for_slip = presets.sale_window.clone();
+        let (sw, sh) = (slipped.w as i64, slipped.h as i64);
+        let displaced = SaleWindowOcrService::new(SaleWindowProviders {
+            sale_window_region: Arc::new(move || Some(([0, 0], [sw, sh]))),
+            anchor: Arc::new(move || anchor_for_slip.clone()),
+            capture_region: Arc::new(move |_, _, _, _| Some(slipped.clone())),
+            read_text: Arc::new(move |crop: &BgrImage| {
+                engine_for_slip.recognize_bgr(&crop.data, crop.h, crop.w).ok()
+            }),
+        });
+        let refused = displaced.scan_sale_window();
+        assert!(
+            refused["error"]
+                .as_str()
+                .is_some_and(|error| error.starts_with("That is not the sale window")),
+            "{id}: a displaced panel must be refused, got {refused}"
         );
 
         let expected = capture["fields"].as_object().expect("expected fields");

@@ -89,6 +89,13 @@
         "last_y_top": 6,
         "height": 21
       },
+      "landmark": {
+        "x_left": 4,
+        "x_right": 85,
+        "first_y_top": 4,
+        "last_y_top": 4,
+        "height": 18
+      },
       "quantity": {
         "x_left": 142,
         "x_right": 251,
