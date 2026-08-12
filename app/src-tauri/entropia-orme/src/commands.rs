@@ -62,6 +62,7 @@ use eo_api::tracking::{
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
+use tauri::Emitter;
 
 /// Holds the composed facade for the typed commands, published by
 /// `install_native_services` once every service is present.
@@ -856,11 +857,21 @@ pub async fn inventory_sell(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn inventory_sale_window_capture(
     app: tauri::AppHandle,
+    window: tauri::Window,
 ) -> Result<SaleWindowCapture, ApiError> {
     let api = facade(&app)?;
-    tokio::task::spawn_blocking(move || api.inventory_sale_window_capture())
+    let capture = tokio::task::spawn_blocking(move || api.inventory_sale_window_capture())
         .await
-        .map_err(|_| ApiError::invalid_state("sale window capture task failed"))?
+        .map_err(|_| ApiError::invalid_state("sale window capture task failed"))??;
+    // A read taken from the overlay was taken for a form the player is not
+    // looking at. Waiting for the main window to be focused would leave a
+    // form sitting in plain sight on a second screen, unchanged, looking
+    // exactly like a capture that failed. So it is told, and fills where it
+    // stands. Window orchestration, not a domain event.
+    if window.label() == crate::SALE_CAPTURE_OVERLAY && capture.error.0.is_none() {
+        let _ = app.emit_to("main", "sale-capture-ready", ());
+    }
+    Ok(capture)
 }
 
 #[tauri::command(rename_all = "snake_case")]

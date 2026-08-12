@@ -190,12 +190,16 @@ fn show_scan_overlay(app: tauri::AppHandle) {
     }
 }
 
+/// The capture overlay's window label, shared with the command that decides
+/// whether a read came from it.
+pub const SALE_CAPTURE_OVERLAY: &str = "overlay-sale-capture";
+
 /// The sale-window capture button, put where a fullscreen game leaves it
 /// reachable. It is the main window's button in another place and nothing
 /// more: the values it reads are reviewed back in the form, not here.
 #[tauri::command]
 fn show_sale_capture_overlay(app: tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("overlay-sale-capture") {
+    if let Some(window) = app.get_webview_window(SALE_CAPTURE_OVERLAY) {
         // Top-left of the monitor, clear of a bottom-right docked sale
         // window, which is the one part of the screen it must never cover.
         let _ = window.set_position(monitor_anchor(&window, (40, 40)));
@@ -206,7 +210,7 @@ fn show_sale_capture_overlay(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn hide_sale_capture_overlay(app: tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("overlay-sale-capture") {
+    if let Some(window) = app.get_webview_window(SALE_CAPTURE_OVERLAY) {
         let _ = window.hide();
     }
 }

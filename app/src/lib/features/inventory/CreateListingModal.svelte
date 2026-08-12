@@ -37,8 +37,7 @@
 	import PickerInput from '$lib/components/PickerInput.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
 	import { showSaleCaptureOverlay } from '$lib/api';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import type { UnlistenFn } from '@tauri-apps/api/event';
+	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { formatPed } from '$lib/utils/format';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import type { InventoryHoldingCandidate, SaleWindowCapture } from '$lib/api/commands.gen';
@@ -105,6 +104,9 @@
 	/** Set once the player edits TT themselves, after which it is theirs and
 	 * the derived figure stops overwriting it. */
 	let ttEdited = $state(false);
+
+	/** Emitted by the shell when the overlay has read a window for this form. */
+	const CAPTURE_READY_EVENT = 'sale-capture-ready';
 
 	let capturing = $state(false);
 	/** What the last read could not make out, so the gaps are visible rather
@@ -217,24 +219,22 @@
 	// collects it. There is nothing to confirm: the figures landing in the
 	// fields is the review, exactly as it is for the button.
 	//
-	// Two moments, because the overlay's button is pressed from inside the
-	// game and the form may be either closed or already open behind it.
-	// Opening covers the first. Coming back to this window covers the
-	// second, which is the same instant the player looks at the form.
+	// The overlay says when it has one, rather than the form noticing on its
+	// next focus. A second screen showing this form passively is the case
+	// that makes the difference: nothing there would ever regain focus, and
+	// an unchanged form reads exactly like a capture that failed.
 	$effect(() => {
 		if (!open) return;
 		collect();
 
 		let unlisten: UnlistenFn | undefined;
 		let disposed = false;
-		void getCurrentWindow()
-			.onFocusChanged(({ payload: focused }) => {
-				if (!disposed && focused) collect();
-			})
-			.then((fn) => {
-				if (disposed) fn();
-				else unlisten = fn;
-			});
+		void listen(CAPTURE_READY_EVENT, () => {
+			if (!disposed) collect();
+		}).then((fn) => {
+			if (disposed) fn();
+			else unlisten = fn;
+		});
 		return () => {
 			disposed = true;
 			unlisten?.();
@@ -316,8 +316,11 @@
 		resolvedFor = null;
 		fields = capturedDraft(read);
 		// The box has to show the name the draft is holding, or the form
-		// would carry a name nothing on screen accounts for.
-		picker.query = fields.itemName;
+		// would carry a name nothing on screen accounts for. It is filled
+		// rather than typed: a read is not a search, and routing it through
+		// the query would flash the suggestion list open over the form and
+		// shut it again a moment later.
+		picker.fill(fields.itemName);
 		// The window's TT is what the game says the goods are worth, which
 		// outranks anything derived from our own records.
 		ttEdited = read.ttValue !== null;
