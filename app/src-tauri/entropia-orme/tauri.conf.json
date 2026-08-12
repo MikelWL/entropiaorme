@@ -49,7 +49,7 @@
         "shadow": false
       },
       {
-        "label": "sale-capture-overlay",
+        "label": "overlay-sale-capture",
         "title": "EntropiaOrme Capture",
         "url": "/overlay-sale-capture",
         "width": 260,

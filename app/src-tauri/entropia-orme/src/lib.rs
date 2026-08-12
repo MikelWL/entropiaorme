@@ -195,7 +195,7 @@ fn show_scan_overlay(app: tauri::AppHandle) {
 /// more: the values it reads are reviewed back in the form, not here.
 #[tauri::command]
 fn show_sale_capture_overlay(app: tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("sale-capture-overlay") {
+    if let Some(window) = app.get_webview_window("overlay-sale-capture") {
         // Top-left of the monitor, clear of a bottom-right docked sale
         // window, which is the one part of the screen it must never cover.
         let _ = window.set_position(monitor_anchor(&window, (40, 40)));
@@ -206,7 +206,7 @@ fn show_sale_capture_overlay(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn hide_sale_capture_overlay(app: tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("sale-capture-overlay") {
+    if let Some(window) = app.get_webview_window("overlay-sale-capture") {
         let _ = window.hide();
     }
 }
@@ -1049,6 +1049,46 @@ mod tests {
             capabilities.contains("shell:allow-open"),
             "the shell open capability must survive for external links: {capabilities}"
         );
+    }
+
+    #[test]
+    fn the_capture_overlay_has_a_dedicated_least_privilege_capability() {
+        let default_capability = include_str!("../capabilities/default.json");
+        let capture_capability = include_str!("../capabilities/sale-capture-overlay.json");
+        assert!(
+            !default_capability.contains("overlay-sale-capture"),
+            "the capture webview must not inherit the main capability: {default_capability}"
+        );
+        assert!(capture_capability.contains("\"windows\": [\"overlay-sale-capture\"]"));
+        assert!(capture_capability.contains("sale-capture-commands"));
+        for forbidden in [
+            "shell:allow-open",
+            "core:window:allow-create",
+            "core:webview:allow-create-webview-window",
+            "trusted-commands",
+            "store:allow-set",
+            "store:allow-get",
+            "store:allow-load",
+            "core:path:allow-join",
+            "core:path:allow-resolve-directory",
+        ] {
+            assert!(
+                !capture_capability.contains(forbidden),
+                "the capture capability must not grant {forbidden}: {capture_capability}"
+            );
+        }
+        // A button that reads the screen and dismisses itself needs those two
+        // commands. Anything else here would be a window on the whole ledger
+        // reachable from a surface that floats over the game.
+        assert_eq!(
+            crate::command_acl::SALE_CAPTURE_COMMANDS,
+            ["hide_sale_capture_overlay", "inventory_sale_window_capture"]
+        );
+        // Notably not the collect verb: the form takes the waiting read, the
+        // overlay never needs to see one back.
+        assert!(!crate::command_acl::SALE_CAPTURE_COMMANDS
+            .contains(&"inventory_sale_window_take_capture"));
+        assert!(!crate::command_acl::SALE_CAPTURE_COMMANDS.contains(&"auction_listing_create"));
     }
 
     #[test]

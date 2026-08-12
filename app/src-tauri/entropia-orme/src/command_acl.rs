@@ -204,6 +204,13 @@ pub const APP_COMMANDS: &[&str] = &[
     "tracking_stop",
 ];
 
+/// The capture overlay does one thing: read the sale window and take
+/// itself off screen. It gets those two and nothing else.
+pub const SALE_CAPTURE_COMMANDS: &[&str] = &[
+    "hide_sale_capture_overlay",
+    "inventory_sale_window_capture",
+];
+
 pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
     "map_pin_create",
     "map_pin_nearby",
