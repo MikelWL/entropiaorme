@@ -8,6 +8,9 @@
 const CURVE_COEFFICIENT: f64 = 0.000_670_02;
 const BASE_FEE_PED: f64 = 0.50;
 const PEC_PER_PED: f64 = 100.0;
+// The curve approaches 75.124... PED from below, so 75.12 PED is the
+// greatest fee the game's whole-PEC display can emit.
+const MAX_DISPLAYED_FEE_PEC: u64 = 7_512;
 pub const DEFAULT_MAX_FEE_SHARE_PCT: f64 = 10.0;
 
 /// The game's displayed listing fee for a non-negative gross markup amount.
@@ -42,27 +45,25 @@ pub fn minimum_efficient_gross_markup_ped(max_fee_share_pct: f64) -> Option<f64>
         return None;
     }
     let fee_share = max_fee_share_pct / 100.0;
-    let efficient = |gross_markup_pec: u64| {
-        let gross_markup = gross_markup_pec as f64 / PEC_PER_PED;
-        listing_fee_ped(gross_markup) <= fee_share * gross_markup
-    };
 
-    // Find a containing interval, then select the first efficient whole PEC.
-    // Doubling keeps even an unusually strict custom threshold inexpensive.
-    let mut high = 1_u64;
-    while !efficient(high) {
-        high = high.checked_mul(2)?;
-    }
-    let mut low = 1_u64;
-    while low < high {
-        let middle = low + (high - low) / 2;
-        if efficient(middle) {
-            high = middle;
-        } else {
-            low = middle + 1;
+    // Truncating the displayed fee creates a small sawtooth at every fee-PEC
+    // boundary, so efficiency is not a monotonic predicate and cannot be
+    // binary-searched. Instead, consider every possible displayed fee. For a
+    // fee F, ceil(F / share) is the earliest markup PEC that could qualify;
+    // if the actual fee there is no greater than F, it is efficient. Any true
+    // global minimum must appear among these finite candidates.
+    for displayed_fee_pec in 50..=MAX_DISPLAYED_FEE_PEC {
+        let candidate = ((displayed_fee_pec as f64 / fee_share) - 1e-9).ceil();
+        if !candidate.is_finite() || candidate > u64::MAX as f64 {
+            return None;
+        }
+        let candidate_pec = candidate.max(1.0) as u64;
+        let gross_markup = candidate_pec as f64 / PEC_PER_PED;
+        if listing_fee_ped(gross_markup) <= fee_share * gross_markup {
+            return Some(gross_markup);
         }
     }
-    Some(low as f64 / PEC_PER_PED)
+    None
 }
 
 #[cfg(test)]
@@ -88,6 +89,9 @@ mod tests {
         assert!(listing_fee_ped(9.79) > 9.79 * 0.10);
         assert_eq!(listing_fee_ped(9.80), 0.98);
         assert!(listing_fee_ped(9.80) <= 9.80 * 0.10);
+        assert!(listing_fee_ped(125.99) > 125.99 * 0.05);
+        assert_eq!(listing_fee_ped(126.00), 6.30);
+        assert!(listing_fee_ped(126.00) <= 126.00 * 0.05);
         assert_eq!(minimum_efficient_gross_markup_ped(5.0), Some(126.0));
         assert_eq!(minimum_efficient_gross_markup_ped(10.0), Some(9.8));
         assert_eq!(minimum_efficient_gross_markup_ped(15.0), Some(4.94));
