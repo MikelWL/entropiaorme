@@ -864,6 +864,13 @@ pub async fn inventory_sale_window_capture(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_sale_window_take_capture(
+    app: tauri::AppHandle,
+) -> Result<Nullable<SaleWindowCapture>, ApiError> {
+    Ok(facade(&app)?.inventory_sale_window_take_capture())
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn inventory_draft_resolve(
     app: tauri::AppHandle,
     draft: InventorySaleDraft,
@@ -1726,6 +1733,7 @@ mod tests {
         "inventory_delete",
         "inventory_sell",
         "inventory_sale_window_capture",
+        "inventory_sale_window_take_capture",
         "inventory_draft_resolve",
         "inventory_equipment_listing_create",
         "inventory_equipment_trade",
@@ -1837,6 +1845,8 @@ mod tests {
             "toggle_overlay",
             "toggle_cartography_overlay",
             "show_scan_overlay",
+            "show_sale_capture_overlay",
+            "hide_sale_capture_overlay",
             "hide_scan_overlay",
             "show_navigation_overlays",
             "hide_navigation_overlays",

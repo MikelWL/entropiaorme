@@ -3283,6 +3283,10 @@ export async function inventorySaleWindowCapture(): Promise<SaleWindowCapture> {
 	return invokeCommand('inventory_sale_window_capture', {});
 }
 
+export async function inventorySaleWindowTakeCapture(): Promise<SaleWindowCapture | null> {
+	return invokeCommand('inventory_sale_window_take_capture', {});
+}
+
 export async function inventoryDraftResolve(draft: InventorySaleDraft): Promise<InventoryDraftResolution> {
 	return invokeCommand('inventory_draft_resolve', { draft });
 }

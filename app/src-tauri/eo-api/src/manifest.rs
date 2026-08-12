@@ -853,6 +853,11 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(SaleWindowCapture))),
         },
         CommandSpec {
+            name: "inventory_sale_window_take_capture",
+            args: vec![],
+            returns: Some(schema(schema_for!(Nullable<SaleWindowCapture>))),
+        },
+        CommandSpec {
             name: "inventory_draft_resolve",
             args: vec![ArgSpec {
                 name: "draft",

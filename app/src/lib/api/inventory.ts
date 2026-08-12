@@ -80,6 +80,11 @@ export const resolveInventoryDraft = (draft: InventorySaleDraft) =>
 /** Read the game's sale window once. Fills the form; commits nothing. */
 export const captureSaleWindow = () => commands.inventorySaleWindowCapture();
 
+/** Collect a capture taken while the form was not on screen, clearing it.
+ * The overlay's button can be pressed from inside the game, so its read
+ * waits here until the form opens. */
+export const takeSaleWindowCapture = () => commands.inventorySaleWindowTakeCapture();
+
 /** A reviewed transaction proposal. Manual selection and future OCR matching
  * both cross this boundary before any accounting command is allowed to run. */
 export interface ResolvedInventorySaleDraft {

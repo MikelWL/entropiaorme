@@ -190,6 +190,27 @@ fn show_scan_overlay(app: tauri::AppHandle) {
     }
 }
 
+/// The sale-window capture button, put where a fullscreen game leaves it
+/// reachable. It is the main window's button in another place and nothing
+/// more: the values it reads are reviewed back in the form, not here.
+#[tauri::command]
+fn show_sale_capture_overlay(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("sale-capture-overlay") {
+        // Top-left of the monitor, clear of a bottom-right docked sale
+        // window, which is the one part of the screen it must never cover.
+        let _ = window.set_position(monitor_anchor(&window, (40, 40)));
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn hide_sale_capture_overlay(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("sale-capture-overlay") {
+        let _ = window.hide();
+    }
+}
+
 #[tauri::command]
 fn hide_scan_overlay(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("scan-overlay") {
@@ -309,6 +330,8 @@ pub fn run() {
             toggle_overlay,
             toggle_cartography_overlay,
             show_scan_overlay,
+            show_sale_capture_overlay,
+            hide_sale_capture_overlay,
             hide_scan_overlay,
             capture_png,
             planet_map_image,
@@ -404,6 +427,7 @@ pub fn run() {
             commands::inventory_delete,
             commands::inventory_sell,
             commands::inventory_sale_window_capture,
+            commands::inventory_sale_window_take_capture,
             commands::inventory_draft_resolve,
             commands::inventory_equipment_listing_create,
             commands::inventory_equipment_trade,

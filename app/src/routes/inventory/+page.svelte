@@ -144,6 +144,7 @@
 	holdings={model.holdingOptions}
 	onresolve={model.resolveDraftName}
 	oncapture={model.captureSaleWindow}
+	oncollect={model.takeSaleWindowCapture}
 	onsubmit={model.createFromDraft}
 />
 <SellStockModal

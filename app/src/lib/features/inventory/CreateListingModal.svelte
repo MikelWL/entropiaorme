@@ -36,7 +36,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import PickerInput from '$lib/components/PickerInput.svelte';
 	import SegmentedControl from '$lib/components/SegmentedControl.svelte';
-	import { InDevelopmentMark, inDevelopment } from '$lib/inDevelopment';
+	import { showSaleCaptureOverlay } from '$lib/api';
 	import { formatPed } from '$lib/utils/format';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import type { InventoryHoldingCandidate, SaleWindowCapture } from '$lib/api/commands.gen';
@@ -56,6 +56,7 @@
 		holdings,
 		onresolve,
 		oncapture,
+		oncollect,
 		onsubmit,
 	}: {
 		open?: boolean;
@@ -71,6 +72,9 @@
 		}>;
 		/** One read of the game's sale window. */
 		oncapture: () => Promise<SaleWindowCapture>;
+		/** A read taken from the overlay while this form was not on screen,
+		 * or null if there was none. Collected once. */
+		oncollect: () => Promise<SaleWindowCapture | null>;
 		onsubmit: (input: {
 			fields: ListingDraftFields;
 			channel: 'auction' | 'trade';
@@ -207,6 +211,24 @@
 		reset();
 	});
 
+	// A capture taken from the overlay was taken for this form, so opening it
+	// is what collects that read. There is nothing to confirm: the figures
+	// landing in the fields is the review, exactly as it is for the button.
+	$effect(() => {
+		if (!open) return;
+		collect();
+	});
+
+	async function collect() {
+		try {
+			const waiting = await oncollect();
+			if (waiting) await fill(waiting);
+		} catch {
+			// Nothing waiting, or it could not be collected. The form opens
+			// empty, which is what it would have done anyway.
+		}
+	}
+
 	onDestroy(() => picker.destroy());
 
 	/** Enrich a resolved candidate with what is known about the holding it
@@ -247,34 +269,38 @@
 		capturing = true;
 		error = null;
 		try {
-			const read = await oncapture();
-			if (read.error !== null) {
-				error = read.error;
-				return;
-			}
-			unread = read.unread;
-			attempted = false;
-			candidates = [];
-			chosen = null;
-			resolvedFor = null;
-			fields = capturedDraft(read);
-			// The box has to show the name the draft is holding, or the form
-			// would carry a name nothing on screen accounts for.
-			picker.query = fields.itemName;
-			// The window's TT is what the game says the goods are worth, which
-			// outranks anything derived from our own records.
-			ttEdited = read.ttValue !== null;
-			if (fields.itemName === '') return;
-			await resolveTyped();
-			// A name the window gave and the resolver settled is as chosen as
-			// one picked by hand, so settle it the same way and put the list
-			// away rather than leaving it open over the form.
-			if (chosen) pickerModel.select(chosen);
+			await fill(await oncapture());
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not read the sale window';
 		} finally {
 			capturing = false;
 		}
+	}
+
+	/** Put a read into the form. The same path whichever button took it. */
+	async function fill(read: SaleWindowCapture) {
+		if (read.error !== null) {
+			error = read.error;
+			return;
+		}
+		unread = read.unread;
+		attempted = false;
+		candidates = [];
+		chosen = null;
+		resolvedFor = null;
+		fields = capturedDraft(read);
+		// The box has to show the name the draft is holding, or the form
+		// would carry a name nothing on screen accounts for.
+		picker.query = fields.itemName;
+		// The window's TT is what the game says the goods are worth, which
+		// outranks anything derived from our own records.
+		ttEdited = read.ttValue !== null;
+		if (fields.itemName === '') return;
+		await resolveTyped();
+		// A name the window gave and the resolver settled is as chosen as one
+		// picked by hand, so settle it the same way and put the list away
+		// rather than leaving it open over the form.
+		if (chosen) pickerModel.select(chosen);
 	}
 
 	/** Resolve a name the player typed instead of choosing.
@@ -343,10 +369,9 @@
 			<Button variant="secondary" size="sm" onclick={capture} disabled={capturing}>
 				{capturing ? 'Reading the window' : 'Capture from game'}
 			</Button>
-			{#if inDevelopment.visible}
-				<Button variant="ghost" size="sm" disabled>Capture overlay</Button>
-				<InDevelopmentMark id="market-sale-capture-overlay" align="left" />
-			{/if}
+			<Button variant="ghost" size="sm" onclick={() => showSaleCaptureOverlay()}>
+				Capture over the game
+			</Button>
 		</div>
 		{#if unread.length > 0}
 			<p class="text-sm text-text-tertiary">

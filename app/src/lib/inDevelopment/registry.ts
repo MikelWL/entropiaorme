@@ -21,18 +21,7 @@ export interface InDevelopmentSurface {
 	readonly graduates: string;
 }
 
-export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
-	{
-		id: 'market-sale-capture-overlay',
-		summary:
-			'Capturing from an overlay is not working yet, so this button does nothing. The button ' +
-			'beside it reads the window and does work.',
-		graduates:
-			'It starts working once a capture can be triggered without leaving the game, which is ' +
-			'what a single-screen setup needs. Until then, capture from this window or type the ' +
-			'figures in.',
-	},
-] as const;
+export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [] as const;
 
 /** The registered surface for `id`. Throws on an unregistered id, matching
  * the guard's build-time check so both enforcement points agree. */

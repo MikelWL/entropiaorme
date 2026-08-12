@@ -3,6 +3,7 @@ import { createInventoryModel } from './inventoryModel.svelte';
 
 vi.mock('$lib/api/inventory', () => ({
 	captureSaleWindow: vi.fn(),
+	takeSaleWindowCapture: vi.fn(),
 	confirmInventoryListing: vi.fn(),
 	commitInventorySaleDraft: vi.fn(),
 	convertLoot: vi.fn(),

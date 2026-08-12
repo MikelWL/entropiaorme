@@ -1276,7 +1276,7 @@ impl Api {
                 .into()
         };
         let number = |key: &str| read.get(key).and_then(serde_json::Value::as_f64).into();
-        Ok(SaleWindowCapture {
+        let capture = SaleWindowCapture {
             observed_name: text("item_name"),
             quantity: number("quantity"),
             tt_value: number("tt_value"),
@@ -1301,7 +1301,22 @@ impl Api {
                 })
                 .unwrap_or_default(),
             error: text("error"),
-        })
+        };
+        // Held for the form to collect, since the overlay's button can be
+        // pressed while the form is not on screen.
+        if let Ok(mut slot) = self.last_sale_capture.lock() {
+            *slot = Some(capture.clone());
+        }
+        Ok(capture)
+    }
+
+    /// Collect the last sale-window read, clearing it.
+    pub fn inventory_sale_window_take_capture(&self) -> Nullable<SaleWindowCapture> {
+        self.last_sale_capture
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+            .into()
     }
 
     /// Resolve a manual or OCR-originated transaction draft against current

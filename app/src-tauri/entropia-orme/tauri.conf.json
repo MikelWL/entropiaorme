@@ -49,6 +49,20 @@
         "shadow": false
       },
       {
+        "label": "sale-capture-overlay",
+        "title": "EntropiaOrme Capture",
+        "url": "/sale-capture-overlay",
+        "width": 260,
+        "height": 96,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
+      },
+      {
         "label": "cartography-overlay",
         "title": "EntropiaOrme Pin Overlay",
         "url": "/cartography-overlay",
@@ -100,7 +114,9 @@
       "open": "(https?://.+|mailto:.+)"
     },
     "updater": {
-      "endpoints": ["https://entropiaorme.com/updates/stable/latest.json"],
+      "endpoints": [
+        "https://entropiaorme.com/updates/stable/latest.json"
+      ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk3QTkyRDE1NzVEQTM4ODMKUldTRE9OcDFGUzJwbDlUekhUZlVZRVNiQmdZVkltMFgxbXJHc2ZCYjJBcTFiaUd2QmVESVBkeHgK",
       "windows": {
         "installMode": "passive"
@@ -108,7 +124,9 @@
     }
   },
   "bundle": {
-    "targets": ["msi"],
+    "targets": [
+      "msi"
+    ],
     "createUpdaterArtifacts": true,
     "publisher": "EntropiaOrme",
     "homepage": "https://entropiaorme.com",

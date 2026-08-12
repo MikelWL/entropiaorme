@@ -98,6 +98,14 @@ pub struct Api {
     /// The one-shot sale-window OCR: the analytics family's listing-read
     /// leg drives it, filling a draft the user reviews before committing.
     sale_window_ocr: Arc<SaleWindowOcrService>,
+    /// The last sale-window read, waiting to be collected.
+    ///
+    /// Its whole purpose is to bridge the gap between the overlay's capture
+    /// button and the main window's form: the form may not be on screen when
+    /// the button is pressed, so the values wait here until it opens. Taken
+    /// once and cleared, and never persisted, because a capture nobody came
+    /// back for is one worth taking again.
+    last_sale_capture: std::sync::Mutex<Option<analytics::SaleWindowCapture>>,
     /// The codex service (species / ranks / recommendations / claims),
     /// built over the facade's shared db, catalogue, and clock.
     codex: CodexService,
@@ -196,6 +204,7 @@ impl Api {
             spacebar,
             repair_ocr,
             sale_window_ocr,
+            last_sale_capture: std::sync::Mutex::new(None),
             codex,
             quests,
             analytics,
