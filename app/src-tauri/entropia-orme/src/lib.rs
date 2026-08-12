@@ -403,6 +403,7 @@ pub fn run() {
             commands::inventory_update,
             commands::inventory_delete,
             commands::inventory_sell,
+            commands::inventory_sale_window_capture,
             commands::inventory_draft_resolve,
             commands::inventory_equipment_listing_create,
             commands::inventory_equipment_trade,

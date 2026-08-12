@@ -19,8 +19,8 @@ use eo_api::analytics::{
     HuntingRealisedMarkup, InventoryDraftResolution, InventoryItem, InventoryItemInput,
     InventoryPatch, InventorySaleDraft, InventorySellInput, InventorySellResult, LedgerEntryInput,
     LedgerItem, LedgerPage, LedgerPreset, LedgerPresetInput, LedgerSummary, PrivateSaleInput,
-    Profession, RealisedTierMarkup, ShrapnelConversionInput, StockConversionInput, StockPosition,
-    StockRemovalInput,
+    Profession, RealisedTierMarkup, SaleWindowCapture, ShrapnelConversionInput,
+    StockConversionInput, StockPosition, StockRemovalInput,
 };
 use eo_api::character::{
     ActivityRecommenderQuery, ActivityRecommenderResult, CalibrationStatus,
@@ -847,6 +847,13 @@ pub async fn inventory_sell(
     sale: InventorySellInput,
 ) -> Result<InventorySellResult, ApiError> {
     facade(&app)?.inventory_sell(item_id, sale).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn inventory_sale_window_capture(
+    app: tauri::AppHandle,
+) -> Result<SaleWindowCapture, ApiError> {
+    facade(&app)?.inventory_sale_window_capture().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1711,6 +1718,7 @@ mod tests {
         "inventory_update",
         "inventory_delete",
         "inventory_sell",
+        "inventory_sale_window_capture",
         "inventory_draft_resolve",
         "inventory_equipment_listing_create",
         "inventory_equipment_trade",

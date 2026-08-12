@@ -73,6 +73,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "inventory_equipment_listing_create",
     "inventory_equipment_trade",
     "inventory_list",
+    "inventory_sale_window_capture",
     "inventory_sell",
     "inventory_update",
     "ledger_create",
